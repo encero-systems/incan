@@ -184,6 +184,22 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/build/native_sdk.rs": {
+      "disposition": "unaffected",
+      "notes": "Native SDK facade dependency selection follows the component's declared version and features; no Cargo resolution.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/build/native_sdk_plan.rs": {
+      "disposition": "unaffected",
+      "notes": "Receipt-bound SDK native artifact retention, source-role member bindings and compiler mismatch refusal; no generated Cargo graph or dependency resolution.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/build/output_materialization.rs": {
       "disposition": "unaffected",
       "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend.",
@@ -416,6 +432,14 @@
       "disposition": "unaffected",
       "notes": "generated rust-inspect Cargo workspace that feeds the checker with Rust metadata; not the Rust backend.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/sdk_closure.rs": {
+      "disposition": "unaffected",
+      "notes": "A locally compiled SDK facet seals its native source identity and loads a frozen inspection graph without Cargo metadata.",
+      "owner": 1698,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -8216,8 +8240,16 @@
     },
     "loaves/compiler/incan_provider/src/sdk_build.rs": {
       "disposition": "unaffected",
-      "notes": "SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level.",
-      "owner": 1561,
+      "notes": "Native SDK transaction uses real direct-rustc fixtures to verify publication, receipt reuse, discovery-hint repair, and failed-generation rollback with poisoned Cargo metadata. Legacy command-transport fixtures remain test-only.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_provider/src/sdk_native.rs": {
+      "disposition": "unaffected",
+      "notes": "SDK system source imports parse against Loaf-only dependency declarations; native publication is exercised by sdk_build's receipt and rollback regression.",
+      "owner": 1698,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -8292,6 +8324,14 @@
       },
       "twin": ""
     },
+    "loaves/compiler/incan_test_support/src/lib.rs": {
+      "disposition": "unaffected",
+      "notes": "Test-harness helpers; the fixture bake configuration keeps the consumer's selected authority and never injects Cargo.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/rust_inspect/src/cache_tests.rs": {
       "disposition": "unaffected",
       "notes": "Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level.",
@@ -8328,6 +8368,14 @@
       "disposition": "unaffected",
       "notes": "Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/rust_inspect/src/loader/loaf_manifest.rs": {
+      "disposition": "unaffected",
+      "notes": "Loaf source and frozen graph inspection without Cargo metadata; validates source containment, alias edges and selected facts.",
+      "owner": 1698,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -8972,6 +9020,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_model/src/target_condition.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven manifest grammar; canonical target admission independent of compiler emission.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_model/src/toolchain_layout.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
@@ -9044,6 +9100,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_rustc/src/rustc/compile_environment.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven ring; the validated compile environment envelope accepts Cargo's package metadata values for closure units.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_rustc/src/rustc/compiled_unit.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
@@ -9081,6 +9145,14 @@
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
       "owner": 1561,
       "split_required": true,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/rustc/linking.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven ring; the pinned linker binds the SDK closure, platform inputs and explicit arguments into link identities on macOS and Linux.",
+      "owner": 1698,
+      "split_required": false,
       "split_target": "",
       "twin": ""
     },
@@ -9152,7 +9224,7 @@
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
       "owner": 1561,
-      "split_required": false,
+      "split_required": true,
       "split_target": "",
       "twin": ""
     },
@@ -9212,6 +9284,38 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_rustc/src/sdk_closure.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven-native locked closure edges, domain selection and exact-fact refusal; no generated Cargo project behavior.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/sdk_closure/environment.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven ring; closure units receive Cargo's package environment from the locked binding and pinned adoption metadata, bound into the receipt.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/sdk_closure/local.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven-native local source snapshots bind Rust source bytes without consulting adjacent Cargo metadata.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/sdk_closure/native.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven-native link fact source-catalog and executable-owner refusal boundaries.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_store/src/closure_proof.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
@@ -9256,6 +9360,14 @@
       "disposition": "unaffected",
       "notes": "Oven ring; portable publisher-owner identity and closure tests carry no compiler-crate dependency. Reviewed at crate level.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_store/src/source_archive.rs": {
+      "disposition": "unaffected",
+      "notes": "Digest-first adopted archive admission and source-only materialization; inert Cargo metadata is omitted.",
+      "owner": 1698,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -11265,6 +11377,22 @@
       "disposition": "unaffected",
       "notes": "Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/oven-cli/src/commands/oven/compile_closure.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven-native closure root feature demands and normalized extern alias collision tests.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/oven-cli/src/commands/oven/convert_cargo.rs": {
+      "disposition": "keep",
+      "notes": "Explicit one-time Cargo adoption preserves Loaf dependency declarations and refuses unsupported inputs before writing; it runs no Cargo process.",
+      "owner": 1698,
       "split_required": false,
       "split_target": "",
       "twin": ""

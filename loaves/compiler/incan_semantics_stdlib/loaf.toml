@@ -1,0 +1,21 @@
+[dependencies]
+incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
+incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
+
+[project]
+description = "Stdlib surface-semantics pack for the Incan compiler"
+license = "Apache-2.0"
+name = "incan_semantics_stdlib"
+private = true
+version = "0.6.0-dev.6"
+
+[project.features]
+default = []
+std_async = []
+std_decorators = []
+std_testing = []
+
+[rust]
+edition = "2024"
+name = "incan_semantics_stdlib"
+type = "lib"

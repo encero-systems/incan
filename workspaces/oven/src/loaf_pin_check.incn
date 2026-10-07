@@ -1,0 +1,145 @@
+"""Read-only pin audit driver; no upstream metadata or build invocation enters this path."""
+
+from rust::std::env import args
+from rust::std::process import exit
+from std.fs import Path
+from loaf_index import read_index, LoafVersion
+from loaf_facts import closure_violations, applicable_optional_aliases, FactDependency
+from loaf_pin import pinned_revision
+from loaf_resolve import resolve, resolution_json, LoafDemand
+from rust_graph import NodeDemand
+from rust_activation import ActivationContext, ActivationPurpose, DependencyDomain, CfgSnapshot, TargetConfiguration
+
+
+def audit(directory: str, names_file: str, cfg_file: str) -> Result[None, str]:
+    """Audit every supplied index name and print every fact-closure violation."""
+    source = Path(names_file).read_text("utf-8", "strict").map_err((e) => e.message())?
+    revision = Path(f"{directory}/revision").read_text("utf-8", "strict").map_err((e) => e.message())?
+    if revision.strip() != pinned_revision():
+        return Err("index revision does not match resolver pin")
+    cfg = read_cfg(cfg_file)?
+    mut all_records: list[LoafVersion] = []
+    mut versions = 0
+    mut facts = 0
+    mut violations = 0
+    for loaf in source.split("\n"):
+        if loaf == "":
+            continue
+        records = read_index(directory, loaf).map_err((e) => e.message())?
+        for record in records:
+            all_records.append(record)
+            versions += 1
+            facts += len(record.facts)
+            dependencies = [FactDependency(
+                alias=declaration.alias,
+                optional=declaration.optional == Some(true),
+                target=declaration.target_condition,
+            ) for declaration in record.catalog.dependencies]
+            aliases = applicable_optional_aliases(dependencies, "aarch64-apple-darwin", cfg.flags, cfg.values)?
+            for violation in closure_violations(
+                record.loaf,
+                record.version,
+                record.catalog.features,
+                record.facts,
+                aliases,
+            ):
+                println(violation)
+                violations += 1
+    println(f"versions={versions}; facts={facts}; violations={violations}")
+    if violations != 0:
+        return Err("recorded feature closure violations")
+    smoke(all_records, cfg_file)?
+    return Ok(None)
+
+
+pub def main() -> None:
+    """Accept a pin directory and complete Loaf name inventory."""
+    mut arguments: list[str] = []
+    for argument in args():
+        arguments.append(argument)
+    if len(arguments) != 4:
+        println("usage: loaf_pin_check PIN_DIRECTORY NAMES_FILE CFG_FILE")
+        exit(2)
+    match audit(arguments[1], arguments[2], arguments[3]):
+        Ok(_) => return
+        Err(error) =>
+            println(error)
+            exit(1)
+
+
+pub def read_cfg(path: str) -> Result[CfgSnapshot, str]:
+    """Read retained rustc cfg output; no ambient toolchain query occurs inside the resolver."""
+    source = Path(path).read_text("utf-8", "strict").map_err((e) => e.message())?
+    mut flags: list[str] = []
+    mut values: Dict[str, list[str]] = {}
+    for line in source.split("\n"):
+        if line == "":
+            continue
+        parts = line.split("=")
+        if len(parts) == 1:
+            flags.append(line)
+        elif len(parts) == 2 and parts[1].startswith("\"") and parts[1].endswith("\""):
+            name = parts[0]
+            if name not in values:
+                values[name] = []
+            mut entries = values[name]
+            entries.append(parts[1][1:-1])
+            values[name] = entries
+        else:
+            return Err(f"invalid cfg snapshot line: {line}")
+    return Ok(CfgSnapshot(flags=flags, values=values))
+
+
+def smoke(records: list[LoafVersion], cfg_file: str) -> Result[None, str]:
+    """Resolve the requested real roots and report exact binding matches without claiming build facts apply."""
+    mut roots: list[LoafDemand] = []
+    for loaf in ["crates-io/tokio", "crates-io/serde", "crates-io/regex"]:
+        mut features: list[str] = []
+        if loaf == "crates-io/tokio":
+            features = ["full"]
+        if loaf == "crates-io/serde":
+            features = ["derive"]
+        roots.append(
+            LoafDemand(
+                loaf=loaf,
+                domain=DependencyDomain.Target,
+                requirements=["^1"],
+                intent=NodeDemand(features=features, default_features=true),
+            ),
+        )
+    mut final_root = "crates-io/serde_json"
+    mut final_requirement = "^1"
+    for record in records:
+        if record.loaf == "crates-io/reqwest":
+            final_root = record.loaf
+            final_requirement = "*"
+    roots.append(
+        LoafDemand(
+            loaf=final_root,
+            domain=DependencyDomain.Target,
+            requirements=[final_requirement],
+            intent=NodeDemand(features=[], default_features=true),
+        ),
+    )
+    cfg = read_cfg(cfg_file)?
+    target = TargetConfiguration(triple="aarch64-apple-darwin", cfg=Some(cfg))
+    context = ActivationContext(
+        host=target,
+        target=target,
+        purpose=ActivationPurpose.Normal,
+        domain=DependencyDomain.Target,
+        requested_features=[],
+        default_features=false,
+        build_unit_present=false,
+    )
+    units = resolve(records, roots, context).map_err((e) => e.message())?
+    println(resolution_json(units).to_json().map_err((e) => e.message())?)
+    for unit in units:
+        mut recorded = false
+        for fact in unit.record.facts:
+            if sorted(fact) == unit.features:
+                recorded = true
+        println(
+            f"{unit.record.loaf} {unit.record.version} {unit.domain.value()} features={unit.features}; recorded_feature_match={recorded}",
+        )
+    return Ok(None)

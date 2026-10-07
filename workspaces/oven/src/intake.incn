@@ -28,14 +28,16 @@ pub model LocalDependency:
 
 @derive(Eq)
 pub model RustInputRequest:
-    """An unresolved crate requirement, not an admitted source or host/target unit."""
+    """An unresolved Rust-facet Loaf requirement, before source or host/target unit admission."""
 
     pub alias: str
     pub package: str
+    pub loaf: Option[str]
     pub version: str
     pub features: list[str]
     pub default_features: bool
     pub optional: bool
+    pub target: Option[str]
 
 
 @derive(Eq)
@@ -162,11 +164,11 @@ def parse_raw_intent(source: str, manifest: str) -> Result[ProjectIntent, Intake
     """Validate every supported table before projecting effective local intent."""
     parsed = toml.parse(source).map_err((error) => refusal(manifest, [], IntakeErrorKind.Invalid, error.message()))?
     root = table(parsed, manifest, [])?
-    allowed(root, ["project", "dependencies", "rust-dependencies", "build"], manifest, [])?
+    allowed(root, ["project", "dependencies", "rust-dependencies", "build", "rust", "sdk", "vocab"], manifest, [])?
     if "project" not in root:
         return Err(refusal(manifest, ["project"], IntakeErrorKind.Missing, "project identity is required"))
     project = table(root["project"], manifest, ["project"])?
-    allowed(project, ["name", "version", "scripts"], manifest, ["project"])?
+    allowed(project, ["name", "version", "scripts", "license", "private"], manifest, ["project"])?
     name = required(project, "name", manifest, ["project", "name"])?
     version = required(project, "version", manifest, ["project", "version"])?
     mut scripts: Dict[str, str] = {}
@@ -174,22 +176,15 @@ def parse_raw_intent(source: str, manifest: str) -> Result[ProjectIntent, Intake
         values = table(project["scripts"], manifest, ["project", "scripts"])?
         for key in sorted([key for key in values.keys()]):
             scripts[key] = required(values, key, manifest, ["project", "scripts", key])?
-    mut dependencies: list[LocalDependency] = []
-    if "dependencies" in root:
-        values = table(root["dependencies"], manifest, ["dependencies"])?
-        for alias in sorted([key for key in values.keys()]):
-            entry = table(values[alias], manifest, ["dependencies", alias])?
-            allowed(entry, ["path"], manifest, ["dependencies", alias])?
-            path = required(entry, "path", manifest, ["dependencies", alias, "path"])?
-            dependencies.append(LocalDependency(alias=alias, path=path))
-    mut rust_inputs: list[RustInputRequest] = []
-    if "rust-dependencies" in root:
-        values = table(root["rust-dependencies"], manifest, ["rust-dependencies"])?
-        for alias in sorted([key for key in values.keys()]):
-            rust_inputs.append(rust_request(alias, values[alias], manifest)?)
+    dependencies, rust_inputs = parse_dependencies(root, manifest)?
+    validate_facets(root, manifest)?
     mut target: Option[str] = None
     mut profile: Option[str] = None
     mut edition: Option[str] = None
+    if "rust" in root:
+        rust_facet = table(root["rust"], manifest, ["rust"])?
+        if "edition" in rust_facet:
+            edition = Some(required(rust_facet, "edition", manifest, ["rust", "edition"])?)
     if "build" in root:
         build = table(root["build"], manifest, ["build"])?
         allowed(build, ["target", "profile", "rust-edition"], manifest, ["build"])?
@@ -213,19 +208,181 @@ def parse_raw_intent(source: str, manifest: str) -> Result[ProjectIntent, Intake
     )
 
 
-def rust_request(alias: str, value: TomlValue, manifest: str) -> Result[RustInputRequest, IntakeError]:
+def parse_dependencies(
+    root: Dict[str, TomlValue],
+    manifest: str,
+) -> Result[Tuple[list[LocalDependency], list[RustInputRequest]], IntakeError]:
+    """Keep local edges and adopted Loaf target alternatives without resolving either."""
+    mut dependencies: list[LocalDependency] = []
+    mut rust_inputs: list[RustInputRequest] = []
+    for group in ["dependencies", "rust-dependencies"]:
+        if group not in root:
+            continue
+        values = table(root[group], manifest, [group])?
+        for alias in sorted([key for key in values.keys()]):
+            value = values[alias]
+            if value.kind() == TomlKind.Array:
+                entries = value
+                    .as_array()
+                    .map_err((error) => refusal(manifest, [group, alias], IntakeErrorKind.Invalid, error.message()))?
+                if len(entries) == 0:
+                    return Err(
+                        refusal(
+                            manifest,
+                            [group, alias],
+                            IntakeErrorKind.Invalid,
+                            "target entry array must not be empty",
+                        ),
+                    )
+                for entry in entries:
+                    request = rust_request(alias, entry, manifest, group)?
+                    if request.target is None:
+                        return Err(
+                            refusal(
+                                manifest,
+                                [group, alias, "target"],
+                                IntakeErrorKind.Missing,
+                                "array entries require target",
+                            ),
+                        )
+                    rust_inputs.append(request)
+            elif group == "rust-dependencies":
+                rust_inputs.append(rust_request(alias, value, manifest, group)?)
+            else:
+                entry = table(value, manifest, [group, alias])?
+                if "path" in entry:
+                    allowed(entry, ["loaf", "path", "version"], manifest, [group, alias])?
+                    path = required(entry, "path", manifest, [group, alias, "path"])?
+                    dependencies.append(LocalDependency(alias=alias, path=path))
+                else:
+                    rust_inputs.append(rust_request(alias, value, manifest, group)?)
+    return Ok((dependencies, rust_inputs))
+
+
+def validate_facets(root: Dict[str, TomlValue], manifest: str) -> Result[None, IntakeError]:
+    """Validate authored facet metadata even when local intake does not execute it."""
+    if "rust" in root:
+        rust_facet = table(root["rust"], manifest, ["rust"])?
+        allowed(rust_facet, ["name", "type", "edition", "source"], manifest, ["rust"])?
+        for key in ["name", "type", "edition"]:
+            if key in rust_facet:
+                value = required(rust_facet, key, manifest, ["rust", key])?
+                if key == "type" and value not in ["lib", "proc-macro"]:
+                    return Err(refusal(manifest, ["rust", key], IntakeErrorKind.Invalid, "unsupported Rust type"))
+                if key == "edition" and value not in ["2015", "2018", "2021", "2024"]:
+                    return Err(refusal(manifest, ["rust", key], IntakeErrorKind.Invalid, "unsupported Rust edition"))
+        if "source" in rust_facet:
+            source = table(rust_facet["source"], manifest, ["rust", "source"])?
+            allowed(source, ["root"], manifest, ["rust", "source"])?
+            required(source, "root", manifest, ["rust", "source", "root"])?
+    if "sdk" in root:
+        sdk = table(root["sdk"], manifest, ["sdk"])?
+        allowed(sdk, ["profile", "components"], manifest, ["sdk"])?
+    if "vocab" in root:
+        vocab = table(root["vocab"], manifest, ["vocab"])?
+        allowed(vocab, ["crate"], manifest, ["vocab"])?
+    return Ok(None)
+
+
+def validate_target(value: str) -> Result[None, str]:
+    """Admit an exact triple or the RFC 119 canonical cfg grammar without evaluating it."""
+    if not value.startswith("cfg("):
+        if len(value.split("-")) < 3:
+            return Err("target requires an exact triple or canonical cfg(...)")
+        for part in value.split("-"):
+            if part == "":
+                return Err("target triple contains an empty component")
+        for char in value:
+            if char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.":
+                return Err("target triple contains an invalid character")
+        return Ok(None)
+    if not value.endswith(")"):
+        return Err("cfg target requires a closing parenthesis")
+    rest = cfg_predicate(value[4:-1], 0)?
+    if rest != "":
+        return Err("cfg target has a trailing or noncanonical construct")
+    return Ok(None)
+
+
+def cfg_predicate(value: str, depth: int) -> Result[str, str]:
+    """Consume one canonical cfg expression and retain the unconsumed suffix."""
+    if depth > 64:
+        return Err("cfg nesting exceeds 64")
+    mut name = ""
+    for char in value:
+        if char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_":
+            break
+        name += char
+    if name == "" or name[0] in "0123456789":
+        return Err("cfg requires an identifier")
+    mut rest = value[len(name):]
+    if rest.startswith("("):
+        if name not in ["all", "any", "not"]:
+            return Err("unknown cfg construct: " + name)
+        rest = rest[1:]
+        mut count = 0
+        if not rest.startswith(")"):
+            while true:
+                rest = cfg_predicate(rest, depth + 1)?
+                count += 1
+                if not rest.startswith(", "):
+                    break
+                rest = rest[2:]
+        if not rest.startswith(")"):
+            return Err("cfg requires canonical comma-space separators and closing parenthesis")
+        if name == "not" and count != 1:
+            return Err("cfg not requires exactly one argument")
+        return Ok(rest[1:])
+    if rest.startswith(" = \""):
+        rest = rest[4:]
+        mut escaped = false
+        mut offset = 0
+        for char in rest:
+            if escaped:
+                if char not in ["\\", "\"", "n", "r", "t", "0"]:
+                    return Err("cfg value has an unsupported escape")
+                escaped = false
+            elif char == "\\":
+                escaped = true
+            elif char == "\"":
+                return Ok(rest[offset + 1:])
+            elif char in ["\n", "\r", "\t"]:
+                return Err("cfg value contains a control character")
+            offset += 1
+        return Err("cfg value requires a closing quote")
+    return Ok(rest)
+
+
+def rust_request(alias: str, value: TomlValue, manifest: str, group: str) -> Result[RustInputRequest, IntakeError]:
     """Retain a registry crate requirement and normalize its requested features without selecting a version."""
-    field = ["rust-dependencies", alias]
+    field = [group, alias]
     mut package = alias
+    mut loaf: Option[str] = None
     mut version = ""
     mut features: list[str] = []
     mut default_features = true
     mut optional = false
+    mut target: Option[str] = None
     if value.kind() == TomlKind.String:
         version = text(value, manifest, field)?
     else:
         entry = table(value, manifest, field)?
-        allowed(entry, ["version", "package", "features", "default-features", "optional"], manifest, field)?
+        if group == "dependencies":
+            allowed(entry, ["loaf", "version", "features", "default-features", "optional", "target"], manifest, field)?
+            identity = required(entry, "loaf", manifest, field + ["loaf"])?
+            if not identity.startswith("crates-io/") or identity == "crates-io/":
+                return Err(refusal(manifest, field + ["loaf"], IntakeErrorKind.Invalid, "expected crates-io/<package>"))
+            loaf = Some(identity)
+            package = identity[10:]
+        else:
+            allowed(entry, ["version", "package", "features", "default-features", "optional"], manifest, field)?
+        if "target" in entry:
+            predicate = required(entry, "target", manifest, field + ["target"])?
+            validate_target(predicate).map_err(
+                (error) => refusal(manifest, field + ["target"], IntakeErrorKind.Invalid, error),
+            )?
+            target = Some(predicate)
+
         version = required(entry, "version", manifest, field + ["version"])?
         if "package" in entry:
             package = required(entry, "package", manifest, field + ["package"])?
@@ -252,10 +409,12 @@ def rust_request(alias: str, value: TomlValue, manifest: str) -> Result[RustInpu
         RustInputRequest(
             alias=alias,
             package=package,
+            loaf=loaf,
             version=version,
             features=features,
             default_features=default_features,
             optional=optional,
+            target=target,
         ),
     )
 

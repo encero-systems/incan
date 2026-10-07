@@ -1660,7 +1660,9 @@ impl<'a> IrCodegen<'a> {
     }
 
     /// Mark the programs being generated as modules of the standard library, checked under the standard library's own
-    /// rules, for a module generated without its `std.` module path.
+    /// rules, for a module generated without its `std.` module path. This typed publisher identity also restores the
+    /// public stdlib mount during lowering, including the callable native-function bridge. Ordinary user modules
+    /// must leave this flag false.
     pub fn set_standard_library_source(&mut self, standard_library_source: bool) {
         self.standard_library_source = standard_library_source;
     }
@@ -1803,11 +1805,12 @@ impl<'a> IrCodegen<'a> {
     fn configure_lowering(&self, lowering: &mut AstLowering) {
         lowering.set_stdlib_cache(self.stdlib_cache.clone());
         lowering.set_provider_plan(self.provider_plan.clone());
-        // A release seed compiles compiler-owned provider source into its sealed direct-rustc closure. Give that
-        // source the same trusted public-stdlib identity as the SDK publisher; normal Oven consumers never set this
-        // marker and therefore cannot acquire provider-only lowering behavior.
+        // The native publisher carries trusted SDK source identity in typed codegen context. Legacy release seeds
+        // retain their explicit provider markers; ordinary caller modules acquire neither form of this privilege.
         lowering.set_sdk_provider_build(
-            env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() || env::var_os(OVEN_LOAF_ENV).is_some(),
+            self.standard_library_source
+                || env::var_os(SDK_PROVIDER_BUILD_ENV).is_some()
+                || env::var_os(OVEN_LOAF_ENV).is_some(),
         );
         lowering.set_registry_package_identity(self.registry_package_identity.clone());
         lowering.set_source_module_rust_paths(source_module_rust_paths(
@@ -3555,6 +3558,25 @@ pub model Parcel[T with Clone] with OrderedCatalog:
             "Catalog[T] did not receive its inferred implementation bounds: {:?}",
             parcel.trait_adoptions
         );
+        Ok(())
+    }
+
+    /// Typed SDK source identity reaches lowering while an ordinary same-named module receives no callable bridge.
+    #[test]
+    fn typed_sdk_callable_source_emits_native_function_bridge() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "pub trait Callable1[Arg, Return]:\n    def __call__(self, argument: Arg) -> Return: ...\n";
+        let ast = parser::parse(&lexer::lex(source).map_err(|errors| format!("{errors:?}"))?)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let module_path = vec!["traits".to_string(), "callable".to_string()];
+        let mut trusted = IrCodegen::new();
+        trusted.set_standard_library_source(true);
+        trusted.set_root_source_module_name(Some("traits.callable".to_string()));
+        let (trusted_source, _) = trusted.try_generate_with_metadata(&ast, &module_path)?;
+        assert!(trusted_source.contains("__IncanCallable"), "{trusted_source}");
+        let mut ordinary = IrCodegen::new();
+        ordinary.set_root_source_module_name(Some("traits.callable".to_string()));
+        let (ordinary_source, _) = ordinary.try_generate_with_metadata(&ast, &module_path)?;
+        assert!(!ordinary_source.contains("__IncanCallable"), "{ordinary_source}");
         Ok(())
     }
 

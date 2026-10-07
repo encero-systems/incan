@@ -309,7 +309,8 @@ pub struct StdlibNamespace {
     /// The Rust facet this namespace's generated code links beyond the mandatory [`facets::CORE`], or `None` when
     /// the core facet serves it.
     pub facet: Option<&'static str>,
-    /// Extra crate dependencies required by generated projects when this namespace is enabled.
+    /// Rust extern ownership names used by this namespace; component Loaf manifests own registry requirements and
+    /// features.
     pub extra_crate_deps: &'static [StdlibExtraCrateDep],
     /// Known submodules for validation and LSP completion. Empty for leaf modules.
     pub submodules: &'static [&'static str],
@@ -326,10 +327,8 @@ pub struct StdlibNamespace {
 pub struct StdlibExtraCrateDep {
     /// Cargo dependency key.
     pub crate_name: &'static str,
-    /// Dependency source and version/path metadata.
+    /// Namespace ownership of a declared registry Loaf or a local toolchain support path.
     pub source: StdlibExtraCrateSource,
-    /// Cargo features enabled for this stdlib-managed dependency.
-    pub features: &'static [&'static str],
 }
 
 /// Source descriptor for a namespace-provided extra crate dependency.
@@ -337,8 +336,8 @@ pub struct StdlibExtraCrateDep {
 pub enum StdlibExtraCrateSource {
     /// Path dependency rooted at compiler workspace root.
     Path(&'static str),
-    /// Registry version dependency.
-    Version(&'static str),
+    /// Registry Loaf whose requirement and features belong to its component manifest.
+    Declared,
 }
 
 /// Builtin trait identity for stdlib method-stub lookup.
@@ -438,17 +437,14 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
             StdlibExtraCrateDep {
                 crate_name: STDLIB_WEB_MACROS_CRATE,
                 source: StdlibExtraCrateSource::Path("crates/incan_web_macros"),
-                features: &[],
             },
             StdlibExtraCrateDep {
                 crate_name: "inventory",
-                source: StdlibExtraCrateSource::Version("0.3"),
-                features: &[],
+                source: StdlibExtraCrateSource::Declared,
             },
             StdlibExtraCrateDep {
                 crate_name: "axum",
-                source: StdlibExtraCrateSource::Version("0.8"),
-                features: &[],
+                source: StdlibExtraCrateSource::Declared,
             },
         ],
         submodules: &["app", "routing", "request", "response", "macros", "prelude"],
@@ -508,8 +504,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         facet: Some(facets::DATA),
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "serde",
-            source: StdlibExtraCrateSource::Version("1.0"),
-            features: &["derive"],
+            source: StdlibExtraCrateSource::Declared,
         }],
         submodules: &["json"],
         typechecker_only: false,
@@ -519,8 +514,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         facet: Some(facets::DATA),
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "serde",
-            source: StdlibExtraCrateSource::Version("1.0"),
-            features: &["derive"],
+            source: StdlibExtraCrateSource::Declared,
         }],
         submodules: &[],
         typechecker_only: false,
@@ -531,23 +525,19 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         extra_crate_deps: &[
             StdlibExtraCrateDep {
                 crate_name: "toml_edit",
-                source: StdlibExtraCrateSource::Version("0.25"),
-                features: &["parse", "serde"],
+                source: StdlibExtraCrateSource::Declared,
             },
             StdlibExtraCrateDep {
                 crate_name: "serde_path_to_error",
-                source: StdlibExtraCrateSource::Version("0.1"),
-                features: &[],
+                source: StdlibExtraCrateSource::Declared,
             },
             StdlibExtraCrateDep {
                 crate_name: "toml",
-                source: StdlibExtraCrateSource::Version("0.9"),
-                features: &[],
+                source: StdlibExtraCrateSource::Declared,
             },
             StdlibExtraCrateDep {
                 crate_name: "serde",
-                source: StdlibExtraCrateSource::Version("1.0"),
-                features: &["derive"],
+                source: StdlibExtraCrateSource::Declared,
             },
         ],
         submodules: &[],
@@ -586,8 +576,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         facet: None,
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "libm",
-            source: StdlibExtraCrateSource::Version("0.2"),
-            features: &[],
+            source: StdlibExtraCrateSource::Declared,
         }],
         submodules: &[],
         typechecker_only: false,
@@ -598,13 +587,11 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         extra_crate_deps: &[
             StdlibExtraCrateDep {
                 crate_name: "encoding_rs",
-                source: StdlibExtraCrateSource::Version("0.8"),
-                features: &[],
+                source: StdlibExtraCrateSource::Declared,
             },
             StdlibExtraCrateDep {
                 crate_name: "rustix",
-                source: StdlibExtraCrateSource::Version("1.1"),
-                features: &["fs"],
+                source: StdlibExtraCrateSource::Declared,
             },
         ],
         submodules: &["path", "file", "locking", "metadata", "glob", "prelude"],
@@ -654,8 +641,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         facet: None,
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "rand",
-            source: StdlibExtraCrateSource::Version("0.8"),
-            features: &[],
+            source: StdlibExtraCrateSource::Declared,
         }],
         submodules: &[],
         typechecker_only: false,
@@ -665,8 +651,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         facet: None,
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "regex",
-            source: StdlibExtraCrateSource::Version("1.0"),
-            features: &[],
+            source: StdlibExtraCrateSource::Declared,
         }],
         submodules: &["_core", "_replacement", "types", "prelude"],
         typechecker_only: false,
@@ -687,8 +672,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         facet: None,
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "byteorder",
-            source: StdlibExtraCrateSource::Version("1"),
-            features: &[],
+            source: StdlibExtraCrateSource::Declared,
         }],
         submodules: &[],
         typechecker_only: false,
@@ -707,8 +691,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         facet: None,
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "crc32fast",
-            source: StdlibExtraCrateSource::Version("1"),
-            features: &[],
+            source: StdlibExtraCrateSource::Declared,
         }],
         submodules: &[],
         typechecker_only: false,
@@ -719,43 +702,35 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         extra_crate_deps: &[
             StdlibExtraCrateDep {
                 crate_name: "blake2",
-                source: StdlibExtraCrateSource::Version("0.10"),
-                features: &[],
+                source: StdlibExtraCrateSource::Declared,
             },
             StdlibExtraCrateDep {
                 crate_name: "blake3",
-                source: StdlibExtraCrateSource::Version("1"),
-                features: &[],
+                source: StdlibExtraCrateSource::Declared,
             },
             StdlibExtraCrateDep {
                 crate_name: "hmac",
-                source: StdlibExtraCrateSource::Version("0.12"),
-                features: &["reset"],
+                source: StdlibExtraCrateSource::Declared,
             },
             StdlibExtraCrateDep {
                 crate_name: "md5",
-                source: StdlibExtraCrateSource::Version("0.10"),
-                features: &[],
+                source: StdlibExtraCrateSource::Declared,
             },
             StdlibExtraCrateDep {
                 crate_name: "sha1",
-                source: StdlibExtraCrateSource::Version("0.10"),
-                features: &[],
+                source: StdlibExtraCrateSource::Declared,
             },
             StdlibExtraCrateDep {
                 crate_name: "sha2",
-                source: StdlibExtraCrateSource::Version("0.10"),
-                features: &[],
+                source: StdlibExtraCrateSource::Declared,
             },
             StdlibExtraCrateDep {
                 crate_name: "sha3",
-                source: StdlibExtraCrateSource::Version("0.10"),
-                features: &[],
+                source: StdlibExtraCrateSource::Declared,
             },
             StdlibExtraCrateDep {
                 crate_name: "xxhash_rust",
-                source: StdlibExtraCrateSource::Version("0.8"),
-                features: &["xxh3", "xxh32", "xxh64"],
+                source: StdlibExtraCrateSource::Declared,
             },
         ],
         submodules: &["_core", "_hmac", "_streaming", "prelude"],
@@ -767,28 +742,23 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         extra_crate_deps: &[
             StdlibExtraCrateDep {
                 crate_name: "flate2",
-                source: StdlibExtraCrateSource::Version("1"),
-                features: &[],
+                source: StdlibExtraCrateSource::Declared,
             },
             StdlibExtraCrateDep {
                 crate_name: "zstd",
-                source: StdlibExtraCrateSource::Version("0.13"),
-                features: &[],
+                source: StdlibExtraCrateSource::Declared,
             },
             StdlibExtraCrateDep {
                 crate_name: "bzip2",
-                source: StdlibExtraCrateSource::Version("0.6"),
-                features: &[],
+                source: StdlibExtraCrateSource::Declared,
             },
             StdlibExtraCrateDep {
                 crate_name: "xz2",
-                source: StdlibExtraCrateSource::Version("0.1"),
-                features: &["static"],
+                source: StdlibExtraCrateSource::Declared,
             },
             StdlibExtraCrateDep {
                 crate_name: "snap",
-                source: StdlibExtraCrateSource::Version("1"),
-                features: &[],
+                source: StdlibExtraCrateSource::Declared,
             },
         ],
         submodules: &[
@@ -810,8 +780,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         facet: None,
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "tempfile",
-            source: StdlibExtraCrateSource::Version("3"),
-            features: &[],
+            source: StdlibExtraCrateSource::Declared,
         }],
         submodules: &[],
         typechecker_only: false,
@@ -834,6 +803,26 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         // types deliberately stay at the root surface and there is no source stub or emitted Rust module.
         typechecker_only: true,
     },
+];
+
+/// Authored stdlib Loaf manifests, embedded without duplicating their dependency facts.
+///
+/// The provider layer admits these through Oven's manifest grammar. Namespace metadata here contains ownership
+/// names only; it cannot supply requirements or features independently of these declarations.
+pub const COMPONENT_MANIFESTS: &[(&str, &str)] = &[
+    ("async", include_str!("../../../../stdlib/async/loaf.toml")),
+    ("codecs", include_str!("../../../../stdlib/codecs/loaf.toml")),
+    ("compression", include_str!("../../../../stdlib/compression/loaf.toml")),
+    ("core", include_str!("../../../../stdlib/core/loaf.toml")),
+    ("data", include_str!("../../../../stdlib/data/loaf.toml")),
+    ("interop", include_str!("../../../../stdlib/interop/loaf.toml")),
+    (
+        "observability",
+        include_str!("../../../../stdlib/observability/loaf.toml"),
+    ),
+    ("system", include_str!("../../../../stdlib/system/loaf.toml")),
+    ("testing", include_str!("../../../../stdlib/testing/loaf.toml")),
+    ("web", include_str!("../../../../stdlib/web/loaf.toml")),
 ];
 
 /// Look up a top-level stdlib namespace by name.
@@ -1357,7 +1346,7 @@ mod tests {
     fn extra_crate_dependency_lookup_is_registry_driven() {
         let axum = find_extra_crate_dep("axum");
         assert_eq!(axum.map(|dep| dep.crate_name), Some("axum"));
-        assert_eq!(axum.map(|dep| dep.source), Some(StdlibExtraCrateSource::Version("0.8")));
+        assert_eq!(axum.map(|dep| dep.source), Some(StdlibExtraCrateSource::Declared));
 
         let macros = find_extra_crate_dep("incan_web_macros");
         assert_eq!(
@@ -1432,12 +1421,6 @@ mod tests {
         assert_eq!(
             serde_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
             Some(vec!["serde"])
-        );
-        assert_eq!(
-            serde_ns
-                .and_then(|ns| ns.extra_crate_deps.first())
-                .map(|dep| dep.features),
-            Some(&["derive"][..])
         );
         assert_eq!(
             json_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),

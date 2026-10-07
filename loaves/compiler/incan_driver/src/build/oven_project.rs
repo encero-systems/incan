@@ -252,7 +252,7 @@ pub fn prepare_oven_project(
     generator.set_include_dev_dependencies(oven_plan_mode == OvenProjectPlanMode::ExplicitBake);
     let rust_edition = manifest
         .as_ref()
-        .and_then(|manifest| manifest.build.as_ref().and_then(|build| build.rust_edition.clone()))
+        .and_then(|manifest| manifest.rust_edition().map(str::to_string))
         .unwrap_or_else(|| "2024".to_string());
     generator.set_rust_edition(Some(rust_edition.clone()));
 
@@ -298,6 +298,8 @@ pub fn prepare_oven_project(
                 .collect::<String>();
             CliError::failure(message.trim_end())
         })?;
+    // Compiled Incan providers participate in linking; their checked types do not require Rust source inspection.
+    let inspection_dependencies = resolved.dependencies.clone();
     merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
     let inline_path_dependencies = oven_source_inline_dependency_specs(&resolved, &source_inline_crates)?;
     record_timing(&mut prepare_timings, "prepare_resolve_dependencies", lap);
@@ -417,7 +419,7 @@ pub fn prepare_oven_project(
                 profile,
                 features: &cargo_features.cargo_features,
                 build_unit_inputs: &oven_build_inputs,
-                registry_dependencies: &resolved.dependencies,
+                registry_dependencies: &inspection_dependencies,
             }),
             prepared_project_source_authorities,
             explicit_oven_bake: oven_plan_mode == OvenProjectPlanMode::ExplicitBake,
@@ -531,7 +533,7 @@ pub fn prepare_oven_project(
         &project_root,
         &project_name,
         &project_version,
-        rustc_target,
+        &rustc_target,
         &rustc_toolchain,
         profile,
         cargo_features.cargo_features.clone(),
@@ -548,6 +550,11 @@ pub fn prepare_oven_project(
             provider_compilation_requirements_digest(&provider_compilations)
                 .map_err(|error| CliError::failure(error.to_string()))?,
         );
+    }
+    if let Some(identity) =
+        oven_rustc::rustc::pinned_link_closure_identity(&rustc, &rustc_target).map_err(oven_rustc_error)?
+    {
+        receipt_request = receipt_request.with_build_unit_input("link-closure", identity);
     }
     let receipt = receipt_generated_project(&receipt_request).map_err(|error| CliError::failure(error.to_string()))?;
     let receipt_path =

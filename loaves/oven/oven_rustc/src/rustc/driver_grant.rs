@@ -153,6 +153,8 @@ fn driver_library(library_dir: &Path) -> Result<(std::path::PathBuf, Vec<u8>), O
 
 /// Apply a verified unit grant after ambient stripping, with matching crate name and a feature allowlist.
 /// A receipt for another unit or an unsupported grant is refused rather than broadening permission.
+/// The pinned driver library directory supplies direct and transitive rustc-dev metadata that the normalized std
+/// sysroot excludes.
 pub(super) fn apply_driver_grant(
     command: &mut Command,
     receipt: &OvenReceipt,
@@ -207,8 +209,12 @@ pub(super) fn apply_driver_grant(
             .parent()
             .ok_or_else(|| invalid("driver library has no parent".into()))?;
         command
+            .arg("-L")
+            .arg(format!("all={}", directory.display()))
             .arg("-C")
-            .arg(format!("link-arg=-Wl,-rpath,{}", directory.display()));
+            .arg("link-arg=-rpath")
+            .arg("-C")
+            .arg(format!("link-arg={}", directory.display()));
     }
     for (name, value) in grant.environment {
         command.env(name, value);
@@ -266,9 +272,13 @@ mod tests {
             )
         );
         assert!(command.get_args().any(|arg| arg == "-Zallow-features=rustc_private"));
+        assert!(command.get_args().any(|arg| arg == "all=/fixture/lib"));
+        assert!(command.get_args().any(|arg| arg == "link-arg=-rpath"));
+        assert!(!command.get_args().any(|arg| arg.to_string_lossy().contains("-Wl,")));
         assert!(apply_driver_grant(&mut Command::new("rustc"), &authorized, "undeclared_unit").is_err());
         let mut plain = Command::new("rustc");
         apply_driver_grant(&mut plain, &ordinary, "undeclared_unit")?;
+        assert!(!plain.get_args().any(|arg| arg == "-L"));
         assert!(
             !plain
                 .get_envs()

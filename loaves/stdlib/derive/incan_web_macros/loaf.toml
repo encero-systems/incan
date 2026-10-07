@@ -1,0 +1,15 @@
+[project]
+name = "incan_web_macros"
+version = "0.6.0-dev.6"
+license = "Apache-2.0"
+private = true
+
+[rust]
+name = "incan_web_macros"
+type = "proc-macro"
+edition = "2024"
+
+[dependencies]
+syn = { loaf = "crates-io/syn", version = "2", features = ["full"], default-features = true }
+quote = { loaf = "crates-io/quote", version = "1", features = [], default-features = true }
+proc-macro2 = { loaf = "crates-io/proc-macro2", version = "1", features = [], default-features = true }

@@ -4,14 +4,33 @@ version = "0.5.0"
 license = "Apache-2.0"
 private = true
 
+[rust]
+name = "incan_std_data"
+type = "lib"
+edition = "2024"
+
 [rust.source]
 root = "rust"
-
-[rust-dependencies]
-serde_path_to_error = "0.1"
-toml = "0.9"
-toml_edit = { version = "0.25", features = ["parse", "serde"] }
 
 [sdk]
 profile = "minimal"
 components = ["stdlib-system"]
+
+[dependencies]
+blake2 = { loaf = "crates-io/blake2", version = "0.10", features = [], default-features = true }
+blake3 = { loaf = "crates-io/blake3", version = "1", features = [], default-features = true }
+hmac = { loaf = "crates-io/hmac", version = "0.12", features = ["reset"], default-features = true }
+libm = { loaf = "crates-io/libm", version = "0.2", features = [], default-features = true }
+md5 = { loaf = "crates-io/md-5", version = "0.10", features = [], default-features = true }
+rand = { loaf = "crates-io/rand", version = "0.8", features = [], default-features = true }
+regex = { loaf = "crates-io/regex", version = "1.0", features = [], default-features = true }
+serde = { loaf = "crates-io/serde", version = "1.0", features = ["derive"], default-features = true }
+serde_json = { loaf = "crates-io/serde_json", version = "1.0", features = [], default-features = true }
+serde_path_to_error = { loaf = "crates-io/serde_path_to_error", version = "0.1", features = [], default-features = true }
+sha1 = { loaf = "crates-io/sha1", version = "0.10", features = [], default-features = true }
+sha2 = { loaf = "crates-io/sha2", version = "0.10", features = [], default-features = true }
+sha3 = { loaf = "crates-io/sha3", version = "0.10", features = [], default-features = true }
+toml = { loaf = "crates-io/toml", version = "0.9", features = [], default-features = true }
+toml_edit = { loaf = "crates-io/toml_edit", version = "0.25", features = ["parse", "serde"], default-features = true }
+xxhash_rust = { loaf = "crates-io/xxhash-rust", version = "0.8", features = ["xxh3", "xxh32", "xxh64"], default-features = true }
+incan_std_core = { loaf = "incan_std_core", path = "../core/rust", version = "0.6.0-dev.6" }

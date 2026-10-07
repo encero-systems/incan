@@ -1,0 +1,2 @@
+{"name":"test/leaf","vers":"1.0.0","cksum":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","yanked":false,"rust":{"name":"leaf","type":"lib","edition":"2021"},"deps":[],"features":{"default":["std"],"std":[],"extra":[]},"facts":[{"features":["default","std"]}]}
+{"name":"test/leaf","vers":"1.1.0","cksum":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","yanked":true,"rust":{"name":"leaf","type":"lib","edition":"2021"},"deps":[],"features":{"default":["std"],"std":[],"extra":[]},"facts":[]}
