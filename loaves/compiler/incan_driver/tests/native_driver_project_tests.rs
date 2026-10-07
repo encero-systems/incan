@@ -889,3 +889,72 @@ def main() -> None:
     assert!(!refused_binary.exists());
     Ok(())
 }
+
+/// Prove admitted string methods and Unicode lengths against legacy output.
+#[test]
+fn direct_route_string_methods_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_string_methods(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("string-methods")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+    )
+}
+
+/// Compare booleans with legacy, including evaluation order and retained owners.
+#[test]
+fn direct_route_booleans_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("booleans")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def probe(label: str, value: bool) -> bool:
+    println(label)
+    return value
+
+def main() -> None:
+    println(false and probe("skipped-and", true))
+    println(true or probe("skipped-or", false))
+    println(true and probe("selected-and", true))
+    println(false or probe("selected-or", true))
+    println(not false)
+"#,
+    )
+}
+
+/// Compare builtins with legacy, including evaluation order and retained owners.
+#[test]
+fn direct_route_builtins_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("builtins")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def main() -> None:
+    values = [3, -2, 1]
+    ordered = sorted(values)
+    println(ordered[0])
+    println(ordered[2])
+    println(sum(values))
+    println(abs(-12))
+    println(2 ** 10)
+    println(2.0 ** 3.0)
+    small: f32 = 1.1
+    exponent: f32 = 2.0
+    println(small ** exponent)
+    println(bool(0))
+    println(bool(-2))
+    println(bool(0.0))
+    println(bool(""))
+    println(bool("x"))
+    println(bool(values))
+    merged = values + [8, 9]
+    println(len(merged))
+    println(len(values))
+"#,
+    )
+}
