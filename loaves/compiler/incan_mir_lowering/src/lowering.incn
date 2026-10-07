@@ -62,6 +62,7 @@ from rust::incan_semantics_core::body_ir import (
     GlobalWritePolicy as RustGlobalWritePolicy,
     EnumDeclaration as RustEnumDeclaration,
     MatchArm as RustMatchArm,
+    RaceArm as RustRaceArm,
     Pattern as RustPattern,
     AggregateKind as RustAggregateKind,
     ArgumentBinding as RustArgumentBinding,
@@ -532,18 +533,14 @@ pub def lower_statement(module: &BodyIrModule, mut builder: Builder, statement: 
         RustStatementKind.Call(destination=_destination, callee=_callee, args=_args, may_panic=_may_panic) =>
             return lower_call(module, builder, statement, span)
         RustStatementKind.Await(destination=destination, awaited=awaited) =>
-            match awaited:
-                RustOperand.Place(read) =>
-                    if read.fact != OwnershipFact.Move:
-                        return Err("unsupported Body IR async future ownership")
-                    future = scalar_place(builder, read.place, span)?
-                    match destination:
-                        Some(place) =>
-                            output = scalar_place(builder, place, span)?
-                            return await_future(module, builder, future, output, span)
-                        None => return Err("unsupported Body IR Await without destination")
-                _ => return Err("unsupported Body IR Await constant")
-        RustStatementKind.Race(destination=_destination, arms=_arms) => return Err("unsupported Body IR Race")
+            future = source_future_place(builder, awaited, span)?
+            match destination:
+                Some(place) =>
+                    output = scalar_place(builder, place, span)?
+                    return await_future(module, builder, future, output, span)
+                None => return Err("unsupported Body IR Await without destination")
+        RustStatementKind.Race(destination=destination, arms=arms) =>
+            return lower_ready_race(module, builder, destination, arms, span)
         RustStatementKind.Yield(value=value) =>
             yielded = value_operand(builder, value, span)?
             return generator_yield(builder, yielded, span)
@@ -556,6 +553,102 @@ pub def lower_statement(module: &BodyIrModule, mut builder: Builder, statement: 
         RustStatementKind.Unsupported(description=description) =>
             return Err(f"unsupported Body IR Unsupported: {description}")
     return Ok(None)
+
+
+def source_future_place(builder: Builder, awaited: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+    """Consume a frontend-owned source future; copying or borrowing one cannot realize its one-shot await."""
+    match awaited:
+        RustOperand.Place(read) =>
+            if read.fact != OwnershipFact.Move:
+                return Err("unsupported Body IR async future ownership")
+            return scalar_place(builder, read.place, span)
+        _ => return Err("unsupported Body IR Await constant")
+
+
+def lower_ready_race(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    destination: &Option[RustPlace],
+    arms: list[RustRaceArm],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Preserve source-order ready ties, winner callbacks, and cancellation after the callback returns.
+
+    Every arm is lowered, including statically losing arms, so unsupported futures or callback statements still refuse.
+    The frontend already constructed every awaitable in source order before this statement.
+    """
+    target = ready_race_destination(builder, destination, span)?
+    ty = place_type(builder.locals, target)
+    if not numeric_carrier(ty) and ty != PlanType.Bool and ty != PlanType.Unit:
+        return Err("unsupported Body IR Race owned result")
+    if len(arms) == 0:
+        return Err("unsupported Body IR Race without arms")
+    mut futures: list[Place] = []
+    for arm in arms:
+        futures.append(source_future_place(builder, arm.awaitable, span)?)
+    incoming = builder.owned
+    future_locals = [future.local for future in futures]
+    retained = [owner for owner in incoming if owner not in future_locals]
+    after = builder.new_block(span)
+    for index in range(len(arms)):
+        selected = builder.new_block(span)
+        next_arm = builder.new_block(span)
+        builder.finish(TerminatorKind.SwitchBool(literal(Constant.Bool(index == 0), span), next_arm, selected), span)
+        builder.current = selected
+        builder.owned = incoming
+        arm = arms[index]
+        binding = plan_place(int(arm.binding.index()) + 1 + builder.local_offset, span)
+        await_future(module, builder, futures[index], binding, span)?
+        lower_ready_race_callback(module, builder, arm.body)?
+        lower_local_assignment(builder, target, RustRvalue.Use(arm.result), span)?
+        # Legacy drops losing futures after the winning callback has produced the shared result.
+        for future in futures:
+            drop_owned(builder, future.local, span)
+        verify_branch_owners(true, builder.owned, retained)?
+        builder.finish(TerminatorKind.Goto(after), span)
+        builder.current = next_arm
+    builder.finish(TerminatorKind.Unreachable, span)
+    builder.current = after
+    builder.owned = retained
+    return Ok(None)
+
+
+def ready_race_destination(builder: Builder, destination: &Option[RustPlace], span: SourceSpan) -> Result[Place, str]:
+    """Require the frontend's shared race result slot before building any winner branch."""
+    match destination:
+        Some(place) => return scalar_place(builder, place, span)
+        None => return Err("unsupported Body IR Race without destination")
+
+
+def lower_ready_race_callback(module: &BodyIrModule, mut builder: Builder, body: &RustBlock) -> Result[None, str]:
+    """Keep callback control transfers out of the enclosing body until the plan retains a callback boundary."""
+    for statement in body.stmts:
+        match statement.kind:
+            RustStatementKind.If(cond=_condition, then_block=_then, else_block=_else) =>
+                return Err("unsupported Body IR Race callback control flow")
+            RustStatementKind.Loop(body=_body) => return Err("unsupported Body IR Race callback control flow")
+            RustStatementKind.Return(value=_value) => return Err("unsupported Body IR Race callback Return")
+            RustStatementKind.Break(value=_value) => return Err("unsupported Body IR Race callback Break")
+            RustStatementKind.Continue => return Err("unsupported Body IR Race callback Continue")
+            RustStatementKind.Race(destination=_destination, arms=_arms) =>
+                return Err("unsupported Body IR nested Race callback")
+            RustStatementKind.TryPropagate(destination=_destination, operand=_operand, error_routing=_routing) =>
+                return Err("unsupported Body IR Race callback TryPropagate")
+            RustStatementKind.Await(destination=_destination, awaited=_awaited) =>
+                return Err("unsupported Body IR Race callback Await")
+            RustStatementKind.Assign(place=_place, rvalue=rvalue) =>
+                validate_ready_race_assignment(rvalue)?
+                lower_statement(module, builder, statement)?
+            _ => lower_statement(module, builder, statement)?
+    return Ok(None)
+
+
+def validate_ready_race_assignment(value: &RustRvalue) -> Result[None, str]:
+    """Require an assignment without nested arm blocks that could transfer control out of the callback."""
+    match value:
+        RustRvalue.Match(scrutinee=_value, arms=_arms) => return Err("unsupported Body IR Race callback Match")
+        _ => return Ok(None)
 
 
 def lower_return(mut builder: Builder, value: &Option[RustOperand], span: SourceSpan) -> Result[None, str]:
@@ -1680,9 +1773,6 @@ def lower_string_field_assignment(
     forget_owned(builder, replacement.local)
     builder.emit(plan_assign(destination, RvalueKind.Use(read_place(replacement, true, span)), span))
     return Ok(None)
-# =====================================================================================================================
-# Formatting and strings
-# =====================================================================================================================
 
 
 def lower_format(
@@ -1698,6 +1788,9 @@ def lower_format(
         append_format_part(builder, part, parts, values, span)?
     format_parts(builder, destination, parts, values, span)
     return Ok(None)
+# =====================================================================================================================
+# Formatting and strings
+# =====================================================================================================================
 
 
 def append_format_part(
@@ -1968,9 +2061,6 @@ def lower_str_builtin(
             builder.owned.append(output.local)
         None => drop_owned(builder, text.local, span)
     return Ok(None)
-# =====================================================================================================================
-# Module and function entry points
-# =====================================================================================================================
 
 
 pub def lower_program(
@@ -2279,9 +2369,6 @@ def frame_parameters(
             ),
         )
     return Ok(parameters)
-# =====================================================================================================================
-# Lists: borrowing and runtime calls
-# =====================================================================================================================
 
 
 def list_borrow(mut builder: Builder, place: Place, mutable: bool, span: SourceSpan) -> Result[Operand, str]:
@@ -2324,9 +2411,6 @@ def checked_list_argument(
                 return Err("unsupported Body IR list argument without mutable borrow fact")
             return list_borrow(builder, list_root_place(builder, read.place, span)?, mutable, span)
         _ => return Err("unsupported Body IR constant list argument")
-# =====================================================================================================================
-# Lists: owned values and indexed reads
-# =====================================================================================================================
 
 
 def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
@@ -2476,7 +2560,7 @@ def list_assignment(
     builder.owned.append(destination.local)
     return Ok(None)
 # =====================================================================================================================
-# Lists: checked arguments and methods
+# Module and function entry points
 # =====================================================================================================================
 
 
@@ -2690,9 +2774,6 @@ def lower_list_helper(
     if negated:
         builder.emit(plan_assign(output, RvalueKind.Unary(UnaryOp.Not, read_place(output, false, span)), span))
     return Ok(None)
-# =====================================================================================================================
-# Lists: indexed mutation
-# =====================================================================================================================
 
 
 def indexed_assignment(
@@ -2757,9 +2838,6 @@ def assignment_value(mut builder: Builder, value: &RustRvalue, span: SourceSpan)
     match value:
         RustRvalue.Use(operand) => return value_operand(builder, operand, span)
         _ => return Err("unsupported Body IR indexed assignment rvalue")
-# =====================================================================================================================
-# Lists: iteration
-# =====================================================================================================================
 
 
 def operand_list_place(builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
@@ -2864,9 +2942,6 @@ def list_root_place(builder: Builder, value: &RustPlace, span: SourceSpan) -> Re
     if len(value.projection) != 0:
         return Err("unsupported Body IR list root projection")
     return list_base_place(builder, value, span)
-# =====================================================================================================================
-# Hashed collections: shared frame operations
-# =====================================================================================================================
 
 
 def collection_value(mut builder: Builder, read: &RustPlaceOperand, span: SourceSpan) -> Result[Operand, str]:
@@ -3270,9 +3345,6 @@ def enum_operand(builder: Builder, value: &RustOperand, span: SourceSpan) -> Res
                 _ => pass
         _ => pass
     return Ok(false)
-# =====================================================================================================================
-# Persistent scalar storage
-# =====================================================================================================================
 
 
 def read_static(
@@ -3823,3 +3895,24 @@ def typed_carrier_operand(
     match operand:
         RustOperand.Constant(RustConstant.None) => return none_operand(builder, ty, span)
         _ => return value_operand(builder, operand, span)
+# =====================================================================================================================
+# Lists: borrowing and runtime calls
+# =====================================================================================================================
+# =====================================================================================================================
+# Lists: owned values and indexed reads
+# =====================================================================================================================
+# =====================================================================================================================
+# Lists: checked arguments and methods
+# =====================================================================================================================
+# =====================================================================================================================
+# Lists: indexed mutation
+# =====================================================================================================================
+# =====================================================================================================================
+# Lists: iteration
+# =====================================================================================================================
+# =====================================================================================================================
+# Hashed collections: shared frame operations
+# =====================================================================================================================
+# =====================================================================================================================
+# Persistent scalar storage
+# =====================================================================================================================
