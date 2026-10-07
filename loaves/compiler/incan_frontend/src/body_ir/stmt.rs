@@ -208,6 +208,20 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 remaining,
             )),
         };
+        if assignment.ty.is_some()
+            && !self.type_info.binds_capturing_callable(assignment_span)
+            && let Some(local) = place.local_id()
+            && matches!(self.locals[local.index()].ty, IncanType::Function { .. })
+            && !self.function_pointer_locals.contains(&local)
+        {
+            self.function_pointer_locals.push(local);
+        }
+        if self.type_info.binds_capturing_callable(assignment_span)
+            && let Some(local) = place.local_id()
+            && !self.closure_holding_locals.contains(&local)
+        {
+            self.closure_holding_locals.push(local);
+        }
         if !place.permits_write() {
             let target = place
                 .global()

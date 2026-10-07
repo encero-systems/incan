@@ -1,0 +1,177 @@
+"""Callable signature admission from checked frontend representation facts."""
+
+from rust::incan_semantics_core import IncanType as RustType, IncanCallableParam, IncanCallableParamKind
+from rust::incan_semantics_core::body_ir import (
+    Body as RustBody,
+    BodyIrModule as RustModule,
+    Rvalue as RustRvalue,
+    CallableParam as RustParameter,
+    StatementKind as RustStatementKind,
+    Callee as RustCallee,
+    CallableTarget as RustCallableTarget,
+    NamedCallableTarget as RustNamedTarget,
+)
+from pub::incan_mir_plan import PlanType, Operand, RvalueKind
+from types import primitive_type
+from classes import function_name
+
+
+pub def function_pointer_type(parameters: &list[IncanCallableParam], result: &RustType) -> Result[PlanType, str]:
+    """Keep the checked parameter order and append the return type to the native signature vector."""
+    mut signature: list[PlanType] = []
+    for parameter in parameters:
+        if parameter.kind != IncanCallableParamKind.Normal or parameter.is_mut:
+            return Err("unsupported Body IR function pointer with rest or mutable parameters")
+        signature.append(callable_component(parameter.ty)?)
+    signature.append(callable_component(result)?)
+    return Ok(PlanType.FunctionPointer(signature))
+
+
+def callable_component(ty: &RustType) -> Result[PlanType, str]:
+    """Admit scalar and recursively callable signature components; name every other retained type."""
+    match ty:
+        RustType.Primitive(primitive) => return primitive_type(primitive)
+        RustType.Function(params=parameters, return_type=result) => return function_pointer_type(parameters, result)
+        _ => return Err(f"unsupported Body IR callable signature type {ty}")
+
+
+pub def function_pointer_storage(body: &RustBody) -> list[int]:
+    """The return slot and explicit function annotations keep pointer storage; inferred item locals keep their type."""
+    mut locals = [0]
+    match body.callable_representation:
+        Some(representation) =>
+            for local in representation.function_pointer_locals:
+                locals.append(int(local.index()) + 1)
+        None => pass
+    for parameter in body.params:
+        match parameter.ty:
+            RustType.Function(params=_parameters, return_type=_result) =>
+                locals.append(int(parameter.local.index()) + 1)
+            _ => pass
+    return locals
+
+
+pub def validate_callable_representation(body: &RustBody) -> Result[None, str]:
+    """Do not substitute a function pointer for the checker's closure-holding parameter or return contract."""
+    match body.callable_representation:
+        Some(representation) =>
+            if representation.closure_holding_return:
+                return Err(f"unsupported Body IR closure-holding return in {body.name}")
+            if len(representation.closure_holding_parameters) != 0:
+                return Err(f"unsupported Body IR closure-holding parameter in {body.name}")
+            return Ok(None)
+
+        None =>
+            match body.return_type:
+                RustType.Function(params=_parameters, return_type=_result) =>
+                    return Err(f"unsupported Body IR unproven callable return representation in {body.name}")
+                _ => pass
+            for parameter in body.params:
+                match parameter.ty:
+                    RustType.Function(params=_parameters, return_type=_result) =>
+                        return Err(f"unsupported Body IR unproven callable parameter representation in {body.name}")
+                    _ => pass
+            return Ok(None)
+
+
+pub def callable_copy_type(ty: PlanType) -> bool:
+    """Function items and function pointers have no environment owner and are native Copy values."""
+    match ty:
+        PlanType.FunctionPointer(_signature) => return true
+        PlanType.FunctionItem(_name, _signature) => return true
+        _ => return false
+
+
+pub def callable_signature(ty: PlanType) -> Result[list[PlanType], str]:
+    """Read a retained function signature without treating a closure environment as a pointer."""
+    match ty:
+        PlanType.FunctionPointer(signature) => return Ok(signature)
+        PlanType.FunctionItem(_name, signature) => return Ok(signature)
+        _ => return Err("unsupported Body IR local callable representation")
+
+
+pub def function_assignment(
+    destination: PlanType,
+    source: PlanType,
+    value: Operand,
+    pointer_storage: bool,
+) -> Result[tuple[PlanType, RvalueKind], str]:
+    """Preserve inferred function items and reify only an explicitly typed function-pointer destination."""
+    match source:
+        PlanType.FunctionItem(_name, signature) =>
+            if pointer_storage:
+                if destination != PlanType.FunctionPointer(signature):
+                    return Err("invalid Body IR function-pointer assignment signature")
+                return Ok((destination, RvalueKind.ReifyFunction(value)))
+            match destination:
+                PlanType.FunctionItem(_previous, _signature) =>
+                    if destination != source:
+                        return Err("unsupported Body IR function-item reassignment")
+                _ => pass
+            return Ok((source, RvalueKind.Use(value)))
+        PlanType.FunctionPointer(_signature) =>
+            if destination != source:
+                return Err("invalid Body IR callable assignment signature")
+            return Ok((destination, RvalueKind.Use(value)))
+        _ => return Err("unsupported Body IR noncallable assignment to function value")
+
+
+pub def source_function_item(module: &RustModule, value: &RustRvalue) -> Result[Option[tuple[str, PlanType]], str]:
+    """Select a function item only from the frontend's explicit named-read fact and canonical forwarding identity."""
+    match value:
+        RustRvalue.Closure(params=parameters, captured_operands=captures, body=closure) =>
+            if not closure.function_item:
+                return Ok(None)
+            if len(captures) != 0 or len(closure.capture_locals) != 0 or len(closure.stmts) != 1:
+                return Err("invalid Body IR function-item forwarding computation")
+            return Ok(Some(checked_function_item(module, parameters, closure.stmts[0].kind)?))
+        _ => return Ok(None)
+
+
+def checked_function_item(
+    module: &RustModule,
+    parameters: &list[RustParameter],
+    statement: &RustStatementKind,
+) -> Result[tuple[str, PlanType], str]:
+    """Require the same checked declaration and signature as the named read's retained forwarding call."""
+    match statement:
+        RustStatementKind.Call(destination=_destination, callee=callee, args=_arguments, may_panic=_panic) =>
+            match callee:
+                RustCallee.Function(target) =>
+                    match target:
+                        RustCallableTarget.Named(named) => return function_item_identity(module, parameters, named)
+                        _ => return Err("invalid Body IR indirect function-item forwarding target")
+                _ => return Err("invalid Body IR nonfunction item forwarding target")
+        _ => return Err("invalid Body IR function-item body")
+
+
+def function_item_identity(
+    module: &RustModule,
+    parameters: &list[RustParameter],
+    target: &RustNamedTarget,
+) -> Result[tuple[str, PlanType], str]:
+    """A diagnostic source name becomes a plan item only after its canonical and physical identities agree."""
+    if len(target.type_args) != 0:
+        return Err("unsupported Body IR generic function item")
+    match target.canonical:
+        None => return Err("unsupported Body IR unproven function item")
+        Some(identity) =>
+            match module.body_for_canonical_target(identity):
+                None => return Err("unsupported Body IR imported function item")
+                Some(body) =>
+                    if target.direct_call_id != Some(body.direct_call_id) or str(target.name) != str(body.name):
+                        return Err("invalid Body IR function-item identity")
+                    # Async and generator declarations lower to evaluator or producer frames, not to a callable item.
+                    if body.is_async or body.is_generator():
+                        return Err("unsupported Body IR async or generator function item")
+                    if len(parameters) != len(body.params):
+                        return Err("invalid Body IR function-item parameter count")
+                    mut signature: list[PlanType] = []
+                    for index in range(len(parameters)):
+                        if parameters[index].ty != body.params[index].ty or body.params[index].mutable:
+                            return Err("unsupported Body IR function-item parameter contract")
+                        signature.append(callable_component(body.params[index].ty)?)
+                    signature.append(callable_component(body.return_type)?)
+                    # The item names the same plan symbol a direct call to this declaration uses.
+                    name = function_name(module, body)
+                    return Ok((name, PlanType.FunctionItem(name, signature)))

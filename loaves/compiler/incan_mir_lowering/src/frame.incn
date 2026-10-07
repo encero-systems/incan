@@ -40,6 +40,7 @@ pub model Builder:
     `iterators` pairs borrowed iterable slots with cursor storage; `borrowed_items` prevents mutations of cloned iteration items whose source contract remains borrowed.
     `module_identity` is the caller body's canonical owner, so local-call admission remains module-relative in a project plan.
     `generator_handle` is the provisional yield-handle slot in a producer, or -1 in an ordinary function; completed producer plans move it into their parameter slot.
+    `function_pointer_locals` lists the return slot, function-typed parameters, and explicitly annotated locals whose callables are stored as reified function pointers; other callable locals keep their inferred function-item type.
     """
 
     pub locals: list[Local]
@@ -64,6 +65,7 @@ pub model Builder:
     pub intrinsics: list[EnumDeclaration]
     pub statics: list[RustStaticDeclaration]
     pub generator_handle: int
+    pub function_pointer_locals: list[int]
 
     def new_block(mut self, span: SourceSpan) -> int:
         """Allocate a block before connecting edges, preserving index stability."""

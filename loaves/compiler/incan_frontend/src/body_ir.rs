@@ -645,6 +645,10 @@ struct BodyBuilder<'type_info, 'source> {
     /// `Ident` occurrences of its name in the declaring scope's statement suffix (see [`count_reads_in_stmts`]).
     /// Decremented on every read; a decrement that reaches zero selects [`bir::OwnershipFact::Move`].
     remaining_reads: HashMap<bir::LocalId, usize>,
+    /// Source-annotated function locals whose Rust representation is a function pointer rather than an inferred item.
+    function_pointer_locals: Vec<bir::LocalId>,
+    /// Local bindings the checker proved hold capturing callable values rather than function pointers.
+    closure_holding_locals: Vec<bir::LocalId>,
     /// Locals whose value has been moved out via a full-value (non-projected) read, so scope-exit drop insertion
     /// skips them.
     moved_out: HashSet<bir::LocalId>,
@@ -692,6 +696,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             identity_bindings: HashMap::new(),
             external_locals: HashMap::new(),
             remaining_reads: HashMap::new(),
+            function_pointer_locals: Vec::new(),
+            closure_holding_locals: Vec::new(),
             moved_out: HashSet::new(),
             borrowed_parameters: HashSet::new(),
             materialized_range_locals: HashSet::new(),

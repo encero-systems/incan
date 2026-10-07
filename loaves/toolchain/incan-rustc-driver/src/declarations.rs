@@ -123,6 +123,7 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
         PlanType::CheckedNumeric(kind) => {
             ast::TyKind::Tup(thin_vec![numeric_ty(kind, span), ty(&PlanType::Bool, span)])
         }
+        PlanType::FunctionPointer(signature) => function_pointer_ast(signature, span),
         PlanType::CheckedInt => ast::TyKind::Tup(thin_vec![ty(&PlanType::Int, span), ty(&PlanType::Bool, span)]),
         other => {
             let name = match other {
@@ -183,6 +184,39 @@ fn generator_ty(name: &str, leaf: &ListLeaf, depth: i64, span: Span) -> Box<ast:
         span,
         tokens: None,
     })
+}
+
+/// Construct a function-pointer signature structurally; preflight has proved a final return entry exists.
+fn function_pointer_ast(signature: &[PlanType], span: Span) -> ast::TyKind {
+    let Some((result, parameters)) = signature.split_last() else {
+        unreachable!("preflight rejects empty function-pointer signatures");
+    };
+    let inputs = parameters
+        .iter()
+        .map(|parameter| ast::Param {
+            attrs: ThinVec::new(),
+            ty: ty(parameter, span),
+            pat: Box::new(ast::Pat {
+                id: ast::DUMMY_NODE_ID,
+                kind: ast::PatKind::Wild,
+                span,
+                tokens: None,
+            }),
+            id: ast::DUMMY_NODE_ID,
+            span,
+            is_placeholder: false,
+        })
+        .collect();
+    ast::TyKind::FnPtr(Box::new(ast::FnPtrTy {
+        safety: ast::Safety::Default,
+        ext: ast::Extern::None,
+        generic_params: ThinVec::new(),
+        decl: Box::new(ast::FnDecl {
+            inputs,
+            output: ast::FnRetTy::Ty(ty(result, span)),
+        }),
+        decl_span: span,
+    }))
 }
 
 /// A diverging placeholder satisfies every admitted signature; `mir_built` replaces its body.
