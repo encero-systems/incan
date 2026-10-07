@@ -3,8 +3,10 @@
 from std.json import JsonValue, parse
 from plan_json import evaluate as evaluate_selection
 from rust_policy_exchange import evaluate as evaluate_rust_policy
+from loaf_closure_exchange import evaluate as evaluate_loaf_closure
 
 const RUST_POLICY_SCHEMA: str = "incan.oven.rust-policy-exchange/5"
+const LOAF_CLOSURE_SCHEMA: str = "incan.oven.loaf-closure-request/1"
 
 
 pub def evaluate(source: str) -> JsonValue:
@@ -15,5 +17,7 @@ pub def evaluate(source: str) -> JsonValue:
                 Some(name) =>
                     if name == RUST_POLICY_SCHEMA:
                         return evaluate_rust_policy(source)
+                    if name == LOAF_CLOSURE_SCHEMA:
+                        return evaluate_loaf_closure(source)
                 None => pass
     return evaluate_selection(source)

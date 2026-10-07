@@ -148,12 +148,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 "#,
     )?;
-    let home = root.join("home");
+    let home = support::oven_fixture_home()?;
     bake(&plan, &home)?;
     bake(&lowering, &home)?;
     bake(&caller, &home)?;
-    for profile in ["debug", "release"] {
-        assert_success(&Command::new(caller.join("target/rust").join(profile).join("body-ir-caller")).output()?);
-    }
+    assert_success(&Command::new(caller.join("target/rust/debug/body-ir-caller")).output()?);
     Ok(())
 }

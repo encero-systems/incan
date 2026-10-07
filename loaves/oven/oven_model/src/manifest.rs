@@ -346,6 +346,8 @@ pub struct WorkspaceRustDependencyRequest {
 pub struct WorkspaceSharedDependencies {
     /// Shared Incan library identities.
     pub library_dependencies: BTreeMap<String, LibraryDependencySpec>,
+    /// Shared adopted Loaf edges, including unselected target alternatives.
+    pub loaf_dependencies: BTreeMap<String, Vec<LoafDependency>>,
     /// Shared Rust crate identities.
     pub rust_dependencies: BTreeMap<String, DependencySpec>,
     /// Shared Rust development-crate identities.
@@ -701,6 +703,9 @@ pub enum RustFactLinkLanguage {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RustFactLinkObject {
+    /// Sorted unique logical source names read by this compilation without appearing in its arguments.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reads: Vec<String>,
     /// Portable relative object-file name and archive member name.
     pub name: String,
     /// Source language accepted by the declared compiler for this invocation.
@@ -1143,6 +1148,13 @@ pub struct ProjectManifest {
     pub interop: Option<InteropSection>,
     /// `[rust.source]`: where a mixed Loaf keeps its Rust facet (optional).
     pub rust_source: Option<RustSourceSection>,
+    /// Authored Rust unit identity, type and edition, without Cargo metadata.
+    pub rust_facet: Option<RustFacet>,
+    /// Declared Rust Loaf dependencies, retaining every target-specific entry separately.
+    pub loaf_dependencies: BTreeMap<String, Vec<LoafDependency>>,
+    /// Migration diagnostics for accepted deprecated input spellings.
+    pub deprecations: Vec<String>,
+
     /// `[[rust.facts]]`: RFC 119 declared build facts of the Rust unit, one record per bound selection.
     pub rust_facts: Vec<RustFactRecord>,
     /// `[[rust.bin]]`: the binary build roles of the Rust unit whose name or root departs from convention.
@@ -1258,12 +1270,22 @@ impl ProjectManifest {
         self.interop.as_ref().and_then(|interop| interop.c.as_ref())
     }
 
-    /// Normal Rust dependencies from the manifest.
+    /// Effective authored Rust edition; the Rust facet takes precedence over deprecated build metadata.
+    pub fn rust_edition(&self) -> Option<&str> {
+        self.rust_facet
+            .as_ref()
+            .and_then(|rust| rust.edition.as_deref())
+            .or_else(|| self.build.as_ref().and_then(|build| build.rust_edition.as_deref()))
+    }
+
+    /// Unconditional Rust inputs projected from declared Loaves and deprecated Rust dependency tables.
+    /// Conditional declarations remain in `loaf_dependencies` until a consumer supplies target evidence.
     pub fn rust_dependencies(&self) -> &HashMap<String, DependencySpec> {
         &self.rust_dependencies
     }
 
-    /// Dev-only Rust dependencies from the manifest.
+    /// Development inputs materialized by an environment or effective dependency projection.
+    /// Authored top-level development dependency tables are refused.
     pub fn rust_dev_dependencies(&self) -> &HashMap<String, DependencySpec> {
         &self.rust_dev_dependencies
     }
@@ -1327,13 +1349,45 @@ impl ProjectManifest {
         let Some(workspace) = self.workspace() else {
             return Ok(WorkspaceSharedDependencies::default());
         };
+        let content = String::new();
+        let document: Document<String> = content
+            .parse()
+            .map_err(|error| manifest_parse_error(&self.path, &content, error))?;
+        let spans = ManifestSpans::new(&content, &document);
+        let entries = workspace
+            .dependencies
+            .iter()
+            .map(|(name, value)| {
+                workspace_dependency_entry(value, name, "[workspace.dependencies]", &self.path)
+                    .map(|entry| (name.clone(), entry))
+            })
+            .collect::<Result<HashMap<_, _>, _>>()?;
+        let table = DependencyTable {
+            entries,
+            optional: HashMap::new(),
+        };
+        let loaf_dependencies = parse_loaf_dependencies(Some(&table), &spans, &self.path)?;
+        let mut rust_dependencies = parse_workspace_rust_dependency_table(
+            &workspace.rust_dependencies,
+            &self.path,
+            "[workspace.rust-dependencies]",
+        )?;
+        for (name, entries) in &loaf_dependencies {
+            if let [entry] = entries.as_slice()
+                && entry.target.is_none()
+                && rust_dependencies.insert(name.clone(), entry.spec.clone()).is_some()
+            {
+                return Err(manifest_invalid(
+                    &self.path,
+                    None,
+                    format!("workspace dependency `{name}` repeats deprecated [workspace.rust-dependencies]"),
+                ));
+            }
+        }
         Ok(WorkspaceSharedDependencies {
             library_dependencies: parse_workspace_library_dependency_table(&workspace.dependencies, &self.path)?,
-            rust_dependencies: parse_workspace_rust_dependency_table(
-                &workspace.rust_dependencies,
-                &self.path,
-                "[workspace.rust-dependencies]",
-            )?,
+            loaf_dependencies,
+            rust_dependencies,
             rust_dev_dependencies: parse_workspace_rust_dependency_table(
                 &workspace.rust_dev_dependencies,
                 &self.path,
@@ -1545,9 +1599,159 @@ struct RawManifest {
     source: Option<RegistrySourceSection>,
 }
 
+/// Rust compilation unit facts authored in `[rust]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RustFacet {
+    /// Non-default Rust unit name.
+    pub name: Option<String>,
+    /// Rust unit type, such as `lib` or `proc-macro`.
+    pub kind: Option<String>,
+    /// Explicit Rust language edition.
+    pub edition: Option<String>,
+    /// Whether the upstream package declared a build script; when true, a binding compiles only with a recorded fact.
+    pub build_script: Option<bool>,
+}
+
+/// One declared Loaf edge; target alternatives never lose their authored identity.
+#[derive(Debug, Clone)]
+pub struct LoafDependency {
+    /// Authored Loaf identity, independent of the importing alias or local source override.
+    pub loaf: String,
+    /// Exact target triple or canonical cfg predicate; omitted means all targets.
+    pub target: Option<String>,
+    /// Requirement and feature policy projected for the Rust compilation boundary.
+    pub spec: DependencySpec,
+}
+
+/// Identify Rust registry edges and existing local Rust roots without interpreting Cargo files.
+fn is_rust_loaf_entry(entry: &DependencyEntry, manifest_path: &Path) -> bool {
+    match entry {
+        DependencyEntry::Targets(_) => true,
+        DependencyEntry::Table(table) => {
+            table.loaf.as_deref().is_some_and(|loaf| loaf.starts_with("crates-io/"))
+                || table.path.as_deref().is_some_and(|root| {
+                    let root = manifest_path.parent().unwrap_or_else(|| Path::new(".")).join(root);
+                    root.join("src/lib.rs").is_file() || root.join("src/main.rs").is_file()
+                })
+        }
+        DependencyEntry::Version(_) => false,
+    }
+}
+
+/// Admit scoped Rust Loaves, retaining target alternatives before any consumer selection.
+fn parse_loaf_dependencies(
+    table: Option<&DependencyTable>,
+    spans: &ManifestSpans<'_>,
+    path: &Path,
+) -> Result<BTreeMap<String, Vec<LoafDependency>>, ManifestError> {
+    let mut result = BTreeMap::new();
+    let Some(table) = table else { return Ok(result) };
+    for (name, entry) in &table.entries {
+        if !is_rust_loaf_entry(entry, path) {
+            continue;
+        }
+        let entries = match entry {
+            DependencyEntry::Table(entry) => std::slice::from_ref(entry.as_ref()),
+            DependencyEntry::Targets(entries) => entries.as_slice(),
+            DependencyEntry::Version(_) => continue,
+        };
+        if entries.is_empty() {
+            return Err(manifest_invalid(
+                path,
+                None,
+                format!("dependency `{name}` target array must not be empty"),
+            ));
+        }
+        let mut admitted = Vec::new();
+        for entry in entries {
+            let location = spans.entry_location(&["dependencies"], name);
+            if matches!(table.entries.get(name), Some(DependencyEntry::Targets(_))) && entry.loaf.is_none() {
+                return Err(manifest_invalid(
+                    path,
+                    location,
+                    format!("dependency `{name}` array entry requires field `loaf`"),
+                ));
+            }
+            let loaf = entry.loaf.clone().unwrap_or_else(|| name.clone());
+            if let Some(identity) = entry
+                .loaf
+                .as_deref()
+                .filter(|identity| entry.path.is_none() || identity.starts_with("crates-io/"))
+            {
+                let Some(package) = identity.strip_prefix("crates-io/") else {
+                    return Err(manifest_invalid(
+                        path,
+                        location,
+                        format!("dependency `{name}` field `loaf` requires a supported scope"),
+                    ));
+                };
+                if package.is_empty()
+                    || !package
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_'))
+                {
+                    return Err(manifest_invalid(
+                        path,
+                        location,
+                        format!("dependency `{name}` field `loaf` has an invalid package"),
+                    ));
+                }
+                for (field, present) in [
+                    ("git", entry.git.is_some()),
+                    ("branch", entry.branch.is_some()),
+                    ("tag", entry.tag.is_some()),
+                    ("rev", entry.rev.is_some()),
+                    ("package", entry.package.is_some()),
+                    ("workspace", entry.workspace.is_some()),
+                    ("path", entry.path.is_some()),
+                ] {
+                    if present {
+                        return Err(manifest_invalid(
+                            path,
+                            location,
+                            format!("dependency `{name}` field `{field}` is outside the adopted Loaf grammar"),
+                        ));
+                    }
+                }
+            }
+            if let Some(target) = &entry.target {
+                validate_rust_fact_target(target).map_err(|message| manifest_invalid(path, location, message))?;
+            } else if matches!(table.entries.get(name), Some(DependencyEntry::Targets(_))) {
+                return Err(manifest_invalid(
+                    path,
+                    location,
+                    format!("dependency `{name}` array entry requires `target`"),
+                ));
+            }
+            let spec = dependency_from_entry(
+                name,
+                &DependencyEntry::Table(Box::new(entry.clone())),
+                false,
+                path,
+                location,
+            )?;
+            admitted.push(LoafDependency {
+                loaf,
+                target: entry.target.clone(),
+                spec,
+            });
+        }
+        result.insert(name.clone(), admitted);
+    }
+    Ok(result)
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RustTables {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(rename = "type", default)]
+    kind: Option<String>,
+    #[serde(default)]
+    edition: Option<String>,
+    #[serde(rename = "build-script", default)]
+    build_script: Option<bool>,
     #[serde(default)]
     dependencies: Option<DependencyTable>,
     #[serde(rename = "dev-dependencies", default)]
@@ -1572,12 +1776,14 @@ struct DependencyTable {
 #[serde(untagged)]
 enum DependencyEntry {
     Version(String),
-    Table(DependencyEntryTable),
+    Table(Box<DependencyEntryTable>),
+    Targets(Vec<DependencyEntryTable>),
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DependencyEntryTable {
+    target: Option<String>,
     loaf: Option<String>,
     version: Option<String>,
     features: Option<Vec<String>>,
@@ -1829,22 +2035,7 @@ fn validate_rust_fact_name(value: &str, field: &str) -> Result<(), String> {
 
 /// Admit the settled exact-triple-or-`cfg(...)` target predicate spelling.
 fn validate_rust_fact_target(value: &str) -> Result<(), String> {
-    let exact_triple = value.split('-').count() >= 3
-        && !value.bytes().any(|byte| byte.is_ascii_whitespace())
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'));
-    let cfg_predicate = value
-        .strip_prefix("cfg(")
-        .and_then(|inner| inner.strip_suffix(')'))
-        .is_some_and(|inner| !inner.trim().is_empty() && !inner.contains('\n') && !inner.contains('\r'));
-    if exact_triple || cfg_predicate {
-        Ok(())
-    } else {
-        Err(format!(
-            "target `{value}` must be an exact target triple or one `cfg(...)` predicate"
-        ))
-    }
+    crate::target_condition::validate(value)
 }
 
 /// Require one executable identity to be complete and relocation-independent.
@@ -2065,6 +2256,13 @@ fn validate_rust_fact_link(link: &RustFactLink) -> Result<(), String> {
         &link.sources,
         &object_outputs,
     )?;
+    validate_link_source_references(link)?;
+    validate_rust_fact_name(&link.library.name, "library link name")?;
+    Ok(())
+}
+
+/// Require every object to reference a source and every declared source to participate in the object closure.
+fn validate_link_source_references(link: &RustFactLink) -> Result<(), String> {
     let input_names = link
         .sources
         .iter()
@@ -2074,6 +2272,11 @@ fn validate_rust_fact_link(link: &RustFactLink) -> Result<(), String> {
     for object in &link.objects {
         let mut object_inputs = HashSet::new();
         let mut object_outputs = Vec::new();
+        validate_link_reads(&object.reads, &input_names)?;
+        for input in &object.reads {
+            object_inputs.insert(input.as_str());
+            referenced_inputs.insert(input.as_str());
+        }
         for argument in &object.arguments {
             match argument {
                 RustFactArgument::Literal { literal } if literal.contains('\0') => {
@@ -2127,7 +2330,19 @@ fn validate_rust_fact_link(link: &RustFactLink) -> Result<(), String> {
             source.name
         ));
     }
-    validate_rust_fact_name(&link.library.name, "library link name")?;
+    Ok(())
+}
+
+/// Validate the sorted implicit source reads of one native object against its declared source catalog.
+fn validate_link_reads(reads: &[String], sources: &HashSet<&str>) -> Result<(), String> {
+    if reads.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err("object reads must be sorted and unique".to_string());
+    }
+    for read in reads {
+        if !sources.contains(read.as_str()) {
+            return Err(format!("object reads references undeclared source `{read}`"));
+        }
+    }
     Ok(())
 }
 
@@ -2413,6 +2628,19 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
     let raw: RawManifest =
         toml_edit::de::from_document(document.clone()).map_err(|error| manifest_parse_error(path, content, error))?;
 
+    if raw
+        .workspace
+        .as_ref()
+        .is_some_and(|workspace| !workspace.rust_dev_dependencies.is_empty())
+    {
+        return Err(manifest_invalid(
+            path,
+            spans.table_location(&["workspace", "rust-dev-dependencies"]),
+            "workspace.rust-dev-dependencies is outside the Loaf grammar; use workspace.dependencies",
+        ));
+    }
+    validate_manifest_rust_facet(&raw, &spans, path)?;
+
     let library_dependencies = raw
         .dependencies
         .as_ref()
@@ -2421,7 +2649,7 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
         .unwrap_or_default();
 
     let (rust_deps_table, rust_dev_deps_table) = resolve_rust_dependency_tables(&raw, &spans, path)?;
-    let rust_dependencies = rust_deps_table
+    let mut rust_dependencies = rust_deps_table
         .map(|table| parse_dependency_table(&table, &spans, path, "[rust-dependencies]", &["rust-dependencies"]))
         .transpose()?
         .unwrap_or_default();
@@ -2438,9 +2666,131 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
         .transpose()?
         .unwrap_or_default();
 
+    let loaf_dependencies = parse_loaf_dependencies(raw.dependencies.as_ref(), &spans, path)?;
+    for (name, entries) in &loaf_dependencies {
+        if let [entry] = entries.as_slice()
+            && entry.target.is_none()
+            && rust_dependencies
+                .specs
+                .insert(name.clone(), entry.spec.clone())
+                .is_some()
+        {
+            return Err(manifest_invalid(
+                path,
+                None,
+                format!("dependency `{name}` appears in both [dependencies] and deprecated [rust-dependencies]"),
+            ));
+        }
+    }
     validate_package_collisions(&rust_dependencies, &rust_dev_dependencies, path)?;
-    validate_requires_incan_constraints(&raw, &spans, path)?;
-    validate_script_library_collisions(&raw, &spans, path)?;
+
+    validate_manifest_metadata(&raw, &spans, path)?;
+    let rust_facts = raw.rust.as_ref().map(|rust| rust.facts.clone()).unwrap_or_default();
+    validate_rust_fact_records(&rust_facts, path, &spans)?;
+    let rust_bins = raw.rust.as_ref().map(|rust| rust.bin.clone()).unwrap_or_default();
+    validate_rust_binary_roles(
+        &rust_bins,
+        raw.rust.as_ref().and_then(|rust| rust.source.as_ref()),
+        path,
+        &spans,
+    )?;
+    let deprecations = manifest_deprecations(&raw);
+    Ok(ProjectManifest {
+        path: path.to_path_buf(),
+        project: raw.project,
+        build: raw.build,
+        vocab: raw.vocab,
+        tool: raw.tool,
+        sdk: raw.sdk,
+        interop: raw.interop,
+        rust_source: raw.rust.as_ref().and_then(|rust| rust.source.clone()),
+        rust_facet: raw.rust.as_ref().map(|rust| RustFacet {
+            name: rust.name.clone(),
+            kind: rust.kind.clone(),
+            edition: rust.edition.clone(),
+            build_script: rust.build_script,
+        }),
+        loaf_dependencies,
+        deprecations,
+        rust_facts,
+        rust_bins,
+        source: raw.source,
+        workspace: raw.workspace,
+        library_dependencies: library_dependencies.specs,
+        rust_dependencies: rust_dependencies.specs,
+        rust_dev_dependencies: rust_dev_dependencies.specs,
+        workspace_library_dependencies: library_dependencies.workspace_inherited,
+        workspace_rust_dependencies: rust_dependencies.workspace_inherited,
+        workspace_rust_dev_dependencies: rust_dev_dependencies.workspace_inherited,
+    })
+}
+
+/// Retain migration diagnostics separately from admitted dependency identity.
+fn manifest_deprecations(raw: &RawManifest) -> Vec<String> {
+    let mut diagnostics = Vec::new();
+    if raw.rust_dependencies.is_some() {
+        diagnostics.push(
+            "[rust-dependencies] is deprecated; use [dependencies] with loaf = \"crates-io/<package>\"".to_string(),
+        );
+    }
+    if raw
+        .workspace
+        .as_ref()
+        .is_some_and(|workspace| !workspace.rust_dependencies.is_empty())
+    {
+        diagnostics.push("[workspace.rust-dependencies] is deprecated; use [workspace.dependencies] with loaf = \"crates-io/<package>\"".to_string());
+    }
+    diagnostics
+}
+
+/// Validate authored Rust unit identity before projecting it into a compilation manifest.
+fn validate_manifest_rust_facet(
+    raw: &RawManifest,
+    spans: &ManifestSpans<'_>,
+    path: &Path,
+) -> Result<(), ManifestError> {
+    if let Some(rust) = &raw.rust {
+        if rust
+            .kind
+            .as_deref()
+            .is_some_and(|kind| !["lib", "proc-macro"].contains(&kind))
+        {
+            return Err(manifest_invalid(
+                path,
+                spans.entry_location(&["rust"], "type"),
+                "rust.type is not a supported Rust unit type",
+            ));
+        }
+        if rust
+            .edition
+            .as_deref()
+            .is_some_and(|edition| !["2015", "2018", "2021", "2024"].contains(&edition))
+        {
+            return Err(manifest_invalid(
+                path,
+                spans.entry_location(&["rust"], "edition"),
+                "rust.edition must be 2015, 2018, 2021 or 2024",
+            ));
+        }
+        if rust.name.as_deref().is_some_and(|name| {
+            name.is_empty()
+                || !name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
+                || name.as_bytes()[0].is_ascii_digit()
+        }) {
+            return Err(manifest_invalid(
+                path,
+                spans.entry_location(&["rust"], "name"),
+                "rust.name must be a nonempty Rust identifier",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Validate authority roots and owned metadata before dependency or source consumers run.
+fn validate_manifest_metadata(raw: &RawManifest, spans: &ManifestSpans<'_>, path: &Path) -> Result<(), ManifestError> {
+    validate_requires_incan_constraints(raw, spans, path)?;
+    validate_script_library_collisions(raw, spans, path)?;
     if raw.oven.is_some() {
         return Err(manifest_invalid(
             path,
@@ -2498,15 +2848,6 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
         }
     }
 
-    let rust_facts = raw.rust.as_ref().map(|rust| rust.facts.clone()).unwrap_or_default();
-    validate_rust_fact_records(&rust_facts, path, &spans)?;
-    let rust_bins = raw.rust.as_ref().map(|rust| rust.bin.clone()).unwrap_or_default();
-    validate_rust_binary_roles(
-        &rust_bins,
-        raw.rust.as_ref().and_then(|rust| rust.source.as_ref()),
-        path,
-        &spans,
-    )?;
     if let Some(source) = raw.source.as_ref() {
         if source.registry.trim().is_empty() {
             return Err(manifest_invalid(
@@ -2524,26 +2865,7 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
         }
     }
 
-    Ok(ProjectManifest {
-        path: path.to_path_buf(),
-        project: raw.project,
-        build: raw.build,
-        vocab: raw.vocab,
-        tool: raw.tool,
-        sdk: raw.sdk,
-        interop: raw.interop,
-        rust_source: raw.rust.as_ref().and_then(|rust| rust.source.clone()),
-        rust_facts,
-        rust_bins,
-        source: raw.source,
-        workspace: raw.workspace,
-        library_dependencies: library_dependencies.specs,
-        rust_dependencies: rust_dependencies.specs,
-        rust_dev_dependencies: rust_dev_dependencies.specs,
-        workspace_library_dependencies: library_dependencies.workspace_inherited,
-        workspace_rust_dependencies: rust_dependencies.workspace_inherited,
-        workspace_rust_dev_dependencies: rust_dev_dependencies.workspace_inherited,
-    })
+    Ok(())
 }
 
 /// Reject executable declarations that alias the conventional library before any target consumer runs.
@@ -2780,6 +3102,7 @@ fn toml_value_to_edit_value(value: &toml::Value, manifest_path: &Path) -> Result
 }
 
 const DEPENDENCY_ENTRY_KEYS: &[&str] = &[
+    "target",
     "loaf",
     "version",
     "features",
@@ -2798,6 +3121,7 @@ const DEPENDENCY_ENTRY_KEYS: &[&str] = &[
 fn validate_dependency_entry_shapes(spans: &ManifestSpans<'_>, path: &Path) -> Result<(), ManifestError> {
     for table_path in [
         &["dependencies"][..],
+        &["workspace", "dependencies"][..],
         &["rust-dependencies"][..],
         &["rust-dev-dependencies"][..],
         &["rust", "dependencies"][..],
@@ -2844,6 +3168,12 @@ fn validate_dependency_entry_item(
     entry_name: &str,
     entry_item: &Item,
 ) -> Result<(), ManifestError> {
+    if let Some(array) = entry_item.as_array() {
+        for value in array.iter() {
+            validate_dependency_entry_item(spans, path, table_path, entry_name, &Item::Value(value.clone()))?;
+        }
+        return Ok(());
+    }
     if entry_item.is_str() {
         return Ok(());
     }
@@ -2872,7 +3202,9 @@ fn validate_dependency_entry_item(
 
         let location = spans.item_location(value).or_else(|| spans.item_location(entry_item));
         match key {
-            "loaf" | "version" | "git" | "branch" | "tag" | "rev" | "path" | "package" if !value.is_str() => {
+            "target" | "loaf" | "version" | "git" | "branch" | "tag" | "rev" | "path" | "package"
+                if !value.is_str() =>
+            {
                 return Err(manifest_invalid(
                     path,
                     location,
@@ -2915,45 +3247,29 @@ fn resolve_rust_dependency_tables(
     spans: &ManifestSpans<'_>,
     path: &Path,
 ) -> Result<(Option<DependencyTable>, Option<DependencyTable>), ManifestError> {
-    let rust_tables = raw.rust.as_ref();
-    let rust_deps = raw.rust_dependencies.clone();
-    let legacy_rust_deps = rust_tables.and_then(|r| r.dependencies.clone());
-    let explicit_rust_dev_deps = raw.rust_dev_dependencies.clone();
-    let legacy_dev_deps = raw.legacy_dev_dependencies.clone();
-    let legacy_rust_dev_deps = rust_tables.and_then(|r| r.dev_dependencies.clone());
-
-    if rust_deps.is_some() && legacy_rust_deps.is_some() {
+    if raw.rust_dev_dependencies.is_some() || raw.legacy_dev_dependencies.is_some() {
+        return Err(manifest_invalid(
+            path,
+            spans
+                .table_location(&["rust-dev-dependencies"])
+                .or_else(|| spans.table_location(&["dev-dependencies"])),
+            "dev-dependencies and rust-dev-dependencies are not supported; declare ordinary Loaf dependencies",
+        ));
+    }
+    if raw
+        .rust
+        .as_ref()
+        .is_some_and(|rust| rust.dependencies.is_some() || rust.dev_dependencies.is_some())
+    {
         return Err(manifest_invalid(
             path,
             spans
                 .table_location(&["rust", "dependencies"])
-                .or_else(|| spans.table_location(&["rust-dependencies"])),
-            "cannot specify both [rust-dependencies] and [rust.dependencies]",
+                .or_else(|| spans.table_location(&["rust", "dev-dependencies"])),
+            "rust.dependencies and rust.dev-dependencies are not supported; use [dependencies] with loaf",
         ));
     }
-
-    if legacy_dev_deps.is_some() {
-        return Err(manifest_invalid(
-            path,
-            spans.table_location(&["dev-dependencies"]),
-            "table [dev-dependencies] has been renamed to [rust-dev-dependencies]",
-        ));
-    }
-
-    if explicit_rust_dev_deps.is_some() && legacy_rust_dev_deps.is_some() {
-        return Err(manifest_invalid(
-            path,
-            spans
-                .table_location(&["rust", "dev-dependencies"])
-                .or_else(|| spans.table_location(&["rust-dev-dependencies"])),
-            "cannot specify both [rust-dev-dependencies] and [rust.dev-dependencies]",
-        ));
-    }
-
-    Ok((
-        rust_deps.or(legacy_rust_deps),
-        explicit_rust_dev_deps.or(legacy_rust_dev_deps),
-    ))
+    Ok((raw.rust_dependencies.clone(), None))
 }
 
 /// Parse the Incan library dependency table from `[dependencies]`.
@@ -2966,13 +3282,17 @@ fn parse_library_dependency_table(
         return Err(manifest_invalid(
             path,
             spans.table_location(&["dependencies", "optional"]),
-            "table [dependencies.optional] is no longer valid; move Rust optional crates to [rust-dependencies]",
+            "table [dependencies.optional] is not valid; set optional = true on a scoped loaf entry in [dependencies]",
         ));
     }
 
     let mut result = ParsedLibraryDependencyTable::default();
     for (name, entry) in &table.entries {
         let location = spans.entry_location(&["dependencies"], name);
+        if is_rust_loaf_entry(entry, path) {
+            continue;
+        }
+
         if workspace_inheritance_requested(entry, path, location, name)? {
             validate_workspace_library_request(name, entry, path, location)?;
             result.workspace_inherited.insert(
@@ -3054,12 +3374,12 @@ fn library_dependency_from_entry(
     location: Option<ManifestLocation>,
 ) -> Result<LibraryDependencySpec, ManifestError> {
     let table = match entry {
-        DependencyEntry::Version(_) => {
+        DependencyEntry::Version(_) | DependencyEntry::Targets(_) => {
             return Err(manifest_invalid(
                 path,
                 location,
                 format!(
-                    "dependency `{name}` in [dependencies] uses legacy Rust crate syntax. Move Rust crates to [rust-dependencies]."
+                    "dependency `{name}` in [dependencies] uses legacy Rust crate syntax. Declare the field `loaf` with a scoped package in [dependencies]."
                 ),
             ));
         }
@@ -3071,7 +3391,7 @@ fn library_dependency_from_entry(
             path,
             location,
             format!(
-                "dependency `{name}` in [dependencies] looks like a Rust crate dependency. Move it to [rust-dependencies]."
+                "dependency `{name}` in [dependencies] looks like a Rust crate dependency. Declare the field `loaf` with a scoped package in [dependencies]."
             ),
         ));
     }
@@ -3136,9 +3456,9 @@ fn library_dependency_from_entry(
 /// Return whether an entry in `[dependencies]` looks like legacy Rust dependency syntax.
 fn looks_like_legacy_rust_dependency(entry: &DependencyEntry) -> bool {
     match entry {
-        DependencyEntry::Version(_) => true,
+        DependencyEntry::Version(_) | DependencyEntry::Targets(_) => true,
         DependencyEntry::Table(table) => {
-            table.version.is_some()
+            (table.version.is_some() && table.loaf.is_none())
                 || table.git.is_some()
                 || table.branch.is_some()
                 || table.tag.is_some()
@@ -3170,6 +3490,13 @@ fn parse_dependency_table(
                 path,
                 spans.entry_location(table_path, name),
                 format!("dependency `{name}` appears in both {table_name} and {table_name}.optional"),
+            ));
+        }
+        if matches!(entry, DependencyEntry::Table(entry) if entry.target.is_some()) {
+            return Err(manifest_invalid(
+                path,
+                spans.entry_location(table_path, name),
+                format!("dependency `{name}` field `target` belongs in [dependencies] with loaf"),
             ));
         }
         let location = spans.entry_location(table_path, name);
@@ -3259,6 +3586,9 @@ fn parse_workspace_library_dependency_table(
                 format!("workspace root dependency `{name}` cannot inherit from another workspace"),
             ));
         }
+        if is_rust_loaf_entry(&entry, path) {
+            continue;
+        }
         parsed.insert(name.clone(), library_dependency_from_entry(name, &entry, path, None)?);
     }
     Ok(parsed)
@@ -3300,6 +3630,17 @@ fn workspace_dependency_entry(
     table_name: &str,
     path: &Path,
 ) -> Result<DependencyEntry, ManifestError> {
+    if let Some(table) = value.as_table() {
+        for field in table.keys() {
+            if !DEPENDENCY_ENTRY_KEYS.contains(&field.as_str()) {
+                return Err(manifest_invalid(
+                    path,
+                    None,
+                    format!("dependency `{name}` in {table_name} has unknown field `{field}`"),
+                ));
+            }
+        }
+    }
     value.clone().try_into().map_err(|error| {
         manifest_invalid(
             path,
@@ -3318,6 +3659,13 @@ fn dependency_from_entry(
     location: Option<ManifestLocation>,
 ) -> Result<DependencySpec, ManifestError> {
     let (version, features, default_features, source, optional, package) = match entry {
+        DependencyEntry::Targets(_) => {
+            return Err(manifest_invalid(
+                path,
+                location,
+                "target entry arrays belong in [dependencies]",
+            ));
+        }
         DependencyEntry::Version(version) => (
             Some(version.clone()),
             Vec::new(),
@@ -3327,15 +3675,6 @@ fn dependency_from_entry(
             None,
         ),
         DependencyEntry::Table(table) => {
-            if table.loaf.is_some() {
-                return Err(manifest_invalid(
-                    path,
-                    location,
-                    format!(
-                        "Rust crate dependency `{name}` cannot use `loaf`; declare sibling Loaves in [dependencies]"
-                    ),
-                ));
-            }
             let (source, version) = parse_dependency_source(table, path, location)?;
             let mut optional = table.optional.unwrap_or(false);
             if optional_override {
@@ -3344,7 +3683,12 @@ fn dependency_from_entry(
             let default_features = table.default_features.unwrap_or(true);
             let features = table.features.clone().unwrap_or_default();
 
-            let package = table.package.clone().filter(|p| !p.trim().is_empty());
+            let adopted_package = table.loaf.as_deref().and_then(|loaf| loaf.strip_prefix("crates-io/"));
+            let package = adopted_package
+                .filter(|package| *package != name)
+                .map(str::to_string)
+                .or_else(|| table.package.clone())
+                .filter(|p| !p.trim().is_empty());
             if table.package.as_ref().is_some_and(|p| p.trim().is_empty()) {
                 return Err(manifest_invalid(
                     path,
@@ -3541,6 +3885,121 @@ mod tests {
     use std::fs;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+    /// Shared workspace declarations use the same adopted identity and feature policy as direct edges.
+    #[test]
+    fn amended_loaf_workspace_dependencies_share_the_declared_model() -> TestResult {
+        let manifest = ProjectManifest::from_str(
+            r#"
+[workspace]
+members = []
+[workspace.dependencies]
+search = { loaf = "crates-io/regex", version = "1", features = ["std"], default-features = false }
+"#,
+            Path::new("loaf.toml"),
+        )?;
+        let shared = manifest.workspace_shared_dependencies()?;
+        assert!(shared.library_dependencies.is_empty());
+        assert_eq!(shared.loaf_dependencies["search"][0].loaf, "crates-io/regex");
+        assert_eq!(shared.rust_dependencies["search"].package.as_deref(), Some("regex"));
+        assert!(!shared.rust_dependencies["search"].default_features);
+        Ok(())
+    }
+
+    /// Prove every amended SDK manifest reaches the typed admission boundary.
+    #[test]
+    fn amended_loaf_admits_all_ten_stdlib_manifests() -> TestResult {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../stdlib");
+        let mut count = 0;
+        for component in fs::read_dir(root)? {
+            let path = component?.path().join("loaf.toml");
+            if path.is_file() {
+                let manifest = ProjectManifest::from_str(&fs::read_to_string(&path)?, &path)?;
+                assert!(manifest.project.is_some());
+                count += 1;
+            }
+        }
+        assert_eq!(count, 10);
+        Ok(())
+    }
+
+    /// Retain scoped identities, renames, features, optionality, and target alternatives.
+    #[test]
+    fn amended_loaf_retains_target_entries() -> TestResult {
+        let manifest = ProjectManifest::from_str(
+            r#"
+[project]
+name = "demo"
+[rust]
+name = "demo_lib"
+type = "lib"
+edition = "2024"
+[dependencies]
+md5 = { loaf = "crates-io/md-5", version = "0.10", features = ["std"], default-features = false, optional = true }
+libc = [
+ { loaf = "crates-io/libc", version = "0.2", target = 'cfg(target_os = "linux")' },
+ { loaf = "crates-io/libc", version = "0.2", target = "aarch64-apple-darwin" }
+]
+"#,
+            Path::new("loaf.toml"),
+        )?;
+        let md5 = manifest.rust_dependencies().get("md5").ok_or("missing md5")?;
+        assert_eq!(md5.package.as_deref(), Some("md-5"));
+        assert!(md5.optional);
+        assert!(!md5.default_features);
+        assert_eq!(md5.features, ["std"]);
+        assert_eq!(manifest.loaf_dependencies["libc"].len(), 2);
+        assert!(!manifest.rust_dependencies().contains_key("libc"));
+        assert_eq!(
+            manifest.rust_facet.as_ref().and_then(|facet| facet.edition.as_deref()),
+            Some("2024")
+        );
+        Ok(())
+    }
+
+    /// Forbidden spellings identify the offending field instead of silently dropping declarations.
+    #[test]
+    fn amended_loaf_refuses_retired_fields() -> TestResult {
+        for (body, field) in [
+            ("[rust]\ncrate-name = 'x'", "crate-name"),
+            ("[rust]\ntype = 'bin'", "type"),
+            ("[rust]\nedition = '2025'", "edition"),
+            ("[rust]\ncrate-type = 'lib'", "crate-type"),
+            ("[dependencies]\nx = { crate = 'x', version = '1' }", "crate"),
+            (
+                "[dependencies]\nx = { loaf = 'crates-io/x', version = '1', links = 'x' }",
+                "links",
+            ),
+            ("[build-dependencies]\nx = '1'", "build-dependencies"),
+            ("[dev-dependencies]\nx = '1'", "dev-dependencies"),
+            ("[dependencies]\nx = { loaf = 'crates-io/', version = '1' }", "loaf"),
+            (
+                "[dependencies]\nx = { loaf = 'crates-io/x', version = '1', target = 'linux' }",
+                "target",
+            ),
+        ] {
+            let result =
+                ProjectManifest::from_str(&format!("[project]\nname = 'demo'\n{body}\n"), Path::new("loaf.toml"));
+            let error = result
+                .err()
+                .ok_or_else(|| format!("accepted forbidden field {field}"))?;
+            assert!(error.to_string().contains(field), "{error}");
+        }
+        Ok(())
+    }
+
+    /// Existing Rust dependency inputs retain a visible migration diagnostic.
+    #[test]
+    fn amended_loaf_deprecated_input_names_replacement() -> TestResult {
+        let manifest = ProjectManifest::from_str("[rust-dependencies]\nserde = '1'\n", Path::new("loaf.toml"))?;
+        assert!(
+            manifest
+                .deprecations
+                .iter()
+                .any(|diagnostic| diagnostic.contains("[dependencies]") && diagnostic.contains("loaf"))
+        );
+        assert!(manifest.rust_dependencies().contains_key("serde"));
+        Ok(())
+    }
 
     #[test]
     fn the_legacy_manifest_diagnostic_names_the_file_and_refuses_to_read_it() {
@@ -3802,14 +4261,12 @@ mod tests {
 tokio = "1.0"
 serde = "1.0"
 
-[rust-dev-dependencies]
-pretty_assertions = "1.4"
 "#;
         let manifest = ProjectManifest::from_str(content, Path::new("loaf.toml"))?;
         assert_eq!(manifest.rust_dependencies().len(), 2);
         assert!(manifest.rust_dependencies().contains_key("tokio"));
         assert!(manifest.rust_dependencies().contains_key("serde"));
-        assert!(manifest.rust_dev_dependencies().contains_key("pretty_assertions"));
+        assert!(manifest.rust_dev_dependencies().is_empty());
         Ok(())
     }
 
@@ -3944,7 +4401,7 @@ model-bundles = ["contracts/order_summary.json"]
 version = "1.0"
 features = ["derive"]
 
-[rust-dev-dependencies.proptest]
+[rust-dependencies.proptest]
 version = "1"
 
 [tool.incan.envs.unit]
@@ -3970,7 +4427,7 @@ env-vars = { INCAN_NO_BANNER = "1" }
                 ),
             ]))
         );
-        assert!(manifest.env_base_dev_dependency_overlay().contains_key("proptest"));
+        assert!(manifest.env_base_dependency_overlay().contains_key("proptest"));
         Ok(())
     }
 
@@ -4021,7 +4478,6 @@ domain = { workspace = true }
 [rust-dependencies]
 serde = { workspace = true, features = ["derive"], optional = true }
 
-[rust-dev-dependencies]
 proptest = { workspace = true, features = ["std"] }
 "#,
             Path::new("packages/member/loaf.toml"),
@@ -4045,7 +4501,7 @@ proptest = { workspace = true, features = ["std"] }
         assert!(serde.optional);
         assert_eq!(
             manifest
-                .workspace_rust_dev_dependencies()
+                .workspace_rust_dependencies()
                 .get("proptest")
                 .map(|request| request.features == vec!["std"]),
             Some(true)
@@ -4070,7 +4526,6 @@ domain = { path = "libs/domain" }
 [workspace.rust-dependencies]
 serde = { version = "1", features = ["alloc"], default-features = false }
 
-[workspace.rust-dev-dependencies]
 proptest = "1"
 "#,
             Path::new("loaf.toml"),
@@ -4098,7 +4553,7 @@ proptest = "1"
                 .map(|dependency| dependency.default_features),
             Some(false)
         );
-        assert!(shared.rust_dev_dependencies.contains_key("proptest"));
+        assert!(shared.rust_dependencies.contains_key("proptest"));
         Ok(())
     }
 
@@ -4866,6 +5321,44 @@ library = {{ name = "sys_helper", kind = "{{kind}}" }}
     }
 
     #[test]
+    /// Implicit header reads complete the source closure without changing compiler arguments.
+    fn rust_fact_link_reads_complete_source_closure() -> TestResult {
+        let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let content = format!(
+            r#"
+[[rust.facts]]
+toolchain = "rustc 1.98.0"
+target = "aarch64-apple-darwin"
+profile = "debug"
+features = []
+cfg = []
+[[rust.facts.link]]
+name = "helper"
+target = "aarch64-apple-darwin"
+executable = {{ name = "clang", owner = "{digest}", path = "bin/clang", digest = "{digest}" }}
+sources = [{{ name = "header", kind = "file", path = "c/helper.h", digest = "{digest}" }}, {{ name = "source", kind = "file", path = "c/helper.c", digest = "{digest}" }}]
+objects = [{{ name = "helper.o", language = "c", reads = ["header"], arguments = [{{ input = "source" }}, {{ output = "helper.o" }}] }}]
+library = {{ name = "helper", kind = "static" }}
+"#
+        );
+        let manifest = ProjectManifest::from_str(&content, Path::new("loaf.toml"))?;
+        assert_eq!(manifest.rust_facts[0].link[0].objects[0].reads, ["header"]);
+        for (reads, expected) in [
+            ("unknown", "undeclared source `unknown`"),
+            ("header\", \"header", "reads must be sorted and unique"),
+            ("source\", \"header", "reads must be sorted and unique"),
+        ] {
+            let invalid = content.replace("reads = [\"header\"]", &format!("reads = [\"{reads}\"]"));
+            let error = ProjectManifest::from_str(&invalid, Path::new("loaf.toml"))
+                .err()
+                .ok_or("invalid implicit reads were accepted")?;
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    /// Invalid output references and detached source declarations refuse admission.
     fn rust_fact_link_refuses_invalid_object_argument_closure() -> TestResult {
         let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let base = format!(

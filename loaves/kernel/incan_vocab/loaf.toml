@@ -1,0 +1,18 @@
+[project]
+name = "incan_vocab"
+version = "0.6.0-dev.6"
+license = "Apache-2.0"
+private = true
+
+[rust]
+name = "incan_vocab"
+type = "lib"
+edition = "2024"
+
+[features]
+default = ["serde"]
+serde = []
+
+[dependencies]
+serde = { loaf = "crates-io/serde", version = "1", features = ["derive"], default-features = true }
+serde_json = { loaf = "crates-io/serde_json", version = "1", features = [], default-features = true }

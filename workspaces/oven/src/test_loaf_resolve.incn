@@ -1,0 +1,358 @@
+"""Version selection and shared activation against small pinned index fixtures."""
+
+from std.testing import fail, fail_t
+from manifest_errors import IntakeError
+from loaf_index import read_root_requests, read_index, LoafVersion
+from loaf_resolve import resolve_requests, select_version, resolve, LoafDemand, ResolvedLoaf
+from rust_graph import NodeDemand
+from std.json import JsonValue, parse
+from sdk_local_roots import host_roots
+from loaf_closure_exchange import resolve_shard
+from rust_activation import ActivationContext, ActivationPurpose, DependencyDomain, TargetConfiguration, CfgSnapshot
+
+
+def require_ok[T](result: Result[T, IntakeError]) -> T:
+    """Keep failures in the normal test assertion channel."""
+    match result:
+        Ok(value) => return value
+        Err(error) => return fail_t[T](error.message())
+
+
+pub def test_highest_candidate_excludes_yanked_versions() -> None:
+    """A newer yanked version cannot win fresh resolution."""
+    records = require_ok(read_index("tests/fixtures/loaf-index", "test/leaf"))
+    selected = require_ok(select_version(records, "test/leaf", ["^1"]))
+    assert selected.version == "1.0.0"
+
+
+pub def test_conflicting_requirements_are_named() -> None:
+    """The refusal contains both incoming constraints and the affected Loaf."""
+    records = require_ok(read_index("tests/fixtures/loaf-index", "test/leaf"))
+    match select_version(records, "test/leaf", ["^1", ">=2"]):
+        Ok(_) => fail("conflicting requirements accepted")
+        Err(error) =>
+            assert "test/leaf" in error.message()
+            assert "^1" in error.message()
+            assert ">=2" in error.message()
+
+
+pub def test_root_feature_closure_reuses_activation() -> None:
+    """Defaults and explicit requests expand through the existing activation policy."""
+    records = require_ok(read_index("tests/fixtures/loaf-index", "test/leaf"))
+    target = TargetConfiguration(triple="aarch64-apple-darwin", cfg=None)
+    context = ActivationContext(
+        host=target,
+        target=target,
+        purpose=ActivationPurpose.Normal,
+        domain=DependencyDomain.Target,
+        requested_features=[],
+        default_features=false,
+        build_unit_present=false,
+    )
+    root = LoafDemand(
+        loaf="test/leaf",
+        domain=DependencyDomain.Target,
+        requirements=["^1"],
+        intent=NodeDemand(features=["extra"], default_features=true),
+    )
+    units = require_ok(resolve(records, [root], context))
+    assert len(units) == 1
+    assert units[0].features == ["default", "extra", "std"]
+
+
+def synthetic_context() -> ActivationContext:
+    """Deliberately separate cfg snapshots even though both selected triples are Darwin."""
+    target = TargetConfiguration(triple="aarch64-apple-darwin", cfg=Some(CfgSnapshot(flags=["unix"], values={})))
+    return ActivationContext(
+        host=target,
+        target=target,
+        purpose=ActivationPurpose.Normal,
+        domain=DependencyDomain.Target,
+        requested_features=[],
+        default_features=false,
+        build_unit_present=false,
+    )
+
+
+def synthetic_resolution(features: list[str]) -> list[ResolvedLoaf]:
+    """Load the complete small synthetic pin through the production index boundary."""
+    mut records: list[LoafVersion] = []
+    for loaf in ["test/root", "test/leaf", "test/macro"]:
+        for record in require_ok(read_index("tests/fixtures/loaf-index", loaf)):
+            records.append(record)
+    root = LoafDemand(
+        loaf="test/root",
+        domain=DependencyDomain.Target,
+        requirements=["^1"],
+        intent=NodeDemand(features=features, default_features=false),
+    )
+    return require_ok(resolve(records, [root], synthetic_context()))
+
+
+pub def test_weak_feature_does_not_activate_optional_target_child() -> None:
+    """The macro's host child exists, but a weak target request does not cross domains or enable the target edge."""
+    units = synthetic_resolution(["weak"])
+    assert len(units) == 3
+    for unit in units:
+        if unit.record.loaf == "test/leaf":
+            assert unit.domain == DependencyDomain.Host
+            assert unit.features == []
+
+
+pub def test_multi_entry_features_union_and_proc_macro_host_closure() -> None:
+    """Both applicable declarations contribute features, while macro dependencies stay independently host-only."""
+    units = synthetic_resolution(["strong", "weak"])
+    assert len(units) == 4
+    for unit in units:
+        if unit.record.loaf == "test/leaf":
+            if unit.domain == DependencyDomain.Host:
+                assert unit.features == []
+            else:
+                assert unit.features == ["extra", "std"]
+        if unit.record.loaf == "test/root":
+            assert "leaf" in unit.features
+            assert len(unit.predicates) == 2
+            assert unit.predicates[0].matches
+            assert unit.predicates[1].matches
+
+
+def versioned_root(requirement: str, domain: DependencyDomain, features: list[str]) -> LoafDemand:
+    """Create independent root intent for a shared version-selection test."""
+    return LoafDemand(
+        loaf="test/versioned",
+        domain=domain,
+        requirements=[requirement],
+        intent=NodeDemand(features=features, default_features=false),
+    )
+
+
+pub def test_broad_dependency_records_highest_selected_version() -> None:
+    """Two selected breaking versions cannot leave a broad transitive alias ambiguous."""
+    mut records: list[LoafVersion] = []
+    for loaf in ["test/broad", "test/versioned"]:
+        for record in require_ok(read_index("tests/fixtures/loaf-index", loaf)):
+            records.append(record)
+    broad = LoafDemand(
+        loaf="test/broad",
+        domain=DependencyDomain.Target,
+        requirements=["^1"],
+        intent=NodeDemand(features=[], default_features=false),
+    )
+    units = require_ok(resolve(records, [broad, versioned_root("^1", DependencyDomain.Target, [])], synthetic_context()))
+    assert len(units) == 3
+    for unit in units:
+        if unit.record.loaf == "test/broad":
+            assert len(unit.edges) == 1
+            assert unit.edges[0].dependency_key == "chosen"
+            assert unit.edges[0].loaf == "test/versioned"
+            assert unit.edges[0].version == "2.0.0"
+            assert unit.edges[0].domain == "target"
+
+
+pub def test_broad_alias_respects_all_active_constraints() -> None:
+    """A second active declaration prevents the broad alias from binding a newer incompatible selected line."""
+    mut records: list[LoafVersion] = []
+    for loaf in ["test/narrowed", "test/versioned"]:
+        for record in require_ok(read_index("tests/fixtures/loaf-index", loaf)):
+            records.append(record)
+    root = LoafDemand(
+        loaf="test/narrowed",
+        domain=DependencyDomain.Target,
+        requirements=["^1"],
+        intent=NodeDemand(features=[], default_features=false),
+    )
+    units = require_ok(resolve(records, [root], synthetic_context()))
+    for unit in units:
+        if unit.record.loaf == "test/narrowed":
+            assert len(unit.edges) == 1
+            assert unit.edges[0].version == "1.2.0"
+
+
+pub def test_versions_unify_across_domains_but_features_do_not() -> None:
+    """The target's exact version constrains the host's broad range without sharing cfg features."""
+    records = require_ok(read_index("tests/fixtures/loaf-index", "test/versioned"))
+    units = require_ok(
+        resolve(
+            records,
+            [versioned_root("^1", DependencyDomain.Host, ["one"]), versioned_root(
+                "=1.0.0",
+                DependencyDomain.Target,
+                ["two"],
+            )],
+            synthetic_context(),
+        ),
+    )
+    assert len(units) == 2
+    for unit in units:
+        assert unit.record.version == "1.0.0"
+        if unit.domain == DependencyDomain.Host:
+            assert unit.features == ["one"]
+        else:
+            assert unit.features == ["two"]
+
+
+pub def test_incompatible_ranges_select_separate_versions() -> None:
+    """A different major line does not make an otherwise satisfiable resolution conflict."""
+    records = require_ok(read_index("tests/fixtures/loaf-index", "test/versioned"))
+    units = require_ok(
+        resolve(
+            records,
+            [versioned_root("^1", DependencyDomain.Target, ["one"]), versioned_root(
+                "^2",
+                DependencyDomain.Target,
+                ["two"],
+            )],
+            synthetic_context(),
+        ),
+    )
+    assert len(units) == 2
+    assert units[0].record.version == "1.2.0"
+    assert units[1].record.version == "2.0.0"
+
+
+pub def test_exact_triple_and_cfg_false_predicates_are_retained() -> None:
+    """False target declarations stay visible while optional target edges remain inactive."""
+    mut records: list[LoafVersion] = []
+    for loaf in ["test/root", "test/leaf", "test/macro"]:
+        for record in require_ok(read_index("tests/fixtures/loaf-index", loaf)):
+            records.append(record)
+    host = TargetConfiguration(triple="aarch64-apple-darwin", cfg=Some(CfgSnapshot(flags=["unix"], values={})))
+    target = TargetConfiguration(triple="x86_64-pc-windows-msvc", cfg=Some(CfgSnapshot(flags=["windows"], values={})))
+    context = ActivationContext(
+        host=host,
+        target=target,
+        purpose=ActivationPurpose.Normal,
+        domain=DependencyDomain.Target,
+        requested_features=[],
+        default_features=false,
+        build_unit_present=false,
+    )
+    root = LoafDemand(
+        loaf="test/root",
+        domain=DependencyDomain.Target,
+        requirements=["^1"],
+        intent=NodeDemand(features=["strong"], default_features=false),
+    )
+    units = require_ok(resolve(records, [root], context))
+    assert len(units) == 3
+    for unit in units:
+        if unit.record.loaf == "test/root":
+            assert not unit.predicates[0].matches
+            assert not unit.predicates[1].matches
+        if unit.record.loaf == "test/leaf":
+            assert unit.domain == DependencyDomain.Host
+
+
+pub def test_root_requests_use_shared_optional_activation() -> None:
+    """The same dependency-array shape supports root feature selection before choosing versions."""
+    requests = require_ok(
+        read_root_requests(
+            "[{\"name\":\"versioned\",\"loaf\":\"test/versioned\",\"req\":\"^1\",\"features\":[\"one\"],\"default-features\":false,\"optional\":true}]",
+            "roots",
+        ),
+    )
+    records = require_ok(read_index("tests/fixtures/loaf-index", "test/versioned"))
+    disabled = require_ok(resolve_requests(records, requests, {"chosen": ["dep:versioned"]}, synthetic_context()))
+    assert len(disabled) == 0
+    base = synthetic_context()
+    enabled = ActivationContext(
+        host=base.host,
+        target=base.target,
+        purpose=base.purpose,
+        domain=base.domain,
+        requested_features=["chosen"],
+        default_features=false,
+        build_unit_present=false,
+    )
+    units = require_ok(resolve_requests(records, requests, {"chosen": ["dep:versioned"]}, enabled))
+    assert len(units) == 1
+    assert units[0].record.version == "1.2.0"
+    assert units[0].features == ["one"]
+
+
+pub def test_host_project_roots_keep_independent_features() -> None:
+    """Local macro dependencies enter the host domain even when the same library is a target root."""
+    records = require_ok(read_index("tests/fixtures/loaf-index", "test/leaf"))
+    requests = require_ok(
+        read_root_requests(
+            "[{\"name\":\"leaf\",\"loaf\":\"test/leaf\",\"req\":\"^1\",\"features\":[\"extra\"],\"default-features\":false,\"optional\":false}]",
+            "roots",
+        ),
+    )
+    host_requests = require_ok(
+        read_root_requests(
+            "[{\"name\":\"leaf\",\"loaf\":\"test/leaf\",\"req\":\"^1\",\"features\":[],\"default-features\":true,\"optional\":false}]",
+            "host-roots",
+        ),
+    )
+    units = require_ok(resolve_requests(records, requests, {}, synthetic_context(), host_requests))
+    assert len(units) == 2
+    for unit in units:
+        if unit.domain == DependencyDomain.Host:
+            assert "extra" not in unit.features
+            assert "default" in unit.features
+        else:
+            assert "extra" in unit.features
+            assert "default" not in unit.features
+
+
+pub def test_local_proc_macro_manifest_supplies_host_requests() -> None:
+    """Read dependency intent from the original local Loaf facet instead of a flattened target request."""
+    mut source = ""
+    match parse("{\"host-projects\":[\"loaf.toml\"]}"):
+        Err(error) =>
+            fail(error.message())
+            return
+        Ok(document) =>
+            match host_roots(document, "tests/fixtures/local-macro/roots.json"):
+                Err(error) =>
+                    fail(error)
+                    return
+                Ok(value) =>
+                    source = value
+    requests = require_ok(read_root_requests(source, "fixture-macro"))
+    assert len(requests) == 1
+    assert requests[0].package == "test/leaf"
+    assert requests[0].version_requirement == Some("^1")
+    assert requests[0].features == ["extra"]
+    assert requests[0].default_features == Some(true)
+    assert requests[0].optional == Some(false)
+
+
+pub def test_local_host_project_requires_proc_macro_facet() -> None:
+    """Ordinary library facets cannot silently introduce host requests."""
+    match parse("{\"host-projects\":[\"loaf.toml\"]}"):
+        Err(error) => fail(error.message())
+        Ok(document) =>
+            match host_roots(document, "tests/fixtures/local-library/roots.json"):
+                Ok(_) => fail("ordinary library accepted as a host procedural-macro project")
+                Err(error) =>
+                    assert "not a procedural macro" in error
+
+
+pub def test_shard_retains_named_refusal_and_shared_features() -> None:
+    """An unavailable root cannot erase admitted roots or split their unified feature selection."""
+    records = require_ok(read_index("tests/fixtures/loaf-index", "test/leaf"))
+    source = "[\n        {\"name\":\"first\",\"loaf\":\"test/leaf\",\"req\":\"^1\",\"features\":[\"extra\"],\"default-features\":true,\"optional\":false},\n        {\"name\":\"second\",\"loaf\":\"test/leaf\",\"req\":\"^1\",\"features\":[],\"default-features\":false,\"optional\":false},\n        {\"name\":\"missing\",\"loaf\":\"test/absent\",\"req\":\"^1\",\"features\":[],\"default-features\":true,\"optional\":false}\n    ]"
+    match resolve_shard(records, source, synthetic_context()):
+        Err(reason) => fail(reason)
+        Ok(document) =>
+            assert len(shard_array(document, "units")) == 1
+            assert len(shard_array(document, "refused")) == 1
+            encoded = document.to_json().map_err((e) => e.message())
+            match encoded:
+                Err(reason) => fail(reason)
+                Ok(text) =>
+                    assert "missing" in text
+                    assert "test/absent" in text
+                    assert "extra" in text
+                    assert "test/leaf" in text
+
+
+def shard_array(document: JsonValue, field: str) -> list[JsonValue]:
+    """Require a retained shard result array so successful units and refusals cannot be conflated."""
+    if let Some(value) = document.get(field):
+        match value.expect_array():
+            Ok(entries) => return entries
+            Err(error) => return fail_t[list[JsonValue]](error.message())
+    return fail_t[list[JsonValue]](f"missing shard field {field}")

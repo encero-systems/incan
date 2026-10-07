@@ -1,7 +1,7 @@
 """Local intake contracts; these do not establish a selected Rust compilation plan."""
 
 from intake import parse_intent, parse_document, intake
-from manifest_errors import IntakeErrorKind
+from manifest_errors import IntakeError, IntakeErrorKind
 from std.fs import Path
 from std.testing import fail
 
@@ -41,7 +41,7 @@ pub def test_rust_requirements_preserve_features_and_package_alias() -> None:
 
 pub def test_unsupported_intent_is_not_dropped() -> None:
     """Refuse unimplemented top-level and project intent instead of producing a partial request."""
-    for extra in ["[workspace]\nmembers=[]\n", "[project.features]\ndefault=[]\n", "[interop.c]\n", "[rust.source]\nroot='rust'\n"]:
+    for extra in ["[workspace]\nmembers=[]\n", "[project.features]\ndefault=[]\n", "[interop.c]\n", "[rust]\ncrate-name='legacy'\n"]:
         source = "[project]\nname='app'\nversion='0.1.0'\n" + extra
         match parse_intent(source, "loaf.toml"):
             Ok(_) => fail("unsupported intent was accepted")
@@ -128,3 +128,29 @@ pub def test_absent_build_options_stay_absent() -> None:
             assert project.target == None
             assert project.profile == None
             assert project.rust_edition == None
+
+
+pub def test_amended_loaf_dependency_entries() -> Result[None, IntakeError]:
+    """Retain scoped aliases, feature policy and every target alternative in authored intent."""
+    source = "\n[project]\nname = \"app\"\nversion = \"0.1.0\"\nlicense = \"Apache-2.0\"\nprivate = true\n[rust]\nname = \"app_lib\"\ntype = \"lib\"\nedition = \"2024\"\n[rust.source]\nroot = \"rust\"\n[dependencies]\nsearch = { loaf = \"crates-io/regex\", version = \"1\", features = [\"std\"], default-features = false, optional = true }\nlibc = [\n  { loaf = \"crates-io/libc\", version = \"0.2\", target = \"aarch64-apple-darwin\" },\n  { loaf = \"crates-io/libc\", version = \"0.2\", target = 'cfg(all(unix, not(target_os = \"macos\")))' }\n]\n"
+    project = parse_intent(source, "loaf.toml")?
+    assert len(project.rust_inputs) == 3
+    assert project.rust_edition == Some("2024")
+    search = project.rust_inputs[2]
+    assert search.alias == "search"
+    assert search.package == "regex"
+    assert search.loaf == Some("crates-io/regex")
+    assert search.features == ["std"]
+    assert not search.default_features
+    assert search.optional
+    assert project.rust_inputs[0].target == Some("aarch64-apple-darwin")
+    return Ok(None)
+
+
+pub def test_amended_loaf_refuses_retired_grammar() -> None:
+    """Reject removed Rust keys, dependency kinds, extra roles and noncanonical predicates."""
+    for extra in ["[rust]\ncrate-name='app'\n", "[rust]\ncrate-type='lib'\n", "[dev-dependencies]\nregex='1'\n", "[build-dependencies]\nregex='1'\n", "[dependencies]\nregex={crate='regex', version='1'}\n", "[dependencies]\nregex={loaf='crates-io/regex', version='1', target='cfg(all(unix,windows))'}\n"]:
+        source = "[project]\nname='app'\nversion='0.1.0'\n" + extra
+        match parse_intent(source, "loaf.toml"):
+            Ok(_) => fail("removed or noncanonical grammar was admitted")
+            Err(_) => pass

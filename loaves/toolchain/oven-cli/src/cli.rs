@@ -170,6 +170,8 @@ pub enum ToolsMetadataCommand {
 /// Explicit Oven Alpha lifecycle commands.
 #[derive(Subcommand, Debug)]
 pub enum OvenCommand {
+    /// Compile a pinned adopted-Loaf closure without Cargo or build-script execution
+    CompileClosure(CompileClosureArgs),
     /// Transfer one compiler-selected SDK between CI jobs under a bound envelope
     #[command(hide = true)]
     SdkHandoff {
@@ -475,6 +477,35 @@ pub enum OvenCommand {
         #[arg(long = "format", value_enum, default_value = "text")]
         format: OvenOutputFormat,
     },
+}
+
+/// Physical inputs and policy for the shared adopted-closure executor.
+#[derive(Args, Debug)]
+pub struct CompileClosureArgs {
+    /// Index checkout whose committed files supply facts
+    #[arg(long)]
+    pub pin: PathBuf,
+    /// Full index commit identity, used for every read
+    #[arg(long)]
+    pub index_commit: String,
+    /// JSON root requests with target and host triples
+    #[arg(long)]
+    pub roots: PathBuf,
+    /// Compilation profile
+    #[arg(long, value_parser = ["debug", "release"])]
+    pub profile: String,
+    /// Closure result JSON destination
+    #[arg(long)]
+    pub out: PathBuf,
+    /// Optional existing resolution; omission runs the Incan resolver at the supplied index commit
+    #[arg(long)]
+    pub lock: Option<PathBuf>,
+    /// Digest-addressed source archive directory
+    #[arg(long)]
+    pub blobs: Option<PathBuf>,
+    /// Selected compiler; defaults to the active pinned compiler
+    #[arg(long)]
+    pub rustc: Option<PathBuf>,
 }
 
 /// CI-only SDK provider-store transport operations.

@@ -265,8 +265,8 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
         .map(PathBuf::from)
         .unwrap_or_else(|| root.join("report"));
     fs::create_dir_all(&output)?;
-    let closure = corpus::runtime_closure(&graph.formatting, "release")?;
-    let driver = graph.driver_binary("release");
+    let closure = corpus::runtime_closure(&graph.formatting)?;
+    let driver = graph.driver_binary("debug");
     let sysroot = &graph.sysroot;
     let all = all_fixtures()?;
     let workers = std::thread::available_parallelism()?.get();

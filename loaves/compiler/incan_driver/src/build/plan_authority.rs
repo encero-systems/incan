@@ -1031,6 +1031,9 @@ pub fn validate_selected_plan_registry_dependencies(
                 .iter()
                 .find(|(selected_crate, _)| selected_crate == &crate_name)
             {
+                if super::native_sdk_plan::native_registry_dependency_is_selected(dependency, selected_artifact)? {
+                    continue;
+                }
                 validate_selected_sealed_registry_leaf(dependency, selected_artifact, registry_authority, profile)
                     .map_err(oven_rustc_error)?;
             }

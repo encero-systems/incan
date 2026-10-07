@@ -7,6 +7,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::build::native_sdk::prepare_or_discover_sdk_inventory;
 use crate::cargo_policy::{CargoPolicy, enforce_project_toolchain_constraint};
 use crate::error::{CliError, CliResult};
 use crate::lock::workspace::{
@@ -18,7 +19,6 @@ use crate::lock::{
 };
 use crate::session::CompilationSession;
 use incan_provider::dependency_resolver::ResolvedDependencies;
-use incan_provider::inventory::prepare_or_discover_sdk_inventory;
 use incan_provider::requirements::{
     ProjectRequirements, merge_project_requirement_dependencies, semantic_sdk_path_dependencies,
 };
