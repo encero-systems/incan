@@ -923,7 +923,8 @@ pub struct DeclarationArtifacts {
     pub enum_payload_types: HashMap<(usize, usize), ResolvedType>,
     /// Explicit and automatic native derives selected by checking for each source enum.
     pub enum_derives: HashMap<String, Vec<String>>,
-    /// Accepted foreign nominal bindings retained before lexical checker context is discarded.
+    /// Active module-scope nominal identities from source and package bindings, retained before lexical checker
+    /// context is discarded.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
     /// Exact selected foreign origins retained from accepted bindings for native representation projection.
     pub named_type_origins: std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>,
