@@ -77,6 +77,7 @@ pub enum PlanType:
     GeneratorMutRef advances caller-owned state. GeneratorYield and GeneratorYieldRef are producer-only runtime
     handles; they never represent source values or eagerly collected elements.
     ZipIterator retains two independent owned list snapshots; its reference variants retain shared read or exclusive poll authority.
+    FunctionPointer retains its inputs followed by exactly one return entry; the vector is never empty, including for a zero-argument function. FunctionItem keeps that same signature and the proven source declaration's name; it remains distinct from a pointer until an explicit reification.
     """
 
     Int
@@ -136,6 +137,8 @@ pub enum PlanType:
     GeneratorMutRef(ListLeaf, int)
     GeneratorYield(ListLeaf, int)
     GeneratorYieldRef(ListLeaf, int)
+    FunctionPointer(list[PlanType])
+    FunctionItem(str, list[PlanType])
 
 
 pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
@@ -294,6 +297,8 @@ pub enum RvalueKind:
     Borrow(Place)
     MutBorrow(Place)
     UnsizeSlice(Operand)
+    FunctionItem(Callee)
+    ReifyFunction(Operand)
 
 
 @derive(Clone, PartialEq)
@@ -323,7 +328,7 @@ pub model Statement:
 
 @derive(Clone, PartialEq)
 pub enum CalleeKind:
-    """A planned function, canonical external path, checked model clone, explicit generic instantiation, or an exact legacy generator runtime operation."""
+    """A planned function, canonical external path, checked model clone, explicit generic instantiation, exact legacy generator runtime operation, or a local item/pointer operand with its retained type."""
 
     Planned(str)
     External(str)
@@ -336,6 +341,7 @@ pub enum CalleeKind:
     SpawnGenerator(str, ListLeaf, int)
     YieldGenerator(ListLeaf, int)
     CollectGenerator(ListLeaf, int)
+    Value(Operand)
 
 
 @derive(Clone, PartialEq)

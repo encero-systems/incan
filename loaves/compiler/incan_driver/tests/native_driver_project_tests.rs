@@ -603,6 +603,122 @@ def main() -> None:
     Ok(())
 }
 
+/// Compare stored function values, callable parameters, and capturing closure expressions with legacy execution.
+#[test]
+fn direct_route_function_values_and_closures_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("closures")?;
+    check_function_item_values(fixture, &root)?;
+    let source = root.join("closures.incn");
+    fs::write(
+        &source,
+        concat!(
+            "def double(value: int) -> int:\n    \"\"\"Double the argument.\"\"\"\n    return value * 2\n\n",
+            "def apply(f: (int) -> int, value: int) -> int:\n    \"\"\"Invoke a function-typed argument.\"\"\"\n    return f(value)\n\n",
+            "def apply_callable(f: Callable[int, int], value: int) -> int:\n    \"\"\"Invoke a Callable-typed argument.\"\"\"\n    return f(value)\n\n",
+            "def make_adder(offset: int) -> (int) -> int:\n    \"\"\"Return a closure owning its offset.\"\"\"\n    return (value) => value + offset\n\n",
+            "def main() -> None:\n    \"\"\"Exercise stored, borrowed, returned, and snapshot closures.\"\"\"\n",
+            "    stored = double\n",
+            "    println(stored(4))\n",
+            "    println(apply(double, 5))\n",
+            "    println(apply((value) => value + 1, 4))\n",
+            "    println(apply_callable(double, 6))\n",
+            "    offset = 2\n",
+            "    add: (int) -> int = (value) => value + offset\n",
+            "    println(add(40))\n",
+            "    println(apply(add, 39))\n",
+            "    println(add(41))\n",
+            "    returned = make_adder(3)\n",
+            "    println(returned(40))\n",
+            "    mut bias = 2\n",
+            "    snapshot: (int) -> int = (value) => value + bias\n",
+            "    bias = 5\n",
+            "    println(snapshot(40))\n",
+            "    println(bias)\n",
+        ),
+    )?;
+    let legacy_root = root.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy function values and closure expressions compilation",
+    );
+    let legacy = Command::new(legacy_root.join("oven/release/closures")).output()?;
+    success(&legacy, "legacy function values and closure expressions execution");
+    assert_eq!(legacy.stdout, b"8\n10\n5\n12\n42\n41\n43\n43\n42\n5\n");
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let native = root.join("native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native function values and closure expressions compilation",
+    );
+    let actual = Command::new(native).output()?;
+    success(&actual, "native function values and closure expressions execution");
+    assert_eq!(actual.stdout, legacy.stdout);
+    Ok(())
+}
+
+/// Prove stored items, aliases, explicit pointer coercions, returned pointers, and indirect invocation separately
+/// before the same focused test exercises closure-holding contracts.
+fn check_function_item_values(fixture: &DriverFixture, root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let source = root.join("function-items.incn");
+    fs::write(
+        &source,
+        concat!(
+            "def double(value: int) -> int:\n    return value * 2\n\n",
+            "def pointer() -> (int) -> int:\n    return double\n\n",
+            "def echo(value: str) -> str:\n    return value\n\n",
+            "def main() -> None:\n",
+            "    stored = double\n    alias = stored\n    typed: (int) -> int = double\n",
+            "    println(alias(4))\n    println(typed(5))\n",
+            "    returned = pointer()\n    println(returned(6))\n",
+            "    stored_echo = echo\n    println(stored_echo(\"hello\"))\n",
+        ),
+    )?;
+    let legacy_root = root.join("function-items-legacy");
+    success(
+        &support::repo_command()
+            .current_dir(root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy function-item compilation",
+    );
+    let legacy = Command::new(legacy_root.join("oven/release/function-items")).output()?;
+    success(&legacy, "legacy function-item execution");
+    assert_eq!(legacy.stdout, b"8\n10\n12\nhello\n");
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let native = root.join("function-items-native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native function-item compilation",
+    );
+    let actual = Command::new(native).output()?;
+    success(&actual, "native function-item execution");
+    assert_eq!(actual.stdout, legacy.stdout);
+    eprintln!("stored function items and pointers matched legacy byte for byte");
+    Ok(())
+}
+
 /// Measure every behavior fixture only when explicitly requested.
 #[test]
 #[ignore = "explicit full direct-route census"]

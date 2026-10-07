@@ -92,6 +92,9 @@ fn call_operand<'tcx>(
     sources: &Sources<'_>,
     callee: &crate::plan::Callee,
 ) -> Result<mir::Operand<'tcx>, PlanError> {
+    if let crate::plan::CalleeKind::Value(value) = &callee.kind {
+        return operand(tcx, sources, value);
+    }
     let mut arguments = Vec::new();
     match &callee.kind {
         crate::plan::CalleeKind::SpawnGenerator(name, leaf, depth) => {

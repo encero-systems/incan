@@ -82,6 +82,7 @@ from rust::incan_semantics_core::body_ir import (
     FormatStyle as RustFormatStyle,
     HelperOp as RustHelper,
     NamedCallableTarget as RustNamedCallableTarget,
+    LocalCallableTarget as RustLocalCallableTarget,
     Operand as RustOperand,
     OwnershipFact,
     Place as RustPlace,
@@ -220,6 +221,14 @@ from assertions import lower_assertion
 from async_ import future_type, future_declarations, construct_future, await_future, async_entry, evaluator_name
 from defaults import default_arguments, default_type, model_default_arguments
 from type_parameters import Instance, instantiate, substitute
+from closures import (
+    validate_callable_representation,
+    source_function_item,
+    function_assignment,
+    callable_copy_type,
+    callable_signature,
+    function_pointer_storage,
+)
 # =====================================================================================================================
 # Boundary types and validation
 # =====================================================================================================================
@@ -337,6 +346,11 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
         Some(global) => return read_static(builder, value, global, fact, span)
         None => pass
     target = scalar_place(builder, value, span)?
+    if callable_copy_type(place_type(builder.locals, target)):
+        match fact:
+            OwnershipFact.Unknown => return Err("unsupported Body IR unknown callable ownership")
+            OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable callable borrow")
+            _ => return Ok(read_place(target, false, span))
     match fact:
         OwnershipFact.Copy => return Ok(Operand(kind=OperandKind.Copy(target), span=span))
         OwnershipFact.Move =>
@@ -726,7 +740,10 @@ def lower_return(mut builder: Builder, value: &Option[RustOperand], span: Source
                 track_rvalue_moves(builder, RvalueKind.Use(result))
         None => pass
     result = coerce_numeric_operand(builder, result, return_type, span)?
-    builder.emit(plan_assign(plan_place(0, span), RvalueKind.Use(result), span))
+    if callable_copy_type(return_type):
+        assign_callable(builder, plan_place(0, span), result, true, span)?
+    else:
+        builder.emit(plan_assign(plan_place(0, span), RvalueKind.Use(result), span))
     validate_exact_float(builder, plan_place(0, span), span)
     drop_all_owned(builder, span)
     builder.finish(TerminatorKind.Return, span)
@@ -795,6 +812,23 @@ def lower_local_assignment(
     """Assign a resolved local slot while preserving checked values and ownership replacement."""
     if target.local in builder.borrowed_items:
         return Err("unsupported Body IR mutation of borrowed list iteration item")
+    match source_function_item(module, value)?:
+        Some(item) =>
+            name, ty = item
+            if target.projection != Projection.Whole:
+                return Err("unsupported Body IR projected function-item construction")
+            builder.locals[target.local].ty = ty
+            builder.emit(
+                plan_assign(target, RvalueKind.FunctionItem(Callee(kind=CalleeKind.Planned(name), span=span)), span),
+            )
+            return Ok(None)
+        None => pass
+    match value:
+        RustRvalue.Use(operand) =>
+            if callable_copy_type(place_type(builder.locals, target)):
+                callable = scalar_operand(builder, operand, span)?
+                return assign_callable(builder, target, callable, target.local in builder.function_pointer_locals, span)
+        _ => pass
     match builder.locals[target.local].ty:
         PlanType.ZipIteratorMutRef(_left, _right) =>
             match value:
@@ -885,6 +919,23 @@ def lower_local_assignment(
     validate_exact_float(builder, target, span)
     if is_nominal_type(place_type(builder.locals, target)) and target.local not in builder.owned:
         builder.owned.append(target.local)
+    return Ok(None)
+
+
+def assign_callable(
+    mut builder: Builder,
+    target: Place,
+    value: Operand,
+    pointer_storage: bool,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Store a Copy callable with its retained item type or the source-required function-pointer coercion."""
+    if target.projection != Projection.Whole:
+        return Err("unsupported Body IR projected callable assignment")
+    source = operand_type(builder, value)?
+    ty, operation = function_assignment(place_type(builder.locals, target), source, value, pointer_storage)?
+    builder.locals[target.local].ty = ty
+    builder.emit(plan_assign(target, operation, span))
     return Ok(None)
 
 
@@ -1019,6 +1070,8 @@ def lower_call(
                     match callable:
                         CallableTarget.Named(target) =>
                             return lower_named_target(module, builder, target, arguments, destination, span)
+                        CallableTarget.Local(target) =>
+                            return lower_callable_value(builder, target, arguments, destination, span)
                         _ => return Err("unsupported Body IR local callable value")
                 RustCallee.Method(target) =>
                     return lower_method_call(module, builder, target, arguments, destination, span)
@@ -1275,17 +1328,63 @@ def emit_local_call(
         body.return_type,
         builder.intrinsics,
     )?
+    return lower_callable_result(
+        builder,
+        CalleeKind.Planned(function_name(module, body)),
+        operands,
+        output,
+        result_type,
+        span,
+    )
+
+
+def lower_callable_result(
+    mut builder: Builder,
+    callee: CalleeKind,
+    operands: list[Operand],
+    output: Place,
+    result_type: PlanType,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Preserve owned return replacement and unwind cleanup identically for declared and locally held callees."""
     if result_type == PlanType.String or is_nominal_type(result_type) or is_owned_collection(result_type):
         result = temporary(builder, result_type, span)
-        terminate_call(builder, CalleeKind.Planned(function_name(module, body)), operands, result, span)
+        terminate_call(builder, callee, operands, result, span)
         builder.owned.append(result.local)
         drop_owned(builder, output.local, span)
         forget_owned(builder, result.local)
         builder.emit(plan_assign(output, RvalueKind.Use(read_place(result, true, span)), span))
         builder.owned.append(output.local)
     else:
-        terminate_call(builder, CalleeKind.Planned(function_name(module, body)), operands, output, span)
+        terminate_call(builder, callee, operands, output, span)
     return Ok(None)
+
+
+def lower_callable_value(
+    mut builder: Builder,
+    target: &RustLocalCallableTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Call an admitted function item or pointer; closure environments retain a distinct named refusal."""
+    callable = scalar_place(builder, target.operand.place, span)?
+    signature = callable_signature(place_type(builder.locals, callable))?
+    if len(signature) == 0:
+        return Err("invalid Body IR callable signature without return type")
+    mut parameters: list[PlanType] = []
+    for index in range(len(signature) - 1):
+        parameters.append(signature[index])
+    operands = ordered_slot_operands(builder, target.binding, arguments, parameters, span, 0)?
+    result = signature[-1]
+    mut output = plan_place(0, span)
+    match destination:
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+        None =>
+            output = temporary(builder, result, span)
+    value = place_read(builder, target.operand.place, target.operand.fact, span)?
+    return lower_callable_result(builder, CalleeKind.Value(value), operands, output, result, span)
 
 
 def lower_stdlib_delegation(
@@ -1442,7 +1541,23 @@ pub def call_argument_operand(
         text = display_operand(builder, value, span)?
         return Ok(read_place(text, true, span))
     operand = boundary_operand(builder, value, ty, span)?
-    return coerce_numeric_operand(builder, operand, ty, span)
+    coerced = coerce_numeric_operand(builder, operand, ty, span)?
+    return function_argument(builder, ty, coerced, span)
+
+
+def function_argument(mut builder: Builder, ty: PlanType, value: Operand, span: SourceSpan) -> Result[Operand, str]:
+    """Reify an item passed into a function-pointer signature without changing its inferred binding type."""
+    match ty:
+        PlanType.FunctionPointer(_signature) =>
+            source = operand_type(builder, value)?
+            _type, operation = function_assignment(ty, source, value, true)?
+            match operation:
+                RvalueKind.ReifyFunction(_value) =>
+                    result = temporary(builder, ty, span)
+                    builder.emit(plan_assign(result, operation, span))
+                    return Ok(read_place(result, false, span))
+                _ => return Ok(value)
+        _ => return Ok(value)
 
 
 def fixed_arguments(
@@ -2615,6 +2730,7 @@ def lower_function(
     match body.extern_delegation:
         Some(_delegation) => return Err("unsupported Body IR ExternDelegation")
         None => pass
+    validate_callable_representation(body)?
     span = location(body.span, source, file)
     declared_type = native_source_type(
         module.nominal_declarations,
@@ -2666,6 +2782,7 @@ def lower_function(
         instances=[],
         type_parameters=names,
         type_arguments=bindings,
+        function_pointer_locals=function_pointer_storage(body),
     )
     _ = builder.new_block(span)
     if body.is_generator():
