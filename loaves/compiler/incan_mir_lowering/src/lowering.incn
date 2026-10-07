@@ -1711,6 +1711,9 @@ pub def display_operand(mut builder: Builder, value: &RustOperand, span: SourceS
     match value:
         RustOperand.Place(read) =>
             place = scalar_place(builder, read.place, span)?
+            if is_list(place_type(builder.locals, place)):
+                operand = value_operand(builder, value, span)?
+                return display_plan_operand(builder, operand, span)
             match place_type(builder.locals, place):
                 PlanType.Enum(owner, name) =>
                     if owner >= len(builder.enums) + len(builder.unions):
@@ -1738,6 +1741,8 @@ pub def display_operand(mut builder: Builder, value: &RustOperand, span: SourceS
 def display_plan_operand(mut builder: Builder, operand: Operand, span: SourceSpan) -> Result[Place, str]:
     """Format a materialized scalar without re-reading its source ownership fact."""
     ty = operand_type(builder, operand)?
+    if is_owned_list(ty):
+        return debug_plan_operand(builder, operand, span)
     if ty == PlanType.String:
         return display_string_operand(builder, operand, span)
     if has_sized_numeric(ty):
@@ -1763,6 +1768,19 @@ def display_plan_operand(mut builder: Builder, operand: Operand, span: SourceSpa
         _ => return Err("unsupported Body IR display type")
     result = temporary(builder, PlanType.String, span)
     external_call(builder, f"incan_native_runtime::{name}", [ty], PlanType.String, [operand], result, span)
+    return Ok(result)
+
+
+def debug_plan_operand(mut builder: Builder, operand: Operand, span: SourceSpan) -> Result[Place, str]:
+    """Invoke legacy Debug on an admitted carrier after its read ownership has been materialized."""
+    ty = operand_type(builder, operand)?
+    path = "incan_native_runtime::debug_value"
+    result = temporary(builder, PlanType.String, span)
+    builder.externals.append(
+        ExternalFunction(path=path, type_arguments=[ty], parameters=[ty], return_type=PlanType.String, span=span),
+    )
+    terminate_call(builder, CalleeKind.Instantiated(path, ty), [operand], result, span)
+    builder.owned.append(result.local)
     return Ok(result)
 
 

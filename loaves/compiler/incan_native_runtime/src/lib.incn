@@ -3,6 +3,7 @@
 pub from carriers import format_carrier, clone_carrier_payload
 pub from model_values import (
     debug_model,
+    debug_value,
     serialize_model,
     serialize_int,
     serialize_float,

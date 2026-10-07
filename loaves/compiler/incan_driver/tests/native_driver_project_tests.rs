@@ -1326,6 +1326,28 @@ def main() -> None:
     Ok(())
 }
 
+/// List display preserves legacy Debug spelling, escaping, nesting, and repeated owner reads.
+#[test]
+fn list_display_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "list_display",
+        r#"def main() -> None:
+    values = [1, 2]
+    println(values)
+    println(f"values={values}")
+    println(values)
+    println([true, false])
+    println([1.0, -2.5])
+    words = ["quoted\"", "line\n", "é"]
+    println(words)
+    println(words)
+    println([[1, 2], [3]])
+    println([1] + [2])
+"#,
+        None,
+    )
+}
+
 /// Derived Display uses the same Debug structure in println, string conversion, and interpolation as legacy.
 #[test]
 fn model_display_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
