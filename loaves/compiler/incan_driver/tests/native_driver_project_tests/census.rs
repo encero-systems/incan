@@ -15,6 +15,7 @@ struct Record {
     observed: String,
     detail: String,
     pending_reason: Option<String>,
+    formerly_multi_module: bool,
     elapsed_ms: u128,
 }
 
@@ -102,14 +103,47 @@ fn measure(
         };
         return Ok(("check-only".into(), detail));
     }
-    if fixture.layout != FixtureLayout::SingleFile {
-        return Ok((
-            "multi-module".into(),
-            "directory fixture; direct source entrypoint does not resolve modules".into(),
-        ));
-    }
+    let source = if fixture.layout == FixtureLayout::SingleFile {
+        fixture.path.clone()
+    } else {
+        fixtures::materialize(fixture, scratch)?;
+        let projects = std::iter::once(scratch.to_path_buf())
+            .chain(fixture.providers.iter().map(|provider| scratch.join(&provider.path)));
+        for project in projects {
+            let manifest = oven_model::manifest::ProjectManifest::load(&project.join("loaf.toml"))?;
+            if let Some((name, dependency)) = manifest.rust_dependencies().iter().min_by_key(|(name, _)| *name) {
+                let source = match dependency.source {
+                    oven_model::manifest::DependencySource::Registry => "registry",
+                    oven_model::manifest::DependencySource::Path { .. } => "native path",
+                    oven_model::manifest::DependencySource::Git { .. } => "native Git",
+                };
+                return Ok((
+                    "refused".into(),
+                    format!("unsupported source {source} dependency `{name}` on the native route"),
+                ));
+            }
+        }
+        for provider in &fixture.providers {
+            let mut bake = support::cli_project::configured_incan_command(
+                &scratch.join(&provider.path),
+                &["oven", "bake", "--project", "."],
+            );
+            support::configure_explicit_oven_bake_command(&mut bake)?;
+            let Some(output) = bounded(&mut bake, scratch, deadline)? else {
+                return Ok((
+                    "driver-error".into(),
+                    format!("local library {} preparation timeout", provider.name),
+                ));
+            };
+            if !output.status.success() {
+                return Ok(compile_failure(&output));
+            }
+        }
+        scratch.join("src/main.incn")
+    };
     let binary = scratch.join("native");
-    let mut command = corpus::source_command(driver, &fixture.path, &binary, sysroot, closure);
+    let mut command = corpus::source_command(driver, &source, &binary, sysroot, closure);
+    command.current_dir(scratch);
     let Some(output) = bounded(&mut command, scratch, deadline)? else {
         return Ok(("driver-error".into(), "compile timeout".into()));
     };
@@ -200,6 +234,16 @@ fn markdown(records: &[Record]) -> String {
     for (detail, count) in ranked {
         text.push_str(&format!("| {} | {count} |\n", detail.replace('|', "\\|")));
     }
+    text.push_str("\n## Former directory-fixture exclusions\n\n| Fixture | Class | Detail |\n| --- | --- | --- |\n");
+    for record in records.iter().filter(|record| record.formerly_multi_module) {
+        text.push_str(&format!(
+            "| {}/{} | {} | {} |\n",
+            record.area,
+            record.name,
+            record.class,
+            record.detail.replace('|', "\\|")
+        ));
+    }
     text.push_str("\n## Wrong and driver errors\n");
     for record in records
         .iter()
@@ -260,6 +304,9 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
                         observed,
                         detail,
                         pending_reason: fixture.header.pending.clone(),
+                        formerly_multi_module: fixture.layout != FixtureLayout::SingleFile
+                            && fixture.header.pending.is_none()
+                            && matches!(fixture.header.expectation, Expectation::Run { .. }),
                         elapsed_ms: start.elapsed().as_millis(),
                     });
                 }

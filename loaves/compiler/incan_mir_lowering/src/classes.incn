@@ -1,6 +1,6 @@
 """Class receiver frames and canonical source method admission."""
 
-from rust::incan_semantics_core import SemanticSourceTargetKind
+from rust::incan_semantics_core import SemanticSourceTargetKind, canonical_module_identity
 from rust::incan_semantics_core::body_ir import (
     Body,
     LocalOrigin,
@@ -29,10 +29,15 @@ pub def frame_type(module: &BodyIrModule, local: &RustLocal) -> Result[PlanType,
         None => return Ok(ty)
 
 
-pub def function_name(body: &Body) -> str:
-    """Use source identity for native symbols so equal method spellings remain distinct."""
+pub def function_name(module: &BodyIrModule, body: &Body) -> str:
+    """Keep entry symbols and encode dependency module identities so equal spellings and spans remain distinct."""
     match body.canonical:
         Some(identity) =>
+            match canonical_module_identity(identity):
+                Some(owner) =>
+                    if owner != module.module_id.path():
+                        return module_function_symbol(owner, body)
+                None => pass
             if identity.kind == SemanticSourceTargetKind.Function:
                 return str(body.name)
         None => pass
@@ -41,6 +46,39 @@ pub def function_name(body: &Body) -> str:
             Some(_mutable) => return f"__incan_body_{body.span.start}_{body.locals[0].ty}"
             None => pass
     return f"__incan_body_{body.span.start}"
+
+
+pub def body_module_identity(body: &Body) -> Result[str, str]:
+    """Read the validated body's declaring module independently of the project entry module."""
+    match body.canonical:
+        Some(identity) =>
+            match canonical_module_identity(identity):
+                Some(owner) => return Ok(owner)
+                None => return Err("invalid Body IR body without source module owner")
+        None => return Err("invalid Body IR body without canonical identity")
+
+
+def module_function_symbol(owner: str, body: &Body) -> str:
+    """Encode the full owner and declaration span using identifier-safe bytes without punctuation collisions."""
+    mut symbol = "__incan_module"
+    for segment in owner.split("::"):
+        symbol += symbol_component(segment)
+    # A trait default can have the same canonical declaration and span in several concrete receiver frames.
+    if len(body.locals) != 0:
+        match receiver_mode(body.locals[0].origin):
+            Some(_mutable) =>
+                symbol += f"_receiver{symbol_component(str(body.locals[0].ty))}"
+            None => pass
+    return f"{symbol}_{body.span.start}_{body.span.end}"
+
+
+def symbol_component(value: str) -> str:
+    """Encode one length-delimited UTF-8 component without admitting punctuation into a native identifier."""
+    encoded = value.encode()
+    mut component = f"_{len(encoded)}"
+    for byte in encoded:
+        component += f"_{byte}"
+    return component
 
 
 pub def method_receiver(
