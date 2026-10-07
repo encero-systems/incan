@@ -926,7 +926,8 @@ pub struct DeclarationArtifacts {
     /// Explicit builtin, canonical serde, and implicit native derives selected for source models, in legacy emission
     /// order. Derived Display remains a semantic selection, not a Rust macro.
     pub model_derives: HashMap<String, Vec<String>>,
-    /// Accepted foreign nominal bindings retained before lexical checker context is discarded.
+    /// Active module-scope nominal identities from source and package bindings, retained before lexical checker
+    /// context is discarded.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
     /// Exact selected foreign origins retained from accepted bindings for native representation projection.
     pub named_type_origins: std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>,
