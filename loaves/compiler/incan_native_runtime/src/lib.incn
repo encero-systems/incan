@@ -21,12 +21,24 @@ pub from builtins import sum_int, sum_bool, truth_text, truth_list
 pub from builtins import absolute_int, truth_int, truth_float, truth_bool, boolean_and, boolean_or
 from rust::incan_std_core::iter import range as runtime_range
 pub from statics import (
+    read_static_text,
+    write_static_text,
     read_static_int,
     write_static_int,
     read_static_float,
     write_static_float,
     read_static_bool,
     write_static_bool,
+)
+pub from static_lists import (
+    read_static_int_list,
+    write_static_int_list,
+    read_static_float_list,
+    write_static_float_list,
+    read_static_bool_list,
+    write_static_bool_list,
+    read_static_text_list,
+    write_static_text_list,
 )
 from panic_hook import initialize_panic_hook as initialize_entrypoint
 pub from strings import (

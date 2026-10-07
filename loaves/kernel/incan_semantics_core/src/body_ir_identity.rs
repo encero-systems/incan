@@ -7,33 +7,51 @@
 //! coherent-looking foreign record. These checks never mint or complete an identity; they only confirm that the
 //! retained ones agree with each other and belong to this module. They answer the same question for every consumer.
 
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use std::collections::BTreeSet;
 
 use crate::body_ir::{
-    Body, BodyIrModule, FieldlessEnumDeclaration, LocalOrigin, NominalDeclaration, ValueEnumDeclaration,
+    Body, BodyIrModule, Constant, FieldlessEnumDeclaration, LocalOrigin, NominalDeclaration, StaticInitializer,
+    ValueEnumDeclaration,
 };
 use crate::{
-    CanonicalSymbolId, CompilerNodeId, CompilerNodeKind, SemanticSourceTargetKind, SymbolNamespace,
-    canonical_module_identity,
+    CanonicalSymbolId, CompilerNodeId, CompilerNodeKind, IncanPrimitiveType, IncanType, SemanticSourceTargetKind,
+    SymbolNamespace, canonical_module_identity,
 };
 
 impl BodyIrModule {
-    /// Prove a scalar static belongs to this module and its literal matches its exact retained carrier.
+    /// Prove a literal static belongs to this module and its initializer matches its exact retained carrier.
     pub fn is_well_formed_static_declaration(&self, declaration: &crate::body_ir::StaticDeclaration) -> bool {
-        use crate::body_ir::Constant;
-        use crate::{IncanPrimitiveType, IncanType};
         self.declaration_id_for_canonical(
             &declaration.canonical,
             SymbolNamespace::OrdinaryLexical,
             SemanticSourceTargetKind::Static,
         )
         .is_some()
-            && matches!(
-                (&declaration.ty, &declaration.initial),
-                (IncanType::Primitive(IncanPrimitiveType::Int), Constant::Int(_))
-                    | (IncanType::Primitive(IncanPrimitiveType::Float), Constant::Float(_))
-                    | (IncanType::Primitive(IncanPrimitiveType::Bool), Constant::Bool(_))
-            )
+            && match &declaration.initial {
+                StaticInitializer::Literal(value) => literal_static_carrier_matches(&declaration.ty, value),
+                StaticInitializer::List(values) => {
+                    let IncanType::Generic { base, args } = &declaration.ty else {
+                        return false;
+                    };
+                    let [element] = args.as_slice() else {
+                        return false;
+                    };
+                    collections::from_str(base) == Some(CollectionTypeId::List)
+                        && matches!(
+                            element,
+                            IncanType::Primitive(
+                                IncanPrimitiveType::Int
+                                    | IncanPrimitiveType::Float
+                                    | IncanPrimitiveType::Bool
+                                    | IncanPrimitiveType::Str
+                            )
+                        )
+                        && values
+                            .iter()
+                            .all(|value| literal_static_carrier_matches(element, value))
+                }
+            }
     }
 
     /// Whether a normal enum layout belongs to this module and every variant identity belongs to its declared owner.
@@ -303,6 +321,17 @@ impl BodyIrModule {
                     && variant_canonical.declaration_name == variant_name
             })
     }
+}
+
+/// Validate a literal payload against its exact primitive storage or list element carrier.
+fn literal_static_carrier_matches(ty: &IncanType, value: &Constant) -> bool {
+    matches!(
+        (ty, value),
+        (IncanType::Primitive(IncanPrimitiveType::Int), Constant::Int(_))
+            | (IncanType::Primitive(IncanPrimitiveType::Float), Constant::Float(_))
+            | (IncanType::Primitive(IncanPrimitiveType::Bool), Constant::Bool(_))
+            | (IncanType::Primitive(IncanPrimitiveType::Str), Constant::Str(_))
+    )
 }
 
 /// Whether `member` is declared inside `owner`: its declaration site lies within the owner's.

@@ -3,7 +3,7 @@
 
 use super::*;
 
-/// Retain only scalar literal statics, whose lazy initialization has no user-visible evaluation effects.
+/// Retain primitive and list literal statics, whose initialization has no user-visible evaluation effects.
 pub(super) fn collect_scalar_statics(program: &ast::Program, type_info: &TypeCheckInfo) -> Vec<bir::StaticDeclaration> {
     program
         .declarations
@@ -12,17 +12,8 @@ pub(super) fn collect_scalar_statics(program: &ast::Program, type_info: &TypeChe
             let ast::Declaration::Static(storage) = &declaration.node else {
                 return None;
             };
-            let ast::Expr::Literal(literal) = &storage.value.node else {
-                return None;
-            };
             let ty = semantic_type_from_resolved(type_info.expr_type(storage.value.span)?);
-            if !matches!(
-                ty,
-                IncanType::Primitive(IncanPrimitiveType::Int | IncanPrimitiveType::Float | IncanPrimitiveType::Bool)
-            ) {
-                return None;
-            }
-            let initial = primitives::lower_checked_literal(literal, &ty);
+            let initial = static_literal_initializer(&storage.value.node, &ty)?;
             let canonical = type_info
                 .declarations
                 .declaration_identities
@@ -31,6 +22,44 @@ pub(super) fn collect_scalar_statics(program: &ast::Program, type_info: &TypeChe
             Some(bir::StaticDeclaration { canonical, ty, initial })
         })
         .collect()
+}
+
+/// Preserve literal values only in their exact checked primitive or list element carrier.
+fn static_literal_initializer(value: &ast::Expr, ty: &IncanType) -> Option<bir::StaticInitializer> {
+    match (value, ty) {
+        (ast::Expr::Literal(literal), IncanType::Primitive(primitive))
+            if matches!(
+                primitive,
+                IncanPrimitiveType::Int
+                    | IncanPrimitiveType::Float
+                    | IncanPrimitiveType::Bool
+                    | IncanPrimitiveType::Str
+            ) =>
+        {
+            Some(bir::StaticInitializer::Literal(primitives::lower_checked_literal(
+                literal, ty,
+            )))
+        }
+        (ast::Expr::List(entries), IncanType::Generic { base, args })
+            if collections::from_str(base) == Some(CollectionTypeId::List) =>
+        {
+            let [element] = args.as_slice() else {
+                return None;
+            };
+            let values = entries
+                .iter()
+                .map(|entry| {
+                    let bir::StaticInitializer::Literal(value) = static_literal_initializer(&entry.node, element)?
+                    else {
+                        return None;
+                    };
+                    Some(value)
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some(bir::StaticInitializer::List(values))
+        }
+        _ => None,
+    }
 }
 
 /// Retain canonical normal-enum layouts from checked annotation and derive facts, never syntax-based type guesses.

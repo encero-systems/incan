@@ -976,6 +976,40 @@ def main() -> None:
     )
 }
 
+/// String static reads preserve live aliases, detached bindings, assignments, and returned snapshots.
+#[test]
+fn string_statics_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "string_statics",
+        r#"static TEXT: str = "initial"
+
+def read() -> str:
+    return TEXT
+
+def replace(value: str) -> None:
+    TEXT = value
+
+def main() -> None:
+    first = read()
+    live = TEXT
+    mut changing = TEXT
+    println(TEXT)
+    println(read())
+    replace("changed")
+    println(live)
+    println(changing)
+    changing += "!"
+    replace("final")
+    println(live)
+    println(changing)
+    println(first)
+    println(TEXT)
+    println(read())
+"#,
+        None,
+    )
+}
+
 /// Newtypes, erased aliases, scalar constants, and persistent scalar statics retain exactly the legacy output.
 #[test]
 fn declarations_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

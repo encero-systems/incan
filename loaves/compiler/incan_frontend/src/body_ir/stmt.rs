@@ -6,15 +6,38 @@ use super::*;
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Lower every statement in `stmts` into `out`, within `scope`. Statements are lowered in source order and each
     /// one is given the statement suffix that follows it (`&stmts[index + 1..]`), so last-use countdowns seeded by
-    /// [`Self::declare_new_local`] only count reads that can still occur after the declaration.
+    /// [`Self::declare_new_local`] only count reads that can still occur after the declaration. Nested blocks cannot
+    /// change an enclosing static binding's handle selection: that needs a runtime handle fact, so it refuses
+    /// explicitly rather than retaining whichever branch happened to lower last.
     pub(super) fn lower_block_into(
         &mut self,
         stmts: &[ast::Spanned<ast::Statement>],
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) {
+        // ---- Context: storage bindings in the enclosing scope ----
+        let nested = self.scopes.iter().any(|info| info.id == scope && info.parent.is_some());
+        let enclosing_aliases = self.static_aliases.clone();
+        let enclosing_handles = self.static_binding_locals.clone();
+
+        // ---- Context: source-order statements ----
         for (index, stmt) in stmts.iter().enumerate() {
             self.lower_stmt_into(stmt, &stmts[index + 1..], scope, out);
+        }
+
+        // ---- Context: a handle selected by runtime control flow ----
+        if nested {
+            if enclosing_handles
+                .iter()
+                .any(|local| self.static_aliases.get(local) != enclosing_aliases.get(local))
+            {
+                self.push_unsupported_stmt(
+                    "control-flow-dependent static binding handle".to_string(),
+                    self.scope_span(scope),
+                    out,
+                );
+            }
+            self.static_aliases = enclosing_aliases;
         }
     }
 
@@ -206,6 +229,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.push_unsupported_stmt(format!("assignment target `{target}` is not writable"), span, out);
             return;
         }
+        self.record_static_alias_assignment(assignment, &place, &value);
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {
                 place: place.clone(),
@@ -384,8 +408,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             );
             return;
         }
-        let (fact, last_use) = self.ownership_fact_for_place(&lhs_place, &lhs_ty);
-        let lhs_operand = bir::Operand::place(lhs_place.clone(), fact, last_use);
+        let read_place = self.static_alias_read_place(&lhs_place);
+        let (fact, last_use) = self.ownership_fact_for_place(&read_place, &lhs_ty);
+        let lhs_operand = bir::Operand::place(read_place, fact, last_use);
         let rhs_operand = self.lower_expr_to_operand(&compound_assignment.value, scope, out);
         let result = self.lower_binary_from_operands(
             op,
@@ -398,6 +423,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             span,
             out,
         );
+        if let Some(local) = lhs_place.local_id() {
+            self.static_aliases.remove(&local);
+        }
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {
                 place: lhs_place,

@@ -1836,6 +1836,16 @@ def borrow_text_operand(mut builder: Builder, value: &RustOperand, span: SourceS
     """Borrow an owned string for a helper without transferring its owner."""
     match value:
         RustOperand.Place(read) =>
+            match read.place.global():
+                Some(global) =>
+                    owner = read_static(builder, read.place, global, read.fact, span)?
+                    match owner.kind:
+                        OperandKind.Move(place) =>
+                            reference = temporary(builder, PlanType.StringRef, span)
+                            builder.emit(plan_assign(reference, RvalueKind.Borrow(place), span))
+                            return Ok(read_place(reference, false, span))
+                        _ => return Err("unsupported Body IR non-string static text operand")
+                None => pass
             place = scalar_place(builder, read.place, span)?
             if place_type(builder.locals, place) != PlanType.String:
                 return Err("unsupported Body IR non-string text operand")
@@ -3114,19 +3124,21 @@ def read_static(
     fact: &OwnershipFact,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Read a proven scalar cell through its persistent runtime slot, never a frame-local substitute."""
+    """Read a persistent cell, returning a fresh owner for string reads without consuming storage."""
     if len(value.projection) != 0:
         return Err("unsupported Body IR static projection")
-    match fact:
-        OwnershipFact.Copy => pass
-        _ => return Err("unsupported Body IR static ownership")
     slot = static_slot(builder.statics, global)?
     ty = model_type(builder.nominals, global.ty)?
+    if ty == PlanType.String:
+        if fact != OwnershipFact.Clone and fact != OwnershipFact.Borrow:
+            return Err("unsupported Body IR static string ownership")
+    elif fact != OwnershipFact.Copy:
+        return Err("unsupported Body IR static ownership")
     read_cell, _write_cell = static_accessors(ty)?
-    initial = scalar_constant(builder.statics[slot].initial, span)?
+    initial = scalar_operand(builder, RustOperand.Constant(builder.statics[slot].initial), span)?
     target = temporary(builder, ty, span)
     external_call(builder, read_cell, [PlanType.Int, ty], ty, [literal(Constant.Int(slot), span), initial], target, span)
-    return Ok(read_place(target, false, span))
+    return Ok(read_place(target, ty == PlanType.String, span))
 
 
 def write_static(
@@ -3136,7 +3148,7 @@ def write_static(
     value: &RustRvalue,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Evaluate and check a scalar write before committing it to a checker-authorized persistent cell."""
+    """Evaluate a write before committing it to a checker-authorized persistent cell."""
     if len(destination.projection) != 0:
         return Err("unsupported Body IR static projection")
     match global.write_policy:
@@ -3153,7 +3165,7 @@ def write_static(
         write_cell,
         [PlanType.Int, ty],
         PlanType.Unit,
-        [literal(Constant.Int(slot), span), read_place(target, false, span)],
+        [literal(Constant.Int(slot), span), read_place(target, ty == PlanType.String, span)],
         output,
         span,
     )
@@ -3516,6 +3528,9 @@ def argument_type(
         return Err("invalid Body IR argument type arity")
     match arguments[index].as_one():
         Some(RustOperand.Place(read)) =>
+            match read.place.global():
+                Some(global) => return model_type(builder.nominals, global.ty)
+                None => pass
             place = scalar_place(builder, read.place, span)?
             return Ok(place_type(builder.locals, place))
         Some(RustOperand.Constant(RustConstant.Str(_text))) => return Ok(PlanType.String)
