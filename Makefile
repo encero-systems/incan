@@ -506,11 +506,16 @@ test-prewarm-sdk:
 	else \
 		$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_PREWARM_TOOLCHAIN)" cargo build -p incan-cli -p incan-lsp; \
 	fi
+	@test -n "$(INCAN_SDK_NATIVE_BLOBS)" -a -n "$(INCAN_SDK_NATIVE_INDEX)" || { \
+		echo "SDK preparation needs INCAN_SDK_NATIVE_BLOBS (incan.pub source archives) and INCAN_SDK_NATIVE_INDEX (an incan.pub index checkout)" >&2; \
+		exit 2; }
 	@$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_PREWARM_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
 		INCAN_STDLIB="$(CURDIR)/loaves/stdlib" \
 		INCAN_STDLIB_DIR="$(CURDIR)/loaves/stdlib" \
+		INCAN_SDK_NATIVE_BLOBS="$(INCAN_SDK_NATIVE_BLOBS)" \
+		INCAN_SDK_NATIVE_INDEX="$(INCAN_SDK_NATIVE_INDEX)" \
 		INCAN_INTERNAL_SDK_PROVIDER_PATH_FILE="$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)" \
-		"$(TARGET_DIR)/debug/incan" check loaves/compiler/incan_test_support/fixtures/test_assert_canary.incn
+		"$(TARGET_DIR)/debug/incan" prepare-sdk
 	@test -s "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)"
 	@test -f "$$(cat "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)")/sdk-inventory.json"
 
