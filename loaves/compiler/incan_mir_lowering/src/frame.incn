@@ -20,6 +20,7 @@ from pub::incan_mir_plan import (
     Unwind,
 )
 from pub::incan_mir_plan import assign as plan_assign, block as plan_block, place as plan_place
+from rust::incan_semantics_core import IncanType as RustType
 from rust::incan_semantics_core::body_ir import (
     NominalDeclaration as RustNominalDeclaration,
     EnumDeclaration as RustEnumDeclaration,
@@ -51,6 +52,7 @@ pub model Builder:
     pub borrowed_items: list[int]
     pub nominals: list[RustNominalDeclaration]
     pub enums: list[RustEnumDeclaration]
+    pub unions: list[RustType]
     # Deferred defaults reserve a declaration-local frame within the caller.
     pub local_offset: int
     pub statics: list[RustStaticDeclaration]

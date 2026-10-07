@@ -8,9 +8,9 @@ from rust::incan_semantics_core::body_ir import (
     Operand as RustOperand,
 )
 from pub::incan_mir_plan import Operand, OperandKind, Constant, PlanType, SourceSpan, Local
-from models import model_type
-from lowering import BodyIrModule, literal, display_operand, scalar_operand, lower_statement
-from frame import Builder, read_place, temporary, drop_owned
+from unions import native_source_type
+from lowering import BodyIrModule, literal, call_argument_operand, lower_statement
+from frame import Builder, drop_owned
 
 
 pub def default_arguments(
@@ -38,7 +38,7 @@ pub def default_arguments(
                 occupied.append(slot)
                 match elements[index].as_one():
                     Some(value) =>
-                        operands[slot] = argument_operand(builder, value, types[slot], span)?
+                        operands[slot] = call_argument_operand(builder, value, types[slot], span)?
                     None => return Err("unsupported Body IR spread ArgumentElement")
             for slot in defaults:
                 index = int(slot.clone())
@@ -48,18 +48,6 @@ pub def default_arguments(
                 operands[index] = evaluate_default(module, builder, body, index, types[index], span)?
             return Ok(operands)
         _ => return Err("unsupported Body IR unresolved ArgumentBinding")
-
-
-pub def argument_operand(
-    mut builder: Builder,
-    value: &RustOperand,
-    ty: PlanType,
-    span: SourceSpan,
-) -> Result[Operand, str]:
-    """Materialize an owned string or a checked scalar without changing its ownership fact."""
-    if ty == PlanType.String:
-        return Ok(read_place(display_operand(builder, value, span)?, true, span))
-    return scalar_operand(builder, value, span)
 
 
 pub def evaluate_default(
@@ -80,11 +68,13 @@ pub def evaluate_default(
             offset = len(builder.locals)
             builder.locals.append(Local(ty=PlanType.Unit, span=span))
             for local in body.locals:
-                builder.locals.append(Local(ty=model_type(builder.nominals, local.ty)?, span=span))
+                builder.locals.append(
+                    Local(ty=native_source_type(builder.nominals, builder.enums, builder.unions, local.ty)?, span=span),
+                )
             builder.local_offset = offset
             for statement in computation.stmts:
                 lower_statement(module, builder, statement)?
-            result = argument_operand(builder, computation.result, ty, span)?
+            result = call_argument_operand(builder, computation.result, ty, span)?
             builder.local_offset = saved
             mut result_owner = -1
             match result.kind:
