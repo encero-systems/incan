@@ -276,14 +276,8 @@ fn lowers_collection_membership_as_a_helper_call_naming_its_own_container() -> R
     ] {
         let source = format!("def f({container}) -> bool:\n  return v in xs\n");
         let rendered = rendered_f(&source, module_leaf)?;
-        let read = if helper == "list_contains" {
-            "clone(_0)"
-        } else {
-            "move(_0, last_use)"
-        };
-
         assert!(
-            rendered.contains(&format!("call helper:{helper}({read}")),
+            rendered.contains(&format!("call helper:{helper}(clone(_0)")),
             "`in` over {container} must lower to {helper} with the container first: {rendered}"
         );
         assert!(
@@ -302,7 +296,7 @@ fn lowers_collection_membership_as_a_helper_call_naming_its_own_container() -> R
     Ok(())
 }
 
-/// Retain negated membership directly, cloning shared list parameter storage.
+/// Retain negated membership directly, cloning caller-owned collection parameter storage.
 #[test]
 fn lowers_negated_collection_membership_as_its_own_helper_per_container() -> Result<(), Box<dyn std::error::Error>> {
     // One source operator stays one Body IR operation, following the `str_contains`/`str_not_contains` pair: a
@@ -314,14 +308,8 @@ fn lowers_negated_collection_membership_as_its_own_helper_per_container() -> Res
     ] {
         let source = format!("def f({container}) -> bool:\n  return v not in xs\n");
         let rendered = rendered_f(&source, module_leaf)?;
-        let read = if helper == "list_not_contains" {
-            "clone(_0)"
-        } else {
-            "move(_0, last_use)"
-        };
-
         assert!(
-            rendered.contains(&format!("call helper:{helper}({read}")),
+            rendered.contains(&format!("call helper:{helper}(clone(_0)")),
             "`not in` over {container} must lower to {helper}, container first: {rendered}"
         );
         assert!(

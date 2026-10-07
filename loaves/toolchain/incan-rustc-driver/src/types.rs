@@ -4,7 +4,7 @@ use crate::error::PlanError;
 use crate::plan::{ListLeaf, PlanType, SizedNumeric};
 use rustc_middle::ty::{Ty, TyCtxt};
 
-/// Translate admitted scalar, model, and list types to their canonical native representations.
+/// Translate admitted scalar, model, and collection types to their canonical native representations.
 ///
 /// List references preserve source parameter borrowing; checked pairs and other shared references are body-internal.
 pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, PlanError> {
@@ -23,6 +23,28 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::ListMutRef(leaf, depth) => {
             Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, list_type(tcx, leaf, *depth)?)
         }
+        PlanType::Set(leaf) => hash_collection_type(tcx, "HashSet", &[leaf])?,
+        PlanType::SetRef(leaf) => Ty::new_imm_ref(
+            tcx,
+            tcx.lifetimes.re_erased,
+            hash_collection_type(tcx, "HashSet", &[leaf])?,
+        ),
+        PlanType::SetMutRef(leaf) => Ty::new_mut_ref(
+            tcx,
+            tcx.lifetimes.re_erased,
+            hash_collection_type(tcx, "HashSet", &[leaf])?,
+        ),
+        PlanType::Dict(key, value) => hash_collection_type(tcx, "HashMap", &[key, value])?,
+        PlanType::DictRef(key, value) => Ty::new_imm_ref(
+            tcx,
+            tcx.lifetimes.re_erased,
+            hash_collection_type(tcx, "HashMap", &[key, value])?,
+        ),
+        PlanType::DictMutRef(key, value) => Ty::new_mut_ref(
+            tcx,
+            tcx.lifetimes.re_erased,
+            hash_collection_type(tcx, "HashMap", &[key, value])?,
+        ),
         PlanType::Int => tcx.types.i64,
         PlanType::Float => tcx.types.f64,
         PlanType::I8 => tcx.types.i8,
@@ -122,12 +144,7 @@ pub fn model_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Result<Ty<'tcx>, PlanE
 
 /// Select the primitive leaf and wrap it in the standard Vec ADT once per retained list dimension.
 fn list_type<'tcx>(tcx: TyCtxt<'tcx>, leaf: &ListLeaf, depth: i64) -> Result<Ty<'tcx>, PlanError> {
-    let mut element = match leaf {
-        ListLeaf::Int => tcx.types.i64,
-        ListLeaf::Float => tcx.types.f64,
-        ListLeaf::Bool => tcx.types.bool,
-        ListLeaf::Str => string_type(tcx)?,
-    };
+    let mut element = primitive_type(tcx, leaf)?;
     if depth < 1 {
         return Err(PlanError::Invalid {
             function: "list".into(),
@@ -175,5 +192,43 @@ fn numeric_type<'tcx>(tcx: TyCtxt<'tcx>, kind: &SizedNumeric) -> Ty<'tcx> {
         SizedNumeric::F64 => tcx.types.f64,
         SizedNumeric::ISize => tcx.types.isize,
         SizedNumeric::USize => tcx.types.usize,
+    }
+}
+
+/// Resolve the standard hashed ADT and instantiate its default hasher from metadata.
+fn hash_collection_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str, leaves: &[&ListLeaf]) -> Result<Ty<'tcx>, PlanError> {
+    let definition = tcx
+        .get_diagnostic_item(rustc_span::Symbol::intern(name))
+        .ok_or_else(|| PlanError::Invalid {
+            function: name.into(),
+            reason: "native closure has no standard hashed collection definition".into(),
+        })?;
+    let elements = leaves
+        .iter()
+        .map(|leaf| primitive_type(tcx, leaf))
+        .collect::<Result<Vec<_>, _>>()?;
+    let arguments = rustc_middle::ty::GenericArgs::for_item(tcx, definition, |parameter, arguments| {
+        match usize::try_from(parameter.index)
+            .ok()
+            .and_then(|index| elements.get(index))
+        {
+            Some(element) => (*element).into(),
+            None => tcx
+                .type_of(parameter.def_id)
+                .instantiate(tcx, arguments)
+                .skip_normalization()
+                .into(),
+        }
+    });
+    Ok(Ty::new_adt(tcx, tcx.adt_def(definition), arguments))
+}
+
+/// Map the shared checked primitive leaf once for all collection layouts.
+fn primitive_type<'tcx>(tcx: TyCtxt<'tcx>, leaf: &ListLeaf) -> Result<Ty<'tcx>, PlanError> {
+    match leaf {
+        ListLeaf::Int => Ok(tcx.types.i64),
+        ListLeaf::Float => Ok(tcx.types.f64),
+        ListLeaf::Bool => Ok(tcx.types.bool),
+        ListLeaf::Str => string_type(tcx),
     }
 }
