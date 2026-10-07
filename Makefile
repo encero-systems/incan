@@ -20,6 +20,8 @@ INCAN_TEST_GENERATED_CARGO_TARGET_DIR ?= $(TARGET_DIR)/incan_generated_shared_ta
 INCAN_TEST_SDK_PROVIDER_STORE ?= $(TARGET_DIR)/incan_test_sdk_provider_store
 INCAN_TEST_SDK_PROVIDER_PATH_FILE ?= $(TARGET_DIR)/incan_test_sdk_provider_path
 INCAN_TEST_OVEN_HOME ?= $(TARGET_DIR)/incan_test_oven_home
+# Receipt-addressed fixture units survive compiler rebuilds and sibling workspace invocations.
+INCAN_TEST_OVEN_FIXTURE_HOME ?= $(abspath $(dir $(TARGET_DIR))/incan-oven-fixture-home)
 INCAN_TEST_OVEN_LOAF_ROOT ?= $(TARGET_DIR)/share/incan/oven/loafs
 INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT ?= $(TARGET_DIR)/oven-alpha-release-toolchain
 INCAN_TEST_OVEN_RELEASE_COMPILER_BIN ?= $(TARGET_DIR)/debug/incan
@@ -71,6 +73,7 @@ TEST_ENV = CARGO_BUILD_JOBS=$(INCAN_TEST_CARGO_BUILD_JOBS) \
 	INCAN_GENERATED_CARGO_TARGET_DIR="$(INCAN_TEST_GENERATED_CARGO_TARGET_DIR)" \
 	INCAN_INTERNAL_SDK_PROVIDER_STORE="$(INCAN_TEST_SDK_PROVIDER_STORE)" \
 	INCAN_HOME="$(INCAN_TEST_OVEN_HOME)" \
+	INCAN_TEST_OVEN_FIXTURE_HOME="$(INCAN_TEST_OVEN_FIXTURE_HOME)" \
 	INCAN_SOURCE_ROOT="$(CURDIR)" \
 	INCAN_STDLIB="$(CURDIR)/loaves/stdlib" \
 	INCAN_STDLIB_DIR="$(CURDIR)/loaves/stdlib"

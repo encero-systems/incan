@@ -209,26 +209,31 @@ pub fn oven_compiler_suite_is_active() -> bool {
             && std::env::var_os("INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT").is_some_and(|value| !value.is_empty()))
 }
 
-/// Apply the compiler-suite's narrowly injected publisher authority to one explicit Oven bake command.
+/// Select the persistent fixture home shared by compiler workspaces and test invocations.
 ///
-/// The suite must not set `CARGO` for an entire libtest root: that would let an accidental normal-command fallback
-/// evade the outer exit-97 guard. Callers therefore opt in only for `incan oven bake`, the named publisher boundary.
-/// The command deliberately retains the suite-selected consumer `RUSTC`: publisher Cargo may differ, but the
-/// produced Loaf must be compatible with the direct-Rustc consumer that will select it.
-pub fn configure_explicit_oven_bake_command(command: &mut Command) -> std::io::Result<()> {
-    if !oven_compiler_suite_is_active() {
-        return Ok(());
+/// Mutable fixture sources remain temporary. Only receipt-validated Oven entries survive between runs, outside
+/// compiler-build identities and child scratch directories. An explicit harness override takes precedence; the
+/// default is a sibling of the selected Cargo target, so sibling workspaces share it without using developer state.
+pub fn oven_fixture_home() -> std::io::Result<PathBuf> {
+    if let Some(home) = std::env::var_os("INCAN_TEST_OVEN_FIXTURE_HOME").filter(|value| !value.is_empty()) {
+        return Ok(anchor_harness_path(PathBuf::from(home)));
     }
-    let required = |name: &str| {
-        std::env::var_os(name).filter(|value| !value.is_empty()).ok_or_else(|| {
-            std::io::Error::other(format!(
-                "compiler-suite explicit Oven bake has no injected {name} authority"
-            ))
-        })
-    };
+    let target = selected_harness_path("CARGO_TARGET_DIR", "target");
+    let parent = target
+        .parent()
+        .ok_or_else(|| std::io::Error::other("compiler target has no parent"))?;
+    Ok(parent.join("incan-oven-fixture-home"))
+}
+
+/// Configure a Cargo-free fixture bake against the persistent store and the debug profile.
+///
+/// Retain the selected consumer Rustc and SDK authority. Removing `CARGO` ensures any accidental compatibility
+/// fallback reaches the outer PATH guard rather than a separately injected publisher executable.
+pub fn configure_explicit_oven_bake_command(command: &mut Command) -> std::io::Result<()> {
     command
-        .env("CARGO", required("INCAN_INTERNAL_OVEN_EXPLICIT_BAKE_CARGO")?)
-        .env("HOME", required("INCAN_INTERNAL_OVEN_EXPLICIT_BAKE_HOME")?);
+        .env_remove("CARGO")
+        .env("INCAN_HOME", oven_fixture_home()?)
+        .env("INCAN_OVEN_BAKE_PROFILES", "debug");
     Ok(())
 }
 
@@ -297,5 +302,41 @@ fn anchor_harness_path(selected: PathBuf) -> PathBuf {
         selected
     } else {
         std::env::current_dir().unwrap_or_else(|_| repo_root()).join(selected)
+    }
+}
+
+#[cfg(test)]
+mod fixture_bake_tests {
+    use super::{configure_explicit_oven_bake_command, oven_fixture_home};
+    use std::collections::BTreeMap;
+    use std::ffi::OsStr;
+    use std::process::Command;
+
+    /// Fixture publication cannot retain a separately injected Cargo executable or change its consumer authority.
+    #[test]
+    fn fixture_bake_preserves_consumer_authority_without_cargo() -> std::io::Result<()> {
+        let mut command = Command::new("incan");
+        command
+            .env("CARGO", "publisher-cargo")
+            .env("RUSTC", "selected-rustc")
+            .env("INCAN_SDK_INVENTORY", "selected-sdk");
+        configure_explicit_oven_bake_command(&mut command)?;
+        let environment = command.get_envs().collect::<BTreeMap<_, _>>();
+        assert_eq!(environment.get(OsStr::new("CARGO")), Some(&None));
+        assert_eq!(
+            environment.get(OsStr::new("RUSTC")),
+            Some(&Some(OsStr::new("selected-rustc")))
+        );
+        assert_eq!(
+            environment.get(OsStr::new("INCAN_SDK_INVENTORY")),
+            Some(&Some(OsStr::new("selected-sdk")))
+        );
+        assert_eq!(
+            environment.get(OsStr::new("INCAN_OVEN_BAKE_PROFILES")),
+            Some(&Some(OsStr::new("debug")))
+        );
+        let home = oven_fixture_home()?;
+        assert_eq!(environment.get(OsStr::new("INCAN_HOME")), Some(&Some(home.as_os_str())));
+        Ok(())
     }
 }

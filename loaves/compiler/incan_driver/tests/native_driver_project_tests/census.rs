@@ -222,13 +222,13 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all(&output)?;
     let repo = support::repo_root();
     let driver = prepare_source_driver(&root, &repo)?;
-    let home = root.join("home");
+    let home = support::oven_fixture_home()?;
     for project in [root.join("library"), root.join("lowering"), driver.clone()] {
         bake(&project, &home)?;
     }
     let runtime = prepare_formatting_runtime(&root, &repo, &home)?;
-    let closure = corpus::runtime_closure(&runtime, "release")?;
-    let driver = driver.join("target/rust/release/incan-rustc-driver");
+    let closure = corpus::runtime_closure(&runtime)?;
+    let driver = driver.join("target/rust/debug/incan-rustc-driver");
     let sysroot = oven_rustc::rustc::rustc_sysroot(&pinned_driver_rustc()?)?;
     let all = all_fixtures()?;
     let workers = std::thread::available_parallelism()?.get();

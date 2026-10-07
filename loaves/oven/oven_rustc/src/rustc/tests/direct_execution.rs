@@ -2,6 +2,96 @@
 
 use super::*;
 
+/// Fresh caller directories reuse an admitted library, while changed source cannot borrow its cached bytes.
+#[test]
+fn generated_library_store_reuses_across_outputs_and_refuses_stale_sources() -> Result<(), Box<dyn std::error::Error>> {
+    let project = tempfile::tempdir()?;
+    let output = tempfile::tempdir()?;
+    let artifact_root = tempfile::tempdir()?;
+    let store_root = tempfile::tempdir()?;
+    let store = OvenStore::new(
+        store_root.path(),
+        OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+    );
+    write_project(project.path())?;
+    fs::create_dir_all(project.path().join("src"))?;
+    let source = project.path().join("src/library.rs");
+    fs::write(&source, "pub fn value() -> u32 { 42 }\n")?;
+    let rustc = rustc_path()?;
+    let input = OvenGeneratedProjectRequest::new(
+        project.path(),
+        "library_store",
+        "0.1.0",
+        rustc_host_target(&rustc)?,
+        rustc_identity(&rustc)?,
+        "debug",
+        Vec::new(),
+    )
+    .with_generated_source("generated-library", &source);
+    let receipt = receipt_generated_project(&input)?;
+    let artifacts = empty_manifest(&receipt);
+    let first_output = output.path().join("first.rlib");
+    let second_output = output.path().join("second.rlib");
+    let first = OvenTrustedDirectRustcTargetRequest {
+        receipt: &receipt,
+        artifacts: &artifacts,
+        artifact_root: artifact_root.path(),
+        artifact_plan: None,
+        rustc: &rustc,
+        source: &source,
+        output: &first_output,
+        crate_name: "library_store",
+        edition: "2024",
+        source_evidence_key: "generated-library",
+        features: &[],
+        prefer_dynamic: false,
+    };
+    let cold = super::super::bake_trusted_direct_rustc_library_in_store(&first, &store)?;
+    assert!(!cold.reused);
+    let second = OvenTrustedDirectRustcTargetRequest {
+        output: &second_output,
+        ..first
+    };
+    let warm = super::super::bake_trusted_direct_rustc_library_in_store(&second, &store)?;
+    assert!(warm.reused);
+    assert_eq!(cold.output_digest, warm.output_digest);
+    assert!(!warm.cargo_process_started);
+
+    fs::write(&second_output, b"invalid caller projection")?;
+    let repaired = super::super::bake_trusted_direct_rustc_library_in_store(&second, &store)?;
+    assert!(repaired.reused);
+    assert_eq!(cold.output_digest, repaired.output_digest);
+    let mut environment_plan = artifacts.materialize(artifact_root.path(), &receipt.intent)?;
+    environment_plan
+        .compile_environment
+        .insert("CARGO_PKG_DESCRIPTION".to_string(), "different environment".to_string());
+    let environment_request = OvenTrustedDirectRustcTargetRequest {
+        artifact_plan: Some(&environment_plan),
+        ..second
+    };
+    let environment_changed = super::super::bake_trusted_direct_rustc_library_in_store(&environment_request, &store)?;
+    assert!(
+        !environment_changed.reused,
+        "a changed declared environment must invalidate store reuse"
+    );
+    fs::write(&source, "pub fn value() -> u32 { 43 }\n")?;
+    assert!(matches!(
+        super::super::bake_trusted_direct_rustc_library_in_store(&second, &store),
+        Err(OvenRustcError::SourceEvidenceMismatch { .. })
+    ));
+    let changed = receipt_generated_project(&input)?;
+    let changed_artifacts = empty_manifest(&changed);
+    let changed_request = OvenTrustedDirectRustcTargetRequest {
+        receipt: &changed,
+        artifacts: &changed_artifacts,
+        ..second
+    };
+    let rebuilt = super::super::bake_trusted_direct_rustc_library_in_store(&changed_request, &store)?;
+    assert!(!rebuilt.reused);
+    assert_ne!(cold.output_digest, rebuilt.output_digest);
+    Ok(())
+}
+
 #[test]
 fn failed_direct_rustc_report_keeps_the_bounded_invocation() {
     let mut command = Command::new("rustc");

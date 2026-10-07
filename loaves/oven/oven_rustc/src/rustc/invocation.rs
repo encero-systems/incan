@@ -1,5 +1,8 @@
 //! Invoking direct rustc and rustdoc consumers against admitted artifacts.
 
+mod library_store;
+pub use library_store::bake_trusted_direct_rustc_library_in_store;
+
 use super::{
     BTreeSet, Command, Duration, Instant, OVEN_DIRECT_RUSTC_OUTPUT_RECEIPT_SCHEMA_VERSION, OvenDirectRustcBake,
     OvenDirectRustcOutputKind, OvenDirectRustcOutputReceipt, OvenDirectRustcOutputRecord, OvenDirectRustcRunRequest,

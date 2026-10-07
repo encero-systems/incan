@@ -70,7 +70,7 @@ use oven_model::manifest::ProjectManifest;
 use oven_rustc::plan::OvenDirectRustcPlanSelection;
 use oven_rustc::rustc::{
     OvenCallerOwnedRustcLibrary, OvenRustcError, OvenTrustedDirectRustcTargetRequest,
-    attach_caller_owned_rustc_libraries, bake_trusted_direct_rustc_library, bake_trusted_direct_rustc_run,
+    attach_caller_owned_rustc_libraries, bake_trusted_direct_rustc_library_in_store, bake_trusted_direct_rustc_run,
     bake_trusted_direct_rustc_run_with_artifact_role,
 };
 use oven_store::store::OvenArtifactKind;
@@ -309,20 +309,24 @@ fn bake_oven_library_with_dependencies(
     } else {
         selected.receipt.clone()
     };
-    let direct = bake_trusted_direct_rustc_library(&OvenTrustedDirectRustcTargetRequest {
-        receipt: &coherent_receipt,
-        artifacts: selected.plan_selection.artifacts(),
-        artifact_root: selected.plan_selection.output_guard_root(),
-        artifact_plan: Some(&artifact_plan),
-        rustc: &oven.rustc,
-        source: &prepared.generator.crate_root_path(),
-        output: &oven_library_path(prepared, oven, profile),
-        crate_name: &oven.crate_name,
-        edition: &oven.rust_edition,
-        source_evidence_key: "generated-root",
-        features: &selected.receipt.intent.features,
-        prefer_dynamic: false,
-    });
+    let store = open_default_oven_store()?;
+    let direct = bake_trusted_direct_rustc_library_in_store(
+        &OvenTrustedDirectRustcTargetRequest {
+            receipt: &coherent_receipt,
+            artifacts: selected.plan_selection.artifacts(),
+            artifact_root: selected.plan_selection.output_guard_root(),
+            artifact_plan: Some(&artifact_plan),
+            rustc: &oven.rustc,
+            source: &prepared.generator.crate_root_path(),
+            output: &oven_library_path(prepared, oven, profile),
+            crate_name: &oven.crate_name,
+            edition: &oven.rust_edition,
+            source_evidence_key: "generated-root",
+            features: &selected.receipt.intent.features,
+            prefer_dynamic: false,
+        },
+        &store,
+    );
 
     classify_direct_rustc_bake(&oven.crate_name, direct).map(|bake| (bake, artifact_plan))
 }

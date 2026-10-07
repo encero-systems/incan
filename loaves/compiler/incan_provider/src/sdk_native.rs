@@ -104,7 +104,8 @@ pub fn select_sdk_native_artifacts(root: &Path) -> ProviderResult<SdkNativeSelec
             .map_err(|error| ProviderError::failure(error.to_string()))?;
         let actual: oven_rustc::sdk_closure::SdkLockedUnit =
             serde_json::from_slice(&owner.payload).map_err(|error| ProviderError::failure(error.to_string()))?;
-        let actual = serde_json::to_value(actual.identity_binding()).map_err(|error| ProviderError::failure(error.to_string()))?;
+        let actual = serde_json::to_value(actual.identity_binding())
+            .map_err(|error| ProviderError::failure(error.to_string()))?;
         let expected = serde_json::to_value(unit.binding.identity_binding())
             .map_err(|error| ProviderError::failure(error.to_string()))?;
         if receipts.get(&key) != Some(&unit.receipt_identity)

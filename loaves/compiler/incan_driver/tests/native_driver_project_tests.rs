@@ -32,11 +32,12 @@ fn pinned_driver_rustc() -> Result<PathBuf, Box<dyn std::error::Error>> {
     Ok(PathBuf::from(String::from_utf8(output.stdout)?.trim()))
 }
 
-/// Run the explicit publisher in the fixture-owned home and preserve full failure diagnostics.
+/// Bake one debug fixture in the persistent Oven home and preserve full failure diagnostics.
 fn bake(project: &Path, home: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let mut command = support::repo_command();
     support::configure_explicit_oven_bake_command(&mut command)?;
     let rustc = pinned_driver_rustc()?;
+    let started = support::command_timing_started();
     let output = command
         .env("RUSTC", rustc)
         .args(["oven", "bake", "--project"])
@@ -44,6 +45,10 @@ fn bake(project: &Path, home: &Path) -> Result<(), Box<dyn std::error::Error>> {
         .env("INCAN_HOME", home)
         .env("RUSTC_BOOTSTRAP", "ambient-unit")
         .output()?;
+    support::report_command_timing("oven bake --project (debug)", started);
+    if started.is_some() {
+        eprintln!("{}", String::from_utf8_lossy(&output.stdout));
+    }
     success(&output, "Oven bake");
     Ok(())
 }
@@ -56,6 +61,31 @@ fn success(output: &Output, operation: &str) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+/// Retain a debug runtime's receipt-selected native plan, including its immutable output leases.
+///
+/// Native SDK publication supplies a stored direct-Rustc plan. Older installed toolchains supply a compiler-owned
+/// Loaf instead; both paths validate the same receipt and keep their selected closure alive through execution.
+fn runtime_plan(runtime: &Path) -> Result<oven_rustc::plan::OvenDirectRustcPlanSelection, Box<dyn std::error::Error>> {
+    let path = oven_store::default_receipt_path(runtime).with_file_name("library-debug-receipt.json");
+    let receipt: oven_store::OvenReceipt = serde_json::from_slice(&fs::read(path)?)?;
+    let store = oven_store::store::OvenStore::new(
+        oven_store::store::store_root_for_home(&support::oven_fixture_home()?),
+        oven_store::store::OvenStoreLimits::new(
+            oven_store::DEFAULT_OVEN_MAX_PHYSICAL_BYTES,
+            oven_store::DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES,
+            oven_store::DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES,
+        ),
+    );
+    if let Some(plan) = oven_rustc::plan::selection::select_receipt_direct_rustc_execution_plan(&store, &receipt)? {
+        return Ok(oven_rustc::plan::OvenDirectRustcPlanSelection::Stored(Box::new(plan)));
+    }
+    let loaf = oven_rustc::loaf::resolve_compiler_owned_loaf_for_registry_dependencies(&receipt, &[])?
+        .ok_or("runtime fixture has no receipt-selected native closure")?;
+    Ok(oven_rustc::plan::OvenDirectRustcPlanSelection::ToolchainLoaf(Box::new(
+        loaf,
+    )))
 }
 
 /// Startup refusals precede output creation, including a substituted loaded driver library.
@@ -175,6 +205,36 @@ fn prepare_source_driver(root: &Path, repo: &Path) -> Result<std::path::PathBuf,
     Ok(driver)
 }
 
+/// Fresh fixture roots share the plan library's immutable debug output and retain its native SDK closure.
+#[test]
+fn oven_plan_fixture_shares_debug_native_output() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let source = support::repo_root().join("loaves/compiler/incan_mir_plan");
+    let home = support::oven_fixture_home()?;
+    let mut outputs = Vec::new();
+    for name in ["first", "second"] {
+        let project = root.path().join(name);
+        copy_tree(&source.join("src"), &project.join("src"))?;
+        fs::copy(source.join("loaf.toml"), project.join("loaf.toml"))?;
+        bake(&project, &home)?;
+        let plan = runtime_plan(&project)?;
+        assert!(matches!(
+            plan,
+            oven_rustc::plan::OvenDirectRustcPlanSelection::Stored(_)
+        ));
+        assert!(!project.join("target/lib/oven/release").exists());
+        assert!(!oven_store::default_receipt_path(&project).is_file());
+        outputs.push(oven_store::digest_bytes(&fs::read(
+            project.join("target/lib/oven/debug/libincan_mir_plan.rlib"),
+        )?));
+    }
+    assert_eq!(
+        outputs[0], outputs[1],
+        "identical authored sources must select the same debug output bytes"
+    );
+    Ok(())
+}
+
 /// Publish the compiler Loafs, then reuse one driver bake for native output, spans, and typed refusals.
 #[test]
 fn oven_driver_compiles_scalar_plan_and_refuses_invalid_inputs() -> Result<(), Box<dyn std::error::Error>> {
@@ -187,7 +247,7 @@ fn oven_driver_compiles_scalar_plan_and_refuses_invalid_inputs() -> Result<(), B
     copy_tree(&driver_source.join("tests/fixtures/native_output"), &runtime)?;
     let source = root.join("scalar.incn");
     fs::copy(driver_source.join("tests/fixtures/scalar.incn"), &source)?;
-    let home = root.join("home");
+    let home = support::oven_fixture_home()?;
     bake(&root.join("library"), &home)?;
     bake(&root.join("lowering"), &home)?;
     bake(&driver, &home)?;
@@ -205,16 +265,10 @@ fn oven_driver_compiles_scalar_plan_and_refuses_invalid_inputs() -> Result<(), B
     bake(&runtime_caller, &home)?;
     let rustc = pinned_driver_rustc()?;
     let sysroot = oven_rustc::rustc::rustc_sysroot(&rustc)?;
-    for profile in ["debug", "release"] {
-        let receipt_path = if profile == "release" {
-            oven_store::default_receipt_path(&runtime)
-        } else {
-            oven_store::default_receipt_path(&runtime).with_file_name("library-debug-receipt.json")
-        };
-        let receipt: oven_store::OvenReceipt = serde_json::from_slice(&fs::read(receipt_path)?)?;
-        let closure = oven_rustc::loaf::resolve_compiler_owned_loaf_for_registry_dependencies(&receipt, &[])?
-            .ok_or("runtime fixture must select its compiler-owned native closure")?;
-        let directories = &closure.artifact_plan.dependency_search_paths;
+    {
+        let profile = "debug";
+        let closure = runtime_plan(&runtime)?;
+        let directories = &closure.artifact_plan().dependency_search_paths;
         let binary = driver.join("target/rust").join(profile).join("incan-rustc-driver");
         let runtime_rlib = runtime
             .join("target/lib/oven")
@@ -259,9 +313,9 @@ fn oven_driver_compiles_scalar_plan_and_refuses_invalid_inputs() -> Result<(), B
         check_startup_refusals(&binary, &source, root, &sysroot, &runtime_rlib)?;
         check_source_pipeline(&binary, root, &sysroot, &formatting, profile)?;
     }
-    let release = driver.join("target/rust/release/incan-rustc-driver");
+    let debug = driver.join("target/rust/debug/incan-rustc-driver");
     for name in ["fib", "collatz", "mandelbrot"] {
-        corpus::check_benchmark(&release, root, &sysroot, &formatting, name)?;
+        corpus::check_benchmark(&debug, root, &sysroot, &formatting, name)?;
     }
     Ok(())
 }
@@ -312,15 +366,7 @@ fn check_source_pipeline(
         &source,
         "def twice(mut n: int) -> int:\n  n += n\n  return n\n\ndef main() -> None:\n  mut total = 0\n  for i in range(5, -1, -2):\n    if i == 3:\n      continue\n    total += twice(i)\n  println(f\"total={total} float={float(total)} div={-7 // 3} mod={-7 % 3}\")\n",
     )?;
-    let receipt_path = oven_store::default_receipt_path(runtime);
-    let receipt_path = if profile == "debug" {
-        receipt_path.with_file_name("library-debug-receipt.json")
-    } else {
-        receipt_path
-    };
-    let receipt: oven_store::OvenReceipt = serde_json::from_slice(&fs::read(receipt_path)?)?;
-    let closure = oven_rustc::loaf::resolve_compiler_owned_loaf_for_registry_dependencies(&receipt, &[])?
-        .ok_or("formatting runtime has no retained native closure")?;
+    let closure = runtime_plan(runtime)?;
     let binary = root.join(format!("checked-source-{profile}"));
     let library = runtime
         .join("target/lib/oven")
@@ -336,10 +382,10 @@ fn check_source_pipeline(
         .arg(sysroot)
         .arg("--extern")
         .arg(format!("incan_native_runtime={}", library.display()));
-    for (name, artifact) in &closure.artifact_plan.externs {
+    for (name, artifact) in &closure.artifact_plan().externs {
         command.arg("--extern").arg(format!("{name}={}", artifact.display()));
     }
-    for directory in &closure.artifact_plan.dependency_search_paths {
+    for directory in &closure.artifact_plan().dependency_search_paths {
         command.arg("--search").arg(directory);
     }
     success(&command.output()?, "checked source native compilation");
