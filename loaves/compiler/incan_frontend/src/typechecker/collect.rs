@@ -341,6 +341,7 @@ impl TypeChecker {
                 self.type_info.declarations.function_bindings.insert(
                     local_name.to_string(),
                     FunctionBindingInfo {
+                        is_async: info.is_async,
                         params: info.params.clone(),
                         return_type: info.return_type.clone(),
                         identity,
@@ -477,6 +478,7 @@ impl TypeChecker {
         self.type_info.declarations.function_bindings.insert(
             partial.name.clone(),
             FunctionBindingInfo {
+                is_async,
                 identity: Some(self.symbols.module_declaration_identity(
                     &partial.name,
                     SemanticSourceTargetKind::Partial,
@@ -1907,6 +1909,7 @@ impl TypeChecker {
             .collect();
         let return_type = self.resolve_type_checked(&func.return_type);
         let binding = FunctionBindingInfo {
+            is_async: func.is_async(),
             params: params.clone(),
             return_type: return_type.clone(),
             identity: Some(self.symbols.module_declaration_identity(

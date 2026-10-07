@@ -1888,6 +1888,8 @@ pub struct StaticBindingInfo {
 /// duplicating an equivalent struct per callable kind.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionBindingInfo {
+    /// Invoking this declaration constructs a lazy future whose output is `return_type`.
+    pub is_async: bool,
     /// Typechecker-resolved source parameters, including default-presence markers.
     pub params: Vec<CallableParam>,
     /// Typechecker-resolved source return type.

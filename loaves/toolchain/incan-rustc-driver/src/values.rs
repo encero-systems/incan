@@ -122,6 +122,22 @@ pub fn rvalue<'tcx>(
     destination_type: &PlanType,
 ) -> Result<mir::Rvalue<'tcx>, PlanError> {
     Ok(match value {
+        RvalueKind::UnitFunction(name) => {
+            let def = tcx
+                .hir_crate_items(())
+                .free_items()
+                .map(|item| item.owner_id.to_def_id())
+                .find(|def| tcx.opt_item_name(*def).is_some_and(|symbol| symbol.as_str() == name))
+                .ok_or_else(|| PlanError::UnknownCallee(name.clone()))?;
+            mir::Rvalue::Cast(
+                mir::CastKind::PointerCoercion(
+                    rustc_middle::ty::adjustment::PointerCoercion::ReifyFnPointer(rustc_hir::Safety::Safe),
+                    mir::CoercionSource::Implicit,
+                ),
+                mir::Operand::function_handle(tcx, def, [], rustc_span::DUMMY_SP),
+                native_type(tcx, &PlanType::UnitFunction)?,
+            )
+        }
         RvalueKind::Discriminant(value) => mir::Rvalue::Discriminant(place(tcx, value)?),
         RvalueKind::TagToInt(value) => {
             mir::Rvalue::Cast(mir::CastKind::IntToInt, operand(tcx, sources, value)?, tcx.types.i64)

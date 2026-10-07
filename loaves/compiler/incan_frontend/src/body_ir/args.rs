@@ -12,6 +12,8 @@ use super::*;
 /// survives an import or a rename. An imported callable therefore has no `direct_call_id` but may still have a
 /// canonical identity, and the two must not be read as substitutes for one another.
 pub(super) struct DirectCallDeclaration {
+    /// Whether invoking the checked declaration constructs a future rather than its eventual output.
+    pub(super) is_async: bool,
     pub(super) slots: Option<Vec<DeclaredSlot>>,
     pub(super) direct_call_id: Option<CompilerNodeId>,
     pub(super) builtin: Option<incan_lang::lang::builtins::BuiltinFnId>,

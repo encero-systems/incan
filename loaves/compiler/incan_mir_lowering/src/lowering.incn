@@ -196,6 +196,7 @@ from lists import (
     is_mutable_list_reference,
 )
 from assertions import lower_assertion
+from async_ import future_type, future_declarations, construct_future, await_future, async_entry, evaluator_name
 from defaults import default_arguments, default_type, model_default_arguments
 # =====================================================================================================================
 # Boundary types and validation
@@ -517,7 +518,18 @@ pub def lower_statement(module: &BodyIrModule, mut builder: Builder, statement: 
             return lower_discarded_operand(builder, value, span)
         RustStatementKind.Call(destination=_destination, callee=_callee, args=_args, may_panic=_may_panic) =>
             return lower_call(module, builder, statement, span)
-        RustStatementKind.Await(destination=_destination, awaited=_awaited) => return Err("unsupported Body IR Await")
+        RustStatementKind.Await(destination=destination, awaited=awaited) =>
+            match awaited:
+                RustOperand.Place(read) =>
+                    if read.fact != OwnershipFact.Move:
+                        return Err("unsupported Body IR async future ownership")
+                    future = scalar_place(builder, read.place, span)?
+                    match destination:
+                        Some(place) =>
+                            output = scalar_place(builder, place, span)?
+                            return await_future(module, builder, future, output, span)
+                        None => return Err("unsupported Body IR Await without destination")
+                _ => return Err("unsupported Body IR Await constant")
         RustStatementKind.Race(destination=_destination, arms=_arms) => return Err("unsupported Body IR Race")
         RustStatementKind.Yield(value=_value) => return Err("unsupported Body IR Yield")
         RustStatementKind.Assert(kind=kind, message=message, may_panic=_panic) =>
@@ -929,6 +941,12 @@ def lower_local_call(
             if call_id != body.direct_call_id:
                 return Err("Body IR call identity disagrees with target body")
     operands = ordered_arguments(module, builder, target.binding, arguments, body, span)?
+    if body.is_async:
+        match destination:
+            Some(place) =>
+                output = scalar_place(builder, place, span)?
+                return construct_future(module, builder, body, operands, output, span)
+            None => return Err("unsupported Body IR async call without carrier")
     return emit_local_call(module, builder, body, operands, destination, span)
 
 
@@ -1943,6 +1961,8 @@ pub def lower_program(
     mut enums = lower_enum_declarations(context, files[entry])?
     for declaration in intrinsics:
         enums.append(declaration)
+    for declaration in future_declarations(context, files[entry], intrinsics)?:
+        enums.append(declaration)
     mut functions: list[Function] = []
     mut externals: list[ExternalFunction] = []
     for index in range(len(checked)):
@@ -1952,6 +1972,10 @@ pub def lower_program(
                 if retained.name == function.name:
                     return Err(f"unsupported Body IR overloaded function {body.name}")
             functions.append(function)
+            if body.is_async and function_name(context, body) == "main":
+                entry_function, entry_runtime = async_entry(function)
+                functions.append(entry_function)
+                merge_externals(externals, [entry_runtime])
             merge_externals(externals, runtime)
     return Ok(
         Plan(
@@ -1981,6 +2005,8 @@ def lower_concrete_module(module: &BodyIrModule, source: str, file: str) -> Resu
     mut enums = lower_enum_declarations(module, file)?
     for declaration in intrinsics:
         enums.append(declaration)
+    for declaration in future_declarations(module, file, intrinsics)?:
+        enums.append(declaration)
     mut functions: list[Function] = []
     mut externals: list[ExternalFunction] = []
     for body in module.bodies:
@@ -1989,6 +2015,10 @@ def lower_concrete_module(module: &BodyIrModule, source: str, file: str) -> Resu
                 return Err(f"unsupported Body IR overloaded function {body.name}")
         function, runtime = lower_function(module, body, unions, source, file, intrinsics)?
         functions.append(function)
+        if body.is_async and function_name(module, body) == "main":
+            entry_function, entry_runtime = async_entry(function)
+            functions.append(entry_function)
+            merge_externals(externals, [entry_runtime])
         merge_externals(externals, runtime)
     return Ok(
         Plan(
@@ -2021,8 +2051,6 @@ def lower_function(
     intrinsics: list[EnumDeclaration],
 ) -> Result[tuple[Function, list[ExternalFunction]], str]:
     """Build one function's native frame from its checked locals, parameters and body."""
-    if body.is_async:
-        return Err("unsupported Body IR async Body")
     match body.extern_delegation:
         Some(_delegation) => return Err("unsupported Body IR ExternDelegation")
         None => pass
@@ -2036,6 +2064,8 @@ def lower_function(
     )?
     if function_name(module, body) == "main" and return_type != PlanType.Unit:
         return Err("unsupported Body IR non-unit native main")
+    if body.is_async and function_name(module, body) == "main" and len(body.params) != 0:
+        return Err("unsupported Body IR async entry signature")
     parameters = frame_parameters(module, body, source, file, intrinsics)?
     mut builder = Builder(
         locals=frame_locals(module, body, unions, return_type, span, source, file, intrinsics)?,
@@ -2077,7 +2107,7 @@ def lower_function(
         drop_all_owned(builder, span)
         builder.finish(TerminatorKind.Return, span)
     function = Function(
-        name=function_name(module, body),
+        name=evaluator_name(module, body),
         parameters=parameters,
         return_type=return_type,
         locals=builder.locals,
@@ -2103,7 +2133,12 @@ def frame_locals(
     for local in body.locals:
         if int(local.id.index()) + 1 != len(locals):
             return Err("Body IR local order disagrees with LocalId")
-        mut ty = frame_type(module, local, intrinsics)?
+        mut ty = PlanType.Unit
+        match future_type(module, local.ty, intrinsics)?:
+            Some(carrier) =>
+                ty = carrier
+            None =>
+                ty = frame_type(module, local, intrinsics)?
         index = int(local.id.index()) + 1
         if index in iterators:
             ty = list_parameter_type(ty, false)
@@ -2146,6 +2181,9 @@ def frame_parameters(
             ),
         )
     return Ok(parameters)
+# =====================================================================================================================
+# Lists: borrowing and runtime calls
+# =====================================================================================================================
 
 
 def list_borrow(mut builder: Builder, place: Place, mutable: bool, span: SourceSpan) -> Result[Operand, str]:

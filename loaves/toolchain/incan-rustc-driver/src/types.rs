@@ -67,6 +67,10 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::USize => tcx.types.usize,
         PlanType::Bool => tcx.types.bool,
         PlanType::Unit => tcx.types.unit,
+        PlanType::UnitFunction => Ty::new_fn_ptr(
+            tcx,
+            rustc_middle::ty::Binder::dummy(tcx.mk_fn_sig_safe_rust_abi([], tcx.types.unit)),
+        ),
         PlanType::CheckedInt => Ty::new_tup(tcx, &[tcx.types.i64, tcx.types.bool]),
         PlanType::String => string_type(tcx)?,
         PlanType::StringRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, string_type(tcx)?),
