@@ -50,7 +50,7 @@ fn checked_module(path: &Path) -> Result<BodyIrModule, String> {
             Declaration::Function(_) | Declaration::Docstring(_) | Declaration::Import(_) | Declaration::Const(_) => {
                 continue;
             }
-            Declaration::Static(_) => "Static",
+            Declaration::Static(_) => continue,
             Declaration::Model(model) => {
                 if !incan_frontend::body_ir::is_direct_replacement_plain_model(model) {
                     return Err(format!(
@@ -97,16 +97,23 @@ fn checked_module(path: &Path) -> Result<BodyIrModule, String> {
                 }
                 continue;
             }
-            Declaration::Newtype(_) => "Newtype",
-            Declaration::Alias(_) => "Alias",
+            Declaration::Newtype(newtype) if incan_frontend::body_ir::is_direct_replacement_plain_newtype(newtype) => continue,
+            Declaration::Newtype(_) => "nonplain Newtype",
+            Declaration::Alias(_) => continue,
             Declaration::Partial(_) => "Partial",
-            Declaration::TypeAlias(_) => "TypeAlias",
+            // Type aliases have no runtime declaration; checked Body IR carries their resolved uses.
+            Declaration::TypeAlias(_) => continue,
             _ => "top-level declaration",
         };
         return Err(format!("unsupported source {kind} on the native route"));
     }
     let type_info = analysis.type_info_for_path(&path).ok_or("entry analysis is missing")?;
-    Ok(build_body_ir_module_v0(program, &module.path_segments, type_info))
+    let body_ir = build_body_ir_module_v0(program, &module.path_segments, type_info);
+    let static_count = program.declarations.iter().filter(|declaration| matches!(declaration.node, incan_frontend::ast::Declaration::Static(_))).count();
+    if static_count != body_ir.static_declarations.len() {
+        return Err("unsupported source Static initializer or carrier on the native route".to_owned());
+    }
+    Ok(body_ir)
 }
 
 /// Exact caller-declared native libraries and their dependency search directories.

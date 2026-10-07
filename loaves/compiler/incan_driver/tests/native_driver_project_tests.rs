@@ -51,7 +51,7 @@ fn bake(project: &Path, home: &Path) -> Result<(), Box<dyn std::error::Error>> {
         .env("INCAN_HOME", home)
         .env("RUSTC_BOOTSTRAP", "ambient-unit")
         .output()?;
-    success(&output, "Oven bake");
+    success(&output, &format!("Oven bake {}", project.display()));
     Ok(())
 }
 
@@ -674,4 +674,16 @@ def main() -> None:
     assert_eq!(actual.stdout, expected.stdout);
     assert_eq!(actual.stdout, b"49\n49\n0\n15\n1\n2\npayload\npayload\n");
     Ok(())
+}
+
+/// Newtypes, erased aliases, scalar constants, and persistent scalar statics retain exactly the legacy output.
+#[test]
+fn declarations_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_declarations(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("declarations")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+    )
 }

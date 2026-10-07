@@ -117,7 +117,8 @@ pub def constructor_index(
                 declaration = declarations[index]
                 if identity != declaration.direct_declaration_id:
                     continue
-                if target.name != declaration.name or target.canonical != Some(declaration.canonical) or target.canonical_field_layout != Some(
+                # Aliases change diagnostic spelling, never the retained constructor identity or physical layout.
+                if target.canonical != Some(declaration.canonical) or target.canonical_field_layout != Some(
                     declaration.fields,
                 ):
                     return Err("invalid Body IR model constructor identity or layout")

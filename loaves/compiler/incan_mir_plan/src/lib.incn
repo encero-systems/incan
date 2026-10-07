@@ -344,7 +344,7 @@ pub model Function:
 @derive(Clone, PartialEq)
 pub model Plan:
     """
-    A native crate with scalar functions, plain models and normal enums; external functions are admitted by canonical path.
+    A native crate with scalar functions, plain nominal layouts and normal enums; external functions are admitted by canonical path.
 
     External declarations give validation a signature and explicit type arguments before rustc runs. The
     adapter verifies those signatures against the loaded dependency metadata.
@@ -359,7 +359,11 @@ pub model Plan:
 
 @derive(Clone, PartialEq)
 pub model ModelDeclaration:
-    """Checked field layout and implicit derives for one nongeneric source model."""
+    """
+    Checked field layout and implicit derives for one nongeneric source model or plain newtype.
+
+    A newtype has exactly one public field named `0`, emitted as a tuple slot; named model fields retain their names.
+    """
 
     pub name: str
     pub public: bool

@@ -3,6 +3,36 @@
 
 use super::*;
 
+/// Retain only scalar literal statics, whose lazy initialization has no user-visible evaluation effects.
+pub(super) fn collect_scalar_statics(program: &ast::Program, type_info: &TypeCheckInfo) -> Vec<bir::StaticDeclaration> {
+    program
+        .declarations
+        .iter()
+        .filter_map(|declaration| {
+            let ast::Declaration::Static(storage) = &declaration.node else {
+                return None;
+            };
+            let ast::Expr::Literal(literal) = &storage.value.node else {
+                return None;
+            };
+            let ty = semantic_type_from_resolved(type_info.expr_type(storage.value.span)?);
+            if !matches!(
+                ty,
+                IncanType::Primitive(IncanPrimitiveType::Int | IncanPrimitiveType::Float | IncanPrimitiveType::Bool)
+            ) {
+                return None;
+            }
+            let initial = primitives::lower_checked_literal(literal, &ty);
+            let canonical = type_info
+                .declarations
+                .declaration_identities
+                .get(&(declaration.span.start, declaration.span.end))?
+                .clone();
+            Some(bir::StaticDeclaration { canonical, ty, initial })
+        })
+        .collect()
+}
+
 /// Retain canonical normal-enum layouts from checked annotation and derive facts, never syntax-based type guesses.
 pub(super) fn collect_local_enum_declarations(
     program: &ast::Program,
@@ -107,7 +137,7 @@ pub(super) fn collect_local_function_declarations(program: &ast::Program) -> Loc
     }
     declarations
 }
-/// Retain directly executable model and class declarations in source order.
+/// Retain directly executable model, class, and plain newtype declarations in source order.
 ///
 /// Constructor argument binding already comes from the typechecker; this adds only the source-local declaration
 /// identity and canonical raw field order the direct runtime otherwise could not establish without reopening AST or
@@ -121,6 +151,9 @@ pub(super) fn collect_local_nominal_declarations(
         .declarations
         .iter()
         .filter_map(|declaration| {
+            if let ast::Declaration::Newtype(newtype) = &declaration.node {
+                return collect_plain_newtype(declaration.span, newtype, module_identity, type_info);
+            }
             let (name, fields, visibility, type_parameter_count, class_layout) = match &declaration.node {
                 ast::Declaration::Model(model) if is_direct_replacement_plain_model(model) => (
                     &model.name,
@@ -212,6 +245,52 @@ pub(super) fn collect_local_nominal_declarations(
             })
         })
         .collect()
+}
+
+/// Retain a plain newtype's checked carrier as one canonical tuple slot; its owner identity authorizes that slot.
+fn collect_plain_newtype(
+    span: ast::Span,
+    newtype: &ast::NewtypeDecl,
+    module_identity: &str,
+    type_info: &TypeCheckInfo,
+) -> Option<bir::NominalDeclaration> {
+    if !is_direct_replacement_plain_newtype(newtype) {
+        return None;
+    }
+    let facts = type_info.declarations.newtype_construction.get(&newtype.name)?;
+    if facts.checked_constructor.is_some() || !facts.constraints.is_empty() {
+        return None;
+    }
+    let canonical = type_info
+        .declarations
+        .declaration_identities
+        .get(&(span.start, span.end))?
+        .clone();
+    let underlying = semantic_type_from_resolved(&facts.underlying);
+    let mut derives = facts.automatic_derives.clone();
+    if matches!(
+        underlying,
+        IncanType::Primitive(IncanPrimitiveType::Int | IncanPrimitiveType::Float | IncanPrimitiveType::Bool)
+    ) {
+        if !derives.iter().any(|derive| derive == "Clone") {
+            derives.push("Clone".to_owned());
+        }
+        derives.push("Copy".to_owned());
+    }
+    Some(bir::NominalDeclaration {
+        direct_declaration_id: CompilerNodeId::declaration_span(module_identity, span.start, span.end),
+        field_identities: vec![canonical.clone()],
+        canonical,
+        name: newtype.name.clone(),
+        fields: vec!["0".to_owned()],
+        field_types: vec![underlying],
+        field_public: vec![true],
+        public: newtype.visibility == ast::Visibility::Public,
+        has_field_defaults: false,
+        derives,
+        named_type_identities: type_info.declarations.named_type_identities.clone(),
+        type_parameter_count: 0,
+    })
 }
 /// Retain exact source-local fieldless normal-enum declaration and unit-member facts in source order.
 ///
