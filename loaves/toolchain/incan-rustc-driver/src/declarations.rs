@@ -1,6 +1,6 @@
 //! Declarations enter as AST items; only MIR supplies executable bodies.
 
-use crate::plan::{Function, ListLeaf, PlanType};
+use crate::plan::{Function, ListLeaf, PlanType, SizedNumeric};
 use rustc_ast as ast;
 use rustc_span::{Ident, Span, Symbol};
 use thin_vec::{ThinVec, thin_vec};
@@ -65,14 +65,31 @@ fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
                 },
             },
         ),
+        PlanType::CheckedNumeric(kind) => {
+            ast::TyKind::Tup(thin_vec![numeric_ty(kind, span), ty(&PlanType::Bool, span)])
+        }
         PlanType::CheckedInt => ast::TyKind::Tup(thin_vec![
             ty(&PlanType::Int, span),
             ty(&PlanType::Bool, span)
         ]),
         other => {
             let name = match other {
+                PlanType::ISize => "isize",
+                PlanType::USize => "usize",
                 PlanType::Int => "i64",
                 PlanType::Float => "f64",
+                PlanType::I8 => "i8",
+                PlanType::I16 => "i16",
+                PlanType::I32 => "i32",
+                PlanType::I128 => "i128",
+                PlanType::U8 => "u8",
+                PlanType::U16 => "u16",
+                PlanType::U32 => "u32",
+                PlanType::U64 => "u64",
+                PlanType::U128 => "u128",
+                PlanType::F32 => "f32",
+                PlanType::F64 => "f64",
+
                 PlanType::String => "String",
                 PlanType::Model(_, name) => name.as_str(),
                 _ => "bool",
@@ -383,4 +400,24 @@ pub fn derive_attribute(
         ast::AttrStyle::Outer,
         span,
     )
+}
+
+/// Construct the type of an admitted overflow-pair value.
+fn numeric_ty(kind: &SizedNumeric, span: Span) -> Box<ast::Ty> {
+    let kind = match kind {
+        SizedNumeric::I8 => PlanType::I8,
+        SizedNumeric::I16 => PlanType::I16,
+        SizedNumeric::I32 => PlanType::I32,
+        SizedNumeric::I128 => PlanType::I128,
+        SizedNumeric::U8 => PlanType::U8,
+        SizedNumeric::U16 => PlanType::U16,
+        SizedNumeric::U32 => PlanType::U32,
+        SizedNumeric::U64 => PlanType::U64,
+        SizedNumeric::U128 => PlanType::U128,
+        SizedNumeric::F32 => PlanType::F32,
+        SizedNumeric::F64 => PlanType::F64,
+        SizedNumeric::ISize => PlanType::ISize,
+        SizedNumeric::USize => PlanType::USize,
+    };
+    ty(&kind, span)
 }

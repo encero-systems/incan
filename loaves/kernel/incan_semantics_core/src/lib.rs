@@ -25,6 +25,9 @@
 use incan_lang::lang::decorators::DecoratorId;
 use incan_lang::lang::keywords::KeywordId;
 
+/// Canonical numeric identities shared by the checker and native lowering.
+pub use incan_lang::lang::types::numerics::NumericTypeId;
+
 pub mod dependencies;
 
 pub mod authority;

@@ -9,6 +9,7 @@ from rust::incan_semantics_core::body_ir import (
     PlaceElem as RustPlaceElem,
 )
 from pub::incan_mir_plan import ListLeaf, PlanType, Local, Place, Projection, SourceSpan
+from numerics import numeric_type
 
 
 pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Result[PlanType, str]:
@@ -21,6 +22,7 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
             return Err(f"unsupported Body IR nominal type {name}")
         RustType.Primitive(primitive) =>
             match primitive:
+                Primitive.Numeric(kind) => return numeric_type(kind)
                 Primitive.Int => return Ok(PlanType.Int)
                 Primitive.Float => return Ok(PlanType.Float)
                 Primitive.Bool => return Ok(PlanType.Bool)
@@ -80,6 +82,7 @@ pub def place_type(locals: list[Local], value: Place) -> PlanType:
         Projection.Field(_slot, ty) => return ty
         Projection.DerefField(_slot, ty) => return ty
         Projection.Deref(ty) => return ty
+        Projection.NumericValue(ty) => return ty
         Projection.Value => return PlanType.Int
         Projection.Overflow => return PlanType.Bool
         Projection.Whole => return locals[value.local].ty
