@@ -55,6 +55,20 @@ fn bake(project: &Path, home: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Start the pinned driver without the caller's dynamic-loader search paths.
+///
+/// The driver must load the `rustc_driver` its runpath names, and its startup check refuses any other copy. On Linux an
+/// inherited `LD_LIBRARY_PATH` is searched before that runpath, and the compiler-suite runner exports one naming the
+/// toolchain's `lib` directory to every libtest child, so an inheriting launch loads rustup's second, byte-identical
+/// copy of the library from the rustc component and the check refuses it (#1755, #1785).
+fn driver_command(driver: &Path) -> Command {
+    let mut command = Command::new(driver);
+    for name in ["LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH"] {
+        command.env_remove(name);
+    }
+    command
+}
+
 /// Assert native success with both output streams available on failure.
 fn success(output: &Output, operation: &str) {
     assert!(
@@ -74,7 +88,7 @@ fn check_startup_refusals(
     runtime_rlib: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // ---- Ambient permission and detached sysroot ----
-    let ambient = Command::new(binary)
+    let ambient = driver_command(binary)
         .env("RUSTC_BOOTSTRAP", "1")
         .arg(source)
         .arg("scalar")
@@ -85,7 +99,7 @@ fn check_startup_refusals(
     assert!(!ambient.status.success());
     assert!(String::from_utf8_lossy(&ambient.stderr).contains("Bootstrap"));
     assert!(!root.join("ambient-output").exists());
-    let mismatch = Command::new(binary)
+    let mismatch = driver_command(binary)
         .env_remove("RUSTC_BOOTSTRAP")
         .arg(source)
         .arg("scalar")
@@ -236,7 +250,7 @@ fn oven_driver_compiles_scalar_plan_and_refuses_invalid_inputs() -> Result<(), B
             .join("libnative_output.rlib");
         for mode in ["normal", "overflow", "dangling"] {
             let output_binary = root.join(format!("scalar-{profile}-{mode}"));
-            let compile = Command::new(&binary)
+            let compile = driver_command(&binary)
                 .env_remove("RUSTC_BOOTSTRAP")
                 .arg(&source)
                 .arg("scalar")
@@ -430,7 +444,7 @@ fn check_source_pipeline(
         .join("target/lib/oven")
         .join(profile)
         .join("libincan_native_runtime.rlib");
-    let mut command = Command::new(driver);
+    let mut command = driver_command(driver);
     command
         .env_remove("RUSTC_BOOTSTRAP")
         .args(["--source"])
