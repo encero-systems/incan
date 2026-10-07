@@ -23,6 +23,7 @@ from pub::incan_mir_plan import assign as plan_assign, block as plan_block, plac
 from rust::incan_semantics_core::body_ir import (
     NominalDeclaration as RustNominalDeclaration,
     EnumDeclaration as RustEnumDeclaration,
+    StaticDeclaration as RustStaticDeclaration,
 )
 
 
@@ -50,6 +51,7 @@ pub model Builder:
     pub borrowed_items: list[int]
     pub nominals: list[RustNominalDeclaration]
     pub enums: list[RustEnumDeclaration]
+    pub statics: list[RustStaticDeclaration]
 
     def new_block(mut self, span: SourceSpan) -> int:
         """Allocate a block before connecting edges, preserving index stability."""

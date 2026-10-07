@@ -911,15 +911,19 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
     Ok(())
 }
 
-/// Validate plain nominal declarations and reject cyclic layouts before invoking rustc.
+/// Validate named model layouts and single-slot newtypes, rejecting cyclic layouts before invoking rustc.
 fn validate_models(plan: &Plan) -> Result<(), PlanError> {
     let mut names: BTreeSet<_> = plan.functions.iter().map(|function| &function.name).collect();
     for (index, declaration) in plan.models.iter().enumerate() {
         span(&declaration.span)?;
+        let tuple = declaration.fields.len() == 1 && declaration.fields[0].name == "0";
+        let derives_valid = if tuple {
+            declaration.derives == ["Debug", "Clone"] || declaration.derives == ["Debug", "Clone", "Copy"]
+        } else { declaration.derives == ["Debug", "Clone", "FieldInfo", "IncanClass"] };
         if !identifier(&declaration.name)
             || !names.insert(&declaration.name)
             || declaration.fields.len() != declaration.field_public.len()
-            || declaration.derives != ["Debug", "Clone", "FieldInfo", "IncanClass"]
+            || !derives_valid
         {
             return Err(PlanError::Invalid {
                 function: declaration.name.clone(),
@@ -929,7 +933,7 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
         let mut fields = BTreeSet::new();
         for field in &declaration.fields {
             span(&field.span)?;
-            if !identifier(&field.name) || !fields.insert(&field.name) || !source_signature_type(scalar(&field.ty)) {
+            if (!tuple && !identifier(&field.name)) || !fields.insert(&field.name) || !source_signature_type(scalar(&field.ty)) {
                 return Err(PlanError::Invalid {
                     function: declaration.name.clone(),
                     reason: "invalid model field declaration".into(),

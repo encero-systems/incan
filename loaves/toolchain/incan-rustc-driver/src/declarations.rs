@@ -212,8 +212,9 @@ pub fn external_crate(name: &str, span: Span) -> Box<ast::Item> {
     item(ast::ItemKind::ExternCrate(None, ident(name, span)), span)
 }
 
-/// Inject the exact checked field layout, preserving source visibility and declaration order.
+/// Inject the exact checked nominal layout, preserving visibility and field order; the sole `0` field is a tuple slot.
 pub fn model(model: &crate::plan::ModelDeclaration, span: Span) -> Box<ast::Item> {
+    let tuple = model.fields.len() == 1 && model.fields[0].name == "0";
     let fields = model
         .fields
         .iter()
@@ -229,7 +230,7 @@ pub fn model(model: &crate::plan::ModelDeclaration, span: Span) -> Box<ast::Item
                 tokens: None,
             },
             safety: ast::Safety::Default,
-            ident: Some(ident(&field.name, span)),
+            ident: if tuple { None } else { Some(ident(&field.name, span)) },
             ty: ty(&field.ty, span),
             default: None,
             is_placeholder: false,
@@ -239,10 +240,10 @@ pub fn model(model: &crate::plan::ModelDeclaration, span: Span) -> Box<ast::Item
         ast::ItemKind::Struct(
             ident(&model.name, span),
             ast::Generics::default(),
-            ast::VariantData::Struct {
+            if tuple { ast::VariantData::Tuple(fields, ast::DUMMY_NODE_ID) } else { ast::VariantData::Struct {
                 fields,
                 recovered: ast::Recovered::No,
-            },
+            } },
         ),
         span,
     );
@@ -256,15 +257,18 @@ fn model_tokens(model: &crate::plan::ModelDeclaration, span: Span) -> ast::token
     use ast::token::{Delimiter, TokenKind};
     use ast::tokenstream::{AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, LazyAttrTokenStream, Spacing};
     let mut fields = Vec::new();
+    let tuple = model.fields.len() == 1 && model.fields[0].name == "0";
     for (field, public) in model.fields.iter().zip(&model.field_public) {
         if *public {
             fields.push(keyword_token("pub", span));
         }
-        fields.push(name_token(&field.name, span));
-        fields.push(AttrTokenTree::Token(
+        if !tuple {
+            fields.push(name_token(&field.name, span));
+            fields.push(AttrTokenTree::Token(
             ast::token::Token::new(TokenKind::Colon, span),
             Spacing::Alone,
-        ));
+            ));
+        }
         fields.extend(type_tokens(&ty(&field.ty, span)));
         fields.push(AttrTokenTree::Token(
             ast::token::Token::new(TokenKind::Comma, span),
@@ -280,9 +284,12 @@ fn model_tokens(model: &crate::plan::ModelDeclaration, span: Span) -> ast::token
     tokens.push(AttrTokenTree::Delimited(
         DelimSpan::from_single(span),
         DelimSpacing::new(Spacing::Alone, Spacing::Alone),
-        Delimiter::Brace,
+        if tuple { Delimiter::Parenthesis } else { Delimiter::Brace },
         AttrTokenStream::new(fields),
     ));
+    if tuple {
+        tokens.push(AttrTokenTree::Token(ast::token::Token::new(TokenKind::Semi, span), Spacing::Alone));
+    }
     LazyAttrTokenStream::new_direct(AttrTokenStream::new(tokens))
 }
 

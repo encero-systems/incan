@@ -16,6 +16,14 @@ pub from collections import (
     nth_dict,
 )
 from rust::incan_std_core::iter import range as runtime_range
+pub from statics import (
+    read_static_int,
+    write_static_int,
+    read_static_float,
+    write_static_float,
+    read_static_bool,
+    write_static_bool,
+)
 pub from strings import (
     concat_text,
     equal_text,
