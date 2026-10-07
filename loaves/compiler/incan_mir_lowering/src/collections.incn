@@ -2,6 +2,7 @@
 
 from pub::incan_mir_plan import (
     ListLeaf,
+    list_leaf_type,
     PlanType,
     Operand,
     OperandKind,
@@ -39,12 +40,8 @@ pub def primitive_leaf(ty: &RustType, hashed: bool) -> Result[ListLeaf, str]:
 
 
 pub def leaf_type(leaf: ListLeaf) -> PlanType:
-    """Recover a primitive element without encoding leaf kinds as numeric tags."""
-    match leaf:
-        ListLeaf.Int => return PlanType.Int
-        ListLeaf.Float => return PlanType.Float
-        ListLeaf.Bool => return PlanType.Bool
-        ListLeaf.Str => return PlanType.String
+    """Recover the exact admitted leaf layout without numeric type tags."""
+    return list_leaf_type(leaf)
 
 
 pub def collection_owned(ty: PlanType) -> PlanType:

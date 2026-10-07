@@ -100,13 +100,14 @@ enum Scalar {
     GeneratorYieldRef(Leaf, i64),
 }
 
-/// The comparison vocabulary's copy of the plan's list leaf, which carries no Rust `Copy` or `Ord` derive.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+/// Comparison mirror of scalar and tuple leaves; the public plan remains Incan-authored.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Leaf {
     Int,
     Float,
     Bool,
     Str,
+    Tuple(Vec<Scalar>),
 }
 
 impl Leaf {
@@ -117,6 +118,7 @@ impl Leaf {
             ListLeaf::Float => Leaf::Float,
             ListLeaf::Bool => Leaf::Bool,
             ListLeaf::Str => Leaf::Str,
+            ListLeaf::Tuple(elements) => Leaf::Tuple(elements.iter().map(|element| scalar(&tuple_element_type(element.clone()))).collect()),
         }
     }
 }
@@ -777,7 +779,7 @@ fn external_signature_type(ty: Scalar) -> bool {
         )
 }
 
-/// Refuse an invalid dimension before constructing native array constants, including unused locals.
+/// Reject unsupported hashed leaves and invalid dimensions before constructing native types, including unused locals.
 fn validate_array_length(function: &Function, ty: Scalar) -> Result<(), PlanError> {
     match ty {
         Scalar::Generator(_, depth)
@@ -788,6 +790,15 @@ fn validate_array_length(function: &Function, ty: Scalar) -> Result<(), PlanErro
         {
             Err(invalid(function, "generator element depth must be nonnegative"))
         }
+        Scalar::Set(Leaf::Tuple(_))
+        | Scalar::SetRef(Leaf::Tuple(_))
+        | Scalar::SetMutRef(Leaf::Tuple(_))
+        | Scalar::Dict(Leaf::Tuple(_), _)
+        | Scalar::DictRef(Leaf::Tuple(_), _)
+        | Scalar::DictMutRef(Leaf::Tuple(_), _)
+        | Scalar::Dict(_, Leaf::Tuple(_))
+        | Scalar::DictRef(_, Leaf::Tuple(_))
+        | Scalar::DictMutRef(_, Leaf::Tuple(_)) => Err(invalid(function, "tuple leaves are admitted only in lists")),
         Scalar::Set(Leaf::Float)
         | Scalar::SetRef(Leaf::Float)
         | Scalar::SetMutRef(Leaf::Float)

@@ -657,6 +657,67 @@ fn direct_route_lists_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
     )
 }
 
+/// Compare scalar tuple list construction, indexed reads, and copies byte-for-byte with legacy.
+#[test]
+fn direct_route_tuple_lists_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("tuple-lists")?;
+    let source = root.join("tuple_lists.incn");
+    fs::write(
+        &source,
+        r#"
+def main() -> None:
+    """Exercise copied tuple lists, iteration, and owned string fields."""
+    mut pairs: list[tuple[int, int]] = [(1, 2), (3, 4)]
+    pairs.append((5, 6))
+    copied = pairs
+    pair = copied[1]
+    println(pair[0])
+    println(pair[1])
+    println(len(pairs))
+    empty: list[tuple[int, int]] = []
+    println(len(empty))
+    for item in pairs:
+        println(item[0] + item[1])
+    texts: list[tuple[str, int]] = [("one", 1), ("two", 2)]
+    text = texts[0]
+    println(text[0])
+    for item in texts:
+        println(item[0])
+"#,
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let native = root.join("tuple-lists-native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native tuple lists compilation",
+    );
+    let legacy_root = root.join("tuple-lists-legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy tuple lists compilation",
+    );
+    let expected = Command::new(legacy_root.join("oven/release/tuple_lists")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy tuple lists execution");
+    success(&actual, "native tuple lists execution");
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(actual.stdout, b"3\n4\n3\n0\n3\n7\n11\none\none\ntwo\n");
+    Ok(())
+}
+
 /// Prove class construction, shared and mutable receivers, and passing classes against legacy.
 #[test]
 fn source_class_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
