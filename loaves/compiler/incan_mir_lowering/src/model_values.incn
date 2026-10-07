@@ -173,7 +173,7 @@ pub def serialize_model_operand(
 
 
 pub def is_json_serialize_method(target: &MethodTarget) -> bool:
-    """Recognize the checker-selected JSON protocol default by declaring module and member identity."""
+    """Recognize the JSON protocol default in source and compiled SDK identities, never a same-name override."""
     match target.canonical:
         Some(identity) =>
             if identity.kind != SemanticSourceTargetKind.Method or identity.declaration_name != "to_json":
@@ -181,5 +181,7 @@ pub def is_json_serialize_method(target: &MethodTarget) -> bool:
             match identity.origin:
                 SymbolOrigin.Module(path) =>
                     return len(path) == 3 and path[0] == "std" and path[1] == "serde" and path[2] == "json"
+                SymbolOrigin.Package(library=library, module_path=path) =>
+                    return library == "incan_stdlib_data" and len(path) == 2 and path[0] == "serde" and path[1] == "json"
                 _ => return false
         None => return false
