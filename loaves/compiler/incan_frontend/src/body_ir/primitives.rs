@@ -294,6 +294,14 @@ pub(super) fn lower_checked_negative_literal(lit: &ast::Literal, ty: &IncanType)
     if let (ast::Literal::Int(value), IncanType::Primitive(IncanPrimitiveType::Float)) = (lit, ty) {
         return Some(bir::Constant::Float((-(value.magnitude as f64)).to_string()));
     }
+    // `int`'s most negative value is only spellable negated: its magnitude does not fit `i64`, so the literal's
+    // `value` saturates and a runtime negation of it would yield `-i64::MAX`. Fold it to `i64::MIN`, as legacy does.
+    if let (ast::Literal::Int(value), IncanType::Primitive(IncanPrimitiveType::Int)) = (lit, ty)
+        && value.suffix.is_none()
+        && value.magnitude == 1_u128 << 63
+    {
+        return Some(bir::Constant::Int(i64::MIN));
+    }
     let value = match (lit, ty) {
         (ast::Literal::Int(value), IncanType::Primitive(IncanPrimitiveType::Numeric(kind)))
             if info_for(*kind).family == NumericFamily::SignedInteger =>

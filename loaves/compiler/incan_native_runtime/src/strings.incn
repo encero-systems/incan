@@ -1,6 +1,14 @@
 """Monomorphic text boundaries retaining the legacy runtime semantics."""
 
 from rust::incan_std_core::strings import (
+    str_split as runtime_split,
+    str_join as runtime_join,
+    str_len as runtime_length_text,
+    str_upper as runtime_upper_text,
+    str_lower as runtime_lower_text,
+    str_strip as runtime_strip_text,
+    str_replace as runtime_replace_text,
+    str_contains as runtime_contains_text,
     str_concat as runtime_concat,
     str_eq as runtime_equal,
     str_ne as runtime_unequal,
@@ -44,3 +52,54 @@ pub def greater_text(left: &str, right: &str) -> bool:
 pub def greater_equal_text(left: &str, right: &str) -> bool:
     """Compare shared text in inclusive reverse lexical order through the canonical string runtime."""
     return runtime_greater_equal(left, right)
+
+
+pub def length_text(value: &str) -> int:
+    """Retain the canonical str_len runtime contract on shared text."""
+    return runtime_length_text(value)
+
+
+pub def upper_text(value: &str) -> str:
+    """Retain the canonical str_upper runtime contract on shared text."""
+    return runtime_upper_text(value)
+
+
+pub def lower_text(value: &str) -> str:
+    """Retain the canonical str_lower runtime contract on shared text."""
+    return runtime_lower_text(value)
+
+
+pub def strip_text(value: &str) -> str:
+    """Retain the canonical str_strip runtime contract on shared text."""
+    return runtime_strip_text(value)
+
+
+pub def replace_text(value: &str, old: &str, replacement: &str) -> str:
+    """Retain the canonical str_replace runtime contract on shared text."""
+    return runtime_replace_text(value, old, replacement)
+
+
+pub def contains_text(value: &str, needle: &str) -> bool:
+    """Retain the canonical str_contains runtime contract on shared text."""
+    return runtime_contains_text(value, needle)
+
+
+pub def split_text(value: &str, separator: &str) -> list[str]:
+    """Use legacy splitting, including empty separators and retained empty pieces."""
+    return runtime_split(value, Some(separator))
+
+
+pub def split_default_text(value: &str) -> list[str]:
+    """An omitted separator retains the entire input as one piece in legacy."""
+    separator: Option[str] = None
+    return runtime_split(value, separator)
+
+
+pub def join_text(separator: &str, values: &list[str]) -> str:
+    """Join borrowed strings with the legacy separator contract."""
+    return runtime_join(separator, values)
+
+
+pub def not_contains_text(value: &str, needle: &str) -> bool:
+    """Preserve the canonical negated substring containment contract."""
+    return not runtime_contains_text(value, needle)

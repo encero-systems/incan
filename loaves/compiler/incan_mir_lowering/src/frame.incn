@@ -205,3 +205,20 @@ pub def frame_place_type(locals: list[Local], value: Place) -> PlanType:
         Projection.Overflow => return PlanType.Bool
         Projection.Deref(ty) => return ty
         Projection.Whole => return locals[value.local].ty
+
+
+pub def external_call(
+    mut builder: Builder,
+    name: str,
+    parameters: list[PlanType],
+    result: PlanType,
+    arguments: list[Operand],
+    destination: Place,
+    span: SourceSpan,
+) -> None:
+    """Declare a monomorphic runtime signature and emit its unwinding call."""
+    builder.externals.append(ExternalFunction(path=name, parameters=parameters, return_type=result, span=span))
+    terminate_call(builder, CalleeKind.External(name), arguments, destination, span)
+    # A returned String is a new owner: it is dropped at scope exit or on unwind like any other.
+    if result == PlanType.String:
+        builder.owned.append(destination.local)
