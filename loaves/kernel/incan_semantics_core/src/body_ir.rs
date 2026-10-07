@@ -413,6 +413,9 @@ impl ValueEnumVariantDeclaration {
 /// Body IR v0 for a single function or method.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Body {
+    /// Ordered declaration type parameters, retained for checker-selected native instantiation.
+    #[serde(default)]
+    pub type_parameters: Vec<String>,
     /// Identity of the owning declaration, matching the [`crate::HirDeclaration::id`] this body was lowered from.
     pub decl_id: CompilerNodeId,
     /// Exact source-local identity used to dispatch a direct named Body-IR call.
@@ -3701,6 +3704,7 @@ mod tests {
         let local_y = LocalId(1);
         let local_tmp = LocalId(2);
         Body {
+            type_parameters: Vec::new(),
             decl_id: decl_id.clone(),
             direct_call_id,
             canonical: None,

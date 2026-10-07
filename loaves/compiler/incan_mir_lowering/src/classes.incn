@@ -13,6 +13,7 @@ from rust::incan_semantics_core::body_ir import (
 from pub::incan_mir_plan import PlanType, Local, RvalueKind, SourceSpan
 from models import model_place
 from unions import native_source_type, collect_unions
+from symbols import symbol_component
 
 
 pub def frame_type(module: &BodyIrModule, local: &RustLocal) -> Result[PlanType, str]:
@@ -69,16 +70,9 @@ def module_function_symbol(owner: str, body: &Body) -> str:
             Some(_mutable) =>
                 symbol += f"_receiver{symbol_component(str(body.locals[0].ty))}"
             None => pass
+    if len(body.type_parameters) != 0:
+        symbol += symbol_component(str(body.name))
     return f"{symbol}_{body.span.start}_{body.span.end}"
-
-
-def symbol_component(value: str) -> str:
-    """Encode one length-delimited UTF-8 component without admitting punctuation into a native identifier."""
-    encoded = value.encode()
-    mut component = f"_{len(encoded)}"
-    for byte in encoded:
-        component += f"_{byte}"
-    return component
 
 
 pub def method_receiver(

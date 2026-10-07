@@ -325,9 +325,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         Ok((fixed_elements(operands), binding))
     }
 
-    /// Resolve a call site's explicit type arguments to semantic types, or describe why they cannot be represented.
+    /// Retain the checker's ordered explicit or inferred call-site type arguments, refusing unresolved explicit
+    /// arguments.
     ///
-    /// Explicit type arguments are part of a call's resolved identity, so Body IR takes the typechecker's
+    /// Type arguments are part of a call's resolved identity, so Body IR takes the typechecker's
     /// monomorphized selection rather than re-lowering the written AST type nodes -- which is also the only way a
     /// `_` placeholder resolves to a real type instead of an unknown. A call that wrote type arguments the
     /// typechecker did not resolve is refused by name rather than represented with a guess.
@@ -336,15 +337,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         span: ast::Span,
         type_args: &[ast::Spanned<ast::Type>],
     ) -> Result<Vec<IncanType>, String> {
-        if type_args.is_empty() {
-            return Ok(Vec::new());
-        }
         let Some(resolved) = self
             .type_info
             .calls
             .call_site_monomorph_type_args
             .get(&(span.start, span.end))
         else {
+            if type_args.is_empty() {
+                return Ok(Vec::new());
+            }
             return Err("call with unresolved explicit type arguments".to_string());
         };
         Ok(resolved.iter().map(semantic_type_from_resolved).collect())

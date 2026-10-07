@@ -5,6 +5,34 @@
 
 use super::*;
 
+/// Native instantiation retains declaration order and both explicit and inferred checker bindings.
+#[test]
+fn function_type_parameters_and_inferred_arguments_are_retained() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def identity[T](value: T) -> T:\n    return value\n\ndef main() -> None:\n    identity[int](42)\n    identity(true)\n",
+        &["m", "type_parameters"],
+    )?;
+    assert_eq!(module.bodies[0].type_parameters, ["T"]);
+    let mut arguments = Vec::new();
+    for statement in &module.bodies[1].block.stmts {
+        if let bir::StatementKind::Call {
+            callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+            ..
+        } = &statement.kind
+        {
+            arguments.push(target.type_args.clone());
+        }
+    }
+    assert_eq!(
+        arguments,
+        [
+            vec![IncanType::Primitive(IncanPrimitiveType::Int)],
+            vec![IncanType::Primitive(IncanPrimitiveType::Bool)],
+        ]
+    );
+    Ok(())
+}
+
 /// A plain newtype's slot and construction share the retained owner identity; hooks stay outside this profile.
 #[test]
 fn plain_newtype_retains_checked_tuple_layout() -> Result<(), Box<dyn std::error::Error>> {

@@ -153,6 +153,11 @@ pub(super) fn lower_function_body(
     }
 
     bir::Body {
+        type_parameters: function
+            .type_params
+            .iter()
+            .map(|parameter| parameter.name.clone())
+            .collect(),
         decl_id,
         direct_call_id,
         canonical: binding.and_then(|binding| binding.identity.clone()),
@@ -304,6 +309,11 @@ pub(super) fn lower_method_body(
     }
 
     Some(bir::Body {
+        type_parameters: method
+            .type_params
+            .iter()
+            .map(|parameter| parameter.name.clone())
+            .collect(),
         decl_id,
         direct_call_id,
         canonical: binding.and_then(|binding| binding.identity.clone()),

@@ -759,6 +759,7 @@ mod tests {
     fn body(name: &str, ordinal: usize) -> Body {
         let identity = identity(name, ordinal);
         Body {
+            type_parameters: Vec::new(),
             decl_id: CompilerNodeId::declaration_span(
                 "lib",
                 identity.declaration_span.start,

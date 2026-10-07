@@ -538,6 +538,32 @@ fn plain_model_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>>
     )
 }
 
+/// Prove two checked instantiations of a function with type parameters against legacy output.
+#[test]
+fn type_parameter_function_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("type-parameter-function")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def identity[T](value: T) -> T:
+    return value
+
+def forward[T](value: T) -> T:
+    copied = value
+    return identity[T](value)
+
+def main() -> None:
+    println(identity[int](42))
+    println(identity[bool](true))
+    println(identity(7))
+    println(forward[int](9))
+    println(identity[str]("text"))
+"#,
+    )
+}
+
 /// Prove list indexing, mutation, shared parameters, owned returns and iteration against legacy.
 #[test]
 fn direct_route_lists_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
