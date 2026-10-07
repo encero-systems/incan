@@ -451,10 +451,10 @@ pub fn is_direct_replacement_plain_newtype(newtype: &ast::NewtypeDecl) -> bool {
 
 /// Admit source classes whose fields and method bodies have complete direct-route facts.
 ///
-/// Inheritance, generic substitution, decorators, properties, aliases, and defaults remain refused.
+/// Ordered owner parameters and method parameters are retained for checked instance scheduling. Inheritance,
+/// decorators, properties, aliases, and defaults remain refused.
 pub fn is_direct_replacement_class(class: &ast::ClassDecl) -> bool {
     class.decorators.is_empty()
-        && class.type_params.is_empty()
         && class.traits.iter().all(|adoption| adoption.node.type_args.is_empty())
         && class.extends.is_none()
         && class.method_aliases.is_empty()
@@ -465,10 +465,7 @@ pub fn is_direct_replacement_class(class: &ast::ClassDecl) -> bool {
             .fields
             .iter()
             .all(|field| field.node.metadata.alias.is_none() && field.node.default.is_none())
-        && class
-            .methods
-            .iter()
-            .all(|method| method.node.type_params.is_empty() && method.node.decorators.is_empty())
+        && class.methods.iter().all(|method| method.node.decorators.is_empty())
 }
 
 /// Determine whether an enum carries the narrow source-local fieldless normal-enum declaration fact.
@@ -551,6 +548,8 @@ struct BodyBuilder<'type_info, 'source> {
     provider_operations: &'source ProviderOperationCatalog,
     /// Checked return type of the function/method currently being lowered, used only to retain `?` error routing.
     owner_return_type: IncanType,
+    /// Explicit owner and callable binders whose checked types remain placeholders at this boundary.
+    type_parameters: Vec<String>,
     locals: Vec<bir::LocalDecl>,
     scopes: Vec<bir::ScopeInfo>,
     /// Current source-name -> local binding.
@@ -610,6 +609,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             module_identity: lowering_facts.module_identity,
             provider_operations: lowering_facts.provider_operations,
             owner_return_type,
+            type_parameters: Vec::new(),
             locals: Vec::new(),
             scopes: Vec::new(),
             bindings: HashMap::new(),
@@ -653,7 +653,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     fn resolve_ty(&self, span: ast::Span) -> IncanType {
         self.type_info
             .expr_type(span)
-            .map(semantic_type_from_resolved)
+            .map(|ty| self.checked_type(ty))
             .unwrap_or(IncanType::Unknown)
     }
 
@@ -1135,6 +1135,7 @@ mod reads;
 mod collect;
 
 mod bodies;
+mod parameter_types;
 
 mod primitives;
 

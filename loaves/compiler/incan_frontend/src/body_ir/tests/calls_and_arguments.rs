@@ -25,6 +25,134 @@ fn option_constructor_retains_intrinsic_selection() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
+/// Native instantiation retains declaration order and both explicit and inferred checker bindings.
+#[test]
+fn function_type_parameters_and_inferred_arguments_are_retained() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def identity[T](value: T) -> T:\n    return value\n\ndef main() -> None:\n    identity[int](42)\n    identity(true)\n",
+        &["m", "type_parameters"],
+    )?;
+    assert_eq!(module.bodies[0].type_parameters, ["T"]);
+    let mut arguments = Vec::new();
+    for statement in &module.bodies[1].block.stmts {
+        if let bir::StatementKind::Call {
+            callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+            ..
+        } = &statement.kind
+        {
+            arguments.push(target.type_args.clone());
+        }
+    }
+    assert_eq!(
+        arguments,
+        [
+            vec![IncanType::Primitive(IncanPrimitiveType::Int)],
+            vec![IncanType::Primitive(IncanPrimitiveType::Bool)],
+        ]
+    );
+    Ok(())
+}
+
+/// Assignment binding facts preserve declared placeholders for inferred and annotated function locals.
+#[test]
+fn function_parameter_local_bindings_are_retained() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def identity[T](value: T) -> T:\n    return value\n\ndef forward[T](value: T) -> T:\n    copied = value\n    annotated: T = copied\n    return identity[T](annotated)\n\ndef main() -> None:\n    println(forward[int](9))\n",
+        &["m", "function_parameter_locals"],
+    )?;
+    let forward = body_named(&module, "forward")?;
+    for name in ["value", "copied", "annotated"] {
+        let local = forward
+            .locals
+            .iter()
+            .find(|local| local.name.as_deref() == Some(name))
+            .ok_or("missing parameter local")?;
+        assert_eq!(local.ty, IncanType::TypeVar("T".into()), "{name}");
+    }
+    Ok(())
+}
+
+/// Owner parameters stay placeholders in method signatures and forwarded checked call arguments.
+#[test]
+fn class_owner_parameter_frames_are_retained() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def identity[T](value: T) -> T:\n    return value\n\nclass Box[T]:\n    pub value: T\n    def get(self) -> T:\n        return self.value\n    def forward(self) -> T:\n        return identity[T](self.value)\n\ndef main() -> None:\n    box = Box[int](value=42)\n    box.get()\n    box.forward()\n",
+        &["m", "owner_parameter_frames"],
+    )?;
+    let get = body_named(&module, "get")?;
+    let forward = body_named(&module, "forward")?;
+    assert_eq!(get.return_type, IncanType::TypeVar("T".into()));
+    assert_eq!(forward.return_type, IncanType::TypeVar("T".into()));
+    assert!(get.block.stmts.iter().any(|statement| matches!(
+        &statement.kind,
+        bir::StatementKind::Return { value: Some(bir::Operand::Place(read)) }
+            if read.fact == bir::OwnershipFact::Clone
+    )));
+    assert!(forward.block.stmts.iter().any(|statement| matches!(
+        &statement.kind,
+        bir::StatementKind::Call { args, .. }
+            if args.iter().any(|argument| matches!(argument.as_one(), Some(bir::Operand::Place(read)) if read.fact == bir::OwnershipFact::Clone))
+    )));
+    let arguments: Vec<_> = forward
+        .block
+        .stmts
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+                ..
+            } => Some(target.type_args.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(arguments, [vec![IncanType::TypeVar("T".into())]]);
+    Ok(())
+}
+
+/// Class declaration order, receiver identity, and inferred method arguments survive the Body IR boundary.
+#[test]
+fn class_parameters_and_method_instantiations_are_retained() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "class Pair[T, U]:\n    pub first: U\n    pub second: T\n    def pick[V](self, value: V) -> V:\n        return value\n\ndef main() -> None:\n    pair = Pair[int, str](first=\"first\", second=7)\n    pair.pick[int](42)\n    pair.pick(true)\n",
+        &["m", "class_parameters"],
+    )?;
+    let [declaration] = module.nominal_declarations.as_slice() else {
+        return Err("expected one retained class".into());
+    };
+    assert_eq!(declaration.type_parameters, ["T", "U"]);
+    assert_eq!(declaration.type_parameter_count, 2);
+    assert_eq!(
+        declaration.field_types,
+        [IncanType::TypeVar("U".into()), IncanType::TypeVar("T".into())]
+    );
+    assert!(module.is_well_formed_nominal_declaration(declaration));
+    assert!(module.body_has_canonical_direct_call_id(&module.bodies[0]));
+    assert_eq!(module.bodies[0].type_parameters, ["V"]);
+    let arguments: Vec<_> = module.bodies[1]
+        .block
+        .stmts
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                ..
+            } => Some(target.type_args.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        arguments,
+        [
+            vec![IncanType::Primitive(IncanPrimitiveType::Int)],
+            vec![IncanType::Primitive(IncanPrimitiveType::Bool)],
+        ]
+    );
+    let mut malformed = declaration.clone();
+    malformed.type_parameters.pop();
+    assert!(!module.is_well_formed_nominal_declaration(&malformed));
+    Ok(())
+}
+
 /// A plain newtype's slot and construction share the retained owner identity; hooks stay outside this profile.
 #[test]
 fn plain_newtype_retains_checked_tuple_layout() -> Result<(), Box<dyn std::error::Error>> {

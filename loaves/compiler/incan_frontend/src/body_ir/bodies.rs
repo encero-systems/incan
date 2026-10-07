@@ -96,18 +96,25 @@ pub(super) fn lower_function_body(
         .declarations
         .function_bindings_by_span
         .get(&(decl_span.start, decl_span.end));
+    let type_parameters: Vec<_> = function
+        .type_params
+        .iter()
+        .map(|parameter| parameter.name.clone())
+        .collect();
     let owner_return_type = binding
         .map(|binding| semantic_type_from_resolved(&binding.return_type))
+        .map(|ty| parameter_types::retain_parameter_type(ty, &type_parameters))
         .unwrap_or(IncanType::Unknown);
 
     let mut builder = BodyBuilder::new(lowering_facts, owner_return_type.clone());
+    builder.type_parameters = type_parameters;
     let root_scope = builder.new_scope(None, hir_span(decl_span));
 
     let mut param_locals = Vec::with_capacity(function.params.len());
     for (index, param) in function.params.iter().enumerate() {
         let ty = binding
             .and_then(|b| b.params.get(index))
-            .map(|p| semantic_type_from_resolved(&p.ty))
+            .map(|p| builder.checked_type(&p.ty))
             .unwrap_or(IncanType::Unknown);
         let local = builder.declare_new_local(
             param.node.name.clone(),
@@ -153,6 +160,11 @@ pub(super) fn lower_function_body(
     }
 
     bir::Body {
+        type_parameters: function
+            .type_params
+            .iter()
+            .map(|parameter| parameter.name.clone())
+            .collect(),
         decl_id,
         direct_call_id,
         canonical: binding.and_then(|binding| binding.identity.clone()),
@@ -216,11 +228,22 @@ pub(super) fn lower_method_body(
         .declarations
         .method_bindings_by_span
         .get(&(decl_span.start, decl_span.end));
+    let mut type_parameters = lowering_facts
+        .type_info
+        .declarations
+        .class_layouts
+        .get(owner_name)
+        .map(|layout| layout.type_params.clone())
+        .or_else(|| lowering_facts.type_info.traits.type_params.get(owner_name).cloned())
+        .unwrap_or_default();
+    type_parameters.extend(method.type_params.iter().map(|parameter| parameter.name.clone()));
     let owner_return_type = binding
         .map(|binding| semantic_type_from_resolved(&binding.return_type))
+        .map(|ty| parameter_types::retain_parameter_type(ty, &type_parameters))
         .unwrap_or(IncanType::Unknown);
 
     let mut builder = BodyBuilder::new(lowering_facts, owner_return_type.clone());
+    builder.type_parameters = type_parameters;
     let root_scope = builder.new_scope(None, hir_span(decl_span));
 
     let mut params = Vec::with_capacity(method.params.len() + 1);
@@ -248,7 +271,7 @@ pub(super) fn lower_method_body(
     for (index, param) in method.params.iter().enumerate() {
         let ty = binding
             .and_then(|b| b.params.get(index))
-            .map(|p| semantic_type_from_resolved(&p.ty))
+            .map(|p| builder.checked_type(&p.ty))
             .unwrap_or(IncanType::Unknown);
         // In a declared type's own method, a parameter typed `Self` (`other: Self`) is that type, as the checker reads
         // it; only a trait default keeps `Self` open, and its `receiver_ty` is `Self` already.
@@ -304,6 +327,11 @@ pub(super) fn lower_method_body(
     }
 
     Some(bir::Body {
+        type_parameters: method
+            .type_params
+            .iter()
+            .map(|parameter| parameter.name.clone())
+            .collect(),
         decl_id,
         direct_call_id,
         canonical: binding.and_then(|binding| binding.identity.clone()),

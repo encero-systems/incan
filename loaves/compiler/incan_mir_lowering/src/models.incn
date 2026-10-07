@@ -14,6 +14,7 @@ from pub::incan_mir_plan import ListLeaf, PlanType, Local, Place, Projection, So
 from numerics import numeric_type
 from tuples import tuple_type, generic_tuple_type, type_name, tuple_slot
 from pub::incan_mir_plan import tuple_element_type
+from nominal_instances import class_symbol
 
 
 pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Result[PlanType, str]:
@@ -35,6 +36,13 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                 _ => return Err(f"unsupported Body IR primitive type {primitive}")
         RustType.Tuple(elements) => return tuple_type(elements)
         RustType.Generic(base=base, args=arguments) =>
+            for index in range(len(declarations)):
+                declaration = declarations[index]
+                if declaration.type_parameter_count != 0 and declaration.canonical.declaration_name == str(base) and declaration.name == class_symbol(
+                    str(base),
+                    arguments,
+                ):
+                    return Ok(PlanType.Model(index, str(declaration.name)))
             if base == "Set" and len(arguments) == 1:
                 return Ok(PlanType.Set(primitive_leaf(arguments[0], true)?))
             if base == "Dict" and len(arguments) == 2:
@@ -116,11 +124,17 @@ pub def constructor_index(
     declarations: list[NominalDeclaration],
     target: &ConstructorTarget,
     count: int,
+    expected: PlanType,
 ) -> Result[int, str]:
     """Prove the constructor's retained declaration identity, canonical layout, and complete field binding."""
     match target.direct_declaration_id:
         Some(identity) =>
             for index in range(len(declarations)):
+                match expected:
+                    PlanType.Model(owner, _name) =>
+                        if index != owner:
+                            continue
+                    _ => return Err("unsupported Body IR nonnominal constructor destination")
                 declaration = declarations[index]
                 if identity != declaration.direct_declaration_id:
                     continue
