@@ -108,6 +108,7 @@ enum Leaf {
     Bool,
     Str,
     Tuple(Vec<Scalar>),
+    Model(i64),
 }
 
 impl Leaf {
@@ -119,6 +120,7 @@ impl Leaf {
             ListLeaf::Bool => Leaf::Bool,
             ListLeaf::Str => Leaf::Str,
             ListLeaf::Tuple(elements) => Leaf::Tuple(elements.iter().map(|element| scalar(&tuple_element_type(element.clone()))).collect()),
+            ListLeaf::Model(index, _) => Leaf::Model(*index),
         }
     }
 }
