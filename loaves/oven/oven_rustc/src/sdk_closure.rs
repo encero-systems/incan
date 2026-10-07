@@ -741,12 +741,20 @@ fn unit_receipt(
     context: &CompileContext<'_>,
     source: &Path,
 ) -> Result<oven_store::OvenReceipt, Error> {
+    // A host-domain unit is compiled for the machine running the compiler, so its receipt names the host triple even
+    // when the closure cross-compiles; for a same-host closure both are equal and identities are unchanged.
+    let host = crate::rustc::rustc_host_target(context.rustc)?;
+    let compiled_for = if unit.binding.domain == "host" {
+        host.as_str()
+    } else {
+        context.target
+    };
     let mut receipt = receipt_generated_project(
         &OvenGeneratedProjectRequest::new(
             &unit.root,
             &unit.binding.loaf,
             &unit.binding.version,
-            context.target,
+            compiled_for,
             context.toolchain,
             context.profile,
             unit.binding.features.clone(),

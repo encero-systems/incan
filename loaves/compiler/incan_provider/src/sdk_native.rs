@@ -257,7 +257,7 @@ pub const VOCABULARY_DESUGARER_TARGET: &str = "wasm32-wasip1";
 const VOCABULARY_DESUGARER_LOCK: &str = "vocab-wasm-lock.json";
 
 /// Index commit whose build facts the desugarer closure compiles under; it records the wasm32-wasip1 facts.
-const VOCABULARY_DESUGARER_INDEX_COMMIT: &str = "5935281efb19929ea901553930f52832a4a6a5ee";
+const VOCABULARY_DESUGARER_INDEX_COMMIT: &str = "d6e8b1e0ce9a47bd1f9da967c270636dc8cab956";
 
 /// Compile the vocabulary desugarer inputs for wasm32-wasip1 and retain them beside the SDK closure.
 ///
