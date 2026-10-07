@@ -106,7 +106,6 @@ enum Scalar {
 /// Comparison mirror of scalar and tuple leaves; the public plan remains Incan-authored.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Leaf {
-    Tuple(Vec<Scalar>),
     Int,
     Float,
     Bool,
