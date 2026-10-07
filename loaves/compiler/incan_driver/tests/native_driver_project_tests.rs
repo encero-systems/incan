@@ -1126,6 +1126,73 @@ fn direct_route_modules_match_legacy() -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
+/// Published two-module library bodies retain function, nominal, enum, and adopted-method output.
+#[test]
+fn direct_route_packages_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("packages")?;
+    let library = root.join("deps/library");
+    fs::create_dir_all(library.join("src"))?;
+    fs::create_dir_all(root.join("src"))?;
+    fs::write(
+        root.join("loaf.toml"),
+        "[project]\nname = \"package_consumer\"\nversion = \"0.1.0\"\n[project.scripts]\nmain = \"src/main.incn\"\n[dependencies]\nlibrary = { path = \"deps/library\" }\n",
+    )?;
+    fs::write(
+        library.join("loaf.toml"),
+        "[project]\nname = \"library\"\nversion = \"0.1.0\"\n",
+    )?;
+    fs::write(
+        library.join("src/lib.incn"),
+        "pub from values import Reading, Counter, Signal, add, BASE, Answer, classify\n",
+    )?;
+    fs::write(
+        library.join("src/values.incn"),
+        "pub const BASE: int = 2\n\npub type Answer = int | str\n\npub def classify(value: Answer) -> int:\n    if isinstance(value, int):\n        return 1\n    return 2\n\npub trait Reading:\n    def get(self) -> int: ...\n\n    def doubled(self) -> int:\n        return self.get() + self.get()\n\npub model Counter with Reading:\n    pub value: int\n\n    def get(self) -> int:\n        return self.value\n\npub enum Signal:\n    Ready\n    Waiting\n\npub def add(value: int) -> int:\n    return value + BASE\n",
+    )?;
+    let source = root.join("src/main.incn");
+    fs::write(
+        &source,
+        "from pub::library import Counter, Signal, add, BASE, Answer, classify\n\ndef main() -> None:\n    println(add(40))\n    counter = Counter(value=7)\n    println(counter.get())\n    println(counter.doubled())\n    println(BASE)\n    answer: Answer = 7\n    println(classify(answer))\n    signal = Signal.Ready\n    match signal:\n        Signal.Ready => println(1)\n        Signal.Waiting => println(2)\n",
+    )?;
+    let mut publish = support::cli_project::configured_incan_command(&library, &["oven", "bake", "--project", "."]);
+    support::configure_explicit_oven_bake_command(&mut publish)?;
+    success(&publish.output()?, "package publication");
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let native = root.join("native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .current_dir(&root)
+        .output()?,
+        "package native compilation",
+    );
+    let legacy = root.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy)
+            .output()?,
+        "package legacy compilation",
+    );
+    let expected = Command::new(legacy.join("oven/release/package_consumer")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "package legacy execution");
+    success(&actual, "package native execution");
+    assert_eq!(actual.stdout, b"42\n7\n14\n2\n1\n1\n");
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(actual.stderr, expected.stderr);
+    assert_eq!(actual.status.code(), expected.status.code());
+    Ok(())
+}
+
 /// Prove tuple construction, typed signatures, constant projections, and simultaneous unpacking against legacy.
 #[test]
 fn tuple_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

@@ -87,6 +87,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         out,
                     );
                 };
+                if let Some(global) = place.global()
+                    && global.identity.kind == SemanticSourceTargetKind::Const
+                    && let Some(value) = self.published_constants.get(&global.identity)
+                {
+                    let constant = match value {
+                        bir::Constant::Int(number) if ty == IncanType::Primitive(IncanPrimitiveType::Float) => {
+                            bir::Constant::Float(number.to_string())
+                        }
+                        value => value.clone(),
+                    };
+                    return bir::Operand::Constant(constant);
+                }
                 // Retain the checker's evaluated scalar or text for a source-local constant. Identity must prove the
                 // module and declaration kind before the name-keyed const-evaluation table is consulted;
                 // imported globals and same-spelled locals keep their existing place representation.

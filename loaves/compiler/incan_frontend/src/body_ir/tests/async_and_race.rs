@@ -351,7 +351,9 @@ fn a_prefix_surface_keyword_that_is_not_await_is_refused_rather_than_treated_as_
     let local_fieldless_enum_declarations = LocalFieldlessEnumDeclarations::new();
     let local_value_enum_declarations = LocalValueEnumDeclarations::new();
     let provider_operations = ProviderOperationCatalog::new();
+    let published_constants = HashMap::new();
     let lowering_facts = BodyIrLoweringFacts {
+        published_constants: &published_constants,
         type_info: &type_info,
         function_default_sources: &function_default_sources,
         local_function_declarations: &local_function_declarations,

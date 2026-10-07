@@ -226,6 +226,12 @@ fn build_body_ir_module_v0_with_provider_operations(
 ) -> bir::BodyIrModule {
     let module_identity = body_ir_module_identity(module_path);
     let module_id = CompilerNodeId::module(module_identity.clone());
+    let constant_declarations = collect::collect_constants(program, type_info);
+    let published_constants = context
+        .iter()
+        .flat_map(|module| module.constant_declarations.iter())
+        .map(|declaration| (declaration.canonical.clone(), declaration.value.clone()))
+        .collect::<HashMap<_, _>>();
     let function_default_sources = collect_function_default_sources(program);
     let local_function_declarations = collect_local_function_declarations(program);
     let nominal_declarations = collect_local_nominal_declarations(program, &module_identity, type_info);
@@ -255,6 +261,7 @@ fn build_body_ir_module_v0_with_provider_operations(
         }
     }
     let lowering_facts = BodyIrLoweringFacts {
+        published_constants: &published_constants,
         type_info,
         function_default_sources: &function_default_sources,
         local_function_declarations: &local_function_declarations,
@@ -314,6 +321,8 @@ fn build_body_ir_module_v0_with_provider_operations(
         .collect::<Vec<_>>();
     apply_top_level_input_contract_refusal(program, &mut bodies);
     bir::BodyIrModule {
+        constant_declarations,
+        type_alias_declarations: collect::collect_type_aliases(program, type_info),
         trait_declarations: collect::collect_local_trait_declarations(program, type_info),
         trait_implementations: collect::collect_local_trait_implementations(program, type_info),
         enum_declarations: collect_local_enum_declarations(program, &module_identity, type_info),
@@ -392,6 +401,7 @@ type LocalValueEnumDeclarations = HashMap<String, bir::ValueEnumDeclaration>;
 /// identities and representations a later direct executor needs. Keeping the bundle explicit avoids widening any
 /// individual lowering helper's parameter surface as profiles add one bounded source-local fact at a time.
 struct BodyIrLoweringFacts<'type_info, 'source> {
+    published_constants: &'source HashMap<CanonicalSymbolId, bir::Constant>,
     type_info: &'type_info TypeCheckInfo,
     function_default_sources: &'source FunctionDefaultSources,
     local_function_declarations: &'source LocalFunctionDeclarations,
@@ -534,6 +544,8 @@ const fn hir_span(span: ast::Span) -> HirSourceSpan {
 /// Per-function lowering state: fresh local/scope allocation, current name bindings, and accumulated body-level
 /// facts (runtime requirements, panic facts, which locals have been moved out of their declaring scope).
 struct BodyBuilder<'type_info, 'source> {
+    /// Immutable values decoded from the selected package representation, indexed by canonical declaration.
+    published_constants: &'source HashMap<CanonicalSymbolId, bir::Constant>,
     type_info: &'type_info TypeCheckInfo,
     /// Source defaults for top-level partial targets, retained only until they lower into Body IR.
     function_default_sources: &'source FunctionDefaultSources,
@@ -607,6 +619,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             local_nominal_declarations: lowering_facts.local_nominal_declarations,
             local_fieldless_enum_declarations: lowering_facts.local_fieldless_enum_declarations,
             local_value_enum_declarations: lowering_facts.local_value_enum_declarations,
+            published_constants: lowering_facts.published_constants,
             module_identity: lowering_facts.module_identity,
             provider_operations: lowering_facts.provider_operations,
             owner_return_type,
