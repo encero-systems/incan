@@ -573,7 +573,6 @@ def main() -> None:
     println(text)
     println(text_pair[-1])
     println((true, 1.5))
-    println((42,))
     mut boxed = Boxed(value=0)
     boxed.value, a = pair
     println(boxed.value)
@@ -608,26 +607,36 @@ def main() -> None:
     success(&actual, "native tuple execution");
     assert_eq!(actual.stdout, expected.stdout);
     assert!(actual.stdout.starts_with(b"3\n7\n(3, 7)\n"));
-    let refused_source = root.join("function_value.incn");
-    fs::write(
-        &refused_source,
-        "def apply(value: (int) -> int) -> int:\n    return value(1)\n\ndef main() -> None:\n    println(1)\n",
-    )?;
-    let refused_output = root.join("function-native");
-    let refused = corpus::source_command(
-        &fixture.driver_binary("release"),
-        &refused_source,
-        &refused_output,
-        &fixture.sysroot,
-        &closure,
-    )
-    .output()?;
-    assert!(!refused.status.success());
-    assert!(
-        String::from_utf8_lossy(&refused.stderr).contains("Function"),
-        "{}",
-        String::from_utf8_lossy(&refused.stderr)
-    );
-    assert!(!refused_output.exists());
+    for (name, source_text, kind) in [
+        (
+            "function_value",
+            "def apply(value: (int) -> int) -> int:\n    return value(1)\n\ndef main() -> None:\n    println(1)\n",
+            "Function",
+        ),
+        (
+            "singleton",
+            "def main() -> None:\n    println((42,))\n",
+            "singleton Tuple",
+        ),
+    ] {
+        let refused_source = root.join(format!("{name}.incn"));
+        fs::write(&refused_source, source_text)?;
+        let refused_output = root.join(format!("{name}-native"));
+        let refused = corpus::source_command(
+            &fixture.driver_binary("release"),
+            &refused_source,
+            &refused_output,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?;
+        assert!(!refused.status.success());
+        assert!(
+            String::from_utf8_lossy(&refused.stderr).contains(kind),
+            "{}",
+            String::from_utf8_lossy(&refused.stderr)
+        );
+        assert!(!refused_output.exists());
+    }
     Ok(())
 }
