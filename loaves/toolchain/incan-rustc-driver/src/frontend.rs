@@ -60,11 +60,6 @@ fn checked_modules(path: &Path) -> Result<CheckedProgram, String> {
     let resolved =
         incan_frontend::executable_resolution::resolve_executable_requirements(&session.provider_plan, &required)
             .map_err(|error| format!("unsupported Body IR package executable representation: {error}"))?;
-    // Published executable fragments lack original source text for the adapter diagnostic source map.
-    // Refuse before planning rather than treating their canonical module identities as filesystem paths.
-    if resolved.modules.iter().any(|module| !module.bodies.is_empty()) {
-        return Err("unsupported Body IR published executable source provenance".to_owned());
-    }
     let mut bodies = resolved.modules;
     // Published fragments retain canonical spans but do not carry source text. Do not attribute those spans to the
     // entry.
@@ -75,25 +70,17 @@ fn checked_modules(path: &Path) -> Result<CheckedProgram, String> {
     let mut sources = vec![String::new(); bodies.len()];
     let entry = entry + bodies.len();
     for module in modules {
-        validate_declarations(&module.ast)?;
         let type_info = analysis
             .type_info_for_path(&module.file_path)
             .ok_or("module analysis is missing")?;
+        validate_declarations(&module.ast, type_info)?;
         let body_ir = incan_frontend::body_ir::build_body_ir_module_v0_with_executable_context(
             &module.ast,
             &module.path_segments,
             type_info,
             &bodies,
         );
-        let static_count = module
-            .ast
-            .declarations
-            .iter()
-            .filter(|declaration| matches!(declaration.node, incan_frontend::ast::Declaration::Static(_)))
-            .count();
-        if static_count != body_ir.static_declarations.len() {
-            return Err("unsupported source Static initializer or carrier on the native route".to_owned());
-        }
+        validate_retained_storage(&module.ast, &body_ir)?;
         bodies.push(body_ir);
         sources.push(module.source);
         files.push(module.file_path.to_string_lossy().into_owned());
@@ -106,8 +93,43 @@ fn checked_modules(path: &Path) -> Result<CheckedProgram, String> {
     })
 }
 
+/// Refuse source storage whose checked layout was deliberately omitted from Body IR.
+///
+/// In particular, a checked newtype constructor must not reach body validation as if it were an ordinary raw wrapper.
+/// The frontend declaration collector owns that decision; this boundary only checks whether its layout was retained.
+fn validate_retained_storage(program: &incan_frontend::ast::Program, module: &BodyIrModule) -> Result<(), String> {
+    use incan_frontend::ast::Declaration;
+    use incan_semantics_core::SemanticSourceTargetKind;
+
+    let static_count = program
+        .declarations
+        .iter()
+        .filter(|declaration| matches!(declaration.node, Declaration::Static(_)))
+        .count();
+    if static_count != module.static_declarations.len() {
+        return Err("unsupported source Static initializer or carrier on the native route".to_owned());
+    }
+    let newtype_count = program
+        .declarations
+        .iter()
+        .filter(|declaration| matches!(declaration.node, Declaration::Newtype(_)))
+        .count();
+    let retained_newtypes = module
+        .nominal_declarations
+        .iter()
+        .filter(|declaration| declaration.canonical.kind == SemanticSourceTargetKind::Newtype)
+        .count();
+    if newtype_count != retained_newtypes {
+        return Err("unsupported source checked Newtype construction on the native route".to_owned());
+    }
+    Ok(())
+}
+
 /// Refuse declarations whose observable behavior the direct route cannot retain, independently for each module.
-fn validate_declarations(program: &incan_frontend::ast::Program) -> Result<(), String> {
+fn validate_declarations(
+    program: &incan_frontend::ast::Program,
+    type_info: &incan_frontend::typechecker::TypeCheckInfo,
+) -> Result<(), String> {
     // Legacy's `incan_ir::check_for_this_import` injects entrypoint output for this exact module import.
     // Until Body IR carries that effect, accepting the declaration would silently erase observable behavior.
     for declaration in &program.declarations {
@@ -127,17 +149,21 @@ fn validate_declarations(program: &incan_frontend::ast::Program) -> Result<(), S
             }
             Declaration::Static(_) => continue,
             Declaration::Model(model) => {
-                if !incan_frontend::body_ir::is_direct_replacement_plain_model(model) {
+                if type_info.declarations.model_derives.get(&model.name).is_some_and(|names| names.iter().any(|name| name.starts_with("serde::")))
+                    && model.fields.iter().any(|field| field.node.metadata.alias.is_some())
+                {
+                    return Err(format!("unsupported source Model serde field aliases on {} on the native route", model.name));
+                }
+                if !incan_frontend::body_ir::is_direct_replacement_checked_model(model, type_info) {
                     return Err(format!(
-                        "unsupported source nonplain Model {} on the native route",
-                        model.name
+                        "unsupported source Model {} on {} on the native route",
+                        model_refusal_feature(model), model.name
                     ));
                 }
-                if model.fields.iter().any(|field| field.node.default.is_some()) {
-                    return Err(format!(
-                        "unsupported source Model defaults on {} on the native route",
-                        model.name
-                    ));
+                if model.fields.iter().any(|field| field.node.default.is_some())
+                    && type_info.declarations.model_derives.get(&model.name).is_some_and(|derives| derives.iter().any(|derive| derive == "Default"))
+                {
+                    return Err(format!("unsupported source Model derived Default over field defaults on {} on the native route", model.name));
                 }
                 continue;
             }
@@ -185,6 +211,49 @@ fn validate_declarations(program: &incan_frontend::ast::Program) -> Result<(), S
         return Err(format!("unsupported source {kind} on the native route"));
     }
     Ok(())
+}
+
+/// Name the first unsupported model feature without relaxing the frontend's declaration admission predicate.
+fn model_refusal_feature(model: &incan_frontend::ast::ModelDecl) -> String {
+
+    // ---- Structural declaration features ----
+    if !model.type_params.is_empty() {
+        return "type parameters".to_owned();
+    }
+    if model.traits.iter().any(|adoption| !adoption.node.type_args.is_empty()) {
+        return "generic trait adoption".to_owned();
+    }
+
+    // ---- Member binding features ----
+    if !model.method_aliases.is_empty() {
+        return "method aliases".to_owned();
+    }
+    if !model.method_partials.is_empty() {
+        return "method partials".to_owned();
+    }
+    if !model.properties.is_empty() {
+        return "properties".to_owned();
+    }
+
+    // ---- Method facts ----
+    if model.methods.iter().any(|method| !method.node.type_params.is_empty() || !method.node.decorators.is_empty()) {
+        return "generic or decorated methods".to_owned();
+    }
+
+    // ---- Decorator expansion ----
+    if let Some(decorator) = model.decorators.iter().find(|decorator| !incan_frontend::body_ir::is_direct_replacement_model_derive(&decorator.node)) {
+        let arguments = decorator.node.args.iter().filter_map(|argument| {
+            match argument {
+                incan_frontend::ast::DecoratorArg::Positional(value) => match &value.node {
+                    incan_frontend::ast::Expr::Ident(name) => Some(name.as_str()),
+                    _ => None,
+                },
+                _ => None,
+            }
+        }).collect::<Vec<_>>().join(", ");
+        return format!("decorator @{}({arguments})", decorator.node.name);
+    }
+    "unsupported declaration shape".to_owned()
 }
 
 /// Exact caller-declared native libraries and their dependency search directories.

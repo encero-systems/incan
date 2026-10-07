@@ -83,11 +83,31 @@ fn mir_built<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> &'tcx Steal<Body<'tcx>
             && name.is_some_and(|name| name.as_str() == function.name)
     });
     match function {
-        Some(function) => match bodies::body(tcx, def, function) {
+        Some(function) => match if crate::captured_generators::producer(function).is_some() {
+            crate::captured_generators::constructor(tcx, def, function)
+        } else {
+            bodies::body(tcx, def, function)
+        } {
             Ok(body) => tcx.alloc_steal_mir(body),
             Err(error) => refuse(tcx, error),
         },
-        None => (rustc_interface::DEFAULT_QUERY_PROVIDERS.queries.mir_built)(tcx, def),
+        None => {
+            let parent = tcx.parent(def.to_def_id());
+            let constructor = plan.functions.iter().find(|function| {
+                tcx.def_kind(def) == rustc_hir::def::DefKind::Closure
+                    && tcx
+                        .opt_item_name(parent)
+                        .is_some_and(|name| name.as_str() == function.name)
+                    && crate::captured_generators::producer(function).is_some()
+            });
+            match constructor {
+                Some(function) => match crate::captured_generators::callback(tcx, def, function) {
+                    Ok(body) => tcx.alloc_steal_mir(body),
+                    Err(error) => refuse(tcx, error),
+                },
+                None => (rustc_interface::DEFAULT_QUERY_PROVIDERS.queries.mir_built)(tcx, def),
+            }
+        }
     }
 }
 
@@ -134,7 +154,7 @@ impl rustc_driver::Callbacks for Callbacks {
                 Err(error) => compiler.sess.dcx().fatal(error.to_string()),
             };
             let mut item = declarations::model(model, span);
-            for derive in &model.derives {
+            for derive in model.derives.iter().filter(|derive| derive.as_str() != "Display") {
                 item.attrs.push(declarations::derive_attribute(
                     &compiler.sess.psess.attr_id_generator,
                     derive,
@@ -156,12 +176,25 @@ impl rustc_driver::Callbacks for Callbacks {
             };
             krate.items.push(declarations::function(function, span));
         }
-        let roots: BTreeSet<_> = self
+        let mut roots: BTreeSet<_> = self
             .plan
             .externals
             .iter()
             .filter_map(|external| external.path.split("::").next())
             .collect();
+        if self.plan.functions.iter().any(|function| {
+            function.locals.iter().any(|local| {
+                matches!(
+                    local.ty,
+                    crate::plan::PlanType::Generator(..)
+                        | crate::plan::PlanType::GeneratorMutRef(..)
+                        | crate::plan::PlanType::GeneratorYield(..)
+                        | crate::plan::PlanType::GeneratorYieldRef(..)
+                )
+            })
+        }) {
+            roots.insert("incan_std_core");
+        }
         for root in roots {
             krate
                 .items

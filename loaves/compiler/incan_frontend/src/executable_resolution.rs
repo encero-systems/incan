@@ -147,6 +147,11 @@ pub fn resolve_executable_requirements(
             .ok_or_else(|| ExecutableResolutionError::UnknownPackage {
                 library: library.clone(),
             })?;
+        // A checked module binding selects an admitted package namespace; it has no executable body. Calls and
+        // type uses retain their own canonical requirements and must still resolve from the selected artifact.
+        if identity.kind == incan_semantics_core::SemanticSourceTargetKind::Module {
+            continue;
+        }
         if !opened.contains_key(library) {
             let surface = OpenSurface::open(package, &identity)?;
             resolved.content_bytes_verified += surface.content_bytes_verified;
@@ -182,6 +187,8 @@ pub fn resolve_executable_requirements(
         let owner = canonical_module_identity(&identity)
             .ok_or_else(|| package.unusable(malformed("declaration has no module owner")))?;
         let module = modules.entry(owner.clone()).or_insert_with(|| BodyIrModule {
+            constant_declarations: Vec::new(),
+            type_alias_declarations: Vec::new(),
             trait_declarations: Vec::new(),
             trait_implementations: Vec::new(),
             module_id: CompilerNodeId::module(owner),
@@ -200,6 +207,14 @@ pub fn resolve_executable_requirements(
             ExecutableDeclaration::Nominal(value) => module.nominal_declarations.push(value),
             ExecutableDeclaration::FieldlessEnum(value) => module.fieldless_enum_declarations.push(value),
             ExecutableDeclaration::ValueEnum(value) => module.value_enum_declarations.push(value),
+            ExecutableDeclaration::Enum(value) => module.enum_declarations.push(value),
+            ExecutableDeclaration::Trait(value) => module.trait_declarations.push(value),
+            ExecutableDeclaration::Constant(value) => module.constant_declarations.push(value),
+            ExecutableDeclaration::TypeAlias(value) => module.type_alias_declarations.push(value),
+            ExecutableDeclaration::NominalWithTraits(value, implementations) => {
+                module.nominal_declarations.push(value);
+                module.trait_implementations.extend(implementations);
+            }
         }
         resolved.decoded_declarations += 1;
         resolved.payload_bytes_read += length;
