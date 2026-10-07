@@ -605,7 +605,7 @@ def lower_ready_race(
         binding = plan_place(int(arm.binding.index()) + 1 + builder.local_offset, span)
         await_future(module, builder, futures[index], binding, span)?
         lower_ready_race_callback(module, builder, arm.body)?
-        lower_local_assignment(builder, target, RustRvalue.Use(arm.result), span)?
+        lower_local_assignment(module, builder, target, RustRvalue.Use(arm.result), span)?
         # Legacy drops losing futures after the winning callback has produced the shared result.
         for future in futures:
             drop_owned(builder, future.local, span)
