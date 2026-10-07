@@ -148,6 +148,7 @@ fn prepare_trusted_rustdoc_command(
     for (crate_name, path) in &plan.externs {
         command.arg("--extern").arg(format!("{crate_name}={}", path.display()));
     }
+    super::linking::apply_receipt_link(&mut command, request.rustc, request.receipt)?;
     Ok((source, rustdoc, command))
 }
 

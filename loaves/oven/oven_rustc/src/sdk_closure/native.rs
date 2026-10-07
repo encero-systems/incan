@@ -54,6 +54,8 @@ fn prepare_link(
     link: &RustFactLink,
     roots: &[PathBuf],
 ) -> Result<NativeProduct, Error> {
+    let effective_link = apple_deployment_link(link, context.target);
+    let link = &effective_link;
     validate_source_catalog(link)?;
     let owner = select_owner(link, roots)?;
     let receipt = receipt_with_build_unit_input(receipt, "sdk-link-fact", serde_json::to_string(link)?)?;
@@ -106,6 +108,22 @@ fn prepare_link(
         name: link.library.name.clone(),
         owner,
     })
+}
+
+/// Bind Apple native objects to the same explicit minimum OS as the pinned Rust linker.
+///
+/// The effective fact is serialized into the native archive receipt before Store lookup. This policy overrides
+/// captured compiler defaults without inheriting the host SDK's minimum, and leaves non-Apple facts unchanged.
+fn apple_deployment_link(link: &RustFactLink, target: &str) -> RustFactLink {
+    let mut effective = link.clone();
+    if target.ends_with("-apple-darwin") {
+        for object in &mut effective.objects {
+            object.arguments.push(RustFactArgument::Literal {
+                literal: "-mmacosx-version-min=11.0".to_string(),
+            });
+        }
+    }
+    effective
 }
 
 /// Refuse source catalogs requiring inert metadata reads or ambiguous object/library names before execution.
@@ -194,6 +212,27 @@ mod tests {
         assert!(error.to_string().contains("sha256:owner"));
         link.objects.push(link.objects[0].clone());
         assert!(validate_source_catalog(&link).is_err());
+        Ok(())
+    }
+
+    /// The effective Apple fact names the deployment flag before its cache identity is derived.
+    #[test]
+    fn apple_native_fact_binds_deployment_policy() -> Result<(), Box<dyn std::error::Error>> {
+        let link: oven_model::manifest::RustFactLink = serde_json::from_value(serde_json::json!({
+            "name": "native", "target": "aarch64-apple-darwin",
+            "executable": {"name": "clang", "owner": "owner", "path": "usr/bin/clang", "digest": "digest"},
+            "objects": [{"name": "probe.o", "language": "c", "arguments": [{"output": "probe.o"}]}],
+            "library": {"name": "probe", "kind": "static"}
+        }))?;
+        let apple = super::apple_deployment_link(&link, "aarch64-apple-darwin");
+        assert_ne!(serde_json::to_vec(&link)?, serde_json::to_vec(&apple)?);
+        assert_eq!(
+            apple.objects[0].arguments.last(),
+            Some(&super::RustFactArgument::Literal {
+                literal: "-mmacosx-version-min=11.0".to_string(),
+            })
+        );
+        assert_eq!(link, super::apple_deployment_link(&link, "x86_64-unknown-linux-gnu"));
         Ok(())
     }
 }

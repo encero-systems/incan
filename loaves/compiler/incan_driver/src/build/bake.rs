@@ -912,6 +912,11 @@ fn project_rust_unit_receipt(
     {
         request = request.with_build_unit_input(oven_rustc::rustc::driver_grant::DRIVER_GRANT_INPUT, grant);
     }
+    if let Some(identity) =
+        oven_rustc::rustc::pinned_link_closure_identity(context.rustc, context.target).map_err(oven_rustc_error)?
+    {
+        request = request.with_build_unit_input("link-closure", identity);
+    }
     let evidence = generated_project_source_evidence(&request).map_err(|error| CliError::failure(error.to_string()))?;
     let receipt = receipt_generated_project_with_source_evidence(&request, &evidence)
         .map_err(|error| CliError::failure(error.to_string()))?;

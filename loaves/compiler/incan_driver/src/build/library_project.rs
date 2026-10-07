@@ -1171,6 +1171,8 @@ fn prepare_library_project_with_context(
         let store = oven_store
             .as_ref()
             .ok_or_else(|| CliError::failure("normal Oven library build omitted its bounded store"))?;
+        let link_closure =
+            oven_rustc::rustc::pinned_link_closure_identity(&rustc, &target).map_err(oven_rustc_error)?;
         let mut profiles = BTreeMap::new();
         let oven_receipt_source_evidence_start = Instant::now();
         let mut source_evidence_request = OvenGeneratedProjectRequest::new(
@@ -1226,6 +1228,9 @@ fn prepare_library_project_with_context(
                     provider_compilation_requirements_digest(&provider_compilations)
                         .map_err(|error| CliError::failure(error.to_string()))?,
                 );
+            }
+            if let Some(identity) = &link_closure {
+                receipt_request = receipt_request.with_build_unit_input("link-closure", identity);
             }
             let receipt = receipt_generated_project_with_source_evidence(&receipt_request, &generated_source_evidence)
                 .map_err(|error| CliError::failure(error.to_string()))?;

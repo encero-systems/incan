@@ -531,7 +531,7 @@ pub fn prepare_oven_project(
         &project_root,
         &project_name,
         &project_version,
-        rustc_target,
+        &rustc_target,
         &rustc_toolchain,
         profile,
         cargo_features.cargo_features.clone(),
@@ -548,6 +548,11 @@ pub fn prepare_oven_project(
             provider_compilation_requirements_digest(&provider_compilations)
                 .map_err(|error| CliError::failure(error.to_string()))?,
         );
+    }
+    if let Some(identity) =
+        oven_rustc::rustc::pinned_link_closure_identity(&rustc, &rustc_target).map_err(oven_rustc_error)?
+    {
+        receipt_request = receipt_request.with_build_unit_input("link-closure", identity);
     }
     let receipt = receipt_generated_project(&receipt_request).map_err(|error| CliError::failure(error.to_string()))?;
     let receipt_path =

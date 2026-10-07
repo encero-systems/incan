@@ -10,6 +10,7 @@ mod diagnostics;
 pub mod driver_grant;
 mod inspection;
 pub(crate) mod linking;
+pub use linking::pinned_link_closure_identity;
 mod manifest_cohort;
 mod manifest_materialize;
 mod manifest_source_roles;

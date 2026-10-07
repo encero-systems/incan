@@ -144,7 +144,8 @@ impl OvenRuntimeFoundationBuild {
 /// The caller retains the foundation's source and artifact leases for the duration of this call and owns
 /// `output_root`. Each unit is compiled exactly once and unconditionally: the executor empties the unit directory
 /// and runs the compiler rather than trusting whatever scratch already holds, so `compiler_launches` reports real
-/// process starts. Whether two compilations are interchangeable is decided by the Store on identity, not here.
+/// process starts. Apple output identities additionally bind the pinned link closure and actual child identities
+/// before publication. Whether two compilations are interchangeable is decided by the Store on identity, not here.
 pub fn execute_runtime_foundation_rebuild(
     foundation: &ValidatedOvenRuntimeFoundation,
     materialized: &OvenMaterializedRuntimeFoundation,
@@ -290,7 +291,26 @@ pub fn execute_runtime_foundation_rebuild(
         // identity was compiled. Deciding that two compilations are interchangeable is the Store's decision, made
         // on identity; this executor's job is to produce the bytes. So the unit directory is emptied first, the
         // compiler always runs, and `compiler_launches` counts real launches rather than scratch misses.
-        let compiled_identity = source.compiled_identity.clone();
+        let target = match unit.domain {
+            OvenSelectedRustFacetDomain::Host => selection.host.as_str(),
+            OvenSelectedRustFacetDomain::Target => selection.intent.target.as_str(),
+        };
+        let link = if unit.compiler_crate_type != "rlib" && unit.compiler_crate_type != "lib" {
+            super::linking::pinned_apple_link(closure.rustc(), target)?
+        } else {
+            None
+        };
+        let compiled_identity = if target.ends_with("-apple-darwin") {
+            let children = dependencies
+                .iter()
+                .map(|child| (child.alias.clone(), child.identity.clone()))
+                .collect::<Vec<_>>();
+            source
+                .compiled_identity
+                .with_execution_inputs(link.as_ref().map(|link| link.identity.as_str()), &children)?
+        } else {
+            source.compiled_identity.clone()
+        };
         let unit_root = output_root.join(compiled_identity.as_str().replace(':', "-"));
         let artifact = unit_root.join(runtime_rebuild_artifact_name(unit, &selection.host)?);
         if unit_root.exists() {
@@ -696,6 +716,15 @@ fn rebuild_unit_command(
         artifact,
         private_out_dir,
     )?;
+    if unit.compiler_crate_type != "rlib" && unit.compiler_crate_type != "lib" {
+        let target = match unit.domain {
+            OvenSelectedRustFacetDomain::Host => selection.host.as_str(),
+            OvenSelectedRustFacetDomain::Target => selection.intent.target.as_str(),
+        };
+        if let Some(link) = super::linking::pinned_apple_link(closure.rustc(), target)? {
+            link.apply(&mut command);
+        }
+    }
     let working_relative = Path::new(&unit.compiler_paths.working_directory)
         .strip_prefix(&unit.compiler_paths.source_root)
         .map_err(|_| {
@@ -833,7 +862,9 @@ fn append_rebuild_unit_inputs(
         artifact,
         private_out_dir,
     )?;
-    append_captured_linker_arguments(command, &unit.compiler_arguments);
+    let direct_apple = unit.crate_kind == OvenSelectedRustFacetCrateKind::ProcMacro
+        && super::rustc_host_target(closure.rustc())?.ends_with("-apple-darwin");
+    append_captured_linker_arguments(command, &unit.compiler_arguments, direct_apple);
     append_materialized_sysroot_extern_arguments(command, &source.sysroot_externs);
     append_materialized_link_arguments(command, &source.linked_libraries)?;
     if unit.crate_kind == OvenSelectedRustFacetCrateKind::ProcMacro {
@@ -987,13 +1018,23 @@ fn append_runtime_search_paths(
     }
 }
 
-/// Append capture-bound linker arguments at Cargo's terminal injection point after all path remaps.
-fn append_captured_linker_arguments(command: &mut Command, arguments: &[OvenSelectedRustFacetCompilerArgument]) {
+/// Append captured linker inputs after remaps, translating driver forwarding syntax for direct Apple LLD.
+fn append_captured_linker_arguments(
+    command: &mut Command,
+    arguments: &[OvenSelectedRustFacetCompilerArgument],
+    direct_apple: bool,
+) {
     for argument in arguments {
         if let OvenSelectedRustFacetCompilerArgument::Codegen { name, value } = argument
             && name == "link-arg"
         {
-            command.arg("-C").arg(format!("link-arg={value}"));
+            if direct_apple && let Some(forwarded) = value.strip_prefix("-Wl,") {
+                for flag in forwarded.split(',') {
+                    command.arg("-C").arg(format!("link-arg={flag}"));
+                }
+            } else {
+                command.arg("-C").arg(format!("link-arg={value}"));
+            }
         }
     }
 }
@@ -1423,11 +1464,9 @@ pub(crate) mod tests {
             &output_root.path().join("libfixture.dylib"),
             None,
         )?;
-        assert!(
-            proc_macro_command
-                .get_envs()
-                .any(|(name, value)| name == "SDKROOT" && value.is_none())
-        );
+        assert!(proc_macro_command.get_envs().any(
+            |(name, value)| name == "SDKROOT" && value.is_some() == graph.selection.host.ends_with("-apple-darwin")
+        ));
         let proc_macro_arguments = proc_macro_command
             .get_args()
             .map(|argument| argument.to_string_lossy().into_owned())
@@ -1441,6 +1480,78 @@ pub(crate) mod tests {
         );
         assert!(path.windows(2).any(|pair| pair == ["--cap-lints", "warn"]));
         assert!(path.windows(2).any(|pair| pair == ["-C", "embed-bitcode=no"]));
+        Ok(())
+    }
+
+    /// The captured runtime command links a real proc macro through pinned LLD in two roots.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn pinned_runtime_proc_macro_links_captured_arguments() -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = fixture()?;
+        let graph = fixture.foundation.selected_graph().graph();
+        let selected = fixture
+            .materialized
+            .rebuild_order()
+            .next()
+            .ok_or("missing rebuild unit")?;
+        let base = graph
+            .units
+            .iter()
+            .find(|unit| unit.identity == selected)
+            .ok_or("missing graph unit")?;
+        let materialized = fixture
+            .materialized
+            .sources()
+            .unit(selected)
+            .ok_or("missing materialized unit")?;
+        let temp = tempfile::tempdir()?;
+        let closure = OvenRuntimeCompilerClosure::new(&fixture.rustc, FIXTURE_CLOSURE);
+        let mut outputs = Vec::new();
+        for name in ["first", "second"] {
+            let root = temp.path().join(name);
+            fs::create_dir_all(&root)?;
+            let mut source = materialized.clone();
+            source.source_root = root.clone();
+            source.root_module = root.join("probe.rs");
+            source.linked_libraries.clear();
+            source.environment.clear();
+            fs::write(
+                &source.root_module,
+                "extern crate proc_macro; #[proc_macro] pub fn identity(input: proc_macro::TokenStream) -> proc_macro::TokenStream { input }",
+            )?;
+            let mut unit = base.clone();
+            unit.crate_name = "probe".to_string();
+            unit.root_module = "probe.rs".to_string();
+            unit.domain = OvenSelectedRustFacetDomain::Host;
+            unit.crate_kind = OvenSelectedRustFacetCrateKind::ProcMacro;
+            unit.compiler_crate_type = "proc-macro".to_string();
+            unit.compiler_arguments = ["-Wl,-reproducible", "-install_name", "@rpath/libprobe.dylib", "-S"]
+                .into_iter()
+                .map(|value| OvenSelectedRustFacetCompilerArgument::Codegen {
+                    name: "link-arg".to_string(),
+                    value: value.to_string(),
+                })
+                .collect();
+            let artifact = root.join("libprobe.dylib");
+            let mut command = rebuild_unit_command(
+                &closure,
+                &unit,
+                &source,
+                &graph.selection,
+                fixture.materialized.sources().compiler_target(),
+                fixture.materialized.artifact_plan(),
+                &BTreeSet::new(),
+                &[],
+                &artifact,
+                None,
+            )?;
+            let result = command.output()?;
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            assert!(result.status.success(), "{stderr}");
+            assert!(!stderr.contains("rust-lld: warning"), "{stderr}");
+            outputs.push(fs::read(&artifact)?);
+        }
+        assert_eq!(outputs[0], outputs[1]);
         Ok(())
     }
 
