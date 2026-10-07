@@ -364,13 +364,9 @@ type FunctionDefaultSources = HashMap<String, Vec<FunctionDefaultSource>>;
 /// small source-local map long enough to attach the chosen declaration identity to each named call.
 type LocalFunctionDeclarations = HashMap<String, Vec<ast::Span>>;
 
-/// Plain source-local models whose checked declaration layout is retained for direct nominal execution.
+/// Source-local plain models and non-generic classes with canonical checked layouts.
 ///
-/// This frontend map intentionally contains only non-generic, behavior-free models. It is used only while lowering
-/// a checked constructor call to attach the exact declaration identity and selected field layout. The direct executor
-/// compares that target snapshot with the resulting [`bir::NominalDeclaration`] before binding slots. Classes,
-/// trait-adopting models, and models carrying methods/properties/aliases are absent rather than being approximated
-/// as inert field bags.
+/// Unsupported traits, inheritance, properties, and aliases never enter this constructor registry.
 type LocalNominalDeclarations = HashMap<String, bir::NominalDeclaration>;
 
 /// Source-local fieldless normal enums whose canonical unit variants are retained for direct comparison.
@@ -429,6 +425,28 @@ pub fn is_direct_replacement_plain_model(model: &ast::ModelDecl) -> bool {
         && model.properties.is_empty()
         && model.methods.is_empty()
         && model.fields.iter().all(|field| field.node.metadata.alias.is_none())
+}
+
+/// Admit source classes whose fields and method bodies have complete direct-route facts.
+///
+/// Inheritance, traits, generic substitution, decorators, properties, aliases, and defaults remain refused.
+pub fn is_direct_replacement_class(class: &ast::ClassDecl) -> bool {
+    class.decorators.is_empty()
+        && class.type_params.is_empty()
+        && class.extends.is_none()
+        && class.traits.is_empty()
+        && class.method_aliases.is_empty()
+        && class.method_partials.is_empty()
+        && class.properties.is_empty()
+        && class.declarative_members.is_empty()
+        && class
+            .fields
+            .iter()
+            .all(|field| field.node.metadata.alias.is_none() && field.node.default.is_none())
+        && class
+            .methods
+            .iter()
+            .all(|method| method.node.type_params.is_empty() && method.node.decorators.is_empty())
 }
 
 /// Determine whether an enum carries the narrow source-local fieldless normal-enum declaration fact.

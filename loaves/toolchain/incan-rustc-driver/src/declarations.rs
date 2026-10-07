@@ -25,10 +25,14 @@ fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
             );
             for _ in 0..*depth {
                 let mut path = ast::Path::from_ident(ident("Vec", span));
-                path.segments[0].args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
-                    span,
-                    args: thin_vec![ast::AngleBracketedArg::Arg(ast::GenericArg::Type(element))],
-                })));
+                path.segments[0].args = Some(Box::new(ast::GenericArgs::AngleBracketed(
+                    ast::AngleBracketedArgs {
+                        span,
+                        args: thin_vec![ast::AngleBracketedArg::Arg(ast::GenericArg::Type(
+                            element
+                        ))],
+                    },
+                )));
                 element = Box::new(ast::Ty {
                     id: ast::DUMMY_NODE_ID,
                     kind: ast::TyKind::Path(None, path),
@@ -50,7 +54,21 @@ fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
             },
         ),
         PlanType::Unit => ast::TyKind::Tup(ThinVec::new()),
-        PlanType::CheckedInt => ast::TyKind::Tup(thin_vec![ty(&PlanType::Int, span), ty(&PlanType::Bool, span)]),
+        PlanType::ModelRef(index, name) | PlanType::ModelMutRef(index, name) => ast::TyKind::Ref(
+            None,
+            ast::MutTy {
+                ty: ty(&PlanType::Model(*index, name.clone()), span),
+                mutbl: if matches!(kind, PlanType::ModelMutRef(..)) {
+                    ast::Mutability::Mut
+                } else {
+                    ast::Mutability::Not
+                },
+            },
+        ),
+        PlanType::CheckedInt => ast::TyKind::Tup(thin_vec![
+            ty(&PlanType::Int, span),
+            ty(&PlanType::Bool, span)
+        ]),
         other => {
             let name = match other {
                 PlanType::Int => "i64",
@@ -109,7 +127,11 @@ pub fn function(function: &Function, span: Span) -> Box<ast::Item> {
             ty: ty(&parameter.ty, span),
             pat: Box::new(ast::Pat {
                 id: ast::DUMMY_NODE_ID,
-                kind: ast::PatKind::Ident(ast::BindingMode::NONE, ident(&parameter.name, span), None),
+                kind: ast::PatKind::Ident(
+                    ast::BindingMode::NONE,
+                    ident(&parameter.name, span),
+                    None,
+                ),
                 span,
                 tokens: None,
             }),
@@ -200,9 +222,14 @@ pub fn model(model: &crate::plan::ModelDeclaration, span: Span) -> Box<ast::Item
 }
 
 /// Retain the injected declaration's tokens for procedural derives, without parsing or generating source text.
-fn model_tokens(model: &crate::plan::ModelDeclaration, span: Span) -> ast::tokenstream::LazyAttrTokenStream {
+fn model_tokens(
+    model: &crate::plan::ModelDeclaration,
+    span: Span,
+) -> ast::tokenstream::LazyAttrTokenStream {
     use ast::token::{Delimiter, TokenKind};
-    use ast::tokenstream::{AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, LazyAttrTokenStream, Spacing};
+    use ast::tokenstream::{
+        AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, LazyAttrTokenStream, Spacing,
+    };
     let mut fields = Vec::new();
     for (field, public) in model.fields.iter().zip(&model.field_public) {
         if *public {
@@ -297,10 +324,15 @@ fn visibility(public: bool, span: Span) -> ast::Visibility {
 }
 
 /// Build derive path tokens directly from the admitted registry names, including compiler-owned proc macros.
-pub fn derive_attribute(generator: &ast::attr::AttrIdGenerator, name: &str, span: Span) -> ast::Attribute {
+pub fn derive_attribute(
+    generator: &ast::attr::AttrIdGenerator,
+    name: &str,
+    span: Span,
+) -> ast::Attribute {
     use ast::token::{Delimiter, Token, TokenKind};
     use ast::tokenstream::{
-        AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, LazyAttrTokenStream, Spacing, TokenStream,
+        AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, LazyAttrTokenStream, Spacing,
+        TokenStream,
     };
     let mut tokens = Vec::new();
     if matches!(name, "FieldInfo" | "IncanClass") {
