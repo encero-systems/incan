@@ -1,4 +1,4 @@
-"""Owned list snapshots and lazy pair polling through the legacy iterator models."""
+"""Legacy zip snapshots and materialized builtin enumeration of lists and text."""
 
 from std.derives.collection import Iterator, ListIterator, ZipIterator
 from std.derives.copying import Clone
@@ -29,3 +29,21 @@ pub def poll_zip[T with Clone, U with Clone](mut values: ZipLists[T, U], mut out
             output.append(item)
             return true
         None => return false
+
+
+pub def enumerate_list[T with Clone](values: &list[T]) -> list[tuple[int, T]]:
+    """Retain the checked builtin's materialized pairs without consuming the source list."""
+    mut pairs: list[tuple[int, T]] = []
+    for index in range(len(values)):
+        pairs.append((index, values[index]))
+    return pairs
+
+
+pub def enumerate_text(values: &str) -> list[tuple[int, str]]:
+    """Pair Unicode scalar strings with their zero-based positions, matching legacy text enumeration."""
+    mut pairs: list[tuple[int, str]] = []
+    mut index = 0
+    for value in values:
+        pairs.append((index, value))
+        index += 1
+    return pairs

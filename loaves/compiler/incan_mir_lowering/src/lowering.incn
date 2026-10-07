@@ -97,7 +97,7 @@ from rust::incan_semantics_core::body_ir import (
 # ---- Admission helpers owned by this Loaf ----
 from rust::incan_semantics_core import SymbolOrigin, canonical_module_identity
 from classes import frame_type, function_name, body_module_identity, method_receiver
-from tuple_iterators import zip_shape, zip_call, clone_zip, zip_next, initialize_zip_iterator
+from tuple_iterators import zip_shape, zip_call, clone_zip, zip_next, initialize_zip_iterator, enumerated_element
 from generators import (
     generator_shape,
     generator_constructor,
@@ -444,7 +444,7 @@ def scalar_rvalue(mut builder: Builder, value: &RustRvalue, span: SourceSpan) ->
 
 
 def is_nominal_type(ty: PlanType) -> bool:
-    """Identify model and enum owners alongside owned strings when transferring call results."""
+    """Identify nominal, generator, zip, and tuple values whose owned payloads require transfer or destruction."""
     match ty:
         PlanType.Enum(_index, _name) => return true
         PlanType.Model(_index, _name) => return true
@@ -1275,6 +1275,7 @@ def lower_builtin(
         RustBuiltin.Sum => return lower_sequence_builtin(builder, builtin, arguments, destination, span)
         RustBuiltin.Sorted => return lower_sequence_builtin(builder, builtin, arguments, destination, span)
         RustBuiltin.Zip => return lower_zip_builtin(builder, arguments, destination, span)
+        RustBuiltin.Enumerate => return lower_enumerate_builtin(builder, arguments, destination, span)
         RustBuiltin.Len => return lower_list_builtin(builder, arguments, destination, span)
         RustBuiltin.Float => return lower_scalar_conversion(builder, arguments, destination, false, span)
         RustBuiltin.Int => return lower_scalar_conversion(builder, arguments, destination, true, span)
@@ -1322,6 +1323,55 @@ def lower_zip_builtin(
             )
             builder.owned.append(output.local)
             return Ok(None)
+
+
+def lower_enumerate_builtin(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Materialize the checked builtin's zero-based tuple list from admitted list or text inputs."""
+    if len(arguments) != 1:
+        return Err("invalid Body IR enumerate arity")
+    source_type = argument_type(builder, arguments, 0, span)?
+    mut element_type = PlanType.String
+    if source_type not in [PlanType.String, PlanType.StringRef]:
+        leaf, depth = require_list_shape(source_type, "unsupported Body IR enumerate non-list or text source")?
+        element_type = list_element(leaf, depth)
+    element = enumerated_element(element_type)?
+    result = PlanType.List(ListLeaf.Tuple([TupleElement.Int, element]), 1)
+    output = call_destination(builder, destination, result, span)?
+    if place_type(builder.locals, output) != result:
+        return Err("unsupported Body IR enumerate checked destination")
+    drop_owned(builder, output.local, span)
+    if source_type in [PlanType.String, PlanType.StringRef]:
+        reference = text_argument(builder, arguments, 0, span)?
+        external_call(
+            builder,
+            "incan_native_runtime::enumerate_text",
+            [PlanType.StringRef],
+            result,
+            [reference],
+            output,
+            span,
+        )
+        builder.owned.append(output.local)
+    else:
+        receiver = argument_place(builder, arguments, 0, span)?
+        leaf, depth = require_list_shape(source_type, "unsupported Body IR enumerate source layout")?
+        reference = list_borrow(builder, receiver, false, span)?
+        list_call(
+            builder,
+            "enumerate_list",
+            element_type,
+            [PlanType.ListRef(leaf, depth)],
+            result,
+            [reference],
+            output,
+            span,
+        )
+    return Ok(None)
 
 
 def lower_print(
