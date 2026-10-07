@@ -25,14 +25,10 @@ fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
             );
             for _ in 0..*depth {
                 let mut path = ast::Path::from_ident(ident("Vec", span));
-                path.segments[0].args = Some(Box::new(ast::GenericArgs::AngleBracketed(
-                    ast::AngleBracketedArgs {
-                        span,
-                        args: thin_vec![ast::AngleBracketedArg::Arg(ast::GenericArg::Type(
-                            element
-                        ))],
-                    },
-                )));
+                path.segments[0].args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
+                    span,
+                    args: thin_vec![ast::AngleBracketedArg::Arg(ast::GenericArg::Type(element))],
+                })));
                 element = Box::new(ast::Ty {
                     id: ast::DUMMY_NODE_ID,
                     kind: ast::TyKind::Path(None, path),
@@ -92,10 +88,7 @@ fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
         PlanType::CheckedNumeric(kind) => {
             ast::TyKind::Tup(thin_vec![numeric_ty(kind, span), ty(&PlanType::Bool, span)])
         }
-        PlanType::CheckedInt => ast::TyKind::Tup(thin_vec![
-            ty(&PlanType::Int, span),
-            ty(&PlanType::Bool, span)
-        ]),
+        PlanType::CheckedInt => ast::TyKind::Tup(thin_vec![ty(&PlanType::Int, span), ty(&PlanType::Bool, span)]),
         other => {
             let name = match other {
                 PlanType::ISize => "isize",
@@ -115,7 +108,7 @@ fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
                 PlanType::F64 => "f64",
 
                 PlanType::String => "String",
-                PlanType::Model(_, name) => name.as_str(),
+                PlanType::Model(_, name) | PlanType::Enum(_, name) => name.as_str(),
                 _ => "bool",
             };
             ast::TyKind::Path(None, ast::Path::from_ident(ident(name, span)))
@@ -168,11 +161,7 @@ pub fn function(function: &Function, span: Span) -> Box<ast::Item> {
             ty: ty(&parameter.ty, span),
             pat: Box::new(ast::Pat {
                 id: ast::DUMMY_NODE_ID,
-                kind: ast::PatKind::Ident(
-                    ast::BindingMode::NONE,
-                    ident(&parameter.name, span),
-                    None,
-                ),
+                kind: ast::PatKind::Ident(ast::BindingMode::NONE, ident(&parameter.name, span), None),
                 span,
                 tokens: None,
             }),
@@ -263,14 +252,9 @@ pub fn model(model: &crate::plan::ModelDeclaration, span: Span) -> Box<ast::Item
 }
 
 /// Retain the injected declaration's tokens for procedural derives, without parsing or generating source text.
-fn model_tokens(
-    model: &crate::plan::ModelDeclaration,
-    span: Span,
-) -> ast::tokenstream::LazyAttrTokenStream {
+fn model_tokens(model: &crate::plan::ModelDeclaration, span: Span) -> ast::tokenstream::LazyAttrTokenStream {
     use ast::token::{Delimiter, TokenKind};
-    use ast::tokenstream::{
-        AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, LazyAttrTokenStream, Spacing,
-    };
+    use ast::tokenstream::{AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, LazyAttrTokenStream, Spacing};
     let mut fields = Vec::new();
     for (field, public) in model.fields.iter().zip(&model.field_public) {
         if *public {
@@ -365,15 +349,10 @@ fn visibility(public: bool, span: Span) -> ast::Visibility {
 }
 
 /// Build derive path tokens directly from the admitted registry names, including compiler-owned proc macros.
-pub fn derive_attribute(
-    generator: &ast::attr::AttrIdGenerator,
-    name: &str,
-    span: Span,
-) -> ast::Attribute {
+pub fn derive_attribute(generator: &ast::attr::AttrIdGenerator, name: &str, span: Span) -> ast::Attribute {
     use ast::token::{Delimiter, Token, TokenKind};
     use ast::tokenstream::{
-        AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, LazyAttrTokenStream, Spacing,
-        TokenStream,
+        AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, LazyAttrTokenStream, Spacing, TokenStream,
     };
     let mut tokens = Vec::new();
     if matches!(name, "FieldInfo" | "IncanClass") {
@@ -476,4 +455,96 @@ fn hashed_type(name: &str, leaves: &[&ListLeaf], span: Span) -> Box<ast::Ty> {
         span,
         tokens: None,
     })
+}
+
+/// Inject source-ordered unit and tuple variants as AST nodes; executable bodies still enter only through MIR.
+pub fn enum_declaration(value: &crate::plan::EnumDeclaration, span: Span) -> Box<ast::Item> {
+    let variants = value
+        .variants
+        .iter()
+        .map(|variant| {
+            let fields = variant
+                .fields
+                .iter()
+                .map(|field| ast::FieldDef {
+                    attrs: ThinVec::new(),
+                    id: ast::DUMMY_NODE_ID,
+                    span,
+                    vis: visibility(false, span),
+                    mut_restriction: ast::MutRestriction {
+                        kind: ast::RestrictionKind::Unrestricted,
+                        span,
+                        tokens: None,
+                    },
+                    safety: ast::Safety::Default,
+                    ident: None,
+                    ty: ty(field, span),
+                    default: None,
+                    is_placeholder: false,
+                })
+                .collect();
+            ast::Variant {
+                attrs: ThinVec::new(),
+                id: ast::DUMMY_NODE_ID,
+                span,
+                vis: visibility(false, span),
+                ident: ident(&variant.name, span),
+                data: if variant.fields.is_empty() {
+                    ast::VariantData::Unit(ast::DUMMY_NODE_ID)
+                } else {
+                    ast::VariantData::Tuple(fields, ast::DUMMY_NODE_ID)
+                },
+                disr_expr: None,
+                is_placeholder: false,
+            }
+        })
+        .collect();
+    let mut declaration = item(
+        ast::ItemKind::Enum(
+            ident(&value.name, span),
+            ast::Generics::default(),
+            ast::EnumDef { variants },
+        ),
+        span,
+    );
+    declaration.vis = visibility(value.public, span);
+    declaration.tokens = Some(enum_tokens(value, span));
+    declaration
+}
+
+/// Preserve enum tokens for derives from the exact planned layout without parsing generated Rust source.
+fn enum_tokens(value: &crate::plan::EnumDeclaration, span: Span) -> ast::tokenstream::LazyAttrTokenStream {
+    use ast::token::{Delimiter, Token, TokenKind};
+    use ast::tokenstream::{AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, LazyAttrTokenStream, Spacing};
+    let mut variants = Vec::new();
+    for variant in &value.variants {
+        variants.push(name_token(&variant.name, span));
+        if !variant.fields.is_empty() {
+            let mut fields = Vec::new();
+            for field in &variant.fields {
+                fields.extend(type_tokens(&ty(field, span)));
+                fields.push(AttrTokenTree::Token(Token::new(TokenKind::Comma, span), Spacing::Alone));
+            }
+            variants.push(AttrTokenTree::Delimited(
+                DelimSpan::from_single(span),
+                DelimSpacing::new(Spacing::Alone, Spacing::Alone),
+                Delimiter::Parenthesis,
+                AttrTokenStream::new(fields),
+            ));
+        }
+        variants.push(AttrTokenTree::Token(Token::new(TokenKind::Comma, span), Spacing::Alone));
+    }
+    let mut tokens = Vec::new();
+    if value.public {
+        tokens.push(keyword_token("pub", span));
+    }
+    tokens.push(keyword_token("enum", span));
+    tokens.push(name_token(&value.name, span));
+    tokens.push(AttrTokenTree::Delimited(
+        DelimSpan::from_single(span),
+        DelimSpacing::new(Spacing::Alone, Spacing::Alone),
+        Delimiter::Brace,
+        AttrTokenStream::new(variants),
+    ));
+    LazyAttrTokenStream::new_direct(AttrTokenStream::new(tokens))
 }

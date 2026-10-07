@@ -1,0 +1,160 @@
+"""Canonical normal-enum layouts and identity-checked native construction and pattern admission."""
+
+from rust::incan_semantics_core import IncanType as RustType
+from rust::incan_semantics_core::body_ir import (
+    EnumDeclaration as RustEnumDeclaration,
+    NominalDeclaration as RustNominalDeclaration,
+    BodyIrModule as RustBodyIrModule,
+    EnumVariantTarget,
+    FieldlessEnumVariantTarget,
+    Pattern as RustPattern,
+    ArgumentBinding,
+    OwnershipFact,
+)
+from pub::incan_mir_plan import EnumDeclaration, EnumVariant, PlanType, SourceSpan
+from models import model_type as plain_model_type
+
+
+pub def enum_type(declarations: list[RustEnumDeclaration], ty: &RustType) -> Option[PlanType]:
+    """Recognize a retained source enum before the model/scalar resolver runs."""
+    match ty:
+        RustType.Named(name) =>
+            for index in range(len(declarations)):
+                if declarations[index].name == str(name):
+                    return Some(PlanType.Enum(index, str(name)))
+        _ => pass
+    return None
+
+
+pub def variant_index(
+    declarations: list[RustEnumDeclaration],
+    target: &EnumVariantTarget,
+) -> Result[tuple[int, int], str]:
+    """Resolve construction by variant identity and cross-check the retained owner facts."""
+    for owner in range(len(declarations)):
+        declaration = declarations[owner]
+        for slot in range(len(declaration.variants)):
+            variant = declaration.variants[slot]
+            if variant.canonical != target.variant_canonical:
+                continue
+            if target.enum_canonical != Some(declaration.canonical) or target.enum_name != declaration.name or target.variant_name != variant.name:
+                return Err("invalid Body IR enum constructor identity")
+            validate_binding(target.binding, len(variant.fields))?
+            return Ok((owner, slot))
+    return Err("unsupported Body IR unretained enum constructor")
+
+
+pub def unit_variant(
+    declarations: list[RustEnumDeclaration],
+    target: &FieldlessEnumVariantTarget,
+) -> Result[tuple[int, int], str]:
+    """Resolve the older fieldless constructor vocabulary against the same canonical layout."""
+    for owner in range(len(declarations)):
+        declaration = declarations[owner]
+        if declaration.canonical != target.enum_canonical or declaration.direct_declaration_id != target.enum_declaration_id:
+            continue
+        for slot in range(len(declaration.variants)):
+            variant = declaration.variants[slot]
+            if variant.canonical == target.variant_canonical and variant.direct_declaration_id == target.variant_declaration_id and len(
+                variant.fields,
+            ) == 0:
+                if declaration.name != target.enum_name or variant.name != target.variant_name:
+                    return Err("invalid Body IR fieldless enum spelling")
+                return Ok((owner, slot))
+    return Err("unsupported Body IR unretained fieldless enum variant")
+
+
+pub def pattern_variant(declaration: &RustEnumDeclaration, pattern: &RustPattern) -> Result[int, str]:
+    """Admit only canonical variant patterns and irrefutable fallback patterns; payload recursion stays explicit."""
+    match pattern:
+        RustPattern.Wildcard => return Ok(-1)
+        RustPattern.Enum(canonical=identity, name=name, variant=name_variant, fields=fields) =>
+            for slot in range(len(declaration.variants)):
+                variant = declaration.variants[slot]
+                if identity.clone() == Some(variant.canonical):
+                    # Constructor patterns retain the parser's qualified `Owner::Variant` spelling.
+                    spelling = str(name_variant)
+                    qualified = f"{declaration.name}::{variant.name}"
+                    if (str(name) != "" and str(name) != str(declaration.name)) or (
+                        spelling != str(variant.name)
+                        and spelling != qualified
+                    ) or len(fields) != len(variant.fields):
+                        return Err("invalid Body IR enum pattern layout")
+                    validate_payload_patterns(fields)?
+                    return Ok(slot)
+        RustPattern.FieldlessEnumVariant(target) =>
+            if target.enum_canonical != declaration.canonical or target.enum_declaration_id != declaration.direct_declaration_id:
+                return Err("invalid Body IR fieldless enum pattern owner")
+            for slot in range(len(declaration.variants)):
+                variant = declaration.variants[slot]
+                if target.variant_canonical == variant.canonical and target.variant_declaration_id == variant.direct_declaration_id and len(
+                    variant.fields,
+                ) == 0:
+                    return Ok(slot)
+        _ => pass
+    return Err("unsupported Body IR enum pattern")
+
+
+pub def validate_payload_patterns(patterns: &list[RustPattern]) -> Result[None, str]:
+    """Refuse refutable/nested payload patterns until their comparison and ownership paths are represented."""
+    for pattern in patterns:
+        match pattern:
+            RustPattern.Wildcard => pass
+            RustPattern.Var(binding) =>
+                if binding.fact != OwnershipFact.Copy and binding.fact != OwnershipFact.Clone and binding.fact != OwnershipFact.Borrow:
+                    return Err("unsupported Body IR enum payload binding ownership")
+            _ => return Err("unsupported Body IR nested enum payload pattern")
+    return Ok(None)
+
+
+pub def validate_binding(binding: &ArgumentBinding, count: int) -> Result[None, str]:
+    """Require complete positional payload binding; spreads and omitted payload slots remain refused."""
+    match binding:
+        ArgumentBinding.Resolved(arguments=arguments, defaulted_slots=defaults) =>
+            if len(defaults) != 0 or len(arguments) != count:
+                return Err("unsupported Body IR incomplete enum payload binding")
+            for index in range(count):
+                if int(arguments[index].slot) != index:
+                    return Err("unsupported Body IR reordered enum payload binding")
+            return Ok(None)
+        _ => return Err("unsupported Body IR unresolved enum payload binding")
+
+
+pub def native_source_type(
+    nominals: list[RustNominalDeclaration],
+    declarations: list[RustEnumDeclaration],
+    ty: &RustType,
+) -> Result[PlanType, str]:
+    """Resolve normal enums by the retained registry, then delegate the existing scalar/model boundary."""
+    match enum_type(declarations, ty):
+        Some(result) => return Ok(result)
+        None => return plain_model_type(nominals, ty)
+
+
+pub def lower_enum_declarations(module: &RustBodyIrModule, file: str) -> Result[list[EnumDeclaration], str]:
+    """Copy checked source-order variants and derives into the native declaration plan."""
+    mut declarations: list[EnumDeclaration] = []
+    for declaration in module.enum_declarations:
+        mut variants: list[EnumVariant] = []
+        for variant in declaration.variants:
+            mut fields: list[PlanType] = []
+            for ty in variant.fields:
+                fields.append(native_source_type(module.nominal_declarations, module.enum_declarations, ty)?)
+            variants.append(EnumVariant(name=str(variant.name), fields=fields))
+        declarations.append(
+            EnumDeclaration(
+                name=str(declaration.name),
+                public=declaration.public,
+                variants=variants,
+                derives=declaration.derives,
+                span=SourceSpan(file=file, line=1, column=1),
+            ),
+        )
+    return Ok(declarations)
+
+
+pub def enum_owner(ty: PlanType) -> Result[int, str]:
+    """Require a normal enum scrutinee; scalar, Option and Result matches stay named refusals."""
+    match ty:
+        PlanType.Enum(index, _name) => return Ok(index)
+        _ => return Err("unsupported Body IR Match outside source enums")
