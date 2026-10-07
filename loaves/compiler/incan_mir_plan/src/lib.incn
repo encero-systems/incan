@@ -17,10 +17,22 @@ pub model SourceSpan:
 
 
 @derive(Clone, PartialEq)
+pub enum TupleElement:
+    """The flat scalar and owned-text tuple layout, without recursive caller ABI types."""
+
+    Int
+    Float
+    Bool
+    Unit
+    String
+
+
+@derive(Clone, PartialEq)
 pub enum PlanType:
     """
-    Scalar types plus the owned text, fixed arrays, and shared slices used by formatting.
+    Scalar types, heterogeneous tuples, owned text, and formatting arrays and slices.
 
+    Tuple elements retain their exact ordered types; tuples own any string elements.
     Array lengths are exact nonnegative counts. CheckedInt and arrays are body
     temporaries; shared slice variants already include their reference. StringRef
     borrows an owned String, while StrRef is a string literal's shared str view.
@@ -31,6 +43,7 @@ pub enum PlanType:
     Bool
     Unit
     CheckedInt
+    Tuple(list[TupleElement])
     String
     StringRef
     StrRef
@@ -42,6 +55,16 @@ pub enum PlanType:
     ModelRef(int, str)
     StringSlice
     StrSlice
+
+
+pub def tuple_element_type(element: TupleElement) -> PlanType:
+    """Recover a tuple field's exact local type from the admitted flat layout."""
+    match element:
+        TupleElement.Int => return PlanType.Int
+        TupleElement.Float => return PlanType.Float
+        TupleElement.Bool => return PlanType.Bool
+        TupleElement.Unit => return PlanType.Unit
+        TupleElement.String => return PlanType.String
 
 
 @derive(Clone, PartialEq)
@@ -63,7 +86,7 @@ pub model Local:
 
 @derive(Clone, PartialEq)
 pub enum Projection:
-    """Whole local, checked arithmetic component, or an indexed checked model field."""
+    """Whole local, checked arithmetic component, or a typed model or tuple field."""
 
     Whole
     Value
@@ -142,6 +165,7 @@ pub enum RvalueKind:
     """
     An explicit scalar or formatting expression assigned to a place.
 
+    Tuple preserves the ordered operand layout of its destination type.
     Array moves or copies its listed operands into a fixed array. Borrow creates
     a shared reference to a whole local. UnsizeSlice converts an array reference
     to the corresponding shared slice without changing ownership of its owner.
@@ -153,6 +177,7 @@ pub enum RvalueKind:
     IntToFloat(Operand)
     Array(list[Operand])
     Model(int, list[Operand])
+    Tuple(list[Operand])
     Borrow(Place)
     UnsizeSlice(Operand)
 

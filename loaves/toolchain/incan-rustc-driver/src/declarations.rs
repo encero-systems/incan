@@ -1,6 +1,6 @@
 //! Declarations enter as AST items; only MIR supplies executable bodies.
 
-use crate::plan::{Function, PlanType};
+use crate::plan::{Function, PlanType, tuple_element_type};
 use rustc_ast as ast;
 use rustc_span::{Ident, Span, Symbol};
 use thin_vec::{ThinVec, thin_vec};
@@ -10,9 +10,15 @@ fn ident(name: &str, span: Span) -> Ident {
     Ident::new(Symbol::intern(name), span)
 }
 
-/// Construct an admitted scalar or model AST type without generating or parsing Rust source.
+/// Construct an admitted scalar, tuple, or model AST type without generating or parsing Rust source.
 fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
     let kind = match kind {
+        PlanType::Tuple(elements) => ast::TyKind::Tup(
+            elements
+                .iter()
+                .map(|element| ty(&tuple_element_type(element.clone()), span))
+                .collect(),
+        ),
         PlanType::Unit => ast::TyKind::Tup(ThinVec::new()),
         PlanType::CheckedInt => ast::TyKind::Tup(thin_vec![ty(&PlanType::Int, span), ty(&PlanType::Bool, span)]),
         other => {

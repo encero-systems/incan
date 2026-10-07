@@ -1,0 +1,199 @@
+"""Tuple admission and checked constant field selection for the direct route."""
+
+from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive
+from rust::incan_semantics_core::body_ir import PlaceElem, Operand, Constant
+from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
+from frame import Builder, temporary, read_place, track_rvalue_moves, external_call, place_type
+from text_plan import clone_text, format_parts
+from pub::incan_mir_plan import assign as plan_assign
+from pub::incan_mir_plan import (
+    PlanType,
+    TupleElement,
+    tuple_element_type,
+    Place,
+    Projection,
+    SourceSpan,
+    RvalueKind,
+    Operand as PlanOperand,
+)
+
+
+pub def type_name(ty: &RustType) -> str:
+    """Name every canonical type kind even when its legacy Display implementation is empty."""
+    match ty:
+        RustType.Tuple(elements) =>
+            mut names: list[str] = []
+            for element in elements:
+                names.append(type_name(element))
+            return "Tuple[" + ", ".join(names) + "]"
+        RustType.Function(params=_params, return_type=_result) => return "Function"
+        RustType.Primitive(value) => return str(value)
+        RustType.Named(name) => return "Named[" + str(name) + "]"
+        RustType.Generic(base=base, args=arguments) =>
+            mut names: list[str] = []
+            for argument in arguments:
+                names.append(type_name(argument))
+            return str(base) + "[" + ", ".join(names) + "]"
+        RustType.Decimal(precision=_precision, scale=_scale) => return "Decimal"
+        RustType.TypeToken(_inner) => return "TypeToken"
+        RustType.TypeVar(_name) => return "TypeVar"
+        RustType.Ref(_inner) => return "Ref"
+        RustType.RefMut(_inner) => return "RefMut"
+        RustType.RustInteropPath(_path) => return "RustInteropPath"
+        RustType.Never => return "Never"
+        RustType.SelfType => return "SelfType"
+        RustType.Infer => return "Infer"
+        RustType.Unknown => return "Unknown"
+
+
+pub def generic_tuple_type(ty: &RustType) -> Result[PlanType, str]:
+    """Read annotation-shaped tuples through the same collection registry the Body IR frontend uses."""
+    match ty:
+        RustType.Generic(base=base, args=elements) =>
+            match collection_type(str(base)):
+                Some(CollectionTypeId.Tuple) => return tuple_type(elements)
+                _ => pass
+        _ => pass
+    return Err(f"unsupported Body IR type {type_name(ty)}")
+
+
+pub def tuple_type(elements: &list[RustType]) -> Result[PlanType, str]:
+    """Admit only tuple elements whose native scalar layout is already supported."""
+    mut types: list[TupleElement] = []
+    for element in elements:
+        match element:
+            RustType.Primitive(primitive) =>
+                match primitive:
+                    Primitive.Int => types.append(TupleElement.Int)
+                    Primitive.Float => types.append(TupleElement.Float)
+                    Primitive.Bool => types.append(TupleElement.Bool)
+                    Primitive.Str => types.append(TupleElement.String)
+                    Primitive.Unit => types.append(TupleElement.Unit)
+                    _ => return Err(f"unsupported Body IR tuple element type {type_name(element)}")
+            _ => return Err(f"unsupported Body IR tuple element type {type_name(element)}")
+    return Ok(PlanType.Tuple(types))
+
+
+pub def is_tuple_type(ty: PlanType) -> bool:
+    """Identify tuple locals without guessing their layout from a source expression."""
+    match ty:
+        PlanType.Tuple(_elements) => return true
+        _ => return false
+
+
+pub def tuple_slot(projection: &PlaceElem, count: int) -> Result[int, str]:
+    """Accept a checker-proven structural field or a constant tuple index, including negative indices."""
+    mut slot = -1
+    match projection:
+        PlaceElem.Field(name=name, canonical=_canonical, structural=structural) =>
+            if not structural.clone():
+                return Err("unsupported Body IR nonstructural tuple field")
+            slot = int(str(name))
+        PlaceElem.Index(index) =>
+            match index.as_ref():
+                Operand.Constant(constant) =>
+                    match constant:
+                        Constant.Int(value) =>
+                            slot = value.clone()
+                        _ => return Err("unsupported Body IR nonconstant tuple index")
+                _ => return Err("unsupported Body IR nonconstant tuple index")
+            if slot < 0:
+                slot += count
+        _ => return Err("unsupported Body IR tuple slice")
+    if slot < 0 or slot >= count:
+        return Err("unsupported Body IR tuple index outside layout")
+    return Ok(slot)
+
+
+pub def tuple_has_owners(ty: PlanType) -> bool:
+    """Track a tuple as one owner only when at least one element requires destruction."""
+    match ty:
+        PlanType.Tuple(elements) => return TupleElement.String in elements
+        _ => return false
+
+
+pub def tuple_fields(value: Place, ty: PlanType, span: SourceSpan) -> Result[list[Place], str]:
+    """Project the admitted flat tuple layout in canonical element order."""
+    if value.projection != Projection.Whole:
+        return Err("unsupported Body IR nested tuple projection")
+    mut fields: list[Place] = []
+    match ty:
+        PlanType.Tuple(elements) =>
+            for slot in range(len(elements)):
+                fields.append(
+                    Place(
+                        local=value.local,
+                        projection=Projection.Field(slot, tuple_element_type(elements[slot])),
+                        span=span,
+                    ),
+                )
+        _ => pass
+    return Ok(fields)
+
+
+pub def tuple_parts(count: int) -> list[str]:
+    """Retain Rust debug tuple punctuation, including the one-element trailing comma."""
+    if count == 0:
+        return ["()"]
+    mut parts = ["("]
+    for index in range(count - 1):
+        parts.append(", ")
+    if count == 1:
+        parts.append(",)")
+    else:
+        parts.append(")")
+    return parts
+
+
+pub def tuple_aggregate(elements: list[PlanOperand]) -> RvalueKind:
+    """Construct the plan's ordered tuple aggregate after reads have preserved their ownership facts."""
+    return RvalueKind.Tuple(elements)
+
+
+pub def tuple_formatter(ty: PlanType) -> Result[tuple[str, PlanType], str]:
+    """Select the existing debug formatter and its exact scalar or borrowed-text signature."""
+    match ty:
+        PlanType.Int => return Ok(("debug_int", ty))
+        PlanType.Float => return Ok(("debug_float", ty))
+        PlanType.Bool => return Ok(("debug_bool", ty))
+        PlanType.Unit => return Ok(("debug_unit", ty))
+        PlanType.String => return Ok(("debug_text", PlanType.StringRef))
+        _ => return Err("unsupported Body IR tuple display element")
+
+
+pub def clone_tuple_operand(mut builder: Builder, value: Place, span: SourceSpan) -> Result[PlanOperand, str]:
+    """Snapshot tuple elements without partially moving an owned tuple."""
+    ty = place_type(builder.locals, value)
+    mut operands: list[PlanOperand] = []
+    for field in tuple_fields(value, ty, span)?:
+        if place_type(builder.locals, field) == PlanType.String:
+            operands.append(read_place(clone_text(builder, field, span)?, true, span))
+        else:
+            operands.append(read_place(field, false, span))
+    result = temporary(builder, ty, span)
+    operation = tuple_aggregate(operands)
+    track_rvalue_moves(builder, operation)
+    builder.emit(plan_assign(result, operation, span))
+    if tuple_has_owners(ty):
+        builder.owned.append(result.local)
+    return Ok(read_place(result, true, span))
+
+
+pub def display_tuple(mut builder: Builder, value: Place, span: SourceSpan) -> Result[Place, str]:
+    """Format each scalar element with legacy debug spelling while borrowing owned string fields."""
+    fields = tuple_fields(value, place_type(builder.locals, value), span)?
+    mut values: list[Place] = []
+    for field in fields:
+        ty = place_type(builder.locals, field)
+        name, parameter = tuple_formatter(ty)?
+        mut argument = read_place(field, false, span)
+        if ty == PlanType.String:
+            reference = temporary(builder, parameter, span)
+            builder.emit(plan_assign(reference, RvalueKind.Borrow(field), span))
+            argument = read_place(reference, false, span)
+        text = temporary(builder, PlanType.String, span)
+        external_call(builder, f"incan_native_runtime::{name}", [parameter], PlanType.String, [argument], text, span)
+        values.append(text)
+    result = temporary(builder, PlanType.String, span)
+    format_parts(builder, result, tuple_parts(len(fields)), values, span)
+    return Ok(result)

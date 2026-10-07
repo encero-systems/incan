@@ -40,3 +40,28 @@ pub def clone_text(value: &str) -> str:
 pub def validate_range(start: int, end: int, step: int) -> None:
     """Use the existing range constructor's error behavior before a normalized counting loop."""
     _ = runtime_range(start, end, step)
+
+
+pub def debug_int(value: int) -> str:
+    """Preserve legacy tuple element debug spelling."""
+    return f"{value:?}"
+
+
+pub def debug_float(value: float) -> str:
+    """Preserve legacy tuple element debug spelling."""
+    return f"{value:?}"
+
+
+pub def debug_bool(value: bool) -> str:
+    """Preserve legacy tuple element debug spelling."""
+    return f"{value:?}"
+
+
+pub def debug_unit(value: None) -> str:
+    """Preserve the empty tuple spelling of a unit element."""
+    return f"{value:?}"
+
+
+pub def debug_text(value: &str) -> str:
+    """Quote and escape text with the legacy tuple debug formatter."""
+    return f"{value:?}"

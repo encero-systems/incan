@@ -147,7 +147,8 @@ fn check_startup_refusals(
     Ok(())
 }
 
-/// Prepare one source-only driver graph whose plan and lowering share the same semantics-core declaration.
+/// Prepare one source-only driver graph whose plan and lowering share the same semantics-core declaration and SDK
+/// registry identity.
 fn prepare_source_driver(root: &Path, repo: &Path) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
     let driver_source = repo.join("loaves/toolchain/incan-rustc-driver");
     let driver = root.join("driver");
@@ -165,9 +166,16 @@ fn prepare_source_driver(root: &Path, repo: &Path) -> Result<std::path::PathBuf,
     let frontend = repo.join("loaves/compiler/incan_frontend");
     let core = core.to_str().ok_or("semantics-core path is not UTF-8")?;
     let frontend = frontend.to_str().ok_or("frontend path is not UTF-8")?;
+    // The semantics-core projection selects the active SDK registry; its direct edge must use that same root.
     let manifest = fs::read_to_string(repo.join("loaves/compiler/incan_mir_lowering/loaf.toml"))?
         .replace("../incan_mir_plan", "../library")
-        .replace("../../kernel/incan_semantics_core", core);
+        .replace("../../kernel/incan_semantics_core", core)
+        .replace(
+            "../../kernel/incan_lang",
+            oven_model::toolchain_layout::resolve_toolchain_crate_path("incan_lang")
+                .to_str()
+                .ok_or("language registry path is not UTF-8")?,
+        );
     fs::write(lowering.join("loaf.toml"), manifest)?;
     copy_tree(
         &repo.join("loaves/compiler/incan_mir_lowering/src"),
@@ -530,4 +538,96 @@ fn plain_model_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>>
         &fixture.sysroot,
         &fixture.formatting,
     )
+}
+
+/// Prove tuple construction, typed signatures, constant projections, and simultaneous unpacking against legacy.
+#[test]
+fn tuple_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("tuples")?;
+    let source = root.join("tuples.incn");
+    fs::write(
+        &source,
+        r#"model Boxed:
+    value: int
+
+def swap(value: tuple[int, int]) -> tuple[int, int]:
+    return (value[1], value[0])
+
+def identity(value: tuple[int, str]) -> tuple[int, str]:
+    return value
+
+def main() -> None:
+    mut a = 3
+    mut b = 7
+    a, b = b, a
+    pair: tuple[int, int] = swap((a, b))
+    x, y = pair
+    println(x)
+    println(y)
+    println(pair)
+    text_pair = identity((9, "hello\n\"tuple\""))
+    number, text = text_pair
+    println(text_pair)
+    println(number)
+    println(text)
+    println(text_pair[-1])
+    println((true, 1.5))
+    println((42,))
+    mut boxed = Boxed(value=0)
+    boxed.value, a = pair
+    println(boxed.value)
+    println(a)
+"#,
+    )?;
+    let native = root.join("native");
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native tuple compilation",
+    );
+    let legacy_root = root.join("legacy");
+    success(
+        &support::repo_command()
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy tuple compilation",
+    );
+    let expected = Command::new(legacy_root.join("oven/release/tuples")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy tuple execution");
+    success(&actual, "native tuple execution");
+    assert_eq!(actual.stdout, expected.stdout);
+    assert!(actual.stdout.starts_with(b"3\n7\n(3, 7)\n"));
+    let refused_source = root.join("function_value.incn");
+    fs::write(
+        &refused_source,
+        "def apply(value: (int) -> int) -> int:\n    return value(1)\n\ndef main() -> None:\n    println(1)\n",
+    )?;
+    let refused_output = root.join("function-native");
+    let refused = corpus::source_command(
+        &fixture.driver_binary("release"),
+        &refused_source,
+        &refused_output,
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("Function"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(!refused_output.exists());
+    Ok(())
 }

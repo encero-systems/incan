@@ -4869,9 +4869,9 @@ impl TypeChecker {
     /// Return the constant a tuple index spells: an integer literal, a negated one, which counts from the end, or
     /// either in parentheses.
     ///
-    /// Lowering reads the same spellings when it turns the index into an element position, so every index accepted
-    /// here resolves to a position there.
-    fn constant_tuple_index(index: &Spanned<Expr>) -> Option<i64> {
+    /// Body IR shares this classification so checked negative and parenthesized tuple indices survive as constants,
+    /// without folding ordinary arithmetic or collection indices at the replacement boundary.
+    pub(crate) fn constant_tuple_index(index: &Spanned<Expr>) -> Option<i64> {
         match &index.node {
             Expr::Literal(Literal::Int(literal)) => Some(literal.value),
             Expr::Unary(UnaryOp::Neg, operand) => match &operand.node {

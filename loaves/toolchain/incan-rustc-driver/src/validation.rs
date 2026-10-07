@@ -5,17 +5,18 @@ use std::collections::BTreeSet;
 use crate::error::PlanError;
 use crate::plan::{
     BinaryOp, Callee, CalleeKind, Constant, Function, Operand, OperandKind, Place, Plan, PlanType, Projection,
-    RvalueKind, SourceSpan, StatementKind, TerminatorKind, UnaryOp, Unwind,
+    RvalueKind, SourceSpan, StatementKind, TerminatorKind, UnaryOp, Unwind, tuple_element_type,
 };
 
 /// A local comparison vocabulary; the public types remain the Incan Loaf's own types.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum Scalar {
     Int,
     Float,
     Bool,
     Unit,
     CheckedInt,
+    Tuple(Vec<Scalar>),
     String,
     StringRef,
     StrRef,
@@ -34,6 +35,12 @@ fn scalar(ty: &PlanType) -> Scalar {
     match ty {
         PlanType::Model(index, _) => Scalar::Model(*index),
         PlanType::ModelRef(index, _) => Scalar::ModelRef(*index),
+        PlanType::Tuple(elements) => Scalar::Tuple(
+            elements
+                .iter()
+                .map(|element| scalar(&tuple_element_type(element.clone())))
+                .collect(),
+        ),
         PlanType::Int => Scalar::Int,
         PlanType::Float => Scalar::Float,
         PlanType::Bool => Scalar::Bool,
@@ -172,7 +179,7 @@ fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> 
                 StatementKind::Assign(destination, value) => {
                     span(&value.span)?;
                     let expected = place(plan, function, destination)?;
-                    let result = rvalue(plan, function, &value.kind, expected)?;
+                    let result = rvalue(plan, function, &value.kind, expected.clone())?;
                     require(function, expected, result, "assignment")?;
                 }
                 StatementKind::StorageLive(index) | StatementKind::StorageDead(index) => {
@@ -207,13 +214,26 @@ fn local(function: &Function, index: i64) -> Result<Scalar, PlanError> {
         })
 }
 
-/// Resolve a local projection, restricted to the checked result pair.
+/// Resolve a checked result component or a typed model or tuple field.
 fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, PlanError> {
     span(&value.span)?;
     let ty = local(function, value.local)?;
     match &value.projection {
         Projection::Whole => Ok(ty),
         Projection::Field(slot, field_type) => {
+            if let Scalar::Tuple(elements) = &ty {
+                let field = usize::try_from(*slot)
+                    .ok()
+                    .and_then(|slot| elements.get(slot))
+                    .ok_or_else(|| invalid(function, "unknown tuple field"))?;
+                require(
+                    function,
+                    scalar(field_type),
+                    field.clone(),
+                    "projected tuple field type",
+                )?;
+                return Ok(field.clone());
+            }
             let Scalar::Model(owner) = ty else {
                 return Err(invalid(function, "field projection requires a model owner"));
             };
@@ -262,7 +282,7 @@ fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, 
     match &value.kind {
         OperandKind::Copy(value) => {
             let ty = place(plan, function, value)?;
-            if matches!(ty, Scalar::String | Scalar::StringArray(_) | Scalar::Model(_)) {
+            if owns_values(&ty) {
                 return Err(invalid(function, "owned formatting values cannot be copied"));
             }
             Ok(ty)
@@ -278,6 +298,15 @@ fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, 
     }
 }
 
+/// Reject implicit copies of any recursively owned value, including tuple string fields.
+fn owns_values(ty: &Scalar) -> bool {
+    match ty {
+        Scalar::String | Scalar::StringArray(_) | Scalar::Model(_) => true,
+        Scalar::Tuple(elements) => elements.iter().any(owns_values),
+        _ => false,
+    }
+}
+
 /// Keep type mismatches explicit rather than allowing rustc MIR validation to ICE.
 fn require(function: &Function, actual: Scalar, expected: Scalar, context: &str) -> Result<(), PlanError> {
     if actual != expected {
@@ -289,7 +318,7 @@ fn require(function: &Function, actual: Scalar, expected: Scalar, context: &str)
     Ok(())
 }
 
-/// Type scalar rvalues, including the checked integer pair rustc produces for arithmetic.
+/// Validate scalar and aggregate rvalues against their exact destination layout.
 fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar) -> Result<Scalar, PlanError> {
     match value {
         RvalueKind::Use(value) => operand(plan, function, value),
@@ -307,12 +336,34 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
         }
         RvalueKind::Binary(op, left, right) => {
             let ty = operand(plan, function, left)?;
-            require(function, operand(plan, function, right)?, ty, "binary operands")?;
+            require(function, operand(plan, function, right)?, ty.clone(), "binary operands")?;
             binary_result(function, op, ty)
         }
         RvalueKind::Array(elements) => validate_array(plan, function, elements, expected),
+        RvalueKind::Tuple(elements) => {
+            let Scalar::Tuple(fields) = &expected else {
+                return Err(invalid(function, "tuple aggregate requires a tuple destination"));
+            };
+            if fields.len() != elements.len() {
+                return Err(invalid(function, "tuple element count differs from destination"));
+            }
+            for (element, field) in elements.iter().zip(fields) {
+                require(
+                    function,
+                    operand(plan, function, element)?,
+                    field.clone(),
+                    "tuple element",
+                )?;
+            }
+            Ok(expected)
+        }
         RvalueKind::Model(index, elements) => {
-            require(function, expected, Scalar::Model(*index), "model aggregate destination")?;
+            require(
+                function,
+                expected.clone(),
+                Scalar::Model(*index),
+                "model aggregate destination",
+            )?;
             let model = model(plan, *index).ok_or_else(|| invalid(function, "unknown constructed model"))?;
             if elements.len() != model.fields.len() {
                 return Err(invalid(function, "model field count differs from declaration"));
@@ -345,8 +396,16 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
     }
 }
 
-/// Source functions expose only scalar or owned text values; formatting arrays and references stay body-internal.
+/// Source signatures expose scalars, owned text, models, and tuples of admitted types; formatting views stay internal.
 fn source_signature_type(ty: Scalar) -> bool {
+    if let Scalar::Tuple(elements) = &ty {
+        return elements.iter().all(|element| {
+            matches!(
+                element,
+                Scalar::Int | Scalar::Float | Scalar::Bool | Scalar::Unit | Scalar::String
+            )
+        });
+    }
     matches!(
         ty,
         Scalar::Int | Scalar::Float | Scalar::Bool | Scalar::Unit | Scalar::String | Scalar::Model(_)
@@ -355,7 +414,7 @@ fn source_signature_type(ty: Scalar) -> bool {
 
 /// Runtime signatures additionally admit shared text and slice views, whose regions metadata checking erases.
 fn external_signature_type(ty: Scalar) -> bool {
-    source_signature_type(ty)
+    source_signature_type(ty.clone())
         || matches!(
             ty,
             Scalar::StringRef | Scalar::StrRef | Scalar::StringSlice | Scalar::StrSlice
@@ -396,7 +455,7 @@ fn validate_array(plan: &Plan, function: &Function, values: &[Operand], expected
         require(
             function,
             operand(plan, function, value)?,
-            element,
+            element.clone(),
             "formatting array element",
         )?;
     }
@@ -540,8 +599,14 @@ fn model(plan: &Plan, index: i64) -> Option<&crate::plan::ModelDeclaration> {
     usize::try_from(index).ok().and_then(|index| plan.models.get(index))
 }
 
-/// Ensure every nominal type's diagnostic spelling agrees with its indexed declaration.
+/// Require flat scalar/text tuple layouts and consistent nominal declaration identities.
 fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
+    if matches!(ty, PlanType::Tuple(_)) && !source_signature_type(scalar(ty)) {
+        return Err(PlanError::Invalid {
+            function: "tuple".into(),
+            reason: "tuple elements must be admitted scalars or owned text".into(),
+        });
+    }
     if let PlanType::Model(index, name) | PlanType::ModelRef(index, name) = ty {
         if model(plan, *index).is_none_or(|declaration| declaration.name != *name) {
             return Err(PlanError::Invalid {

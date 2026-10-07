@@ -1,15 +1,22 @@
 //! Mapping admitted plan types to the pinned rustc representation.
 
 use crate::error::PlanError;
-use crate::plan::PlanType;
+use crate::plan::{PlanType, tuple_element_type};
 use rustc_middle::ty::{Ty, TyCtxt};
 
-/// Translate an admitted scalar or model type. Checked pairs and shared references are body-internal and never appear
-/// in source signatures.
+/// Translate an admitted scalar, tuple, or model type. Checked pairs and shared references are body-internal and never
+/// appear in source signatures.
 pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, PlanError> {
     Ok(match ty {
         PlanType::Model(_, name) => model_type(tcx, name)?,
         PlanType::ModelRef(_, name) => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, model_type(tcx, name)?),
+        PlanType::Tuple(elements) => Ty::new_tup(
+            tcx,
+            &elements
+                .iter()
+                .map(|element| native_type(tcx, &tuple_element_type(element.clone())))
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
         PlanType::Int => tcx.types.i64,
         PlanType::Float => tcx.types.f64,
         PlanType::Bool => tcx.types.bool,
