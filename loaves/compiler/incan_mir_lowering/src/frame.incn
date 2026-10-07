@@ -35,6 +35,7 @@ pub model Builder:
     `closed` marks blocks whose terminator is final, so an `if` whose branches both return leaves its join closed.
     `loops` holds each enclosing loop's (header, after) blocks, and `loop_owners` the owners live when it began.
     `iterators` pairs borrowed iterable slots with cursor storage; `borrowed_items` prevents mutations of cloned iteration items whose source contract remains borrowed.
+    `module_identity` is the caller body's canonical owner, so local-call admission remains module-relative in a project plan.
     """
 
     pub locals: list[Local]
@@ -42,6 +43,7 @@ pub model Builder:
     pub current: int
     pub source: str
     pub file: str
+    pub module_identity: str
     pub loops: list[tuple[int, int]]
     pub loop_owners: list[list[int]]
     pub externals: list[ExternalFunction]
