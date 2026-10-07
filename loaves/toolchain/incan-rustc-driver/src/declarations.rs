@@ -33,6 +33,9 @@ fn generator_signature_ty(kind: &PlanType, span: Span) -> Option<Box<ast::Ty>> {
 
 /// Construct an admitted native AST type without generating or parsing Rust source.
 pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
+    if let Some(ty) = zip_signature_ty(kind, span) {
+        return ty;
+    }
     if let Some(ty) = generator_signature_ty(kind, span) {
         return ty;
     }
@@ -50,6 +53,8 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
                     ListLeaf::Float => PlanType::Float,
                     ListLeaf::Bool => PlanType::Bool,
                     ListLeaf::Str => PlanType::String,
+
+                    ListLeaf::Tuple(elements) => PlanType::Tuple(elements.clone()),
                 },
                 span,
             );
@@ -160,6 +165,8 @@ fn generator_ty(name: &str, leaf: &ListLeaf, depth: i64, span: Span) -> Box<ast:
             ListLeaf::Float => PlanType::Float,
             ListLeaf::Bool => PlanType::Bool,
             ListLeaf::Str => PlanType::String,
+
+            ListLeaf::Tuple(elements) => PlanType::Tuple(elements.clone()),
         }
     } else {
         PlanType::List(leaf.clone(), depth)
@@ -520,6 +527,8 @@ fn hashed_type(name: &str, leaves: &[&ListLeaf], span: Span) -> Box<ast::Ty> {
                         ListLeaf::Float => PlanType::Float,
                         ListLeaf::Bool => PlanType::Bool,
                         ListLeaf::Str => PlanType::String,
+
+                        ListLeaf::Tuple(elements) => PlanType::Tuple(elements.clone()),
                     },
                     span,
                 )))
@@ -597,21 +606,35 @@ pub fn enum_declaration(value: &crate::plan::EnumDeclaration, span: Span) -> Box
 fn carrier_alias(value: &crate::plan::EnumDeclaration, span: Span) -> Box<ast::Item> {
     let fields: Vec<_> = value.variants.iter().flat_map(|variant| &variant.fields).collect();
     let mut path = ast::Path::from_ident(ident("std", span));
-    path.segments.push(ast::PathSegment::from_ident(ident(if value.carrier == "Option" { "option" } else { "result" }, span)));
+    path.segments.push(ast::PathSegment::from_ident(ident(
+        if value.carrier == "Option" { "option" } else { "result" },
+        span,
+    )));
     let mut carrier = ast::PathSegment::from_ident(ident(&value.carrier, span));
     carrier.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
         span,
-        args: fields.iter().map(|field| ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(field, span)))).collect(),
+        args: fields
+            .iter()
+            .map(|field| ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(field, span))))
+            .collect(),
     })));
     path.segments.push(carrier);
-    item(ast::ItemKind::TyAlias(Box::new(ast::TyAlias {
-        defaultness: ast::Defaultness::Implicit,
-        ident: ident(&value.name, span),
-        generics: ast::Generics::default(),
-        after_where_clause: ast::WhereClause::default(),
-        bounds: Vec::new(),
-        ty: Some(Box::new(ast::Ty { id: ast::DUMMY_NODE_ID, kind: ast::TyKind::Path(None, path), span, tokens: None })),
-    })), span)
+    item(
+        ast::ItemKind::TyAlias(Box::new(ast::TyAlias {
+            defaultness: ast::Defaultness::Implicit,
+            ident: ident(&value.name, span),
+            generics: ast::Generics::default(),
+            after_where_clause: ast::WhereClause::default(),
+            bounds: Vec::new(),
+            ty: Some(Box::new(ast::Ty {
+                id: ast::DUMMY_NODE_ID,
+                kind: ast::TyKind::Path(None, path),
+                span,
+                tokens: None,
+            })),
+        })),
+        span,
+    )
 }
 
 /// Preserve enum tokens for derives from the exact planned layout without parsing generated Rust source.
@@ -649,4 +672,39 @@ fn enum_tokens(value: &crate::plan::EnumDeclaration, span: Span) -> ast::tokenst
         AttrTokenStream::new(variants),
     ));
     LazyAttrTokenStream::new_direct(AttrTokenStream::new(tokens))
+}
+
+/// Declare the Incan runtime wrapper and its retained shared or exclusive reference without inventing its fields.
+fn zip_signature_ty(kind: &PlanType, span: Span) -> Option<Box<ast::Ty>> {
+    let (left, right, mutability) = match kind {
+        PlanType::ZipIterator(left, right) => (left, right, None),
+        PlanType::ZipIteratorRef(left, right) => (left, right, Some(ast::Mutability::Not)),
+        PlanType::ZipIteratorMutRef(left, right) => (left, right, Some(ast::Mutability::Mut)),
+        _ => return None,
+    };
+    let mut path = ast::Path::from_ident(ident("incan_native_runtime", span));
+    let mut segment = ast::PathSegment::from_ident(ident("ZipLists", span));
+    segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
+        span,
+        args: thin_vec![
+            ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(&tuple_element_type(left.clone()), span))),
+            ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(&tuple_element_type(right.clone()), span))),
+        ],
+    })));
+    path.segments.push(segment);
+    let owned = Box::new(ast::Ty {
+        id: ast::DUMMY_NODE_ID,
+        kind: ast::TyKind::Path(None, path),
+        span,
+        tokens: None,
+    });
+    Some(match mutability {
+        None => owned,
+        Some(mutbl) => Box::new(ast::Ty {
+            id: ast::DUMMY_NODE_ID,
+            kind: ast::TyKind::Ref(None, ast::MutTy { ty: owned, mutbl }),
+            span,
+            tokens: None,
+        }),
+    })
 }

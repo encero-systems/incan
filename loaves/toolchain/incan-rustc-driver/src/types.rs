@@ -9,6 +9,13 @@ use rustc_middle::ty::{Ty, TyCtxt};
 /// List references preserve source parameter borrowing; checked pairs and other shared references are body-internal.
 pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, PlanError> {
     Ok(match ty {
+        PlanType::ZipIterator(left, right) => zip_type(tcx, left, right)?,
+        PlanType::ZipIteratorRef(left, right) => {
+            Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, zip_type(tcx, left, right)?)
+        }
+        PlanType::ZipIteratorMutRef(left, right) => {
+            Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, zip_type(tcx, left, right)?)
+        }
         PlanType::EnumTag => tcx.types.isize,
         PlanType::Generator(leaf, depth) => generator_type(tcx, "Generator", leaf, *depth)?,
         PlanType::GeneratorMutRef(leaf, depth) => Ty::new_mut_ref(
@@ -255,6 +262,7 @@ fn primitive_type<'tcx>(tcx: TyCtxt<'tcx>, leaf: &ListLeaf) -> Result<Ty<'tcx>, 
         ListLeaf::Float => Ok(tcx.types.f64),
         ListLeaf::Bool => Ok(tcx.types.bool),
         ListLeaf::Str => string_type(tcx),
+        ListLeaf::Tuple(elements) => native_type(tcx, &PlanType::Tuple(elements.clone())),
     }
 }
 
@@ -265,12 +273,41 @@ pub fn enum_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Result<Ty<'tcx>, PlanEr
         .free_items()
         .map(|item| item.owner_id.to_def_id())
         .find(|def| {
-            matches!(tcx.def_kind(*def), rustc_hir::def::DefKind::Enum | rustc_hir::def::DefKind::TyAlias)
-                && tcx.opt_item_name(*def).is_some_and(|symbol| symbol.as_str() == name)
+            matches!(
+                tcx.def_kind(*def),
+                rustc_hir::def::DefKind::Enum | rustc_hir::def::DefKind::TyAlias
+            ) && tcx.opt_item_name(*def).is_some_and(|symbol| symbol.as_str() == name)
         })
         .ok_or_else(|| PlanError::Invalid {
             function: name.into(),
             reason: "enum declaration is missing".into(),
         })?;
     Ok(tcx.type_of(definition).instantiate_identity().skip_normalization())
+}
+
+/// Resolve the Incan runtime's lazy zip wrapper with its checked flat element arguments.
+fn zip_type<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    left: &crate::plan::TupleElement,
+    right: &crate::plan::TupleElement,
+) -> Result<Ty<'tcx>, PlanError> {
+    let root = tcx
+        .crates(())
+        .iter()
+        .find(|krate| tcx.crate_name(**krate).as_str() == "incan_native_runtime")
+        .map(|krate| krate.as_def_id())
+        .ok_or_else(|| PlanError::UnknownCallee("incan_native_runtime".into()))?;
+    let definition = tcx
+        .module_children(root)
+        .iter()
+        .find(|child| child.ident.name.as_str() == "ZipLists" && child.vis.is_public())
+        .and_then(|child| child.res.opt_def_id())
+        .ok_or_else(|| PlanError::UnknownCallee("incan_native_runtime::ZipLists".into()))?;
+    let left = native_type(tcx, &tuple_element_type(left.clone()))?;
+    let right = native_type(tcx, &tuple_element_type(right.clone()))?;
+    Ok(Ty::new_adt(
+        tcx,
+        tcx.adt_def(definition),
+        tcx.mk_args(&[left.into(), right.into()]),
+    ))
 }

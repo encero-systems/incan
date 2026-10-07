@@ -45,6 +45,7 @@ pub def leaf_type(leaf: ListLeaf) -> PlanType:
         ListLeaf.Float => return PlanType.Float
         ListLeaf.Bool => return PlanType.Bool
         ListLeaf.Str => return PlanType.String
+        ListLeaf.Tuple(elements) => return PlanType.Tuple(elements)
 
 
 pub def collection_owned(ty: PlanType) -> PlanType:

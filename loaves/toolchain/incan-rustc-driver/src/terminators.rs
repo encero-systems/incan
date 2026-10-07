@@ -144,6 +144,8 @@ fn generator_element<'tcx>(
             crate::plan::ListLeaf::Float => crate::plan::PlanType::Float,
             crate::plan::ListLeaf::Bool => crate::plan::PlanType::Bool,
             crate::plan::ListLeaf::Str => crate::plan::PlanType::String,
+
+            crate::plan::ListLeaf::Tuple(elements) => crate::plan::PlanType::Tuple(elements.clone()),
         }
     } else {
         crate::plan::PlanType::List(leaf.clone(), depth)
