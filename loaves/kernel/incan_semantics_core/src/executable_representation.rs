@@ -1069,6 +1069,7 @@ mod tests {
             has_field_defaults: false,
             derives: vec![],
             named_type_identities: Default::default(),
+            type_parameters: Vec::new(),
             type_parameter_count: 0,
         });
         let public = BTreeSet::from([identity("exported", 1), type_id.clone()]);
@@ -1199,6 +1200,7 @@ mod tests {
             has_field_defaults: false,
             derives: vec![],
             named_type_identities: Default::default(),
+            type_parameters: Vec::new(),
             type_parameter_count: 0,
         });
         let public = BTreeSet::from([identity("exported", 1), published_type.clone()]);

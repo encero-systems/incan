@@ -241,6 +241,7 @@ pub(super) fn collect_local_nominal_declarations(
                     })
                     .collect(),
                 named_type_identities: type_info.declarations.named_type_identities.clone(),
+                type_parameters: class_layout.map_or_else(Vec::new, |layout| layout.type_params.clone()),
                 type_parameter_count,
             })
         })
@@ -289,6 +290,7 @@ fn collect_plain_newtype(
         has_field_defaults: false,
         derives,
         named_type_identities: type_info.declarations.named_type_identities.clone(),
+        type_parameters: Vec::new(),
         type_parameter_count: 0,
     })
 }

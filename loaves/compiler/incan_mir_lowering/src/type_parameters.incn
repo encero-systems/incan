@@ -1,6 +1,6 @@
-"""Closed native function instances selected exclusively by checked call-site arguments."""
+"""Closed native callable instances selected exclusively by checked call-site arguments."""
 
-from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind
+from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind, generic
 from rust::incan_semantics_core::body_ir import Body
 from symbols import type_component
 
@@ -21,16 +21,15 @@ pub def substitute(ty: &RustType, names: list[str], arguments: list[RustType]) -
                     return Ok(arguments[index].clone())
             return Err(f"unsupported Body IR unbound type parameter {name}")
         RustType.Named(name) =>
-            for index in range(len(names)):
-                if names[index] == str(name):
-                    return Ok(arguments[index].clone())
+            # A named declaration is not a placeholder, even when its spelling matches a type parameter.
             return Ok(ty.clone())
         RustType.Generic(base=base, args=elements) =>
             mut concrete: list[RustType] = []
             for element in elements:
                 closed: RustType = substitute(element, names, arguments)?
                 concrete.append(closed.clone())
-            return Ok(RustType.Generic(str(base), concrete))
+            # Work around legacy struct-variant construction; removed in dev.8.
+            return Ok(generic(str(base), concrete))
         RustType.Tuple(elements) =>
             mut concrete: list[RustType] = []
             for element in elements:
@@ -45,9 +44,9 @@ pub def instantiate(body: &Body, arguments: list[RustType]) -> Result[Body, str]
     names = body.type_parameters.clone()
     match body.canonical:
         Some(identity) =>
-            if identity.kind != SemanticSourceTargetKind.Function:
-                return Err("unsupported Body IR method with type parameters")
-        None => return Err("unsupported Body IR unproven function with type parameters")
+            if identity.kind != SemanticSourceTargetKind.Function and identity.kind != SemanticSourceTargetKind.Method:
+                return Err("unsupported Body IR declaration with type parameters")
+        None => return Err("unsupported Body IR unproven declaration with type parameters")
     if len(names) != len(arguments):
         return Err(f"unsupported Body IR type argument arity on {body.name}")
     mut result = body.clone()

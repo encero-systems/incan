@@ -451,10 +451,10 @@ pub fn is_direct_replacement_plain_newtype(newtype: &ast::NewtypeDecl) -> bool {
 
 /// Admit source classes whose fields and method bodies have complete direct-route facts.
 ///
-/// Inheritance, generic substitution, decorators, properties, aliases, and defaults remain refused.
+/// Ordered owner parameters and method parameters are retained for checked instance scheduling. Inheritance,
+/// decorators, properties, aliases, and defaults remain refused.
 pub fn is_direct_replacement_class(class: &ast::ClassDecl) -> bool {
     class.decorators.is_empty()
-        && class.type_params.is_empty()
         && class.traits.iter().all(|adoption| adoption.node.type_args.is_empty())
         && class.extends.is_none()
         && class.method_aliases.is_empty()
@@ -465,10 +465,7 @@ pub fn is_direct_replacement_class(class: &ast::ClassDecl) -> bool {
             .fields
             .iter()
             .all(|field| field.node.metadata.alias.is_none() && field.node.default.is_none())
-        && class
-            .methods
-            .iter()
-            .all(|method| method.node.type_params.is_empty() && method.node.decorators.is_empty())
+        && class.methods.iter().all(|method| method.node.decorators.is_empty())
 }
 
 /// Determine whether an enum carries the narrow source-local fieldless normal-enum declaration fact.

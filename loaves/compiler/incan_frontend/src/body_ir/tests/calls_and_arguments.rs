@@ -33,6 +33,50 @@ fn function_type_parameters_and_inferred_arguments_are_retained() -> Result<(), 
     Ok(())
 }
 
+/// Class declaration order, receiver identity, and inferred method arguments survive the Body IR boundary.
+#[test]
+fn class_parameters_and_method_instantiations_are_retained() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "class Pair[T, U]:\n    pub first: U\n    pub second: T\n    def pick[V](self, value: V) -> V:\n        return value\n\ndef main() -> None:\n    pair = Pair[int, str](first=\"first\", second=7)\n    pair.pick[int](42)\n    pair.pick(true)\n",
+        &["m", "class_parameters"],
+    )?;
+    let [declaration] = module.nominal_declarations.as_slice() else {
+        return Err("expected one retained class".into());
+    };
+    assert_eq!(declaration.type_parameters, ["T", "U"]);
+    assert_eq!(declaration.type_parameter_count, 2);
+    assert_eq!(
+        declaration.field_types,
+        [IncanType::TypeVar("U".into()), IncanType::TypeVar("T".into())]
+    );
+    assert!(module.is_well_formed_nominal_declaration(declaration));
+    assert!(module.body_has_canonical_direct_call_id(&module.bodies[0]));
+    assert_eq!(module.bodies[0].type_parameters, ["V"]);
+    let arguments: Vec<_> = module.bodies[1]
+        .block
+        .stmts
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                ..
+            } => Some(target.type_args.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        arguments,
+        [
+            vec![IncanType::Primitive(IncanPrimitiveType::Int)],
+            vec![IncanType::Primitive(IncanPrimitiveType::Bool)],
+        ]
+    );
+    let mut malformed = declaration.clone();
+    malformed.type_parameters.pop();
+    assert!(!module.is_well_formed_nominal_declaration(&malformed));
+    Ok(())
+}
+
 /// A plain newtype's slot and construction share the retained owner identity; hooks stay outside this profile.
 #[test]
 fn plain_newtype_retains_checked_tuple_layout() -> Result<(), Box<dyn std::error::Error>> {

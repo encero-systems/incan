@@ -902,7 +902,7 @@ impl TypeChecker {
             call_site_span,
         );
 
-        // ---- Require concrete bindings; snapshot monomorphs for lowering when brackets were used ----
+        // ---- Require explicit bindings and retain complete explicit or inferred method instantiations ----
         if !explicit_type_args.is_empty() && explicit_arity_ok {
             self.assert_call_site_type_params_inferred(
                 method,
@@ -910,6 +910,8 @@ impl TypeChecker {
                 &type_bindings,
                 call_site_span,
             );
+        }
+        if self.errors.len() == errors_before_call {
             self.record_call_site_monomorph_if_complete(call_site_span, &method_info.type_params, &type_bindings);
         }
 
