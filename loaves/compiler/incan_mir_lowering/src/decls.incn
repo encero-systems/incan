@@ -1,7 +1,7 @@
 """Runtime layouts of checked source-local declarations; erased aliases have no storage."""
 
 from rust::incan_semantics_core::body_ir import BodyIrModule, StaticDeclaration, GlobalPlace
-from pub::incan_mir_plan import ModelDeclaration, Parameter, SourceSpan, PlanType
+from pub::incan_mir_plan import EnumDeclaration, ModelDeclaration, Parameter, SourceSpan, PlanType
 from enums import native_source_type
 
 
@@ -40,6 +40,7 @@ pub def lower_model_declarations(module: &BodyIrModule, file: str) -> Result[lis
                         module.nominal_declarations,
                         module.enum_declarations,
                         declaration.field_types[slot],
+                        [],
                     )?,
                     span=SourceSpan(file=file, line=1, column=1),
                 ),

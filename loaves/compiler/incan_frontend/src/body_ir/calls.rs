@@ -5,6 +5,7 @@ use super::primitives::*;
 use super::*;
 use incan_lang::lang::builtins::BuiltinFnId;
 use incan_lang::lang::surface::{dict_methods, list_methods, set_methods};
+use incan_semantics_core::SymbolOrigin;
 
 /// Read receiver exclusivity from the canonical builtin collection registry, never from a source method's spelling.
 fn collection_method_changes_receiver(identity: &CanonicalSymbolId) -> bool {
@@ -841,6 +842,27 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             );
         }
 
+        if name == "Some"
+            && !self.bindings.contains_key(&name)
+            && !self.local_function_declarations.contains_key(&name)
+            && self
+                .type_info
+                .resolved_identity(callee.span)
+                .is_some_and(|identity| identity.origin == SymbolOrigin::Builtin && identity.declaration_name == "Some")
+            && type_args.is_empty()
+            && matches!(self.resolve_ty(span), IncanType::Generic { ref base, ref args } if base == "Option" && args.len() == 1)
+            && let [ast::CallArg::Positional(payload)] = args
+        {
+            let payload = self.lower_expr_to_operand(payload, scope, out);
+            return self.push_assign_temp(
+                bir::Rvalue::Aggregate(bir::AggregateKind::OptionSome, fixed_elements(vec![payload])),
+                self.resolve_ty(span),
+                scope,
+                hir_span_value,
+                out,
+            );
+        }
+
         let resolved_type_args = match self.call_site_type_arguments(span, type_args) {
             Ok(resolved_type_args) => resolved_type_args,
             Err(description) => {
@@ -872,6 +894,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return self.push_call_temp(
                 bir::Callee::Method(bir::MethodTarget {
                     name: method,
+                    intrinsic_carrier: None,
                     canonical: self.type_info.resolved_identity(span).cloned(),
                     type_args: resolved_type_args,
                     binding,
@@ -1248,6 +1271,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.push_call_temp(
             bir::Callee::Method(bir::MethodTarget {
                 name: name.to_string(),
+                intrinsic_carrier: match self.resolve_ty(recv.span) {
+                    IncanType::Generic { base, .. }
+                        if (base == "Option" && matches!(name, "is_some" | "is_none" | "unwrap_or"))
+                            || (base == "Result" && matches!(name, "is_ok" | "is_err" | "unwrap_or")) =>
+                    {
+                        Some(base)
+                    }
+                    _ => None,
+                },
                 canonical: self
                     .type_info
                     .resolved_identity(span)

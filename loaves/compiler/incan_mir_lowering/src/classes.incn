@@ -10,14 +10,18 @@ from rust::incan_semantics_core::body_ir import (
     OwnershipFact,
     ArgumentElement as RustArgumentElement,
 )
-from pub::incan_mir_plan import PlanType, Local, RvalueKind, SourceSpan
+from pub::incan_mir_plan import PlanType, Local, RvalueKind, SourceSpan, EnumDeclaration
 from models import model_place
 from enums import native_source_type
 
 
-pub def frame_type(module: &BodyIrModule, local: &RustLocal) -> Result[PlanType, str]:
+pub def frame_type(
+    module: &BodyIrModule,
+    local: &RustLocal,
+    intrinsics: list[EnumDeclaration],
+) -> Result[PlanType, str]:
     """Turn only checker-retained receiver origins into borrowed native frame slots."""
-    ty = native_source_type(module.nominal_declarations, module.enum_declarations, local.ty)?
+    ty = native_source_type(module.nominal_declarations, module.enum_declarations, local.ty, intrinsics)?
     match receiver_mode(local.origin):
         Some(mutable) =>
             match ty:
@@ -65,7 +69,7 @@ def receiver_borrow(
 ) -> Result[tuple[PlanType, RvalueKind], str]:
     """Lower the checked receiver to a shared borrow or mutable reborrow without moving its owner."""
     body = module.bodies[index]
-    receiver_type = frame_type(module, body.locals[0])?
+    receiver_type = frame_type(module, body.locals[0], [])?
     match value:
         RustOperand.Place(read) =>
             match read.fact:

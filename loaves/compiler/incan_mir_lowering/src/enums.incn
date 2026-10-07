@@ -124,8 +124,12 @@ pub def native_source_type(
     nominals: list[RustNominalDeclaration],
     declarations: list[RustEnumDeclaration],
     ty: &RustType,
+    intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
-    """Resolve normal enums by the retained registry, then delegate the existing scalar/model boundary."""
+    """Resolve retained standard carriers and source enums before delegating the existing scalar/model boundary."""
+    for index in range(len(intrinsics)):
+        if intrinsics[index].source_type == str(ty):
+            return Ok(PlanType.Enum(len(declarations) + index, intrinsics[index].name))
     match enum_type(declarations, ty):
         Some(result) => return Ok(result)
         None => return plain_model_type(nominals, ty)
@@ -139,7 +143,7 @@ pub def lower_enum_declarations(module: &RustBodyIrModule, file: str) -> Result[
         for variant in declaration.variants:
             mut fields: list[PlanType] = []
             for ty in variant.fields:
-                fields.append(native_source_type(module.nominal_declarations, module.enum_declarations, ty)?)
+                fields.append(native_source_type(module.nominal_declarations, module.enum_declarations, ty, [])?)
             variants.append(EnumVariant(name=str(variant.name), fields=fields))
         declarations.append(
             EnumDeclaration(

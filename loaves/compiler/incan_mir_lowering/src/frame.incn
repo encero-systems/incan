@@ -2,6 +2,7 @@
 
 from pub::incan_mir_plan import (
     BasicBlock,
+    EnumDeclaration,
     Callee,
     CalleeKind,
     Constant,
@@ -51,6 +52,7 @@ pub model Builder:
     pub borrowed_items: list[int]
     pub nominals: list[RustNominalDeclaration]
     pub enums: list[RustEnumDeclaration]
+    pub intrinsics: list[EnumDeclaration]
     pub statics: list[RustStaticDeclaration]
 
     def new_block(mut self, span: SourceSpan) -> int:

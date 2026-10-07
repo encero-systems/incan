@@ -652,7 +652,7 @@ fn external_signature_type(ty: Scalar) -> bool {
     source_signature_type(ty)
         || matches!(
             ty,
-            Scalar::StringRef | Scalar::StrRef | Scalar::StringSlice | Scalar::StrSlice
+            Scalar::StringRef | Scalar::StrRef | Scalar::StringSlice | Scalar::StrSlice | Scalar::EnumRef(_) | Scalar::ModelRef(_)
         )
 }
 
@@ -997,6 +997,19 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
             function: declaration.name.clone(),
             reason: "invalid or unsupported enum declaration".into(),
         };
+        if !declaration.carrier.is_empty() {
+            let variants = &declaration.variants;
+            let valid = match declaration.carrier.as_str() {
+                "Option" => variants.len() == 2 && variants[0].name == "None" && variants[0].fields.is_empty()
+                    && variants[1].name == "Some" && variants[1].fields.len() == 1,
+                "Result" => variants.len() == 2 && variants[0].name == "Ok" && variants[0].fields.len() == 1
+                    && variants[1].name == "Err" && variants[1].fields.len() == 1,
+                _ => false,
+            };
+            if !valid || declaration.source_type.is_empty() || !declaration.name.starts_with("__IncanCarrier") {
+                return Err(error());
+            }
+        }
         if !identifier(&declaration.name)
             || !names.insert(&declaration.name)
             || declaration.variants.is_empty()

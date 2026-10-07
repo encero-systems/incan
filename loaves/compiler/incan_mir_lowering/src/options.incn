@@ -1,0 +1,348 @@
+"""Concrete standard Option and Result layouts shared with native enum operations."""
+
+from rust::incan_semantics_core import IncanType as RustType, SymbolOrigin
+from rust::incan_semantics_core::body_ir import (
+    BodyIrModule,
+    Pattern as RustPattern,
+    ResultVariantKind,
+    Constant as RustConstant,
+)
+from pub::incan_mir_plan import (
+    BinaryOp,
+    CalleeKind,
+    ExternalFunction,
+    Constant,
+    EnumDeclaration,
+    EnumVariant,
+    Operand,
+    OperandKind,
+    Place,
+    PlanType,
+    Projection,
+    RvalueKind,
+    SourceSpan,
+    TerminatorKind,
+)
+from pub::incan_mir_plan import assign as plan_assign, place as plan_place
+from frame import (
+    Builder,
+    temporary,
+    read_place,
+    forget_owned,
+    drop_owned,
+    drop_all_owned,
+    track_rvalue_moves,
+    terminate_call,
+    frame_place_type,
+)
+from enums import native_source_type, validate_payload_patterns
+from numerics import numeric_carrier
+
+
+pub def variant_condition(mut builder: Builder, source: Place, slot: int, span: SourceSpan) -> Operand:
+    """Read a standard or source enum discriminant through the shared plan vocabulary."""
+    raw = temporary(builder, PlanType.EnumTag, span)
+    tag = temporary(builder, PlanType.Int, span)
+    condition = temporary(builder, PlanType.Bool, span)
+    builder.emit(plan_assign(raw, RvalueKind.Discriminant(source), span))
+    builder.emit(plan_assign(tag, RvalueKind.TagToInt(read_place(raw, false, span)), span))
+    literal = Operand(kind=OperandKind.Literal(Constant.Int(slot)), span=span)
+    builder.emit(plan_assign(condition, RvalueKind.Binary(BinaryOp.Equal, read_place(tag, false, span), literal), span))
+    return read_place(condition, false, span)
+
+
+pub def result_layout(builder: Builder, ty: PlanType) -> Result[tuple[int, EnumDeclaration], str]:
+    """Require a retained concrete Result carrier before reading its variant payload layout."""
+    match ty:
+        PlanType.Enum(owner, _name) =>
+            if owner < len(builder.enums):
+                return Err("unsupported Body IR TryPropagate outside Result")
+            declaration = builder.intrinsics[owner - len(builder.enums)]
+            if declaration.carrier != "Result":
+                return Err("unsupported Body IR TryPropagate outside Result")
+            return Ok((owner, declaration))
+        _ => return Err("unsupported Body IR TryPropagate outside Result")
+
+
+pub def propagate_result(
+    mut builder: Builder,
+    source: Place,
+    destination: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Move the selected payload once; error returns drop every other initialized owner before returning."""
+    _owner, input = result_layout(builder, builder.locals[source.local].ty)?
+    output_owner, output = result_layout(builder, builder.locals[0].ty)?
+    if input.variants[1].fields != output.variants[1].fields:
+        return Err("unsupported Body IR TryPropagate error conversion")
+    failure = builder.new_block(span)
+    success = builder.new_block(span)
+    condition = variant_condition(builder, source, 0, span)
+    builder.finish(TerminatorKind.SwitchBool(condition, failure, success), span)
+    # The carrier has one active payload. Both edges move it, so neither drops the emptied carrier.
+    forget_owned(builder, source.local)
+    owners = builder.owned
+    builder.current = failure
+    error = Place(local=source.local, projection=Projection.VariantField(1, 0, input.variants[1].fields[0]), span=span)
+    builder.emit(
+        plan_assign(plan_place(0, span), RvalueKind.Enum(output_owner, 1, [read_place(error, true, span)]), span),
+    )
+    drop_all_owned(builder, span)
+    builder.finish(TerminatorKind.Return, span)
+    builder.current = success
+    builder.owned = owners
+    value = Place(local=source.local, projection=Projection.VariantField(0, 0, input.variants[0].fields[0]), span=span)
+    builder.emit(plan_assign(destination, RvalueKind.Use(read_place(value, true, span)), span))
+    match builder.locals[destination.local].ty:
+        PlanType.String => builder.owned.append(destination.local)
+        PlanType.Enum(_owner, _name) => builder.owned.append(destination.local)
+        PlanType.Model(_owner, _name) => builder.owned.append(destination.local)
+        PlanType.List(_leaf, _depth) => builder.owned.append(destination.local)
+        _ => pass
+    return Ok(None)
+
+
+pub def intrinsic_pattern(declaration: EnumDeclaration, pattern: &RustPattern) -> Result[int, str]:
+    """Match intrinsic Result facts; ordinary source constructor spellings never authorize a standard carrier."""
+    match pattern:
+        RustPattern.Wildcard => return Ok(-1)
+        RustPattern.Literal(value) =>
+            if declaration.carrier == "Option" and value.clone() == RustConstant.None:
+                return Ok(0)
+        RustPattern.Enum(canonical=identity, name=_name, variant=variant, fields=fields) =>
+            match identity:
+                Some(canonical) =>
+                    if declaration.carrier == "Option" and canonical.origin == SymbolOrigin.Builtin and canonical.declaration_name == "Some" and str(
+                        variant,
+                    ) == "Some" and len(fields) == 1:
+                        validate_payload_patterns(fields)?
+                        return Ok(1)
+                None => pass
+        RustPattern.Result(variant=variant, fields=fields) =>
+            if declaration.carrier != "Result" or len(fields) != 1:
+                return Err("invalid Body IR Result pattern")
+            validate_payload_patterns(fields)?
+            if variant.clone() == ResultVariantKind.Ok:
+                return Ok(0)
+            return Ok(1)
+        _ => pass
+    return Err("unsupported Body IR intrinsic carrier pattern")
+
+
+pub def intrinsic_declarations(module: &BodyIrModule, file: str) -> Result[list[EnumDeclaration], str]:
+    """Collect concrete checked carriers in stable body/local order, admitting only existing payload types."""
+    mut declarations: list[EnumDeclaration] = []
+    for body in module.bodies:
+        retain_carrier(module, declarations, body.return_type, file)?
+        for local in body.locals:
+            retain_carrier(module, declarations, local.ty, file)?
+    return Ok(declarations)
+
+
+def retain_carrier(
+    module: &BodyIrModule,
+    mut declarations: list[EnumDeclaration],
+    ty: &RustType,
+    file: str,
+) -> Result[None, str]:
+    """Retain one concrete standard layout once; nested carriers precede their containing carrier."""
+    match ty:
+        RustType.Generic(base=base, args=arguments) =>
+            if base != "Option" and base != "Result":
+                return Ok(None)
+            for retained in declarations:
+                if retained.source_type == str(ty):
+                    return Ok(None)
+            if (base == "Option" and len(arguments) != 1) or (base == "Result" and len(arguments) != 2):
+                return Err(f"unsupported Body IR type {ty}")
+            mut fields: list[PlanType] = []
+            for argument in arguments:
+                retain_carrier(module, declarations, argument, file)?
+                fields.append(
+                    native_source_type(module.nominal_declarations, module.enum_declarations, argument, declarations)?,
+                )
+            mut variants = [EnumVariant(name="None", fields=[]), EnumVariant(name="Some", fields=[fields[0]])]
+            if base == "Result":
+                variants = [EnumVariant(name="Ok", fields=[fields[0]]), EnumVariant(name="Err", fields=[fields[1]])]
+            declarations.append(
+                EnumDeclaration(
+                    name=f"__IncanCarrier{len(declarations)}",
+                    public=false,
+                    variants=variants,
+                    derives=["Clone"],
+                    span=SourceSpan(file=file, line=1, column=1),
+                    carrier=str(base),
+                    source_type=str(ty),
+                ),
+            )
+        _ => pass
+    return Ok(None)
+
+
+pub def carrier_layout(builder: Builder, ty: PlanType) -> Result[tuple[int, EnumDeclaration], str]:
+    """Resolve only a retained standard carrier, keeping source enums on their existing canonical path."""
+    match ty:
+        PlanType.Enum(owner, _name) =>
+            if owner >= len(builder.enums):
+                return Ok((owner, builder.intrinsics[owner - len(builder.enums)]))
+        _ => pass
+    return Err("unsupported Body IR intrinsic carrier receiver")
+
+
+pub def assign_carrier(
+    mut builder: Builder,
+    target: Place,
+    owner: int,
+    slot: int,
+    operands: list[Operand],
+    span: SourceSpan,
+) -> None:
+    """Transfer active payload owners before replacing and tracking one concrete carrier destination."""
+    operation = RvalueKind.Enum(owner, slot, operands)
+    track_rvalue_moves(builder, operation)
+    drop_owned(builder, target.local, span)
+    builder.emit(plan_assign(target, operation, span))
+    builder.owned.append(target.local)
+
+
+pub def none_operand(mut builder: Builder, ty: PlanType, span: SourceSpan) -> Result[Operand, str]:
+    """Materialize None using the checked unit or concrete Option destination contract."""
+    if ty == PlanType.Unit:
+        return Ok(Operand(kind=OperandKind.Literal(Constant.Unit), span=span))
+    owner, declaration = carrier_layout(builder, ty)?
+    if declaration.carrier != "Option":
+        return Err("unsupported Body IR None outside Option")
+    output = temporary(builder, ty, span)
+    assign_carrier(builder, output, owner, 0, [], span)
+    return Ok(read_place(output, true, span))
+
+
+pub def borrowed_runtime_value(
+    mut builder: Builder,
+    name: str,
+    source: Place,
+    ty: PlanType,
+    reference_type: PlanType,
+    result_type: PlanType,
+    span: SourceSpan,
+) -> Place:
+    """Instantiate a native runtime helper against one checked carrier or payload type and its shared reference."""
+    reference = temporary(builder, reference_type, span)
+    builder.emit(plan_assign(reference, RvalueKind.Borrow(source), span))
+    output = temporary(builder, result_type, span)
+    path = f"incan_native_runtime::{name}"
+    builder.externals.append(
+        ExternalFunction(path=path, type_arguments=[ty], parameters=[reference_type], return_type=result_type, span=span),
+    )
+    terminate_call(builder, CalleeKind.Instantiated(path, ty), [read_place(reference, false, span)], output, span)
+    builder.owned.append(output.local)
+    return output
+
+
+pub def format_carrier(mut builder: Builder, source: Place, span: SourceSpan) -> Result[Place, str]:
+    """Render a retained standard carrier through legacy Debug formatting, without moving the source."""
+    owner, declaration = carrier_layout(builder, frame_place_type(builder.locals, source))?
+    ty = PlanType.Enum(owner, declaration.name)
+    return Ok(
+        borrowed_runtime_value(
+            builder,
+            "format_carrier",
+            source,
+            ty,
+            PlanType.EnumRef(owner, declaration.name),
+            PlanType.String,
+            span,
+        ),
+    )
+
+
+pub def carrier_payload_value(mut builder: Builder, place: Place, span: SourceSpan) -> Result[Operand, str]:
+    """Copy primitive payloads and clone an owned active payload without consuming its borrowed carrier."""
+    ty = frame_place_type(builder.locals, place)
+    if numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit:
+        return Ok(read_place(place, false, span))
+    mut reference_type = PlanType.StringRef
+    match ty:
+        PlanType.String => pass
+        PlanType.List(leaf, depth) =>
+            reference_type = PlanType.ListRef(leaf, depth)
+        PlanType.Set(leaf) =>
+            reference_type = PlanType.SetRef(leaf)
+        PlanType.Dict(key, value) =>
+            reference_type = PlanType.DictRef(key, value)
+        PlanType.Enum(owner, name) =>
+            reference_type = PlanType.EnumRef(owner, name)
+        PlanType.Model(owner, name) =>
+            reference_type = PlanType.ModelRef(owner, name)
+        _ => return Err("unsupported Body IR intrinsic payload clone type")
+    output = borrowed_runtime_value(builder, "clone_carrier_payload", place, ty, reference_type, ty, span)
+    return Ok(read_place(output, true, span))
+
+
+pub def lower_carrier_method_plan(
+    mut builder: Builder,
+    name: str,
+    source: Place,
+    target: Place,
+    fallback: Option[Operand],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Lower retained carrier predicates and eager defaults using the shared discriminant and payload machinery."""
+    _owner, declaration = carrier_layout(builder, frame_place_type(builder.locals, source))?
+    mut present = 0
+    if declaration.carrier == "Option":
+        present = 1
+    predicate = (declaration.carrier == "Option" and (name == "is_some" or name == "is_none")) or (declaration.carrier == "Result" and (
+        name == "is_ok"
+        or name == "is_err"
+    ))
+    if predicate:
+        if name == "is_none" or name == "is_err":
+            present = 1 - present
+        condition = variant_condition(builder, source, present, span)
+        builder.emit(plan_assign(target, RvalueKind.Use(condition), span))
+        return Ok(None)
+    if name != "unwrap_or":
+        return Err(f"unsupported Body IR intrinsic carrier method {name}")
+    match fallback:
+        Some(value) => return lower_carrier_default(builder, declaration, present, source, target, value, span)
+        None => return Err("unsupported Body IR carrier missing default")
+
+
+def lower_carrier_default(
+    mut builder: Builder,
+    declaration: EnumDeclaration,
+    present: int,
+    source: Place,
+    target: Place,
+    fallback: Operand,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Select the active borrowed payload or the eager default, releasing the unused default on the payload edge."""
+    payload_type = declaration.variants[present].fields[0]
+    selected = builder.new_block(span)
+    missing = builder.new_block(span)
+    join = builder.new_block(span)
+    owners = builder.owned
+    condition = variant_condition(builder, source, present, span)
+    builder.finish(TerminatorKind.SwitchBool(condition, missing, selected), span)
+    builder.current = selected
+    projected = Place(local=source.local, projection=Projection.VariantField(present, 0, payload_type), span=span)
+    payload = carrier_payload_value(builder, projected, span)?
+    track_rvalue_moves(builder, RvalueKind.Use(payload))
+    builder.emit(plan_assign(target, RvalueKind.Use(payload), span))
+    match fallback.kind:
+        OperandKind.Move(place) => drop_owned(builder, place.local, span)
+        _ => pass
+    builder.finish(TerminatorKind.Goto(join), span)
+    builder.current = missing
+    builder.owned = owners
+    track_rvalue_moves(builder, RvalueKind.Use(fallback))
+    builder.emit(plan_assign(target, RvalueKind.Use(fallback), span))
+    retained = builder.owned
+    builder.finish(TerminatorKind.Goto(join), span)
+    builder.current = join
+    builder.owned = retained
+    if not numeric_carrier(payload_type) and payload_type != PlanType.Bool and payload_type != PlanType.Unit:
+        builder.owned.append(target.local)
+    return Ok(None)

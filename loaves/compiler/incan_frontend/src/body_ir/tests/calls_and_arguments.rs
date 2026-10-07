@@ -5,6 +5,26 @@
 
 use super::*;
 
+/// Intrinsic Option construction is explicit, while an ordinary source function called Some keeps its call identity.
+#[test]
+fn option_constructor_retains_intrinsic_selection() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def option() -> Option[int]:\n    return Some(7)\n\ndef main() -> None:\n    value = option()\n    println(value.unwrap_or(0))\n    match value:\n        Some(number) => println(number)\n        None => println(0)\n",
+        &["m", "option_constructor"],
+    )?;
+    let snapshot = module.render_snapshot();
+    assert!(snapshot.contains("option_some"), "{snapshot}");
+    assert!(snapshot.contains("Some(bind"), "{snapshot}");
+    assert!(!snapshot.contains("unsupported("), "{snapshot}");
+    assert!(body_named(&module, "main")?.block.stmts.iter().any(|statement| matches!(&statement.kind, bir::StatementKind::Call { callee: bir::Callee::Method(target), .. } if target.intrinsic_carrier.as_deref() == Some("Option") && target.name == "unwrap_or")));
+    let shadowed = build(
+        "def Some(value: int) -> int:\n    return value\n\ndef main() -> None:\n    println(Some(7))\n",
+        &["m", "shadowed_constructor"],
+    )?;
+    assert!(!shadowed.render_snapshot().contains("option_some"));
+    Ok(())
+}
+
 /// A plain newtype's slot and construction share the retained owner identity; hooks stay outside this profile.
 #[test]
 fn plain_newtype_retains_checked_tuple_layout() -> Result<(), Box<dyn std::error::Error>> {
