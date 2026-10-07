@@ -51,6 +51,25 @@ fn plain_newtype_retains_checked_tuple_layout() -> Result<(), Box<dyn std::error
     Ok(())
 }
 
+/// Ordinary newtype methods retain a layout and trait slots, while checked constructors cannot become raw wraps.
+#[test]
+fn newtype_methods_retain_layout_without_erasing_validation() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Read:\n    def read(self) -> int\n\ntype Count = newtype int with Read:\n    def read(self) -> int:\n        return self.0\n\ndef main() -> int:\n    return Count(7).read()\n",
+        &["m", "newtype_methods"],
+    )?;
+    assert_eq!(module.nominal_declarations.len(), 1);
+    assert_eq!(module.trait_implementations.len(), 1);
+    assert!(module.is_well_formed_trait_implementation(&module.trait_implementations[0]));
+    let checked = build(
+        "trait Read:\n    def read(self) -> int\n\ntype Positive = newtype int with Read:\n    def read(self) -> int:\n        return self.0\n\n    def from_underlying(value: int) -> Result[Self, ValidationError]:\n        if value <= 0:\n            return Err(ValidationError(\"must be positive\"))\n        return Ok(Positive(value))\n\ndef main() -> None:\n    value = Positive(1)\n",
+        &["m", "checked_newtype"],
+    )?;
+    assert!(checked.nominal_declarations.is_empty());
+    assert!(checked.trait_implementations.is_empty());
+    Ok(())
+}
+
 /// Only effect-free scalar initialization reaches the persistent native storage profile.
 #[test]
 fn scalar_static_retains_canonical_initializer() -> Result<(), Box<dyn std::error::Error>> {

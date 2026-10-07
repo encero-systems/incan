@@ -85,15 +85,7 @@ fn checked_modules(path: &Path) -> Result<CheckedProgram, String> {
             type_info,
             &bodies,
         );
-        let static_count = module
-            .ast
-            .declarations
-            .iter()
-            .filter(|declaration| matches!(declaration.node, incan_frontend::ast::Declaration::Static(_)))
-            .count();
-        if static_count != body_ir.static_declarations.len() {
-            return Err("unsupported source Static initializer or carrier on the native route".to_owned());
-        }
+        validate_retained_storage(&module.ast, &body_ir)?;
         bodies.push(body_ir);
         sources.push(module.source);
         files.push(module.file_path.to_string_lossy().into_owned());
@@ -104,6 +96,38 @@ fn checked_modules(path: &Path) -> Result<CheckedProgram, String> {
         files,
         entry,
     })
+}
+
+/// Refuse source storage whose checked layout was deliberately omitted from Body IR.
+///
+/// In particular, a checked newtype constructor must not reach body validation as if it were an ordinary raw wrapper.
+/// The frontend declaration collector owns that decision; this boundary only checks whether its layout was retained.
+fn validate_retained_storage(program: &incan_frontend::ast::Program, module: &BodyIrModule) -> Result<(), String> {
+    use incan_frontend::ast::Declaration;
+    use incan_semantics_core::SemanticSourceTargetKind;
+
+    let static_count = program
+        .declarations
+        .iter()
+        .filter(|declaration| matches!(declaration.node, Declaration::Static(_)))
+        .count();
+    if static_count != module.static_declarations.len() {
+        return Err("unsupported source Static initializer or carrier on the native route".to_owned());
+    }
+    let newtype_count = program
+        .declarations
+        .iter()
+        .filter(|declaration| matches!(declaration.node, Declaration::Newtype(_)))
+        .count();
+    let retained_newtypes = module
+        .nominal_declarations
+        .iter()
+        .filter(|declaration| declaration.canonical.kind == SemanticSourceTargetKind::Newtype)
+        .count();
+    if newtype_count != retained_newtypes {
+        return Err("unsupported source checked Newtype construction on the native route".to_owned());
+    }
+    Ok(())
 }
 
 /// Refuse declarations whose observable behavior the direct route cannot retain, independently for each module.

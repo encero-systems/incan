@@ -789,6 +789,104 @@ def main() -> None:
     Ok(())
 }
 
+/// Ordinary newtype builders and receiver methods preserve their wrapped values and legacy output.
+#[test]
+fn newtype_methods_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("newtype-methods")?;
+    let source = root.join("newtype_methods.incn");
+    fs::write(
+        &source,
+        r#"trait Doubled:
+    """Expose a shared read of a wrapped count."""
+
+    def doubled(self) -> int
+
+type Count = newtype int with Doubled:
+    """Wrap a count without introducing checked construction."""
+
+    def create(value: int) -> Count:
+        """Construct through an ordinary associated builder."""
+        return Count(value)
+
+    def doubled(self) -> int:
+        """Read tuple slot zero through a nominal receiver."""
+        return self.0 * 2
+
+type Message = newtype str:
+    """Keep owned text behind a nominal wrapper."""
+
+    def create(value: str) -> Message:
+        """Wrap the supplied text through an associated method."""
+        return Message(value)
+
+    def text(self) -> str:
+        """Read the wrapped text without consuming the receiver."""
+        return self.0
+
+def main() -> None:
+    """Exercise builders, scalar projection, and repeated text reads."""
+    count = Count.create(21)
+    println(count.doubled())
+    println(count.0)
+    message = Message.create("wrapped")
+    println(message.text())
+    println(message.text())
+"#,
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let native = root.join("native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "newtype methods native compilation",
+    );
+    let legacy = root.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy)
+            .output()?,
+        "newtype methods legacy compilation",
+    );
+    let expected = Command::new(legacy.join("oven/release/newtype_methods")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "newtype methods legacy execution");
+    success(&actual, "newtype methods native execution");
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(actual.stdout, b"42\n21\nwrapped\nwrapped\n");
+    let checked_source = root.join("checked_newtype.incn");
+    fs::write(
+        &checked_source,
+        "type Positive = newtype int:\n    def from_underlying(value: int) -> Result[Self, ValidationError]:\n        if value <= 0:\n            return Err(ValidationError(\"must be positive\"))\n        return Ok(Positive(value))\n\ndef main() -> None:\n    value = Positive(1)\n",
+    )?;
+    let checked_output = root.join("checked-native");
+    let refused = corpus::source_command(
+        &fixture.driver_binary("release"),
+        &checked_source,
+        &checked_output,
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("unsupported source checked Newtype construction"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(!checked_output.exists());
+    Ok(())
+}
+
 /// Newtypes, erased aliases, scalar constants, and persistent scalar statics retain exactly the legacy output.
 #[test]
 fn declarations_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
