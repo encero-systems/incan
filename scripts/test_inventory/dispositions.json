@@ -586,7 +586,7 @@
       "disposition": "keep",
       "notes": "Oven-built pinned native driver; scalar plan and real Body IR lowering; unchanged benchmark byte parity and opt-in census of every behavior fixture",
       "owner": 1337,
-      "split_required": false,
+      "split_required": true,
       "split_target": "",
       "twin": ""
     },
