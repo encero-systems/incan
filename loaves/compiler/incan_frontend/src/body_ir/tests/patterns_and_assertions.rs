@@ -840,3 +840,53 @@ fn an_enum_variant_where_a_place_is_needed_is_materialized() -> Result<(), Box<d
     assert!(rendered.contains("enum_variant(Suit::Hearts "), "{rendered}");
     Ok(())
 }
+
+/// A successful assertion must not run its failure message computation.
+#[test]
+fn condition_assertion_message_is_deferred_to_the_failure_block() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def message() -> str:\n  return \"failure\"\n\ndef run(flag: bool) -> None:\n  assert flag, message()\n",
+        &["m", "lazy_assert_message"],
+    )?;
+    let body = body_named(&module, "run")?;
+    let branch = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| {
+            if let bir::StatementKind::If {
+                then_block,
+                else_block: Some(failure),
+                ..
+            } = &statement.kind
+            {
+                Some((then_block, failure))
+            } else {
+                None
+            }
+        })
+        .ok_or("condition message must be deferred inside an If")?;
+    assert!(branch.0.stmts.is_empty());
+    assert!(
+        branch
+            .1
+            .stmts
+            .iter()
+            .any(|statement| matches!(statement.kind, bir::StatementKind::Call { .. }))
+    );
+    assert!(
+        branch
+            .1
+            .stmts
+            .iter()
+            .any(|statement| matches!(statement.kind, bir::StatementKind::Assert { .. }))
+    );
+    assert!(
+        !body
+            .block
+            .stmts
+            .iter()
+            .any(|statement| matches!(statement.kind, bir::StatementKind::Call { .. }))
+    );
+    Ok(())
+}
