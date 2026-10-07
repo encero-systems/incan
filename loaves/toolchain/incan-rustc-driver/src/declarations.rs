@@ -80,6 +80,16 @@ fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
             },
         ),
         PlanType::Unit => ast::TyKind::Tup(ThinVec::new()),
+        PlanType::UnitFunction => ast::TyKind::FnPtr(Box::new(ast::FnPtrTy {
+            safety: ast::Safety::Default,
+            ext: ast::Extern::None,
+            generic_params: ThinVec::new(),
+            decl: Box::new(ast::FnDecl {
+                inputs: ThinVec::new(),
+                output: ast::FnRetTy::Ty(ty(&PlanType::Unit, span)),
+            }),
+            decl_span: span,
+        })),
         PlanType::ModelRef(index, name) | PlanType::ModelMutRef(index, name) => ast::TyKind::Ref(
             None,
             ast::MutTy {
