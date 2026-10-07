@@ -4,12 +4,12 @@ use std::collections::BTreeSet;
 
 use crate::error::PlanError;
 use crate::plan::{
-    BinaryOp, Callee, CalleeKind, Constant, Function, Operand, OperandKind, Place, Plan, PlanType, Projection,
-    RvalueKind, SourceSpan, StatementKind, TerminatorKind, UnaryOp, Unwind,
+    BinaryOp, Callee, CalleeKind, Constant, Function, ListLeaf, Operand, OperandKind, Place, Plan, PlanType,
+    Projection, RvalueKind, SourceSpan, StatementKind, TerminatorKind, UnaryOp, Unwind,
 };
 
 /// A local comparison vocabulary; the public types remain the Incan Loaf's own types.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Scalar {
     Int,
     Float,
@@ -27,6 +27,30 @@ enum Scalar {
     ModelRef(i64),
     StringSlice,
     StrSlice,
+    List(Leaf, i64),
+    ListRef(Leaf, i64),
+    ListMutRef(Leaf, i64),
+}
+
+/// The comparison vocabulary's copy of the plan's list leaf, which carries no Rust `Copy` or `Ord` derive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Leaf {
+    Int,
+    Float,
+    Bool,
+    Str,
+}
+
+impl Leaf {
+    /// Mirror one plan leaf.
+    fn of(leaf: &ListLeaf) -> Self {
+        match leaf {
+            ListLeaf::Int => Leaf::Int,
+            ListLeaf::Float => Leaf::Float,
+            ListLeaf::Bool => Leaf::Bool,
+            ListLeaf::Str => Leaf::Str,
+        }
+    }
 }
 
 /// Compare source-authored types without requiring a Rust derive on Incan types.
@@ -34,6 +58,9 @@ fn scalar(ty: &PlanType) -> Scalar {
     match ty {
         PlanType::Model(index, _) => Scalar::Model(*index),
         PlanType::ModelRef(index, _) => Scalar::ModelRef(*index),
+        PlanType::List(leaf, depth) => Scalar::List(Leaf::of(leaf), *depth),
+        PlanType::ListRef(leaf, depth) => Scalar::ListRef(Leaf::of(leaf), *depth),
+        PlanType::ListMutRef(leaf, depth) => Scalar::ListMutRef(Leaf::of(leaf), *depth),
         PlanType::Int => Scalar::Int,
         PlanType::Float => Scalar::Float,
         PlanType::Bool => Scalar::Bool,
@@ -76,7 +103,13 @@ pub fn validate(plan: &Plan) -> Result<(), PlanError> {
     for external in &plan.externals {
         span(&external.span)?;
         let segments: Vec<_> = external.path.split("::").collect();
-        if segments.len() < 2 || !segments.iter().all(|segment| identifier(segment)) || !paths.insert(&external.path) {
+        if segments.len() < 2
+            || !segments.iter().all(|segment| identifier(segment))
+            || !paths.insert((
+                external.path.clone(),
+                external.type_arguments.iter().map(scalar).collect::<Vec<_>>(),
+            ))
+        {
             return Err(PlanError::Invalid {
                 function: external.path.clone(),
                 reason: "invalid or duplicate canonical external path".into(),
@@ -225,6 +258,10 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
             require(function, scalar(field_type), scalar(&field.ty), "projected field type")?;
             Ok(scalar(field_type))
         }
+        Projection::Deref => match ty {
+            Scalar::ListRef(leaf, depth) | Scalar::ListMutRef(leaf, depth) => Ok(Scalar::List(leaf, depth)),
+            _ => Err(invalid(function, "dereference requires a list reference")),
+        },
         Projection::Value if ty == Scalar::CheckedInt => Ok(Scalar::Int),
         Projection::Overflow if ty == Scalar::CheckedInt => Ok(Scalar::Bool),
         _ => Err(invalid(function, "only checked integer results support projections")),
@@ -262,7 +299,14 @@ fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, 
     match &value.kind {
         OperandKind::Copy(value) => {
             let ty = place(plan, function, value)?;
-            if matches!(ty, Scalar::String | Scalar::StringArray(_) | Scalar::Model(_)) {
+            if matches!(
+                ty,
+                Scalar::String
+                    | Scalar::StringArray(_)
+                    | Scalar::Model(_)
+                    | Scalar::List(_, _)
+                    | Scalar::ListMutRef(_, _)
+            ) {
                 return Err(invalid(function, "owned formatting values cannot be copied"));
             }
             Ok(ty)
@@ -329,10 +373,15 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
         }
         RvalueKind::Borrow(value) => match place(plan, function, value)? {
             Scalar::Model(index) => Ok(Scalar::ModelRef(index)),
+            Scalar::List(leaf, depth) => Ok(Scalar::ListRef(leaf, depth)),
             Scalar::String => Ok(Scalar::StringRef),
             Scalar::StringArray(count) => Ok(Scalar::StringArrayRef(count)),
             Scalar::StrArray(count) => Ok(Scalar::StrArrayRef(count)),
             _ => Err(invalid(function, "shared borrow requires an owned formatting value")),
+        },
+        RvalueKind::MutBorrow(value) => match place(plan, function, value)? {
+            Scalar::List(leaf, depth) => Ok(Scalar::ListMutRef(leaf, depth)),
+            _ => Err(invalid(function, "mutable borrow requires an owned list")),
         },
         RvalueKind::UnsizeSlice(value) => match operand(plan, function, value)? {
             Scalar::StringArrayRef(_) => Ok(Scalar::StringSlice),
@@ -349,7 +398,15 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
 fn source_signature_type(ty: Scalar) -> bool {
     matches!(
         ty,
-        Scalar::Int | Scalar::Float | Scalar::Bool | Scalar::Unit | Scalar::String | Scalar::Model(_)
+        Scalar::Int
+            | Scalar::Float
+            | Scalar::Bool
+            | Scalar::Unit
+            | Scalar::String
+            | Scalar::Model(_)
+            | Scalar::List(_, _)
+            | Scalar::ListRef(_, _)
+            | Scalar::ListMutRef(_, _)
     )
 }
 
@@ -372,6 +429,9 @@ fn validate_array_length(function: &Function, ty: Scalar) -> Result<(), PlanErro
             if count < 0 =>
         {
             Err(invalid(function, "formatting array length must be nonnegative"))
+        }
+        Scalar::List(_, depth) | Scalar::ListRef(_, depth) | Scalar::ListMutRef(_, depth) if depth < 1 => {
+            Err(invalid(function, "list depth must be positive"))
         }
         _ => Ok(()),
     }
@@ -448,11 +508,19 @@ fn signature(plan: &Plan, callee: &Callee) -> Result<(Vec<Scalar>, Scalar), Plan
             }
             Ok((vec![Scalar::ModelRef(*index)], Scalar::Model(*index)))
         }
-        CalleeKind::External(path) => {
+        CalleeKind::External(path) | CalleeKind::Instantiated(path, _) => {
             let external = plan
                 .externals
                 .iter()
-                .find(|external| &external.path == path)
+                .find(|external| {
+                    &external.path == path
+                        && match &callee.kind {
+                            CalleeKind::Instantiated(_, ty) => {
+                                external.type_arguments.len() == 1 && scalar(&external.type_arguments[0]) == scalar(ty)
+                            }
+                            _ => external.type_arguments.is_empty(),
+                        }
+                })
                 .ok_or_else(|| PlanError::UnknownCallee(path.clone()))?;
             Ok((
                 external.parameters.iter().map(scalar).collect(),

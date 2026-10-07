@@ -17,6 +17,16 @@ pub model SourceSpan:
 
 
 @derive(Clone, PartialEq)
+pub enum ListLeaf:
+    """The primitive element at the bottom of a homogeneous, possibly nested, list."""
+
+    Int
+    Float
+    Bool
+    Str
+
+
+@derive(Clone, PartialEq)
 pub enum PlanType:
     """
     Scalar types plus the owned text, fixed arrays, and shared slices used by formatting.
@@ -24,6 +34,8 @@ pub enum PlanType:
     Array lengths are exact nonnegative counts. CheckedInt and arrays are body
     temporaries; shared slice variants already include their reference. StringRef
     borrows an owned String, while StrRef is a string literal's shared str view.
+    List stores its primitive leaf element and a positive nesting
+    depth; ListRef and ListMutRef borrow that same Vec representation.
     """
 
     Int
@@ -42,6 +54,10 @@ pub enum PlanType:
     ModelRef(int, str)
     StringSlice
     StrSlice
+    # A homogeneous list: its primitive leaf element and nesting depth.
+    List(ListLeaf, int)
+    ListRef(ListLeaf, int)
+    ListMutRef(ListLeaf, int)
 
 
 @derive(Clone, PartialEq)
@@ -63,17 +79,18 @@ pub model Local:
 
 @derive(Clone, PartialEq)
 pub enum Projection:
-    """Whole local, checked arithmetic component, or an indexed checked model field."""
+    """Whole local, checked arithmetic component, checked model field, or list-reference dereference."""
 
     Whole
     Value
     Overflow
     Field(int, PlanType)
+    Deref
 
 
 @derive(Clone, PartialEq)
 pub model Place:
-    """An indexed local, optionally projected into a checked result pair or model field."""
+    """An indexed local with a checked arithmetic, model field, or list-reference projection."""
 
     pub local: int
     pub projection: Projection
@@ -143,7 +160,7 @@ pub enum RvalueKind:
     An explicit scalar or formatting expression assigned to a place.
 
     Array moves or copies its listed operands into a fixed array. Borrow creates
-    a shared reference to a whole local. UnsizeSlice converts an array reference
+    a shared reference to a whole local or checked projection; MutBorrow creates an exclusive list reference. UnsizeSlice converts an array reference
     to the corresponding shared slice without changing ownership of its owner.
     """
 
@@ -154,6 +171,7 @@ pub enum RvalueKind:
     Array(list[Operand])
     Model(int, list[Operand])
     Borrow(Place)
+    MutBorrow(Place)
     UnsizeSlice(Operand)
 
 
@@ -184,11 +202,12 @@ pub model Statement:
 
 @derive(Clone, PartialEq)
 pub enum CalleeKind:
-    """A source-named planned function or a canonical external function path."""
+    """A planned function, canonical external path, checked model clone, or one-argument generic external instantiation."""
 
     Planned(str)
     External(str)
     CloneModel(int, str)
+    Instantiated(str, PlanType)
 
 
 @derive(Clone, PartialEq)
@@ -263,7 +282,7 @@ pub model Plan:
     """
     A native crate with scalar functions and plain models; external functions are admitted by canonical path.
 
-    External declarations give validation a signature before rustc runs. The
+    External declarations give validation a signature and explicit type arguments before rustc runs. The
     adapter verifies those signatures against the loaded dependency metadata.
     """
 
@@ -290,6 +309,7 @@ pub model ExternalFunction:
     """The signature of a canonical dependency function used by this plan."""
 
     pub path: str
+    pub type_arguments: list[PlanType] = []
     pub parameters: list[PlanType]
     pub return_type: PlanType
     pub span: SourceSpan

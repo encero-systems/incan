@@ -247,24 +247,6 @@ fn reads_manifest_directory(source: proc_macro2::TokenStream) -> bool {
     false
 }
 
-/// Return the directory content-addressed compiler-source projections live under.
-///
-/// Cargo identifies a path dependency by its location, so a projection keeps one path across builds or Cargo rebuilds
-/// the whole compiler closure every time: below `INCAN_HOME` (else `~/.incan`), never a per-process temporary
-/// directory. The temporary directory remains only for an environment with neither home.
-fn projection_cache_root() -> std::path::PathBuf {
-    std::env::var_os("INCAN_HOME")
-        .filter(|path| !path.is_empty())
-        .map(std::path::PathBuf::from)
-        .or_else(|| {
-            crate::oven_store::user_home()
-                .filter(|path| !path.is_empty())
-                .map(|path| std::path::PathBuf::from(path).join(".incan"))
-        })
-        .map(|root| root.join("cache").join("body-ir-source"))
-        .unwrap_or_else(|| std::env::temp_dir().join("incan-body-ir-source"))
-}
-
 /// Publish exact compiler sources and included resources in their repository-relative layout under a shared lock.
 /// The package retains its original depth so frozen repository-relative includes resolve inside the snapshot; manifests
 /// and resource bytes contribute to the content identity.
@@ -301,7 +283,9 @@ fn materialize_projection(
         digest.update(bytes.len().to_le_bytes());
         digest.update(bytes);
     }
-    let shadow = projection_cache_root().join(hex::encode(digest.finalize()));
+    let shadow = std::env::temp_dir()
+        .join("incan-body-ir-source")
+        .join(hex::encode(digest.finalize()));
     fs::create_dir_all(&shadow)?;
     let lock = fs::OpenOptions::new()
         .create(true)

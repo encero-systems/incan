@@ -860,17 +860,9 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
         .map(|cargo| prepare_compiler_suite_fixture_cargo_proxy(&output_directory, cargo))
         .transpose()?
         .map(|mut proxy| {
-            // A kept workspace holds bakes against one standard-library family, and a receipt does not name that
-            // family, so a bake against a refreshed SDK must not find the previous family's state. Key it by the
-            // stored SDK inventory, which changes whenever the standard library does.
-            proxy.explicit_bake_workspace = options
-                .explicit_bake_workspace
-                .as_ref()
-                .map(|workspace| select_explicit_bake_workspace(workspace, &suite.sdk_inventory_digest))
-                .transpose()?;
-            Ok::<_, CliError>(proxy)
-        })
-        .transpose()?;
+            proxy.explicit_bake_workspace = options.explicit_bake_workspace.clone();
+            proxy
+        });
     let stored_sdk_inventory = fs::canonicalize(compiler_suite_file(
         &artifact_root,
         &suite.sdk_inventory_relative_path,
