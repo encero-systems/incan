@@ -104,6 +104,8 @@ enum Leaf {
     Str,
     Tuple(Vec<Scalar>),
     Model(i64),
+    U8,
+    Unit,
 }
 
 impl Leaf {
@@ -116,6 +118,8 @@ impl Leaf {
             ListLeaf::Str => Leaf::Str,
             ListLeaf::Tuple(elements) => Leaf::Tuple(elements.iter().map(|element| scalar(&tuple_element_type(element.clone()))).collect()),
             ListLeaf::Model(index, _) => Leaf::Model(*index),
+            ListLeaf::U8 => Leaf::U8,
+            ListLeaf::Unit => Leaf::Unit,
         }
     }
 }
@@ -741,15 +745,25 @@ fn external_signature_type(ty: Scalar) -> bool {
 /// Reject unsupported hashed leaves and invalid dimensions before constructing native types, including unused locals.
 fn validate_array_length(function: &Function, ty: Scalar) -> Result<(), PlanError> {
     match ty {
-        Scalar::Set(Leaf::Tuple(_))
-        | Scalar::SetRef(Leaf::Tuple(_))
-        | Scalar::SetMutRef(Leaf::Tuple(_))
-        | Scalar::Dict(Leaf::Tuple(_), _)
-        | Scalar::DictRef(Leaf::Tuple(_), _)
-        | Scalar::DictMutRef(Leaf::Tuple(_), _)
-        | Scalar::Dict(_, Leaf::Tuple(_))
+        Scalar::Set(Leaf::Tuple(elements))
+        | Scalar::SetRef(Leaf::Tuple(elements))
+        | Scalar::SetMutRef(Leaf::Tuple(elements))
+        | Scalar::Dict(Leaf::Tuple(elements), _)
+        | Scalar::DictRef(Leaf::Tuple(elements), _)
+        | Scalar::DictMutRef(Leaf::Tuple(elements), _) if elements.contains(&Scalar::Float) =>
+            Err(invalid(function, "floating-point tuple hashed keys lack Eq and Hash")),
+        Scalar::Dict(_, Leaf::Tuple(_))
         | Scalar::DictRef(_, Leaf::Tuple(_))
-        | Scalar::DictMutRef(_, Leaf::Tuple(_)) => Err(invalid(function, "tuple leaves are admitted only in lists")),
+        | Scalar::DictMutRef(_, Leaf::Tuple(_)) => Err(invalid(function, "tuple dictionary values are not admitted")),
+        Scalar::Set(Leaf::Model(_))
+        | Scalar::SetRef(Leaf::Model(_))
+        | Scalar::SetMutRef(Leaf::Model(_))
+        | Scalar::Dict(Leaf::Model(_), _)
+        | Scalar::DictRef(Leaf::Model(_), _)
+        | Scalar::DictMutRef(Leaf::Model(_), _)
+        | Scalar::Dict(_, Leaf::Model(_))
+        | Scalar::DictRef(_, Leaf::Model(_))
+        | Scalar::DictMutRef(_, Leaf::Model(_)) => Err(invalid(function, "model leaves are admitted only in lists")),
         Scalar::Set(Leaf::Float)
         | Scalar::SetRef(Leaf::Float)
         | Scalar::SetMutRef(Leaf::Float)

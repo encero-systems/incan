@@ -37,6 +37,8 @@ pub enum ListLeaf:
     Str
     Tuple(list[TupleElement])
     Model(int, str)
+    U8
+    Unit
 
 
 @derive(Clone, PartialEq)
@@ -128,6 +130,8 @@ pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
         ListLeaf.Str => return PlanType.String
         ListLeaf.Tuple(elements) => return PlanType.Tuple(elements)
         ListLeaf.Model(index, name) => return PlanType.Model(index, name)
+        ListLeaf.U8 => return PlanType.U8
+        ListLeaf.Unit => return PlanType.Unit
 
 
 pub def tuple_element_type(element: TupleElement) -> PlanType:
