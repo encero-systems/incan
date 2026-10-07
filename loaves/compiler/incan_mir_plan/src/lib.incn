@@ -234,10 +234,12 @@ pub model Operand:
 @derive(Clone, PartialEq)
 pub enum BinaryOp:
     """
-    Checked integer arithmetic, scalar comparisons, and floating arithmetic.
+    Checked integer arithmetic, scalar comparisons, floating arithmetic, and integer bit operations.
 
     Add, Subtract, and Multiply on int produce CheckedInt. Comparisons produce
     Bool. The other arithmetic operations require float operands.
+    BitAnd, BitOr, and BitXor take two operands of one integer type and keep it. A shift keeps its left operand's
+    integer type, counts with any integer type, and masks the count to that width as Rust's unchecked release shift does.
     """
 
     Add
@@ -250,14 +252,20 @@ pub enum BinaryOp:
     LessEqual
     Greater
     GreaterEqual
+    BitAnd
+    BitOr
+    BitXor
+    ShiftLeft
+    ShiftRight
 
 
 @derive(Clone, PartialEq)
 pub enum UnaryOp:
-    """Boolean inversion or numeric negation."""
+    """Boolean inversion, numeric negation, or the bitwise complement of an integer that keeps its type."""
 
     Not
     Negate
+    Invert
 
 
 @derive(Clone, PartialEq)

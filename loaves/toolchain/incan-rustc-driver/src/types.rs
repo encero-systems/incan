@@ -96,6 +96,7 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         ),
         PlanType::CheckedInt => Ty::new_tup(tcx, &[tcx.types.i64, tcx.types.bool]),
         PlanType::String => string_type(tcx)?,
+        PlanType::Decimal => decimal_type(tcx)?,
         PlanType::StringRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, string_type(tcx)?),
         PlanType::StrRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, tcx.types.str_),
         PlanType::StringArray(count) => array_type(tcx, string_type(tcx)?, *count)?,
@@ -154,6 +155,12 @@ fn string_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
         reason: "the native dependency closure has no String language item".into(),
     })?;
     Ok(tcx.type_of(definition).instantiate_identity().skip_normalization())
+}
+
+/// Recover Decimal128 from the canonical runtime constructor's return type, preserving its dependency identity.
+fn decimal_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
+    let definition = crate::callees::external(tcx, "incan_native_runtime::decimal_from_parts")?;
+    Ok(tcx.fn_sig(definition).instantiate_identity().skip_binder().output())
 }
 
 /// Translate a checked exact array length without a signed or truncating conversion.
