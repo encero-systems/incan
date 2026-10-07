@@ -116,6 +116,7 @@ from tuples import is_tuple_type, tuple_has_owners, tuple_aggregate, clone_tuple
 from text_plan import format_parts, clone_text, owned_literal
 from options import (
     intrinsic_declarations,
+    retain_body_carriers,
     intrinsic_pattern,
     propagate_result,
     carrier_layout,
@@ -1866,11 +1867,9 @@ pub def lower_program(
     if not has_main:
         return Err("unsupported Body IR project without selected main entrypoint")
     unions = collect_unions(context)
-    intrinsics = intrinsic_declarations(context, files[entry])?
+    mut intrinsics = intrinsic_declarations(context, files[entry])?
     models = lower_model_declarations(context, files[entry])?
     mut enums = lower_enum_declarations(context, files[entry])?
-    for declaration in intrinsics:
-        enums.append(declaration)
     mut functions: list[Function] = []
     mut externals: list[ExternalFunction] = []
     mut instances: list[Instance] = []
@@ -1899,6 +1898,8 @@ pub def lower_program(
     for module in checked:
         owners.append(str(module.module_id.path()))
     _ = lower_instances(context, instances, unions, sources, files, owners, functions, externals, intrinsics)?
+    for declaration in intrinsics:
+        enums.append(declaration)
     return Ok(
         Plan(
             enums=enums,
@@ -1923,11 +1924,9 @@ pub def lower_module(module: &BodyIrModule, source: str, file: str) -> Result[Pl
 def lower_concrete_module(module: &BodyIrModule, source: str, file: str) -> Result[Plan, str]:
     """Lower ordinary bodies, closed trait defaults, and the worklist of checker-selected function instances."""
     unions = collect_unions(module)
-    intrinsics = intrinsic_declarations(module, file)?
+    mut intrinsics = intrinsic_declarations(module, file)?
     models = lower_model_declarations(module, file)?
     mut enums = lower_enum_declarations(module, file)?
-    for declaration in intrinsics:
-        enums.append(declaration)
     mut functions: list[Function] = []
     mut externals: list[ExternalFunction] = []
     mut instances: list[Instance] = []
@@ -1952,6 +1951,8 @@ def lower_concrete_module(module: &BodyIrModule, source: str, file: str) -> Resu
         externals,
         intrinsics,
     )?
+    for declaration in intrinsics:
+        enums.append(declaration)
     return Ok(
         Plan(
             enums=enums,
@@ -1972,7 +1973,7 @@ def lower_instances(
     owners: list[str],
     mut functions: list[Function],
     mut externals: list[ExternalFunction],
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[None, str]:
     """Drain checked instance requests using their original declaring module's source provenance."""
     mut completed: list[Instance] = []
@@ -1990,6 +1991,7 @@ def lower_instances(
                 source_index = index
         if source_index < 0:
             return Err("unsupported Body IR instance without source provenance")
+        retain_body_carriers(module, intrinsics, body, files[source_index])?
         function, runtime, pending = lower_function(
             module,
             body,
