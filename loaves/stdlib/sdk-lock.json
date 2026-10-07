@@ -310,7 +310,7 @@
       "version": "1.1.10"
     },
     {
-      "archive_digest": "sha256:ca99d0319ab49692d029168800bbbfb650952c6e2ce4ea33c626321371ed5d39",
+      "archive_digest": "sha256:1ba45e51eae486f720c635c179255f56d9ae37130ea84ea6be36a3e2241637d1",
       "domain": "target",
       "features": [
         "alloc",
@@ -674,7 +674,7 @@
       "version": "0.4.34"
     },
     {
-      "archive_digest": "sha256:dee60821038211192492a4cfabfb18018cf59a344395fc89ebde27aa86da0995",
+      "archive_digest": "sha256:c143574a9dfea7e539e6a6b42d6efdcd9166293d3157a1b443d357eb995880eb",
       "domain": "target",
       "features": [
         "static"
@@ -785,7 +785,7 @@
       "version": "1.21.4"
     },
     {
-      "archive_digest": "sha256:52993414c36f1a3dafb5220d6cf8ef87ad0ff7b9c32fca2cf1191039958b24b6",
+      "archive_digest": "sha256:4ca60ad86ff2a7936fe1e460cb4bae72fcc923cba3b1c52f9198b4caf25e6eaf",
       "domain": "target",
       "features": [
         "alloc",
@@ -805,7 +805,7 @@
       "version": "0.2.17"
     },
     {
-      "archive_digest": "sha256:23acd772af3a444138f7414cbccf5a3e39ce1d0be5f94949dc87cb57dd8d089b",
+      "archive_digest": "sha256:4f9cf7186bea1a1864c51f0a3504bbff81c6e7998a4cbcff47f1d96e0a358e97",
       "domain": "target",
       "features": [
         "simd",

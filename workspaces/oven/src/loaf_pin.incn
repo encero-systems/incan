@@ -3,4 +3,4 @@
 
 pub def pinned_revision() -> str:
     """Return the default incan.pub audit revision; explicit resolution pins remain caller-owned inputs."""
-    return "17e062806c769faee1f2fb549d7e257d5607eb93"
+    return "6ec35e0d7e2d202496e2f7a108bb5111b6a9ff87"
