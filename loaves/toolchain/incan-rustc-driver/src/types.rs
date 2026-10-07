@@ -218,14 +218,14 @@ fn primitive_type<'tcx>(tcx: TyCtxt<'tcx>, leaf: &ListLeaf) -> Result<Ty<'tcx>, 
     }
 }
 
-/// Resolve an injected source enum by its validated declaration name, never an external nominal spelling.
+/// Resolve an injected source enum or concrete standard-carrier alias by its validated plan declaration name.
 pub fn enum_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Result<Ty<'tcx>, PlanError> {
     let definition = tcx
         .hir_crate_items(())
         .free_items()
         .map(|item| item.owner_id.to_def_id())
         .find(|def| {
-            tcx.def_kind(*def) == rustc_hir::def::DefKind::Enum
+            matches!(tcx.def_kind(*def), rustc_hir::def::DefKind::Enum | rustc_hir::def::DefKind::TyAlias)
                 && tcx.opt_item_name(*def).is_some_and(|symbol| symbol.as_str() == name)
         })
         .ok_or_else(|| PlanError::Invalid {

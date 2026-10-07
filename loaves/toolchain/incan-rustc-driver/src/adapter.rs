@@ -119,7 +119,7 @@ impl rustc_driver::Callbacks for Callbacks {
                 Err(error) => compiler.sess.dcx().fatal(error.to_string()),
             };
             let mut item = declarations::enum_declaration(value, span);
-            for derive in &value.derives {
+            for derive in value.derives.iter().filter(|_| value.carrier.is_empty()) {
                 item.attrs.push(declarations::derive_attribute(
                     &compiler.sess.psess.attr_id_generator,
                     derive,

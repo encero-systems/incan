@@ -1,0 +1,15 @@
+"""Legacy Debug rendering for concrete standard carriers on the direct route."""
+
+from std.derives.string import Debug
+from std.derives.copying import Clone
+from rust::std::clone import Clone as RuntimeClone
+
+
+pub def format_carrier[T with Debug](value: &T) -> str:
+    """Render the borrowed carrier with the same Debug formatter selected by legacy printing."""
+    return f"{value:?}"
+
+
+pub def clone_carrier_payload[T with Clone](value: &T) -> T:
+    """Clone a borrowed active payload using its native Clone implementation."""
+    return RuntimeClone.clone(value)

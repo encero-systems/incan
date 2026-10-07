@@ -2333,6 +2333,8 @@ impl DictEntry {
 /// Aggregate value shape built by [`Rvalue::Aggregate`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AggregateKind {
+    /// Intrinsic `Some(payload)` selected by checking, with its concrete Option type retained on the destination.
+    OptionSome,
     Tuple,
     List,
     /// `{v, ...}` set literal. Operands are the set's elements, one per entry -- the same flat shape as
@@ -2407,6 +2409,7 @@ impl AggregateKind {
     fn as_str(&self) -> String {
         match self {
             Self::Tuple => "tuple".to_string(),
+            Self::OptionSome => "option_some".to_string(),
             Self::List => "list".to_string(),
             Self::Set => "set".to_string(),
             Self::Range => "range".to_string(),
@@ -2901,6 +2904,9 @@ fn render_symbol_path(symbol: &CanonicalSymbolId) -> String {
 pub struct MethodTarget {
     /// Source-level method name.
     pub name: String,
+    /// Checked compiler-owned Option/Result receiver for intrinsic carrier methods; source methods retain no carrier.
+    #[serde(default)]
+    pub intrinsic_carrier: Option<String>,
     /// Canonical method declaration or compiler-owned member selected by typechecking.
     ///
     /// Compiler-synthesized calls without a source resolution site carry `None`; consumers must keep those on an
@@ -2923,6 +2929,7 @@ impl MethodTarget {
     pub fn synthesized(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
+            intrinsic_carrier: None,
             canonical: None,
             type_args: Vec::new(),
             binding: ArgumentBinding::UnresolvedPositional,

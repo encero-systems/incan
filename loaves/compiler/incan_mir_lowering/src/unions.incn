@@ -48,13 +48,14 @@ pub def native_source_type(
     enums: list[RustEnumDeclaration],
     unions: list[RustType],
     ty: &RustType,
+    intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """Resolve an anonymous union to its injected enum slot; all payloads must already be admitted."""
     for index in range(len(unions)):
         if unions[index] == ty.clone():
             members = union_members(nominals, enums, ty)?
             return Ok(PlanType.Enum(len(enums) + index, union_name(members)?))
-    return source_type(nominals, enums, ty)
+    return source_type(nominals, enums, ty, intrinsics)
 
 
 pub def union_members(
@@ -70,7 +71,7 @@ pub def union_members(
             if str(base) != "Union":
                 return Err(f"unsupported Body IR union type {ty}")
             for arg in args:
-                member = source_type(nominals, enums, arg)?
+                member = source_type(nominals, enums, arg, [])?
                 if member == PlanType.Unit:
                     return Err("unsupported Body IR optional union")
                 mut key = ""
@@ -173,7 +174,7 @@ pub def union_pattern_slot(
             if len(fields) > 1:
                 return Err("unsupported Body IR union payload pattern arity")
             validate_payload_patterns(fields)?
-            member = native_source_type(nominals, enums, unions, ty)?
+            member = native_source_type(nominals, enums, unions, ty, [])?
             return union_slot(nominals, enums, unions, owner, member)
         _ => return Err("unsupported Body IR union pattern")
 
@@ -231,7 +232,7 @@ pub def union_projection(
                 Some(local) =>
                     index = int(local.index()) + 1
                     owner = enum_owner(locals[index].ty)?
-                    member = native_source_type(nominals, enums, unions, ty)?
+                    member = native_source_type(nominals, enums, unions, ty, [])?
                     slot = union_slot(nominals, enums, unions, owner, member)?
                     return Ok(Some(Place(local=index, projection=Projection.VariantField(slot, 0, member), span=span)))
                 None => return Err("unsupported Body IR global union narrowing")

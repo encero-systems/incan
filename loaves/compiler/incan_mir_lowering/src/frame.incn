@@ -2,6 +2,7 @@
 
 from pub::incan_mir_plan import (
     BasicBlock,
+    EnumDeclaration,
     Callee,
     CalleeKind,
     Constant,
@@ -34,12 +35,14 @@ pub model Builder:
 
     `owned` lists the locals that currently hold an initialized value needing a drop, in initialization order.
     `closed` marks blocks whose terminator is final, so an `if` whose branches both return leaves its join closed.
+    `parameter_count` separates invocation-long argument storage from locals with explicit storage lifetimes.
     `loops` holds each enclosing loop's (header, after) blocks, and `loop_owners` the owners live when it began.
     `iterators` pairs borrowed iterable slots with cursor storage; `borrowed_items` prevents mutations of cloned iteration items whose source contract remains borrowed.
     `module_identity` is the caller body's canonical owner, so local-call admission remains module-relative in a project plan.
     """
 
     pub locals: list[Local]
+    pub parameter_count: int
     pub blocks: list[BasicBlock]
     pub current: int
     pub source: str
@@ -57,6 +60,7 @@ pub model Builder:
     pub unions: list[RustType]
     # Deferred defaults reserve a declaration-local frame within the caller.
     pub local_offset: int
+    pub intrinsics: list[EnumDeclaration]
     pub statics: list[RustStaticDeclaration]
 
     def new_block(mut self, span: SourceSpan) -> int:
