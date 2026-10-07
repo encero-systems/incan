@@ -6609,6 +6609,7 @@ impl TypeChecker {
         self.type_info.declarations.method_bindings_by_span.insert(
             (method_span.start, method_span.end),
             FunctionBindingInfo {
+                is_async: method.is_async(),
                 params: checked_params,
                 return_type: return_type.clone(),
                 identity: Some(self.symbols.member_declaration_identity(

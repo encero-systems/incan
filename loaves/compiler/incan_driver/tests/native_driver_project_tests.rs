@@ -503,7 +503,7 @@ fn direct_route_fixture_census() -> Result<(), Box<dyn std::error::Error>> {
     census::run()
 }
 
-/// Import-activated async vocabulary must check through the CLI session before the lowering refuses async bodies.
+/// Import-activated async vocabulary checks before pending runtime operations receive a named direct-route refusal.
 fn check_async_frontend_refusal(
     driver: &Path,
     root: &Path,
@@ -513,7 +513,7 @@ fn check_async_frontend_refusal(
     let source = root.join("async_frontend.incn");
     fs::write(
         &source,
-        "import std.async\n\nasync def value() -> int:\n    return 1\n\nasync def main() -> None:\n    result = await value()\n    println(result)\n",
+        "import std.async\nfrom std.async.time import sleep_ms\n\nasync def main() -> None:\n    await sleep_ms(1)\n",
     )?;
     success(
         &support::repo_command().arg("check").arg(&source).output()?,
@@ -522,7 +522,7 @@ fn check_async_frontend_refusal(
     let output = corpus::source_command(driver, &source, &root.join("async-native"), sysroot, closure).output()?;
     assert!(!output.status.success());
     let diagnostic = String::from_utf8(output.stderr)?;
-    assert!(diagnostic.contains("unsupported Body IR async Body"), "{diagnostic}");
+    assert!(diagnostic.contains("unsupported Body IR"), "{diagnostic}");
     Ok(())
 }
 
@@ -793,6 +793,35 @@ fn check_declaration_case(
         success(&actual, "declaration execution");
     }
     Ok(())
+}
+
+/// Source async calls defer discarded body effects and evaluate arguments before their immediately ready awaits.
+#[test]
+fn direct_route_async_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "async_ready",
+        r#"
+import std.async
+
+def argument() -> int:
+    println("argument")
+    return 40
+
+async def answer(value: int) -> int:
+    println(f"body={value}")
+    return value + 1
+
+async def nested(value: int) -> int:
+    return await answer(value)
+
+async def main() -> None:
+    answer(999)
+    println("constructed")
+    println(await nested(argument()))
+    println(await answer(7))
+"#,
+        None,
+    )
 }
 
 /// Prove union injection at assignment, argument and return boundaries against legacy output.

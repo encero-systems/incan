@@ -1,0 +1,13 @@
+"""Run direct native entry callbacks inside the legacy async executor."""
+
+import std.async
+
+
+async def main(entry: () -> None) -> None:
+    """Use legacy's entry bootstrap, initialization failure reporting, and shared executor."""
+    entry()
+
+
+pub def run_async_entry(entry: () -> None) -> None:
+    """Execute an immediately completing direct body under the canonical executor context."""
+    main(entry)
