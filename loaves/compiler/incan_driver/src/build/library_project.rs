@@ -882,11 +882,14 @@ fn prepare_library_project_with_context(
                 &library_manifest.contract_metadata.provider.namespace_claims,
             )?;
         context.validate_component_facets(&manifest)?;
+        // The desugarer module is built here and copied into the component by `package_desugarer_artifact`.
+        let desugarer_scratch = tempfile::tempdir().map_err(|error| CliError::failure(error.to_string()))?;
         if let Some(vocab) = incan_provider::vocab_extraction::collect_native_sdk_vocab_metadata(
             &manifest,
             &project_root,
             context.closure,
             &resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?,
+            desugarer_scratch.path(),
         )? {
             package_desugarer_artifact(&out_dir, vocab.pending_desugarer_artifact.as_ref())?;
             library_manifest.vocab = Some(vocab.payload);

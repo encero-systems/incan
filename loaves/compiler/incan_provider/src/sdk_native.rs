@@ -3,7 +3,10 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use oven_rustc::sdk_closure::{SdkCompiledClosure, compile_local_sdk_facet, prepare_sdk_seed};
+use oven_rustc::sdk_closure::{
+    ClosureCompileRequest, SdkCompiledClosure, compile_local_sdk_facet, compile_local_sdk_facet_for_target,
+    prepare_closure, prepare_sdk_seed,
+};
 use oven_store::store::{OvenStore, OvenStoreExecutionPayload, OvenStoreLimits};
 use rust_inspect::{
     OVEN_DIRECT_LOAF_PROJECT_FILE, OvenInspectionRegistrySource, write_sealed_oven_inspection_source_authority,
@@ -214,6 +217,9 @@ pub fn prepare_sdk_native_closure(
             local_failures.push(format!("SDK companion {relative}: {error}"));
         }
     }
+    if let Err(error) = attach_vocabulary_desugarer_closure(&mut closure, stdlib, source_root, inputs) {
+        local_failures.push(format!("SDK vocabulary desugarer closure: {error}"));
+    }
     for component in catalog.publication_order() {
         let declaration = std::fs::read_to_string(component.project_root.join("loaf.toml"))
             .map_err(|error| ProviderError::failure(error.to_string()))?;
@@ -242,6 +248,49 @@ pub fn prepare_sdk_native_closure(
     )
     .map_err(|error| ProviderError::failure(error.to_string()))?;
     Ok(closure)
+}
+
+/// Target triple every SDK vocabulary desugarer is compiled for.
+pub const VOCABULARY_DESUGARER_TARGET: &str = "wasm32-wasip1";
+
+/// The desugarer closure's committed resolution, relative to the standard-library root.
+const VOCABULARY_DESUGARER_LOCK: &str = "vocab-wasm-lock.json";
+
+/// Index commit whose build facts the desugarer closure compiles under; it records the wasm32-wasip1 facts.
+const VOCABULARY_DESUGARER_INDEX_COMMIT: &str = "5935281efb19929ea901553930f52832a4a6a5ee";
+
+/// Compile the vocabulary desugarer inputs for wasm32-wasip1 and retain them beside the SDK closure.
+///
+/// The closure is the SDK seed's own serde family cut to what `incan_vocab` needs, plus `incan_vocab` itself built for
+/// the same target. Its units are receipt-bound like the seed's, so a desugarer is built only from admitted archives.
+fn attach_vocabulary_desugarer_closure(
+    closure: &mut SdkCompiledClosure,
+    stdlib: &Path,
+    source_root: &Path,
+    inputs: &SdkNativeInputs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let output = inputs.output.join(VOCABULARY_DESUGARER_TARGET);
+    let mut vocabulary = prepare_closure(&ClosureCompileRequest {
+        primary: &[],
+        lock: &stdlib.join(VOCABULARY_DESUGARER_LOCK),
+        blobs: &inputs.blobs,
+        output: &output,
+        rustc: &inputs.rustc,
+        index: &inputs.index,
+        index_commit: VOCABULARY_DESUGARER_INDEX_COMMIT,
+        target: VOCABULARY_DESUGARER_TARGET,
+        profile: "debug",
+    })?;
+    compile_local_sdk_facet_for_target(
+        &mut vocabulary,
+        &source_root.join("loaves/kernel/incan_vocab"),
+        &["serde".to_string()],
+        "target",
+        &output,
+        &inputs.rustc,
+        VOCABULARY_DESUGARER_TARGET,
+    )?;
+    closure.attach_auxiliary_target(VOCABULARY_DESUGARER_TARGET, vocabulary)
 }
 
 /// Identify complete native bindings, retaining domain and features so host and target units cannot collide.
@@ -304,26 +353,6 @@ pub fn write_sdk_native_authority(closure: &SdkCompiledClosure, root: &Path) -> 
     )
     .map_err(|error| ProviderError::failure(error.to_string()))?;
     Ok(authority)
-}
-
-#[cfg(test)]
-mod tests {
-    /// Component imports parse using their Loaf dependency declarations instead of removed inline version hints.
-    #[test]
-    fn system_sources_use_loaf_dependency_declarations() -> Result<(), Box<dyn std::error::Error>> {
-        let root = oven_model::toolchain_layout::development_root().join("loaves/stdlib/system/src");
-        for relative in [
-            "fs/file.incn",
-            "fs/locking.incn",
-            "fs/path.incn",
-            "io.incn",
-            "tempfile.incn",
-        ] {
-            let source = std::fs::read_to_string(root.join(relative))?;
-            crate::test_support::parsed_module_for_test(&source).map_err(|error| format!("{relative}: {error}"))?;
-        }
-        Ok(())
-    }
 }
 
 /// Check a consumer requirement against one admitted SDK selection without resolving another dependency graph.
@@ -436,4 +465,24 @@ fn sdk_native_facet_path_matches(crate_name: &str, path: &Path) -> ProviderResul
     Ok(roots
         .into_iter()
         .any(|root| root.canonicalize().unwrap_or(root) == path))
+}
+
+#[cfg(test)]
+mod tests {
+    /// Component imports parse using their Loaf dependency declarations instead of removed inline version hints.
+    #[test]
+    fn system_sources_use_loaf_dependency_declarations() -> Result<(), Box<dyn std::error::Error>> {
+        let root = oven_model::toolchain_layout::development_root().join("loaves/stdlib/system/src");
+        for relative in [
+            "fs/file.incn",
+            "fs/locking.incn",
+            "fs/path.incn",
+            "io.incn",
+            "tempfile.incn",
+        ] {
+            let source = std::fs::read_to_string(root.join(relative))?;
+            crate::test_support::parsed_module_for_test(&source).map_err(|error| format!("{relative}: {error}"))?;
+        }
+        Ok(())
+    }
 }

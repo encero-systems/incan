@@ -24,7 +24,7 @@ mod environment;
 mod local;
 mod native;
 
-pub use local::compile_local_sdk_facet;
+pub use local::{compile_local_sdk_facet, compile_local_sdk_facet_for_target};
 
 struct CompileContext<'a> {
     rustc: &'a Path,
@@ -329,6 +329,7 @@ fn compile_units(units: &[PreparedUnit], context: &CompileContext<'_>) -> Result
     Ok(SdkCompiledClosure {
         report,
         units: selected_units,
+        auxiliary_targets: BTreeMap::new(),
     })
 }
 
@@ -394,6 +395,9 @@ fn prepare_units(
         ..
     } = *request;
     let about = environment::adopted_about(index, index_commit, &bindings)?;
+    // A host-domain unit's build script ran for the machine that compiles it, so its fact is keyed by the compiler's
+    // host triple even when the closure cross-compiles its target-domain units.
+    let host = rustc_host_target(request.rustc)?;
     bindings
         .into_iter()
         .enumerate()
@@ -417,7 +421,12 @@ fn prepare_units(
             }
             let root = scratch.join(ordinal.to_string());
             archive.materialize(&root)?;
-            let fact = index_fact(index, index_commit, &binding, target, toolchain, profile)?;
+            let fact_target = if binding.domain == "host" {
+                host.as_str()
+            } else {
+                target
+            };
+            let fact = index_fact(index, index_commit, &binding, fact_target, toolchain, profile)?;
             let fact_out = match &fact {
                 Some(fact) => fact_out_files(index, index_commit, &binding, fact)?,
                 None => Vec::new(),
@@ -1098,6 +1107,8 @@ pub struct SdkCompiledClosure {
     report: SdkClosureReport,
     /// Verified source and output selections, retained under execution leases.
     units: Vec<SdkCompiledUnit>,
+    /// Cross-target closures keyed by target triple, such as the wasm32-wasip1 inputs of vocabulary desugarers.
+    auxiliary_targets: BTreeMap<String, SdkCompiledClosure>,
 }
 
 /// One admitted archive and compiled output held in the immutable Oven store.
@@ -1187,6 +1198,22 @@ impl SdkCompiledClosure {
     /// Borrow all retained units without releasing or retargeting their leases.
     pub fn units(&self) -> &[SdkCompiledUnit] {
         &self.units
+    }
+    /// Retain a complete cross-target closure beside this one for the same publication transaction.
+    ///
+    /// The auxiliary closure keeps its own leases. A target may be attached once, and an incomplete closure is refused
+    /// so a desugarer can never be built from a partially compiled input set.
+    pub fn attach_auxiliary_target(&mut self, target: &str, closure: SdkCompiledClosure) -> Result<(), Error> {
+        closure.require_complete()?;
+        if self.auxiliary_targets.contains_key(target) {
+            return Err(format!("auxiliary target `{target}` is already attached").into());
+        }
+        self.auxiliary_targets.insert(target.to_string(), closure);
+        Ok(())
+    }
+    /// Borrow the retained cross-target closures, keyed by target triple.
+    pub fn auxiliary_targets(&self) -> &BTreeMap<String, SdkCompiledClosure> {
+        &self.auxiliary_targets
     }
     /// Refuse publication of inspection or SDK inventory authority while any locked unit is unavailable.
     pub fn require_complete(&self) -> Result<(), Error> {
@@ -1439,6 +1466,7 @@ mod tests {
         let closure = SdkCompiledClosure {
             report,
             units: Vec::new(),
+            auxiliary_targets: BTreeMap::new(),
         };
         assert!(closure.require_complete().is_err());
     }

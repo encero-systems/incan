@@ -120,8 +120,10 @@ fn execute(arguments: CompileClosureArgs) -> Result<ExitCode, Box<dyn std::error
         Some(path) => path,
         None => oven_rustc::rustc::resolve_active_rustc()?,
     };
-    if roots.host != oven_rustc::rustc::rustc_host_target(&rustc)? || roots.target != roots.host {
-        return Err("closure currently requires target = host = selected rustc host".into());
+    // Host-domain units run on this machine, so the declared host must be the compiler's; target-domain units may
+    // cross-compile, such as a vocabulary desugarer closure for wasm32-wasip1.
+    if roots.host != oven_rustc::rustc::rustc_host_target(&rustc)? {
+        return Err("closure host must be the selected rustc host".into());
     }
     let named_refusals = retain_resolved_roots(&mut roots, &lock_value, &arguments.profile);
     let selected = selected_roots(&roots, &lock)?;

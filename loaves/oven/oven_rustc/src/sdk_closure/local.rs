@@ -23,6 +23,23 @@ pub fn compile_local_sdk_facet(
     output: &Path,
     rustc: &Path,
 ) -> Result<(), Error> {
+    let target = rustc_host_target(rustc)?;
+    compile_local_sdk_facet_for_target(closure, project, features, domain, output, rustc, &target)
+}
+
+/// Compile one local Loaf's Rust facet for an explicit target triple into a closure compiled for that same target.
+///
+/// A cross-target closure, such as the wasm32-wasip1 inputs of a vocabulary desugarer, needs its local facets built
+/// for its own target; the receipt binds the triple, so a host build and a cross build never share an identity.
+pub fn compile_local_sdk_facet_for_target(
+    closure: &mut SdkCompiledClosure,
+    project: &Path,
+    features: &[String],
+    domain: &str,
+    output: &Path,
+    rustc: &Path,
+    target: &str,
+) -> Result<(), Error> {
     if !matches!(domain, "host" | "target") {
         return Err("local SDK facet domain must be host or target".into());
     }
@@ -45,18 +62,17 @@ pub fn compile_local_sdk_facet(
         .filter_map(|unit| unit.output.parent().map(Path::to_path_buf))
         .collect();
     let toolchain = rustc_identity(rustc)?;
-    let target = rustc_host_target(rustc)?;
     let store = OvenStore::new(
         output.join("store"),
         OvenStoreLimits::new(4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024),
     );
     let context = CompileContext {
         rustc,
-        target: &target,
+        target,
         toolchain: &toolchain,
         output,
         store: &store,
-        compiler_digest: compiler_closure_digest(rustc, &target)?,
+        compiler_digest: compiler_closure_digest(rustc, target)?,
         profile: "debug",
     };
     let (path, reused, owner) = compile_unit(&unit, &context, externs, searches)?;
@@ -312,6 +328,7 @@ mod tests {
             let mut closure = SdkCompiledClosure {
                 report: SdkClosureReport::default(),
                 units: Vec::new(),
+                auxiliary_targets: std::collections::BTreeMap::new(),
             };
             compile_local_sdk_facet(
                 &mut closure,
@@ -350,12 +367,14 @@ mod tests {
         let mut first = SdkCompiledClosure {
             report: SdkClosureReport::default(),
             units: Vec::new(),
+            auxiliary_targets: std::collections::BTreeMap::new(),
         };
         compile_local_sdk_facet(&mut first, project.path(), &[], "target", store.path(), &rustc)?;
         assert_eq!(first.report.compiled.len(), 1);
         let mut second = SdkCompiledClosure {
             report: SdkClosureReport::default(),
             units: Vec::new(),
+            auxiliary_targets: std::collections::BTreeMap::new(),
         };
         compile_local_sdk_facet(&mut second, project.path(), &[], "target", store.path(), &rustc)?;
         assert_eq!(second.report.reused.len(), 1);
@@ -364,6 +383,7 @@ mod tests {
         let mut third = SdkCompiledClosure {
             report: SdkClosureReport::default(),
             units: Vec::new(),
+            auxiliary_targets: std::collections::BTreeMap::new(),
         };
         compile_local_sdk_facet(&mut third, project.path(), &[], "target", store.path(), &rustc)?;
         assert_eq!(third.report.compiled.len(), 1);
