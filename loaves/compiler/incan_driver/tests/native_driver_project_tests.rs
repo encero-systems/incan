@@ -999,6 +999,72 @@ def main() -> None:
     Ok(())
 }
 
+/// Compare exact decimal scale, function boundaries, numeric comparisons, and hashed duplicate elimination.
+#[test]
+fn direct_route_decimals_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("decimals")?;
+    let source = root.join("decimals.incn");
+    fs::write(
+        &source,
+        r#"
+def identity(value: decimal[38, 2]) -> decimal[38, 2]:
+    """Retain the written scale across a function boundary."""
+    println(value)
+    return value
+
+def main() -> None:
+    """Observe exact digits, scale, numeric ordering, and collection hashing."""
+    a: decimal[4, 2] = 1.50d
+    b: decimal[3, 1] = 1.5d
+    c: decimal[4, 2] = 1.49d
+    println(a == b)
+    println(a != b)
+    println(c < b)
+    println(c <= b)
+    println(b > c)
+    println(b >= c)
+    println(len({a, b}))
+    println(identity(19.90d))
+    large: decimal[38, 2] = 123456789012345678901234567890123456.78d
+    println(identity(large))
+    values = [a, b]
+    println(values[0])
+    println(values[1])
+"#,
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let native = root.join("decimals-native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native decimal compilation",
+    );
+    let legacy_root = root.join("decimals-legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy decimal compilation",
+    );
+    let expected = Command::new(legacy_root.join("oven/release/decimals")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy decimal execution");
+    success(&actual, "native decimal execution");
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(actual.stdout, b"true\nfalse\ntrue\ntrue\ntrue\ntrue\n1\n19.90\n19.90\n123456789012345678901234567890123456.78\n123456789012345678901234567890123456.78\n1.50\n1.5\n");
+    Ok(())
+}
+
 /// Prove class construction, shared and mutable receivers, and passing classes against legacy.
 #[test]
 fn source_class_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

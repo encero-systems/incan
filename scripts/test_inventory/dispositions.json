@@ -587,7 +587,7 @@
       "notes": "Oven-built pinned native driver; scalar plan and real Body IR lowering; unchanged benchmark byte parity and opt-in census of every behavior fixture",
       "owner": 1337,
       "split_required": true,
-      "split_target": "",
+      "split_target": "native_driver_project_tests/collections.rs for focused collection parity cases",
       "twin": ""
     },
     "loaves/compiler/incan_driver/tests/native_driver_project_tests/census.rs": {
