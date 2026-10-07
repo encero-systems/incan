@@ -827,7 +827,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// owned value from it is to clone (mirrors the existing backend ownership planner's treatment of non-Copy
     /// `self` reads in `loaves/compiler/incan_emit/src/ownership.rs`, which this module's own docs cite as precedent).
     /// A bare read of caller-owned parameter storage, identified by [`Self::is_borrowed_parameter`], never moves for
-    /// the same reason: a list parameter is a shared binding, or a mutable borrow when declared `mut` (RFC 129).
+    /// the same reason: a collection parameter is a shared binding, or a mutable borrow when declared `mut` (RFC 129).
     /// An owned value read from it clones; passing it on to a `mut` parameter instead retains a reborrow fact.
     /// Every other bare local read decrements its remaining-reads countdown; reaching zero selects `Move` (and
     /// records the local as moved for [`Self::insert_scope_drops`]), otherwise `Clone`. A local with no tracked
@@ -891,15 +891,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .is_some_and(|decl| matches!(decl.origin, bir::LocalOrigin::Receiver { .. }))
     }
 
-    /// Identify caller-owned parameter storage, including shared list bindings (RFC 129).
+    /// Identify caller-owned parameter storage, including shared collection bindings (RFC 129).
     ///
-    /// A list parameter never owns the caller's vector: its mutability selects the borrow kind, not ownership.
-    /// Reads that require an owned value therefore clone even at last use, and scope exit must not drop it.
+    /// A list, set, or dictionary parameter never owns the caller's collection: its mutability selects the borrow kind,
+    /// not ownership. Reads that require an owned value therefore clone even at last use, and scope exit must not
+    /// drop it.
     fn is_borrowed_parameter(&self, local: bir::LocalId) -> bool {
         self.borrowed_parameters.contains(&local)
             || self.locals.get(local.index()).is_some_and(|decl| {
                 matches!(decl.origin, bir::LocalOrigin::Parameter)
-                    && matches!(&decl.ty, IncanType::Generic { base, .. } if collections::from_str(base) == Some(CollectionTypeId::List))
+                    && matches!(&decl.ty, IncanType::Generic { base, .. } if matches!(collections::from_str(base), Some(CollectionTypeId::List | CollectionTypeId::Set | CollectionTypeId::Dict)))
             })
     }
 
