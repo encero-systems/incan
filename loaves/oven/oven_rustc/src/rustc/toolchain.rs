@@ -445,13 +445,15 @@ pub fn rustc_sysroot(rustc: &Path) -> Result<PathBuf, OvenRustcError> {
     Ok(sysroot)
 }
 
-/// A sysroot holding exactly the selected compiler's `rust-std` component for one target, for `--sysroot`.
+/// A sysroot holding the selected compiler's `rust-std` component and compiler/linker runtimes, for `--sysroot`.
 ///
 /// Rustc searches its whole target library directory for crates, and optional components install into that same
 /// directory: `rustc-dev` alone adds hundreds of compiler-internal libraries beside std, and their presence changes
 /// the metadata rustc writes for an ordinary dependency. Compiling against a sysroot that holds only the files the
 /// `rust-std-<target>` manifest lists makes a unit's bytes independent of which components a machine installed.
-/// The directory is keyed by the compiler commit and the manifest digest, built once per temporary root, and reused.
+/// Host LLD and its LLVM runtime accompany the compiler; optional Rust crates never enter the library catalog.
+/// The directory is keyed by the normalization policy, compiler commit and manifest digest, built once per temporary
+/// root, and reused.
 pub fn normalized_std_sysroot(rustc: &Path, target: &str) -> Result<PathBuf, OvenRustcError> {
     let sysroot = rustc_sysroot(rustc)?;
     let manifest_path = sysroot.join("lib/rustlib").join(format!("manifest-rust-std-{target}"));
@@ -460,7 +462,8 @@ pub fn normalized_std_sysroot(rustc: &Path, target: &str) -> Result<PathBuf, Ove
         source,
     })?;
     let commit = rustc_commit_hash(rustc).unwrap_or_else(|| "unknown".to_string());
-    let key = oven_store::digest_bytes(&[commit.as_bytes(), b"\0", &manifest].concat()).replace(':', "-");
+    let key = oven_store::digest_bytes(&[b"pinned-linker-v2\0", commit.as_bytes(), b"\0", &manifest].concat())
+        .replace(':', "-");
     let root = env::temp_dir().join("incan-oven-std-sysroot").join(&key);
     if root.join(".complete").is_file() {
         return Ok(root);
@@ -468,6 +471,7 @@ pub fn normalized_std_sysroot(rustc: &Path, target: &str) -> Result<PathBuf, Ove
     let staging = root.with_extension(format!("staging-{}", std::process::id()));
     copy_listed_std_files(&sysroot, &manifest, &staging)?;
     copy_compiler_runtime(&sysroot, &staging)?;
+    copy_pinned_linker(&sysroot, &staging, &rustc_host_target(rustc)?)?;
     fs::write(staging.join(".complete"), b"").map_err(|source| OvenRustcError::Io {
         path: staging.clone(),
         source,
@@ -481,6 +485,38 @@ pub fn normalized_std_sysroot(rustc: &Path, target: &str) -> Result<PathBuf, Ove
         }
         Err(source) => Err(OvenRustcError::Io { path: root, source }),
     }
+}
+
+/// Retain host LLD and its optional LLVM runtime beside the normalized compiler instead of discovering a host linker.
+fn copy_pinned_linker(sysroot: &Path, staging: &Path, host: &str) -> Result<(), OvenRustcError> {
+    let relative = PathBuf::from("lib/rustlib").join(host).join("bin/rust-lld");
+    let source = sysroot.join(&relative);
+    if !source.is_file() {
+        return Ok(());
+    }
+    let destination = staging.join(relative);
+    let parent = destination.parent().ok_or_else(|| OvenRustcError::InvalidInput {
+        field: "pinned linker",
+        message: "has no parent directory".to_string(),
+    })?;
+    fs::create_dir_all(parent).map_err(|source| OvenRustcError::Io {
+        path: parent.to_path_buf(),
+        source,
+    })?;
+    fs::copy(&source, destination).map_err(|error| OvenRustcError::Io {
+        path: source,
+        source: error,
+    })?;
+    let llvm_relative = PathBuf::from("lib/rustlib").join(host).join("lib/libLLVM.dylib");
+    let llvm_source = sysroot.join(&llvm_relative);
+    if llvm_source.is_file() {
+        let destination = staging.join(llvm_relative);
+        link_runtime_library(&llvm_source, &destination).map_err(|source| OvenRustcError::Io {
+            path: llvm_source,
+            source,
+        })?;
+    }
+    Ok(())
 }
 
 /// The compiler executable inside a normalized sysroot built by [`normalized_std_sysroot`].

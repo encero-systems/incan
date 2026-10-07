@@ -622,6 +622,20 @@ pub(super) fn bake_direct_rustc(
     let output_receipt = OvenDirectRustcOutputReceipt {
         schema_version: OVEN_DIRECT_RUSTC_OUTPUT_RECEIPT_SCHEMA_VERSION,
         receipt_identity: receipt.identity.clone(),
+        link_closure_identity: if matches!(output_kind, OvenDirectRustcOutputKind::Library) && !test_harness {
+            None
+        } else {
+            let identity = super::linking::pinned_apple_link(rustc, &receipt.intent.target)?.map(|link| link.identity);
+            if let Some(bound) = receipt.sources.build_unit_inputs.get("link-closure")
+                && identity.as_deref() != Some(bound.as_str())
+            {
+                return Err(OvenRustcError::InvalidInput {
+                    field: "link closure",
+                    message: "receipt does not bind the active linker and SDK bytes".to_string(),
+                });
+            }
+            identity
+        },
         artifact_manifest_digest: digest_bytes(&serde_json::to_vec(&selected_artifacts).map_err(|error| {
             OvenRustcError::InvalidInput {
                 field: "artifact manifest",
@@ -711,75 +725,34 @@ fn compile_direct_rustc_output(
         selected_artifacts.materialize(artifact_root, &receipt.intent)?
     };
 
-    // Ordinary units run the compiler from a normalized sysroot that holds only the std component; dynamic test
-    // harnesses embed the sysroot in their runtime search path, so they keep the installed one.
-    let std_sysroot = if prefer_dynamic {
-        None
-    } else {
-        Some(super::toolchain::normalized_std_sysroot(rustc, &receipt.intent.target)?)
-    };
-    let mut command = match std_sysroot.as_deref().and_then(super::toolchain::normalized_rustc) {
-        Some(normalized) => Command::new(normalized),
-        None => Command::new(rustc),
-    };
-    if receipt.sources.build_unit_inputs.contains_key("sdk-source-archive") {
-        // Adopted units compile under a fixed environment so no ambient variable reaches their bytes. Rustc still
-        // invokes the system linker (`cc`) for proc-macro and other linked outputs; a fixed system search path finds
-        // it on every host without making the ambient PATH an input.
-        command.env_clear();
-        command.env("PATH", "/usr/bin:/bin");
-    }
-    if test_harness {
-        command.arg("--test");
-    }
-    match output_kind {
-        OvenDirectRustcOutputKind::Binary => {}
-        OvenDirectRustcOutputKind::Library => {
-            command.args(["--crate-type", "lib"]);
-        }
-        OvenDirectRustcOutputKind::Dylib => {
-            command.args(["--crate-type", "dylib"]);
-        }
-        OvenDirectRustcOutputKind::ProcMacro => {
-            // `proc_macro` is supplied by the selected Rustc sysroot rather than by a Cargo-produced artifact.
-            // Naming the crate explicitly is still required for edition-2018-and-later sources that import it with
-            // `use proc_macro::…`; unlike an `extern crate proc_macro` declaration, that import does not cause
-            // Rustc to infer the sysroot dependency.
-            command.args(["--crate-type", "proc-macro", "--extern", "proc_macro"]);
-        }
-    }
-    apply_portable_install_name(&mut command, output_kind, &receipt.intent.target, output);
-    if prefer_dynamic {
-        // Cargo emits both flags for a proc-macro libtest. `proc_macro` is provided by the receipt-selected Rust
-        // toolchain sysroot rather than a Cargo target artifact, so it is intentionally not represented as a stored
-        // third-party `--extern` file. `rpath` is required as well: compiler-suite children can pass a dynamically
-        // linked caller-owned CLI through a shell script, and macOS strips `DYLD_*` values when it starts its system
-        // shell. The selected Rustc and caller-owned `-L dependency` paths define the embedded loader closure.
-        command.args(["-C", "prefer-dynamic", "-C", "rpath", "--extern", "proc_macro"]);
-    }
-    command
-        .arg("--target")
-        .arg(&receipt.intent.target)
-        .arg(format!("--edition={edition}"))
-        .arg("--crate-name")
-        .arg(crate_name)
-        .arg("--error-format=json")
-        .arg(source)
-        .arg("-o")
-        .arg(output);
-    apply_oven_profile(&mut command, &receipt.intent.profile);
-    clear_inherited_cargo_environment(&mut command);
-    apply_sdk_compilation_policy(&mut command, receipt)?;
-    apply_portable_source_paths(&mut command, receipt, artifact_root, rustc, std_sysroot.is_some())?;
-    if let Some(std_sysroot) = &std_sysroot {
-        command.arg("--sysroot").arg(std_sysroot);
-        command.arg(format!("--remap-path-prefix={}=/oven/sysroot", std_sysroot.display()));
-    }
+    let mut command = direct_rustc_command(
+        receipt,
+        artifact_root,
+        rustc,
+        source,
+        output,
+        crate_name,
+        edition,
+        output_kind,
+        test_harness,
+        prefer_dynamic,
+    )?;
     for (name, value) in &plan.compile_environment {
         let value = resolve_compile_environment_value(name, value, source)?;
         command.env(name, value);
     }
     super::driver_grant::apply_driver_grant(&mut command, receipt, crate_name)?;
+    if (!matches!(output_kind, OvenDirectRustcOutputKind::Library) || test_harness)
+        && let Some(link) = super::linking::pinned_apple_link(rustc, &receipt.intent.target)?
+    {
+        if output_receipt.link_closure_identity.as_deref() != Some(link.identity.as_str()) {
+            return Err(OvenRustcError::InvalidInput {
+                field: "link closure",
+                message: "changed after output identity selection".to_string(),
+            });
+        }
+        link.apply(&mut command);
+    }
     for feature in features {
         command.arg("--cfg").arg(format!("feature={feature:?}"));
     }
@@ -895,6 +868,85 @@ pub(super) fn write_caller_output_record(
     fs::rename(&temporary, &path).map_err(|source| OvenRustcError::Io { path, source })
 }
 
+/// Build the normalized compiler command and portable target policy before adding admitted plan inputs.
+#[allow(clippy::too_many_arguments)]
+fn direct_rustc_command(
+    receipt: &OvenReceipt,
+    artifact_root: &Path,
+    rustc: &Path,
+    source: &Path,
+    output: &Path,
+    crate_name: &str,
+    edition: &str,
+    output_kind: OvenDirectRustcOutputKind,
+    test_harness: bool,
+    prefer_dynamic: bool,
+) -> Result<Command, OvenRustcError> {
+    // Ordinary units run the compiler from a normalized sysroot that holds only the std component; dynamic test
+    // harnesses embed the sysroot in their runtime search path, so they keep the installed one.
+    let std_sysroot = if prefer_dynamic {
+        None
+    } else {
+        Some(super::toolchain::normalized_std_sysroot(rustc, &receipt.intent.target)?)
+    };
+    let mut command = match std_sysroot.as_deref().and_then(super::toolchain::normalized_rustc) {
+        Some(normalized) => Command::new(normalized),
+        None => Command::new(rustc),
+    };
+    if receipt.sources.build_unit_inputs.contains_key("sdk-source-archive") {
+        // Adopted units compile under a fixed environment so no ambient variable reaches their bytes.
+        command.env_clear();
+        command.env("PATH", "/usr/bin:/bin");
+    }
+    if test_harness {
+        command.arg("--test");
+    }
+    match output_kind {
+        OvenDirectRustcOutputKind::Binary => {}
+        OvenDirectRustcOutputKind::Library => {
+            command.args(["--crate-type", "lib"]);
+        }
+        OvenDirectRustcOutputKind::Dylib => {
+            command.args(["--crate-type", "dylib"]);
+        }
+        OvenDirectRustcOutputKind::ProcMacro => {
+            // `proc_macro` is supplied by the selected Rustc sysroot rather than by a Cargo-produced artifact.
+            // Naming the crate explicitly is still required for edition-2018-and-later sources that import it with
+            // `use proc_macro::…`; unlike an `extern crate proc_macro` declaration, that import does not cause
+            // Rustc to infer the sysroot dependency.
+            command.args(["--crate-type", "proc-macro", "--extern", "proc_macro"]);
+        }
+    }
+    apply_portable_install_name(&mut command, output_kind, &receipt.intent.target, output);
+    if prefer_dynamic {
+        // Cargo emits both flags for a proc-macro libtest. `proc_macro` is provided by the receipt-selected Rust
+        // toolchain sysroot rather than a Cargo target artifact, so it is intentionally not represented as a stored
+        // third-party `--extern` file. `rpath` is required as well: compiler-suite children can pass a dynamically
+        // linked caller-owned CLI through a shell script, and macOS strips `DYLD_*` values when it starts its system
+        // shell. The selected Rustc and caller-owned `-L dependency` paths define the embedded loader closure.
+        command.args(["-C", "prefer-dynamic", "-C", "rpath", "--extern", "proc_macro"]);
+    }
+    command
+        .arg("--target")
+        .arg(&receipt.intent.target)
+        .arg(format!("--edition={edition}"))
+        .arg("--crate-name")
+        .arg(crate_name)
+        .arg("--error-format=json")
+        .arg(source)
+        .arg("-o")
+        .arg(output);
+    apply_oven_profile(&mut command, &receipt.intent.profile);
+    clear_inherited_cargo_environment(&mut command);
+    apply_sdk_compilation_policy(&mut command, receipt)?;
+    apply_portable_source_paths(&mut command, receipt, artifact_root, rustc, std_sysroot.is_some())?;
+    if let Some(std_sysroot) = &std_sysroot {
+        command.arg("--sysroot").arg(std_sysroot);
+        command.arg(format!("--remap-path-prefix={}=/oven/sysroot", std_sysroot.display()));
+    }
+    Ok(command)
+}
+
 /// Give an Apple dynamic library a location-independent install name.
 ///
 /// The Apple linker records a dylib's own path as its install name, so a proc-macro or dylib built in two store roots
@@ -913,16 +965,29 @@ fn apply_portable_install_name(
     if !dynamic || !target.contains("-apple-") {
         return;
     }
+    if !target.ends_with("-apple-darwin") {
+        if let Some(file_name) = output.file_name().and_then(|name| name.to_str()) {
+            command
+                .arg("-C")
+                .arg(format!("link-arg=-Wl,-install_name,@rpath/{file_name}"));
+        }
+        if matches!(output_kind, OvenDirectRustcOutputKind::ProcMacro) {
+            command.args(["-C", "link-arg=-Wl,-S"]);
+        }
+        return;
+    }
     if let Some(file_name) = output.file_name().and_then(|name| name.to_str()) {
         command
             .arg("-C")
-            .arg(format!("link-arg=-Wl,-install_name,@rpath/{file_name}"));
+            .arg("link-arg=-install_name")
+            .arg("-C")
+            .arg(format!("link-arg=@rpath/{file_name}"));
     }
     if matches!(output_kind, OvenDirectRustcOutputKind::ProcMacro) {
         // The Apple debug map records the absolute path of every linked object and rlib, which differs per store
         // root, and the linker derives the output UUID before any later strip. A proc macro only runs inside rustc
         // at build time, so the linker is told to emit no debug map at all (`-S`).
-        command.args(["-C", "link-arg=-Wl,-S"]);
+        command.args(["-C", "link-arg=-S"]);
     }
 }
 

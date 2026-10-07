@@ -636,6 +636,16 @@ fn unit_receipt(
     if let Some(fact) = &unit.fact {
         receipt = oven_store::receipt_with_build_unit_input(&receipt, "sdk-build-fact", serde_json::to_string(fact)?)?;
     }
+    if unit
+        .manifest
+        .get("rust")
+        .and_then(|facet| facet.get("type"))
+        .and_then(toml::Value::as_str)
+        == Some("proc-macro")
+        && let Some(link) = crate::rustc::linking::pinned_apple_link(context.rustc, context.target)?
+    {
+        receipt = oven_store::receipt_with_build_unit_input(&receipt, "link-closure", link.identity)?;
+    }
     Ok(receipt)
 }
 

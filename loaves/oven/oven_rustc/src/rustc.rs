@@ -9,6 +9,7 @@ mod compiled_unit;
 mod diagnostics;
 pub mod driver_grant;
 mod inspection;
+pub(crate) mod linking;
 mod manifest_cohort;
 mod manifest_materialize;
 mod manifest_source_roles;
@@ -445,6 +446,8 @@ fn default_direct_rustc_output_kind() -> String {
 struct OvenDirectRustcOutputReceipt {
     schema_version: u32,
     receipt_identity: String,
+    #[serde(default)]
+    link_closure_identity: Option<String>,
     artifact_manifest_digest: String,
     source_digest: String,
     crate_name: String,
