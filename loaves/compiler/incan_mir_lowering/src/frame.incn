@@ -26,6 +26,7 @@ from rust::incan_semantics_core::body_ir import (
     NominalDeclaration as RustNominalDeclaration,
     EnumDeclaration as RustEnumDeclaration,
     StaticDeclaration as RustStaticDeclaration,
+    ValueEnumDeclaration as RustValueEnumDeclaration,
 )
 
 
@@ -62,6 +63,7 @@ pub model Builder:
     pub local_offset: int
     pub intrinsics: list[EnumDeclaration]
     pub statics: list[RustStaticDeclaration]
+    pub value_enums: list[RustValueEnumDeclaration]
 
     def new_block(mut self, span: SourceSpan) -> int:
         """Allocate a block before connecting edges, preserving index stability."""

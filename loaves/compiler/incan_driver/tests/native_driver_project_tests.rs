@@ -887,6 +887,39 @@ def main() -> None:
     Ok(())
 }
 
+/// Integer and string value enums retain canonical construction, parameter passing, and repeated scalar extraction.
+#[test]
+fn value_enum_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "value_enum_getters",
+        r#"enum HttpStatus(int):
+    Ok = 200
+    NotFound = 404
+
+enum Env(str):
+    Dev = "development"
+    Prod = "production"
+
+def status_code(status: HttpStatus) -> int:
+    return status.value()
+
+def environment_name(environment: Env) -> str:
+    return environment.value()
+
+def main() -> None:
+    status = HttpStatus.NotFound
+    println(status_code(status))
+    println(status.value())
+    println(HttpStatus.Ok.value())
+    environment = Env.Prod
+    println(environment_name(environment))
+    println(environment.value())
+    println(Env.Dev.value())
+"#,
+        None,
+    )
+}
+
 /// Newtypes, erased aliases, scalar constants, and persistent scalar statics retain exactly the legacy output.
 #[test]
 fn declarations_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

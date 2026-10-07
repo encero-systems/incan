@@ -373,6 +373,17 @@ fn source_local_value_enum_member_retains_exact_enum_and_variant_identities() ->
         .value_enum_declarations
         .first()
         .ok_or("the value enum must retain its declaration record")?;
+    let layout = module
+        .enum_declarations
+        .iter()
+        .find(|layout| layout.canonical == declaration.canonical)
+        .ok_or("the value enum must retain its native unit layout")?;
+    assert!(module.is_well_formed_native_enum_declaration(layout));
+    assert_eq!(layout.variants.len(), declaration.variants.len());
+    for (native, raw) in layout.variants.iter().zip(&declaration.variants) {
+        assert_eq!(native.canonical, raw.canonical);
+        assert!(native.fields.is_empty());
+    }
     let variant = declaration
         .variants
         .iter()
