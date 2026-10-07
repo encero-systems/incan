@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 type Error = Box<dyn std::error::Error>;
 const INDEX_COMMIT: &str = "6ec35e0d7e2d202496e2f7a108bb5111b6a9ff87";
 
+mod environment;
 mod local;
 mod native;
 
@@ -37,6 +38,8 @@ struct CompileContext<'a> {
 
 /// Explicit authority and physical inputs for compiling an adopted closure without Cargo.
 pub struct ClosureCompileRequest<'a> {
+    /// Explicit requested roots; dependencies never receive CARGO_PRIMARY_PACKAGE.
+    pub primary: &'a [SdkLockedUnit],
     /// Resolution document produced by the Incan resolver.
     pub lock: &'a Path,
     /// Digest-addressed admitted archive directory.
@@ -140,6 +143,10 @@ pub struct SdkClosureReport {
 
 struct PreparedUnit {
     binding: SdkLockedUnit,
+    about: serde_json::Value,
+    primary: bool,
+    /// Lock handle prevents concurrent macros or fact materialization from changing this source during compilation.
+    _source_lease: Option<std::fs::File>,
     manifest: toml::Value,
     root: PathBuf,
     build_script: bool,
@@ -169,6 +176,7 @@ pub fn prepare_sdk_seed(
 ) -> Result<SdkCompiledClosure, Error> {
     let target = rustc_host_target(rustc)?;
     prepare_closure(&ClosureCompileRequest {
+        primary: &[],
         lock,
         blobs,
         output,
@@ -336,17 +344,7 @@ fn inspection_unit(
         .and_then(|source| source.get("root"))
         .and_then(toml::Value::as_str)
         .unwrap_or("src/lib.rs");
-    let version = semver::Version::parse(&unit.binding.version)?;
-    let mut environment = BTreeMap::from([
-        (
-            "CARGO_PKG_NAME".to_string(),
-            unit.binding.loaf.trim_start_matches("crates-io/").to_string(),
-        ),
-        ("CARGO_PKG_VERSION".to_string(), unit.binding.version.clone()),
-        ("CARGO_PKG_VERSION_MAJOR".to_string(), version.major.to_string()),
-        ("CARGO_PKG_VERSION_MINOR".to_string(), version.minor.to_string()),
-        ("CARGO_PKG_VERSION_PATCH".to_string(), version.patch.to_string()),
-    ]);
+    let mut environment = environment::package_environment(unit)?;
     let mut cfg = unit
         .binding
         .features
@@ -395,6 +393,7 @@ fn prepare_units(
         profile,
         ..
     } = *request;
+    let about = environment::adopted_about(index, index_commit, &bindings)?;
     bindings
         .into_iter()
         .enumerate()
@@ -423,7 +422,18 @@ fn prepare_units(
                 Some(fact) => fact_out_files(index, index_commit, &binding, fact)?,
                 None => Vec::new(),
             };
+            let metadata = about
+                .get(&binding.archive_digest)
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let primary = request.primary.iter().any(|root| {
+                root.loaf == binding.loaf && root.version == binding.version && root.domain == binding.domain
+            });
+            let (root, lease) = environment::stable_sources(&root, &binding, &metadata, primary, fact.as_ref())?;
             Ok(PreparedUnit {
+                about: metadata,
+                primary,
+                _source_lease: Some(lease),
                 build_script: declares_build_script(&manifest) || archive.has_build_script(),
                 binding,
                 manifest,
@@ -618,6 +628,11 @@ fn compile_unit(
     externs: Vec<(String, PathBuf)>,
     searches: Vec<PathBuf>,
 ) -> Result<(PathBuf, bool, OvenStoreExecutionPayload), Error> {
+    let _source_lease = unit
+        ._source_lease
+        .as_ref()
+        .map(environment::SourceLease::acquire)
+        .transpose()?;
     let rustc = context.rustc;
     let output = context.output;
     let store = context.store;
@@ -644,6 +659,7 @@ fn compile_unit(
     let source = unit.root.join(relative);
     let mut receipt = unit_receipt(unit, context, &source)?;
     let (mut plan, artifacts) = unit_plan(unit, &receipt.intent, externs, searches)?;
+    receipt = environment::bind_environment(&receipt, &plan.compile_environment)?;
     let native = native::prepare(unit, context, &receipt)?;
     for product in &native {
         plan.native_search_paths.push(product.owner.artifact_root.clone());
@@ -972,7 +988,7 @@ fn apply_fact(unit: &PreparedUnit, plan: &mut OvenRustcArtifactPlan) -> Result<(
     }
     let out = unit.root.join(".oven-out");
     if !unit.fact_out.is_empty() {
-        std::fs::create_dir(&out)?;
+        std::fs::create_dir_all(&out)?;
     }
     for file in &unit.fact_out {
         let destination = out.join(&file.name);
@@ -1008,17 +1024,7 @@ fn unit_plan(
     externs: Vec<(String, PathBuf)>,
     searches: Vec<PathBuf>,
 ) -> Result<(OvenRustcArtifactPlan, OvenRustcArtifactManifest), Error> {
-    let version = semver::Version::parse(&unit.binding.version)?;
-    let environment = BTreeMap::from([
-        (
-            "CARGO_PKG_NAME".to_string(),
-            unit.binding.loaf.trim_start_matches("crates-io/").to_string(),
-        ),
-        ("CARGO_PKG_VERSION".to_string(), unit.binding.version.clone()),
-        ("CARGO_PKG_VERSION_MAJOR".to_string(), version.major.to_string()),
-        ("CARGO_PKG_VERSION_MINOR".to_string(), version.minor.to_string()),
-        ("CARGO_PKG_VERSION_PATCH".to_string(), version.patch.to_string()),
-    ]);
+    let environment = environment::package_environment(unit)?;
     let mut plan = OvenRustcArtifactPlan {
         source_path_projection: None,
         dependency_search_paths: Vec::new(),
@@ -1286,7 +1292,7 @@ mod tests {
     }
 
     /// Run a local fixture Git command without changing the user's index repository or identity configuration.
-    fn fixture_git(root: &Path, arguments: &[&str]) -> Result<Vec<u8>, Error> {
+    pub(super) fn fixture_git(root: &Path, arguments: &[&str]) -> Result<Vec<u8>, Error> {
         let output = std::process::Command::new("git")
             .arg("-C")
             .arg(root)
@@ -1331,7 +1337,7 @@ mod tests {
     }
 
     /// Parse a script-free seed unit for graph-selection regression tests.
-    fn unit(loaf: &str, domain: &str, manifest: &str, features: &[&str]) -> Result<PreparedUnit, Error> {
+    pub(super) fn unit(loaf: &str, domain: &str, manifest: &str, features: &[&str]) -> Result<PreparedUnit, Error> {
         Ok(PreparedUnit {
             binding: SdkLockedUnit {
                 loaf: loaf.to_string(),
@@ -1342,6 +1348,9 @@ mod tests {
                 target_predicates: Vec::new(),
                 edges: None,
             },
+            about: serde_json::Value::Null,
+            primary: false,
+            _source_lease: None,
             manifest: toml::from_str(manifest)?,
             root: PathBuf::new(),
             build_script: false,

@@ -153,7 +153,9 @@ fn execute(arguments: CompileClosureArgs) -> Result<ExitCode, Box<dyn std::error
         &compile_lock,
         serde_json::to_vec(&serde_json::json!({"schema": lock.schema, "units": lock.units}))?,
     )?;
+    let primary: Vec<_> = selected.values().map(|binding| (*binding).clone()).collect();
     let closure = prepare_closure(&ClosureCompileRequest {
+        primary: &primary,
         lock: &compile_lock,
         blobs: &blobs,
         output: &output,

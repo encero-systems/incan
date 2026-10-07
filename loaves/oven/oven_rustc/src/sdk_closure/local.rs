@@ -29,7 +29,11 @@ pub fn compile_local_sdk_facet(
     let started = std::time::Instant::now();
     std::fs::create_dir_all(output)?;
     let snapshot = tempfile::Builder::new().prefix("sdk-local-").tempdir_in(output)?;
-    let unit = prepare_local_unit(project, snapshot.path(), features, domain)?;
+    let mut unit = prepare_local_unit(project, snapshot.path(), features, domain)?;
+    let (source, lease) =
+        super::environment::stable_sources(&unit.root, &unit.binding, &unit.about, unit.primary, None)?;
+    unit.root = source;
+    unit._source_lease = Some(lease);
     let edges = selected_local_edges(&unit, closure)?;
     let externs = edges
         .iter()
@@ -139,6 +143,9 @@ fn prepare_local_unit(
     features.sort();
     features.dedup();
     Ok(PreparedUnit {
+        about: serde_json::Value::Null,
+        primary: true,
+        _source_lease: None,
         binding: SdkLockedUnit {
             loaf: name,
             version,
@@ -300,7 +307,7 @@ mod tests {
             )?;
             std::fs::write(
                 project.join("src/lib.rs"),
-                "pub fn location() -> &'static str { file!() } pub fn value() -> u8 { 42 }",
+                "pub fn location() -> &'static str { file!() } pub fn package_dir() -> &'static str { env!(\"CARGO_MANIFEST_DIR\") } pub fn value() -> u8 { 42 }",
             )?;
             let mut closure = SdkCompiledClosure {
                 report: SdkClosureReport::default(),
