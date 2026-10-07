@@ -53,6 +53,30 @@ fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
                 },
             },
         ),
+        PlanType::Set(leaf) => return hashed_type("HashSet", &[leaf], span),
+        PlanType::Dict(key, value) => return hashed_type("HashMap", &[key, value], span),
+        PlanType::SetRef(leaf) | PlanType::SetMutRef(leaf) => ast::TyKind::Ref(
+            None,
+            ast::MutTy {
+                ty: hashed_type("HashSet", &[leaf], span),
+                mutbl: if matches!(kind, PlanType::SetMutRef(_)) {
+                    ast::Mutability::Mut
+                } else {
+                    ast::Mutability::Not
+                },
+            },
+        ),
+        PlanType::DictRef(key, value) | PlanType::DictMutRef(key, value) => ast::TyKind::Ref(
+            None,
+            ast::MutTy {
+                ty: hashed_type("HashMap", &[key, value], span),
+                mutbl: if matches!(kind, PlanType::DictMutRef(_, _)) {
+                    ast::Mutability::Mut
+                } else {
+                    ast::Mutability::Not
+                },
+            },
+        ),
         PlanType::Unit => ast::TyKind::Tup(ThinVec::new()),
         PlanType::ModelRef(index, name) | PlanType::ModelMutRef(index, name) => ast::TyKind::Ref(
             None,
@@ -420,4 +444,36 @@ fn numeric_ty(kind: &SizedNumeric, span: Span) -> Box<ast::Ty> {
         SizedNumeric::USize => PlanType::USize,
     };
     ty(&kind, span)
+}
+
+/// Build the standard collection path with explicit checked primitive type arguments.
+fn hashed_type(name: &str, leaves: &[&ListLeaf], span: Span) -> Box<ast::Ty> {
+    let mut path = ast::Path::from_ident(ident("std", span));
+    path.segments
+        .push(ast::PathSegment::from_ident(ident("collections", span)));
+    let mut segment = ast::PathSegment::from_ident(ident(name, span));
+    segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
+        span,
+        args: leaves
+            .iter()
+            .map(|leaf| {
+                ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(
+                    &match leaf {
+                        ListLeaf::Int => PlanType::Int,
+                        ListLeaf::Float => PlanType::Float,
+                        ListLeaf::Bool => PlanType::Bool,
+                        ListLeaf::Str => PlanType::String,
+                    },
+                    span,
+                )))
+            })
+            .collect(),
+    })));
+    path.segments.push(segment);
+    Box::new(ast::Ty {
+        id: ast::DUMMY_NODE_ID,
+        kind: ast::TyKind::Path(None, path),
+        span,
+        tokens: None,
+    })
 }

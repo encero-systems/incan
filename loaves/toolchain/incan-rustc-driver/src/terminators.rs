@@ -98,6 +98,10 @@ fn call_operand<'tcx>(
     if let crate::plan::CalleeKind::Instantiated(_, ty) = &callee.kind {
         arguments.extend(callees::arguments(tcx, callees::resolve(tcx, callee)?, std::slice::from_ref(ty))?.iter());
     }
+    if let crate::plan::CalleeKind::InstantiatedPair(_, key, value) = &callee.kind {
+        arguments
+            .extend(callees::arguments(tcx, callees::resolve(tcx, callee)?, &[key.clone(), value.clone()])?.iter());
+    }
     Ok(mir::Operand::function_handle(
         tcx,
         callees::resolve(tcx, callee)?,

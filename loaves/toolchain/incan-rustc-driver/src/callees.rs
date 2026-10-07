@@ -6,7 +6,8 @@ use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 
-/// Resolve a planned source name or an external canonical path to a free function; explicit plan arguments are checked separately.
+/// Resolve a planned source name or an external canonical path to a free function; explicit plan arguments are checked
+/// separately.
 pub fn resolve(tcx: TyCtxt<'_>, callee: &Callee) -> Result<DefId, PlanError> {
     match &callee.kind {
         CalleeKind::Planned(name) => tcx
@@ -15,7 +16,7 @@ pub fn resolve(tcx: TyCtxt<'_>, callee: &Callee) -> Result<DefId, PlanError> {
             .map(|item| item.owner_id.to_def_id())
             .find(|def| tcx.opt_item_name(*def).is_some_and(|symbol| symbol.as_str() == name))
             .ok_or_else(|| PlanError::UnknownCallee(name.clone())),
-        CalleeKind::Instantiated(path, _) => external(tcx, path),
+        CalleeKind::Instantiated(path, _) | CalleeKind::InstantiatedPair(path, _, _) => external(tcx, path),
         CalleeKind::External(path) => external(tcx, path),
         CalleeKind::CloneModel(_, _) => {
             let trait_id = tcx

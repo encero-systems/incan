@@ -579,3 +579,16 @@ fn source_trait_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>
         &fixture.formatting,
     )
 }
+
+/// Compare hashed collection literals, mutation, membership, and indexed reads with legacy.
+#[test]
+fn direct_route_collections_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_collections(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("collections")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+    )?;
+    Ok(())
+}
