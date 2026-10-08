@@ -24,10 +24,10 @@ enum RangeLoopSource<'ast> {
 }
 
 /// Scalar operands retained once from a checked builtin call; boxed together to keep range classification compact.
-struct BuiltinRangeBounds {
-    start: bir::Operand,
-    end: bir::Operand,
-    step: bir::Operand,
+pub(super) struct BuiltinRangeBounds {
+    pub(super) start: bir::Operand,
+    pub(super) end: bir::Operand,
+    pub(super) step: bir::Operand,
 }
 
 /// Read a counting loop's index local.
@@ -619,20 +619,54 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let ast::Expr::Call(callee, type_args, args) = &expr.node else {
             return Ok(None);
         };
-        if self.type_info.resolved_builtin_call(expr.span) != Some(bir::BuiltinFnId::Range) {
+        let Some(bounds) = self.checked_builtin_range_bounds(callee, type_args, args, expr.span, scope, out)? else {
+            return Ok(None);
+        };
+        let span = hir_span(expr.span);
+        let helper = bir::HelperOp::RangeValidate;
+        self.record_runtime_requirement(AbiV0RuntimeRequirement::RuntimeHelper(helper.as_str().into()));
+        self.record_runtime_requirement(AbiV0RuntimeRequirement::PanicStrategy);
+        self.panic_facts.push(bir::PanicFact {
+            span,
+            reason: bir::PanicReason::HelperMayPanic(helper),
+        });
+        out.push(bir::Statement {
+            kind: bir::StatementKind::Call {
+                destination: None,
+                callee: bir::Callee::Helper(helper),
+                args: fixed_elements(vec![bounds.start.clone(), bounds.end.clone(), bounds.step.clone()]),
+                may_panic: true,
+            },
+            span,
+        });
+        Ok(Some(RangeLoopSource::Builtin(Box::new(bounds))))
+    }
+
+    /// Bind checked builtin range arguments once in written order, retaining scalar defaults for every consumer.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn checked_builtin_range_bounds(
+        &mut self,
+        callee: &ast::Spanned<ast::Expr>,
+        type_args: &[ast::Spanned<ast::Type>],
+        args: &[ast::CallArg],
+        call_span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Result<Option<BuiltinRangeBounds>, String> {
+        if self.type_info.resolved_builtin_call(call_span) != Some(bir::BuiltinFnId::Range) {
             return Ok(None);
         }
         let ast::Expr::Ident(name) = &callee.node else {
             return Err("unsupported builtin range callee shape".into());
         };
-        let declaration = self.declared_slots_for_direct_call(name, callee.span, expr.span)?;
+        let declaration = self.declared_slots_for_direct_call(name, callee.span, call_span)?;
         if declaration.builtin != Some(bir::BuiltinFnId::Range) || !type_args.is_empty() {
             return Err("builtin range lacks a matching checked canonical identity".into());
         }
         if args.is_empty() || args.len() > 3 || args.iter().any(|arg| !matches!(arg, ast::CallArg::Positional(_))) {
             return Err("unsupported builtin range argument binding".into());
         }
-        let span = hir_span(expr.span);
+        let span = hir_span(call_span);
         let int_ty = IncanType::Primitive(IncanPrimitiveType::Int);
         let mut values = Vec::new();
         for argument in args {
@@ -656,27 +690,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             [start, end, step] => (start.clone(), end.clone(), step.clone()),
             _ => return Err("unsupported builtin range arity".into()),
         };
-        let helper = bir::HelperOp::RangeValidate;
-        self.record_runtime_requirement(AbiV0RuntimeRequirement::RuntimeHelper(helper.as_str().into()));
-        self.record_runtime_requirement(AbiV0RuntimeRequirement::PanicStrategy);
-        self.panic_facts.push(bir::PanicFact {
-            span,
-            reason: bir::PanicReason::HelperMayPanic(helper),
-        });
-        out.push(bir::Statement {
-            kind: bir::StatementKind::Call {
-                destination: None,
-                callee: bir::Callee::Helper(helper),
-                args: fixed_elements(vec![start.clone(), end.clone(), step.clone()]),
-                may_panic: true,
-            },
-            span,
-        });
-        Ok(Some(RangeLoopSource::Builtin(Box::new(BuiltinRangeBounds {
-            start,
-            end,
-            step,
-        }))))
+        Ok(Some(BuiltinRangeBounds { start, end, step }))
     }
 
     /// Select positive-step or negative-step exhaustion from the retained scalar builtin arguments.
@@ -840,7 +854,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         )
     }
 
-    /// Retain the range's checked index update as operations shared by fallthrough and each `continue` edge.
+    /// Retain the range's checked index update as operations shared by fallthrough and each `continue` edge. Source
+    /// ranges finish at the maximum integer before adding their unit step; builtin ranges retain their separate runtime
+    /// advancement contract.
     fn range_increment_steps(
         &mut self,
         source: &RangeLoopSource<'_>,
@@ -850,6 +866,34 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ) -> Vec<bir::Statement> {
         let int_ty = IncanType::Primitive(IncanPrimitiveType::Int);
         let mut body_stmts = Vec::new();
+        if !matches!(source, RangeLoopSource::Builtin(_)) {
+            let exhausted = self.push_assign_temp(
+                bir::Rvalue::BinaryOp(
+                    bir::BinOp::Eq,
+                    index_read(idx_local),
+                    bir::Operand::Constant(bir::Constant::Int(i64::MAX)),
+                ),
+                IncanType::Primitive(IncanPrimitiveType::Bool),
+                loop_scope,
+                span,
+                &mut body_stmts,
+            );
+            let break_scope = self.new_scope(Some(loop_scope), span);
+            body_stmts.push(bir::Statement {
+                kind: bir::StatementKind::If {
+                    cond: exhausted,
+                    then_block: bir::Block {
+                        scope: break_scope,
+                        stmts: vec![bir::Statement {
+                            kind: bir::StatementKind::Break { value: None },
+                            span,
+                        }],
+                    },
+                    else_block: None,
+                },
+                span,
+            });
+        }
         let step = match source {
             RangeLoopSource::Header { .. } => bir::Operand::Constant(bir::Constant::Int(RANGE_UNIT_STEP)),
             RangeLoopSource::Builtin(bounds) => bounds.step.clone(),
@@ -1135,11 +1179,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// into a [`bir::StatementKind::TryPropagate`] ahead of the loop via [`Self::lower_expr_to_place`]'s existing
     /// `Expr::Try` handling -- no special-casing needed for that form.
     ///
-    /// The iterable is always read as a [`bir::OwnershipFact::Borrow`], matching [`Self::lower_method_call`]'s
+    /// Ordinary collections are read as a [`bir::OwnershipFact::Borrow`], matching [`Self::lower_method_call`]'s
     /// established receiver-borrow precedent (never an unsound move, and consistent with obtaining an iterator
     /// conceptually borrowing its source rather than consuming it at this normalized level); the materialized iterator
     /// local is polled with [`bir::OwnershipFact::MutBorrow`] each iteration, since polling advances its internal
-    /// state.
+    /// state. Builtin range cursors instead retain a Clone snapshot, matching legacy cursor iteration.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn lower_general_iteration(
         &mut self,
@@ -1178,13 +1222,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 },
                 span,
             }),
-            None => out.push(bir::Statement {
-                kind: bir::StatementKind::Assign {
-                    place: bir::Place::from_local(iterator_local),
-                    rvalue: bir::Rvalue::Use(bir::Operand::place(iterable_place, bir::OwnershipFact::Borrow, false)),
-                },
-                span,
-            }),
+            None => {
+                let read = self.builtin_iterator_read(iterable_place, iterator_local);
+                out.push(bir::Statement {
+                    kind: bir::StatementKind::Assign {
+                        place: bir::Place::from_local(iterator_local),
+                        rvalue: bir::Rvalue::Use(read),
+                    },
+                    span,
+                });
+            }
         }
 
         self.loop_break_targets.push(None);

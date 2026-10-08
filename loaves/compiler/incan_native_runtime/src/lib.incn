@@ -1,6 +1,7 @@
 """Language formatting and collection helpers used by the direct native route."""
 
 pub from carriers import format_carrier, clone_carrier_payload
+pub from ranges import RangeCursor, make_range, clone_range, poll_range
 pub from generators import poll_generator
 pub from tuple_iterators import ZipLists, zip_lists, clone_zip, poll_zip, enumerate_list, enumerate_text
 pub from collections import empty_set, insert_set, length_set, contains_set, clone_set

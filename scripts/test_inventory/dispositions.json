@@ -586,7 +586,7 @@
       "disposition": "keep",
       "notes": "Oven-built pinned native driver; scalar plan and real Body IR lowering; unchanged benchmark byte parity and opt-in census of every behavior fixture",
       "owner": 1337,
-      "split_required": false,
+      "split_required": true,
       "split_target": "",
       "twin": ""
     },
@@ -5803,6 +5803,14 @@
       "disposition": "keep",
       "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/range_bounds.rs": {
+      "disposition": "keep",
+      "notes": "Retained Body IR source range exhaustion on fallthrough and continue; no generated Rust dependency.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""

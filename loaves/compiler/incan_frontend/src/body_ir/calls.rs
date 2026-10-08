@@ -751,6 +751,31 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if self.type_info.resolved_builtin_call(span) == Some(BuiltinFnId::IsInstance) {
             return self.lower_checked_isinstance_call(type_args, args, span, scope, out);
         }
+        if self.type_info.resolved_builtin_call(span) == Some(BuiltinFnId::Range) {
+            let bounds = match self.checked_builtin_range_bounds(callee, type_args, args, span, scope, out) {
+                Ok(Some(bounds)) => bounds,
+                Ok(None) => {
+                    return self.unsupported_operand("missing checked range bounds".into(), scope, hir_span_value, out);
+                }
+                Err(detail) => return self.unsupported_operand(detail, scope, hir_span_value, out),
+            };
+            let helper = bir::HelperOp::RangeConstruct;
+            self.record_runtime_requirement(AbiV0RuntimeRequirement::RuntimeHelper(helper.as_str().into()));
+            self.record_runtime_requirement(AbiV0RuntimeRequirement::PanicStrategy);
+            self.panic_facts.push(bir::PanicFact {
+                span: hir_span_value,
+                reason: bir::PanicReason::HelperMayPanic(helper),
+            });
+            return self.push_call_temp(
+                bir::Callee::Helper(helper),
+                fixed_elements(vec![bounds.start, bounds.end, bounds.step]),
+                self.resolve_ty(span),
+                scope,
+                hir_span_value,
+                true,
+                out,
+            );
+        }
         let ast::Expr::Ident(name) = &callee.node else {
             return self.unsupported_operand("indirect call target".to_string(), scope, hir_span_value, out);
         };

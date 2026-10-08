@@ -9,13 +9,12 @@ from pub::incan_mir_plan import (
     Operand,
     SourceSpan,
     RvalueKind,
-    TerminatorKind,
     ExternalFunction,
     CalleeKind,
 )
 from pub::incan_mir_plan import assign as plan_assign, tuple_element_type
-from frame import Builder, temporary, terminate_call, read_place, drop_owned
-from builtins import list_call
+from frame import Builder, temporary, terminate_call, read_place
+from iterator_polling import poll_buffer, finish_poll
 
 
 pub def zip_shape(ty: PlanType) -> Option[tuple[TupleElement, TupleElement]]:
@@ -114,10 +113,7 @@ pub def zip_next(mut builder: Builder, receiver: Place, output: Place, span: Sou
             if builder.locals[output.local].ty != element:
                 return Err("unsupported Body IR zip IterNext destination")
             storage_type = PlanType.List(ListLeaf.Tuple([left, right]), 1)
-            storage = temporary(builder, storage_type, span)
-            list_call(builder, "empty_list", element, [], storage_type, [], storage, span)
-            reference = temporary(builder, PlanType.ListMutRef(ListLeaf.Tuple([left, right]), 1), span)
-            builder.emit(plan_assign(reference, RvalueKind.MutBorrow(storage), span))
+            storage, reference = poll_buffer(builder, storage_type, span)?
             source = zip_reference(builder, receiver, true, span)?
             available = temporary(builder, PlanType.Bool, span)
             zip_call(
@@ -127,34 +123,11 @@ pub def zip_next(mut builder: Builder, receiver: Place, output: Place, span: Sou
                 right,
                 [PlanType.ZipIteratorMutRef(left, right), PlanType.ListMutRef(ListLeaf.Tuple([left, right]), 1)],
                 PlanType.Bool,
-                [source, read_place(reference, true, span)],
+                [source, reference],
                 available,
                 span,
             )
-            exhausted = builder.new_block(span)
-            selected = builder.new_block(span)
-            owners = builder.owned
-            builder.finish(TerminatorKind.SwitchBool(read_place(available, false, span), exhausted, selected), span)
-            builder.current = exhausted
-            drop_owned(builder, storage.local, span)
-            builder.finish(TerminatorKind.Goto(builder.loops[-1][1]), span)
-            builder.current = selected
-            builder.owned = owners
-            drop_owned(builder, output.local, span)
-            final_reference = temporary(builder, PlanType.ListMutRef(ListLeaf.Tuple([left, right]), 1), span)
-            builder.emit(plan_assign(final_reference, RvalueKind.MutBorrow(storage), span))
-            list_call(
-                builder,
-                "pop_list",
-                element,
-                [PlanType.ListMutRef(ListLeaf.Tuple([left, right]), 1)],
-                element,
-                [read_place(final_reference, true, span)],
-                output,
-                span,
-            )
-            drop_owned(builder, storage.local, span)
-            return Ok(None)
+            return finish_poll(builder, storage, available, output, span)
 
 
 pub def enumerated_element(ty: PlanType) -> Result[TupleElement, str]:

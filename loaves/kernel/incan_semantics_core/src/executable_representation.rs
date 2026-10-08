@@ -1246,6 +1246,7 @@ mod tests {
         let mut local_identity = identity("local", 2);
         local_identity.scope_discriminant = Some(crate::ScopeDiscriminant(917));
         exported.locals.push(crate::body_ir::LocalDecl {
+            value_representation: crate::body_ir::ValueRepresentation::Typed,
             id: crate::body_ir::LocalId(0),
             name: Some("local".into()),
             identity: Some(local_identity),

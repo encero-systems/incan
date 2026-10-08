@@ -93,6 +93,10 @@ enum Scalar {
     Dict(Leaf, Leaf),
     DictRef(Leaf, Leaf),
     DictMutRef(Leaf, Leaf),
+    RangeValue,
+    RangeCursor,
+    RangeCursorRef,
+    RangeCursorMutRef,
     ZipIterator(Leaf, Leaf),
     ZipIteratorRef(Leaf, Leaf),
     ZipIteratorMutRef(Leaf, Leaf),
@@ -138,6 +142,10 @@ fn tuple_leaf(element: &crate::plan::TupleElement) -> Leaf {
 /// Compare source-authored types without requiring a Rust derive on Incan types.
 fn scalar(ty: &PlanType) -> Scalar {
     match ty {
+        PlanType::RangeValue => Scalar::RangeValue,
+        PlanType::RangeCursor => Scalar::RangeCursor,
+        PlanType::RangeCursorRef => Scalar::RangeCursorRef,
+        PlanType::RangeCursorMutRef => Scalar::RangeCursorMutRef,
         PlanType::ZipIterator(left, right) => Scalar::ZipIterator(tuple_leaf(left), tuple_leaf(right)),
         PlanType::ZipIteratorRef(left, right) => Scalar::ZipIteratorRef(tuple_leaf(left), tuple_leaf(right)),
         PlanType::ZipIteratorMutRef(left, right) => Scalar::ZipIteratorMutRef(tuple_leaf(left), tuple_leaf(right)),
@@ -383,6 +391,7 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
         }
         Projection::Deref(field_type) => {
             let pointee = match ty {
+                Scalar::RangeCursorRef | Scalar::RangeCursorMutRef => Scalar::RangeCursor,
                 Scalar::ModelRef(owner) | Scalar::ModelMutRef(owner) => Scalar::Model(owner),
                 Scalar::ZipIteratorRef(left, right) | Scalar::ZipIteratorMutRef(left, right) => {
                     Scalar::ZipIterator(left, right)
@@ -402,6 +411,15 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
             Ok(pointee)
         }
         Projection::Field(slot, field_type) | Projection::DerefField(slot, field_type) => {
+            if ty == Scalar::RangeValue && matches!(value.projection, Projection::Field(..)) {
+                let field = match *slot {
+                    0..=2 => Scalar::Int,
+                    3 => Scalar::Bool,
+                    _ => return Err(invalid(function, "unknown range field")),
+                };
+                require(function, scalar(field_type), &field, "range field projection")?;
+                return Ok(field);
+            }
             if let Scalar::Tuple(elements) = &ty {
                 let field = usize::try_from(*slot)
                     .ok()
@@ -481,6 +499,8 @@ fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, 
                 || matches!(
                     ty,
                     Scalar::String
+                        | Scalar::RangeCursor
+                        | Scalar::RangeCursorMutRef
                         | Scalar::ZipIterator(_, _)
                         | Scalar::ZipIteratorMutRef(_, _)
                         | Scalar::Generator(_, _)
@@ -638,6 +658,17 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             binary_result(function, op, ty, expected)
         }
         RvalueKind::Array(elements) => validate_array(plan, function, elements, expected),
+        RvalueKind::Range(elements) => {
+            require(function, expected, Scalar::RangeValue, "range destination")?;
+            let fields = [Scalar::Int, Scalar::Int, Scalar::Int, Scalar::Bool];
+            if elements.len() != fields.len() {
+                return Err(invalid(function, "range aggregate requires four declared fields"));
+            }
+            for (element, field) in elements.iter().zip(fields) {
+                require(function, operand(plan, function, element)?, field, "range element")?;
+            }
+            Ok(Scalar::RangeValue)
+        }
         RvalueKind::Tuple(elements) => {
             let Scalar::Tuple(fields) = &expected else {
                 return Err(invalid(function, "tuple aggregate requires a tuple destination"));
@@ -694,6 +725,7 @@ fn borrow_result(plan: &Plan, function: &Function, value: &Place, mutable: bool)
     let ty = place(plan, function, value)?;
     if mutable {
         return match ty {
+            Scalar::RangeCursor => Ok(Scalar::RangeCursorMutRef),
             Scalar::ZipIterator(left, right) => Ok(Scalar::ZipIteratorMutRef(left, right)),
             Scalar::Generator(leaf, depth) => Ok(Scalar::GeneratorMutRef(leaf, depth)),
             Scalar::Model(index) => {
@@ -727,6 +759,7 @@ fn borrow_result(plan: &Plan, function: &Function, value: &Place, mutable: bool)
         };
     }
     match ty {
+        Scalar::RangeCursor => Ok(Scalar::RangeCursorRef),
         Scalar::ZipIterator(left, right) => Ok(Scalar::ZipIteratorRef(left, right)),
         Scalar::GeneratorYield(leaf, depth) => Ok(Scalar::GeneratorYieldRef(leaf, depth)),
         Scalar::Enum(index) => Ok(Scalar::EnumRef(index)),
@@ -755,6 +788,9 @@ fn source_signature_type(ty: Scalar) -> bool {
         || matches!(
             ty,
             Scalar::Int
+                | Scalar::RangeValue
+                | Scalar::RangeCursor
+                | Scalar::RangeCursorMutRef
                 | Scalar::ZipIterator(_, _)
                 | Scalar::ZipIteratorMutRef(_, _)
                 | Scalar::Generator(_, _)
@@ -783,7 +819,8 @@ fn external_signature_type(ty: Scalar) -> bool {
     source_signature_type(ty.clone())
         || matches!(
             ty,
-            Scalar::ZipIteratorRef(_, _)
+            Scalar::RangeCursorRef
+                | Scalar::ZipIteratorRef(_, _)
                 | Scalar::StringRef
                 | Scalar::StrRef
                 | Scalar::StringSlice

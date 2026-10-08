@@ -580,6 +580,8 @@ struct BodyBuilder<'type_info, 'source> {
     /// declarations can use it without the four-field `AggregateKind::Range` representation. Only this
     /// source-local provenance permits a later `for` loop to project range fields.
     materialized_range_locals: HashSet<bir::LocalId>,
+    /// Locals whose first storage representation has been retained; later incompatible writes become Mixed.
+    initialized_representations: HashSet<bir::LocalId>,
     /// Stack of the innermost-to-outermost enclosing loop's `break`-value target, pushed/popped by every loop-
     /// lowering path (`while`, `for`, and value-producing `loop` expressions) around its own body. `Some(local)`
     /// means the innermost loop is a value-producing `loop:` expression (see [`Self::lower_loop_expr`]) whose
@@ -619,6 +621,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             moved_out: HashSet::new(),
             borrowed_parameters: HashSet::new(),
             materialized_range_locals: HashSet::new(),
+            initialized_representations: HashSet::new(),
             loop_break_targets: Vec::new(),
             loop_continue_actions: Vec::new(),
             runtime_requirements: Vec::new(),
@@ -692,6 +695,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let id = bir::LocalId(self.next_local);
         self.next_local += 1;
         self.locals.push(bir::LocalDecl {
+            value_representation: bir::ValueRepresentation::Typed,
             id,
             name: Some(name.clone()),
             identity: identity.clone(),
@@ -728,6 +732,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let id = bir::LocalId(self.next_local);
         self.next_local += 1;
         self.locals.push(bir::LocalDecl {
+            value_representation: bir::ValueRepresentation::Typed,
             id,
             name: Some("self".to_string()),
             identity: identity.clone(),
@@ -750,6 +755,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let id = bir::LocalId(self.next_local);
         self.next_local += 1;
         self.locals.push(bir::LocalDecl {
+            value_representation: bir::ValueRepresentation::Typed,
             id,
             name: None,
             identity: None,
@@ -839,6 +845,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let id = bir::LocalId(self.next_local);
         self.next_local += 1;
         self.locals.push(bir::LocalDecl {
+            value_representation: bir::ValueRepresentation::Typed,
             id,
             name: Some(name.to_string()),
             identity: None,
@@ -1014,6 +1021,48 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     // ---- Rvalue / call helpers ----
 
+    /// Read the retained representation of a whole local value; projections and constants retain their own typed
+    /// contract.
+    fn operand_representation(&self, value: &bir::Operand) -> bir::ValueRepresentation {
+        match value {
+            bir::Operand::Place(read) if read.place.projection.is_empty() => {
+                read.place.local_id().map_or(bir::ValueRepresentation::Typed, |local| {
+                    self.locals[local.index()].value_representation
+                })
+            }
+            _ => bir::ValueRepresentation::Typed,
+        }
+    }
+
+    /// Retain one local's physical-value authority, refusing incompatible assignments instead of selecting a branch's
+    /// layout.
+    fn retain_value_representation(&mut self, local: bir::LocalId, representation: bir::ValueRepresentation) {
+        let previously_initialized = !self.initialized_representations.insert(local)
+            || matches!(
+                self.locals[local.index()].origin,
+                bir::LocalOrigin::Parameter | bir::LocalOrigin::Receiver { .. } | bir::LocalOrigin::External
+            );
+        let retained = &mut self.locals[local.index()].value_representation;
+        if previously_initialized && *retained != representation {
+            *retained = bir::ValueRepresentation::Mixed;
+        } else {
+            *retained = representation;
+        }
+    }
+
+    /// Snapshot range cursors at normalized iteration while ordinary collections retain their live shared view.
+    fn builtin_iterator_read(&mut self, source: bir::Place, iterator: bir::LocalId) -> bir::Operand {
+        let representation =
+            self.operand_representation(&bir::Operand::place(source.clone(), bir::OwnershipFact::Borrow, false));
+        self.retain_value_representation(iterator, representation);
+        let fact = if representation == bir::ValueRepresentation::RangeCursor {
+            bir::OwnershipFact::Clone
+        } else {
+            bir::OwnershipFact::Borrow
+        };
+        bir::Operand::place(source, fact, false)
+    }
+
     /// Allocate a fresh temporary, push an `Assign` statement giving it `rvalue`'s value, and return an operand for
     /// that temporary's single, immediate use (see [`Self::temp_operand`]). The common tail shared by every
     /// expression-lowering path that needs to flatten a computed value into a place before it can be read again.
@@ -1026,6 +1075,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let temp = self.new_temp(ty.clone(), scope, span);
+        let representation = match &rvalue {
+            bir::Rvalue::Aggregate(bir::AggregateKind::Range, _) => bir::ValueRepresentation::RangeValue,
+            bir::Rvalue::Use(value) => self.operand_representation(value),
+            _ => bir::ValueRepresentation::Typed,
+        };
+        self.retain_value_representation(temp, representation);
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {
                 place: bir::Place::from_local(temp),
@@ -1050,6 +1105,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let temp = self.new_temp(ty.clone(), scope, span);
+        let representation = if callee == bir::Callee::Helper(bir::HelperOp::RangeConstruct) {
+            bir::ValueRepresentation::RangeCursor
+        } else {
+            bir::ValueRepresentation::Typed
+        };
+        self.retain_value_representation(temp, representation);
         out.push(bir::Statement {
             kind: bir::StatementKind::Call {
                 destination: Some(bir::Place::from_local(temp)),

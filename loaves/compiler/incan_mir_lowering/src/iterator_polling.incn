@@ -1,0 +1,59 @@
+"""Owned poll buffers shared by lazy tuple and integer cursors."""
+
+from pub::incan_mir_plan import PlanType, Place, Operand, SourceSpan, RvalueKind, TerminatorKind
+from pub::incan_mir_plan import assign as plan_assign
+from frame import Builder, temporary, read_place, drop_owned
+from lists import list_shape, list_element
+from builtins import list_call
+
+
+pub def poll_buffer(mut builder: Builder, ty: PlanType, span: SourceSpan) -> Result[tuple[Place, Operand], str]:
+    """Create one owned empty buffer and its exclusive runtime poll reference."""
+    match list_shape(ty):
+        None => return Err("invalid native iterator poll buffer type")
+        Some((leaf, depth)) =>
+            if ty != PlanType.List(leaf, depth):
+                return Err("invalid native iterator poll buffer owner")
+            storage = temporary(builder, ty, span)
+            list_call(builder, "empty_list", list_element(leaf, depth), [], ty, [], storage, span)
+            reference = temporary(builder, PlanType.ListMutRef(leaf, depth), span)
+            builder.emit(plan_assign(reference, RvalueKind.MutBorrow(storage), span))
+            return Ok((storage, read_place(reference, true, span)))
+
+
+pub def finish_poll(
+    mut builder: Builder,
+    storage: Place,
+    available: Place,
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Dispose of the poll buffer on both edges and transfer a produced item into its checked destination."""
+    match list_shape(builder.locals[storage.local].ty):
+        None => return Err("invalid native iterator poll buffer type")
+        Some((leaf, depth)) =>
+            exhausted = builder.new_block(span)
+            selected = builder.new_block(span)
+            owners = builder.owned
+            builder.finish(TerminatorKind.SwitchBool(read_place(available, false, span), exhausted, selected), span)
+            builder.current = exhausted
+            drop_owned(builder, storage.local, span)
+            builder.finish(TerminatorKind.Goto(builder.loops[-1][1]), span)
+            builder.current = selected
+            builder.owned = owners
+            drop_owned(builder, output.local, span)
+            reference = temporary(builder, PlanType.ListMutRef(leaf, depth), span)
+            builder.emit(plan_assign(reference, RvalueKind.MutBorrow(storage), span))
+            element = list_element(leaf, depth)
+            list_call(
+                builder,
+                "pop_list",
+                element,
+                [PlanType.ListMutRef(leaf, depth)],
+                element,
+                [read_place(reference, true, span)],
+                output,
+                span,
+            )
+            drop_owned(builder, storage.local, span)
+            return Ok(None)

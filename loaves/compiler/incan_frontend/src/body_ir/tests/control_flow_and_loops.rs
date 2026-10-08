@@ -892,3 +892,40 @@ fn same_spelled_range_function_keeps_its_checked_iteration_target() -> Result<()
     assert!(snapshot.contains("iter_next("), "{snapshot}");
     Ok(())
 }
+
+/// A stored builtin range retains cursor storage and cloned loop snapshots independently of its nominal list type.
+#[test]
+fn builtin_range_cursor_retains_storage_and_snapshot_reads() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def total() -> int:\n  values = range(5, 0, -2)\n  alias = values\n  mut acc = 0\n  for value in alias:\n    acc += value\n  return acc\n",
+        &["m", "range_cursor"],
+    )?;
+    let body = body_named(&module, "total")?;
+    assert!(body.block.stmts.iter().any(|statement| matches!(
+        statement.kind,
+        bir::StatementKind::Call {
+            callee: bir::Callee::Helper(bir::HelperOp::RangeConstruct),
+            may_panic: true,
+            ..
+        }
+    )));
+    for name in ["values", "alias"] {
+        let local = body
+            .locals
+            .iter()
+            .find(|local| local.name.as_deref() == Some(name))
+            .ok_or("missing cursor binding")?;
+        assert_eq!(local.value_representation, bir::ValueRepresentation::RangeCursor);
+    }
+    assert!(body.block.stmts.iter().any(|statement| match &statement.kind {
+        bir::StatementKind::Assign {
+            place,
+            rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
+        } if read.fact == bir::OwnershipFact::Clone =>
+            place.local_id().is_some_and(
+                |local| body.locals[local.index()].value_representation == bir::ValueRepresentation::RangeCursor
+            ),
+        _ => false,
+    }));
+    Ok(())
+}

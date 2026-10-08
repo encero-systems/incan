@@ -1,0 +1,59 @@
+"""Native lowering of checker-retained builtin range cursors."""
+
+from pub::incan_mir_plan import PlanType, Place, Operand, SourceSpan, RvalueKind, ListLeaf
+from pub::incan_mir_plan import assign as plan_assign
+from frame import Builder, temporary, read_place, external_call
+from iterator_polling import poll_buffer, finish_poll
+
+
+pub def range_reference(mut builder: Builder, source: Place, mutable: bool, span: SourceSpan) -> Operand:
+    """Borrow an owned cursor without inferring an iterator from its nominal checker type."""
+    mut ty = PlanType.RangeCursorRef
+    mut operation = RvalueKind.Borrow(source)
+    if mutable:
+        ty = PlanType.RangeCursorMutRef
+        operation = RvalueKind.MutBorrow(source)
+    output = temporary(builder, ty, span)
+    builder.emit(plan_assign(output, operation, span))
+    return read_place(output, mutable, span)
+
+
+pub def clone_range(mut builder: Builder, source: Place, span: SourceSpan) -> Operand:
+    """Honor the frontend's snapshot read without advancing either cursor."""
+    reference = range_reference(builder, source, false, span)
+    output = temporary(builder, PlanType.RangeCursor, span)
+    external_call(
+        builder,
+        "incan_native_runtime::clone_range",
+        [PlanType.RangeCursorRef],
+        PlanType.RangeCursor,
+        [reference],
+        output,
+        span,
+    )
+    builder.owned.append(output.local)
+    return read_place(output, true, span)
+
+
+pub def range_next(mut builder: Builder, receiver: Place, output: Place, span: SourceSpan) -> Result[None, str]:
+    """Poll a retained cursor into an integer buffer and branch on its exhaustion."""
+    if not builder.deferred_generator:
+        return Err("unsupported Body IR stored builtin range iteration (legacy emits list iteration)")
+    if len(builder.loops) == 0:
+        return Err("unsupported Body IR range polling outside loop")
+    if builder.locals[output.local].ty != PlanType.Int:
+        return Err("unsupported Body IR range IterNext destination")
+    storage_type = PlanType.List(ListLeaf.Int, 1)
+    storage, reference = poll_buffer(builder, storage_type, span)?
+    source = range_reference(builder, receiver, true, span)
+    available = temporary(builder, PlanType.Bool, span)
+    external_call(
+        builder,
+        "incan_native_runtime::poll_range",
+        [PlanType.RangeCursorMutRef, PlanType.ListMutRef(ListLeaf.Int, 1)],
+        PlanType.Bool,
+        [source, reference],
+        available,
+        span,
+    )
+    return finish_poll(builder, storage, available, output, span)

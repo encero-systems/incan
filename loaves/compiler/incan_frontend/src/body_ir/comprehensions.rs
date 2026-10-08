@@ -135,6 +135,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             hir_span_value,
         );
         self.locals[source_local.index()].origin = bir::LocalOrigin::Captured;
+        let source_representation = self.operand_representation(&source);
+        self.retain_value_representation(source_local, source_representation);
 
         // Capture every lexical value used after the first source once, at construction. The body cannot read the
         // enclosing place directly after this point, and restoring the full binding map below prevents generator
@@ -163,6 +165,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let capture_local =
                 self.declare_new_local_with_reads(name.clone(), outer_ty, generator_scope, hir_span_value, total_reads);
             self.locals[capture_local.index()].origin = bir::LocalOrigin::Captured;
+            self.retain_value_representation(capture_local, self.locals[outer_local.index()].value_representation);
             if let Some(identity) = self.locals[outer_local.index()].identity.clone() {
                 self.locals[capture_local.index()].identity = Some(identity.clone());
                 self.identity_bindings.insert(identity, capture_local);
@@ -206,17 +209,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 },
                 span: hir_span_value,
             }),
-            None => generator_stmts.push(bir::Statement {
-                kind: bir::StatementKind::Assign {
-                    place: bir::Place::from_local(iterator_local),
-                    rvalue: bir::Rvalue::Use(bir::Operand::place(
-                        bir::Place::from_local(source_local),
-                        bir::OwnershipFact::Borrow,
-                        false,
-                    )),
-                },
-                span: hir_span_value,
-            }),
+            None => {
+                let read = self.builtin_iterator_read(bir::Place::from_local(source_local), iterator_local);
+                generator_stmts.push(bir::Statement {
+                    kind: bir::StatementKind::Assign {
+                        place: bir::Place::from_local(iterator_local),
+                        rvalue: bir::Rvalue::Use(read),
+                    },
+                    span: hir_span_value,
+                });
+            }
         }
 
         self.loop_break_targets.push(None);

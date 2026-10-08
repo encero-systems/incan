@@ -1468,3 +1468,124 @@ def main() -> None:
     )?;
     Ok(())
 }
+
+/// Prove builtin range construction order, unused owned aliases, inline polling, and construction-time validation.
+#[test]
+fn direct_route_builtin_range_cursor_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("builtin-range-cursor")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def bound(value: int) -> int:
+    """Make argument evaluation order observable."""
+    println(value)
+    return value
+
+def generated() -> Generator[int]:
+    """Keep inline range polling deferred until the producer is consumed."""
+    for value in range(2, 5):
+        yield value
+
+def main() -> None:
+    """Construct unused cursor aliases and consume legacy-supported inline ranges."""
+    values = range(bound(5), bound(0), bound(-2))
+    alias = values
+    println("constructed")
+    for value in range(5, 0, -2):
+        println(value)
+    for value in range(9223372036854775806, 9223372036854775807):
+        println(value)
+    for value in range(0):
+        println(value)
+    collected = generated().collect()
+    println(collected[0])
+    println(collected[2])
+"#,
+    )?;
+    corpus::check_builtin_failure_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("range-zero-step")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def zero() -> int:
+    """Make construction-time argument evaluation observable."""
+    println("step")
+    return 0
+
+def main() -> None:
+    """An unconsumed invalid range still rejects its step immediately."""
+    values = range(1, 4, zero())
+    println("after")
+"#,
+        "ValueError: range() arg 3 must not be zero",
+    )?;
+    Ok(())
+}
+
+/// Prove source-range fields and aliases against legacy while refusing legacy-invalid stored builtin loops.
+#[test]
+fn direct_route_range_values_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("range-values")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def bound(value: int) -> int:
+    """Expose range bound evaluation order."""
+    println(value)
+    return value
+
+def main() -> None:
+    """Read exclusive and inclusive source values through their retained fields."""
+    exclusive = bound(1)..bound(4)
+    alias = exclusive
+    for value in exclusive:
+        println(value)
+    for value in alias:
+        println(value)
+    inclusive = 2..=4
+    for value in inclusive:
+        println(value)
+    upper = bound(9223372036854775806)..=bound(9223372036854775807)
+    for value in upper:
+        println(value)
+    continued = bound(9223372036854775807)..=bound(9223372036854775807)
+    for value in continued:
+        println(value)
+        continue
+    empty = 5..2
+    for value in empty:
+        println(value)
+"#,
+    )?;
+    let root = fixture.scratch("stored-builtin-range-refusal")?;
+    let source = root.join("stored.incn");
+    fs::write(
+        &source,
+        "def main() -> None:\n    values = range(0, 2)\n    for value in values:\n        println(value)\n",
+    )?;
+    let native = root.join("native");
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let refused = corpus::source_command(
+        &fixture.driver_binary("release"),
+        &source,
+        &native,
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    assert!(
+        !refused.status.success(),
+        "legacy-invalid stored builtin iteration must stay refused"
+    );
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("unsupported Body IR stored builtin range iteration"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(!native.exists(), "refusal must not leave a native binary");
+    Ok(())
+}

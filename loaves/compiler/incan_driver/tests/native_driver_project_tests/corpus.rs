@@ -547,7 +547,7 @@ pub(super) fn check_numerics(
             "ValueError",
         ),
     ] {
-        check_numeric_failure(driver, &project, sysroot, &closure, name, source, message)?;
+        check_runtime_failure(driver, &project, sysroot, &closure, name, source, message)?;
     }
     Ok(())
 }
@@ -588,8 +588,30 @@ fn check_numeric_wrapping(
     Ok(())
 }
 
+/// Compare a builtin's constructor-time failure, preserving observable output and its error contract.
+pub(super) fn check_builtin_failure_source(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    runtime: &Path,
+    source: &str,
+    message: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let project = root.join("builtin-failure");
+    fs::create_dir_all(&project)?;
+    check_runtime_failure(
+        driver,
+        &project,
+        sysroot,
+        &runtime_closure(runtime, "release")?,
+        "probe",
+        source,
+        message,
+    )
+}
+
 /// Compare runtime rejection after both routes compile, without comparing panic location paths.
-fn check_numeric_failure(
+fn check_runtime_failure(
     driver: &Path,
     project: &Path,
     sysroot: &Path,
@@ -603,7 +625,7 @@ fn check_numeric_failure(
     let native = project.join(format!("{name}-native"));
     success(
         &compile_source(driver, &path, &native, sysroot, closure)?,
-        "numeric failure native compilation",
+        "runtime failure native compilation",
     );
     let legacy = project.join(format!("{name}-legacy"));
     success(
@@ -613,7 +635,7 @@ fn check_numeric_failure(
             .arg(&path)
             .arg(&legacy)
             .output()?,
-        "numeric failure legacy compilation",
+        "runtime failure legacy compilation",
     );
     let expected = Command::new(legacy.join("oven/release").join(name)).output()?;
     let actual = Command::new(native).output()?;
@@ -621,7 +643,7 @@ fn check_numeric_failure(
     assert!(!actual.status.success(), "native {name} unexpectedly succeeded");
     assert_eq!(
         actual.stdout, expected.stdout,
-        "numeric failure output must be byte-identical"
+        "runtime failure output must be byte-identical"
     );
     for output in [&expected, &actual] {
         let error = String::from_utf8_lossy(&output.stderr);

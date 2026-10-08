@@ -33,6 +33,9 @@ fn generator_signature_ty(kind: &PlanType, span: Span) -> Option<Box<ast::Ty>> {
 
 /// Construct an admitted native AST type without generating or parsing Rust source.
 pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
+    if let Some(ty) = range_signature_ty(kind, span) {
+        return ty;
+    }
     if let Some(ty) = zip_signature_ty(kind, span) {
         return ty;
     }
@@ -40,6 +43,12 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
         return ty;
     }
     let kind = match kind {
+        PlanType::RangeValue => ast::TyKind::Tup(thin_vec![
+            ty(&PlanType::Int, span),
+            ty(&PlanType::Int, span),
+            ty(&PlanType::Int, span),
+            ty(&PlanType::Bool, span)
+        ]),
         PlanType::Tuple(elements) => ast::TyKind::Tup(
             elements
                 .iter()
@@ -692,6 +701,34 @@ fn zip_signature_ty(kind: &PlanType, span: Span) -> Option<Box<ast::Ty>> {
         ],
     })));
     path.segments.push(segment);
+    let owned = Box::new(ast::Ty {
+        id: ast::DUMMY_NODE_ID,
+        kind: ast::TyKind::Path(None, path),
+        span,
+        tokens: None,
+    });
+    Some(match mutability {
+        None => owned,
+        Some(mutbl) => Box::new(ast::Ty {
+            id: ast::DUMMY_NODE_ID,
+            kind: ast::TyKind::Ref(None, ast::MutTy { ty: owned, mutbl }),
+            span,
+            tokens: None,
+        }),
+    })
+}
+
+/// Declare the canonical cursor owner or its exact shared or exclusive reference carrier.
+fn range_signature_ty(kind: &PlanType, span: Span) -> Option<Box<ast::Ty>> {
+    let mutability = match kind {
+        PlanType::RangeCursor => None,
+        PlanType::RangeCursorRef => Some(ast::Mutability::Not),
+        PlanType::RangeCursorMutRef => Some(ast::Mutability::Mut),
+        _ => return None,
+    };
+    let mut path = ast::Path::from_ident(ident("incan_native_runtime", span));
+    path.segments
+        .push(ast::PathSegment::from_ident(ident("RangeCursor", span)));
     let owned = Box::new(ast::Ty {
         id: ast::DUMMY_NODE_ID,
         kind: ast::TyKind::Path(None, path),

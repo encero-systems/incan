@@ -4,6 +4,7 @@ pub from frame import place_type
 from collections import primitive_leaf
 from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive
 from rust::incan_semantics_core::body_ir import (
+    AggregateKind as RustAggregateKind,
     NominalDeclaration,
     ConstructorTarget,
     ArgumentBinding,
@@ -81,6 +82,12 @@ pub def model_place(
             if len(value.projection) != 1:
                 return Err("unsupported Body IR nested model projection")
             match locals[index].ty:
+                PlanType.RangeValue =>
+                    slot = range_slot(value.projection[0])?
+                    mut ty = PlanType.Int
+                    if slot == 3:
+                        ty = PlanType.Bool
+                    return Ok(Place(local=index, projection=Projection.Field(slot, ty), span=span))
                 PlanType.Model(owner, _name) =>
                     declaration = declarations[owner]
                     slot = field_slot(value.projection[0], declaration)?
@@ -180,3 +187,18 @@ def receiver_owner(ty: PlanType) -> Option[tuple[int, str]]:
         PlanType.ModelRef(owner, name) => return Some((owner, name))
         PlanType.ModelMutRef(owner, name) => return Some((owner, name))
         _ => return None
+
+
+def range_slot(value: &RustPlaceElem) -> Result[int, str]:
+    """Read a structural field only through Body IR's canonical range field order."""
+    match value:
+        RustPlaceElem.Field(name=name, canonical=canonical, structural=structural) =>
+            if not structural.clone():
+                return Err("invalid Body IR nonstructural range field")
+            match canonical:
+                Some(_identity) => return Err("invalid Body IR nominal field on structural range")
+                None => pass
+            match RustAggregateKind.range_field_index(str(name)):
+                Some(index) => return Ok(int(index))
+                None => return Err("invalid Body IR range field")
+        _ => return Err("unsupported Body IR range projection")

@@ -4,6 +4,7 @@ from rust::incan_semantics_core import SemanticSourceTargetKind, canonical_modul
 from rust::incan_semantics_core::body_ir import (
     Body,
     LocalOrigin,
+    ValueRepresentation,
     LocalDecl as RustLocal,
     BodyIrModule,
     Operand as RustOperand,
@@ -21,6 +22,11 @@ pub def frame_type(
     intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """Turn only checker-retained receiver origins into borrowed native frame slots."""
+    match local.value_representation:
+        ValueRepresentation.RangeCursor => return Ok(PlanType.RangeCursor)
+        ValueRepresentation.RangeValue => return Ok(PlanType.RangeValue)
+        ValueRepresentation.Mixed => return Err("unsupported Body IR mixed local storage representation")
+        ValueRepresentation.Typed => pass
     ty = native_source_type(
         module.nominal_declarations,
         module.enum_declarations,

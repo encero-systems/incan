@@ -9,6 +9,10 @@ use rustc_middle::ty::{Ty, TyCtxt};
 /// List references preserve source parameter borrowing; checked pairs and other shared references are body-internal.
 pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, PlanError> {
     Ok(match ty {
+        PlanType::RangeValue => Ty::new_tup(tcx, &[tcx.types.i64, tcx.types.i64, tcx.types.i64, tcx.types.bool]),
+        PlanType::RangeCursor => range_type(tcx)?,
+        PlanType::RangeCursorRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, range_type(tcx)?),
+        PlanType::RangeCursorMutRef => Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, range_type(tcx)?),
         PlanType::ZipIterator(left, right) => zip_type(tcx, left, right)?,
         PlanType::ZipIteratorRef(left, right) => {
             Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, zip_type(tcx, left, right)?)
@@ -291,18 +295,7 @@ fn zip_type<'tcx>(
     left: &crate::plan::TupleElement,
     right: &crate::plan::TupleElement,
 ) -> Result<Ty<'tcx>, PlanError> {
-    let root = tcx
-        .crates(())
-        .iter()
-        .find(|krate| tcx.crate_name(**krate).as_str() == "incan_native_runtime")
-        .map(|krate| krate.as_def_id())
-        .ok_or_else(|| PlanError::UnknownCallee("incan_native_runtime".into()))?;
-    let definition = tcx
-        .module_children(root)
-        .iter()
-        .find(|child| child.ident.name.as_str() == "ZipLists" && child.vis.is_public())
-        .and_then(|child| child.res.opt_def_id())
-        .ok_or_else(|| PlanError::UnknownCallee("incan_native_runtime::ZipLists".into()))?;
+    let definition = native_runtime_definition(tcx, "ZipLists")?;
     let left = native_type(tcx, &tuple_element_type(left.clone()))?;
     let right = native_type(tcx, &tuple_element_type(right.clone()))?;
     Ok(Ty::new_adt(
@@ -310,4 +303,25 @@ fn zip_type<'tcx>(
         tcx.adt_def(definition),
         tcx.mk_args(&[left.into(), right.into()]),
     ))
+}
+
+/// Resolve the canonical Incan runtime range cursor from dependency metadata.
+fn range_type<'tcx>(tcx: TyCtxt<'tcx>) -> Result<Ty<'tcx>, PlanError> {
+    let definition = native_runtime_definition(tcx, "RangeCursor")?;
+    Ok(tcx.type_of(definition).instantiate_identity().skip_normalization())
+}
+
+/// Resolve an explicitly admitted public runtime ADT; source spellings never select dependency layouts.
+fn native_runtime_definition(tcx: TyCtxt<'_>, name: &str) -> Result<rustc_hir::def_id::DefId, PlanError> {
+    let root = tcx
+        .crates(())
+        .iter()
+        .find(|krate| tcx.crate_name(**krate).as_str() == "incan_native_runtime")
+        .map(|krate| krate.as_def_id())
+        .ok_or_else(|| PlanError::UnknownCallee("incan_native_runtime".into()))?;
+    tcx.module_children(root)
+        .iter()
+        .find(|child| child.ident.name.as_str() == name && child.vis.is_public())
+        .and_then(|child| child.res.opt_def_id())
+        .ok_or_else(|| PlanError::UnknownCallee(format!("incan_native_runtime::{name}")))
 }

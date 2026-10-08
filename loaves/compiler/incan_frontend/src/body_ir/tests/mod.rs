@@ -23,6 +23,7 @@ mod methods_and_defaults;
 mod operators_literals_and_assignment;
 mod patterns_and_assertions;
 mod provider_plans;
+mod range_bounds;
 
 use helpers::{
     body_named, build, build_after_expected_typecheck_errors, local_for_binding, named_targets, rendered_f,

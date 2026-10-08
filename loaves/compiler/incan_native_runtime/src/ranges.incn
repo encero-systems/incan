@@ -1,0 +1,38 @@
+"""Clonable builtin range cursors using the legacy runtime's polling contract."""
+
+from std.derives.copying import Clone
+from rust::incan_std_core::iter import PyRange, range as runtime_range
+from rust::std::clone import Clone as RuntimeClone
+from rust::std::iter import Iterator as RuntimeIterator
+
+
+@derive(Clone)
+pub model RangeCursor:
+    """Own a deferred legacy integer cursor; snapshots preserve its current position."""
+
+    pub cursor: PyRange
+
+
+pub def make_range(start: int, end: int, step: int) -> RangeCursor:
+    """Validate the step immediately while deferring all cursor polling."""
+    return RangeCursor(cursor=runtime_range(start, end, step))
+
+
+pub def clone_range(values: &RangeCursor) -> RangeCursor:
+    """Snapshot the current cursor without consuming the source binding."""
+    return RuntimeClone.clone(values)
+
+
+pub def poll_range(mut values: RangeCursor, mut output: list[int]) -> bool:
+    """Poll exactly once through the legacy runtime and retain the yielded integer."""
+    match next_range(values.cursor):
+        Some(item) =>
+            output.append(item)
+            return true
+        None => return false
+
+
+def next_range(cursor: &mut PyRange) -> Option[int]:
+    """Poll a borrowed cursor through the existing PyRange Item = i64 contract."""
+    # Bake-time Rust inspection can leave Self::Item unresolved; this signature retains the concrete runtime contract.
+    return cursor.next()

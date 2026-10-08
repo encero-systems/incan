@@ -97,6 +97,7 @@ from rust::incan_semantics_core::body_ir import (
 # ---- Admission helpers owned by this Loaf ----
 from rust::incan_semantics_core import SymbolOrigin, canonical_module_identity
 from classes import frame_type, function_name, body_module_identity, method_receiver
+from ranges import clone_range, range_next
 from tuple_iterators import zip_shape, zip_call, clone_zip, zip_next, initialize_zip_iterator, enumerated_element
 from generators import (
     generator_shape,
@@ -398,6 +399,8 @@ def scalar_operator_operand(mut builder: Builder, value: &RustOperand, span: Sou
 def scalar_rvalue(mut builder: Builder, value: &RustRvalue, span: SourceSpan) -> Result[RvalueKind, str]:
     """Read the checked expression without interpreting generated Rust syntax."""
     match value:
+        RustRvalue.Aggregate(RustAggregateKind.Range, elements) =>
+            return Ok(RvalueKind.Range(fixed_arguments(builder, elements, span)?))
         RustRvalue.Use(operand) => return Ok(RvalueKind.Use(value_operand(builder, operand, span)?))
         RustRvalue.UnaryOp(operator, operand) =>
             match operator:
@@ -448,6 +451,7 @@ def is_nominal_type(ty: PlanType) -> bool:
     match ty:
         PlanType.Enum(_index, _name) => return true
         PlanType.Model(_index, _name) => return true
+        PlanType.RangeCursor => return true
         PlanType.ZipIterator(_left, _right) => return true
         PlanType.Generator(_leaf, _depth) => return true
         PlanType.Tuple(_elements) => return tuple_has_owners(ty)
@@ -1239,6 +1243,24 @@ def lower_runtime_helper(
         Some((name, result)) => return lower_text_helper(builder, name, result, arguments, destination, span)
         None => pass
     match helper:
+        RustHelper.RangeConstruct =>
+            if len(arguments) != 3:
+                return Err("invalid Body IR RangeConstruct arity")
+            output = call_destination(builder, destination, PlanType.RangeCursor, span)?
+            if builder.locals[output.local].ty != PlanType.RangeCursor:
+                return Err("invalid Body IR range constructor destination")
+            operands = fixed_arguments(builder, arguments, span)?
+            external_call(
+                builder,
+                "incan_native_runtime::make_range",
+                [PlanType.Int, PlanType.Int, PlanType.Int],
+                PlanType.RangeCursor,
+                operands,
+                output,
+                span,
+            )
+            builder.owned.append(output.local)
+            return Ok(None)
         RustHelper.RangeValidate =>
             if len(arguments) != 3:
                 return Err("invalid Body IR RangeValidate arity")
@@ -2148,6 +2170,7 @@ def lower_function(
         statics=module.static_declarations,
         local_offset=0,
         generator_handle=-1,
+        deferred_generator=false,
         unions=unions,
     )
     _ = builder.new_block(span)
@@ -2323,6 +2346,15 @@ def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -
                 return indexed_read(builder, read.place, span)
             place = scalar_place(builder, read.place, span)?
             ty = place_type(builder.locals, place)
+            # These four scalar fields have no owned payload or observable clone operation.
+            if ty == PlanType.RangeValue and read.fact == OwnershipFact.Clone:
+                return Ok(read_place(place, false, span))
+            if ty == PlanType.RangeCursor:
+                if read.fact == OwnershipFact.Move:
+                    return Ok(read_place(place, true, span))
+                if read.fact == OwnershipFact.Clone or read.fact == OwnershipFact.Borrow:
+                    return Ok(clone_range(builder, place, span))
+                return Err("unsupported Body IR range value ownership")
             match zip_shape(ty):
                 Some(_shape) =>
                     if read.fact == OwnershipFact.Move:
@@ -2764,6 +2796,8 @@ def list_next(
     if not is_builtin_iteration(protocol) or len(builder.loops) == 0:
         return Err("unsupported Body IR non-builtin list IterNext")
     receiver = operand_list_place(builder, iterator, span)?
+    if builder.locals[receiver.local].ty == PlanType.RangeCursor:
+        return range_next(builder, receiver, list_root_place(builder, destination, span)?, span)
     match zip_shape(builder.locals[receiver.local].ty):
         Some(_shape) => return zip_next(builder, receiver, list_root_place(builder, destination, span)?, span)
         None => pass

@@ -64,6 +64,8 @@ pub model Builder:
     pub intrinsics: list[EnumDeclaration]
     pub statics: list[RustStaticDeclaration]
     pub generator_handle: int
+    # Only a retained generator expression's deferred frame may poll a builtin cursor; legacy rejects stored-range statement loops.
+    pub deferred_generator: bool
 
     def new_block(mut self, span: SourceSpan) -> int:
         """Allocate a block before connecting edges, preserving index stability."""

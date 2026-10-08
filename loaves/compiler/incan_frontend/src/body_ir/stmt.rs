@@ -206,6 +206,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.push_unsupported_stmt(format!("assignment target `{target}` is not writable"), span, out);
             return;
         }
+        if place.projection.is_empty()
+            && let Some(local) = place.local_id()
+        {
+            let representation = self.operand_representation(&value);
+            self.retain_value_representation(local, representation);
+        }
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {
                 place: place.clone(),

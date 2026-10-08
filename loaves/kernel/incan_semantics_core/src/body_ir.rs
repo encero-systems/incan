@@ -729,10 +729,27 @@ pub struct LocalDecl {
     /// recovery locals.
     pub identity: Option<CanonicalSymbolId>,
     pub ty: IncanType,
+    /// Retained storage representation for checked range producers; ordinary values follow their semantic type.
+    #[serde(default)]
+    pub value_representation: ValueRepresentation,
     pub origin: LocalOrigin,
     /// Lexical scope this local is declared in.
     pub scope: ScopeId,
     pub span: HirSourceSpan,
+}
+
+/// Source-proven value storage, retained before backends select their physical native types.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ValueRepresentation {
+    /// The local uses its checked semantic type's ordinary representation.
+    #[default]
+    Typed,
+    /// A checker-proven builtin range constructor produced a clonable integer cursor.
+    RangeCursor,
+    /// A source range value retains the four declared scalar fields, independently of a builtin cursor.
+    RangeValue,
+    /// Assignments require incompatible storage representations; a backend must refuse rather than choose one.
+    Mixed,
 }
 
 impl LocalDecl {
@@ -2405,6 +2422,11 @@ impl AggregateKind {
         Self::RANGE_FIELD_INCLUSIVE,
     ];
 
+    /// Resolve a range value's structural projection against its single declared field order.
+    pub fn range_field_index(name: &str) -> Option<usize> {
+        Self::RANGE_FIELDS.iter().position(|field| *field == name)
+    }
+
     /// Compact snapshot spelling for this aggregate kind.
     fn as_str(&self) -> String {
         match self {
@@ -3151,6 +3173,8 @@ pub enum HelperOp {
     DictNotContainsKey,
     /// Validate normalized builtin range bounds and step using the runtime constructor's error contract.
     RangeValidate,
+    /// Construct a checked builtin integer range cursor from start, end, and step evaluated in written order.
+    RangeConstruct,
 }
 
 impl HelperOp {
@@ -3183,6 +3207,7 @@ impl HelperOp {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::RangeValidate => "range_validate",
+            Self::RangeConstruct => "range_construct",
             Self::StrConcat => "str_concat",
             Self::StrEq => "str_eq",
             Self::StrNe => "str_ne",
@@ -3717,6 +3742,7 @@ mod tests {
             named_type_identities: Default::default(),
             locals: vec![
                 LocalDecl {
+                    value_representation: ValueRepresentation::Typed,
                     id: local_x,
                     name: Some("x".to_string()),
                     identity: None,
@@ -3726,6 +3752,7 @@ mod tests {
                     span: HirSourceSpan::new(4, 5),
                 },
                 LocalDecl {
+                    value_representation: ValueRepresentation::Typed,
                     id: local_y,
                     name: Some("y".to_string()),
                     identity: None,
@@ -3735,6 +3762,7 @@ mod tests {
                     span: HirSourceSpan::new(7, 8),
                 },
                 LocalDecl {
+                    value_representation: ValueRepresentation::Typed,
                     id: local_tmp,
                     name: None,
                     identity: None,
@@ -4266,6 +4294,7 @@ mod tests {
         let param_local = LocalId(3);
         let capture_local = LocalId(4);
         body.locals.push(LocalDecl {
+            value_representation: ValueRepresentation::Typed,
             id: param_local,
             name: Some("z".to_string()),
             identity: None,
@@ -4275,6 +4304,7 @@ mod tests {
             span: HirSourceSpan::new(0, 1),
         });
         body.locals.push(LocalDecl {
+            value_representation: ValueRepresentation::Typed,
             id: capture_local,
             name: Some("x".to_string()),
             identity: None,
@@ -4400,6 +4430,7 @@ mod tests {
     fn locals_requiring_unwind_drop_is_conservative_over_non_copy_locals() {
         let mut body = sample_body();
         body.locals.push(LocalDecl {
+            value_representation: ValueRepresentation::Typed,
             id: LocalId(3),
             name: Some("s".to_string()),
             identity: None,
@@ -4417,6 +4448,7 @@ mod tests {
     fn locals_requiring_unwind_drop_excludes_receiver_locals_even_when_non_copy() {
         let mut body = sample_body();
         body.locals.push(LocalDecl {
+            value_representation: ValueRepresentation::Typed,
             id: LocalId(3),
             name: Some("self".to_string()),
             identity: None,
@@ -4437,6 +4469,7 @@ mod tests {
     fn receiver_origin_renders_mutability_in_the_snapshot() {
         let mut body = sample_body();
         body.locals.push(LocalDecl {
+            value_representation: ValueRepresentation::Typed,
             id: LocalId(3),
             name: Some("self".to_string()),
             identity: None,
@@ -4446,6 +4479,7 @@ mod tests {
             span: HirSourceSpan::new(0, 4),
         });
         body.locals.push(LocalDecl {
+            value_representation: ValueRepresentation::Typed,
             id: LocalId(4),
             name: Some("self".to_string()),
             identity: None,
