@@ -20,6 +20,7 @@ mod for_patterns;
 mod identities_and_imports;
 mod input_contract_and_refusals;
 mod methods_and_defaults;
+mod newtype_storage;
 mod operators_literals_and_assignment;
 mod patterns_and_assertions;
 mod provider_plans;

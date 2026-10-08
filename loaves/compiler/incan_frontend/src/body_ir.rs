@@ -435,13 +435,22 @@ pub fn is_direct_replacement_plain_model(model: &ast::ModelDecl) -> bool {
         && model.fields.iter().all(|field| field.node.metadata.alias.is_none())
 }
 
-/// Admit concrete tuple wrappers with ordinary methods and nongeneric trait adoptions.
+/// Admit concrete tuple wrappers with standard structural derives, ordinary methods and nongeneric trait adoptions.
 ///
 /// Checked construction hooks and constraints remain refused by the declaration collector; aliases, interop edges,
 /// associated types, and generic methods require additional representation facts and remain outside this profile.
 pub fn is_direct_replacement_plain_newtype(newtype: &ast::NewtypeDecl) -> bool {
     !newtype.is_rusttype
-        && newtype.decorators.is_empty()
+        && newtype.decorators.iter().all(|decorator| {
+            decorator.node.name == "derive"
+                && decorator.node.args.iter().all(|argument| match argument {
+                    ast::DecoratorArg::Positional(expression) => match &expression.node {
+                        ast::Expr::Ident(name) => is_direct_newtype_derive(name),
+                        _ => false,
+                    },
+                    _ => false,
+                })
+        })
         && newtype.type_params.is_empty()
         && newtype.traits.iter().all(|adoption| adoption.node.type_args.is_empty())
         && newtype.rebindings.is_empty()
@@ -453,6 +462,27 @@ pub fn is_direct_replacement_plain_newtype(newtype: &ast::NewtypeDecl) -> bool {
             .methods
             .iter()
             .all(|method| method.node.type_params.is_empty() && method.node.decorators.is_empty())
+}
+
+/// Admit standard structural derives whose native macros operate on the retained newtype carrier only.
+///
+/// Serialization, validation, display synthesis and custom macros need their own checked execution facts.
+pub fn is_direct_newtype_derive(name: &str) -> bool {
+    use incan_lang::lang::derives::{self, DeriveId};
+    matches!(
+        derives::from_str(name),
+        Some(
+            DeriveId::Debug
+                | DeriveId::Clone
+                | DeriveId::Copy
+                | DeriveId::PartialEq
+                | DeriveId::Eq
+                | DeriveId::Hash
+                | DeriveId::PartialOrd
+                | DeriveId::Ord
+                | DeriveId::Default
+        )
+    )
 }
 
 /// Admit source classes whose fields and method bodies have complete direct-route facts.

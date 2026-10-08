@@ -1,0 +1,195 @@
+"""Persistent flat primitive dictionary and set cells, addressed by canonical storage slots."""
+
+static INT_INT_DICTS: dict[int, dict[int, int]] = {}
+
+
+pub def read_static_int_int_dict(slot: int, initial: dict[int, int]) -> dict[int, int]:
+    """Read a snapshot of the current dictionary or its declared effect-free contents."""
+    return INT_INT_DICTS.get(slot, initial)
+
+
+pub def write_static_int_int_dict(slot: int, value: dict[int, int]) -> None:
+    """Persist a dictionary replacement across native function frames."""
+    INT_INT_DICTS[slot] = value
+
+
+static INT_BOOL_DICTS: dict[int, dict[int, bool]] = {}
+
+
+pub def read_static_int_bool_dict(slot: int, initial: dict[int, bool]) -> dict[int, bool]:
+    """Read a snapshot of the current dictionary or its declared effect-free contents."""
+    return INT_BOOL_DICTS.get(slot, initial)
+
+
+pub def write_static_int_bool_dict(slot: int, value: dict[int, bool]) -> None:
+    """Persist a dictionary replacement across native function frames."""
+    INT_BOOL_DICTS[slot] = value
+
+
+static INT_TEXT_DICTS: dict[int, dict[int, str]] = {}
+
+
+pub def read_static_int_text_dict(slot: int, initial: dict[int, str]) -> dict[int, str]:
+    """Read a snapshot of the current dictionary or its declared effect-free contents."""
+    return INT_TEXT_DICTS.get(slot, initial)
+
+
+pub def write_static_int_text_dict(slot: int, value: dict[int, str]) -> None:
+    """Persist a dictionary replacement across native function frames."""
+    INT_TEXT_DICTS[slot] = value
+
+
+static INT_FLOAT_DICTS: dict[int, dict[int, float]] = {}
+
+
+pub def read_static_int_float_dict(slot: int, initial: dict[int, float]) -> dict[int, float]:
+    """Read a snapshot of the current dictionary or its declared effect-free contents."""
+    return INT_FLOAT_DICTS.get(slot, initial)
+
+
+pub def write_static_int_float_dict(slot: int, value: dict[int, float]) -> None:
+    """Persist a dictionary replacement across native function frames."""
+    INT_FLOAT_DICTS[slot] = value
+
+
+static BOOL_INT_DICTS: dict[int, dict[bool, int]] = {}
+
+
+pub def read_static_bool_int_dict(slot: int, initial: dict[bool, int]) -> dict[bool, int]:
+    """Read a snapshot of the current dictionary or its declared effect-free contents."""
+    return BOOL_INT_DICTS.get(slot, initial)
+
+
+pub def write_static_bool_int_dict(slot: int, value: dict[bool, int]) -> None:
+    """Persist a dictionary replacement across native function frames."""
+    BOOL_INT_DICTS[slot] = value
+
+
+static BOOL_BOOL_DICTS: dict[int, dict[bool, bool]] = {}
+
+
+pub def read_static_bool_bool_dict(slot: int, initial: dict[bool, bool]) -> dict[bool, bool]:
+    """Read a snapshot of the current dictionary or its declared effect-free contents."""
+    return BOOL_BOOL_DICTS.get(slot, initial)
+
+
+pub def write_static_bool_bool_dict(slot: int, value: dict[bool, bool]) -> None:
+    """Persist a dictionary replacement across native function frames."""
+    BOOL_BOOL_DICTS[slot] = value
+
+
+static BOOL_TEXT_DICTS: dict[int, dict[bool, str]] = {}
+
+
+pub def read_static_bool_text_dict(slot: int, initial: dict[bool, str]) -> dict[bool, str]:
+    """Read a snapshot of the current dictionary or its declared effect-free contents."""
+    return BOOL_TEXT_DICTS.get(slot, initial)
+
+
+pub def write_static_bool_text_dict(slot: int, value: dict[bool, str]) -> None:
+    """Persist a dictionary replacement across native function frames."""
+    BOOL_TEXT_DICTS[slot] = value
+
+
+static BOOL_FLOAT_DICTS: dict[int, dict[bool, float]] = {}
+
+
+pub def read_static_bool_float_dict(slot: int, initial: dict[bool, float]) -> dict[bool, float]:
+    """Read a snapshot of the current dictionary or its declared effect-free contents."""
+    return BOOL_FLOAT_DICTS.get(slot, initial)
+
+
+pub def write_static_bool_float_dict(slot: int, value: dict[bool, float]) -> None:
+    """Persist a dictionary replacement across native function frames."""
+    BOOL_FLOAT_DICTS[slot] = value
+
+
+static TEXT_INT_DICTS: dict[int, dict[str, int]] = {}
+
+
+pub def read_static_text_int_dict(slot: int, initial: dict[str, int]) -> dict[str, int]:
+    """Read a snapshot of the current dictionary or its declared effect-free contents."""
+    return TEXT_INT_DICTS.get(slot, initial)
+
+
+pub def write_static_text_int_dict(slot: int, value: dict[str, int]) -> None:
+    """Persist a dictionary replacement across native function frames."""
+    TEXT_INT_DICTS[slot] = value
+
+
+static TEXT_BOOL_DICTS: dict[int, dict[str, bool]] = {}
+
+
+pub def read_static_text_bool_dict(slot: int, initial: dict[str, bool]) -> dict[str, bool]:
+    """Read a snapshot of the current dictionary or its declared effect-free contents."""
+    return TEXT_BOOL_DICTS.get(slot, initial)
+
+
+pub def write_static_text_bool_dict(slot: int, value: dict[str, bool]) -> None:
+    """Persist a dictionary replacement across native function frames."""
+    TEXT_BOOL_DICTS[slot] = value
+
+
+static TEXT_TEXT_DICTS: dict[int, dict[str, str]] = {}
+
+
+pub def read_static_text_text_dict(slot: int, initial: dict[str, str]) -> dict[str, str]:
+    """Read a snapshot of the current dictionary or its declared effect-free contents."""
+    return TEXT_TEXT_DICTS.get(slot, initial)
+
+
+pub def write_static_text_text_dict(slot: int, value: dict[str, str]) -> None:
+    """Persist a dictionary replacement across native function frames."""
+    TEXT_TEXT_DICTS[slot] = value
+
+
+static TEXT_FLOAT_DICTS: dict[int, dict[str, float]] = {}
+
+
+pub def read_static_text_float_dict(slot: int, initial: dict[str, float]) -> dict[str, float]:
+    """Read a snapshot of the current dictionary or its declared effect-free contents."""
+    return TEXT_FLOAT_DICTS.get(slot, initial)
+
+
+pub def write_static_text_float_dict(slot: int, value: dict[str, float]) -> None:
+    """Persist a dictionary replacement across native function frames."""
+    TEXT_FLOAT_DICTS[slot] = value
+
+
+static INT_SETS: dict[int, set[int]] = {}
+
+
+pub def read_static_int_set(slot: int, initial: set[int]) -> set[int]:
+    """Read a snapshot of the current set or its declared effect-free members."""
+    return INT_SETS.get(slot, initial)
+
+
+pub def write_static_int_set(slot: int, value: set[int]) -> None:
+    """Persist a set replacement across native function frames."""
+    INT_SETS[slot] = value
+
+
+static BOOL_SETS: dict[int, set[bool]] = {}
+
+
+pub def read_static_bool_set(slot: int, initial: set[bool]) -> set[bool]:
+    """Read a snapshot of the current set or its declared effect-free members."""
+    return BOOL_SETS.get(slot, initial)
+
+
+pub def write_static_bool_set(slot: int, value: set[bool]) -> None:
+    """Persist a set replacement across native function frames."""
+    BOOL_SETS[slot] = value
+
+
+static TEXT_SETS: dict[int, set[str]] = {}
+
+
+pub def read_static_text_set(slot: int, initial: set[str]) -> set[str]:
+    """Read a snapshot of the current set or its declared effect-free members."""
+    return TEXT_SETS.get(slot, initial)
+
+
+pub def write_static_text_set(slot: int, value: set[str]) -> None:
+    """Persist a set replacement across native function frames."""
+    TEXT_SETS[slot] = value

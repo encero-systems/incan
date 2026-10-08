@@ -3,7 +3,7 @@
 
 use super::*;
 
-/// Retain primitive and list literal statics, whose initialization has no user-visible evaluation effects.
+/// Retain primitive and collection literal statics, whose initialization has no user-visible evaluation effects.
 pub(super) fn collect_scalar_statics(program: &ast::Program, type_info: &TypeCheckInfo) -> Vec<bir::StaticDeclaration> {
     program
         .declarations
@@ -13,7 +13,10 @@ pub(super) fn collect_scalar_statics(program: &ast::Program, type_info: &TypeChe
                 return None;
             };
             let ty = semantic_type_from_resolved(type_info.expr_type(storage.value.span)?);
-            let initial = static_literal_initializer(&storage.value.node, &ty)?;
+            if !static_carrier_supported(&ty) {
+                return None;
+            }
+            let initial = static_checked_initializer(&storage.value, &ty, type_info)?;
             let canonical = type_info
                 .declarations
                 .declaration_identities
@@ -24,7 +27,49 @@ pub(super) fn collect_scalar_statics(program: &ast::Program, type_info: &TypeChe
         .collect()
 }
 
-/// Preserve literal values only in their exact checked primitive or list element carrier.
+/// Exclude nested or effectful collection carriers before retaining even an empty initializer.
+fn static_carrier_supported(ty: &IncanType) -> bool {
+    let primitive = |ty: &IncanType| {
+        matches!(
+            ty,
+            IncanType::Primitive(
+                IncanPrimitiveType::Int
+                    | IncanPrimitiveType::Float
+                    | IncanPrimitiveType::Bool
+                    | IncanPrimitiveType::Str
+            )
+        )
+    };
+    let hashed = |ty: &IncanType| primitive(ty) && !matches!(ty, IncanType::Primitive(IncanPrimitiveType::Float));
+    match ty {
+        IncanType::Generic { base, args } => match (collections::from_str(base), args.as_slice()) {
+            (Some(CollectionTypeId::List), [element]) => primitive(element),
+            (Some(CollectionTypeId::Set), [element]) => hashed(element),
+            (Some(CollectionTypeId::Dict), [key, value]) => hashed(key) && primitive(value),
+            _ => false,
+        },
+        _ => primitive(ty),
+    }
+}
+
+/// Recognize empty builtin set construction only from the checker's canonical constructor fact.
+fn static_checked_initializer(
+    value: &ast::Spanned<ast::Expr>,
+    ty: &IncanType,
+    type_info: &TypeCheckInfo,
+) -> Option<bir::StaticInitializer> {
+    let empty_call = match &value.node {
+        ast::Expr::Call(_, type_args, args) => type_args.is_empty() && args.is_empty(),
+        ast::Expr::Constructor(_, args) => args.is_empty(),
+        _ => false,
+    };
+    if empty_call && type_info.resolved_collection_constructor(value.span) == Some(CollectionTypeId::Set) {
+        return Some(bir::StaticInitializer::Set(Vec::new()));
+    }
+    static_literal_initializer(&value.node, ty)
+}
+
+/// Preserve literal values only in their exact checked primitive or collection element carrier.
 fn static_literal_initializer(value: &ast::Expr, ty: &IncanType) -> Option<bir::StaticInitializer> {
     match (value, ty) {
         (
@@ -38,6 +83,38 @@ fn static_literal_initializer(value: &ast::Expr, ty: &IncanType) -> Option<bir::
         ) => Some(bir::StaticInitializer::Literal(primitives::lower_checked_literal(
             literal, ty,
         ))),
+        (ast::Expr::Dict(entries), IncanType::Generic { base, args })
+            if collections::from_str(base) == Some(CollectionTypeId::Dict) =>
+        {
+            let [key_type, value_type] = args.as_slice() else {
+                return None;
+            };
+            let pairs = entries
+                .iter()
+                .map(|entry| {
+                    let ast::DictEntry::Pair(key, value) = entry else {
+                        return None;
+                    };
+                    Some((
+                        static_literal_constant(&key.node, key_type)?,
+                        static_literal_constant(&value.node, value_type)?,
+                    ))
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some(bir::StaticInitializer::Dict(pairs))
+        }
+        (ast::Expr::Set(entries), IncanType::Generic { base, args })
+            if collections::from_str(base) == Some(CollectionTypeId::Set) =>
+        {
+            let [element] = args.as_slice() else {
+                return None;
+            };
+            let values = entries
+                .iter()
+                .map(|value| static_literal_constant(&value.node, element))
+                .collect::<Option<Vec<_>>>()?;
+            Some(bir::StaticInitializer::Set(values))
+        }
         (ast::Expr::List(entries), IncanType::Generic { base, args })
             if collections::from_str(base) == Some(CollectionTypeId::List) =>
         {
@@ -70,6 +147,14 @@ fn static_literal_initializer(value: &ast::Expr, ty: &IncanType) -> Option<bir::
                 .collect::<Option<Vec<_>>>()?;
             Some(bir::StaticInitializer::List(values))
         }
+        _ => None,
+    }
+}
+
+/// Extract one exact primitive literal without admitting a nested collection or effectful source expression.
+fn static_literal_constant(value: &ast::Expr, ty: &IncanType) -> Option<bir::Constant> {
+    match static_literal_initializer(value, ty)? {
+        bir::StaticInitializer::Literal(value) => Some(value),
         _ => None,
     }
 }
@@ -317,6 +402,21 @@ fn collect_plain_newtype(
             derives.push("Clone".to_owned());
         }
         derives.push("Copy".to_owned());
+    }
+    for name in &facts.explicit_derives {
+        if !is_direct_newtype_derive(name) {
+            return None;
+        }
+        if !derives.contains(name) {
+            derives.push(name.clone());
+        }
+        let derive = incan_lang::lang::derives::from_str(name)?;
+        for implied in incan_lang::lang::derives::implied_derives(derive) {
+            let name = incan_lang::lang::derives::as_str(*implied);
+            if !derives.iter().any(|existing| existing == name) {
+                derives.push(name.to_owned());
+            }
+        }
     }
     Some(bir::NominalDeclaration {
         direct_declaration_id: CompilerNodeId::declaration_span(module_identity, span.start, span.end),

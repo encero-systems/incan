@@ -1346,6 +1346,8 @@ pub struct NewtypeConstructionInfo {
     ///
     /// The checker's derive relation decides both, so a newtype implements what the checker says it does.
     pub automatic_derives: Vec<String>,
+    /// Explicit checked `@derive(...)` names, retained separately from automatic carrier-derived traits.
+    pub explicit_derives: Vec<String>,
     /// Declared type parameters in source order.
     pub type_params: Vec<String>,
     /// Resolved wrapped value type, including references to the declared type parameters.

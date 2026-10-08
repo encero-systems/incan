@@ -51,6 +51,33 @@ impl BodyIrModule {
                             .iter()
                             .all(|value| literal_static_carrier_matches(element, value))
                 }
+                StaticInitializer::Dict(values) => {
+                    let IncanType::Generic { base, args } = &declaration.ty else {
+                        return false;
+                    };
+                    let [key, value] = args.as_slice() else {
+                        return false;
+                    };
+                    collections::from_str(base) == Some(CollectionTypeId::Dict)
+                        && hashed_static_carrier(key)
+                        && primitive_static_carrier(value)
+                        && values.iter().all(|(k, v)| {
+                            literal_static_carrier_matches(key, k) && literal_static_carrier_matches(value, v)
+                        })
+                }
+                StaticInitializer::Set(values) => {
+                    let IncanType::Generic { base, args } = &declaration.ty else {
+                        return false;
+                    };
+                    let [element] = args.as_slice() else {
+                        return false;
+                    };
+                    collections::from_str(base) == Some(CollectionTypeId::Set)
+                        && hashed_static_carrier(element)
+                        && values
+                            .iter()
+                            .all(|value| literal_static_carrier_matches(element, value))
+                }
             }
     }
 
@@ -323,7 +350,22 @@ impl BodyIrModule {
     }
 }
 
-/// Validate a literal payload against its exact primitive storage or list element carrier.
+/// Recognize primitive value carriers even when an initializer has no elements to validate.
+fn primitive_static_carrier(ty: &IncanType) -> bool {
+    matches!(
+        ty,
+        IncanType::Primitive(
+            IncanPrimitiveType::Int | IncanPrimitiveType::Float | IncanPrimitiveType::Bool | IncanPrimitiveType::Str
+        )
+    )
+}
+
+/// Hash keys and set elements require Eq and Hash; legacy does not admit floating-point keys.
+fn hashed_static_carrier(ty: &IncanType) -> bool {
+    primitive_static_carrier(ty) && !matches!(ty, IncanType::Primitive(IncanPrimitiveType::Float))
+}
+
+/// Validate a literal payload against its exact primitive storage or collection element carrier.
 fn literal_static_carrier_matches(ty: &IncanType, value: &Constant) -> bool {
     matches!(
         (ty, value),

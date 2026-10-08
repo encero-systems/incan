@@ -284,7 +284,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Lower `obj[index] = value` (including the compound `obj[index] <op>= value` form, pre-desugared into
     /// `value` by the parser -- see [`Self::lower_field_assignment`]'s docs for the same note on
     /// `IndexAssignmentStmt::compound_op`). The object place is lowered before the index operand, preserving the
-    /// established assignment evaluation order in the Rust-emission backend: object, index, then assigned value.
+    /// established assignment evaluation order in the Rust-emission backend. Static storage evaluates the assigned
+    /// value before its index so RHS calls finish before the storage mutation begins; ordinary places retain object,
+    /// index, then value order.
     pub(super) fn lower_index_assignment(
         &mut self,
         index_assignment: &ast::IndexAssignmentStmt,
@@ -293,6 +295,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) {
         let mut place = self.lower_expr_to_place(&index_assignment.object, scope, out);
+        let early_value = if place.global().is_some() {
+            Some(self.lower_expr_to_operand(&index_assignment.value, scope, out))
+        } else {
+            None
+        };
         let index_operand = self.lower_expr_to_operand(&index_assignment.index, scope, out);
         place.projection.push(bir::PlaceElem::Index(Box::new(index_operand)));
         if !place.permits_write() {
@@ -303,7 +310,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.push_unsupported_stmt(format!("assignment target `{target}` is not writable"), span, out);
             return;
         }
-        let value = self.lower_expr_to_operand(&index_assignment.value, scope, out);
+        let value = match early_value {
+            Some(value) => value,
+            None => self.lower_expr_to_operand(&index_assignment.value, scope, out),
+        };
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {
                 place,

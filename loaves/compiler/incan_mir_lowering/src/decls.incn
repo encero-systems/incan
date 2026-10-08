@@ -15,8 +15,14 @@ pub def static_slot(declarations: list[StaticDeclaration], value: &GlobalPlace) 
 
 
 pub def static_accessors(ty: PlanType) -> Result[tuple[str, str], str]:
-    """Name persistent primitive and flat-list cells after checked carrier admission."""
+    """Name persistent primitive and flat collection cells after checked carrier admission."""
     match ty:
+        PlanType.Dict(key, value) =>
+            name = f"{static_leaf_name(key)}_{static_leaf_name(value)}_dict"
+            return Ok((f"incan_native_runtime::read_static_{name}", f"incan_native_runtime::write_static_{name}"))
+        PlanType.Set(leaf) =>
+            name = f"{static_leaf_name(leaf)}_set"
+            return Ok((f"incan_native_runtime::read_static_{name}", f"incan_native_runtime::write_static_{name}"))
         PlanType.List(leaf, depth) =>
             if depth != 1:
                 return Err("unsupported Body IR nested static list carrier")
@@ -33,17 +39,17 @@ pub def static_accessors(ty: PlanType) -> Result[tuple[str, str], str]:
 
 def static_list_accessors(leaf: ListLeaf) -> Result[tuple[str, str], str]:
     """Choose typed runtime list cells without erasing their checked element representation."""
-    mut name = ""
-    match leaf:
-        ListLeaf.Int =>
-            name = "int"
-        ListLeaf.Float =>
-            name = "float"
-        ListLeaf.Bool =>
-            name = "bool"
-        ListLeaf.Str =>
-            name = "text"
+    name = static_leaf_name(leaf)
     return Ok((f"incan_native_runtime::read_static_{name}_list", f"incan_native_runtime::write_static_{name}_list"))
+
+
+def static_leaf_name(leaf: ListLeaf) -> str:
+    """Name the exact primitive carrier shared by list and hashed storage cells."""
+    match leaf:
+        ListLeaf.Int => return "int"
+        ListLeaf.Float => return "float"
+        ListLeaf.Bool => return "bool"
+        ListLeaf.Str => return "text"
 
 
 pub def lower_model_declarations(module: &BodyIrModule, file: str) -> Result[list[ModelDeclaration], str]:

@@ -2,6 +2,90 @@
 
 use super::*;
 
+/// Persistent primitive hashed storage exercises read snapshots, live aliases, replacement, and argument effects.
+pub(super) const HASHED_STATICS_SOURCE: &str = r#"
+static counts: dict[str, int] = {"initial": 4}
+static seen: set[int] = Set()
+static words: set[str] = {"before"}
+static flags: dict[bool, str] = {true: "yes"}
+static ratios: dict[int, float] = {1: 2.5}
+
+def record(name: str) -> None:
+    counts[name] = counts.get(name, 0) + 1
+
+def argument() -> int:
+    counts.insert("side", 9)
+    return 3
+
+def main() -> None:
+    record("a")
+    record("a")
+    println(counts.get("a").unwrap_or(0))
+    println(counts.get("missing", 7))
+    println(counts["initial"])
+    counts.insert("a", argument())
+    println(counts["a"])
+    println(counts["side"])
+    live = counts
+    counts["a"] = 5
+    println(live["a"])
+    println(len(counts))
+    println("side" in counts)
+    seen.add(4)
+    seen.add(4)
+    seen.add(6)
+    println(len(seen))
+    println(seen.contains(4))
+    println(seen.contains(5))
+    words.add("after")
+    println("before" in words)
+    println(len(words))
+    flags.insert(false, "no")
+    println(flags[true])
+    println(flags.get(false, "missing"))
+    previous = flags.get(true)
+    flags.insert(true, "changed")
+    println(previous.unwrap_or("missing"))
+    println(flags.get(true).unwrap_or("missing"))
+    ratios.insert(2, 3.5)
+    println(ratios[1] + ratios[2])
+    counts = {"reset": 8}
+    println(live["reset"])
+    println(len(counts))
+"#;
+
+/// Standard newtype derives preserve tuple carriers, ordinary methods, and owned argument/return snapshots.
+pub(super) const DERIVED_NEWTYPES_SOURCE: &str = r#"
+@derive(Clone, Eq, Ord, Hash, Default)
+type Label = newtype str:
+    def upper(self) -> str:
+        return self.0.upper()
+
+@derive(Clone, Copy, Eq, Ord, Hash, Default)
+type Count = newtype int:
+    def next(self) -> int:
+        return self.0 + 1
+
+def keep(value: Label) -> Label:
+    return value
+
+def make() -> Label:
+    return Label("returned")
+
+def main() -> None:
+    label = Label("original")
+    first = keep(label)
+    mut text = first.0
+    text += "!"
+    println(text)
+    println(label.0)
+    println(first.upper())
+    println(make().0)
+    count = Count(4)
+    println(count.0)
+    println(count.next())
+"#;
+
 /// Primitive and flat tuple match parity, including rejected string literals and branch-owned bindings.
 pub(super) const STRUCTURAL_MATCHES_SOURCE: &str = r#"
 def pick(number: int) -> str:

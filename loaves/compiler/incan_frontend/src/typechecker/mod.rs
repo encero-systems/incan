@@ -3719,6 +3719,7 @@ impl TypeChecker {
                 name.clone(),
                 crate::typechecker::type_info::NewtypeConstructionInfo {
                     automatic_derives,
+                    explicit_derives: info.derives.clone(),
                     type_params: info.type_params.clone(),
                     underlying: info.underlying.clone(),
                     checked_constructor,

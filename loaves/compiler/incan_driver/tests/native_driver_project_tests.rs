@@ -1022,6 +1022,18 @@ fn structural_matches_output_matches_legacy() -> Result<(), Box<dyn std::error::
     check_declaration_case("structural_matches", corpus::STRUCTURAL_MATCHES_SOURCE, None)
 }
 
+/// Persistent dictionary and set operations preserve storage mutations and argument evaluation order.
+#[test]
+fn hashed_statics_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case("hashed_statics", corpus::HASHED_STATICS_SOURCE, None)
+}
+
+/// Explicit newtype derives retain canonical carriers and owned snapshots without duplicate native derives.
+#[test]
+fn derived_newtypes_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case("derived_newtypes", corpus::DERIVED_NEWTYPES_SOURCE, None)
+}
+
 /// Newtypes, erased aliases, scalar constants, and persistent scalar statics retain exactly the legacy output.
 #[test]
 fn declarations_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

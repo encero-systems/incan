@@ -1002,7 +1002,10 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
         span(&declaration.span)?;
         let tuple = declaration.fields.len() == 1 && declaration.fields[0].name == "0";
         let derives_valid = if tuple {
-            declaration.derives == ["Debug", "Clone"] || declaration.derives == ["Debug", "Clone", "Copy"]
+            declaration.derives.iter().all(|name| incan_frontend::body_ir::is_direct_newtype_derive(name))
+                && declaration.derives.iter().any(|name| name == "Debug")
+                && declaration.derives.iter().any(|name| name == "Clone")
+                && declaration.derives.iter().collect::<BTreeSet<_>>().len() == declaration.derives.len()
         } else {
             declaration.derives == ["Debug", "Clone", "FieldInfo", "IncanClass"]
         };

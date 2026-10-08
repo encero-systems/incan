@@ -122,6 +122,10 @@ pub enum StaticInitializer {
     Literal(Constant),
     /// An ordered list of primitive literals, each checked against the declaration's element type.
     List(Vec<Constant>),
+    /// Ordered primitive key/value pairs; later duplicate keys replace earlier values as in source dictionaries.
+    Dict(Vec<(Constant, Constant)>),
+    /// Primitive members of an effect-free set initializer, with duplicates resolved by its checked carrier.
+    Set(Vec<Constant>),
 }
 
 /// A source-owned stdlib callable's proven transparent native delegation and scalar signature.
