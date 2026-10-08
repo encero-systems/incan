@@ -303,6 +303,40 @@ def main() -> None:
     )
 }
 
+/// An omitted list or dictionary default is built in the caller and borrowed by the call, as legacy passes it.
+#[test]
+fn collection_defaults_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_case(
+        "collection_defaults",
+        r#"
+def keep(items: list[float] = []) -> int:
+    return 1
+
+def total(values: list[int] = [1, 2, 3]) -> int:
+    mut sum = 0
+    for value in values:
+        sum += value
+    return sum
+
+def names(prefix: str, items: list[str] = ["a", "b"]) -> str:
+    second = items[1]
+    return prefix + second
+
+def size(table: dict[str, int] = {"x": 1}) -> int:
+    return len(table)
+
+def main() -> None:
+    println(keep())
+    println(total())
+    println(total([4]))
+    println(names("n:"))
+    println(size())
+    for _index in range(2):
+        println(total())
+"#,
+    )
+}
+
 /// Fields of a model element read out of a list copy scalars and clone owned values, as legacy's element reads do.
 #[test]
 fn list_element_fields_match_legacy() -> Result<(), Box<dyn std::error::Error>> {

@@ -3197,7 +3197,7 @@ def iterator_assignment(
         _ => return Err("unsupported Body IR list iterator initialization")
 
 
-def list_root_place(builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+pub def list_root_place(builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
     """Require a bare checked list root before constructing a receiver borrow."""
     if len(value.projection) != 0:
         return Err("unsupported Body IR list root projection")
