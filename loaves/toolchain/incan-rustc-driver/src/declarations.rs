@@ -1,6 +1,6 @@
 //! Declarations enter as AST items; only MIR supplies executable bodies.
 
-use crate::plan::{Function, ListLeaf, PlanType, SizedNumeric, tuple_element_type};
+use crate::plan::{Function, ListLeaf, PlanType, SizedNumeric, list_leaf_type, tuple_element_type};
 use rustc_ast as ast;
 use rustc_span::{Ident, Span, Symbol};
 use thin_vec::{ThinVec, thin_vec};
@@ -10,9 +10,51 @@ fn ident(name: &str, span: Span) -> Ident {
     Ident::new(Symbol::intern(name), span)
 }
 
-/// Construct an admitted scalar, nominal, SDK error, or collection AST type without generating or parsing Rust source.
-fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
+/// Declare the exact owned or borrowed runtime handle, leaving other plan types to their ordinary declaration path.
+fn generator_signature_ty(kind: &PlanType, span: Span) -> Option<Box<ast::Ty>> {
+    let (name, leaf, depth, mutability) = match kind {
+        PlanType::Generator(leaf, depth) => ("Generator", leaf, *depth, None),
+        PlanType::GeneratorMutRef(leaf, depth) => ("Generator", leaf, *depth, Some(ast::Mutability::Mut)),
+        PlanType::GeneratorYield(leaf, depth) => ("GeneratorYield", leaf, *depth, None),
+        PlanType::GeneratorYieldRef(leaf, depth) => ("GeneratorYield", leaf, *depth, Some(ast::Mutability::Not)),
+        _ => return None,
+    };
+    let owned = generator_ty(name, leaf, depth, span);
+    Some(match mutability {
+        None => owned,
+        Some(mutbl) => Box::new(ast::Ty {
+            id: ast::DUMMY_NODE_ID,
+            kind: ast::TyKind::Ref(None, ast::MutTy { ty: owned, mutbl }),
+            span,
+            tokens: None,
+        }),
+    })
+}
+
+/// Construct an admitted native AST type without generating or parsing Rust source.
+pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
+    if let Some(ty) = zip_signature_ty(kind, span) {
+        return ty;
+    }
+    if let Some(ty) = generator_signature_ty(kind, span) {
+        return ty;
+    }
+    if let PlanType::TaskEvaluator(index, name, output) = kind {
+        return task_evaluator_ty(*index, name, output, span);
+    }
     let kind = match kind {
+        PlanType::TaskHandle(output) => {
+            let mut path = ast::Path::from_ident(ident("incan_std_async", span));
+            path.segments.push(ast::PathSegment::from_ident(ident("task", span)));
+            let mut segment = ast::PathSegment::from_ident(ident("JoinHandle", span));
+            segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
+                span,
+                args: thin_vec![ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(&tuple_element_type(output.clone()), span)))],
+            })));
+            path.segments.push(segment);
+            ast::TyKind::Path(None, path)
+        }
+
         PlanType::TaskJoinErrorRef => task_join_error_ast_type(true, span),
         PlanType::TaskJoinError => task_join_error_ast_type(false, span),
         PlanType::Tuple(elements) => ast::TyKind::Tup(
@@ -21,14 +63,19 @@ fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
                 .map(|element| ty(&tuple_element_type(element.clone()), span))
                 .collect(),
         ),
+        PlanType::Decimal => {
+            let mut path = ast::Path::from_ident(ident("incan_native_runtime", span));
+            path.segments.push(ast::PathSegment::from_ident(ident("DecimalCarrier", span)));
+            ast::TyKind::Path(None, path)
+        }
+        PlanType::FrozenStr => {
+            let mut path = ast::Path::from_ident(ident("incan_native_runtime", span));
+            path.segments.push(ast::PathSegment::from_ident(ident("FrozenCarrier", span)));
+            ast::TyKind::Path(None, path)
+        }
         PlanType::List(leaf, depth) => {
             let mut element = ty(
-                &match leaf {
-                    ListLeaf::Int => PlanType::Int,
-                    ListLeaf::Float => PlanType::Float,
-                    ListLeaf::Bool => PlanType::Bool,
-                    ListLeaf::Str => PlanType::String,
-                },
+                &list_leaf_type((*leaf).clone()),
                 span,
             );
             for _ in 0..*depth {
@@ -158,6 +205,29 @@ fn task_join_error_ast_type(borrowed: bool, span: Span) -> ast::TyKind {
     ast::TyKind::Path(None, path)
 }
 
+/// Declare the runtime generator's canonical type without creating an alternative wrapper layout.
+fn generator_ty(name: &str, leaf: &ListLeaf, depth: i64, span: Span) -> Box<ast::Ty> {
+    let element = if depth == 0 {
+        list_leaf_type(leaf.clone())
+    } else {
+        PlanType::List(leaf.clone(), depth)
+    };
+    let mut path = ast::Path::from_ident(ident("incan_std_core", span));
+    path.segments.push(ast::PathSegment::from_ident(ident("iter", span)));
+    let mut segment = ast::PathSegment::from_ident(ident(name, span));
+    segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
+        span,
+        args: thin_vec![ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(&element, span)))],
+    })));
+    path.segments.push(segment);
+    Box::new(ast::Ty {
+        id: ast::DUMMY_NODE_ID,
+        kind: ast::TyKind::Path(None, path),
+        span,
+        tokens: None,
+    })
+}
+
 /// A diverging placeholder satisfies every admitted signature; `mir_built` replaces its body.
 fn placeholder(span: Span) -> Box<ast::Block> {
     let empty = Box::new(ast::Block {
@@ -220,7 +290,9 @@ pub fn function(function: &Function, span: Span) -> Box<ast::Item> {
             sig: signature,
             contract: None,
             define_opaque: None,
-            body: Some(placeholder(span)),
+            body: Some(
+                crate::captured_generators::declaration_body(function, span).unwrap_or_else(|| placeholder(span)),
+            ),
             eii_impls: ThinVec::new(),
         })),
         span,
@@ -417,6 +489,9 @@ pub fn derive_attribute(generator: &ast::attr::AttrIdGenerator, name: &str, span
         AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, LazyAttrTokenStream, Spacing, TokenStream,
     };
     let mut tokens = Vec::new();
+    if name.starts_with("serde::") {
+        tokens.push(AttrTokenTree::Token(Token::new(TokenKind::PathSep, span), Spacing::Alone));
+    }
     if matches!(name, "FieldInfo" | "IncanClass") {
         tokens.push(AttrTokenTree::Token(
             Token::from_ast_ident(ident("incan_derive", span)),
@@ -427,10 +502,12 @@ pub fn derive_attribute(generator: &ast::attr::AttrIdGenerator, name: &str, span
             Spacing::Alone,
         ));
     }
-    tokens.push(AttrTokenTree::Token(
-        Token::from_ast_ident(ident(name, span)),
-        Spacing::Alone,
-    ));
+    for (index, segment) in name.split("::").enumerate() {
+        if index != 0 {
+            tokens.push(AttrTokenTree::Token(Token::new(TokenKind::PathSep, span), Spacing::Alone));
+        }
+        tokens.push(AttrTokenTree::Token(Token::from_ast_ident(ident(segment, span)), Spacing::Alone));
+    }
     let arguments = AttrTokenStream::new(tokens);
     let attribute_tokens = LazyAttrTokenStream::new_direct(AttrTokenStream::new(vec![
         AttrTokenTree::Token(Token::new(TokenKind::Pound, span), Spacing::JointHidden),
@@ -499,12 +576,7 @@ fn hashed_type(name: &str, leaves: &[&ListLeaf], span: Span) -> Box<ast::Ty> {
             .iter()
             .map(|leaf| {
                 ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(
-                    &match leaf {
-                        ListLeaf::Int => PlanType::Int,
-                        ListLeaf::Float => PlanType::Float,
-                        ListLeaf::Bool => PlanType::Bool,
-                        ListLeaf::Str => PlanType::String,
-                    },
+                    &list_leaf_type((*leaf).clone()),
                     span,
                 )))
             })
@@ -647,4 +719,66 @@ fn enum_tokens(value: &crate::plan::EnumDeclaration, span: Span) -> ast::tokenst
         AttrTokenStream::new(variants),
     ));
     LazyAttrTokenStream::new_direct(AttrTokenStream::new(tokens))
+}
+
+/// Declare the Incan runtime wrapper and its retained shared or exclusive reference without inventing its fields.
+fn zip_signature_ty(kind: &PlanType, span: Span) -> Option<Box<ast::Ty>> {
+    let (left, right, mutability) = match kind {
+        PlanType::ZipIterator(left, right) => (left, right, None),
+        PlanType::ZipIteratorRef(left, right) => (left, right, Some(ast::Mutability::Not)),
+        PlanType::ZipIteratorMutRef(left, right) => (left, right, Some(ast::Mutability::Mut)),
+        _ => return None,
+    };
+    let mut path = ast::Path::from_ident(ident("incan_native_runtime", span));
+    let mut segment = ast::PathSegment::from_ident(ident("ZipLists", span));
+    segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
+        span,
+        args: thin_vec![
+            ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(&tuple_element_type(left.clone()), span))),
+            ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(&tuple_element_type(right.clone()), span))),
+        ],
+    })));
+    path.segments.push(segment);
+    let owned = Box::new(ast::Ty {
+        id: ast::DUMMY_NODE_ID,
+        kind: ast::TyKind::Path(None, path),
+        span,
+        tokens: None,
+    });
+    Some(match mutability {
+        None => owned,
+        Some(mutbl) => Box::new(ast::Ty {
+            id: ast::DUMMY_NODE_ID,
+            kind: ast::TyKind::Ref(None, ast::MutTy { ty: owned, mutbl }),
+            span,
+            tokens: None,
+        }),
+    })
+}
+
+/// Declare a checked ready-task capture callback without a closure or substitute task layout.
+fn task_evaluator_ty(index: i64, name: &str, output: &crate::plan::TupleElement, span: Span) -> Box<ast::Ty> {
+    let input = ast::Param {
+        attrs: ThinVec::new(),
+        ty: ty(&PlanType::Enum(index, name.to_owned()), span),
+        pat: Box::new(ast::Pat { id: ast::DUMMY_NODE_ID, kind: ast::PatKind::Wild, span, tokens: None }),
+        id: ast::DUMMY_NODE_ID,
+        span,
+        is_placeholder: false,
+    };
+    Box::new(ast::Ty {
+        id: ast::DUMMY_NODE_ID,
+        kind: ast::TyKind::FnPtr(Box::new(ast::FnPtrTy {
+            safety: ast::Safety::Default,
+            ext: ast::Extern::None,
+            generic_params: ThinVec::new(),
+            decl: Box::new(ast::FnDecl {
+                inputs: thin_vec![input],
+                output: ast::FnRetTy::Ty(ty(&tuple_element_type(output.clone()), span)),
+            }),
+            decl_span: span,
+        })),
+        span,
+        tokens: None,
+    })
 }

@@ -1,0 +1,38 @@
+"""Canonical SDK task carriers with explicitly retained scalar output layouts."""
+
+from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive
+from rust::incan_semantics_core::body_ir import NominalDeclaration
+from rust::incan_lang::lang::surface::types import SurfaceTypeId, from_str as surface_type
+from pub::incan_mir_plan import PlanType, TupleElement
+
+
+pub def task_type(declarations: list[NominalDeclaration], ty: &RustType) -> Option[Result[PlanType, str]]:
+    """Recognize the checked SDK surface type without replacing its native ADT layout."""
+    match ty:
+        RustType.Generic(base=base, args=arguments) =>
+            if surface_type(str(base)) != Some(SurfaceTypeId.JoinHandle):
+                return None
+            for declaration in declarations:
+                if declaration.name == str(base):
+                    return Some(Err("unsupported Body IR ambiguous source and SDK task carrier"))
+            if len(arguments) != 1:
+                return Some(Err("unsupported Body IR task output arity"))
+            match task_output(arguments[0]):
+                Ok(output) => return Some(Ok(PlanType.TaskHandle(output)))
+                Err(error) => return Some(Err(error))
+        _ => return None
+
+
+pub def task_output(ty: &RustType) -> Result[TupleElement, str]:
+    """Retain supported output types exactly; aggregate outputs need their own task carrier."""
+    match ty:
+        RustType.Primitive(primitive) =>
+            match primitive:
+                Primitive.Int => return Ok(TupleElement.Int)
+                Primitive.Float => return Ok(TupleElement.Float)
+                Primitive.Bool => return Ok(TupleElement.Bool)
+                Primitive.Unit => return Ok(TupleElement.Unit)
+                Primitive.Str => return Ok(TupleElement.String)
+                _ => pass
+        _ => pass
+    return Err("unsupported Body IR task output carrier")

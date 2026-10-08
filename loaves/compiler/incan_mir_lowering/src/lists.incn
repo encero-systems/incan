@@ -11,7 +11,7 @@ from rust::incan_semantics_core::body_ir import (
 
 
 pub def list_shape(ty: PlanType) -> Option[tuple[ListLeaf, int]]:
-    """Read an owned or borrowed list's primitive leaf and nesting depth."""
+    """Read an owned or borrowed list's admitted leaf and nesting depth."""
     match ty:
         PlanType.List(leaf, depth) => return Some((leaf, depth))
         PlanType.ListRef(leaf, depth) => return Some((leaf, depth))
@@ -46,7 +46,7 @@ pub def statement_iterator_locals(kind: &RustStatementKind) -> list[int]:
     mut result: list[int] = []
     match kind:
         RustStatementKind.IterNext(destination=_destination, iterator=iterator, protocol=protocol) =>
-            if is_builtin_iteration(protocol):
+            if is_borrowing_builtin_iteration(protocol):
                 match iterator:
                     RustOperand.Place(read) =>
                         match read.place.local_id():
@@ -81,11 +81,32 @@ pub def is_builtin_iteration(protocol: &IterProtocol) -> bool:
     """Match a borrowed protocol tag without treating a pattern binding as an owned enum value."""
     match protocol:
         IterProtocol.Builtin => return true
+        IterProtocol.BuiltinTaking => return true
+        _ => return false
+
+
+pub def is_borrowing_builtin_iteration(protocol: &IterProtocol) -> bool:
+    """Only shared-view iterators replace their checked owner type with a native reference."""
+    match protocol:
+        IterProtocol.Builtin => return true
+        _ => return false
+
+
+pub def is_taking_builtin_iteration(protocol: &IterProtocol) -> bool:
+    """Read the checker's explicit permission to take list items, without deriving it from the leaf type."""
+    match protocol:
+        IterProtocol.BuiltinTaking => return true
         _ => return false
 
 
 pub def list_parameter_type(ty: PlanType, mutable: bool) -> PlanType:
     """Map supported collection parameters and iterable storage to caller-owned references."""
+    match ty:
+        PlanType.Generator(leaf, depth) =>
+            if mutable:
+                return PlanType.GeneratorMutRef(leaf, depth)
+            return ty
+        _ => pass
     match list_shape(ty):
         Some((leaf, depth)) =>
             if mutable:

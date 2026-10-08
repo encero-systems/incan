@@ -76,6 +76,13 @@ pub def pop_list[T](mut values: list[T]) -> T:
     return values.pop()
 
 
+pub def take_front[T](mut values: list[T]) -> T:
+    """Move the first item without Clone, preserving the order of the remaining owned items."""
+    for index in range(1, len(values)):
+        values.swap(index - 1, index)
+    return values.pop()
+
+
 pub def remove_list[T](mut values: list[T], index: int) -> None:
     """Remove one element using legacy Python-style index normalization."""
     values.remove(index)

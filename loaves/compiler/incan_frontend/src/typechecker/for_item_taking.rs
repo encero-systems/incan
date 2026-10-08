@@ -184,7 +184,13 @@ impl TypeChecker {
             return false;
         }
         let (list, symbol, definition) = match self.for_items_source(&for_stmt.iter) {
-            ItemsSource::OwnValues => return true,
+            ItemsSource::OwnValues => {
+                if matches!(self.type_info.expr_type(for_stmt.iter.span), Some(ResolvedType::Generic(base, _)) if collection_type_id(base) == Some(CollectionTypeId::List))
+                {
+                    self.type_info.record_for_loop_takes_items(for_stmt.iter.span);
+                }
+                return true;
+            }
             ItemsSource::Unresolved => return false,
             ItemsSource::Untakeable(iterable) => {
                 let error = errors::loop_cannot_take_items(iterable, &item_type_display(item_ty), for_stmt.iter.span);

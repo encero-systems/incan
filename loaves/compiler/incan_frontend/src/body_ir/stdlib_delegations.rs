@@ -19,8 +19,9 @@ pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::StdlibDelegation> {
         .collect()
 }
 
-/// Prove that one undecorated scalar wrapper returns its Rust callee with every parameter exactly once in declaration
-/// order. Checking supplies the native identity; the source spelling never becomes an execution path.
+/// Prove that one undecorated scalar wrapper, or the canonical SDK task-spawn wrapper, returns its Rust callee with
+/// every parameter exactly once in declaration order. Checking supplies the native identity; the source spelling
+/// never becomes an execution path. Generic task carriers require separately retained checked instantiation facts.
 fn delegation(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Option<bir::StdlibDelegation> {
     let source_identity = cache.callable_source_identity(identity)?;
     let SymbolOrigin::Module(path) = &source_identity.origin else {
@@ -38,9 +39,10 @@ fn delegation(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Optio
     if functions.next().is_some() {
         return None;
     }
+    let task_spawn = path.as_slice() == ["std", "async", "task"] && function.name == "spawn";
     if function.is_async()
         || !function.decorators.is_empty()
-        || !function.type_params.is_empty()
+        || (!task_spawn && !function.type_params.is_empty())
         || function
             .params
             .iter()
@@ -48,7 +50,21 @@ fn delegation(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Optio
     {
         return None;
     }
-    let [statement] = function.body.as_slice() else {
+    // The SDK spawn wrapper documents its contract with a leading literal statement. It has no execution effect;
+    // retaining that docstring must not make a proven forwarding call disappear from Body IR.
+    let body = if task_spawn
+        && matches!(
+            function.body.first().map(|statement| &statement.node),
+            Some(ast::Statement::Expr(ast::Spanned {
+                node: ast::Expr::Literal(ast::Literal::String(_)),
+                ..
+            }))
+        ) {
+        &function.body[1..]
+    } else {
+        function.body.as_slice()
+    };
+    let [statement] = body else {
         return None;
     };
     let ast::Statement::Return(Some(value)) = &statement.node else {
@@ -85,7 +101,7 @@ fn delegation(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Optio
         .map(|parameter| semantic_type_from_resolved(&parameter.ty))
         .collect::<Vec<_>>();
     let return_type = semantic_type_from_resolved(&binding.return_type);
-    if !parameters.iter().chain(std::iter::once(&return_type)).all(scalar) {
+    if !task_spawn && !parameters.iter().chain(std::iter::once(&return_type)).all(scalar) {
         return None;
     }
     let fact = bir::StdlibDelegation {
@@ -94,7 +110,10 @@ fn delegation(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Optio
         parameters,
         return_type,
     };
-    fact.rust_path()?;
+    let path = fact.rust_path()?;
+    if task_spawn && path != "incan_std_async::task::spawn" {
+        return None;
+    }
     Some(fact)
 }
 
@@ -111,6 +130,32 @@ fn scalar(ty: &IncanType) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{StdlibAstCache, SymbolOrigin, delegation};
+
+    /// Generic SDK spawn forwarding retains its checked native target without admitting arbitrary source wrappers.
+    #[test]
+    fn sdk_task_spawn_retains_its_checked_delegation() -> Result<(), Box<dyn std::error::Error>> {
+        let mut cache = StdlibAstCache::new();
+        let path = vec!["std".to_owned(), "async".to_owned(), "task".to_owned()];
+        let identity = cache
+            .lookup_identity(&path, "spawn")
+            .ok_or("missing SDK spawn identity")?;
+        let program = cache.callable_program(&identity).ok_or("missing SDK spawn source")?;
+        let mut checker = super::TypeChecker::new();
+        checker.set_current_module_path(Some(path));
+        let checked = checker.check_program(&program);
+        let fact = delegation(&identity, &mut cache);
+        assert!(
+            fact.is_some(),
+            "checked: {checked:?}\nbindings: {:?}\nreferences: {:?}",
+            checker.type_info().declarations.function_bindings,
+            checker.type_info().references.resolved_identities
+        );
+        assert_eq!(
+            fact.and_then(|fact| fact.rust_path()).as_deref(),
+            Some("incan_std_async::task::spawn")
+        );
+        Ok(())
+    }
 
     /// SDK publication may rebase the owner, but a wrong package or declaration span cannot gain forwarding rights.
     #[test]

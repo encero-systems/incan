@@ -3,6 +3,7 @@
 use super::primitives::*;
 use super::refusals::*;
 use super::*;
+use incan_semantics_core::SymbolNamespace;
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Retain the checker's constant tuple index, including negative literals, before flattening ordinary expressions.
@@ -22,11 +23,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.lower_expr_to_operand(index, scope, out)
     }
 
-    /// Classify source-written tuple projections from the checked base type, preserving nominal field authority.
+    /// Classify tuple projections and retain the declaration name selected for a checked nominal field alias.
     ///
     /// Numeric spelling alone proves nothing: only an in-bounds element of the existing checked tuple shape is
-    /// structural. Other fields retain their checked canonical identity, including an explicit unresolved value.
-    fn lower_checked_field_projection(
+    /// structural. Checked member fields use the canonical declaration's name and identity together, so an alias
+    /// cannot become a second storage slot. Unresolved fields preserve their source spelling and remain unproven.
+    pub(super) fn lower_checked_field_projection(
         &self,
         base: &ast::Spanned<ast::Expr>,
         name: &str,
@@ -46,6 +48,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         {
             bir::PlaceElem::structural_field(name)
         } else {
+            if let Some(identity) = self.type_info.resolved_identity(span)
+                && identity.namespace == SymbolNamespace::Member
+                && identity.kind == SemanticSourceTargetKind::Field
+            {
+                return bir::PlaceElem::field(identity.declaration_name.clone(), Some(identity.clone()));
+            }
             bir::PlaceElem::field(name, self.type_info.resolved_identity(span).cloned())
         }
     }
@@ -87,6 +95,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         out,
                     );
                 };
+                if let Some(global) = place.global()
+                    && global.identity.kind == SemanticSourceTargetKind::Const
+                    && let Some(value) = self.published_constants.get(&global.identity)
+                {
+                    let constant = match value {
+                        bir::Constant::Int(number) if ty == IncanType::Primitive(IncanPrimitiveType::Float) => {
+                            bir::Constant::Float(number.to_string())
+                        }
+                        value => value.clone(),
+                    };
+                    return bir::Operand::Constant(constant);
+                }
                 // Retain the checker's evaluated scalar or text for a source-local constant. Identity must prove the
                 // module and declaration kind before the name-keyed const-evaluation table is consulted;
                 // imported globals and same-spelled locals keep their existing place representation.

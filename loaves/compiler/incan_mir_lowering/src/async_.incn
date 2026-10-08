@@ -1,6 +1,11 @@
 """Deferred source calls and SDK operations with serial await evaluation and ready-only races."""
 
-from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive, SemanticSourceTargetKind
+from rust::incan_semantics_core import (
+    IncanType as RustType,
+    IncanPrimitiveType as Primitive,
+    SemanticSourceTargetKind,
+    CanonicalSymbolId,
+)
 from rust::incan_semantics_core::body_ir import BodyIrModule, Body, SdkAsyncPrimitive
 from pub::incan_mir_plan import (
     PlanType,
@@ -30,7 +35,7 @@ from models import place_type
 from sdk_async import capture_types as sdk_capture_types, await_primitive
 
 
-def outputs(module: &BodyIrModule) -> list[RustType]:
+pub def outputs(module: &BodyIrModule) -> list[RustType]:
     """Retain each source future output once, independently of any call site's spelling."""
     mut retained: list[RustType] = []
     for body in module.bodies:
@@ -209,6 +214,18 @@ pub def await_future(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Dispatch an owned future by its discriminant, consuming captures before serial source or SDK evaluation."""
+    return await_selected_future(module, builder, future, destination, span, None)
+
+
+pub def await_selected_future(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    future: Place,
+    destination: Place,
+    span: SourceSpan,
+    selected: Option[list[CanonicalSymbolId]],
+) -> Result[None, str]:
+    """Keep the shared enum layout while task callbacks admit only checker-proven spawned declarations."""
     match place_type(builder.locals, future):
         PlanType.Enum(owner, _name) =>
             index = owner - len(module.enum_declarations) - len(builder.intrinsics)
@@ -222,8 +239,16 @@ pub def await_future(
             forget_owned(builder, future.local)
             after = builder.new_block(span)
             for variant in range(len(bodies)):
-                next_variant = select_future_variant(builder, number, variant, span)
                 body = module.bodies[bodies[variant]]
+                match selected:
+                    Some(identities) =>
+                        match body.canonical:
+                            Some(identity) =>
+                                if identity not in identities:
+                                    continue
+                            None => return Err("unsupported Body IR task callback without source identity")
+                    None => pass
+                next_variant = select_future_variant(builder, number, variant, span)
                 mut arguments: list[Operand] = []
                 fields = capture_types(module, body, builder.intrinsics)?
                 for slot in range(len(fields)):
@@ -241,7 +266,7 @@ pub def await_future(
                 terminate_call(builder, CalleeKind.Planned(evaluator_name(module, body)), arguments, destination, span)
                 builder.finish(TerminatorKind.Goto(after), span)
                 builder.current = next_variant
-            if outputs(module)[index] == unit_output():
+            if outputs(module)[index] == unit_output() and selected.is_none():
                 for primitive in range(len(module.sdk_async_primitives)):
                     variant = len(bodies) + primitive
                     next_variant = select_future_variant(builder, number, variant, span)

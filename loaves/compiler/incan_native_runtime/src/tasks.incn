@@ -1,0 +1,22 @@
+"""SDK scheduling and one-shot joins for direct native ready-task callbacks."""
+
+import std.async
+from std.rust import Send, Static
+from std.async.task import spawn, JoinHandle, TaskJoinError
+from rust::incan_std_async::__private::tokio::task import block_in_place
+from rust::incan_std_async::__private::tokio::runtime import Handle
+
+
+async def invoke_task[C with (Send, Static), T with (Send, Static)](capture: C, callback: (C) -> T) -> T:
+    """Run a ready evaluator only after Tokio polls the spawned task; captures are owned by that task."""
+    return callback(capture)
+
+
+pub def spawn_ready_task[C with (Send, Static), T with (Send, Static)](capture: C, callback: (C) -> T) -> JoinHandle[T]:
+    """Schedule through the actual SDK; dropping the returned handle preserves durable task execution."""
+    return spawn(invoke_task(capture, callback))
+
+
+pub def await_task[T with (Send, Static)](handle: JoinHandle[T]) -> Result[T, TaskJoinError]:
+    """Consume and poll the real SDK handle, retaining task failures in the canonical SDK error carrier."""
+    return block_in_place(() => Handle.current().block_on(handle))

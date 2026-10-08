@@ -33,10 +33,12 @@ mod control_flow;
 mod dict_lookups;
 mod error_display;
 mod list_methods;
+mod literal_carriers;
 mod match_;
 mod match_coverage;
 mod ops;
 mod printed_form;
+mod task_types;
 
 pub(in crate::typechecker) use collections::fill_open_result_parts;
 
@@ -746,6 +748,7 @@ impl TypeChecker {
 
         // Record for downstream stages (lowering/codegen).
         self.record_expr_type(expr.span, ty.clone());
+        self.record_sdk_task_expression_type(expr);
         self.refuse_capturing_callables_held_in(expr);
         ty
     }
@@ -827,6 +830,11 @@ impl TypeChecker {
                 let ty = self.check_expr(expr);
                 self.type_token_value_spans.pop();
                 ty
+            }
+            // None constructs the Option its destination already proves. Retaining that type here also fixes
+            // an enclosing intrinsic constructor's payload type without downstream inference.
+            (Expr::Literal(Literal::None), Some(expected_ty)) if expected_ty.option_inner_type().is_some() => {
+                expected_ty.clone()
             }
             (Expr::Literal(literal @ Literal::Int(value)), _) if value.suffix.is_some() => {
                 self.check_literal(literal, expr.span)
@@ -911,6 +919,7 @@ impl TypeChecker {
             self.refuse_collection_literal_without_one_member(&ty, expected, expr.span);
         }
         self.record_expr_type(expr.span, ty.clone());
+        self.record_sdk_task_expression_type(expr);
         self.refuse_capturing_callables_held_in(expr);
         ty
     }

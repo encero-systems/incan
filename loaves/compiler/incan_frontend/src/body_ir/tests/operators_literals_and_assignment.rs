@@ -5,6 +5,53 @@
 
 use super::*;
 
+/// Constructor temporaries use the open sides settled by their binding and in-place match contexts.
+#[test]
+fn settled_constructor_spans_retain_payload_types() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n    value = Ok(7)\n    match value:\n        Ok(number) => println(number)\n        Err(_) => pass\n    match Ok(8):\n        Ok(number) => println(number)\n        Err(_) => pass\n",
+        &["settled_constructors"],
+    )?;
+    for body in &module.bodies {
+        for local in &body.locals {
+            assert!(!local.ty.to_string().contains('?'), "unresolved local: {local:?}");
+        }
+    }
+    Ok(())
+}
+
+/// Nested intrinsic constructors retain the contextual payload types that their checked call parameters require.
+#[test]
+fn nested_carrier_arguments_retain_checked_payload_types() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def describe(value: Result[Option[int], str]) -> str:\n    match value:\n        Ok(Some(0)) => return \"zero\"\n        Ok(Some(n)) => return f\"{n}\"\n        Ok(None) => return \"empty\"\n        Err(message) => return message\n\ndef main() -> None:\n    println(describe(Ok(Some(7))))\n    println(describe(Ok(None)))\n    println(describe(Err(\"boom\")))\n";
+    let module = build(source, &["nested_carriers"])?;
+    for body in &module.bodies {
+        for local in &body.locals {
+            assert!(
+                !local.ty.to_string().contains('?'),
+                "unresolved local in {}: {local:?}",
+                body.name
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Empty nested literals carry the peer-proven storage types at every Body IR local.
+#[test]
+fn nested_empty_list_locals_retain_checked_element_types() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n    rows = [[], [\"x\"]]\n    deep = [[[]], [[\"y\"]]]\n",
+        &["nested_empty_lists"],
+    )?;
+    let body = body_named(&module, "main")?;
+    assert!(!body.locals.is_empty());
+    for local in &body.locals {
+        assert!(!local.ty.to_string().contains('?'), "unresolved local: {local:?}");
+    }
+    Ok(())
+}
+
 /// Operand and recursive place lowering retain checked tuple indices rather than temporary unary results.
 #[test]
 fn checked_negative_tuple_indices_remain_constant_projections() -> Result<(), Box<dyn std::error::Error>> {
@@ -981,6 +1028,9 @@ fn text_constants_retain_checked_values_without_shadowing_local_places() -> Resu
     )?;
     let constant = body_named(&module, "constant")?.render_snapshot();
     assert!(constant.contains("hello world"), "{constant}");
+    let declaration = module.constant_declarations.first().ok_or("checked constant missing")?;
+    assert_eq!(declaration.canonical.declaration_name, "TEXT");
+    assert_eq!(declaration.value, bir::Constant::Str("hello world".into()));
     let local = body_named(&module, "local")?.render_snapshot();
     assert!(!local.contains("hello world"), "{local}");
     assert!(local.contains("_0"), "{local}");

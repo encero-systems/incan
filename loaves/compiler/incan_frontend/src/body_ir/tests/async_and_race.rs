@@ -40,6 +40,28 @@ fn retains_catalog_owned_sdk_async_primitives() -> Result<(), Box<dyn std::error
 const ASYNC_PRELUDE: &str =
     "import std.async\n\nasync def fast() -> int:\n  return 1\n\nasync def slow() -> int:\n  return 2\n\n";
 
+/// A spawned source future retains a concrete SDK handle across a source return and subsequent join.
+#[test]
+fn retains_spawned_handle_output_before_await() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "import std.async\nfrom std.async.task import spawn, JoinHandle\n\nasync def work(value: int) -> int:\n    return value + 1\n\ndef launch(value: int) -> JoinHandle[int]:\n    return spawn(work(value))\n\nasync def main() -> None:\n    handle = launch(8)\n    match await handle:\n        Ok(value) => println(value)\n        Err(_) => println(\"join failed\")\n";
+    let module = build(source, &["m", "ready_task"])?;
+    let handle = IncanType::Generic {
+        base: "JoinHandle".to_owned(),
+        args: vec![IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Int)],
+    };
+    let launch = body_named(&module, "launch")?;
+    assert_eq!(launch.return_type, handle, "{}", module.render_snapshot());
+    assert!(
+        launch
+            .locals
+            .iter()
+            .all(|local| !matches!(local.ty, IncanType::RustInteropPath(_))),
+        "{}",
+        module.render_snapshot()
+    );
+    Ok(())
+}
+
 /// Await consumes the owned future and records a separately typed resumed destination.
 #[test]
 fn lowers_await_as_an_explicit_suspension_point_with_a_destination() -> Result<(), Box<dyn std::error::Error>> {
@@ -403,7 +425,9 @@ fn a_prefix_surface_keyword_that_is_not_await_is_refused_rather_than_treated_as_
     let local_fieldless_enum_declarations = LocalFieldlessEnumDeclarations::new();
     let local_value_enum_declarations = LocalValueEnumDeclarations::new();
     let provider_operations = ProviderOperationCatalog::new();
+    let published_constants = HashMap::new();
     let lowering_facts = BodyIrLoweringFacts {
+        published_constants: &published_constants,
         type_info: &type_info,
         function_default_sources: &function_default_sources,
         local_function_declarations: &local_function_declarations,

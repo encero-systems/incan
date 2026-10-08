@@ -119,6 +119,7 @@ fn synthetic_body() -> Body {
     let span = HirSourceSpan { start: 0, end: 10 };
     let id = CompilerNodeId::declaration_span("fixture", span.start, span.end);
     Body {
+        type_parameters: Vec::new(),
         decl_id: id.clone(), direct_call_id: id,
         canonical: Some(CanonicalSymbolId::module_declaration(vec!["fixture".into()], "sample", SemanticSourceTargetKind::Function, span)),
         name: "sample".into(), span, return_type: IncanType::Primitive(IncanPrimitiveType::Unit),
@@ -131,6 +132,8 @@ fn synthetic_body() -> Body {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut module = BodyIrModule {
+        constant_declarations: Vec::new(),
+        type_alias_declarations: Vec::new(),
         module_id: CompilerNodeId::module("fixture"), stdlib_delegations: vec![], sdk_async_primitives: vec![], static_declarations: vec![], enum_declarations: vec![], nominal_declarations: vec![],
         fieldless_enum_declarations: vec![], value_enum_declarations: vec![], trait_declarations: vec![], trait_implementations: vec![], bodies: vec![synthetic_body()],
     };

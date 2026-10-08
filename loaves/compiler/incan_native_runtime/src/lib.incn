@@ -1,7 +1,30 @@
 """Language formatting and collection helpers used by the direct native route."""
 
+pub from decimals import decimal_from_parts, format_decimal, equal_decimal, unequal_decimal
+pub from decimals import less_decimal, less_equal_decimal, greater_decimal, greater_equal_decimal
+pub from rust::incan_std_core::num import Decimal128 as DecimalCarrier
+pub from frozen_text import format_frozen
+pub from rust::incan_std_core::frozen import FrozenStr as FrozenCarrier
 pub from carriers import format_carrier, clone_carrier_payload
 pub from async_ import run_async_entry, await_sleep_seconds, await_sleep_millis, await_yield_now
+pub from tasks import spawn_ready_task, await_task
+pub from generators import poll_generator
+pub from model_values import (
+    debug_model,
+    debug_value,
+    serialize_model,
+    serialize_int,
+    serialize_float,
+    serialize_bool,
+    serialize_string,
+    equal_model,
+    unequal_model,
+    less_model,
+    less_equal_model,
+    greater_model,
+    greater_equal_model,
+)
+pub from tuple_iterators import ZipLists, zip_lists, clone_zip, poll_zip, enumerate_list, enumerate_text
 pub from collections import empty_set, insert_set, length_set, contains_set, clone_set
 pub from collections import extend_list_set, extend_set, extend_dict
 pub from collections import (
@@ -22,12 +45,24 @@ pub from builtins import sum_int, sum_bool, truth_text, truth_list
 pub from builtins import absolute_int, truth_int, truth_float, truth_bool, boolean_and, boolean_or
 from rust::incan_std_core::iter import range as runtime_range
 pub from statics import (
+    read_static_text,
+    write_static_text,
     read_static_int,
     write_static_int,
     read_static_float,
     write_static_float,
     read_static_bool,
     write_static_bool,
+)
+pub from static_lists import (
+    read_static_int_list,
+    write_static_int_list,
+    read_static_float_list,
+    write_static_float_list,
+    read_static_bool_list,
+    write_static_bool_list,
+    read_static_text_list,
+    write_static_text_list,
 )
 from panic_hook import initialize_panic_hook as initialize_entrypoint
 pub from strings import (
@@ -53,7 +88,7 @@ pub from lists import empty_list, append_list, length_list, get_list, set_list, 
 pub from lists import concat_list, sorted_list, sorted_float
 pub from lists import contains_list
 pub from lists import borrow_list_mut
-pub from lists import count_list, index_list, extend_list, pop_list, remove_list, swap_list
+pub from lists import count_list, index_list, extend_list, pop_list, take_front, remove_list, swap_list
 pub from numerics import (
     format_isize,
     int_isize,

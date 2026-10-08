@@ -1,0 +1,241 @@
+"""Ready source-task scheduling through canonical SDK handles and checked capture callbacks."""
+
+from rust::incan_semantics_core import CanonicalSymbolId
+from rust::incan_semantics_core::body_ir import (
+    BodyIrModule,
+    Block,
+    StatementKind as RustStatementKind,
+    Callee as RustCallee,
+    CallableTarget,
+)
+from pub::incan_mir_plan import (
+    PlanType,
+    BasicBlock,
+    EnumDeclaration,
+    Function,
+    ExternalFunction,
+    Local,
+    Parameter,
+    SourceSpan,
+    Place,
+    Operand,
+    RvalueKind,
+    CalleeKind,
+    TerminatorKind,
+    tuple_element_type,
+)
+from pub::incan_mir_plan import assign as plan_assign, place as plan_place
+from frame import Builder, temporary, read_place, value_type, forget_moved_arguments, forget_owned, terminate_call
+from async_ import outputs, await_selected_future
+from task_types import task_output, task_type
+
+
+pub def spawned_source_futures(module: &BodyIrModule) -> list[CanonicalSymbolId]:
+    """Read callback identities retained on checked SDK spawn calls, including calls nested in blocks."""
+    mut retained: list[CanonicalSymbolId] = []
+    for body in module.bodies:
+        collect_spawned_sources(body.block, retained)
+    return retained
+
+
+def collect_spawned_sources(block: &Block, mut retained: list[CanonicalSymbolId]) -> None:
+    """Traverse control-flow blocks without reconstructing a task argument's declaration from its value."""
+    for statement in block.stmts:
+        match statement.kind:
+            RustStatementKind.Call(destination=_destination, callee=callee, args=_args, may_panic=_panic) =>
+                match callee:
+                    RustCallee.Function(callable) =>
+                        match callable:
+                            CallableTarget.Named(target) =>
+                                match target.task_source_future:
+                                    Some(identity) =>
+                                        if identity not in retained:
+                                            retained.append(identity)
+                                    None => pass
+                            _ => pass
+                    _ => pass
+            RustStatementKind.If(cond=_cond, then_block=then_block, else_block=else_block) =>
+                collect_spawned_sources(then_block, retained)
+                match else_block:
+                    Some(other) => collect_spawned_sources(other, retained)
+                    None => pass
+            RustStatementKind.Loop(body=body) => collect_spawned_sources(body, retained)
+            _ => pass
+
+
+pub def validate_ready_task_module(module: &BodyIrModule) -> Result[None, str]:
+    """Refuse suspending source callbacks only when the checker proved they were passed to SDK spawn."""
+    selected = spawned_source_futures(module)
+    for body in module.bodies:
+        match body.canonical:
+            Some(identity) =>
+                if identity not in selected:
+                    continue
+            None => continue
+        for local in body.locals:
+            match task_type(module.nominal_declarations, local.ty):
+                Some(Ok(_carrier)) => return Err("unsupported Body IR task callback group requiring suspending polling")
+                Some(Err(reason)) => return Err(reason)
+                None => pass
+    return Ok(None)
+
+
+pub def lower_task_spawn(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    capture: Operand,
+    destination: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Move one checked deferred source future into a real Tokio task without evaluating it at spawn."""
+    match value_type(builder, capture)?:
+        PlanType.Enum(owner, name) =>
+            index = owner - len(module.enum_declarations) - len(builder.intrinsics)
+            if index < 0 or index >= len(outputs(module)):
+                return Err("unsupported Body IR spawn outside retained source future")
+            output = task_output(outputs(module)[index])?
+            handle = PlanType.TaskHandle(output)
+            if builder.locals[destination.local].ty != handle:
+                return Err("invalid Body IR task handle output identity")
+            capture_type = PlanType.Enum(owner, name)
+            callback_type = PlanType.TaskEvaluator(owner, name, output)
+            callback = temporary(builder, callback_type, span)
+            builder.emit(plan_assign(callback, RvalueKind.TaskEvaluator(f"__incan_task_evaluate_{index}"), span))
+            arguments = [capture, read_place(callback, false, span)]
+            forget_moved_arguments(builder, arguments)
+            path = "incan_native_runtime::spawn_ready_task"
+            result_type = tuple_element_type(output)
+            builder.externals.append(
+                ExternalFunction(
+                    path=path,
+                    type_arguments=[capture_type, result_type],
+                    parameters=[capture_type, callback_type],
+                    return_type=handle,
+                    span=span,
+                ),
+            )
+            terminate_call(
+                builder,
+                CalleeKind.InstantiatedPair(path, capture_type, result_type),
+                arguments,
+                destination,
+                span,
+            )
+            builder.owned.append(destination.local)
+            return Ok(None)
+        _ => return Err("unsupported Body IR task spawn without owned source future")
+
+
+pub def await_task(mut builder: Builder, handle: Place, destination: Place, span: SourceSpan) -> Result[None, str]:
+    """Consume the actual SDK handle, preserving its Result output and task failure identity."""
+    match builder.locals[handle.local].ty:
+        PlanType.TaskHandle(output) =>
+            ty = tuple_element_type(output)
+            path = "incan_native_runtime::await_task"
+            result_type = builder.locals[destination.local].ty
+            builder.externals.append(
+                ExternalFunction(
+                    path=path,
+                    type_arguments=[ty],
+                    parameters=[PlanType.TaskHandle(output)],
+                    return_type=result_type,
+                    span=span,
+                ),
+            )
+            forget_owned(builder, handle.local)
+            terminate_call(
+                builder,
+                CalleeKind.Instantiated(path, ty),
+                [read_place(handle, true, span)],
+                destination,
+                span,
+            )
+            builder.owned.append(destination.local)
+            return Ok(None)
+        _ => return Err("unsupported Body IR join without task handle")
+
+
+pub def task_evaluators(
+    module: &BodyIrModule,
+    intrinsics: list[EnumDeclaration],
+    file: str,
+    mut functions: list[Function],
+    mut externals: list[ExternalFunction],
+) -> Result[None, str]:
+    """Build callbacks only for checker-proven SDK spawn inputs, consuming each future once."""
+    selected = spawned_source_futures(module)
+    for index in range(len(outputs(module))):
+        mut used = false
+        for body in module.bodies:
+            if body.return_type != outputs(module)[index]:
+                continue
+            match body.canonical:
+                Some(identity) =>
+                    if identity in selected:
+                        used = true
+                None => pass
+        if not used:
+            continue
+        function, runtime = task_evaluator(module, intrinsics, file, index)?
+        functions.append(function)
+        externals.extend(runtime)
+    return Ok(None)
+
+
+def task_evaluator(
+    module: &BodyIrModule,
+    intrinsics: list[EnumDeclaration],
+    file: str,
+    index: int,
+) -> Result[tuple[Function, list[ExternalFunction]], str]:
+    """Reuse deferred-future dispatch with the exact checker-retained callback identities."""
+    span = SourceSpan(file=file, line=1, column=1)
+    output = tuple_element_type(task_output(outputs(module)[index])?)
+    capture = PlanType.Enum(len(module.enum_declarations) + len(intrinsics) + index, f"__incan_ready_future_{index}")
+    mut builder = Builder(
+        locals=[Local(ty=output, span=span), Local(ty=capture, span=span)],
+        parameter_count=1,
+        blocks=[],
+        current=0,
+        source="",
+        file=file,
+        module_identity=str(module.module_id.path()),
+        loops=[],
+        loop_owners=[],
+        externals=[],
+        owned=[1],
+        closed=[],
+        nominals=module.nominal_declarations,
+        iterators=[],
+        borrowed_items=[],
+        enums=module.enum_declarations,
+        intrinsics=intrinsics,
+        statics=module.static_declarations,
+        value_enums=module.value_enum_declarations,
+        local_offset=0,
+        generator_handle=-1,
+        unions=[],
+        instances=[],
+        type_parameters=[],
+        type_arguments=[],
+    )
+    _ = builder.new_block(span)
+    await_selected_future(
+        module,
+        builder,
+        plan_place(1, span),
+        plan_place(0, span),
+        span,
+        Some(spawned_source_futures(module)),
+    )?
+    builder.finish(TerminatorKind.Return, span)
+    return Ok(
+        (Function(
+            name=f"__incan_task_evaluate_{index}",
+            parameters=[Parameter(name="future", ty=capture, span=span)],
+            return_type=output,
+            locals=builder.locals,
+            blocks=builder.blocks,
+            span=span,
+        ), builder.externals),
+    )

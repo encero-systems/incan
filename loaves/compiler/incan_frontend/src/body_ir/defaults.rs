@@ -2,6 +2,80 @@
 
 use super::*;
 
+/// Retain each admitted model's field defaults in a declaration-owned frame, evaluated only for omitted slots.
+pub(super) fn attach_model_field_defaults(
+    program: &ast::Program,
+    declarations: &mut [bir::NominalDeclaration],
+    facts: &BodyIrLoweringFacts<'_, '_>,
+) {
+    for source in &program.declarations {
+        let ast::Declaration::Model(model) = &source.node else {
+            continue;
+        };
+        let Some(declaration) = declarations.iter_mut().find(|value| value.name == model.name) else {
+            continue;
+        };
+        if !declaration.has_field_defaults {
+            continue;
+        }
+
+        // ---- Declaration-local frame ----
+        let span = hir_span(source.span);
+        let mut builder = BodyBuilder::new(
+            facts,
+            IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Unit),
+        );
+        let scope = builder.new_scope(None, span);
+
+        // ---- Canonical field slots and deferred computations ----
+        let mut params = Vec::new();
+        for (field, ty) in model.fields.iter().zip(&declaration.field_types) {
+            let local =
+                builder.declare_new_local(field.node.name.clone(), ty.clone(), scope, hir_span(field.span), &[]);
+            builder.locals[local.index()].origin = bir::LocalOrigin::Parameter;
+            params.push(bir::CallableParam {
+                local,
+                name: field.node.name.clone(),
+                ty: ty.clone(),
+                span: hir_span(field.span),
+                default: builder.lower_callable_default(field.node.default.as_ref(), scope),
+                mutable: false,
+            });
+        }
+
+        // ---- Owned frame metadata; construction selects computations, never this empty block ----
+        if builder
+            .locals
+            .iter()
+            .any(|local| !local.ty.abi_v0_facts().ownership.is_trivially_copy())
+        {
+            builder.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
+        }
+        declaration.field_default_body = Some(Box::new(bir::Body {
+            type_parameters: Vec::new(),
+            decl_id: declaration.direct_declaration_id.clone(),
+            direct_call_id: declaration.direct_declaration_id.clone(),
+            canonical: Some(declaration.canonical.clone()),
+            name: declaration.name.clone(),
+            span,
+            return_type: IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Unit),
+            named_type_identities: facts.type_info.declarations.named_type_identities.clone(),
+            param_locals: params.iter().map(|param| param.local).collect(),
+            params,
+            locals: builder.locals,
+            scopes: builder.scopes,
+            block: bir::Block {
+                scope,
+                stmts: Vec::new(),
+            },
+            runtime_requirements: builder.runtime_requirements,
+            panic_facts: builder.panic_facts,
+            is_async: false,
+            extern_delegation: None,
+        }));
+    }
+}
+
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Lower one source-declared default into a deferred Body-IR computation.
     ///

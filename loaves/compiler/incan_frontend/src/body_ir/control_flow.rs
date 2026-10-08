@@ -1135,11 +1135,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// into a [`bir::StatementKind::TryPropagate`] ahead of the loop via [`Self::lower_expr_to_place`]'s existing
     /// `Expr::Try` handling -- no special-casing needed for that form.
     ///
-    /// The iterable is always read as a [`bir::OwnershipFact::Borrow`], matching [`Self::lower_method_call`]'s
-    /// established receiver-borrow precedent (never an unsound move, and consistent with obtaining an iterator
-    /// conceptually borrowing its source rather than consuming it at this normalized level); the materialized iterator
-    /// local is polled with [`bir::OwnershipFact::MutBorrow`] each iteration, since polling advances its internal
-    /// state.
+    /// Checked item-taking lists move into owned iterator storage. Other builtin collections and user-defined
+    /// protocols borrow their source. Polling advances either representation through a mutable iterator borrow;
+    /// consuming permission comes only from the checker's retained loop decision.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn lower_general_iteration(
         &mut self,
@@ -1164,6 +1162,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             None => self.resolve_ty(effective_iter_expr.span),
         };
         let iterator_local = self.new_temp(iterator_ty, outer_scope, span);
+        let taking = protocol.is_none() && self.type_info.for_loop_takes_items(iter_expr.span);
         match &protocol {
             Some(p) => out.push(bir::Statement {
                 kind: bir::StatementKind::Call {
@@ -1181,7 +1180,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             None => out.push(bir::Statement {
                 kind: bir::StatementKind::Assign {
                     place: bir::Place::from_local(iterator_local),
-                    rvalue: bir::Rvalue::Use(bir::Operand::place(iterable_place, bir::OwnershipFact::Borrow, false)),
+                    rvalue: bir::Rvalue::Use(bir::Operand::place(
+                        iterable_place,
+                        if taking {
+                            bir::OwnershipFact::Move
+                        } else {
+                            bir::OwnershipFact::Borrow
+                        },
+                        taking,
+                    )),
                 },
                 span,
             }),
@@ -1196,6 +1203,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 next_method: p.next_method.clone(),
                 fallible,
             },
+            None if taking => bir::IterProtocol::BuiltinTaking,
             None => bir::IterProtocol::Builtin,
         };
         body_stmts.push(bir::Statement {

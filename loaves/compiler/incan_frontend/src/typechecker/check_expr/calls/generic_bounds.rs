@@ -210,7 +210,10 @@ impl TypeChecker {
         let explicit_arity_ok = explicit_type_args.is_empty() || explicit_type_args.len() == info.type_params.len();
         if !explicit_type_args.is_empty() && explicit_arity_ok {
             self.assert_call_site_type_params_inferred(func_name, &info.type_params, &type_bindings, call_span);
+        }
+        if explicit_arity_ok {
             self.record_call_site_monomorph_if_complete(call_span, &info.type_params, &type_bindings);
+            self.record_sdk_task_carrier_type(func_name, info, &type_bindings, args, &arg_types, call_span);
         }
 
         substitute_resolved_type(&info.return_type, &type_bindings)
@@ -672,7 +675,8 @@ impl TypeChecker {
         }
     }
 
-    /// Record explicit call-site generic arguments after every type parameter has a concrete resolved type.
+    /// Record ordered explicit or inferred call-site arguments after every declaration type parameter has a resolved
+    /// binding.
     fn record_call_site_monomorph_if_complete(
         &mut self,
         call_span: Span,
@@ -899,7 +903,7 @@ impl TypeChecker {
             call_site_span,
         );
 
-        // ---- Require concrete bindings; snapshot monomorphs for lowering when brackets were used ----
+        // ---- Require explicit bindings and retain complete explicit or inferred method instantiations ----
         if !explicit_type_args.is_empty() && explicit_arity_ok {
             self.assert_call_site_type_params_inferred(
                 method,
@@ -907,6 +911,8 @@ impl TypeChecker {
                 &type_bindings,
                 call_site_span,
             );
+        }
+        if self.errors.len() == errors_before_call {
             self.record_call_site_monomorph_if_complete(call_site_span, &method_info.type_params, &type_bindings);
         }
 

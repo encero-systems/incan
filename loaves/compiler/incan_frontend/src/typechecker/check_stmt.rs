@@ -1002,6 +1002,7 @@ impl TypeChecker {
         }
         self.record_read_only_binding(is_mutable, target_span);
         self.record_write_target_identity(target_span, &assign.name);
+        self.bind_sdk_task_projection(&assign.name, assign.value.span, span);
         self.note_function_value_binding(target_span, &assign.value);
         self.bind_c_abi_output_slot_assignment(&assign.name, assign.value.span);
         self.bind_c_abi_span_assignment(&assign.name, assign.value.span);
@@ -1814,6 +1815,7 @@ impl TypeChecker {
         // bindings would carry `Unknown` even though the element type is fully resolved right here.
         self.record_expr_type(for_stmt.pattern.span, elem_ty.clone());
         self.define_for_pattern_bindings(&for_stmt.pattern, &elem_ty);
+        self.bind_sdk_task_iteration_pattern(&for_stmt.pattern, for_stmt.iter.span);
         self.remember_for_pattern_bindings(&for_stmt.pattern.node, owns_items);
         self.push_loop_context(LoopContextKind::Statement, None, span.start);
         let loop_body = self.enter_for_loop_body(&for_stmt.pattern.node, loop_view_param, derived_views);

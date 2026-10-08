@@ -95,6 +95,46 @@ fn constant<'tcx>(tcx: TyCtxt<'tcx>, value: &Constant, span: Span) -> Result<mir
     })
 }
 
+/// Construct the dependency-owned frozen wrapper only after verifying its single static string field.
+///
+/// The literal allocation is static; its operand takes the field's exact lifetime rather than a body borrow.
+fn frozen_text<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    sources: &Sources<'_>,
+    text: &Operand,
+) -> Result<mir::Rvalue<'tcx>, PlanError> {
+
+    // ---- Carrier: the dependency-owned static text layout ----
+    let ty = native_type(tcx, &PlanType::FrozenStr)?;
+    let rustc_middle::ty::Adt(definition, args) = ty.kind() else {
+        return Err(PlanError::Invalid { function: "FrozenStr".into(), reason: "frozen carrier is not an ADT".into() });
+    };
+    if !definition.is_struct() || definition.non_enum_variant().fields.len() != 1 {
+        return Err(PlanError::Invalid { function: "FrozenStr".into(), reason: "frozen carrier must have one field".into() });
+    }
+    // The concrete frozen carrier has no parameters or associated-type projections to normalize.
+    let field = definition.non_enum_variant().fields[FieldIdx::from_usize(0)].ty(tcx, *args).skip_normalization();
+    if !matches!(field.kind(), rustc_middle::ty::Ref(region, pointee, rustc_hir::Mutability::Not)
+        if region.is_static() && pointee.is_str()) {
+        return Err(PlanError::Invalid { function: "FrozenStr".into(), reason: "frozen carrier field is not static shared text".into() });
+    }
+
+    // ---- Literal: the existing allocation with the carrier field's lifetime ----
+    let mir::Operand::Constant(mut literal) = operand(tcx, sources, text)? else {
+        return Err(PlanError::Invalid { function: "FrozenStr".into(), reason: "frozen text is not a constant".into() });
+    };
+    let mir::Const::Val(value, _) = literal.const_ else {
+        return Err(PlanError::Invalid { function: "FrozenStr".into(), reason: "frozen text has no literal allocation".into() });
+    };
+    literal.const_ = mir::Const::Val(value, field);
+
+    // ---- Construction: the admitted single-field carrier ----
+    Ok(mir::Rvalue::Aggregate(
+        Box::new(mir::AggregateKind::Adt(definition.did(), rustc_abi::VariantIdx::from_usize(0), *args, None, None)),
+        IndexVec::from_raw(vec![mir::Operand::Constant(literal)]),
+    ))
+}
+
 /// Map an operation name; overflow variants are selected only for integer arithmetic.
 pub fn binary(op: &BinaryOp, checked: bool) -> mir::BinOp {
     match op {
@@ -111,6 +151,11 @@ pub fn binary(op: &BinaryOp, checked: bool) -> mir::BinOp {
         BinaryOp::LessEqual => mir::BinOp::Le,
         BinaryOp::Greater => mir::BinOp::Gt,
         BinaryOp::GreaterEqual => mir::BinOp::Ge,
+        BinaryOp::BitAnd => mir::BinOp::BitAnd,
+        BinaryOp::BitOr => mir::BinOp::BitOr,
+        BinaryOp::BitXor => mir::BinOp::BitXor,
+        BinaryOp::ShiftLeft => mir::BinOp::Shl,
+        BinaryOp::ShiftRight => mir::BinOp::Shr,
     }
 }
 
@@ -122,7 +167,7 @@ pub fn rvalue<'tcx>(
     destination_type: &PlanType,
 ) -> Result<mir::Rvalue<'tcx>, PlanError> {
     Ok(match value {
-        RvalueKind::UnitFunction(name) => {
+        RvalueKind::UnitFunction(name) | RvalueKind::TaskEvaluator(name) => {
             let def = tcx
                 .hir_crate_items(())
                 .free_items()
@@ -135,10 +180,11 @@ pub fn rvalue<'tcx>(
                     mir::CoercionSource::Implicit,
                 ),
                 mir::Operand::function_handle(tcx, def, [], rustc_span::DUMMY_SP),
-                native_type(tcx, &PlanType::UnitFunction)?,
+                native_type(tcx, destination_type)?,
             )
         }
         RvalueKind::Discriminant(value) => mir::Rvalue::Discriminant(place(tcx, value)?),
+        RvalueKind::FrozenText(text) => frozen_text(tcx, sources, text)?,
         RvalueKind::TagToInt(value) => {
             mir::Rvalue::Cast(mir::CastKind::IntToInt, operand(tcx, sources, value)?, tcx.types.i64)
         }
@@ -167,6 +213,7 @@ pub fn rvalue<'tcx>(
             match op {
                 UnaryOp::Not => mir::UnOp::Not,
                 UnaryOp::Negate => mir::UnOp::Neg,
+                UnaryOp::Invert => mir::UnOp::Not,
             },
             operand(tcx, sources, value)?,
         ),

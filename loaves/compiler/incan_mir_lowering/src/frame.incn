@@ -21,11 +21,13 @@ from pub::incan_mir_plan import (
     Unwind,
 )
 from pub::incan_mir_plan import assign as plan_assign, block as plan_block, place as plan_place
+from type_parameters import Instance
 from rust::incan_semantics_core import IncanType as RustType
 from rust::incan_semantics_core::body_ir import (
     NominalDeclaration as RustNominalDeclaration,
     EnumDeclaration as RustEnumDeclaration,
     StaticDeclaration as RustStaticDeclaration,
+    ValueEnumDeclaration as RustValueEnumDeclaration,
 )
 
 
@@ -39,6 +41,8 @@ pub model Builder:
     `loops` holds each enclosing loop's (header, after) blocks, and `loop_owners` the owners live when it began.
     `iterators` pairs borrowed iterable slots with cursor storage; `borrowed_items` prevents mutations of cloned iteration items whose source contract remains borrowed.
     `module_identity` is the caller body's canonical owner, so local-call admission remains module-relative in a project plan.
+    `generator_handle` is the provisional yield-handle slot in a producer, or -1 in an ordinary function; completed producer plans move it into their parameter slot.
+    `type_parameters` and `type_arguments` retain the current closed declaration binding; `instances` records checked calls that need their own concrete native function.
     """
 
     pub locals: list[Local]
@@ -62,6 +66,11 @@ pub model Builder:
     pub local_offset: int
     pub intrinsics: list[EnumDeclaration]
     pub statics: list[RustStaticDeclaration]
+    pub generator_handle: int
+    pub value_enums: list[RustValueEnumDeclaration]
+    pub instances: list[Instance]
+    pub type_parameters: list[str]
+    pub type_arguments: list[RustType]
 
     def new_block(mut self, span: SourceSpan) -> int:
         """Allocate a block before connecting edges, preserving index stability."""

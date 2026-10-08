@@ -15,10 +15,19 @@ from numerics import numeric_type
 from rust::incan_lang::lang::surface::types import SurfaceTypeId, from_str as surface_type
 from tuples import tuple_type, generic_tuple_type, type_name, tuple_slot
 from pub::incan_mir_plan import tuple_element_type
+from generators import generator_type
+from nominal_instances import class_symbol
+from task_types import task_type
 
 
 pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Result[PlanType, str]:
     """Translate checked scalars and collections; retained source nominals precede canonical SDK surface carriers."""
+    match generator_type(ty):
+        Some(result) => return result
+        None => pass
+    match task_type(declarations, ty):
+        Some(result) => return result
+        None => pass
     match ty:
         RustType.Named(name) =>
             for index in range(len(declarations)):
@@ -35,9 +44,19 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                 Primitive.Bool => return Ok(PlanType.Bool)
                 Primitive.Unit => return Ok(PlanType.Unit)
                 Primitive.Str => return Ok(PlanType.String)
+                Primitive.FrozenStr => return Ok(PlanType.FrozenStr)
+                Primitive.Bytes => return Ok(PlanType.List(ListLeaf.U8, 1))
                 _ => return Err(f"unsupported Body IR primitive type {primitive}")
         RustType.Tuple(elements) => return tuple_type(elements)
+        RustType.Decimal(precision=_precision, scale=_scale) => return Ok(PlanType.Decimal)
         RustType.Generic(base=base, args=arguments) =>
+            for index in range(len(declarations)):
+                declaration = declarations[index]
+                if declaration.type_parameter_count != 0 and declaration.canonical.declaration_name == str(base) and declaration.name == class_symbol(
+                    str(base),
+                    arguments,
+                ):
+                    return Ok(PlanType.Model(index, str(declaration.name)))
             if base == "Set" and len(arguments) == 1:
                 return Ok(PlanType.Set(primitive_leaf(arguments[0], true)?))
             if base == "Dict" and len(arguments) == 2:
@@ -50,6 +69,12 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                 PlanType.Float => return Ok(PlanType.List(ListLeaf.Float, 1))
                 PlanType.Bool => return Ok(PlanType.List(ListLeaf.Bool, 1))
                 PlanType.String => return Ok(PlanType.List(ListLeaf.Str, 1))
+                PlanType.U8 => return Ok(PlanType.List(ListLeaf.U8, 1))
+                PlanType.Decimal => return Ok(PlanType.List(ListLeaf.Decimal, 1))
+                PlanType.FrozenStr => return Ok(PlanType.List(ListLeaf.FrozenStr, 1))
+                PlanType.Tuple(elements) => return Ok(PlanType.List(ListLeaf.Tuple(elements), 1))
+                PlanType.Model(index, name) => return Ok(PlanType.List(ListLeaf.Model(index, name), 1))
+                PlanType.TaskHandle(output) => return Ok(PlanType.List(ListLeaf.TaskHandle(output), 1))
                 PlanType.List(leaf, depth) => return Ok(PlanType.List(leaf, depth + 1))
                 _ => return Err(f"unsupported Body IR list element {ty}")
         _ => return Err(f"unsupported Body IR type {type_name(ty)}")
@@ -119,11 +144,17 @@ pub def constructor_index(
     declarations: list[NominalDeclaration],
     target: &ConstructorTarget,
     count: int,
+    expected: PlanType,
 ) -> Result[int, str]:
     """Prove the constructor's retained declaration identity, canonical layout, and complete field binding."""
     match target.direct_declaration_id:
         Some(identity) =>
             for index in range(len(declarations)):
+                match expected:
+                    PlanType.Model(owner, _name) =>
+                        if index != owner:
+                            continue
+                    _ => return Err("unsupported Body IR nonnominal constructor destination")
                 declaration = declarations[index]
                 if identity != declaration.direct_declaration_id:
                     continue
@@ -132,25 +163,28 @@ pub def constructor_index(
                     declaration.fields,
                 ):
                     return Err("invalid Body IR model constructor identity or layout")
-                if count != len(declaration.fields):
-                    return Err("unsupported Body IR incomplete model constructor")
-                validate_constructor_binding(target.binding, count)?
+                validate_constructor_binding(target.binding, count, len(declaration.fields))?
                 return Ok(index)
             return Err("unsupported Body IR unretained model constructor")
         None => return Err("unsupported Body IR nonlocal model constructor")
 
 
-def validate_constructor_binding(binding: &ArgumentBinding, count: int) -> Result[None, str]:
+def validate_constructor_binding(binding: &ArgumentBinding, count: int, fields: int) -> Result[None, str]:
     """Require every field slot exactly once; Body IR supplies elements in canonical field order."""
     match binding:
         ArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults) =>
-            if len(defaults) != 0 or len(bindings) != count:
+            if len(bindings) != count or len(bindings) + len(defaults) != fields:
                 return Err("unsupported Body IR incomplete model constructor")
             mut slots: list[int] = []
             for binding in bindings:
                 slot = int(binding.slot)
-                if slot < 0 or slot >= count or slot in slots:
+                if slot < 0 or slot >= fields or slot in slots:
                     return Err("invalid Body IR model constructor slot map")
+                slots.append(slot)
+            for default in defaults:
+                slot = int(default.clone())
+                if slot < 0 or slot >= fields or slot in slots:
+                    return Err("invalid Body IR model default slot map")
                 slots.append(slot)
             return Ok(None)
         _ => return Err("unsupported Body IR unresolved model constructor")

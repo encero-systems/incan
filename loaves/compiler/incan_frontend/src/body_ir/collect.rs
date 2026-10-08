@@ -3,7 +3,62 @@
 
 use super::*;
 
-/// Retain only scalar literal statics, whose lazy initialization has no user-visible evaluation effects.
+/// Retain checker-evaluated constants once; unsupported aggregate and symbolic constants remain absent.
+pub(super) fn collect_constants(program: &ast::Program, type_info: &TypeCheckInfo) -> Vec<bir::ConstantDeclaration> {
+    program
+        .declarations
+        .iter()
+        .filter_map(|declaration| {
+            let ast::Declaration::Const(item) = &declaration.node else {
+                return None;
+            };
+            let canonical = type_info
+                .declarations
+                .declaration_identities
+                .get(&(declaration.span.start, declaration.span.end))?
+                .clone();
+            let value = match type_info.const_value(&item.name)? {
+                crate::typechecker::ConstValue::Int(value) => bir::Constant::Int(*value),
+                crate::typechecker::ConstValue::Float(value) => bir::Constant::Float(value.to_string()),
+                crate::typechecker::ConstValue::Bool(value) => bir::Constant::Bool(*value),
+                crate::typechecker::ConstValue::FrozenStr(value) => bir::Constant::Str(value.clone()),
+                _ => return None,
+            };
+            Some(bir::ConstantDeclaration { canonical, value })
+        })
+        .collect()
+}
+
+/// Retain alias-expanded nongeneric type declarations and their checker-proven nominal references.
+pub(super) fn collect_type_aliases(
+    program: &ast::Program,
+    type_info: &TypeCheckInfo,
+) -> Vec<bir::TypeAliasDeclaration> {
+    program
+        .declarations
+        .iter()
+        .filter_map(|declaration| {
+            let ast::Declaration::TypeAlias(item) = &declaration.node else {
+                return None;
+            };
+            if !item.type_params.is_empty() {
+                return None;
+            }
+            let canonical = type_info
+                .declarations
+                .declaration_identities
+                .get(&(declaration.span.start, declaration.span.end))?
+                .clone();
+            Some(bir::TypeAliasDeclaration {
+                canonical,
+                ty: semantic_type_from_resolved(type_info.type_alias_target(&item.name)?),
+                named_type_identities: type_info.declarations.named_type_identities.clone(),
+            })
+        })
+        .collect()
+}
+
+/// Retain primitive and list literal statics, whose initialization has no user-visible evaluation effects.
 pub(super) fn collect_scalar_statics(program: &ast::Program, type_info: &TypeCheckInfo) -> Vec<bir::StaticDeclaration> {
     program
         .declarations
@@ -12,17 +67,8 @@ pub(super) fn collect_scalar_statics(program: &ast::Program, type_info: &TypeChe
             let ast::Declaration::Static(storage) = &declaration.node else {
                 return None;
             };
-            let ast::Expr::Literal(literal) = &storage.value.node else {
-                return None;
-            };
             let ty = semantic_type_from_resolved(type_info.expr_type(storage.value.span)?);
-            if !matches!(
-                ty,
-                IncanType::Primitive(IncanPrimitiveType::Int | IncanPrimitiveType::Float | IncanPrimitiveType::Bool)
-            ) {
-                return None;
-            }
-            let initial = primitives::lower_checked_literal(literal, &ty);
+            let initial = static_literal_initializer(&storage.value.node, &ty)?;
             let canonical = type_info
                 .declarations
                 .declaration_identities
@@ -31,6 +77,56 @@ pub(super) fn collect_scalar_statics(program: &ast::Program, type_info: &TypeChe
             Some(bir::StaticDeclaration { canonical, ty, initial })
         })
         .collect()
+}
+
+/// Preserve literal values only in their exact checked primitive or list element carrier.
+fn static_literal_initializer(value: &ast::Expr, ty: &IncanType) -> Option<bir::StaticInitializer> {
+    match (value, ty) {
+        (
+            ast::Expr::Literal(literal),
+            IncanType::Primitive(
+                IncanPrimitiveType::Int
+                | IncanPrimitiveType::Float
+                | IncanPrimitiveType::Bool
+                | IncanPrimitiveType::Str,
+            ),
+        ) => Some(bir::StaticInitializer::Literal(primitives::lower_checked_literal(
+            literal, ty,
+        ))),
+        (ast::Expr::List(entries), IncanType::Generic { base, args })
+            if collections::from_str(base) == Some(CollectionTypeId::List) =>
+        {
+            let [element] = args.as_slice() else {
+                return None;
+            };
+            if !matches!(
+                element,
+                IncanType::Primitive(
+                    IncanPrimitiveType::Int
+                        | IncanPrimitiveType::Float
+                        | IncanPrimitiveType::Bool
+                        | IncanPrimitiveType::Str
+                )
+            ) {
+                return None;
+            }
+            let values = entries
+                .iter()
+                .map(|entry| {
+                    let ast::ListEntry::Element(item) = entry else {
+                        return None;
+                    };
+                    let bir::StaticInitializer::Literal(value) = static_literal_initializer(&item.node, element)?
+                    else {
+                        return None;
+                    };
+                    Some(value)
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some(bir::StaticInitializer::List(values))
+        }
+        _ => None,
+    }
 }
 
 /// Retain canonical normal-enum layouts from checked annotation and derive facts, never syntax-based type guesses.
@@ -155,7 +251,7 @@ pub(super) fn collect_local_nominal_declarations(
                 return collect_plain_newtype(declaration.span, newtype, module_identity, type_info);
             }
             let (name, fields, visibility, type_parameter_count, class_layout) = match &declaration.node {
-                ast::Declaration::Model(model) if is_direct_replacement_plain_model(model) => (
+                ast::Declaration::Model(model) if is_direct_replacement_checked_model(model, type_info) => (
                     &model.name,
                     &model.fields,
                     model.visibility,
@@ -217,9 +313,14 @@ pub(super) fn collect_local_nominal_declarations(
                     .collect::<Option<Vec<_>>>()?,
                 public: visibility == ast::Visibility::Public,
                 has_field_defaults: fields.iter().any(|field| field.node.default.is_some()),
-                derives: incan_lang::lang::derives::plain_model_derives()
-                    .map(str::to_owned)
-                    .to_vec(),
+                field_default_body: None,
+                derives: if class_layout.is_some() {
+                    incan_lang::lang::derives::plain_model_derives()
+                        .map(str::to_owned)
+                        .to_vec()
+                } else {
+                    type_info.declarations.model_derives.get(name)?.clone()
+                },
                 field_types: fields
                     .iter()
                     .map(|field| {
@@ -241,6 +342,7 @@ pub(super) fn collect_local_nominal_declarations(
                     })
                     .collect(),
                 named_type_identities: type_info.declarations.named_type_identities.clone(),
+                type_parameters: class_layout.map_or_else(Vec::new, |layout| layout.type_params.clone()),
                 type_parameter_count,
             })
         })
@@ -287,8 +389,10 @@ fn collect_plain_newtype(
         field_public: vec![true],
         public: newtype.visibility == ast::Visibility::Public,
         has_field_defaults: false,
+        field_default_body: None,
         derives,
         named_type_identities: type_info.declarations.named_type_identities.clone(),
+        type_parameters: Vec::new(),
         type_parameter_count: 0,
     })
 }
@@ -448,18 +552,24 @@ pub(super) fn collect_local_trait_declarations(
 /// Retain non-generic local trait slots and their checked concrete implementation identities.
 ///
 /// Successful typechecking already proves adoption and method compatibility. This registry retains only local,
-/// unambiguous method declarations; imported, generic, and overloaded implementations never gain a guessed target.
+/// unambiguous method declarations with admitted owner layouts; imported, generic, and overloaded implementations never
+/// gain a guessed target. A refused checked newtype constructor cannot contribute an implementation without its owner
+/// layout.
 pub(super) fn collect_local_trait_implementations(
     program: &ast::Program,
     type_info: &TypeCheckInfo,
+    nominal_declarations: &[bir::NominalDeclaration],
 ) -> Vec<bir::TraitImplementation> {
     let mut implementations = Vec::new();
     for declaration in &program.declarations {
         let (adoptions, methods) = match &declaration.node {
-            ast::Declaration::Model(model) if is_direct_replacement_plain_model(model) => {
+            ast::Declaration::Model(model) if is_direct_replacement_checked_model(model, type_info) => {
                 (&model.traits, &model.methods)
             }
             ast::Declaration::Class(class) if is_direct_replacement_class(class) => (&class.traits, &class.methods),
+            ast::Declaration::Newtype(newtype) if is_direct_replacement_plain_newtype(newtype) => {
+                (&newtype.traits, &newtype.methods)
+            }
             _ => continue,
         };
         let Some(owner) = type_info
@@ -469,6 +579,12 @@ pub(super) fn collect_local_trait_implementations(
         else {
             continue;
         };
+        if !nominal_declarations
+            .iter()
+            .any(|declaration| &declaration.canonical == owner)
+        {
+            continue;
+        }
         for adoption in adoptions {
             if !adoption.node.type_args.is_empty() {
                 continue;

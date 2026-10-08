@@ -58,6 +58,12 @@ use crate::{AbiV0RuntimeRequirement, CanonicalSymbolId, CompilerNodeId, HirSourc
 /// One module's lowered function/method bodies and direct-execution declaration facts.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BodyIrModule {
+    /// Checker-evaluated scalar and text constants, addressed by their declaring canonical identity.
+    #[serde(default)]
+    pub constant_declarations: Vec<ConstantDeclaration>,
+    /// Alias-expanded checked types for nongeneric source aliases; aliases introduce no runtime storage.
+    #[serde(default)]
+    pub type_alias_declarations: Vec<TypeAliasDeclaration>,
     /// Checked source-local nongeneric enum layouts, including canonical payload variants and selected derives.
     #[serde(default)]
     pub enum_declarations: Vec<EnumDeclaration>,
@@ -69,7 +75,7 @@ pub struct BodyIrModule {
     /// These call the real SDK implementation; they are not transparent synchronous forwarding facts.
     #[serde(default)]
     pub sdk_async_primitives: Vec<SdkAsyncPrimitive>,
-    /// Source-local scalar statics with effect-free literal initializers; all other initializers must refuse.
+    /// Source-local statics with effect-free literal initializers; all other initializers must refuse.
     #[serde(default)]
     pub static_declarations: Vec<StaticDeclaration>,
     /// Identity of the owning module, matching [`crate::HirModule::id`].
@@ -108,15 +114,44 @@ pub struct BodyIrModule {
     pub bodies: Vec<Body>,
 }
 
+/// Canonical immutable value evaluated by the declaring compilation, with no runtime storage or initialization.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConstantDeclaration {
+    /// Exact checker-selected declaration; aliases never mint another value identity.
+    pub canonical: CanonicalSymbolId,
+    /// The checked scalar or text value retained by constant evaluation.
+    pub value: Constant,
+}
+
+/// Declaring compilation's checked meaning of an erased type alias, including canonical named member types.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TypeAliasDeclaration {
+    /// Canonical declaration selected through an alias or facade binding.
+    pub canonical: CanonicalSymbolId,
+    /// Alias-expanded semantic type, without a consumer-side name lookup.
+    pub ty: IncanType,
+    /// Checker-retained named type identities; publication removes unused entries and audits the required closure.
+    pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
+}
+
 /// Canonical persistent storage with a checker-typed, effect-free initializer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StaticDeclaration {
     /// Exact checker-selected storage identity, independent of aliases at its uses.
     pub canonical: CanonicalSymbolId,
-    /// Checked scalar carrier type.
+    /// Checked carrier type; initializer validation must preserve its exact element types.
     pub ty: IncanType,
-    /// Literal initialization value; repeated reads must not reinitialize an assigned cell.
-    pub initial: Constant,
+    /// Effect-free initialization value; repeated reads must not reinitialize an assigned cell.
+    pub initial: StaticInitializer,
+}
+
+/// Checked effect-free storage initialization, independent of its eventual native representation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum StaticInitializer {
+    /// One primitive literal, interpreted in the storage declaration's checked carrier.
+    Literal(Constant),
+    /// An ordered list of primitive literals, each checked against the declaration's element type.
+    List(Vec<Constant>),
 }
 
 /// A source-owned stdlib callable's proven transparent native delegation and scalar signature.
@@ -264,12 +299,13 @@ pub struct TraitImplementation {
 
 /// The exact local declaration and canonical field layout for one direct-executable plain model or class.
 ///
-/// The record belongs to its declaring module and excludes enums, generic nominals, and inheritance. Nominal methods
-/// and adopted trait defaults remain separate canonical bodies with receiver origins. A consumer may load
+/// The record belongs to its declaring module and excludes enums and inheritance. Classes retain ordered type
+/// parameters for specialization from checked uses; models and newtypes in this profile remain concrete. Nominal
+/// methods and adopted trait defaults remain separate canonical bodies with receiver origins. A consumer may load
 /// this canonical context from a package artifact. Its field order is the checked constructor-slot order; a direct
 /// runtime must compare it with [`ConstructorTarget::canonical_field_layout`] before applying
 /// [`ConstructorTarget::binding`], rather than treating constructor argument spelling as layout evidence.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NominalDeclaration {
     /// Exact source-local declaration identity, derived from the declaration source span.
     pub direct_declaration_id: CompilerNodeId,
@@ -292,13 +328,23 @@ pub struct NominalDeclaration {
     pub field_public: Vec<bool>,
     /// Whether the source nominal declaration is public.
     pub public: bool,
-    /// Whether any declared field has a default; the native route refuses these declarations.
+    /// Whether any declared field has a default; missing executable default facts must refuse omitted fields.
     pub has_field_defaults: bool,
-    /// Legacy implicit nominal derives, retained by the frontend rather than inferred by consumers.
+    /// Declaration-owned deferred field computations, with one parameter slot per canonical field and a private
+    /// local frame. The empty block is not a callable implementation; consumers evaluate only defaults selected by
+    /// a checked constructor binding. Older artifacts without this frame must refuse omitted fields.
+    #[serde(default)]
+    pub field_default_body: Option<Box<Body>>,
+    /// Checked builtin and implicit nominal derives, retained in legacy normalization order. A selected `Default`
+    /// over source field defaults requires a custom implementation rather than a Rust derive macro; consumers that
+    /// cannot implement it must refuse that combination.
     pub derives: Vec<String>,
     /// Checked nominal bindings needed by those field types; serialized publications retain only referenced entries.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
-    /// Number of declared type parameters; this profile admits only zero.
+    /// Ordered checker-retained declaration parameters used to close class layouts at checked uses.
+    #[serde(default)]
+    pub type_parameters: Vec<String>,
+    /// Number of declared type parameters, agreeing with [`Self::type_parameters`].
     pub type_parameter_count: usize,
 }
 
@@ -439,6 +485,9 @@ impl ValueEnumVariantDeclaration {
 /// Body IR v0 for a single function or method.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Body {
+    /// Ordered declaration type parameters, retained for checker-selected native instantiation.
+    #[serde(default)]
+    pub type_parameters: Vec<String>,
     /// Identity of the owning declaration, matching the [`crate::HirDeclaration::id`] this body was lowered from.
     pub decl_id: CompilerNodeId,
     /// Exact source-local identity used to dispatch a direct named Body-IR call.
@@ -2714,6 +2763,10 @@ pub struct LocalCallableTarget {
 /// spelling.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NamedCallableTarget {
+    /// Source async declaration the checker proved was passed directly to the canonical SDK task spawn. Other
+    /// argument shapes retain no identity, so task lowering cannot guess a callback from its operand type.
+    #[serde(default)]
+    pub task_source_future: Option<CanonicalSymbolId>,
     /// Source-level function name.
     pub name: String,
     /// Exact same-module declaration selected for this call, when Body IR can retain one.
@@ -3405,6 +3458,8 @@ pub enum IterProtocol {
     /// concretely advance such an iterator is left to the consuming backend, matching how a plain `for` doesn't
     /// manually unroll `IntoIterator` at the existing Rust-emission backend's own IR level either.
     Builtin,
+    /// Checked list iteration consumes its owned source and gives each item to the loop by value.
+    BuiltinTaking,
     /// Iterate through a resolved user-defined iterator-protocol dispatch (`__iter__`/`__next__`-shaped magic
     /// methods).
     UserDefined {
@@ -3424,6 +3479,7 @@ impl IterProtocol {
     fn render_snapshot(&self) -> String {
         match self {
             Self::Builtin => "builtin".to_string(),
+            Self::BuiltinTaking => "builtin-taking".to_string(),
             Self::UserDefined { next_method, fallible } => {
                 if *fallible {
                     format!("user_defined({next_method}, fallible)")
@@ -3766,6 +3822,7 @@ mod tests {
         let local_y = LocalId(1);
         let local_tmp = LocalId(2);
         Body {
+            type_parameters: Vec::new(),
             decl_id: decl_id.clone(),
             direct_call_id,
             canonical: None,
@@ -4521,6 +4578,8 @@ mod tests {
     #[test]
     fn body_ir_module_snapshot_wraps_bodies() {
         let module = BodyIrModule {
+            constant_declarations: Vec::new(),
+            type_alias_declarations: Vec::new(),
             module_id: CompilerNodeId::new(CompilerNodeKind::Module, "m"),
             stdlib_delegations: Vec::new(),
             sdk_async_primitives: Vec::new(),

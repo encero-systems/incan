@@ -226,9 +226,15 @@ fn build_body_ir_module_v0_with_provider_operations(
 ) -> bir::BodyIrModule {
     let module_identity = body_ir_module_identity(module_path);
     let module_id = CompilerNodeId::module(module_identity.clone());
+    let constant_declarations = collect::collect_constants(program, type_info);
+    let published_constants = context
+        .iter()
+        .flat_map(|module| module.constant_declarations.iter())
+        .map(|declaration| (declaration.canonical.clone(), declaration.value.clone()))
+        .collect::<HashMap<_, _>>();
     let function_default_sources = collect_function_default_sources(program);
     let local_function_declarations = collect_local_function_declarations(program);
-    let nominal_declarations = collect_local_nominal_declarations(program, &module_identity, type_info);
+    let mut nominal_declarations = collect_local_nominal_declarations(program, &module_identity, type_info);
     let mut local_nominal_declarations = nominal_declarations
         .iter()
         .map(|declaration| (declaration.name.clone(), declaration.clone()))
@@ -255,6 +261,7 @@ fn build_body_ir_module_v0_with_provider_operations(
         }
     }
     let lowering_facts = BodyIrLoweringFacts {
+        published_constants: &published_constants,
         type_info,
         function_default_sources: &function_default_sources,
         local_function_declarations: &local_function_declarations,
@@ -265,6 +272,7 @@ fn build_body_ir_module_v0_with_provider_operations(
         provider_operations,
         rust_module: program.rust_module_path.as_ref().map(|path| path.node.as_str()),
     };
+    defaults::attach_model_field_defaults(program, &mut nominal_declarations, &lowering_facts);
     let mut bodies = program
         .declarations
         .iter()
@@ -314,8 +322,10 @@ fn build_body_ir_module_v0_with_provider_operations(
         .collect::<Vec<_>>();
     apply_top_level_input_contract_refusal(program, &mut bodies);
     bir::BodyIrModule {
+        constant_declarations,
+        type_alias_declarations: collect::collect_type_aliases(program, type_info),
         trait_declarations: collect::collect_local_trait_declarations(program, type_info),
-        trait_implementations: collect::collect_local_trait_implementations(program, type_info),
+        trait_implementations: collect::collect_local_trait_implementations(program, type_info, &nominal_declarations),
         enum_declarations: collect_local_enum_declarations(program, &module_identity, type_info),
         stdlib_delegations: stdlib_delegations::collect(type_info),
         sdk_async_primitives: sdk_async::collect(type_info),
@@ -371,7 +381,8 @@ type LocalFunctionDeclarations = HashMap<String, Vec<ast::Span>>;
 
 /// Source-local plain models and non-generic classes with canonical checked layouts.
 ///
-/// Unsupported inheritance, properties, and aliases never enter this constructor registry.
+/// Unsupported inheritance, properties, and callable aliases never enter this constructor registry; checked field
+/// aliases select canonical storage.
 type LocalNominalDeclarations = HashMap<String, bir::NominalDeclaration>;
 
 /// Source-local fieldless normal enums whose canonical unit variants are retained for direct comparison.
@@ -393,6 +404,7 @@ type LocalValueEnumDeclarations = HashMap<String, bir::ValueEnumDeclaration>;
 /// identities and representations a later direct executor needs. Keeping the bundle explicit avoids widening any
 /// individual lowering helper's parameter surface as profiles add one bounded source-local fact at a time.
 struct BodyIrLoweringFacts<'type_info, 'source> {
+    published_constants: &'source HashMap<CanonicalSymbolId, bir::Constant>,
     type_info: &'type_info TypeCheckInfo,
     function_default_sources: &'source FunctionDefaultSources,
     local_function_declarations: &'source LocalFunctionDeclarations,
@@ -418,13 +430,56 @@ struct FunctionDefaultSource {
 /// Determine whether a model can carry the small direct-replacement declaration fact.
 ///
 /// This is deliberately a source-local data-model shape, not a general nominal-semantics predicate. The replacement
-/// runtime cannot execute model decorators, field aliases, or generic substitution without facts that Body IR does not
-/// retain. Non-generic methods remain separate bodies; adopted trait slots are retained in the module implementation
-/// registry. Field defaults remain represented by each construction's checked binding, so a fully supplied construction
-/// may execute while any omitted default still refuses at that constructor's span.
+/// runtime admits builtin Rust derives, checked JSON protocol derives, and field aliases without serde renames, but
+/// cannot execute other model decorators or generic substitution without retained facts. Non-generic methods remain
+/// separate bodies; adopted trait slots are retained in the module implementation registry. Field defaults have
+/// declaration-owned deferred computations; each construction's checked binding selects the omitted slots without
+/// repeating source expressions at call sites.
 pub fn is_direct_replacement_plain_model(model: &ast::ModelDecl) -> bool {
-    model.decorators.is_empty()
-        && model.type_params.is_empty()
+    model
+        .decorators
+        .iter()
+        .all(|decorator| is_direct_replacement_model_derive(&decorator.node))
+        && has_direct_replacement_model_shape(model)
+}
+
+/// Admit JSON derives only after checking resolves all selections to canonical supported serde paths.
+/// Serde field renames remain refused until their checked metadata crosses the Body IR and plan boundary.
+pub fn is_direct_replacement_checked_model(model: &ast::ModelDecl, type_info: &TypeCheckInfo) -> bool {
+    if is_direct_replacement_plain_model(model) {
+        return true;
+    }
+    let Some(names) = type_info.declarations.model_derives.get(&model.name) else {
+        return false;
+    };
+    model.decorators.iter().all(|decorator| {
+        decorator.node.name == "derive"
+            && decorator.node.path.segments == ["derive"]
+            && decorator.node.type_args.is_empty()
+    }) && names.iter().all(|name| {
+        matches!(
+            name.as_str(),
+            "Debug"
+                | "Clone"
+                | "Eq"
+                | "PartialEq"
+                | "Hash"
+                | "Ord"
+                | "PartialOrd"
+                | "Default"
+                | "Display"
+                | "FieldInfo"
+                | "IncanClass"
+                | "serde::Serialize"
+                | "serde::Deserialize"
+        )
+    }) && model.fields.iter().all(|field| field.node.metadata.alias.is_none())
+        && has_direct_replacement_model_shape(model)
+}
+
+/// Keep the structural admission boundary shared by builtin and checked serde derive selections.
+fn has_direct_replacement_model_shape(model: &ast::ModelDecl) -> bool {
+    model.type_params.is_empty()
         && model.traits.iter().all(|adoption| adoption.node.type_args.is_empty())
         && model.method_aliases.is_empty()
         && model.method_partials.is_empty()
@@ -433,29 +488,47 @@ pub fn is_direct_replacement_plain_model(model: &ast::ModelDecl) -> bool {
             .methods
             .iter()
             .all(|method| method.node.type_params.is_empty() && method.node.decorators.is_empty())
-        && model.fields.iter().all(|field| field.node.metadata.alias.is_none())
 }
 
-/// Admit only a concrete tuple wrapper whose construction adds no hooks, constraints, or trait behavior.
+/// Admit only the bare builtin derive decorator whose complete native trait selection Body IR retains.
+/// Qualified, bundled, foreign, and semantic derives need their own checked expansion facts and remain refused. Display
+/// retains its checked selection and uses the implied Debug rendering.
+pub fn is_direct_replacement_model_derive(decorator: &ast::Decorator) -> bool {
+    decorator.name == "derive"
+        && decorator.path.segments == ["derive"]
+        && decorator.type_args.is_empty()
+        && decorator.args.iter().all(|argument| {
+            matches!(argument, ast::DecoratorArg::Positional(value) if matches!(&value.node,
+                ast::Expr::Ident(name) if matches!(name.as_str(), "Debug" | "Clone" | "Eq" | "PartialEq" | "Hash" | "Ord" | "PartialOrd" | "Default" | "Display")))
+        })
+}
+
+/// Admit concrete tuple wrappers with ordinary methods and nongeneric trait adoptions.
+///
+/// Checked construction hooks and constraints remain refused by the declaration collector; aliases, interop edges,
+/// associated types, and generic methods require additional representation facts and remain outside this profile.
 pub fn is_direct_replacement_plain_newtype(newtype: &ast::NewtypeDecl) -> bool {
     !newtype.is_rusttype
         && newtype.decorators.is_empty()
         && newtype.type_params.is_empty()
-        && newtype.traits.is_empty()
+        && newtype.traits.iter().all(|adoption| adoption.node.type_args.is_empty())
         && newtype.rebindings.is_empty()
         && newtype.method_aliases.is_empty()
         && newtype.method_partials.is_empty()
         && newtype.associated_types.is_empty()
         && newtype.interop_edges.is_empty()
-        && newtype.methods.is_empty()
+        && newtype
+            .methods
+            .iter()
+            .all(|method| method.node.type_params.is_empty() && method.node.decorators.is_empty())
 }
 
 /// Admit source classes whose fields and method bodies have complete direct-route facts.
 ///
-/// Inheritance, generic substitution, decorators, properties, aliases, and defaults remain refused.
+/// Ordered owner parameters and method parameters are retained for checked instance scheduling. Inheritance,
+/// decorators, properties, aliases, and defaults remain refused.
 pub fn is_direct_replacement_class(class: &ast::ClassDecl) -> bool {
     class.decorators.is_empty()
-        && class.type_params.is_empty()
         && class.traits.iter().all(|adoption| adoption.node.type_args.is_empty())
         && class.extends.is_none()
         && class.method_aliases.is_empty()
@@ -466,10 +539,7 @@ pub fn is_direct_replacement_class(class: &ast::ClassDecl) -> bool {
             .fields
             .iter()
             .all(|field| field.node.metadata.alias.is_none() && field.node.default.is_none())
-        && class
-            .methods
-            .iter()
-            .all(|method| method.node.type_params.is_empty() && method.node.decorators.is_empty())
+        && class.methods.iter().all(|method| method.node.decorators.is_empty())
 }
 
 /// Determine whether an enum carries the narrow source-local fieldless normal-enum declaration fact.
@@ -490,14 +560,18 @@ pub fn is_direct_replacement_fieldless_enum(enum_decl: &ast::EnumDecl) -> bool {
             .all(|variant| variant.node.fields.is_empty() && variant.node.value.is_none())
 }
 
-/// Admit normal enum layouts only when no methods, aliases, value backing, or generic substitution are required.
+/// Admit normal enum layouts and plain value-enum layouts without methods, aliases, or generic substitution.
+///
+/// A value enum also retains its separate canonical raw-value registry; its unit layout alone never authorizes scalar
+/// extraction.
 pub fn is_direct_native_enum(value: &ast::EnumDecl) -> bool {
-    value.type_params.is_empty()
-        && value.value_type.is_none()
-        && value.traits.is_empty()
-        && value.variant_aliases.is_empty()
-        && value.methods.is_empty()
-        && value.decorators.iter().all(|decorator| decorator.node.name == "derive")
+    is_direct_replacement_value_enum(value)
+        || (value.type_params.is_empty()
+            && value.value_type.is_none()
+            && value.traits.is_empty()
+            && value.variant_aliases.is_empty()
+            && value.methods.is_empty()
+            && value.decorators.iter().all(|decorator| decorator.node.name == "derive"))
 }
 
 /// Determine whether an enum carries the narrow source-local RFC 032 scalar declaration fact.
@@ -535,6 +609,8 @@ const fn hir_span(span: ast::Span) -> HirSourceSpan {
 /// Per-function lowering state: fresh local/scope allocation, current name bindings, and accumulated body-level
 /// facts (runtime requirements, panic facts, which locals have been moved out of their declaring scope).
 struct BodyBuilder<'type_info, 'source> {
+    /// Immutable values decoded from the selected package representation, indexed by canonical declaration.
+    published_constants: &'source HashMap<CanonicalSymbolId, bir::Constant>,
     type_info: &'type_info TypeCheckInfo,
     /// Source defaults for top-level partial targets, retained only until they lower into Body IR.
     function_default_sources: &'source FunctionDefaultSources,
@@ -552,6 +628,8 @@ struct BodyBuilder<'type_info, 'source> {
     provider_operations: &'source ProviderOperationCatalog,
     /// Checked return type of the function/method currently being lowered, used only to retain `?` error routing.
     owner_return_type: IncanType,
+    /// Explicit owner and callable binders whose checked types remain placeholders at this boundary.
+    type_parameters: Vec<String>,
     locals: Vec<bir::LocalDecl>,
     scopes: Vec<bir::ScopeInfo>,
     /// Current source-name -> local binding.
@@ -564,6 +642,11 @@ struct BodyBuilder<'type_info, 'source> {
     /// write; [`Self::bindings`] remains only as a lexical bookkeeping projection for lowering constructs that
     /// introduce and restore source names.
     identity_bindings: HashMap<CanonicalSymbolId, bir::LocalId>,
+    /// Canonical storage currently selected by a direct local static binding; reads retain a global place rather than
+    /// a snapshot.
+    static_aliases: HashMap<bir::LocalId, bir::GlobalPlace>,
+    /// Locals originally declared as storage bindings, which can detach to values and later select another static.
+    static_binding_locals: HashSet<bir::LocalId>,
     /// Names lowering could not resolve to a tracked local (e.g. module-level `const`/`static`), reused across
     /// repeated reads instead of allocating a fresh external local per read.
     external_locals: HashMap<String, bir::LocalId>,
@@ -608,13 +691,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             local_nominal_declarations: lowering_facts.local_nominal_declarations,
             local_fieldless_enum_declarations: lowering_facts.local_fieldless_enum_declarations,
             local_value_enum_declarations: lowering_facts.local_value_enum_declarations,
+            published_constants: lowering_facts.published_constants,
             module_identity: lowering_facts.module_identity,
             provider_operations: lowering_facts.provider_operations,
             owner_return_type,
+            type_parameters: Vec::new(),
             locals: Vec::new(),
             scopes: Vec::new(),
             bindings: HashMap::new(),
             identity_bindings: HashMap::new(),
+            static_aliases: HashMap::new(),
+            static_binding_locals: HashSet::new(),
             external_locals: HashMap::new(),
             remaining_reads: HashMap::new(),
             moved_out: HashSet::new(),
@@ -649,12 +736,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .unwrap_or(HirSourceSpan::new(0, 0))
     }
 
-    /// Resolve the expression type recorded by the typechecker for `span`, or [`IncanType::Unknown`] when v0 has no
-    /// resolved type available (an explicit unknown rather than a guessed default).
+    /// Project a checked SDK task instantiation before the ordinary expression type recorded for `span`.
+    /// Missing facts remain [`IncanType::Unknown`]; this boundary never infers a task output from its operand.
     fn resolve_ty(&self, span: ast::Span) -> IncanType {
         self.type_info
-            .expr_type(span)
-            .map(semantic_type_from_resolved)
+            .calls
+            .sdk_task_carrier_types
+            .get(&(span.start, span.end))
+            .or_else(|| self.type_info.expr_type(span))
+            .map(|ty| self.checked_type(ty))
             .unwrap_or(IncanType::Unknown)
     }
 
@@ -772,6 +862,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     fn place_for_name(&mut self, name: &str, span: ast::Span, ty: &IncanType) -> Option<bir::Place> {
         if let Some(identity) = self.type_info.resolved_identity(span).cloned() {
             if let Some(&id) = self.identity_bindings.get(&identity) {
+                if let Some(global) = self.static_aliases.get(&id) {
+                    return Some(bir::Place::from_global(global.clone()));
+                }
                 let mut place = bir::Place::from_local(id);
                 // The local keeps its storage type; a read keeps the checker's narrower member as an explicit
                 // projection.
@@ -1135,8 +1228,10 @@ mod refusals;
 mod reads;
 
 mod collect;
+mod static_aliases;
 
 mod bodies;
+mod parameter_types;
 
 mod primitives;
 
