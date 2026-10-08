@@ -5,6 +5,8 @@ version = "0.6.0-dev.6"
 private = true
 
 [dependencies]
+incan_driver = { loaf = "incan_driver", path = ".." }
+incan_provider = { loaf = "incan_provider", path = "../../incan_provider" }
 incan_test_support = { loaf = "incan_test_support", path = "../../incan_test_support" }
 oven_model = { loaf = "oven_model", path = "../../../oven/oven_model" }
 oven_rustc = { loaf = "oven_rustc", path = "../../../oven/oven_rustc" }

@@ -89,7 +89,30 @@ pub(crate) fn select_native_sdk_plan(
             receipt: receipt.clone(),
             domain: "sdk-native-consumer-plan".to_string(),
             kind: OvenArtifactKind::DirectRustcPlan,
-            payload: serde_json::to_vec(&manifest).map_err(|error| CliError::failure(error.to_string()))?,
+            payload: serde_json::to_vec(&oven_rustc::plan::shared::OvenSharedNativePlan {
+                artifacts: manifest,
+                shared_native_roots: selection
+                    .units
+                    .iter()
+                    .zip(&selection.owners)
+                    .enumerate()
+                    .map(|(index, (unit, owner))| {
+                        Ok(oven_rustc::plan::shared::OvenSharedNativeRoot {
+                            store: owner
+                                .artifact_root
+                                .parent()
+                                .and_then(Path::parent)
+                                .and_then(Path::parent)
+                                .ok_or_else(|| CliError::failure("native unit has no store root"))?
+                                .to_path_buf(),
+                            identity: unit.store_identity.clone(),
+                            receipt_identity: unit.receipt_identity.clone(),
+                            prefix: format!("units/{index}"),
+                        })
+                    })
+                    .collect::<CliResult<Vec<_>>>()?,
+            })
+            .map_err(|error| CliError::failure(error.to_string()))?,
             materialized_files: files,
             materialized_directories: Vec::new(),
         })
@@ -97,7 +120,7 @@ pub(crate) fn select_native_sdk_plan(
     super::plan_selection::select_published_project_plan(store, receipt, OvenToolchainMaterialization::Reused)
 }
 
-/// Copy admitted native members into distinct unit directories without reinterpreting their source declarations.
+/// Name admitted native members in distinct logical unit directories without copying their bytes.
 ///
 /// The receipt catalog in the build-unit identity binds package, feature, domain and archive selection. Inspection
 /// retains its separately sealed source authority; the legacy registry source catalog requires Cargo declarations
@@ -121,7 +144,7 @@ fn native_unit_manifest(
         vocab_auxiliary_targets: Vec::new(),
         supporting_artifacts: Vec::new(),
     };
-    let mut files = Vec::new();
+    let files = Vec::new();
     for (index, (unit, owner)) in selection.units.iter().zip(&selection.owners).enumerate() {
         if owner.manifest.intent.target != receipt.intent.target
             || owner.manifest.intent.toolchain != receipt.intent.toolchain
@@ -175,10 +198,6 @@ fn native_unit_manifest(
             manifest.supporting_artifacts.push(OvenRustcSupportingArtifact {
                 relative_path: relative_path.clone(),
                 digest: file.digest.clone(),
-            });
-            files.push(OvenArtifactMaterializedFile {
-                source_path: owner.artifact_root.join(&file.relative_path),
-                relative_path,
             });
         }
     }
@@ -337,6 +356,7 @@ fn seal_source_roles(receipt: &oven_store::OvenReceipt, manifest: &mut OvenRustc
 #[cfg(test)]
 mod tests {
     use super::{native_unit_manifest, native_unit_root_aliases, seal_source_roles};
+    use std::path::Path;
 
     /// A real admitted local library becomes a source-scoped plan, with byte validation and compiler mismatch refusal.
     #[test]
@@ -395,11 +415,11 @@ mod tests {
         let (mut manifest, files) = native_unit_manifest(&receipt, &selection, std::slice::from_ref(&dependency))?;
         seal_source_roles(&receipt, &mut manifest);
         manifest.validate_shape(&receipt.intent)?;
-        assert_eq!(files.len(), 1);
-        assert!(files[0].relative_path.ends_with("/liblocal.rlib"));
+        assert!(files.is_empty());
         assert!(manifest.registry_sources.is_empty());
         assert_eq!(manifest.externs.len(), 1);
         assert!(manifest.supporting_artifacts.is_empty());
+        check_shared_consumer_plan(root.path(), &output, &receipt, &manifest, &selection)?;
         assert_eq!(
             manifest.entrypoint_dependency_search_paths["generated-root"]
                 .publisher_paths
@@ -424,6 +444,50 @@ mod tests {
         renamed.version = Some("1".to_string());
         renamed.features.push("absent".to_string());
         assert!(native_unit_root_aliases(&registry_unit, "local", &[renamed])?.is_empty());
+        Ok(())
+    }
+    /// A small consumer publication resolves the original native bytes while retaining their receipt leases.
+    fn check_shared_consumer_plan(
+        root: &Path,
+        output: &Path,
+        receipt: &oven_store::OvenReceipt,
+        manifest: &oven_rustc::rustc::OvenRustcArtifactManifest,
+        selection: &incan_provider::sdk_native::SdkNativeSelection,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let consumer_store = oven_store::store::OvenStore::new(
+            root.join("consumer-store"),
+            oven_store::store::OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000),
+        );
+        let unit = selection.units.first().ok_or("native fixture has no unit")?;
+        let shared = oven_rustc::plan::shared::OvenSharedNativePlan {
+            artifacts: manifest.clone(),
+            shared_native_roots: vec![oven_rustc::plan::shared::OvenSharedNativeRoot {
+                store: output.join("store"),
+                identity: unit.store_identity.clone(),
+                receipt_identity: unit.receipt_identity.clone(),
+                prefix: "units/0".to_string(),
+            }],
+        };
+        let published = consumer_store.publish(&oven_store::store::OvenArtifactPublishRequest {
+            receipt: receipt.clone(),
+            domain: "sdk-native-consumer-plan".to_string(),
+            kind: oven_store::store::OvenArtifactKind::DirectRustcPlan,
+            payload: serde_json::to_vec(&shared)?,
+            materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
+        })?;
+        assert!(published.materialized_files.is_empty());
+        let selected =
+            oven_rustc::plan::selection::select_receipt_direct_rustc_execution_plan(&consumer_store, receipt)?
+                .ok_or("shared consumer plan was not selected")?;
+        assert_eq!(
+            selected.artifact_plan.externs[0].1,
+            selection.owners[0].artifact_root.join("liblocal.rlib")
+        );
+        assert_eq!(
+            selected.artifact_plan.dependency_search_paths,
+            vec![selection.owners[0].artifact_root.clone()]
+        );
         Ok(())
     }
 }

@@ -449,9 +449,17 @@ pub fn compose_direct_packaged_provider_plan(
             root_inventory: &fragment.root_inventory,
         })
         .collect::<Vec<_>>();
-    composed.artifact_plan = composed
-        .artifacts
-        .materialize_trusted_store_composed_with_search_roots(&roots, &search_roots, expected_intent)?;
+    composed.artifact_plan = if composed
+        .fragments
+        .iter()
+        .any(|fragment| !fragment.plan.shared_paths.is_empty())
+    {
+        super::shared::compose_provider_paths(&composed)?
+    } else {
+        composed
+            .artifacts
+            .materialize_trusted_store_composed_with_search_roots(&roots, &search_roots, expected_intent)?
+    };
     for fragment in &composed.fragments {
         if composed
             .artifact_plan

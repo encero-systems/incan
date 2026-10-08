@@ -1,8 +1,8 @@
 //! Bounded, lease-aware storage for immutable Oven Alpha artifacts.
 //!
 //! This store is intentionally separate from generated Cargo targets. It owns versioned Oven artifacts only, reports
-//! logical artifact bytes and measured physical file allocation separately, and refuses publication when its active
-//! leases leave no safe way to satisfy capacity policy.
+//! logical artifact bytes and measured physical file allocation separately. Bounded requests sweep idle entries
+//! toward retention targets; retained totals never justify evicting active readers or refusing valid records.
 
 use oven_model::compiler_identity::{CompilerIdentity, RELEASE_DOMAIN_PREFIX};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -52,14 +52,14 @@ const LEGACY_CARGO_PUBLISHER_LOCK_FILE: &str = ".publisher.lock";
 const LEGACY_CARGO_STAGING_PREFIX: &str = ".legacy-cargo-";
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-/// Policy enforced before an Oven artifact becomes visible in the store.
+/// Request bounds and idle-retention targets applied before an Oven artifact becomes visible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OvenStoreLimits {
-    /// Maximum measured physical file allocation retained by all published artifacts.
+    /// Physical retention target across published artifacts; active entries may exceed it.
     pub max_physical_bytes: u64,
-    /// Maximum measured physical file allocation retained by one compatibility domain.
+    /// Physical request bound and idle-retention target for one compatibility domain.
     pub max_domain_physical_bytes: u64,
-    /// Maximum logical artifact bytes retained by one compatibility domain.
+    /// Logical request bound and idle-retention target for one compatibility domain.
     pub max_domain_logical_bytes: u64,
 }
 
@@ -326,6 +326,48 @@ impl OvenStoreExecutionPayload {
         verify_materialized_files(&self.admitted_entry_root, &self.manifest).map(|_| ())
     }
 
+    /// Verify a sealed native unit once, then reuse its identity-bound closure proof under the retained lease.
+    ///
+    /// Every call still authenticates the original receipt, descriptor, payload and root. The proof relies on the
+    /// same immutable-store contract as direct-plan materialization; explicit inspection and imports keep using
+    /// full verification so they can audit out-of-band changes to a published store.
+    pub fn verify_proven_native_payload(&self) -> Result<(), OvenStoreError> {
+        self.verify_admitted_record()?;
+        if !self.manifest.domain.starts_with("sdk-source-unit-") {
+            return self.verify_admitted_payload();
+        }
+        let store_root = self
+            .admitted_entry_root
+            .parent()
+            .and_then(Path::parent)
+            .ok_or_else(|| OvenStoreError::Integrity {
+                identity: self.admitted_identity.clone(),
+                message: "native entry has no store root".to_string(),
+            })?;
+        let proof_path = crate::closure_proof::OvenClosureProof::path(store_root, &self.admitted_identity);
+        let artifact_count =
+            u64::try_from(self.manifest.materialized_files.len()).map_err(|_| OvenStoreError::Integrity {
+                identity: self.admitted_identity.clone(),
+                message: "native member count is outside supported bounds".to_string(),
+            })?;
+        if crate::closure_proof::OvenClosureProof::read_matching(&proof_path, &self.admitted_identity, artifact_count)
+            .is_some()
+        {
+            return Ok(());
+        }
+        self.verify_admitted_payload()?;
+        crate::closure_proof::OvenClosureProof {
+            schema_version: crate::closure_proof::OVEN_CLOSURE_PROOF_SCHEMA_VERSION,
+            closure_identity: self.admitted_identity.clone(),
+            artifact_count,
+        }
+        .write(&proof_path)
+        .map_err(|source| OvenStoreError::Io {
+            path: proof_path,
+            source,
+        })
+    }
+
     /// Borrow the admitted content descriptors this payload's closure was proven against.
     ///
     /// A publication that reads the same files can be handed these as expectations, so one read both describes the
@@ -436,7 +478,7 @@ pub enum OvenStoreError {
     /// An entry's manifest and payload fail integrity verification.
     #[error("Oven store integrity failure for `{identity}`: {message}")]
     Integrity { identity: String, message: String },
-    /// Capacity policy cannot admit an artifact without deleting an active entry or exceeding an allowance.
+    /// An artifact request or private publisher staging exceeds its explicit size allowance.
     #[error("Oven store capacity blocked for domain `{domain}`: {message}")]
     CapacityBlocked { domain: String, message: String },
     /// The named legacy publisher holds private staging capacity, so an unrelated publication cannot safely grow
@@ -1392,19 +1434,12 @@ impl OvenStore {
         self.prune_with_superseded_release_reclamation(false)
     }
 
-    /// Reserve the remaining aggregate and compatibility-domain allowance for the explicit compatibility baker.
+    /// Reserve a bounded private staging request while sweeping idle entries toward retention targets.
     ///
-    /// A live lease must never be pruned. The old all-or-nothing reservation treated even a tiny live Loaf as a
-    /// reason to reject the next serialized bake, which made debug/release preparation impossible in one process.
-    /// Instead, inactive entries are reclaimed as before, active entries stay intact, and Cargo's staging monitor is
-    /// capped at the exact remaining aggregate/domain capacity. The publisher lock excludes another staging writer
-    /// while that cap is in force, so this remains a hard physical bound rather than post-hoc accounting.
-    ///
-    /// `staging_floor_bytes` is the transient capacity the caller expects the bake to need. When what remains after
-    /// retention is smaller than that, inactive entries are reclaimed oldest-first until the floor fits, so a home
-    /// holding one large project's closure does not make the next project's bake fail on staging it could have had
-    /// (#1230). Entries under a live lease are never candidates; a reservation is refused only when they alone leave
-    /// no staging at all. A floor of zero keeps every entry that fits retention policy.
+    /// Active leases remain protected and retained totals never reduce the staging allowance. The publisher lock
+    /// excludes concurrent staging writers; the monitor bounds this request, not the size of the retained store.
+    /// `staging_floor_bytes` is a sweep hint: inactive entries are reclaimed oldest-first when that anticipated
+    /// request would exceed retention targets. A zero floor keeps reusable entries that already fit those targets.
     pub fn reserve_legacy_cargo_publisher_capacity(
         &self,
         domain: &str,
@@ -1432,8 +1467,7 @@ impl OvenStore {
         // A reservation is not itself evidence that an existing immutable entry is obsolete. Keep every entry that
         // already fits policy so a debug/release sibling or a second project can reuse it; the measured hand-off
         // below is where the actual pending closure is admitted and any necessary inactive reclamation occurs.
-        // The staging monitor still receives only the remaining aggregate/domain allowance, so this preserves the
-        // hard transient bound without turning each explicit bake into a cache flush.
+        // The staging monitor receives its independent request allowance; retained readers do not reduce it.
         let mut report = self.prune_to_limits(None, 0, 0, true)?;
         if self.remaining_publisher_capacity(domain)? < staging_floor_bytes {
             // The retained closure of some other project is worth less than this bake finishing: reclaim what is
@@ -1441,12 +1475,15 @@ impl OvenStore {
             let reclaimed = self.prune_to_limits(Some(domain), 0, staging_floor_bytes, true)?;
             report = merge_prune_reports(report, reclaimed);
         }
-        let transient_limit_bytes = self.remaining_publisher_capacity(domain)?;
+        let transient_limit_bytes = self
+            .limits
+            .max_physical_bytes
+            .min(self.limits.max_domain_physical_bytes);
         if transient_limit_bytes == 0 {
             return Err(OvenStoreError::CapacityBlocked {
                 domain: domain.to_string(),
                 message: format!(
-                    "active retained physical bytes leave no compatibility-baker staging capacity; skipped active entries {:?}. Run `incan oven store inspect`, then `incan oven store prune --max-physical-bytes <bytes>` to reclaim inactive artifacts before retrying; active leases remain protected",
+                    "compatibility-baker request has zero staging allowance; skipped active entries {:?}",
                     report.skipped_active_entries,
                 ),
             });
@@ -1471,14 +1508,11 @@ impl OvenStore {
         Ok(aggregate_remaining.min(domain_remaining))
     }
 
-    /// Refuse the named publisher's final hand-off when its live private staging plus every new immutable file would
-    /// exceed the aggregate physical policy.
+    /// Refuse a publisher's final hand-off only when its private staging and pending batch exceed the request bound.
     ///
-    /// Materialized files beneath `legacy-cargo-staging` are hard-linked into the atomic entry staging, so they are
-    /// counted once here. Sources outside that private tree are copied by [`write_staged_entry`] and are reserved
-    /// once per digest/executable pair, exactly as the batch writer shares them. The publisher reservation can retain
-    /// leased entries while capping staging at the remaining capacity, so this hand-off includes those entries again
-    /// and remains safe if another explicit transition owner reuses the primitive.
+    /// Files beneath `legacy-cargo-staging` are hard-linked into atomic entry staging and counted once. Sources
+    /// outside that private tree are copied by [`write_staged_entry`] and reserved once per digest/executable pair.
+    /// Retained entries are outside this request, even when active readers hold them above retention targets.
     pub fn ensure_legacy_cargo_batch_physical_capacity(
         &self,
         staging: &Path,
@@ -1517,12 +1551,6 @@ impl OvenStore {
             });
         }
         let mut observed_physical = unique_publisher_staging_physical_bytes(&staging)?;
-        observed_physical = observed_physical.saturating_add(
-            self.collect_entries_for_admission()?
-                .iter()
-                .map(|entry| entry.physical_bytes)
-                .sum::<u64>(),
-        );
         let mut copied_materializations = BTreeSet::new();
         for request in requests {
             let manifest = self.manifest_for_publication(request)?;
@@ -1591,58 +1619,28 @@ impl OvenStore {
         })
     }
 
-    /// Ensure published entries leave enough capacity for the pending immutable artifact.
+    /// Sweep idle entries toward retention targets without rejecting a bounded request because readers are active.
+    ///
+    /// Request-size checks happen before staging. Retained totals are sweep targets, not publication ceilings: an
+    /// immutable unit under lease must survive, and its presence cannot prevent another valid record being published.
     fn prune_for_admission(
         &self,
         domain: &str,
         pending_logical_bytes: u64,
         pending_physical_bytes: u64,
     ) -> Result<(), OvenStoreError> {
-        let report = self.prune_to_limits(Some(domain), pending_logical_bytes, pending_physical_bytes, true)?;
-        let entries = self.collect_entries_for_admission()?;
-        if policy_satisfied(
-            &entries,
-            self.limits,
-            Some(domain),
-            pending_logical_bytes,
-            pending_physical_bytes,
-        ) {
-            return Ok(());
-        }
-        Err(OvenStoreError::CapacityBlocked {
-            domain: domain.to_string(),
-            message: format!(
-                "policy cannot admit logical={pending_logical_bytes} physical={pending_physical_bytes}; skipped active entries {:?}",
-                report.skipped_active_entries
-            ),
-        })
+        self.prune_to_limits(Some(domain), pending_logical_bytes, pending_physical_bytes, true)?;
+        Ok(())
     }
 
-    /// Ensure a related mixed-domain batch can be admitted without treating its foundations as separate unrelated
-    /// publications. Aggregate physical policy applies to the complete set, while every named domain retains its
-    /// own logical and physical allowance.
+    /// Sweep idle members before a bounded related batch, preserving active foundations even above retention targets.
     fn prune_for_related_admission(
         &self,
         pending_by_domain: &BTreeMap<String, (u64, u64)>,
         pending_physical_bytes: u64,
     ) -> Result<(), OvenStoreError> {
-        let report = self.prune_related_to_limits(pending_by_domain, pending_physical_bytes, true)?;
-        let entries = self.collect_entries_for_admission()?;
-        if related_policy_satisfied(&entries, self.limits, pending_by_domain, pending_physical_bytes) {
-            return Ok(());
-        }
-        let domain = related_policy_offending_domains(&entries, self.limits, pending_by_domain, pending_physical_bytes)
-            .into_iter()
-            .next()
-            .or_else(|| pending_by_domain.keys().next().cloned())
-            .unwrap_or_else(|| "related-batch".to_string());
-        Err(OvenStoreError::CapacityBlocked {
-            domain,
-            message: format!(
-                "policy cannot admit related batch physical={pending_physical_bytes}; skipped active entries {:?}",
-                report.skipped_active_entries
-            ),
-        })
+        self.prune_related_to_limits(pending_by_domain, pending_physical_bytes, true)?;
+        Ok(())
     }
 
     /// Apply LRU pruning for a complete related batch while preserving every active lease.
@@ -5283,6 +5281,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// Active readers survive publication above the retention target, then idle records can be swept.
     #[test]
     fn active_lease_blocks_unsafe_pruning_then_inactive_entry_is_reclaimed() -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -5297,11 +5296,18 @@ pub(crate) mod tests {
         );
         let (_entry, lease) = bounded.select(&first.identity)?;
 
-        let blocked = bounded.publish(&request(project.path(), "engine-two", b"second payload")?);
-        assert!(matches!(blocked, Err(OvenStoreError::CapacityBlocked { .. })));
-        assert_eq!(bounded.inspect()?.entries.len(), 1);
+        bounded.publish(&request(project.path(), "engine-two", b"second payload")?)?;
+        assert!(
+            bounded
+                .inspect()?
+                .entries
+                .iter()
+                .any(|entry| entry.manifest.identity == first.identity)
+        );
+        assert_eq!(bounded.inspect()?.entries.len(), 2);
 
         drop(lease);
+        bounded.prune()?;
         let second = bounded.publish(&request(project.path(), "engine-two", b"second payload")?)?;
         let inspection = bounded.inspect()?;
         assert_eq!(inspection.entries.len(), 1);
@@ -5309,6 +5315,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// Atomic matching selection protects its owner without blocking another bounded publication.
     #[test]
     fn matching_execution_selection_holds_the_lease_before_policy_can_prune() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -5328,9 +5335,16 @@ pub(crate) mod tests {
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].manifest.identity, first.identity);
 
-        let blocked = bounded.publish(&request(project.path(), "engine-two", b"second payload")?);
-        assert!(matches!(blocked, Err(OvenStoreError::CapacityBlocked { .. })));
+        bounded.publish(&request(project.path(), "engine-two", b"second payload")?)?;
+        assert!(
+            bounded
+                .inspect()?
+                .entries
+                .iter()
+                .any(|entry| entry.manifest.identity == first.identity)
+        );
         drop(selected);
+        bounded.prune()?;
 
         let second = bounded.publish(&request(project.path(), "engine-two", b"second payload")?)?;
         assert_eq!(bounded.inspect()?.entries[0].manifest.identity, second.identity);
@@ -5412,7 +5426,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
-    /// A reservation with no floor keeps every entry, leased or not, and caps staging at what remains.
+    /// Retained readers and idle reusable entries do not reduce the bounded staging request allowance.
     #[test]
     fn legacy_publisher_reservation_preserves_active_leases_and_caps_staging() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -5427,25 +5441,24 @@ pub(crate) mod tests {
         assert_eq!(store.inspect()?.entries.len(), 1);
         assert!(active_reservation.prune_report.removed_entries.is_empty());
         assert!(
-            active_reservation.transient_limit_bytes < store.limits().max_physical_bytes,
-            "a held lease must remain while reducing the baker's staging allowance"
+            active_reservation.transient_limit_bytes == store.limits().max_physical_bytes,
+            "a held lease must remain without reducing the request allowance"
         );
 
         drop(lease);
         let inactive_reservation = store.reserve_legacy_cargo_publisher_capacity("engine", 0)?;
         assert!(inactive_reservation.prune_report.removed_entries.is_empty());
         assert!(
-            inactive_reservation.transient_limit_bytes < store.limits().max_physical_bytes,
-            "an inactive reusable entry must reduce the staging allowance instead of being discarded speculatively"
+            inactive_reservation.transient_limit_bytes == store.limits().max_physical_bytes,
+            "an inactive reusable entry must preserve the staging request allowance"
         );
         assert_eq!(store.inspect()?.entries.len(), 1);
         Ok(())
     }
 
-    /// When live leases alone leave no staging, the refusal names the inspect-then-prune recovery path.
+    /// A retained closure filling the retention target cannot block a bounded staging request.
     #[test]
-    fn legacy_publisher_capacity_failure_names_the_safe_prune_recovery_path() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn legacy_publisher_reservation_is_not_blocked_by_retained_capacity() -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
         let project = tempfile::tempdir()?;
         write_project(project.path())?;
@@ -5458,17 +5471,10 @@ pub(crate) mod tests {
         );
         let (_entry, lease) = bounded.select(&first.identity)?;
 
-        let error = bounded
-            .reserve_legacy_cargo_publisher_capacity("engine", 0)
-            .err()
-            .ok_or("a fully retained active entry must block publisher staging")?;
+        let reservation = bounded.reserve_legacy_cargo_publisher_capacity("engine", 0)?;
+        assert_eq!(reservation.transient_limit_bytes, physical_bytes);
+        assert_eq!(bounded.inspect()?.entries.len(), 1);
 
-        assert!(error.to_string().contains("incan oven store inspect"));
-        assert!(
-            error
-                .to_string()
-                .contains("incan oven store prune --max-physical-bytes")
-        );
         drop(lease);
         Ok(())
     }
@@ -5618,6 +5624,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// Batch readers remain intact while another bounded shard is admitted above the retention target.
     #[test]
     fn batch_execution_leases_protect_every_selected_shard_from_policy_pruning()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -5642,9 +5649,11 @@ pub(crate) mod tests {
         let inspection = bounded.inspect()?;
         assert_eq!(inspection.active_lease_physical_bytes, inspection.physical_bytes);
 
-        let blocked = bounded.publish(&request(project.path(), "suite-shard-three", b"third shard")?);
-        assert!(matches!(blocked, Err(OvenStoreError::CapacityBlocked { .. })));
-        assert_eq!(bounded.inspect()?.entries.len(), 2);
+        bounded.publish(&request(project.path(), "suite-shard-three", b"third shard")?)?;
+        assert_eq!(bounded.inspect()?.entries.len(), 3);
+        for payload in &selected {
+            payload.verify_admitted_payload()?;
+        }
 
         drop(selected);
         let third = bounded.publish(&request(project.path(), "suite-shard-three", b"third shard")?)?;
@@ -5829,6 +5838,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// A bounded related batch publishes without removing either actively leased foundation.
     #[test]
     fn related_batch_keeps_all_active_leases_safe_under_aggregate_pressure() -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -5848,15 +5858,19 @@ pub(crate) mod tests {
             request(project.path(), "foundation-d", b"incoming foundation d")?,
         ];
 
-        let result = bounded.publish_batch(&requests);
-        assert!(matches!(result, Err(OvenStoreError::CapacityBlocked { .. })));
+        let published = bounded.publish_batch(&requests)?;
+        assert_eq!(published.len(), 2);
         let inspection = bounded.inspect()?;
-        assert_eq!(inspection.entries.len(), 2);
-        assert_eq!(inspection.active_lease_physical_bytes, inspection.physical_bytes);
+        assert_eq!(inspection.entries.len(), 4);
+        assert!(inspection.active_lease_physical_bytes < inspection.physical_bytes);
+        for payload in &leases {
+            payload.verify_admitted_payload()?;
+        }
         drop(leases);
         Ok(())
     }
 
+    /// Shared members occupy one physical copy, and live leases do not block a distinct bounded member.
     #[cfg(unix)]
     #[test]
     fn batch_publication_shares_identical_materialized_closure_files_once_physically()
@@ -5943,18 +5957,18 @@ pub(crate) mod tests {
                 2_000_000,
             ),
         );
-        let mut blocked_request = request(project.path(), "compiler-suite", b"new suite shard")?;
-        blocked_request.materialized_files = vec![OvenArtifactMaterializedFile {
+        let mut incoming_request = request(project.path(), "compiler-suite", b"new suite shard")?;
+        incoming_request.materialized_files = vec![OvenArtifactMaterializedFile {
             source_path: unique_source,
             relative_path: "closure/libunique.rlib".to_string(),
         }];
-        assert!(matches!(
-            lease_bounded.publish(&blocked_request),
-            Err(OvenStoreError::CapacityBlocked { .. })
-        ));
+        lease_bounded.publish(&incoming_request)?;
         let protected = lease_bounded.inspect()?;
-        assert_eq!(protected.entries.len(), 2);
-        assert_eq!(protected.active_lease_physical_bytes, protected.physical_bytes);
+        assert_eq!(protected.entries.len(), 3);
+        assert!(protected.active_lease_physical_bytes < protected.physical_bytes);
+        for payload in &selected {
+            payload.verify_admitted_payload()?;
+        }
         drop(selected);
         Ok(())
     }

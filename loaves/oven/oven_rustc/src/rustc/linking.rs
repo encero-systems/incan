@@ -43,21 +43,30 @@ pub(crate) fn pinned_link(rustc: &Path, target: &str) -> Result<Option<PinnedLin
     pinned_unit_link(rustc, target, false)
 }
 
-/// Native SDK stubs and reexports required by the pinned compiler driver's declared runtime closure.
-const DRIVER_APPLE_SDK_INPUTS: &[&str] = &[
-    "usr/lib/libobjc.tbd",
+/// Exact stable native inputs, including frameworks declared by adopted compiler SDK units and their reexports.
+const ORDINARY_APPLE_SDK_INPUTS: &[&str] = &[
+    "usr/lib/libSystem.tbd",
+    "usr/lib/libc.tbd",
+    "usr/lib/libm.tbd",
+    "usr/lib/libiconv.tbd",
+    "usr/lib/libcharset.1.tbd",
     "usr/lib/libobjc.A.tbd",
-    "usr/lib/libz.tbd",
-    "usr/lib/libc++.tbd",
-    "usr/lib/libc++.1.tbd",
-    "System/Library/Frameworks/Foundation.framework/Foundation.tbd",
-    "System/Library/Frameworks/Foundation.framework/Versions/C/Foundation.tbd",
     "System/Library/Frameworks/CoreFoundation.framework/CoreFoundation.tbd",
     "System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation.tbd",
     "System/Library/Frameworks/CoreServices.framework/CoreServices.tbd",
     "System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices.tbd",
     "System/Library/Frameworks/CFNetwork.framework/CFNetwork.tbd",
     "System/Library/Frameworks/CFNetwork.framework/Versions/A/CFNetwork.tbd",
+];
+
+/// Additional native inputs required by the pinned compiler driver's declared runtime closure.
+const DRIVER_APPLE_SDK_INPUTS: &[&str] = &[
+    "usr/lib/libobjc.tbd",
+    "usr/lib/libz.tbd",
+    "usr/lib/libc++.tbd",
+    "usr/lib/libc++.1.tbd",
+    "System/Library/Frameworks/Foundation.framework/Foundation.tbd",
+    "System/Library/Frameworks/Foundation.framework/Versions/C/Foundation.tbd",
 ];
 
 /// Select the ordinary closure or the explicit driver's additional SDK inputs before computing its identity.
@@ -82,15 +91,8 @@ fn pinned_unit_link(rustc: &Path, target: &str, declared_driver: bool) -> Result
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk"));
     let mut members = BTreeMap::new();
-    let ordinary = [
-        "usr/lib/libSystem.tbd",
-        "usr/lib/libc.tbd",
-        "usr/lib/libm.tbd",
-        "usr/lib/libiconv.tbd",
-        "usr/lib/libcharset.1.tbd",
-    ];
     let driver_inputs = if declared_driver { DRIVER_APPLE_SDK_INPUTS } else { &[] };
-    for relative in ordinary.into_iter().chain(driver_inputs.iter().copied()) {
+    for relative in ORDINARY_APPLE_SDK_INPUTS.iter().chain(driver_inputs).copied() {
         let path = sdk.join(relative);
         let bytes = fs::read(&path).map_err(|source| OvenRustcError::Io { path, source })?;
         members.insert(relative, bytes);
@@ -109,7 +111,7 @@ fn pinned_unit_link(rustc: &Path, target: &str, declared_driver: bool) -> Result
         identities.insert(relative, digest_bytes(bytes));
     }
     // SDK version is an explicit link policy, never inferred from the machine's selected developer directory.
-    identities.insert("platform-policy", "macos:min=11.0:sdk=26.5:direct-lld:v2".to_string());
+    identities.insert("platform-policy", "macos:min=11.0:sdk=26.5:direct-lld:v4".to_string());
     let encoded = serde_json::to_vec(&identities).map_err(|error| OvenRustcError::InvalidInput {
         field: "link closure",
         message: error.to_string(),

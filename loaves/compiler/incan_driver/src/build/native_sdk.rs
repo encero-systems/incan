@@ -25,6 +25,10 @@ pub fn select_prepared_native_sdk_plan(
     let catalog = std::fs::read(inventory.root.join(".sealed-native-receipts.json"))
         .map_err(|error| CliError::failure(error.to_string()))?;
     let receipt = bind_native_catalog(source_receipt, &catalog)?;
+    let roots = oven_store::digest_dependency_specs(dependencies, incan_oven_facet::provider_hooks().as_ref())
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let receipt = oven_store::receipt_with_build_unit_input(&receipt, "sdk-native-roots", roots)
+        .map_err(|error| CliError::failure(error.to_string()))?;
     let selection = super::native_sdk_plan::select_native_sdk_plan(store, &receipt, dependencies)?
         .ok_or_else(|| CliError::failure("prepared SDK has no native dependency plan"))?;
     Ok((receipt, selection.plan_selection))

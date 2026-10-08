@@ -132,7 +132,7 @@ pub fn select_sdk_native_artifacts(root: &Path) -> ProviderResult<SdkNativeSelec
             ));
         }
         owner
-            .verify_admitted_payload()
+            .verify_proven_native_payload()
             .map_err(|error| ProviderError::failure(error.to_string()))?;
     }
     Ok(SdkNativeSelection {

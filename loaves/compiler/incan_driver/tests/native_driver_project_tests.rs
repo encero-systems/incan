@@ -99,6 +99,15 @@ fn runtime_plan(runtime: &Path) -> Result<oven_rustc::plan::OvenDirectRustcPlanS
             oven_store::DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES,
         ),
     );
+    if incan_provider::inventory::discover_or_reuse_published_sdk_inventory()?
+        .is_some_and(|inventory| inventory.root.join(".sealed-native-units.json").is_file())
+    {
+        let manifest = oven_model::manifest::ProjectManifest::load(&runtime.join("loaf.toml"))?;
+        let dependencies = manifest.rust_dependencies().values().cloned().collect::<Vec<_>>();
+        return Ok(
+            incan_driver::build::native_sdk::select_prepared_native_sdk_plan(&store, &receipt, &dependencies)?.1,
+        );
+    }
     if let Some(plan) = oven_rustc::plan::selection::select_receipt_direct_rustc_execution_plan(&store, &receipt)? {
         return Ok(oven_rustc::plan::OvenDirectRustcPlanSelection::Stored(Box::new(plan)));
     }
@@ -3224,6 +3233,16 @@ fn check_project_case(name: &str, text: &str, expected_stdout: &[u8]) -> Result<
     assert_eq!(actual.stdout, expected.stdout);
     assert_eq!(actual.stdout, expected_stdout);
     Ok(())
+}
+
+/// The adopted math unit is an explicit receipt-selected dependency on both native routes.
+#[test]
+fn direct_route_native_sdk_math_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "native_sdk_math",
+        "from std.math import sqrt\n\ndef main() -> None:\n    println(sqrt(81.0))\n",
+        b"9.0\n",
+    )
 }
 
 /// Explicit Debug formatting preserves scalar spelling, text escaping, and repeated list reads.
