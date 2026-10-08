@@ -2,7 +2,9 @@
 
 pub from decimals import decimal_from_parts, format_decimal, equal_decimal, unequal_decimal
 pub from decimals import less_decimal, less_equal_decimal, greater_decimal, greater_equal_decimal
-pub from rust::incan_std_core::num import Decimal128
+pub from rust::incan_std_core::num import Decimal128 as DecimalCarrier
+pub from frozen_text import format_frozen
+pub from rust::incan_std_core::frozen import FrozenStr as FrozenCarrier
 pub from carriers import format_carrier, clone_carrier_payload
 pub from async_ import run_async_entry
 pub from generators import poll_generator
@@ -42,12 +44,24 @@ pub from builtins import sum_int, sum_bool, truth_text, truth_list
 pub from builtins import absolute_int, truth_int, truth_float, truth_bool, boolean_and, boolean_or
 from rust::incan_std_core::iter import range as runtime_range
 pub from statics import (
+    read_static_text,
+    write_static_text,
     read_static_int,
     write_static_int,
     read_static_float,
     write_static_float,
     read_static_bool,
     write_static_bool,
+)
+pub from static_lists import (
+    read_static_int_list,
+    write_static_int_list,
+    read_static_float_list,
+    write_static_float_list,
+    read_static_bool_list,
+    write_static_bool_list,
+    read_static_text_list,
+    write_static_text_list,
 )
 from panic_hook import initialize_panic_hook as initialize_entrypoint
 pub from strings import (

@@ -71,7 +71,7 @@ pub struct BodyIrModule {
     /// implementations are absent and must refuse.
     #[serde(default)]
     pub stdlib_delegations: Vec<StdlibDelegation>,
-    /// Source-local scalar statics with effect-free literal initializers; all other initializers must refuse.
+    /// Source-local statics with effect-free literal initializers; all other initializers must refuse.
     #[serde(default)]
     pub static_declarations: Vec<StaticDeclaration>,
     /// Identity of the owning module, matching [`crate::HirModule::id`].
@@ -135,10 +135,19 @@ pub struct TypeAliasDeclaration {
 pub struct StaticDeclaration {
     /// Exact checker-selected storage identity, independent of aliases at its uses.
     pub canonical: CanonicalSymbolId,
-    /// Checked scalar carrier type.
+    /// Checked carrier type; initializer validation must preserve its exact element types.
     pub ty: IncanType,
-    /// Literal initialization value; repeated reads must not reinitialize an assigned cell.
-    pub initial: Constant,
+    /// Effect-free initialization value; repeated reads must not reinitialize an assigned cell.
+    pub initial: StaticInitializer,
+}
+
+/// Checked effect-free storage initialization, independent of its eventual native representation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum StaticInitializer {
+    /// One primitive literal, interpreted in the storage declaration's checked carrier.
+    Literal(Constant),
+    /// An ordered list of primitive literals, each checked against the declaration's element type.
+    List(Vec<Constant>),
 }
 
 /// A source-owned stdlib callable's proven transparent native delegation and scalar signature.
@@ -537,6 +546,14 @@ impl ExternDelegation {
 }
 
 impl Body {
+    /// Store this already-checked body in the recursive representation used by deferred nominal field defaults.
+    ///
+    /// This allocation preserves every retained fact unchanged and keeps Rust recursive-storage plumbing out of
+    /// the Incan lowering. Consumers must still validate and specialize the body before storing it.
+    pub fn into_box(self) -> Box<Self> {
+        Box::new(self)
+    }
+
     /// Return the locals in this body whose type is not [`crate::types::AbiV0Ownership::CopyOrTrivial`] and are
     /// therefore drop-relevant if a panic unwinds through this body.
     ///

@@ -24,6 +24,7 @@ mod nominal_parameters;
 mod operators_literals_and_assignment;
 mod patterns_and_assertions;
 mod provider_plans;
+mod static_storage;
 
 use helpers::{
     body_named, build, build_after_expected_typecheck_errors, local_for_binding, named_targets, rendered_f,

@@ -76,6 +76,7 @@ enum Scalar {
     String,
     StringRef,
     Decimal,
+    FrozenStr,
     StrRef,
     StringArray(i64),
     StrArray(i64),
@@ -116,6 +117,7 @@ enum Leaf {
     U8,
     Unit,
     Decimal,
+    FrozenStr,
 }
 
 impl Leaf {
@@ -131,6 +133,7 @@ impl Leaf {
             ListLeaf::U8 => Leaf::U8,
             ListLeaf::Unit => Leaf::Unit,
             ListLeaf::Decimal => Leaf::Decimal,
+            ListLeaf::FrozenStr => Leaf::FrozenStr,
         }
     }
 }
@@ -193,6 +196,7 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::CheckedInt => Scalar::CheckedInt,
         PlanType::String => Scalar::String,
         PlanType::Decimal => Scalar::Decimal,
+        PlanType::FrozenStr => Scalar::FrozenStr,
         PlanType::StringRef => Scalar::StringRef,
         PlanType::StrRef => Scalar::StrRef,
         PlanType::StringArray(count) => Scalar::StringArray(*count),
@@ -563,6 +567,13 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             Ok(Scalar::UnitFunction)
         }
         RvalueKind::Use(value) => operand(plan, function, value),
+        RvalueKind::FrozenText(value) => {
+            if !matches!(value.kind, OperandKind::Literal(Constant::Text(_))) {
+                return Err(invalid(function, "FrozenStr construction requires static literal text"));
+            }
+            require(function, operand(plan, function, value)?, Scalar::StrRef, "frozen literal")?;
+            Ok(Scalar::FrozenStr)
+        }
         RvalueKind::NumericCast(value, source, target) => {
             let source = scalar(source);
             let target = scalar(target);
@@ -635,6 +646,7 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             let ty = operand(plan, function, value)?;
             match op {
                 UnaryOp::Not if ty == Scalar::Bool => Ok(ty),
+                UnaryOp::Invert if integer(&ty) => Ok(ty),
                 UnaryOp::Negate
                     if matches!(
                         ty,
@@ -655,7 +667,11 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
         }
         RvalueKind::Binary(op, left, right) => {
             let ty = operand(plan, function, left)?;
-            require(function, operand(plan, function, right)?, ty.clone(), "binary operands")?;
+            let count = operand(plan, function, right)?;
+            if matches!(op, BinaryOp::ShiftLeft | BinaryOp::ShiftRight) {
+                return shift_result(function, ty, &count);
+            }
+            require(function, count, ty.clone(), "binary operands")?;
             binary_result(function, op, ty, expected)
         }
         RvalueKind::Array(elements) => validate_array(plan, function, elements, expected),
@@ -787,6 +803,7 @@ fn source_signature_type(ty: Scalar) -> bool {
                 | Scalar::Unit
                 | Scalar::String
                 | Scalar::Decimal
+                | Scalar::FrozenStr
                 | Scalar::Model(_)
                 | Scalar::Enum(_)
                 | Scalar::List(_, _)
@@ -914,10 +931,12 @@ fn binary_result(function: &Function, op: &BinaryOp, ty: Scalar, expected: Scala
             | BinaryOp::LessEqual
             | BinaryOp::Greater
             | BinaryOp::GreaterEqual => Ok(Scalar::Bool),
+            BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor if sized_integer(&ty) => Ok(ty),
             _ => Err(invalid(function, "unsupported sized numeric operator")),
         };
     }
     match op {
+        BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor if ty == Scalar::Int => Ok(Scalar::Int),
         BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply if ty == Scalar::Int => Ok(Scalar::CheckedInt),
         BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide if ty == Scalar::Float => {
             Ok(Scalar::Float)
@@ -931,6 +950,15 @@ fn binary_result(function: &Function, op: &BinaryOp, ty: Scalar, expected: Scala
             Ok(Scalar::Bool)
         }
         _ => Err(invalid(function, "invalid binary operand type")),
+    }
+}
+
+/// A shift keeps its left operand's integer type and counts with any integer type, as Rust's own shifts do.
+fn shift_result(function: &Function, ty: Scalar, count: &Scalar) -> Result<Scalar, PlanError> {
+    if integer(&ty) && integer(count) {
+        Ok(ty)
+    } else {
+        Err(invalid(function, "shift operands must be integers"))
     }
 }
 
@@ -1254,6 +1282,11 @@ fn sized_numeric(ty: &Scalar) -> Option<Numeric> {
 /// Sized integer carriers can produce a checked arithmetic pair; floats cannot.
 fn sized_integer(ty: &Scalar) -> bool {
     sized_numeric(&ty).is_some() && !matches!(ty, Scalar::F32 | Scalar::F64)
+}
+
+/// The ordinary and sized integer carriers, the only operands of bit operations.
+fn integer(ty: &Scalar) -> bool {
+    *ty == Scalar::Int || sized_integer(ty)
 }
 
 /// Resolve a source enum layout by its validated plan index.

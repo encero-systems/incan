@@ -2,6 +2,59 @@
 
 use super::*;
 
+/// Primitive static-list parity, including an argument that changes the same cell before its outer append.
+pub(super) const LIST_STATICS_SOURCE: &str = r#"
+static ITEMS: list[int] = [1]
+static FLAGS: list[bool] = [true, false]
+static TEXTS: list[str] = ["alpha"]
+static REALS: list[float] = [1.5]
+
+def push(value: int) -> None:
+    ITEMS.append(value)
+
+def argument_effect() -> int:
+    ITEMS.append(8)
+    return 9
+
+def snapshot() -> list[int]:
+    return ITEMS
+
+def total() -> int:
+    mut result = 0
+    for item in ITEMS:
+        result += item
+    return result
+
+def main() -> None:
+    live = ITEMS
+    first = snapshot()
+    push(2)
+    println(len(live))
+    ITEMS.append(argument_effect())
+    live.extend([5, 6])
+    live.swap(0, 5)
+    println(live[0])
+    println(live.pop())
+    live.remove(0)
+    println(len(ITEMS))
+    println(total())
+    println(len(first))
+    mut detached = ITEMS
+    detached = [7]
+    detached.append(10)
+    println(len(detached))
+    println(len(ITEMS))
+    ITEMS = [3]
+    println(live[0])
+    println(FLAGS[0])
+    FLAGS.append(true)
+    println(len(FLAGS))
+    TEXTS.append("beta")
+    println(TEXTS[1])
+    REALS.append(2.5)
+    println(REALS[1])
+"#;
+
 /// Exercise newtype construction and projection, aliases, scalar constants, and static mutation against legacy.
 pub(super) fn check_declarations(
     driver: &Path,
