@@ -586,7 +586,9 @@ impl TypeChecker {
                             field_count: 1,
                         },
                     );
-                    return self.constructor_result_type(name);
+                    // Retain the checked wrapped value's owner arguments; native layouts cannot depend on Rust
+                    // inference.
+                    return self.constructor_result_type_with_bindings(name, &type_bindings);
                 }
                 let ctor_fields: Option<std::collections::HashMap<String, FieldInfo>> =
                     self.lookup_type_info(name).and_then(|info| match info {

@@ -205,6 +205,8 @@ pub(super) fn lower_function_body(
 /// parameters) via [`BodyBuilder::declare_receiver_local`], typed with the typechecker-equivalent `receiver_ty`.
 /// A method with `receiver: None` (a static/associated method) lowers with no receiver local at all, identically
 /// in shape to a free function's body; its ordinary parameters still resolve through the same binding lookup.
+/// Its ordered callable binders include the owner's parameters before its own, because there is no receiver frame
+/// through which nominal specialization could close them. A nominal `Self` return retains that checked owner carrier.
 pub(super) fn lower_method_body(
     method: &ast::MethodDecl,
     decl_span: ast::Span,
@@ -232,6 +234,13 @@ pub(super) fn lower_method_body(
     type_parameters.extend(method.type_params.iter().map(|parameter| parameter.name.clone()));
     let owner_return_type = binding
         .map(|binding| semantic_type_from_resolved(&binding.return_type))
+        .map(|ty| {
+            if ty == IncanType::SelfType {
+                receiver_ty.clone()
+            } else {
+                ty
+            }
+        })
         .map(|ty| parameter_types::retain_parameter_type(ty, &type_parameters))
         .unwrap_or(IncanType::Unknown);
 
@@ -320,11 +329,15 @@ pub(super) fn lower_method_body(
     }
 
     Some(bir::Body {
-        type_parameters: method
-            .type_params
-            .iter()
-            .map(|parameter| parameter.name.clone())
-            .collect(),
+        type_parameters: if method.receiver.is_none() {
+            builder.type_parameters.clone()
+        } else {
+            method
+                .type_params
+                .iter()
+                .map(|parameter| parameter.name.clone())
+                .collect()
+        },
         decl_id,
         direct_call_id,
         canonical: binding.and_then(|binding| binding.identity.clone()),

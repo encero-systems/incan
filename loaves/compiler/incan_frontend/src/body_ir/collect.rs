@@ -359,7 +359,9 @@ pub(super) fn collect_local_nominal_declarations(
         .collect()
 }
 
-/// Retain a plain newtype's checked carrier as one canonical tuple slot; its owner identity authorizes that slot.
+/// Retain a newtype's checked carrier as one canonical tuple slot and preserve ordered owner placeholders for
+/// specialization. The owner identity authorizes that slot even when the wrapped carrier is still open in the
+/// declaration template.
 fn collect_plain_newtype(
     span: ast::Span,
     newtype: &ast::NewtypeDecl,
@@ -378,7 +380,13 @@ fn collect_plain_newtype(
         .declaration_identities
         .get(&(span.start, span.end))?
         .clone();
-    let underlying = semantic_type_from_resolved(&facts.underlying);
+    let type_parameters = newtype
+        .type_params
+        .iter()
+        .map(|parameter| parameter.name.clone())
+        .collect::<Vec<_>>();
+    let underlying =
+        parameter_types::retain_parameter_type(semantic_type_from_resolved(&facts.underlying), &type_parameters);
     let mut derives = facts.automatic_derives.clone();
     if matches!(
         underlying,
@@ -402,8 +410,8 @@ fn collect_plain_newtype(
         field_default_body: None,
         derives,
         named_type_identities: type_info.declarations.named_type_identities.clone(),
-        type_parameters: Vec::new(),
-        type_parameter_count: 0,
+        type_parameter_count: type_parameters.len(),
+        type_parameters,
     })
 }
 /// Retain exact source-local fieldless normal-enum declaration and unit-member facts in source order.

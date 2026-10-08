@@ -872,6 +872,42 @@ def main() -> None:
     )
 }
 
+/// Prove inferred generic newtype owners, static construction, and tuple-returning methods against legacy.
+#[test]
+fn type_parameter_newtype_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("type-parameter-newtype")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"type Box[T] = newtype T:
+    @staticmethod
+    def wrap(value: T) -> Self:
+        return Box(value)
+
+    def kind(self) -> str:
+        return "Box"
+
+    @staticmethod
+    def pick[U](value: T, other: U) -> U:
+        return other
+
+    def duplicate(self) -> Tuple[T, T]:
+        return (self.0, self.0)
+
+def main() -> None:
+    boxed = Box(42)
+    println(boxed.kind())
+    wrapped = Box.wrap(42)
+    pair = wrapped.duplicate()
+    println(f"{pair[0]} {pair[1]}")
+    println(Box.wrap("text").0)
+    println(Box.pick[str](42, "picked"))
+"#,
+    )
+}
+
 /// Prove carriers retained only inside closed function instances, including forwarded calls, against legacy.
 #[test]
 fn type_parameter_carrier_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

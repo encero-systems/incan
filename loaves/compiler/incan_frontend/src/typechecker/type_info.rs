@@ -1403,6 +1403,8 @@ pub enum PartialProjectionTargetKind {
 /// Call-site semantic decisions selected by the typechecker.
 #[derive(Debug, Default, Clone)]
 pub struct CallArtifacts {
+    /// Checked nominal owner arguments for an associated method, separate from its own explicit method arguments.
+    pub associated_owner_type_args: HashMap<(usize, usize), Vec<ResolvedType>>,
     /// Concrete owner types inferred from checked nominal constructor fields before an open caller context masks them.
     ///
     /// Body IR retains these executable carriers while legacy checking preserves its contextual expression type.
@@ -1696,6 +1698,7 @@ pub enum ResolvedMethodDispatch {
 /// `__iter__` and `__next__` hooks at its iterable's span, leaves the facts of the call written there as they were.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct CallSiteFacts {
+    associated_owner_type_args: Option<Vec<ResolvedType>>,
     inferred_constructor_type: Option<ResolvedType>,
     inferred_call_result_type: Option<ResolvedType>,
     method_call: Option<ResolvedMethodCall>,
@@ -2903,6 +2906,7 @@ impl TypeCheckInfo {
     pub(crate) fn take_call_site_facts(&mut self, span: Span) -> CallSiteFacts {
         let key = (span.start, span.end);
         CallSiteFacts {
+            associated_owner_type_args: self.calls.associated_owner_type_args.remove(&key),
             inferred_constructor_type: self.calls.inferred_constructor_types.remove(&key),
             inferred_call_result_type: self.calls.inferred_call_result_types.remove(&key),
             method_call: self.calls.resolved_method_calls.remove(&key),
@@ -2927,6 +2931,11 @@ impl TypeCheckInfo {
             }
         }
         let key = (span.start, span.end);
+        put(
+            &mut self.calls.associated_owner_type_args,
+            key,
+            facts.associated_owner_type_args,
+        );
         put(
             &mut self.calls.inferred_constructor_types,
             key,

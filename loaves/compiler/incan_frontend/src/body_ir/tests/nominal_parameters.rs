@@ -2,6 +2,72 @@
 
 use super::{IncanPrimitiveType, IncanType, bir, body_named, build, named_targets};
 
+/// Generic newtypes retain the checked owner binder and concrete inferred constructor carrier.
+#[test]
+fn newtype_owner_parameters_are_retained() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        r#"type Box[T] = newtype T:
+    @staticmethod
+    def wrap(value: T) -> Self:
+        return Box(value)
+
+    @staticmethod
+    def pick[U](value: T, other: U) -> U:
+        return other
+
+    def duplicate(self) -> Tuple[T, T]:
+        return (self.0, self.0)
+
+def main() -> None:
+    boxed = Box(42)
+    println(boxed.duplicate()[0])
+    println(Box.wrap("text").0)
+    println(Box.pick[str](42, "picked"))
+"#,
+        &["m", "newtype_parameter_frames"],
+    )?;
+    let [declaration] = module.nominal_declarations.as_slice() else {
+        return Err("expected one retained newtype layout".into());
+    };
+    assert_eq!(declaration.type_parameters, ["T"]);
+    assert_eq!(declaration.field_types, [IncanType::TypeVar("T".into())]);
+    assert!(module.is_well_formed_nominal_declaration(declaration));
+    assert_eq!(
+        body_named(&module, "main")?.locals[0].ty,
+        IncanType::Generic {
+            base: "Box".into(),
+            args: vec![IncanType::Primitive(IncanPrimitiveType::Int)]
+        }
+    );
+    let wrap = body_named(&module, "wrap")?;
+    assert_eq!(wrap.type_parameters, ["T"]);
+    assert_eq!(
+        wrap.return_type,
+        IncanType::Generic {
+            base: "Box".into(),
+            args: vec![IncanType::TypeVar("T".into())]
+        }
+    );
+    let targets = named_targets(&module, "main");
+    let target = targets
+        .iter()
+        .find(|target| target.name == "Box.wrap")
+        .ok_or("missing associated newtype target")?;
+    assert_eq!(target.type_args, [IncanType::Primitive(IncanPrimitiveType::Str)]);
+    let target = targets
+        .iter()
+        .find(|target| target.name == "Box.pick")
+        .ok_or("missing generic associated newtype target")?;
+    assert_eq!(
+        target.type_args,
+        [
+            IncanType::Primitive(IncanPrimitiveType::Int),
+            IncanType::Primitive(IncanPrimitiveType::Str)
+        ]
+    );
+    Ok(())
+}
+
 /// Inferred owner arguments on a constructor retain the concrete checked carrier inside a generic call.
 #[test]
 fn inferred_model_constructor_carriers_are_closed() -> Result<(), Box<dyn std::error::Error>> {

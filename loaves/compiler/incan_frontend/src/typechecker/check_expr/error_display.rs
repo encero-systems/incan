@@ -245,6 +245,8 @@ impl TypeChecker {
 /// These maps preserve the resolutions and executable instantiations under the call span; see
 /// that function for why the display probe takes and restores them.
 struct ProbeFacts {
+    /// Checked associated owner arguments, independent of method arguments.
+    associated_owner_type_args: Option<Vec<ResolvedType>>,
     /// Concrete constructor carrier retained before contextual expression typing.
     inferred_constructor_type: Option<ResolvedType>,
     /// Concrete generic-call result retained alongside its checked executable instantiation.
@@ -264,6 +266,7 @@ impl ProbeFacts {
     fn take(info: &mut TypeCheckInfo, span: Span) -> Self {
         let key = (span.start, span.end);
         Self {
+            associated_owner_type_args: info.calls.associated_owner_type_args.remove(&key),
             inferred_constructor_type: info.calls.inferred_constructor_types.remove(&key),
             inferred_call_result_type: info.calls.inferred_call_result_types.remove(&key),
             method_call: info.calls.resolved_method_calls.remove(&key),
@@ -276,6 +279,9 @@ impl ProbeFacts {
     /// Put these entries back under `span`, leaving absent ones absent.
     fn restore(self, info: &mut TypeCheckInfo, span: Span) {
         let key = (span.start, span.end);
+        if let Some(arguments) = self.associated_owner_type_args {
+            info.calls.associated_owner_type_args.insert(key, arguments);
+        }
         if let Some(ty) = self.inferred_constructor_type {
             info.calls.inferred_constructor_types.insert(key, ty);
         }

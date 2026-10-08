@@ -36,7 +36,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ) -> bir::PlaceElem {
         let ty = self.resolve_ty(base.span);
         if name == "0"
-            && let IncanType::Named(owner) = &ty
+            && let Some(owner) = match &ty {
+                IncanType::Named(owner) | IncanType::Generic { base: owner, .. } => Some(owner),
+                _ => None,
+            }
             && let Some(declaration) = self.local_nominal_declarations.values().find(|declaration| {
                 declaration.name == *owner && declaration.canonical.kind == SemanticSourceTargetKind::Newtype
             })

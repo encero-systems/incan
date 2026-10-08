@@ -37,6 +37,7 @@ impl TypeChecker {
             self.type_info.record_resolved_identity(call_site_span, identity);
         }
         let first_error = self.errors.len();
+        let static_method = method_info.receiver.is_none().then(|| method_info.clone());
         let result = self.check_generic_method_call(
             method,
             method_info,
@@ -50,7 +51,63 @@ impl TypeChecker {
         if let Some(identity) = identity {
             self.attach_related_declaration_to_new_errors(first_error, &identity);
         }
+        if self.errors.len() == first_error
+            && let Some(info) = static_method
+            && let Some(closed) = self.retain_static_newtype_instantiation(&info, receiver_ty, args, call_site_span)
+        {
+            return closed;
+        }
         result
+    }
+
+    /// Retain checked owner arguments on a generic newtype's associated method, which has no receiver frame.
+    ///
+    /// Owner binders precede the method's own binders, matching Body IR's static callable frame. This uses the same
+    /// checked argument binding as ordinary generic calls; lowering must never reconstruct it from operand carriers.
+    fn retain_static_newtype_instantiation(
+        &mut self,
+        info: &MethodInfo,
+        receiver: &ResolvedType,
+        args: &[CallArg],
+        span: Span,
+    ) -> Option<ResolvedType> {
+        let name = match receiver {
+            ResolvedType::Generic(name, _) | ResolvedType::Named(name) => name,
+            _ => return None,
+        };
+        let TypeInfo::Newtype(owner) = self.lookup_semantic_type_info(name)? else {
+            return None;
+        };
+        if owner.type_params.is_empty() {
+            return None;
+        }
+        let owner_parameters = owner.type_params.clone();
+        let mut bindings = self.receiver_type_param_bindings(receiver);
+        bindings.retain(|_, ty| !matches!(ty, ResolvedType::Unknown | ResolvedType::CallSiteInfer));
+        for (argument, parameter) in Self::arguments_with_parameter_types(&info.params, args) {
+            let actual = self.type_info.expr_type(argument.span)?.clone();
+            self.infer_type_param_bindings(parameter, &actual, &mut bindings);
+        }
+        let owner_arguments = owner_parameters
+            .iter()
+            .map(|name| bindings.get(name).cloned())
+            .collect::<Option<Vec<_>>>()?;
+        if owner_arguments
+            .iter()
+            .any(|ty| matches!(ty, ResolvedType::Unknown | ResolvedType::CallSiteInfer))
+        {
+            return None;
+        }
+        self.type_info
+            .calls
+            .associated_owner_type_args
+            .insert((span.start, span.end), owner_arguments.clone());
+        let return_type = if info.return_type == ResolvedType::SelfType {
+            ResolvedType::Generic(name.clone(), owner_arguments)
+        } else {
+            substitute_resolved_type(&info.return_type, &bindings)
+        };
+        Some(return_type)
     }
 
     /// Attach one already-resolved declaration to errors produced while validating its call surface.

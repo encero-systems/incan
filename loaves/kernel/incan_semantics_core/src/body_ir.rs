@@ -273,8 +273,8 @@ pub struct TraitImplementation {
 
 /// The exact local declaration and canonical field layout for one direct-executable plain model or class.
 ///
-/// The record belongs to its declaring module and excludes enums and inheritance. Classes retain ordered type
-/// parameters for specialization from checked uses; models and newtypes in this profile remain concrete. Nominal
+/// The record belongs to its declaring module and excludes enums and inheritance. Classes, models, and newtypes retain
+/// ordered type parameters for specialization from checked uses. Nominal
 /// methods and adopted trait defaults remain separate canonical bodies with receiver origins. A consumer may load
 /// this canonical context from a package artifact. Its field order is the checked constructor-slot order; a direct
 /// runtime must compare it with [`ConstructorTarget::canonical_field_layout`] before applying

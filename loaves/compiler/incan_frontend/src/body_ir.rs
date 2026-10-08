@@ -498,24 +498,27 @@ pub fn is_direct_replacement_model_derive(decorator: &ast::Decorator) -> bool {
         })
 }
 
-/// Admit concrete tuple wrappers with ordinary methods and nongeneric trait adoptions.
+/// Admit tuple wrappers with retained owner parameters, ordinary methods, and nongeneric trait adoptions.
 ///
 /// Checked construction hooks and constraints remain refused by the declaration collector; aliases, interop edges,
-/// associated types, and generic methods require additional representation facts and remain outside this profile.
+/// and associated types require additional representation facts and remain outside this profile. Associated methods
+/// admit only the staticmethod marker; owner and method parameters are retained for checked specialization.
 pub fn is_direct_replacement_plain_newtype(newtype: &ast::NewtypeDecl) -> bool {
     !newtype.is_rusttype
         && newtype.decorators.is_empty()
-        && newtype.type_params.is_empty()
         && newtype.traits.iter().all(|adoption| adoption.node.type_args.is_empty())
         && newtype.rebindings.is_empty()
         && newtype.method_aliases.is_empty()
         && newtype.method_partials.is_empty()
         && newtype.associated_types.is_empty()
         && newtype.interop_edges.is_empty()
-        && newtype
-            .methods
-            .iter()
-            .all(|method| method.node.type_params.is_empty() && method.node.decorators.is_empty())
+        && newtype.methods.iter().all(|method| {
+            method
+                .node
+                .decorators
+                .iter()
+                .all(|decorator| decorator.node.name == "staticmethod")
+        })
 }
 
 /// Admit source classes whose fields and method bodies have complete direct-route facts.

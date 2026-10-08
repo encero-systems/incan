@@ -341,11 +341,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// monomorphized selection rather than re-lowering the written AST type nodes -- which is also the only way a
     /// `_` placeholder resolves to a real type instead of an unknown. A call that wrote type arguments the
     /// typechecker did not resolve is refused by name rather than represented with a guess.
+    /// Associated owner arguments precede method arguments in the executable frame; the checker stores them
+    /// separately so legacy emission continues to consume only the method's own explicit arguments.
     pub(super) fn call_site_type_arguments(
         &self,
         span: ast::Span,
         type_args: &[ast::Spanned<ast::Type>],
     ) -> Result<Vec<IncanType>, String> {
+        let owner_arguments = self
+            .type_info
+            .calls
+            .associated_owner_type_args
+            .get(&(span.start, span.end));
         let Some(resolved) = self
             .type_info
             .calls
@@ -353,11 +360,20 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .get(&(span.start, span.end))
         else {
             if type_args.is_empty() {
-                return Ok(Vec::new());
+                return Ok(owner_arguments
+                    .into_iter()
+                    .flatten()
+                    .map(|ty| self.checked_type(ty))
+                    .collect());
             }
             return Err("call with unresolved explicit type arguments".to_string());
         };
-        Ok(resolved.iter().map(|ty| self.checked_type(ty)).collect())
+        Ok(owner_arguments
+            .into_iter()
+            .flatten()
+            .chain(resolved.iter())
+            .map(|ty| self.checked_type(ty))
+            .collect())
     }
 
     /// Lower a `model`/`class` or plain-newtype construction into a [`bir::AggregateKind::Constructor`] aggregate.

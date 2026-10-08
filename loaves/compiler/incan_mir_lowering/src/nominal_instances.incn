@@ -173,7 +173,7 @@ def is_receiver(origin: &LocalOrigin) -> bool:
 
 def admitted_owner(declaration: &NominalDeclaration) -> bool:
     """Restrict concrete layouts to the source declaration kinds whose canonical field facts are retained."""
-    return declaration.canonical.kind == SemanticSourceTargetKind.Class or declaration.canonical.kind == SemanticSourceTargetKind.Model
+    return declaration.canonical.kind in [SemanticSourceTargetKind.Class, SemanticSourceTargetKind.Model, SemanticSourceTargetKind.Newtype]
 
 
 def close_owner_body(body: &Body, instance: NominalInstance) -> Result[Body, str]:

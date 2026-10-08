@@ -222,7 +222,6 @@ impl BodyIrModule {
                 && declaration.field_identities == [declaration.canonical.clone()]
                 && declaration.field_types.len() == 1
                 && declaration.field_public == [true]
-                && declaration.type_parameter_count == 0
                 && !declaration.has_field_defaults;
         }
 
