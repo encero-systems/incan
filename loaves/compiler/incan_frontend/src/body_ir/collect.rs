@@ -301,6 +301,7 @@ pub(super) fn collect_local_nominal_declarations(
                     })
                     .collect(),
                 named_type_identities: type_info.declarations.named_type_identities.clone(),
+                type_parameters: class_layout.map_or_else(Vec::new, |layout| layout.type_params.clone()),
                 type_parameter_count,
             })
         })
@@ -350,6 +351,7 @@ fn collect_plain_newtype(
         field_default_body: None,
         derives,
         named_type_identities: type_info.declarations.named_type_identities.clone(),
+        type_parameters: Vec::new(),
         type_parameter_count: 0,
     })
 }
@@ -699,8 +701,9 @@ fn slot_implementation(
 /// Successful typechecking already proves adoption and method compatibility. This registry covers the adopter's local
 /// traits at their checked instantiations and every local supertrait those reach; each slot keeps the body that fills
 /// it and the type arguments that body's trait was adopted at. Imported traits, unrecorded instantiations, and
-/// overloaded implementations never gain a guessed target. A refused checked newtype constructor cannot contribute an
-/// implementation without its owner layout.
+/// overloaded implementations never gain a guessed target. An adopter with type parameters of its own contributes
+/// nothing: its adoption arguments stay open until an instance closes them. A refused checked newtype constructor
+/// cannot contribute an implementation without its owner layout.
 pub(super) fn collect_local_trait_implementations(
     program: &ast::Program,
     type_info: &TypeCheckInfo,
@@ -712,7 +715,9 @@ pub(super) fn collect_local_trait_implementations(
             ast::Declaration::Model(model) if is_direct_replacement_checked_model(model, type_info) => {
                 (&model.traits, &model.methods)
             }
-            ast::Declaration::Class(class) if is_direct_replacement_class(class) => (&class.traits, &class.methods),
+            ast::Declaration::Class(class) if is_direct_replacement_class(class) && class.type_params.is_empty() => {
+                (&class.traits, &class.methods)
+            }
             ast::Declaration::Newtype(newtype) if is_direct_replacement_plain_newtype(newtype) => {
                 (&newtype.traits, &newtype.methods)
             }

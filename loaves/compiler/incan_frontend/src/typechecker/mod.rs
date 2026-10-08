@@ -7196,11 +7196,39 @@ impl TypeChecker {
         self.type_info.declarations.public_type_bridge_roots = roots;
         self.type_info.declarations.foreign_pub_type_remappings = self.foreign_pub_type_remappings.clone();
         self.type_info.declarations.named_type_origins = self.checked_nominal_type_origins();
-        self.type_info.declarations.named_type_identities = self
+        self.type_info.declarations.named_type_identities = self.checked_nominal_type_identities();
+    }
+
+    /// Retain active module-scope nominal bindings from both source modules and admitted packages.
+    ///
+    /// Imported source types already carry their declaring identity in the symbol table. Body IR must retain that
+    /// fact before publication; recovering it from a spelling in lowering would lose aliases and module ownership.
+    fn checked_nominal_type_identities(&self) -> std::collections::BTreeMap<String, CanonicalSymbolId> {
+        let mut identities = self
             .public_library_type_identities
             .iter()
             .filter_map(|(name, identity)| Some((name.clone(), identity.canonical.clone()?)))
-            .collect();
+            .collect::<std::collections::BTreeMap<_, _>>();
+        for (id, symbol) in self.symbols.all_symbols().iter().enumerate() {
+            if symbol.scope != 0 || !self.symbols.is_active_lookup_binding(id) {
+                continue;
+            }
+            let Some(identity) = self.symbols.identity_of(id) else {
+                continue;
+            };
+            if matches!(
+                identity.kind,
+                SemanticSourceTargetKind::Model
+                    | SemanticSourceTargetKind::Class
+                    | SemanticSourceTargetKind::Enum
+                    | SemanticSourceTargetKind::Newtype
+            ) {
+                identities
+                    .entry(symbol.name.clone())
+                    .or_insert_with(|| identity.clone());
+            }
+        }
+        identities
     }
 
     /// Turn collisions from the shared symbol-registration mechanism into source diagnostics.

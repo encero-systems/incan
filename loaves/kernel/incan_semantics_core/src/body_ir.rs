@@ -282,8 +282,9 @@ pub struct TraitTypeArgument {
 
 /// The exact local declaration and canonical field layout for one direct-executable plain model or class.
 ///
-/// The record belongs to its declaring module and excludes enums, generic nominals, and inheritance. Nominal methods
-/// and adopted trait defaults remain separate canonical bodies with receiver origins. A consumer may load
+/// The record belongs to its declaring module and excludes enums and inheritance. Classes retain ordered type
+/// parameters for specialization from checked uses; models and newtypes in this profile remain concrete. Nominal
+/// methods and adopted trait defaults remain separate canonical bodies with receiver origins. A consumer may load
 /// this canonical context from a package artifact. Its field order is the checked constructor-slot order; a direct
 /// runtime must compare it with [`ConstructorTarget::canonical_field_layout`] before applying
 /// [`ConstructorTarget::binding`], rather than treating constructor argument spelling as layout evidence.
@@ -323,7 +324,10 @@ pub struct NominalDeclaration {
     pub derives: Vec<String>,
     /// Checked nominal bindings needed by those field types; serialized publications retain only referenced entries.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
-    /// Number of declared type parameters; this profile admits only zero.
+    /// Ordered checker-retained declaration parameters used to close class layouts at checked uses.
+    #[serde(default)]
+    pub type_parameters: Vec<String>,
+    /// Number of declared type parameters, agreeing with [`Self::type_parameters`].
     pub type_parameter_count: usize,
 }
 
@@ -464,6 +468,9 @@ impl ValueEnumVariantDeclaration {
 /// Body IR v0 for a single function or method.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Body {
+    /// Ordered declaration type parameters, retained for checker-selected native instantiation.
+    #[serde(default)]
+    pub type_parameters: Vec<String>,
     /// Identity of the owning declaration, matching the [`crate::HirDeclaration::id`] this body was lowered from.
     pub decl_id: CompilerNodeId,
     /// Exact source-local identity used to dispatch a direct named Body-IR call.
@@ -3759,6 +3766,7 @@ mod tests {
         let local_y = LocalId(1);
         let local_tmp = LocalId(2);
         Body {
+            type_parameters: Vec::new(),
             decl_id: decl_id.clone(),
             direct_call_id,
             canonical: None,

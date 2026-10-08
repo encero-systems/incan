@@ -923,6 +923,7 @@ mod tests {
     fn body(name: &str, ordinal: usize) -> Body {
         let identity = identity(name, ordinal);
         Body {
+            type_parameters: Vec::new(),
             decl_id: CompilerNodeId::declaration_span(
                 "lib",
                 identity.declaration_span.start,
@@ -1376,6 +1377,7 @@ mod tests {
             field_default_body: None,
             derives: vec![],
             named_type_identities: Default::default(),
+            type_parameters: Vec::new(),
             type_parameter_count: 0,
         });
         let public = BTreeSet::from([identity("exported", 1), type_id.clone()]);
@@ -1507,6 +1509,7 @@ mod tests {
             field_default_body: None,
             derives: vec![],
             named_type_identities: Default::default(),
+            type_parameters: Vec::new(),
             type_parameter_count: 0,
         });
         let public = BTreeSet::from([identity("exported", 1), published_type.clone()]);
