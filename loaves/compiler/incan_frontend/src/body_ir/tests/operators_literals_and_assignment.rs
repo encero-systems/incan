@@ -5,6 +5,72 @@
 
 use super::*;
 
+/// Checked integer helpers retain concrete receiver and result types in Body IR.
+#[test]
+fn checked_integer_helper_locals_retain_types() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n    high: u8 = 250\n    value = high.checked_add(10u8)\n    println(high.wrapping_add(10u8))\n    wide: i16 = 300\n    resized = wide.try_resize[u8]()\n",
+        &["integer_helpers"],
+    )?;
+    for body in &module.bodies {
+        for local in &body.locals {
+            assert!(
+                !local.ty.to_string().contains('?'),
+                "unresolved local: {local:?}\n{}",
+                body.render_snapshot()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Constructor temporaries use the open sides settled by their binding and in-place match contexts.
+#[test]
+fn settled_constructor_spans_retain_payload_types() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n    value = Ok(7)\n    match value:\n        Ok(number) => println(number)\n        Err(_) => pass\n    match Ok(8):\n        Ok(number) => println(number)\n        Err(_) => pass\n",
+        &["settled_constructors"],
+    )?;
+    for body in &module.bodies {
+        for local in &body.locals {
+            assert!(!local.ty.to_string().contains('?'), "unresolved local: {local:?}");
+        }
+    }
+    Ok(())
+}
+
+/// Nested intrinsic constructors retain the contextual payload types that their checked call parameters require.
+#[test]
+fn nested_carrier_arguments_retain_checked_payload_types() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def describe(value: Result[Option[int], str]) -> str:\n    match value:\n        Ok(Some(0)) => return \"zero\"\n        Ok(Some(n)) => return f\"{n}\"\n        Ok(None) => return \"empty\"\n        Err(message) => return message\n\ndef main() -> None:\n    println(describe(Ok(Some(7))))\n    println(describe(Ok(None)))\n    println(describe(Err(\"boom\")))\n";
+    let module = build(source, &["nested_carriers"])?;
+    for body in &module.bodies {
+        for local in &body.locals {
+            assert!(
+                !local.ty.to_string().contains('?'),
+                "unresolved local in {}: {local:?}",
+                body.name
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Empty nested literals carry the peer-proven storage types at every Body IR local.
+#[test]
+fn nested_empty_list_locals_retain_checked_element_types() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n    rows = [[], [\"x\"]]\n    deep = [[[]], [[\"y\"]]]\n",
+        &["nested_empty_lists"],
+    )?;
+    let body = body_named(&module, "main")?;
+    assert!(!body.locals.is_empty());
+    for local in &body.locals {
+        assert!(!local.ty.to_string().contains('?'), "unresolved local: {local:?}");
+    }
+    Ok(())
+}
+
 /// Operand and recursive place lowering retain checked tuple indices rather than temporary unary results.
 #[test]
 fn checked_negative_tuple_indices_remain_constant_projections() -> Result<(), Box<dyn std::error::Error>> {
@@ -446,6 +512,51 @@ fn list_equality_stays_a_primitive_because_that_is_what_the_other_backend_emits(
         rendered.contains(" == "),
         "list equality must stay a primitive comparison rather than becoming a helper call: {rendered}"
     );
+    Ok(())
+}
+
+/// Equality borrows collection operands while a later final use still transfers the original binding.
+#[test]
+fn collection_equality_retains_shared_reads_and_later_moves() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def lists(xs: list[int], ys: list[int]) -> bool:\n    return xs == ys\n\ndef sets(xs: Set[int], ys: Set[int]) -> bool:\n    return xs != ys\n\ndef maps(xs: dict[int, int], ys: dict[int, int]) -> bool:\n    return xs == ys\n\ndef retained() -> list[int]:\n    values = [1]\n    same = values == [1]\n    return values\n",
+        &["collection_reads"],
+    )?;
+    for name in ["lists", "sets", "maps", "retained"] {
+        let body = body_named(&module, name)?;
+        let operands = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Assign {
+                    rvalue: bir::Rvalue::BinaryOp(_, left, right),
+                    ..
+                } => Some([left, right]),
+                _ => None,
+            })
+            .ok_or("collection comparison missing")?;
+        for operand in operands {
+            let bir::Operand::Place(read) = operand else {
+                return Err("collection comparison must retain a place".into());
+            };
+            assert_eq!(read.fact, bir::OwnershipFact::Borrow);
+            assert!(!read.last_use);
+        }
+    }
+    let retained = body_named(&module, "retained")?;
+    let returned = retained
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Return {
+                value: Some(bir::Operand::Place(read)),
+            } => Some(read),
+            _ => None,
+        })
+        .ok_or("retained collection return missing")?;
+    assert_eq!(returned.fact, bir::OwnershipFact::Move);
     Ok(())
 }
 
@@ -981,8 +1092,48 @@ fn text_constants_retain_checked_values_without_shadowing_local_places() -> Resu
     )?;
     let constant = body_named(&module, "constant")?.render_snapshot();
     assert!(constant.contains("hello world"), "{constant}");
+    let declaration = module.constant_declarations.first().ok_or("checked constant missing")?;
+    assert_eq!(declaration.canonical.declaration_name, "TEXT");
+    assert_eq!(declaration.value, bir::Constant::Str("hello world".into()));
     let local = body_named(&module, "local")?.render_snapshot();
     assert!(!local.contains("hello world"), "{local}");
     assert!(local.contains("_0"), "{local}");
+    Ok(())
+}
+
+/// Frozen constants and checked literals keep their storage identity while ordinary text parameters stay places.
+#[test]
+fn frozen_text_operands_retain_the_checked_storage_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "const NAME: str = \"policy\"\nconst FROZEN: FrozenStr = \"frozen\"\n\ndef static_text() -> FrozenStr | str | int:\n    return NAME\n\ndef frozen_text() -> FrozenStr | str | int:\n    return FROZEN\n\ndef literal() -> FrozenStr:\n    return \"literal\"\n\ndef owned(value: str) -> FrozenStr | str | int:\n    return value\n",
+        &["m", "frozen_storage"],
+    )?;
+    for (name, expected) in [
+        ("static_text", "policy"),
+        ("frozen_text", "frozen"),
+        ("literal", "literal"),
+    ] {
+        let body = body_named(&module, name)?;
+        assert!(
+            body.block.stmts.iter().any(|statement| matches!(
+                &statement.kind,
+                bir::StatementKind::Return { value: Some(bir::Operand::Constant(bir::Constant::FrozenStr(text))) }
+                    if text == expected
+            )),
+            "{}",
+            body.render_snapshot()
+        );
+    }
+    let owned = body_named(&module, "owned")?;
+    assert!(
+        owned.block.stmts.iter().any(|statement| matches!(
+            &statement.kind,
+            bir::StatementKind::Return {
+                value: Some(bir::Operand::Place(_))
+            }
+        )),
+        "{}",
+        owned.render_snapshot()
+    );
     Ok(())
 }

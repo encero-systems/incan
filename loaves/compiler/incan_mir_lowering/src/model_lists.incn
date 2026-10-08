@@ -1,0 +1,87 @@
+"""Checked list reads through canonical model fields, retaining the parent's storage."""
+
+from rust::incan_semantics_core::body_ir import Place as RustPlace, PlaceElem
+from pub::incan_mir_plan import PlanType, SourceSpan, Operand, Constant, Place as OperandPlace
+from frame import Builder, place_type, temporary, read_place, literal
+from models import model_prefix
+from lists import require_list_shape, list_element, is_owned_list
+from lowering import scalar_operand, read_list_element, list_borrow
+from builtins import list_call
+
+
+pub def model_list_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Option[Operand], str]:
+    """Read an index or slice after a retained nominal field prefix, cloning its result instead of moving the parent."""
+    match source.local_id():
+        None => return Ok(None)
+        Some(local) =>
+            root = builder.locals[int(local.index()) + 1 + builder.local_offset].ty
+            match root:
+                PlanType.Model(_owner, _name) => pass
+                PlanType.ModelRef(_owner, _name) => pass
+                PlanType.ModelMutRef(_owner, _name) => pass
+                _ => return Ok(None)
+    mut count = 0
+    for projection in source.projection:
+        match projection:
+            PlaceElem.Field(name=_name, canonical=_canonical, structural=_structural) =>
+                count += 1
+            _ => break
+    if count == len(source.projection):
+        return Ok(None)
+    if count == 0:
+        return Err("unsupported Body IR model indexing without a field")
+    mut place = model_prefix(builder.nominals, builder.locals[builder.local_offset:], source, count, span)?
+    place.local += builder.local_offset
+    for position in range(count, len(source.projection)):
+        match source.projection[position]:
+            PlaceElem.Index(index) =>
+                argument = scalar_operand(builder, index, span)?
+                place = read_list_element(builder, place, argument, span)?
+            PlaceElem.Slice(start=start, end=end, step=step) =>
+                place = sliced_list(builder, place, source.projection[position], span)?
+            _ => return Err("unsupported Body IR model field after collection projection")
+    ty = place_type(builder.locals, place)
+    return Ok(Some(read_place(place, ty == PlanType.String or is_owned_list(ty) or model_element(ty), span)))
+
+
+def model_element(ty: PlanType) -> bool:
+    """Nominal list elements are cloned owners, while primitive elements remain copyable."""
+    match ty:
+        PlanType.Model(_owner, _name) => return true
+        _ => return false
+
+
+def sliced_list(
+    mut builder: Builder,
+    source: OperandPlace,
+    projection: &PlaceElem,
+    span: SourceSpan,
+) -> Result[OperandPlace, str]:
+    """Pass each retained optional bound to legacy slicing without replacing an omitted bound with zero."""
+    leaf, depth = require_list_shape(place_type(builder.locals, source), "unsupported Body IR model slice on non-list")?
+    reference = list_borrow(builder, source, false, span)?
+    mut arguments = [reference]
+    match projection:
+        PlaceElem.Slice(start=start, end=end, step=step) =>
+            for bound in [start, end, step]:
+                match bound:
+                    Some(value) =>
+                        arguments.append(literal(Constant.Bool(true), span))
+                        arguments.append(scalar_operand(builder, value, span)?)
+                    None =>
+                        arguments.append(literal(Constant.Bool(false), span))
+                        arguments.append(literal(Constant.Int(0), span))
+        _ => return Err("invalid Body IR list slice projection")
+    result = PlanType.List(leaf, depth)
+    output = temporary(builder, result, span)
+    list_call(
+        builder,
+        "slice_list",
+        list_element(leaf, depth),
+        [PlanType.ListRef(leaf, depth), PlanType.Bool, PlanType.Int, PlanType.Bool, PlanType.Int, PlanType.Bool, PlanType.Int],
+        result,
+        arguments,
+        output,
+        span,
+    )
+    return Ok(output)

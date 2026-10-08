@@ -3,6 +3,8 @@
 from rust::incan_semantics_core import IncanType as RustType
 from rust::incan_semantics_core::body_ir import BodyIrModule, NominalDeclaration, EnumDeclaration as RustEnumDeclaration
 from pub::incan_mir_plan import (
+    ListLeaf,
+    list_leaf_type,
     PlanType,
     EnumDeclaration,
     EnumVariant,
@@ -12,7 +14,12 @@ from pub::incan_mir_plan import (
     Local,
     Place,
     Projection,
+    BinaryOp,
+    Constant,
+    TerminatorKind,
 )
+from pub::incan_mir_plan import assign as plan_assign
+from frame import Builder, temporary, read_place, literal
 from rust::incan_semantics_core::body_ir import Pattern as RustPattern, Place as RustPlace, PlaceElem as RustPlaceElem
 from enums import native_source_type as source_type, validate_payload_patterns, enum_owner
 
@@ -100,9 +107,19 @@ def legacy_spelling(ty: PlanType) -> Result[str, str]:
         PlanType.Float => return Ok("f64")
         PlanType.Bool => return Ok("bool")
         PlanType.String => return Ok("String")
+        PlanType.FrozenStr => return Ok("FrozenStr")
         PlanType.Model(_index, name) => return Ok(name)
         PlanType.Enum(_index, name) => return Ok(name)
+        PlanType.List(leaf, depth) => return list_spelling(leaf, depth)
         _ => return Err("unsupported Body IR union member")
+
+
+def list_spelling(leaf: ListLeaf, depth: int) -> Result[str, str]:
+    """Spell a scalar-leaf list member as legacy's nested `Vec` payload key; tuple leaves stay refused."""
+    mut spelling = legacy_spelling(list_leaf_type(leaf))?
+    for _level in range(depth):
+        spelling = f"Vec<{spelling}>"
+    return Ok(spelling)
 
 
 def union_name(members: list[PlanType]) -> Result[str, str]:
@@ -213,6 +230,47 @@ pub def union_injection(
             slot = union_slot(nominals, enums, unions, owner, source)?
             return Ok(RvalueKind.Enum(owner, slot, [operand]))
         _ => return Ok(RvalueKind.Use(operand))
+
+
+pub def union_test_slots(
+    nominals: list[NominalDeclaration],
+    enums: list[RustEnumDeclaration],
+    unions: list[RustType],
+    owner: int,
+    member: PlanType,
+) -> Result[list[int], str]:
+    """Match either string identity against both carriers while preserving exact construction and narrowing slots."""
+    index = owner - len(enums)
+    if index < 0 or index >= len(unions):
+        return Err("unsupported Body IR nonunion enum isinstance")
+    mut slots: list[int] = []
+    members = union_members(nominals, enums, unions[index])?
+    for slot in range(len(members)):
+        same_string_identity = member in [PlanType.String, PlanType.FrozenStr] and members[slot] in [PlanType.String, PlanType.FrozenStr]
+        if members[slot] == member or same_string_identity:
+            slots.append(slot)
+    return Ok(slots)
+
+
+pub def test_union_tag(mut builder: Builder, tag: Place, slots: list[int], span: SourceSpan) -> RvalueKind:
+    """Join tag comparisons through native boolean branches without consuming any union payload."""
+    output = temporary(builder, PlanType.Bool, span)
+    builder.emit(plan_assign(output, RvalueKind.Use(literal(Constant.Bool(false), span)), span))
+    matched = builder.new_block(span)
+    joined = builder.new_block(span)
+    for slot in slots:
+        condition = temporary(builder, PlanType.Bool, span)
+        operation = RvalueKind.Binary(BinaryOp.Equal, read_place(tag, false, span), literal(Constant.Int(slot), span))
+        builder.emit(plan_assign(condition, operation, span))
+        missed = builder.new_block(span)
+        builder.finish(TerminatorKind.SwitchBool(read_place(condition, false, span), missed, matched), span)
+        builder.current = missed
+    builder.finish(TerminatorKind.Goto(joined), span)
+    builder.current = matched
+    builder.emit(plan_assign(output, RvalueKind.Use(literal(Constant.Bool(true), span)), span))
+    builder.finish(TerminatorKind.Goto(joined), span)
+    builder.current = joined
+    return RvalueKind.Use(read_place(output, false, span))
 
 
 pub def union_projection(

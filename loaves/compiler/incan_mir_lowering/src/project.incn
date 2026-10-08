@@ -21,8 +21,6 @@ pub def project_context(
     context.stdlib_delegations.clear()
     mut checked: list[BodyIrModule] = []
     for module in modules:
-        if len(module.value_enum_declarations) != 0:
-            return Err("unsupported Body IR value enum declaration")
         specialized = specialize_traits(module)?
         # The imported Rust type has Clone, but List.append cannot prove that trait for a named opaque value.
         # An explicit interop clone is an owned call result and retains the module for both planning views.
@@ -47,6 +45,9 @@ pub def project_context(
         for index in range(len(module.fieldless_enum_declarations)):
             declaration = module.fieldless_enum_declarations[index].clone()
             context.fieldless_enum_declarations.push(declaration.clone())
+        for index in range(len(module.value_enum_declarations)):
+            declaration = module.value_enum_declarations[index].clone()
+            context.value_enum_declarations.push(declaration.clone())
         for index in range(len(module.trait_declarations)):
             declaration = module.trait_declarations[index].clone()
             context.trait_declarations.push(declaration.clone())

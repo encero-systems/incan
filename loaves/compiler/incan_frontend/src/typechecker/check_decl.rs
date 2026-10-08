@@ -3443,6 +3443,42 @@ impl TypeChecker {
         self.validate_derives(&model.decorators);
         self.validate_rust_derives(&model.decorators, "model", false, &model.traits);
         let derives = self.extract_derive_names(&model.decorators);
+        let mut native_derives = Vec::new();
+        for derive in &derives {
+            let selected = if self
+                .module_path_for_imported_name(derive)
+                .is_some_and(|path| incan_lang::lang::stdlib::is_stdlib_json_trait_module_path(&path))
+            {
+                vec!["serde::Serialize".to_owned(), "serde::Deserialize".to_owned()]
+            } else {
+                let path = self.derive_trait_path(derive);
+                let protocol = path.split_last().and_then(|(name, module)| {
+                    incan_lang::lang::stdlib::stdlib_json_trait_id_for_identity(module, name)
+                });
+                match protocol {
+                    Some(incan_lang::lang::stdlib::StdlibJsonTraitId::Serialize) => vec!["serde::Serialize".to_owned()],
+                    Some(incan_lang::lang::stdlib::StdlibJsonTraitId::Deserialize) => {
+                        vec!["serde::Deserialize".to_owned()]
+                    }
+                    None => vec![derive.clone()],
+                }
+            };
+            for name in selected {
+                if !native_derives.contains(&name) {
+                    native_derives.push(name);
+                }
+            }
+        }
+        Self::append_implied_derives(&mut native_derives);
+        for derive in derives::plain_model_derives() {
+            if !native_derives.iter().any(|name| name == derive) {
+                native_derives.push(derive.to_owned());
+            }
+        }
+        self.type_info
+            .declarations
+            .model_derives
+            .insert(model.name.clone(), native_derives);
         self.validate_descriptor_model_shape(model, &derives);
         let has_validate = derives
             .iter()
@@ -6609,6 +6645,7 @@ impl TypeChecker {
         self.type_info.declarations.method_bindings_by_span.insert(
             (method_span.start, method_span.end),
             FunctionBindingInfo {
+                is_async: method.is_async(),
                 params: checked_params,
                 return_type: return_type.clone(),
                 identity: Some(self.symbols.member_declaration_identity(

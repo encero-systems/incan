@@ -261,7 +261,11 @@ pub fn caller_project_output_path(project_root: &Path, relative_path: &str) -> C
     Ok(project_root.join(validated_project_output_relative_path(relative_path, "caller output")?))
 }
 
-/// Return the small caller-owned projection marker path for one completed output profile.
+/// Keep a profile's replaceable projection marker outside published provider content.
+///
+/// A marker records a compiler-specific output identity, not library input bytes. Writing it beside a native library
+/// changes the physical provider digest and invalidates consumers merely because a warm probe repaired bookkeeping.
+/// The existing `.incan` preparation namespace excludes that state from source and provider authority.
 fn project_output_projection_marker_path(project_root: &Path, output: &OvenStoredProjectOutput) -> CliResult<PathBuf> {
     let native = output
         .payload
@@ -269,17 +273,20 @@ fn project_output_projection_marker_path(project_root: &Path, output: &OvenStore
         .iter()
         .find(|file| file.output_relative_path == OVEN_PROJECT_OUTPUT_ARTIFACT_PATH)
         .ok_or_else(|| CliError::failure("completed Oven project-output Loaf has no native artifact"))?;
-    let native_path = caller_project_output_path(project_root, &native.caller_relative_path)?;
-    let parent = native_path.parent().ok_or_else(|| {
+    let _ = caller_project_output_path(project_root, &native.caller_relative_path)?;
+    let key = serde_json::to_vec(&(
+        &output.payload.target_identity,
+        &output.profile,
+        &native.caller_relative_path,
+    ))
+    .map_err(|error| {
         CliError::failure(format!(
-            "completed Oven project output has no native artifact directory: {}",
-            native_path.display()
+            "failed to encode project-output projection coordinate: {error}"
         ))
     })?;
-    Ok(parent.join(format!(
-        ".oven-project-output-{}.json",
-        digest_bytes(output.payload.target_identity.as_bytes()).trim_start_matches("sha256:")
-    )))
+    Ok(project_root
+        .join(".incan/oven/project-output-projections")
+        .join(format!("{}.json", digest_bytes(&key).trim_start_matches("sha256:"))))
 }
 
 /// Return the stable small projection descriptor expected beside one caller-owned native output.
@@ -427,7 +434,7 @@ fn write_project_output_projection(project_root: &Path, output: &OvenStoredProje
     })?;
     let bytes = serde_json::to_vec_pretty(&project_output_projection(output))
         .map_err(|error| CliError::failure(format!("failed to encode Oven project-output projection: {error}")))?;
-    let staged = parent.join(format!(".oven-project-output-{}.tmp", std::process::id()));
+    let staged = marker_path.with_extension(format!("{}.tmp", std::process::id()));
     oven_store::write_receipt_staged(&bytes, &staged, &marker_path, parent).map_err(|error| {
         CliError::failure(format!(
             "failed to publish Oven project-output projection {}: {error}",
@@ -878,6 +885,58 @@ mod tests {
     use oven_store::store::{OvenArtifactKind, OvenStore};
     use oven_store::{OvenGeneratedProjectRequest, digest_bytes, receipt_generated_project};
 
+    /// Selecting another compiler publication of identical library bytes must not change provider content.
+    #[test]
+    fn projection_markers_do_not_change_provider_authority() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        fs::create_dir(project.path().join("src"))?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = \"fixture\"\n")?;
+        fs::write(
+            project.path().join("src/lib.incn"),
+            "pub def answer() -> int:\n    return 42\n",
+        )?;
+        let store_root = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            store_root.path(),
+            oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        let (receipt, mut payload, mut files) = crate::build::test_support::fixture_project_output_publication_for(
+            project.path(),
+            "debug",
+            "projection",
+            OvenBakeProjectTarget::Library,
+            OvenProjectInspectionAuthorityRef {
+                identity: "sha256:fixture-project-authority".into(),
+                receipt_identity: "sha256:fixture-authority-receipt".into(),
+                build_unit_identity: "sha256:fixture-authority-build-unit".into(),
+            },
+        )?;
+        for file in &mut files {
+            if file.output_relative_path == OVEN_PROJECT_OUTPUT_ARTIFACT_PATH {
+                file.caller_relative_path = "target/lib/oven/debug/libfixture.rlib".into();
+            }
+        }
+        for file in &mut payload.files {
+            if file.output_relative_path == OVEN_PROJECT_OUTPUT_ARTIFACT_PATH {
+                file.caller_relative_path = "target/lib/oven/debug/libfixture.rlib".into();
+            }
+        }
+        let first = publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        materialize_project_output(project.path(), &first)?;
+        let artifact = project.path().join("target/lib");
+        let expected = incan_frontend::library_manifest::digest_provider_artifact(&artifact)?;
+        payload.compiler_identity_digest = Some(digest_bytes(b"another compiler"));
+        let second = publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        assert_ne!(first.identity, second.identity);
+        materialize_project_output(project.path(), &second)?;
+        assert!(project_output_projection_is_current(project.path(), &second)?);
+        assert_eq!(
+            expected,
+            incan_frontend::library_manifest::digest_provider_artifact(&artifact)?
+        );
+        Ok(())
+    }
+
     #[test]
     fn completed_executable_report_replays_sealed_dependencies_and_rebases_project_paths()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -1092,6 +1151,7 @@ mod tests {
             project_identity: baked_project_owner_identity(project.path())?,
             source_authority_digest: digest_baked_project_source_authority(project.path())?,
             lock_dependencies_fingerprint: baked_project_lock_dependencies_fingerprint(project.path())?,
+            compiler_identity_digest: None,
             compiler_version: INCAN_VERSION.to_string(),
             entrypoint_relative_path: "src/lib.incn".to_string(),
             build_unit_identity: receipt.build_unit_identity.clone(),

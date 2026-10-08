@@ -144,6 +144,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/build/file_freshness.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven build-input freshness and content identity; shared by both compilation routes.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/build/inline_command.rs": {
       "disposition": "unaffected",
       "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend.",
@@ -277,6 +285,14 @@
       "disposition": "unaffected",
       "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/build/rust_bake_reuse.rs": {
+      "disposition": "unaffected",
+      "notes": "Receipt-bound Oven bake reuse for Rust caller projects; shared build infrastructure.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -586,13 +602,21 @@
       "disposition": "keep",
       "notes": "Oven-built pinned native driver; scalar plan and real Body IR lowering; unchanged benchmark byte parity and opt-in census of every behavior fixture",
       "owner": 1337,
-      "split_required": false,
-      "split_target": "",
+      "split_required": true,
+      "split_target": "native_driver_project_tests/collections.rs for focused collection parity cases",
       "twin": ""
     },
     "loaves/compiler/incan_driver/tests/native_driver_project_tests/census.rs": {
       "disposition": "keep",
       "notes": "Direct-route census refusal grouping and bounded process capture; route-independent measurement support",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/tail.rs": {
+      "disposition": "keep",
+      "notes": "Direct-route small statements, operators and places compared byte for byte with legacy output",
       "owner": 1337,
       "split_required": false,
       "split_target": "",
@@ -3565,7 +3589,8 @@
       "owner": 1561,
       "split_required": false,
       "split_target": "",
-      "tests": {},
+      "tests": {
+      },
       "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/trait_default_nested_module_identity"
     },
     "loaves/compiler/incan_emit/src/tests/trait_parameters_and_element_bounds.rs": {
@@ -5731,7 +5756,7 @@
       "disposition": "keep",
       "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
       "owner": 1561,
-      "split_required": false,
+      "split_required": true,
       "split_target": "",
       "twin": ""
     },
@@ -5783,6 +5808,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/nominal_parameters.rs": {
+      "disposition": "keep",
+      "notes": "Checked model owner binders, method frames and deferred field defaults retained for direct-route specialization; frontend facts without legacy emission.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/operators_literals_and_assignment.rs": {
       "disposition": "keep",
       "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
@@ -5803,6 +5836,14 @@
       "disposition": "keep",
       "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/static_storage.rs": {
+      "disposition": "keep",
+      "notes": "Canonical static storage and live versus detached local storage bindings; frontend-only contract coverage.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""

@@ -83,11 +83,46 @@ fn mir_built<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> &'tcx Steal<Body<'tcx>
             && name.is_some_and(|name| name.as_str() == function.name)
     });
     match function {
-        Some(function) => match bodies::body(tcx, def, function) {
+        // A closure constructor keeps rustc's own body, built from its injected boxing expression.
+        Some(function) if crate::closures::constructor(function).is_some() => {
+            (rustc_interface::DEFAULT_QUERY_PROVIDERS.queries.mir_built)(tcx, def)
+        }
+        Some(function) => match if crate::captured_generators::producer(function).is_some() {
+            crate::captured_generators::constructor(tcx, def, function)
+        } else {
+            bodies::body(tcx, def, function)
+        } {
             Ok(body) => tcx.alloc_steal_mir(body),
             Err(error) => refuse(tcx, error),
         },
-        None => (rustc_interface::DEFAULT_QUERY_PROVIDERS.queries.mir_built)(tcx, def),
+        None => {
+            let parent = tcx.parent(def.to_def_id());
+            let constructor = plan.functions.iter().find(|function| {
+                tcx.def_kind(def) == rustc_hir::def::DefKind::Closure
+                    && tcx
+                        .opt_item_name(parent)
+                        .is_some_and(|name| name.as_str() == function.name)
+                    && crate::captured_generators::producer(function).is_some()
+            });
+            let closure = plan.functions.iter().find(|function| {
+                tcx.def_kind(def) == rustc_hir::def::DefKind::Closure
+                    && tcx
+                        .opt_item_name(parent)
+                        .is_some_and(|name| name.as_str() == function.name)
+                    && crate::closures::constructor(function).is_some()
+            });
+            match (constructor, closure) {
+                (Some(function), _) => match crate::captured_generators::callback(tcx, def, function) {
+                    Ok(body) => tcx.alloc_steal_mir(body),
+                    Err(error) => refuse(tcx, error),
+                },
+                (None, Some(function)) => match crate::closures::callback(tcx, def, function) {
+                    Ok(body) => tcx.alloc_steal_mir(body),
+                    Err(error) => refuse(tcx, error),
+                },
+                (None, None) => (rustc_interface::DEFAULT_QUERY_PROVIDERS.queries.mir_built)(tcx, def),
+            }
+        }
     }
 }
 
@@ -133,15 +168,7 @@ impl rustc_driver::Callbacks for Callbacks {
                 Ok(span) => span,
                 Err(error) => compiler.sess.dcx().fatal(error.to_string()),
             };
-            let mut item = declarations::model(model, span);
-            for derive in &model.derives {
-                item.attrs.push(declarations::derive_attribute(
-                    &compiler.sess.psess.attr_id_generator,
-                    derive,
-                    span,
-                ));
-            }
-            krate.items.push(item);
+            krate.items.extend(declarations::model_items(model, &compiler.sess.psess.attr_id_generator, span));
         }
         for function in &self.plan.functions {
             let span = match sources.span(&function.span) {
@@ -156,12 +183,25 @@ impl rustc_driver::Callbacks for Callbacks {
             };
             krate.items.push(declarations::function(function, span));
         }
-        let roots: BTreeSet<_> = self
+        let mut roots: BTreeSet<_> = self
             .plan
             .externals
             .iter()
             .filter_map(|external| external.path.split("::").next())
             .collect();
+        if self.plan.functions.iter().any(|function| {
+            function.locals.iter().any(|local| {
+                matches!(
+                    local.ty,
+                    crate::plan::PlanType::Generator(..)
+                        | crate::plan::PlanType::GeneratorMutRef(..)
+                        | crate::plan::PlanType::GeneratorYield(..)
+                        | crate::plan::PlanType::GeneratorYieldRef(..)
+                )
+            })
+        }) {
+            roots.insert("incan_std_core");
+        }
         for root in roots {
             krate
                 .items
@@ -172,6 +212,17 @@ impl rustc_driver::Callbacks for Callbacks {
 
     /// Verify admitted external signatures against canonical dependency metadata before any planned MIR is built.
     fn after_expansion(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'_>) -> rustc_driver::Compilation {
+        match instantiate_generic_externals(tcx, &self.plan) {
+            Ok(Some(plan)) => {
+                self.plan = Arc::new(plan);
+                match PLAN.lock() {
+                    Ok(mut slot) => *slot = Some(Arc::clone(&self.plan)),
+                    Err(_) => tcx.dcx().fatal(DriverError::State.to_string()),
+                }
+            }
+            Ok(None) => {}
+            Err(error) => refuse(tcx, error),
+        }
         for external in &self.plan.externals {
             let def = match callees::external(tcx, &external.path) {
                 Ok(def) => def,
@@ -209,6 +260,54 @@ impl rustc_driver::Callbacks for Callbacks {
         }
         rustc_driver::Compilation::Continue
     }
+}
+
+/// Give each generic external declared without type arguments its inferred ones, and its calls the matching
+/// instantiated callee, so signature verification and MIR construction see one explicit instantiation.
+fn instantiate_generic_externals(tcx: TyCtxt<'_>, plan: &Plan) -> Result<Option<Plan>, PlanError> {
+    use crate::plan::{CalleeKind, TerminatorKind};
+    let mut instantiated = plan.clone();
+    let mut inferred = std::collections::BTreeMap::new();
+    for external in &mut instantiated.externals {
+        if !external.type_arguments.is_empty() {
+            continue;
+        }
+        let def = callees::external(tcx, &external.path)?;
+        if tcx.generics_of(def).count() == 0 {
+            continue;
+        }
+        external.type_arguments = callees::inferred_arguments(tcx, def, external)?;
+        inferred.insert(external.path.clone(), external.type_arguments.clone());
+    }
+    if inferred.is_empty() {
+        return Ok(None);
+    }
+    for block in instantiated
+        .functions
+        .iter_mut()
+        .flat_map(|function| function.blocks.iter_mut())
+    {
+        let TerminatorKind::Call(callee, ..) = &mut block.terminator.kind else {
+            continue;
+        };
+        let CalleeKind::External(path) = &callee.kind else {
+            continue;
+        };
+        let Some(types) = inferred.get(path) else {
+            continue;
+        };
+        callee.kind = match types.as_slice() {
+            [ty] => CalleeKind::Instantiated(path.clone(), ty.clone()),
+            [key, value] => CalleeKind::InstantiatedPair(path.clone(), key.clone(), value.clone()),
+            _ => {
+                return Err(PlanError::Invalid {
+                    function: path.clone(),
+                    reason: "an inferred external instantiation admits one or two type arguments".into(),
+                });
+            }
+        };
+    }
+    Ok(Some(instantiated))
 }
 
 /// Compile a plan supplied directly by an Incan caller function into a native binary.

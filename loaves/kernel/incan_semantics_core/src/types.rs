@@ -91,6 +91,12 @@ pub enum IncanType {
     Unknown,
 }
 
+/// Construct a parameterized type for Incan callers whose legacy emitter cannot construct Rust struct-style variants.
+/// This interop boundary is removable when dev.8 retires legacy emission; it preserves the supplied checked arguments.
+pub fn generic(base: String, args: Vec<IncanType>) -> IncanType {
+    IncanType::Generic { base, args }
+}
+
 impl IncanType {
     /// Return unstable ABI v0 metadata scaffolding for this type.
     ///
