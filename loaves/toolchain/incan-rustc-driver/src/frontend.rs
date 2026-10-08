@@ -165,15 +165,17 @@ fn validate_declarations(
                 {
                     return Err(format!("unsupported source Model derived Default over field defaults on {} on the native route", model.name));
                 }
+                validate_generic_adoptions(&model.traits, program)?;
                 continue;
             }
             Declaration::Class(class) => {
                 if !incan_frontend::body_ir::is_direct_replacement_class(class) {
                     return Err(format!(
-                        "unsupported source Class generic trait adoptions, inheritance, type parameters, decorators, aliases, properties or defaults on {} on the native route",
+                        "unsupported source Class inheritance, type parameters, decorators, aliases, properties or defaults on {} on the native route",
                         class.name
                     ));
                 }
+                validate_generic_adoptions(&class.traits, program)?;
                 continue;
             }
             Declaration::Enum(value) => {
@@ -183,22 +185,13 @@ fn validate_declarations(
                 continue;
             }
             Declaration::Trait(item) => {
-                if !item.type_params.is_empty()
-                    || !item.traits.is_empty()
-                    || !item.decorators.is_empty()
-                    || !item.method_aliases.is_empty()
-                    || !item.method_partials.is_empty()
-                    || !item.properties.is_empty()
-                    || item
-                        .methods
-                        .iter()
-                        .any(|method| !method.node.type_params.is_empty() || !method.node.decorators.is_empty())
-                {
-                    return Err("unsupported source generic Trait, supertraits, decorators, aliases or properties on the native route".to_owned());
+                if let Some(feature) = trait_refusal_feature(item, program) {
+                    return Err(format!("unsupported source Trait {feature} on the native route"));
                 }
                 continue;
             }
             Declaration::Newtype(newtype) if incan_frontend::body_ir::is_direct_replacement_plain_newtype(newtype) => {
+                validate_generic_adoptions(&newtype.traits, program)?;
                 continue;
             }
             Declaration::Newtype(_) => "nonplain Newtype",
@@ -219,9 +212,6 @@ fn model_refusal_feature(model: &incan_frontend::ast::ModelDecl) -> String {
     // ---- Structural declaration features ----
     if !model.type_params.is_empty() {
         return "type parameters".to_owned();
-    }
-    if model.traits.iter().any(|adoption| !adoption.node.type_args.is_empty()) {
-        return "generic trait adoption".to_owned();
     }
 
     // ---- Member binding features ----
@@ -254,6 +244,60 @@ fn model_refusal_feature(model: &incan_frontend::ast::ModelDecl) -> String {
         return format!("decorator @{}({arguments})", decorator.node.name);
     }
     "unsupported declaration shape".to_owned()
+}
+
+/// Name the first trait feature the direct route cannot retain.
+///
+/// Type parameters and supertraits declared in this module are retained: Body IR records each adopter's checked
+/// instantiation and the supertrait slots it fills. A supertrait from elsewhere is an obligation whose implementation
+/// facts Body IR does not carry, so it stays refused.
+fn trait_refusal_feature(item: &incan_frontend::ast::TraitDecl, program: &incan_frontend::ast::Program) -> Option<&'static str> {
+    if !item.decorators.is_empty() {
+        return Some("decorators");
+    }
+    if !item.method_aliases.is_empty() {
+        return Some("method aliases");
+    }
+    if !item.method_partials.is_empty() {
+        return Some("method partials");
+    }
+    if !item.properties.is_empty() {
+        return Some("properties");
+    }
+    if item.methods.iter().any(|method| !method.node.type_params.is_empty()) {
+        return Some("generic methods");
+    }
+    if item.methods.iter().any(|method| !method.node.decorators.is_empty()) {
+        return Some("decorated methods");
+    }
+    if item.traits.iter().any(|supertrait| !declares_trait(program, &supertrait.node.name)) {
+        return Some("imported supertraits");
+    }
+    None
+}
+
+/// Whether this module declares a trait under `name`.
+fn declares_trait(program: &incan_frontend::ast::Program, name: &str) -> bool {
+    program.declarations.iter().any(|declaration| {
+        matches!(&declaration.node, incan_frontend::ast::Declaration::Trait(item) if item.name == name)
+    })
+}
+
+/// Refuse a generic adoption of a trait this module does not declare.
+///
+/// Body IR instantiates only source-local trait defaults; an imported generic trait's implementation facts are not
+/// retained, so admitting the adoption could lose behavior.
+fn validate_generic_adoptions(
+    adoptions: &[incan_frontend::ast::Spanned<incan_frontend::ast::TraitBound>],
+    program: &incan_frontend::ast::Program,
+) -> Result<(), String> {
+    if adoptions
+        .iter()
+        .any(|adoption| !adoption.node.type_args.is_empty() && !declares_trait(program, &adoption.node.name))
+    {
+        return Err("unsupported source generic adoption of an imported trait on the native route".to_owned());
+    }
+    Ok(())
 }
 
 /// Exact caller-declared native libraries and their dependency search directories.

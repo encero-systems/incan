@@ -430,8 +430,9 @@ struct FunctionDefaultSource {
 ///
 /// This is deliberately a source-local data-model shape, not a general nominal-semantics predicate. The replacement
 /// runtime admits builtin Rust derives, checked JSON protocol derives, and field aliases without serde renames, but
-/// cannot execute other model decorators or generic substitution without retained facts. Non-generic methods remain
-/// separate bodies; adopted trait slots are retained in the module implementation registry. Field defaults have
+/// cannot execute other model decorators or generic substitution of the model itself without retained facts.
+/// Non-generic methods remain separate bodies; adopted trait slots, including those of a trait adopted with checked
+/// type arguments, are retained in the module implementation registry. Field defaults have
 /// declaration-owned deferred computations; each construction's checked binding selects the omitted slots without
 /// repeating source expressions at call sites.
 pub fn is_direct_replacement_plain_model(model: &ast::ModelDecl) -> bool {
@@ -479,7 +480,6 @@ pub fn is_direct_replacement_checked_model(model: &ast::ModelDecl, type_info: &T
 /// Keep the structural admission boundary shared by builtin and checked serde derive selections.
 fn has_direct_replacement_model_shape(model: &ast::ModelDecl) -> bool {
     model.type_params.is_empty()
-        && model.traits.iter().all(|adoption| adoption.node.type_args.is_empty())
         && model.method_aliases.is_empty()
         && model.method_partials.is_empty()
         && model.properties.is_empty()
@@ -502,15 +502,15 @@ pub fn is_direct_replacement_model_derive(decorator: &ast::Decorator) -> bool {
         })
 }
 
-/// Admit concrete tuple wrappers with ordinary methods and nongeneric trait adoptions.
+/// Admit concrete tuple wrappers with ordinary methods and trait adoptions.
 ///
-/// Checked construction hooks and constraints remain refused by the declaration collector; aliases, interop edges,
-/// associated types, and generic methods require additional representation facts and remain outside this profile.
+/// A trait adopted with type arguments is instantiated from the checker-recorded arguments. Checked construction hooks
+/// and constraints remain refused by the declaration collector; aliases, interop edges, associated types, and generic
+/// methods require additional representation facts and remain outside this profile.
 pub fn is_direct_replacement_plain_newtype(newtype: &ast::NewtypeDecl) -> bool {
     !newtype.is_rusttype
         && newtype.decorators.is_empty()
         && newtype.type_params.is_empty()
-        && newtype.traits.iter().all(|adoption| adoption.node.type_args.is_empty())
         && newtype.rebindings.is_empty()
         && newtype.method_aliases.is_empty()
         && newtype.method_partials.is_empty()
@@ -524,11 +524,13 @@ pub fn is_direct_replacement_plain_newtype(newtype: &ast::NewtypeDecl) -> bool {
 
 /// Admit source classes whose fields and method bodies have complete direct-route facts.
 ///
-/// Ordered owner parameters and method parameters are retained for checked instance scheduling. Inheritance,
-/// decorators, properties, aliases, and defaults remain refused.
+/// Ordered owner parameters and method parameters are retained for checked instance scheduling, and trait
+/// adoptions, including ones with checked type arguments, are retained in the implementation registry. A class with
+/// both its own type parameters and a generic trait adoption stays refused until that combination has parity
+/// evidence. Inheritance, decorators, properties, aliases, and defaults remain refused.
 pub fn is_direct_replacement_class(class: &ast::ClassDecl) -> bool {
     class.decorators.is_empty()
-        && class.traits.iter().all(|adoption| adoption.node.type_args.is_empty())
+        && (class.type_params.is_empty() || class.traits.iter().all(|adoption| adoption.node.type_args.is_empty()))
         && class.extends.is_none()
         && class.method_aliases.is_empty()
         && class.method_partials.is_empty()

@@ -175,9 +175,23 @@ impl BodyIrModule {
 
     /// Validate a concrete trait slot against retained physical owners and implementation bodies.
     ///
-    /// A default refers back to its own trait slot. An explicit implementation must belong to the concrete owner;
-    /// matching method spellings never suffice to establish either relationship.
+    /// A default belongs to a retained trait: the slot's own or a subtrait's. An explicit implementation must belong
+    /// to the concrete owner and takes no trait type arguments; a default's type arguments must be closed types.
+    /// Matching method spellings never suffice to establish any of these relationships.
     pub fn is_well_formed_trait_implementation(&self, value: &crate::body_ir::TraitImplementation) -> bool {
+        let owned = declares_member(&value.owner, &value.implementation);
+        let inherited = value.method == value.implementation
+            || self.trait_declarations.iter().any(|owner| {
+                owner.origin == value.implementation.origin && declares_member(owner, &value.implementation)
+            });
+        let arguments_close = if owned {
+            value.type_arguments.is_empty()
+        } else {
+            value
+                .type_arguments
+                .iter()
+                .all(|binding| is_closed_type(&binding.argument))
+        };
         value.method.namespace == SymbolNamespace::Member
             && value.method.declaration_name == value.implementation.declaration_name
             && value.implementation.kind == SemanticSourceTargetKind::Method
@@ -196,10 +210,11 @@ impl BodyIrModule {
                     && declares_member(owner, &value.method)
                     && value.method.kind == SemanticSourceTargetKind::Method
             })
+            && arguments_close
             && self.bodies.iter().any(|body| {
                 body.canonical.as_ref() == Some(&value.implementation)
                     && self.body_has_canonical_direct_call_id(body)
-                    && (value.method == value.implementation || declares_member(&value.owner, &value.implementation))
+                    && (owned || inherited)
             })
     }
 
@@ -365,4 +380,24 @@ fn literal_static_carrier_matches(ty: &IncanType, value: &Constant) -> bool {
 fn declares_member(owner: &CanonicalSymbolId, member: &CanonicalSymbolId) -> bool {
     owner.declaration_span.start <= member.declaration_span.start
         && member.declaration_span.end <= owner.declaration_span.end
+}
+
+/// Whether a checked type names no open type: no type variable, `Self`, or uninferred placeholder at any depth.
+///
+/// A trait default instantiated for a concrete adopter must receive closed type arguments; an open one would leave
+/// the default generic after specialization.
+fn is_closed_type(ty: &IncanType) -> bool {
+    match ty {
+        IncanType::TypeVar(_) | IncanType::SelfType | IncanType::Infer | IncanType::Unknown => false,
+        IncanType::Generic { args, .. } | IncanType::Tuple(args) => args.iter().all(is_closed_type),
+        IncanType::Function { params, return_type } => {
+            params.iter().all(|param| is_closed_type(&param.ty)) && is_closed_type(return_type)
+        }
+        IncanType::TypeToken(inner) | IncanType::Ref(inner) | IncanType::RefMut(inner) => is_closed_type(inner),
+        IncanType::Never
+        | IncanType::Primitive(_)
+        | IncanType::Named(_)
+        | IncanType::Decimal { .. }
+        | IncanType::RustInteropPath(_) => true,
+    }
 }
