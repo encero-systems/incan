@@ -529,10 +529,7 @@ impl TypeChecker {
                     ) {
                         self.type_info
                             .record_resolved_operator_call(span, method, ResolvedOperatorKind::Binary);
-                        if !self.types_compatible(&ret, &ResolvedType::Bool) {
-                            self.errors.push(errors::type_mismatch("bool", &ret.to_string(), span));
-                        }
-                        ResolvedType::Bool
+                        ret
                     } else if !self.is_generic_placeholder_type(&left_ty)
                         && (matches!(op, BinaryOp::Lt | BinaryOp::Gt | BinaryOp::LtEq | BinaryOp::GtEq)
                             || self.type_has_any_operator_method(&left_ty, comparison_dunders(), span))
