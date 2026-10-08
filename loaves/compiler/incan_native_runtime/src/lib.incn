@@ -35,6 +35,7 @@ pub from model_values import (
 )
 pub from tuple_iterators import ZipLists, zip_lists, clone_zip, poll_zip, enumerate_list, enumerate_text
 pub from collections import empty_set, insert_set, length_set, contains_set, clone_set
+pub from collections import equal_set, unequal_set, equal_dict, unequal_dict
 pub from collections import extend_list_set, extend_set, extend_dict
 pub from collections import (
     empty_dict,
@@ -97,6 +98,7 @@ pub from strings import (
     greater_equal_text,
 )
 pub from lists import empty_list, append_list, length_list, get_list, set_list, clone_list, slice_list
+pub from lists import equal_list, unequal_list
 pub from lists import concat_list, sorted_list, sorted_float
 pub from lists import contains_list
 pub from lists import borrow_list_mut

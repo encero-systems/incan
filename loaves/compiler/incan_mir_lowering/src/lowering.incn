@@ -179,6 +179,7 @@ from builtins import scalar_builtin, list_call, emit_boolean_operator, emit_powe
 from strings import text_helper, emit_text_helper, text_helper_arity, text_method
 from patterns import pattern_tests
 from resize import resize_policy, emit_resize
+from equality import emit_collection_equality, equality_shape
 from frame import (
     place_type,
     Builder,
@@ -572,6 +573,10 @@ def scalar_rvalue(
         RustRvalue.BinaryOp(operator, left, right) =>
             if enum_operand(builder, left, span)? or enum_operand(builder, right, span)?:
                 return unit_enum_comparison(builder, operator, left, right, span)
+            if operator == BinOp.Eq or operator == BinOp.Ne:
+                match collection_equality(builder, operator, left, right, span)?:
+                    Some(result) => return Ok(RvalueKind.Use(result))
+                    None => pass
             if operator == BinOp.Div:
                 if not float_operand(builder.nominals, builder.locals[builder.local_offset:], left, span)? or not float_operand(
                     builder.nominals,
@@ -609,6 +614,52 @@ def scalar_rvalue(
         RustRvalue.Generator(source=_source, captured_operands=_captures, body=_body) =>
             return Err("unsupported Body IR Generator")
         RustRvalue.Match(scrutinee=_value, arms=_arms) => return Err("unsupported Body IR Match")
+
+
+def comparison_collection_place(
+    mut builder: Builder,
+    value: &RustOperand,
+    span: SourceSpan,
+) -> Result[Option[Place], str]:
+    """Select a whole collection comparison operand only when Body IR retained its shared read."""
+    match value:
+        RustOperand.Place(read) =>
+            if len(read.place.projection) != 0:
+                return Ok(None)
+            match read.place.local_id():
+                None => return Ok(None)
+                Some(_local) => pass
+            place = scalar_place(builder, read.place, span)?
+            match equality_shape(place_type(builder.locals, place)):
+                None => return Ok(None)
+                Some(_shape) => pass
+            if read.fact != OwnershipFact.Borrow:
+                return Err("unsupported Body IR collection equality without retained shared read")
+            return Ok(Some(place))
+        _ => return Ok(None)
+
+
+def collection_equality(
+    mut builder: Builder,
+    operator: &BinOp,
+    left: &RustOperand,
+    right: &RustOperand,
+    span: SourceSpan,
+) -> Result[Option[Operand], str]:
+    """Borrow both checked collection layouts and invoke legacy equality without value-materialization clones."""
+    mut places: list[Place] = []
+    for operand in [left, right]:
+        match comparison_collection_place(builder, operand, span)?:
+            Some(place) => places.append(place)
+            None => return Ok(None)
+    left_shape = equality_shape(place_type(builder.locals, places[0]))
+    if left_shape != equality_shape(place_type(builder.locals, places[1])):
+        return Err("unsupported Body IR collection equality across different layouts")
+    match left_shape:
+        Some(ty) =>
+            references = [list_borrow(builder, places[0], false, span)?, list_borrow(builder, places[1], false, span)?]
+            return Ok(Some(emit_collection_equality(builder, ty, references, operator == BinOp.Ne, span)?))
+        None => return Ok(None)
 # =====================================================================================================================
 # The frame builder and ownership
 # =====================================================================================================================

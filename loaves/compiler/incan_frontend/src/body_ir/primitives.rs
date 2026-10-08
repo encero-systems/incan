@@ -80,6 +80,14 @@ fn builtin_collection_id(ty: &IncanType) -> Option<CollectionTypeId> {
         _ => None,
     }
 }
+
+/// Collection equality invokes shared `PartialEq` receivers in legacy emission; it never clones or consumes either
+/// operand.
+pub(super) fn collection_equality_borrows(op: ast::BinaryOp, lhs_ty: &IncanType, rhs_ty: &IncanType) -> bool {
+    matches!(op, ast::BinaryOp::Eq | ast::BinaryOp::NotEq)
+        && builtin_collection_id(lhs_ty).is_some()
+        && builtin_collection_id(rhs_ty).is_some()
+}
 /// The mutable collection a `FrozenList`, `FrozenSet` or `FrozenDict` type answers membership like, or `None`.
 fn frozen_collection_counterpart(ty: &IncanType) -> Option<CollectionTypeId> {
     let IncanType::Generic { base, args } = ty else {

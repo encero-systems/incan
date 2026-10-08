@@ -8,6 +8,26 @@ from rust::std::collections import HashMap as RuntimeDict
 from rust::incan_std_core::collections import set_contains, dict_contains_key, dict_get
 
 
+pub def equal_set[T with (Eq, Hash)](left: &Set[T], right: &Set[T]) -> bool:
+    """Compare hashed membership through legacy's shared equality receivers."""
+    return left == right
+
+
+pub def unequal_set[T with (Eq, Hash)](left: &Set[T], right: &Set[T]) -> bool:
+    """Compare unequal hashed sets without consuming either source."""
+    return left != right
+
+
+pub def equal_dict[K with (Eq, Hash), V with Eq](left: &Dict[K, V], right: &Dict[K, V]) -> bool:
+    """Compare matching keys and values through the legacy HashMap PartialEq operation."""
+    return left == right
+
+
+pub def unequal_dict[K with (Eq, Hash), V with Eq](left: &Dict[K, V], right: &Dict[K, V]) -> bool:
+    """Retain HashMap inequality on shared operands without cloning keys or values."""
+    return left != right
+
+
 pub def empty_set[T with (Eq, Hash)]() -> Set[T]:
     """Create the same hash collection as the legacy Set constructor."""
     return Set()
