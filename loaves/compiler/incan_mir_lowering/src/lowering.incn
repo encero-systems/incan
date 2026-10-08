@@ -2132,9 +2132,32 @@ def append_format_part(
         RustFormatPart.Expr(operand=value, style=style) =>
             match style:
                 RustFormatStyle.Display => values.append(display_operand(builder, value, span)?)
-                RustFormatStyle.Debug => values.append(debug_model_operand(builder, value, span)?)
+                RustFormatStyle.Debug => values.append(debug_operand(builder, value, span)?)
             parts.append("")
     return Ok(None)
+
+
+def debug_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+    """Render admitted scalar and list values with legacy Debug after materializing their checked ownership."""
+    match value:
+        RustOperand.Place(read) =>
+            if len(read.place.projection) == 0:
+                match read.place.global():
+                    None =>
+                        place = scalar_place(builder, read.place, span)?
+                        match place_type(builder.locals, place):
+                            PlanType.Model(_owner, _name) => return debug_model_operand(builder, value, span)
+                            PlanType.Enum(_owner, _name) => return Err("unsupported Body IR nonmodel FormatStyle.Debug")
+                            _ => pass
+                    Some(_global) => pass
+        _ => pass
+    operand = value_operand(builder, value, span)?
+    ty = operand_type(builder, operand)?
+    if has_sized_numeric(ty) or ty == PlanType.Int or ty == PlanType.Float or ty == PlanType.Bool or ty == PlanType.Unit or ty == PlanType.String or is_owned_list(
+        ty,
+    ):
+        return debug_plan_operand(builder, operand, span)
+    return Err("unsupported Body IR nonmodel FormatStyle.Debug")
 
 
 def display_tuple_place(mut builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Option[Place], str]:

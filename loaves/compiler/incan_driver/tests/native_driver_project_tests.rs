@@ -2668,3 +2668,38 @@ def main() -> None:
     )?;
     Ok(())
 }
+
+/// Explicit Debug formatting preserves scalar spelling, text escaping, and repeated list reads.
+#[test]
+fn scalar_and_list_debug_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "scalar_and_list_debug",
+        r#"def show(mut items: list[int]) -> None:
+    println(f"{items:?}")
+    items.append(3)
+    println(f"{items:?}")
+    println(f"{items:?}")
+
+def main() -> None:
+    text = "quoted \"text\"\nnext"
+    whole: float = 1.0
+    negative: float = -0.0
+    fraction: float = 1.5
+    flag = true
+    count = -7
+    small: u8 = 255
+    println(f"{text:?} {text:?}")
+    println(text)
+    println(f"{whole:?} {negative:?} {fraction:?}")
+    println(f"{flag:?} {count:?} {small:?}")
+    println(f"{1.5:?} {false:?} {42:?}")
+    mut items = [1, 2]
+    show(items)
+    println(f"{items:?}")
+    nested = [[1], [2, 3]]
+    println(f"{nested:?}")
+    println(f"{nested:?}")
+"#,
+        None,
+    )
+}
