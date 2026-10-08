@@ -9,10 +9,10 @@ fn compare_with_legacy(name: &str, text: &str) -> Result<Output, Box<dyn std::er
     let source = root.join(format!("{name}.incn"));
     fs::write(&source, text)?;
     let native = root.join("native");
-    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
     success(
         &corpus::source_command(
-            &fixture.driver_binary("release"),
+            &fixture.driver_binary("debug"),
             &source,
             &native,
             &fixture.sysroot,
