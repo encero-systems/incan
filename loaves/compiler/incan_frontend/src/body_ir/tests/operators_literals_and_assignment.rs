@@ -14,7 +14,11 @@ fn checked_integer_helper_locals_retain_types() -> Result<(), Box<dyn std::error
     )?;
     for body in &module.bodies {
         for local in &body.locals {
-            assert!(!local.ty.to_string().contains('?'), "unresolved local: {local:?}\n{}", body.render_snapshot());
+            assert!(
+                !local.ty.to_string().contains('?'),
+                "unresolved local: {local:?}\n{}",
+                body.render_snapshot()
+            );
         }
     }
     Ok(())

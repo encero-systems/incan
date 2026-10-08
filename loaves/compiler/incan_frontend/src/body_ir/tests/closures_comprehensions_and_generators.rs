@@ -4,6 +4,47 @@
 
 use super::*;
 
+/// Generated collection mutations carry the same canonical identities as explicit builtin member calls.
+#[test]
+fn comprehension_writes_retain_builtin_member_identities() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n  xs = [1, 2]\n  ys = [x * 2 for x in xs if x > 0]\n  zs = {x: x * 2 for x in xs if x > 0}\n",
+        &["m", "comprehension_members"],
+    )?;
+    let mut targets = Vec::new();
+    collect_comprehension_writes(&body_named(&module, "main")?.block, &mut targets);
+    assert_eq!(targets.len(), 2);
+    for (target, owner, member) in [(&targets[0], "List", "append"), (&targets[1], "Dict", "insert")] {
+        assert_eq!(
+            target.canonical.as_ref(),
+            Some(&crate::symbols::canonical_builtin_member_identity(owner, member))
+        );
+    }
+    Ok(())
+}
+
+/// Collect the mutation targets through the loop and filter blocks produced by these comprehensions.
+fn collect_comprehension_writes<'a>(block: &'a bir::Block, targets: &mut Vec<&'a bir::MethodTarget>) {
+    for statement in &block.stmts {
+        match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                ..
+            } if target.name == "push" || target.name == "insert" => targets.push(target),
+            bir::StatementKind::Loop { body } => collect_comprehension_writes(body, targets),
+            bir::StatementKind::If {
+                then_block, else_block, ..
+            } => {
+                collect_comprehension_writes(then_block, targets);
+                if let Some(block) = else_block {
+                    collect_comprehension_writes(block, targets);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 #[test]
 fn lowers_a_list_comprehension_into_a_push_loop() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def doubled(items: list[int]) -> list[int]:\n  return [x * 2 for x in items]\n";
