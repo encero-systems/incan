@@ -1582,6 +1582,11 @@ def emit_local_call(
             )
     declared = native_source_type(builder.nominals, builder.enums, builder.unions, body.return_type, builder.intrinsics)?
     result_type = return_representation(body, declared)?
+    # A replaced callable binding cannot execute its original body when the retained result contract disagrees.
+    if result_type != place_type(builder.locals, output):
+        match result_type:
+            PlanType.Closure(_signature) => pass
+            _ => return Err("unsupported Body IR callable result differs from declared body return type")
     return lower_callable_result(
         builder,
         CalleeKind.Planned(function_name(module, body)),
@@ -1709,7 +1714,7 @@ def callable_argument(
                 return Err("invalid Body IR callable argument signature")
             match source:
                 PlanType.FunctionItem(name, _held) =>
-                    constructor = f"__incan_item_closure_{name}"
+                    constructor = f"__incan_item_closure_{builder.name}_{name}"
                     synthesize(builder, closure_constructor(constructor, name, [], signature, span))
                     boxed = temporary(builder, PlanType.Closure(signature), span)
                     terminate_call(builder, CalleeKind.Planned(constructor), [], boxed, span)

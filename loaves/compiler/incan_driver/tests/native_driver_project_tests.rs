@@ -631,9 +631,11 @@ fn direct_route_function_values_and_closures_match_legacy() -> Result<(), Box<dy
             "def apply(f: (int) -> int, value: int) -> int:\n    \"\"\"Invoke a function-typed argument.\"\"\"\n    return f(value)\n\n",
             "def apply_callable(f: Callable[int, int], value: int) -> int:\n    \"\"\"Invoke a Callable-typed argument.\"\"\"\n    return f(value)\n\n",
             "def make_adder(offset: int) -> (int) -> int:\n    \"\"\"Return a closure owning its offset.\"\"\"\n    return (value) => value + offset\n\n",
+            "def call_double(value: int) -> int:\n    \"\"\"Pass the same item from another caller body.\"\"\"\n    return apply(double, value)\n\n",
             "def main() -> None:\n    \"\"\"Exercise stored, borrowed, returned, and snapshot closures.\"\"\"\n",
             "    stored = double\n",
             "    println(stored(4))\n",
+            "    println(call_double(5))\n",
             "    println(apply(double, 5))\n",
             "    println(apply((value) => value + 1, 4))\n",
             "    println(apply_callable(double, 6))\n",
@@ -663,7 +665,7 @@ fn direct_route_function_values_and_closures_match_legacy() -> Result<(), Box<dy
     );
     let legacy = Command::new(legacy_root.join("oven/release/closures")).output()?;
     success(&legacy, "legacy function values and closure expressions execution");
-    assert_eq!(legacy.stdout, b"8\n10\n5\n12\n42\n41\n43\n43\n42\n5\n");
+    assert_eq!(legacy.stdout, b"8\n10\n10\n5\n12\n42\n41\n43\n43\n42\n5\n");
     let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
     let native = root.join("native");
     success(
@@ -680,6 +682,24 @@ fn direct_route_function_values_and_closures_match_legacy() -> Result<(), Box<dy
     let actual = Command::new(native).output()?;
     success(&actual, "native function values and closure expressions execution");
     assert_eq!(actual.stdout, legacy.stdout);
+    let decorated = support::repo_root().join(
+        "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_functions_and_projections/user_defined_decorators.incn",
+    );
+    let refused = corpus::source_command(
+        &fixture.driver_binary("release"),
+        &decorated,
+        &root.join("decorated-native"),
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr)
+            .contains("unsupported Body IR callable result differs from declared body return type"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
     Ok(())
 }
 
