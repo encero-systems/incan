@@ -1015,7 +1015,7 @@ fn bake_result(what: &str, bake: &Output) -> Result<(), String> {
 }
 
 /// Compare a check report with the diagnostics a refused fixture declares.
-fn compare_refusal(expected: &[String], check: &Output) -> Result<(), String> {
+pub fn compare_refusal(expected: &[String], check: &Output) -> Result<(), String> {
     let stdout = String::from_utf8_lossy(&check.stdout);
     let stderr = String::from_utf8_lossy(&check.stderr);
     if check.status.success() {
@@ -1058,7 +1058,7 @@ fn compare_refusal(expected: &[String], check: &Output) -> Result<(), String> {
 }
 
 /// Compare a run's stdout, stderr substrings, and exit code with what a run fixture declares.
-fn compare_run(
+pub fn compare_run(
     stdout: &StdoutExpectation,
     stderr_contains: &[String],
     exit_code: i32,
