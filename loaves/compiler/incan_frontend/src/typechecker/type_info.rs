@@ -671,6 +671,11 @@ pub struct TraitArtifacts {
     /// Body IR retains these declaration identities for concrete specialization. They remain separate from ordinary
     /// resolved call identities because legacy default expansion selects each adopter's implementation later.
     pub self_method_identities: HashMap<(usize, usize), CanonicalSymbolId>,
+    /// Checked type arguments of each source `with Trait[...]` adoption clause, keyed by the clause's span.
+    ///
+    /// Body IR instantiates an adopted trait's default methods for a concrete adopter from these arguments, so no
+    /// later stage re-resolves the written clause.
+    pub adoption_type_args: HashMap<(usize, usize), Vec<ResolvedType>>,
 }
 
 /// Derive expansion metadata imported from dependency modules and manifests.
@@ -923,7 +928,11 @@ pub struct DeclarationArtifacts {
     pub enum_payload_types: HashMap<(usize, usize), ResolvedType>,
     /// Explicit and automatic native derives selected by checking for each source enum.
     pub enum_derives: HashMap<String, Vec<String>>,
-    /// Accepted foreign nominal bindings retained before lexical checker context is discarded.
+    /// Explicit builtin, canonical serde, and implicit native derives selected for source models, in legacy emission
+    /// order. Derived Display remains a semantic selection, not a Rust macro.
+    pub model_derives: HashMap<String, Vec<String>>,
+    /// Active module-scope nominal identities from source and package bindings, retained before lexical checker
+    /// context is discarded.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
     /// Exact selected foreign origins retained from accepted bindings for native representation projection.
     pub named_type_origins: std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>,
@@ -1401,6 +1410,14 @@ pub enum PartialProjectionTargetKind {
 /// Call-site semantic decisions selected by the typechecker.
 #[derive(Debug, Default, Clone)]
 pub struct CallArtifacts {
+    /// Concrete owner types inferred from checked nominal constructor fields before an open caller context masks them.
+    ///
+    /// Body IR retains these executable carriers while legacy checking preserves its contextual expression type.
+    pub inferred_constructor_types: HashMap<(usize, usize), ResolvedType>,
+    /// Executable result types closed by a checked constructor argument at an inferred generic call.
+    ///
+    /// These accompany the retained call instantiation; legacy contextual expression types remain unchanged.
+    pub inferred_call_result_types: HashMap<(usize, usize), ResolvedType>,
     /// The callee's caller-visible `mut` parameter names for each call that resolved to such a callee, keyed by the
     /// full call span, so lowering passes those arguments the way the declaration takes them (#1773).
     pub caller_visible_mut_arguments: HashMap<(usize, usize), Vec<String>>,
@@ -1424,11 +1441,11 @@ pub struct CallArtifacts {
     /// Lowering consumes these plans to rewrite fixed/static unpack operands into ordinary IR call arguments. This
     /// keeps backend emission from re-deriving the frontend's binding decision from raw IR shape.
     pub fixed_unpack_plans: HashMap<(usize, usize), FixedUnpackPlan>,
-    /// RFC 054: For call expressions that used explicit bracketed type arguments, maps the **full call expression
-    /// span** `(start, end)` to the final monomorphized type arguments in callee type-parameter order.
+    /// Map a full call expression span `(start, end)` to its checked type arguments in declaration order.
     ///
-    /// Populated only after a successful generic function or method check when `[...]` was present; lowering prefers
-    /// this over re-lowering AST type nodes so `_` placeholders never reach codegen as `IrType::Unknown`.
+    /// Functions retain both inferred and explicit bindings; methods retain explicit bindings (RFC 054). Body IR
+    /// consumes these decisions for native instantiation. Legacy emission consumes them only for written `[...]`,
+    /// preserving Rust inference on other calls and ensuring `_` never reaches codegen as `IrType::Unknown`.
     ///
     /// ## Span stability
     ///
@@ -1686,6 +1703,8 @@ pub enum ResolvedMethodDispatch {
 /// `__iter__` and `__next__` hooks at its iterable's span, leaves the facts of the call written there as they were.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct CallSiteFacts {
+    inferred_constructor_type: Option<ResolvedType>,
+    inferred_call_result_type: Option<ResolvedType>,
     method_call: Option<ResolvedMethodCall>,
     identity: Option<CanonicalSymbolId>,
     callable_params: Option<Vec<CallableParam>>,
@@ -1887,6 +1906,8 @@ pub struct StaticBindingInfo {
 /// duplicating an equivalent struct per callable kind.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionBindingInfo {
+    /// Invoking this declaration constructs a lazy future whose output is `return_type`.
+    pub is_async: bool,
     /// Typechecker-resolved source parameters, including default-presence markers.
     pub params: Vec<CallableParam>,
     /// Typechecker-resolved source return type.
@@ -2889,6 +2910,8 @@ impl TypeCheckInfo {
     pub(crate) fn take_call_site_facts(&mut self, span: Span) -> CallSiteFacts {
         let key = (span.start, span.end);
         CallSiteFacts {
+            inferred_constructor_type: self.calls.inferred_constructor_types.remove(&key),
+            inferred_call_result_type: self.calls.inferred_call_result_types.remove(&key),
             method_call: self.calls.resolved_method_calls.remove(&key),
             identity: self.references.resolved_identities.remove(&key),
             callable_params: self.calls.call_site_callable_params.remove(&key),
@@ -2911,6 +2934,16 @@ impl TypeCheckInfo {
             }
         }
         let key = (span.start, span.end);
+        put(
+            &mut self.calls.inferred_constructor_types,
+            key,
+            facts.inferred_constructor_type,
+        );
+        put(
+            &mut self.calls.inferred_call_result_types,
+            key,
+            facts.inferred_call_result_type,
+        );
         put(&mut self.calls.resolved_method_calls, key, facts.method_call);
         put(&mut self.references.resolved_identities, key, facts.identity);
         put(&mut self.calls.call_site_callable_params, key, facts.callable_params);

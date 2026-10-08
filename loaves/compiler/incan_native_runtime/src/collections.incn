@@ -67,7 +67,7 @@ pub def get_dict[K with (Eq, Hash, Display), V with Clone](values: &Dict[K, V], 
 
 
 pub def optional_dict[K with (Eq, Hash, Display), V with Clone](values: &Dict[K, V], key: K) -> Option[V]:
-    """Copy a present value into Some or return None, preserving the legacy one-key get contract."""
+    """Copy a present value or report its absence, as the legacy one-argument lookup does."""
     reference: &K = key
     if dict_contains_key(values, reference):
         return Some(RuntimeClone.clone(dict_get(values, reference)))

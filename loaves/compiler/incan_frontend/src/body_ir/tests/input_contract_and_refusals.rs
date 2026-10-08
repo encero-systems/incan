@@ -329,6 +329,45 @@ fn a_rust_extern_body_records_its_delegation_and_no_placeholder_statements_issue
     Ok(())
 }
 
+// ---- User-defined decorator rebinding (RFC 036) ----
+
+#[test]
+fn a_declaration_rebound_by_a_user_defined_decorator_is_a_representation_gap() -> Result<(), Box<dyn std::error::Error>>
+{
+    // `run` calls the binding `as_int` returns, but its call target still names `label`'s own body, so a lowered
+    // `label` would run undecorated. The decorator and its replacement stay ordinary bodies.
+    let source = "def parse(value: int) -> int:\n    return value\n\ndef as_int(func: (int) -> str) -> (int) -> int:\n    println(\"decorating label\")\n    return parse\n\n@as_int\ndef label(value: int) -> str:\n    return \"value\"\n\ndef run(value: int) -> int:\n    return label(value)\n";
+    let module = build(source, &["m", "decorator_rebinding"])?;
+    let label = body_named(&module, "label")?;
+    assert_eq!(
+        label.first_representation_gap(),
+        Some("declaration `label` rebound by a user-defined decorator"),
+        "{}",
+        label.render_snapshot()
+    );
+    for name in ["parse", "as_int", "run"] {
+        let body = body_named(&module, name)?;
+        assert_eq!(body.first_representation_gap(), None, "{}", body.render_snapshot());
+    }
+    Ok(())
+}
+
+#[test]
+fn a_method_rebound_by_a_user_defined_decorator_is_a_representation_gap() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "class Counter:\n    value: int\n\n    @keep\n    def bump(mut self, by: int) -> int:\n        self.value += by\n        return self.value\n\n    def peek(self) -> int:\n        return self.value\n\ndef keep(func: (mut Counter, int) -> int) -> (mut Counter, int) -> int:\n    return func\n";
+    let module = build(source, &["m", "method_decorator_rebinding"])?;
+    let bump = body_named(&module, "bump")?;
+    assert_eq!(
+        bump.first_representation_gap(),
+        Some("declaration `bump` rebound by a user-defined decorator"),
+        "{}",
+        bump.render_snapshot()
+    );
+    let peek = body_named(&module, "peek")?;
+    assert_eq!(peek.first_representation_gap(), None, "{}", peek.render_snapshot());
+    Ok(())
+}
+
 // ---- Representation gaps and identity well-formedness ----
 
 #[test]
@@ -353,7 +392,7 @@ fn a_body_reports_a_representation_gap_nested_anywhere_in_it() -> Result<(), Box
 #[test]
 fn a_lowered_body_is_well_formed_and_a_tampered_one_is_not() -> Result<(), Box<dyn std::error::Error>> {
     let module = build(
-        "def helper() -> int:\n  return 1\n\ndef main() -> int:\n  return helper()\n",
+        "def helper(n: int = 1, other: int = 0) -> int:\n  return n + other\n\nchosen = partial helper(n=-2)\n\ndef main() -> int:\n  return chosen()\n",
         &["m", "identity"],
     )?;
     for body in &module.bodies {
@@ -369,6 +408,20 @@ fn a_lowered_body_is_well_formed_and_a_tampered_one_is_not() -> Result<(), Box<d
     assert!(
         !module.body_has_canonical_direct_call_id(&tampered),
         "a body carrying another declaration's identity must not pass"
+    );
+    let mut partial = body_named(&module, "chosen")?.clone();
+    assert!(
+        partial
+            .params
+            .iter()
+            .enumerate()
+            .all(|(index, parameter)| parameter.local.index() == index),
+        "default temporaries must follow every parameter slot"
+    );
+    partial.direct_call_id = body_named(&module, "helper")?.direct_call_id.clone();
+    assert!(
+        !module.body_has_canonical_direct_call_id(&partial),
+        "a Partial must retain its own declaration identity rather than its target's"
     );
     Ok(())
 }

@@ -18,10 +18,13 @@ pub def static_accessors(ty: PlanType) -> Result[tuple[str, str], str]:
     """Name persistent primitive and flat collection cells after checked carrier admission."""
     match ty:
         PlanType.Dict(key, value) =>
-            name = f"{static_leaf_name(key)}_{static_leaf_name(value)}_dict"
+            key_name = static_leaf_name(key)?
+            value_name = static_leaf_name(value)?
+            name = f"{key_name}_{value_name}_dict"
             return Ok((f"incan_native_runtime::read_static_{name}", f"incan_native_runtime::write_static_{name}"))
         PlanType.Set(leaf) =>
-            name = f"{static_leaf_name(leaf)}_set"
+            leaf_name = static_leaf_name(leaf)?
+            name = f"{leaf_name}_set"
             return Ok((f"incan_native_runtime::read_static_{name}", f"incan_native_runtime::write_static_{name}"))
         PlanType.List(leaf, depth) =>
             if depth != 1:
@@ -39,17 +42,18 @@ pub def static_accessors(ty: PlanType) -> Result[tuple[str, str], str]:
 
 def static_list_accessors(leaf: ListLeaf) -> Result[tuple[str, str], str]:
     """Choose typed runtime list cells without erasing their checked element representation."""
-    name = static_leaf_name(leaf)
+    name = static_leaf_name(leaf)?
     return Ok((f"incan_native_runtime::read_static_{name}_list", f"incan_native_runtime::write_static_{name}_list"))
 
 
-def static_leaf_name(leaf: ListLeaf) -> str:
+def static_leaf_name(leaf: ListLeaf) -> Result[str, str]:
     """Name the exact primitive carrier shared by list and hashed storage cells."""
     match leaf:
-        ListLeaf.Int => return "int"
-        ListLeaf.Float => return "float"
-        ListLeaf.Bool => return "bool"
-        ListLeaf.Str => return "text"
+        ListLeaf.Int => return Ok("int")
+        ListLeaf.Float => return Ok("float")
+        ListLeaf.Bool => return Ok("bool")
+        ListLeaf.Str => return Ok("text")
+        _ => return Err("unsupported Body IR static element carrier")
 
 
 pub def lower_model_declarations(module: &BodyIrModule, file: str) -> Result[list[ModelDeclaration], str]:
@@ -57,8 +61,8 @@ pub def lower_model_declarations(module: &BodyIrModule, file: str) -> Result[lis
     unions = collect_unions(module)
     mut models: list[ModelDeclaration] = []
     for declaration in module.nominal_declarations:
-        if declaration.has_field_defaults:
-            return Err(f"unsupported Body IR model defaults on {declaration.name}")
+        if declaration.has_field_defaults and "Default" in declaration.derives:
+            return Err(f"unsupported Body IR derived Default over field defaults on {declaration.name}")
         mut fields: list[Parameter] = []
         for slot in range(len(declaration.fields)):
             fields.append(
@@ -81,6 +85,7 @@ pub def lower_model_declarations(module: &BodyIrModule, file: str) -> Result[lis
                 fields=fields,
                 field_public=declaration.field_public,
                 derives=declaration.derives,
+                source_name=str(declaration.canonical.declaration_name),
                 span=SourceSpan(file=file, line=1, column=1),
             ),
         )

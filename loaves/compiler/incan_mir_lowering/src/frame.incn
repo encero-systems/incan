@@ -7,6 +7,7 @@ from pub::incan_mir_plan import (
     CalleeKind,
     Constant,
     ExternalFunction,
+    Function,
     Local,
     Operand,
     OperandKind,
@@ -21,6 +22,7 @@ from pub::incan_mir_plan import (
     Unwind,
 )
 from pub::incan_mir_plan import assign as plan_assign, block as plan_block, place as plan_place
+from type_parameters import Instance
 from rust::incan_semantics_core import IncanType as RustType
 from rust::incan_semantics_core::body_ir import (
     NominalDeclaration as RustNominalDeclaration,
@@ -40,6 +42,10 @@ pub model Builder:
     `loops` holds each enclosing loop's (header, after) blocks, and `loop_owners` the owners live when it began.
     `iterators` pairs borrowed iterable slots with cursor storage; `borrowed_items` prevents mutations of cloned iteration items whose source contract remains borrowed.
     `module_identity` is the caller body's canonical owner, so local-call admission remains module-relative in a project plan.
+    `generator_handle` is the provisional yield-handle slot in a producer, or -1 in an ordinary function; completed producer plans move it into their parameter slot.
+    `type_parameters` and `type_arguments` retain the current closed declaration binding; `instances` records checked calls that need their own concrete native function.
+    `function_pointer_locals` lists the return slot, function-typed parameters, and explicitly annotated locals whose callables are stored as reified function pointers; other callable locals keep their inferred function-item type.
+    `name` is the plan symbol of the function being built, which prefixes the functions its closures synthesize; `synthesized` collects those lifted bodies and constructors for the enclosing plan.
     """
 
     pub locals: list[Local]
@@ -63,7 +69,14 @@ pub model Builder:
     pub local_offset: int
     pub intrinsics: list[EnumDeclaration]
     pub statics: list[RustStaticDeclaration]
+    pub generator_handle: int
     pub value_enums: list[RustValueEnumDeclaration]
+    pub instances: list[Instance]
+    pub type_parameters: list[str]
+    pub type_arguments: list[RustType]
+    pub function_pointer_locals: list[int]
+    pub name: str
+    pub synthesized: list[Function]
 
     def new_block(mut self, span: SourceSpan) -> int:
         """Allocate a block before connecting edges, preserving index stability."""
@@ -209,6 +222,8 @@ pub def place_type(locals: list[Local], value: Place) -> PlanType:
         Projection.VariantField(_variant, _slot, ty) => return ty
         Projection.Field(_slot, ty) => return ty
         Projection.DerefField(_slot, ty) => return ty
+        Projection.Fields(fields) => return fields[-1].ty
+        Projection.DerefFields(fields) => return fields[-1].ty
         Projection.NumericValue(ty) => return ty
         Projection.Value => return PlanType.Int
         Projection.Overflow => return PlanType.Bool

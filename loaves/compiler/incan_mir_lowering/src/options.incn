@@ -3,6 +3,7 @@
 from rust::incan_semantics_core import IncanType as RustType, SymbolOrigin
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
+    Body,
     Pattern as RustPattern,
     ResultVariantKind,
     Constant as RustConstant,
@@ -118,6 +119,11 @@ pub def intrinsic_pattern(declaration: EnumDeclaration, pattern: &RustPattern) -
                     ) == "Some" and len(fields) == 1:
                         validate_payload_patterns(fields)?
                         return Ok(1)
+                    # A bare `None` constructor, as an `assert value is None` pattern spells it.
+                    if declaration.carrier == "Option" and canonical.origin == SymbolOrigin.Builtin and canonical.declaration_name == "None" and str(
+                        variant,
+                    ) == "None" and len(fields) == 0:
+                        return Ok(0)
                 None => pass
         RustPattern.Result(variant=variant, fields=fields) =>
             if declaration.carrier != "Result" or len(fields) != 1:
@@ -131,13 +137,26 @@ pub def intrinsic_pattern(declaration: EnumDeclaration, pattern: &RustPattern) -
 
 
 pub def intrinsic_declarations(module: &BodyIrModule, file: str) -> Result[list[EnumDeclaration], str]:
-    """Collect concrete checked carriers in stable body/local order, admitting only existing payload types."""
+    """Collect concrete non-template carriers; checked function instances add their closed layouts when scheduled."""
     mut declarations: list[EnumDeclaration] = lower_union_declarations(module, file)?
     for body in module.bodies:
-        retain_carrier(module, declarations, body.return_type, file)?
-        for local in body.locals:
-            retain_carrier(module, declarations, local.ty, file)?
+        if len(body.type_parameters) != 0:
+            continue
+        retain_body_carriers(module, declarations, body, file)?
     return Ok(declarations)
+
+
+pub def retain_body_carriers(
+    module: &BodyIrModule,
+    mut declarations: list[EnumDeclaration],
+    body: &Body,
+    file: str,
+) -> Result[None, str]:
+    """Append closed frame carriers without renumbering earlier layouts; open instance payloads still refuse."""
+    retain_carrier(module, declarations, body.return_type, file)?
+    for local in body.locals:
+        retain_carrier(module, declarations, local.ty, file)?
+    return Ok(None)
 
 
 def retain_carrier(

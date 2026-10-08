@@ -1,6 +1,7 @@
 """Public facade for the checked Body-IR-to-native-plan lowering Loaf."""
 
 from assertions import lower_assertion
+from async_ import future_type, future_declarations, construct_future, await_future, async_entry, evaluator_name
 from defaults import default_arguments, default_type
 pub from lowering import BodyIrModule, BodyStatementKind
 from lowering import (
@@ -16,9 +17,11 @@ pub from pub::incan_mir_plan import (
     Callee,
     CalleeKind,
     ExternalFunction,
+    FieldProjection,
     Constant,
     Function,
     ListLeaf,
+    list_leaf_type,
     EnumDeclaration,
     EnumVariant,
     SizedNumeric,

@@ -29,12 +29,18 @@ pub model SourceSpan:
 
 @derive(Clone, PartialEq)
 pub enum ListLeaf:
-    """Primitive leaves shared by lists, sets, and dictionary keys and values."""
+    """Scalar, flat tuple, and retained model leaves; hash keys exclude floats and models, and dictionary values stay scalar."""
 
     Int
     Float
     Bool
     Str
+    Tuple(list[TupleElement])
+    Model(int, str)
+    U8
+    Unit
+    Decimal
+    FrozenStr
 
 
 @derive(Clone, PartialEq)
@@ -63,13 +69,19 @@ pub enum PlanType:
 
     EnumTag is rustc's native discriminant type and stays body-internal; TagToInt explicitly converts it to source int.
 
-    Sized numeric variants preserve their exact Rust carriers. CheckedNumeric stores its named sized carrier; its value projection retains the carrier type. Tuple elements retain their ordered types and own any string elements. Array lengths are exact nonnegative counts. CheckedInt and arrays are body temporaries; shared slice variants already include their reference. StringRef
-    borrows an owned String, while StrRef is a string literal's shared str view.
-    List stores its primitive leaf element and a positive nesting
-    depth; ListRef and ListMutRef borrow that same Vec representation.
+    Sized numeric variants preserve their exact Rust carriers. CheckedNumeric stores its named sized carrier; its value projection retains the carrier type. Tuple elements retain their ordered types and own any string elements. Array lengths are exact nonnegative counts. CheckedInt and arrays are body temporaries; shared slice variants already include their reference.
+    StringRef borrows an owned String, while StrRef is a string literal's shared str view.
+    List stores its scalar or flat tuple leaf element and a positive nesting depth; ListRef and ListMutRef borrow that same Vec representation.
     ModelRef and ModelMutRef retain shared and mutable nominal receiver references.
-    Set and Dict retain the legacy HashSet and HashMap leaf arguments; their
-    reference variants preserve caller-owned storage. Float keys are not admitted.
+    Decimal retains the legacy Decimal128 carrier; precision is checked upstream and the value keeps its written scale.
+    FrozenStr retains the copyable frozen wrapper over static text; it owns no allocation and is distinct from String.
+    Set and Dict retain the legacy HashSet and HashMap leaf arguments; their reference variants preserve caller-owned storage. Float and model keys are refused; flat tuple keys exclude floating-point fields.
+    Generator retains the legacy lazy runtime wrapper, with depth zero for primitive elements.
+    GeneratorMutRef advances caller-owned state. GeneratorYield and GeneratorYieldRef are producer-only runtime
+    handles; they never represent source values or eagerly collected elements.
+    ZipIterator retains two independent owned list snapshots; its reference variants retain shared read or exclusive poll authority.
+    FunctionPointer retains its inputs followed by exactly one return entry; the vector is never empty, including for a zero-argument function. FunctionItem keeps that same signature and the proven source declaration's name; it remains distinct from a pointer until an explicit reification.
+    Closure owns a boxed callable object with that signature layout, holding its captures by value; ClosureRef is the shared view a closure-holding parameter receives. Their inputs are tuple-element types, because a call packs them into one argument tuple.
     """
 
     Int
@@ -90,11 +102,15 @@ pub enum PlanType:
     Bool
     Unit
     CheckedNumeric(SizedNumeric)
+    # A source-free executor callback; ordinary source callable values stay outside this carrier.
+    UnitFunction
     EnumTag
     CheckedInt
     Tuple(list[TupleElement])
     String
     StringRef
+    Decimal
+    FrozenStr
     StrRef
     StringArray(int)
     StrArray(int)
@@ -107,7 +123,7 @@ pub enum PlanType:
     ModelMutRef(int, str)
     StringSlice
     StrSlice
-    # A homogeneous list: its primitive leaf element and nesting depth.
+    # A homogeneous list: its admitted leaf element and nesting depth.
     List(ListLeaf, int)
     ListRef(ListLeaf, int)
     ListMutRef(ListLeaf, int)
@@ -117,6 +133,34 @@ pub enum PlanType:
     Dict(ListLeaf, ListLeaf)
     DictRef(ListLeaf, ListLeaf)
     DictMutRef(ListLeaf, ListLeaf)
+    # Lazy zip over independent owned list snapshots; references retain poll authority.
+    ZipIterator(TupleElement, TupleElement)
+    ZipIteratorRef(TupleElement, TupleElement)
+    ZipIteratorMutRef(TupleElement, TupleElement)
+    # Lazy runtime generators retain the admitted immediate element representation.
+    Generator(ListLeaf, int)
+    GeneratorMutRef(ListLeaf, int)
+    GeneratorYield(ListLeaf, int)
+    GeneratorYieldRef(ListLeaf, int)
+    FunctionPointer(list[PlanType])
+    FunctionItem(str, list[PlanType])
+    Closure(list[PlanType])
+    ClosureRef(list[PlanType])
+
+
+pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
+    """Recover one admitted leaf's exact representation for lowering and adapter consumers."""
+    match leaf:
+        ListLeaf.Int => return PlanType.Int
+        ListLeaf.Float => return PlanType.Float
+        ListLeaf.Bool => return PlanType.Bool
+        ListLeaf.Str => return PlanType.String
+        ListLeaf.Tuple(elements) => return PlanType.Tuple(elements)
+        ListLeaf.Model(index, name) => return PlanType.Model(index, name)
+        ListLeaf.U8 => return PlanType.U8
+        ListLeaf.Unit => return PlanType.Unit
+        ListLeaf.Decimal => return PlanType.Decimal
+        ListLeaf.FrozenStr => return PlanType.FrozenStr
 
 
 pub def tuple_element_type(element: TupleElement) -> PlanType:
@@ -147,8 +191,16 @@ pub model Local:
 
 
 @derive(Clone, PartialEq)
+pub model FieldProjection:
+    """One canonical field slot and its exact retained native type."""
+
+    pub slot: int
+    pub ty: PlanType
+
+
+@derive(Clone, PartialEq)
 pub enum Projection:
-    """Whole local, checked component, typed reference dereference, nominal field, or downcast enum payload."""
+    """Whole local, checked component, typed reference dereference, canonical field path, or downcast enum payload."""
 
     Whole
     NumericValue(PlanType)
@@ -158,6 +210,8 @@ pub enum Projection:
     Field(int, PlanType)
     Deref(PlanType)
     DerefField(int, PlanType)
+    Fields(list[FieldProjection])
+    DerefFields(list[FieldProjection])
 
 
 @derive(Clone, PartialEq)
@@ -201,10 +255,12 @@ pub model Operand:
 @derive(Clone, PartialEq)
 pub enum BinaryOp:
     """
-    Checked integer arithmetic, scalar comparisons, and floating arithmetic.
+    Checked integer arithmetic, scalar comparisons, floating arithmetic, and integer bit operations.
 
     Add, Subtract, and Multiply on int produce CheckedInt. Comparisons produce
     Bool. The other arithmetic operations require float operands.
+    BitAnd, BitOr, and BitXor take two operands of one integer type and keep it. A shift keeps its left operand's
+    integer type, counts with any integer type, and masks the count to that width as Rust's unchecked release shift does.
     """
 
     Add
@@ -217,14 +273,20 @@ pub enum BinaryOp:
     LessEqual
     Greater
     GreaterEqual
+    BitAnd
+    BitOr
+    BitXor
+    ShiftLeft
+    ShiftRight
 
 
 @derive(Clone, PartialEq)
 pub enum UnaryOp:
-    """Boolean inversion or numeric negation."""
+    """Boolean inversion, numeric negation, or the bitwise complement of an integer that keeps its type."""
 
     Not
     Negate
+    Invert
 
 
 @derive(Clone, PartialEq)
@@ -238,12 +300,16 @@ pub enum RvalueKind:
     NumericCast retains both checked source and destination carriers. FloatToInt preserves Rust truncation and saturation; BoolToInt produces zero or one.
 
     Tuple preserves the ordered operand layout of its destination type.
+    FrozenText wraps a static Text literal in the dependency-owned FrozenStr carrier; a dynamic text operand is refused.
     Array moves or copies its listed operands into a fixed array. Borrow creates
     a shared reference to a checked place; MutBorrow creates a mutable list or nominal receiver reference. UnsizeSlice converts an array reference
     to the corresponding shared slice without changing ownership of its owner.
     """
 
     Use(Operand)
+    # Reify a validated zero-argument unit function for the canonical async entry bridge.
+    UnitFunction(str)
+    FrozenText(Operand)
     Binary(BinaryOp, Operand, Operand)
     Unary(UnaryOp, Operand)
     NumericCast(Operand, PlanType, PlanType)
@@ -259,6 +325,10 @@ pub enum RvalueKind:
     Borrow(Place)
     MutBorrow(Place)
     UnsizeSlice(Operand)
+    FunctionItem(Callee)
+    ReifyFunction(Operand)
+    # Borrow an owned closure's callable object as the shared view a call or closure-holding parameter takes.
+    ClosureObject(Place)
 
 
 @derive(Clone, PartialEq)
@@ -288,7 +358,7 @@ pub model Statement:
 
 @derive(Clone, PartialEq)
 pub enum CalleeKind:
-    """A planned function, canonical external path, checked model clone, or explicit generic external instantiation."""
+    """A planned function, canonical external path, checked model clone, explicit generic instantiation, exact legacy generator runtime operation, or a local item/pointer operand with its retained type."""
 
     Planned(str)
     External(str)
@@ -296,6 +366,17 @@ pub enum CalleeKind:
     CloneModel(int, str)
     Instantiated(str, PlanType)
     InstantiatedPair(str, PlanType, PlanType)
+    # The explicit producer takes its yield handle before the source-ordered owned captures. A zero-capture spawn
+    # uses a function item; a captured spawn is a constructor whose call arguments initialize one native FnOnce environment.
+    SpawnGenerator(str, ListLeaf, int)
+    YieldGenerator(ListLeaf, int)
+    CollectGenerator(ListLeaf, int)
+    Value(Operand)
+    # A synthesized constructor's boxed environment. Its closure forwards the leading captured parameters, then its own
+    # inputs, to the named lifted function; the count says how many of that function's parameters are captures.
+    ClosureBody(str, int)
+    # Invoke a borrowed callable object of this signature with one packed argument tuple.
+    CallClosure(list[PlanType])
 
 
 @derive(Clone, PartialEq)
@@ -384,7 +465,7 @@ pub model Plan:
 @derive(Clone, PartialEq)
 pub model ModelDeclaration:
     """
-    Checked field layout and implicit derives for one nongeneric source model or plain newtype.
+    Checked field layout and implicit derives for one concrete source nominal layout.
 
     A newtype has exactly one public field named `0`, emitted as a tuple slot; named model fields retain their names.
     """
@@ -395,6 +476,8 @@ pub model ModelDeclaration:
     pub field_public: list[bool]
     pub derives: list[str]
     pub span: SourceSpan
+    # A specialized carrier keeps its source name for derived Debug and declaration metadata.
+    pub source_name: str = ""
 
 
 @derive(Clone, PartialEq)

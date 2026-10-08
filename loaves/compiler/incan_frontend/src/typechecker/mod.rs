@@ -3583,6 +3583,41 @@ impl TypeChecker {
         result
     }
 
+    /// Record each source trait adoption clause's checked type arguments by the clause's span.
+    ///
+    /// An owner's collected adoptions list its `with` clauses first and in source order, followed by derive-implied
+    /// adoptions, so the clauses pair with that prefix. A clause whose paired adoption names a different trait or a
+    /// different number of arguments records nothing.
+    fn record_trait_adoption_arguments_for_lowering(&mut self, program: &Program) {
+        let mut recorded = Vec::new();
+        for declaration in &program.declarations {
+            let (name, clauses) = match &declaration.node {
+                Declaration::Model(model) => (&model.name, &model.traits),
+                Declaration::Class(class) => (&class.name, &class.traits),
+                Declaration::Newtype(newtype) => (&newtype.name, &newtype.traits),
+                Declaration::Enum(value) => (&value.name, &value.traits),
+                _ => continue,
+            };
+            let adoptions = match self.lookup_type_info(name) {
+                Some(TypeInfo::Model(info)) => &info.trait_adoptions,
+                Some(TypeInfo::Class(info)) => &info.trait_adoptions,
+                Some(TypeInfo::Newtype(info)) => &info.trait_adoptions,
+                Some(TypeInfo::Enum(info)) => &info.trait_adoptions,
+                _ => continue,
+            };
+            for (clause, adoption) in clauses.iter().zip(adoptions) {
+                if clause.node.type_args.is_empty()
+                    || adoption.name != clause.node.name
+                    || adoption.type_args.len() != clause.node.type_args.len()
+                {
+                    continue;
+                }
+                recorded.push(((clause.span.start, clause.span.end), adoption.type_args.clone()));
+            }
+        }
+        self.type_info.traits.adoption_type_args = recorded.into_iter().collect();
+    }
+
     /// Snapshot declaration metadata into [`TypeCheckInfo`] for backend lowering.
     ///
     /// This records all visible trait and method-alias symbols (local and imported), not just declarations in the
@@ -7068,6 +7103,7 @@ impl TypeChecker {
             .resolve_checked_facades(self.current_module_path.as_deref());
 
         self.record_trait_metadata_for_lowering(program);
+        self.record_trait_adoption_arguments_for_lowering(program);
         self.record_model_field_visibilities_for_lowering(program);
         self.record_class_layouts_for_lowering(program);
         self.record_method_decorator_receiver_slots(program);
@@ -7161,11 +7197,39 @@ impl TypeChecker {
         self.type_info.declarations.public_type_bridge_roots = roots;
         self.type_info.declarations.foreign_pub_type_remappings = self.foreign_pub_type_remappings.clone();
         self.type_info.declarations.named_type_origins = self.checked_nominal_type_origins();
-        self.type_info.declarations.named_type_identities = self
+        self.type_info.declarations.named_type_identities = self.checked_nominal_type_identities();
+    }
+
+    /// Retain active module-scope nominal bindings from both source modules and admitted packages.
+    ///
+    /// Imported source types already carry their declaring identity in the symbol table. Body IR must retain that
+    /// fact before publication; recovering it from a spelling in lowering would lose aliases and module ownership.
+    fn checked_nominal_type_identities(&self) -> std::collections::BTreeMap<String, CanonicalSymbolId> {
+        let mut identities = self
             .public_library_type_identities
             .iter()
             .filter_map(|(name, identity)| Some((name.clone(), identity.canonical.clone()?)))
-            .collect();
+            .collect::<std::collections::BTreeMap<_, _>>();
+        for (id, symbol) in self.symbols.all_symbols().iter().enumerate() {
+            if symbol.scope != 0 || !self.symbols.is_active_lookup_binding(id) {
+                continue;
+            }
+            let Some(identity) = self.symbols.identity_of(id) else {
+                continue;
+            };
+            if matches!(
+                identity.kind,
+                SemanticSourceTargetKind::Model
+                    | SemanticSourceTargetKind::Class
+                    | SemanticSourceTargetKind::Enum
+                    | SemanticSourceTargetKind::Newtype
+            ) {
+                identities
+                    .entry(symbol.name.clone())
+                    .or_insert_with(|| identity.clone());
+            }
+        }
+        identities
     }
 
     /// Turn collisions from the shared symbol-registration mechanism into source diagnostics.

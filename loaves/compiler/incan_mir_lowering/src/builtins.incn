@@ -4,6 +4,7 @@ from rust::incan_semantics_core::body_ir import BuiltinFnId
 from pub::incan_mir_plan import PlanType, Place, SourceSpan, Operand, ExternalFunction, CalleeKind
 from frame import Builder, terminate_call, external_call, value_type
 from collections import is_owned_collection
+from tuples import tuple_has_owners
 
 
 pub def scalar_builtin(builtin: &BuiltinFnId, ty: PlanType) -> Option[tuple[str, PlanType]]:
@@ -38,8 +39,11 @@ pub def list_call(
         ExternalFunction(path=path, type_arguments=[element], parameters=parameters, return_type=result, span=span),
     )
     terminate_call(builder, CalleeKind.Instantiated(path, element), arguments, destination, span)
-    if result == PlanType.String or is_owned_collection(result):
-        builder.owned.append(destination.local)
+    match result:
+        PlanType.Model(_index, _name) => builder.owned.append(destination.local)
+        _ =>
+            if result == PlanType.String or is_owned_collection(result) or tuple_has_owners(result):
+                builder.owned.append(destination.local)
 
 
 pub def emit_boolean_operator(

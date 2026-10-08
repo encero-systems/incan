@@ -387,6 +387,10 @@ fn compile_source(
 }
 
 /// Construct the exact direct-route invocation so bounded census execution shares dependency selection.
+///
+/// The driver resolves its pinned `rustc_driver` through its own runpath and refuses any other loaded copy. On Linux
+/// the suite runner exports `LD_LIBRARY_PATH` for test executables, and that search path outranks a runpath, so the
+/// driver would load the sysroot's second, byte-identical copy and refuse every program; it does not inherit it.
 pub(super) fn source_command(
     driver: &Path,
     source: &Path,
@@ -394,9 +398,10 @@ pub(super) fn source_command(
     sysroot: &Path,
     closure: &NativeClosure,
 ) -> Command {
-    let mut command = Command::new(driver);
+    let mut command = super::driver_command(driver);
     command
         .env_remove("RUSTC_BOOTSTRAP")
+        .env_remove("LD_LIBRARY_PATH")
         .arg("--source")
         .arg(source)
         .arg("native_corpus")
