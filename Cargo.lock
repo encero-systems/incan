@@ -2333,6 +2333,7 @@ dependencies = [
  "oven_store",
  "rust_inspect",
  "rustix 1.1.4",
+ "semver",
  "serde",
  "serde_json",
  "sha2",
