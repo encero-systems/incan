@@ -363,3 +363,37 @@ def main() -> None:
 "#,
     )
 }
+
+/// Match arms that each consume the same incoming owner join with that owner consumed, as legacy's moves do.
+#[test]
+fn match_arm_moves_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_case(
+        "match_arm_moves",
+        r#"
+def consume(text: str) -> None:
+    println(text)
+
+def show(label: str, value: Option[int]) -> None:
+    match value:
+        Some(inner) =>
+            consume(label)
+            println(inner)
+        None =>
+            consume(label)
+            println("none")
+
+def describe(label: str, value: Option[int]) -> None:
+    match value:
+        case Some(inner):
+            println(f"{label} Some({inner})")
+        case None:
+            println(f"{label} None")
+
+def main() -> None:
+    show("first", Some(1))
+    show("second", None)
+    describe("local", Some(1))
+    describe("imported", None)
+"#,
+    )
+}

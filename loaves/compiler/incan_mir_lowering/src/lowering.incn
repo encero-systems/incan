@@ -3495,7 +3495,8 @@ def lower_enum_match(
     builder.emit(plan_assign(tag, RvalueKind.TagToInt(read_place(raw_tag, false, span)), span))
     join = builder.new_block(span)
     owners = builder.owned
-    mut reaches_join = false
+    mut arm_ends: list[int] = []
+    mut arm_owners: list[list[int]] = []
     for arm in arms:
         mut slot = -1
         if owner < len(builder.enums):
@@ -3526,30 +3527,70 @@ def lower_enum_match(
         bind_enum_payload(builder, source, slot, arm.pattern, span)?
         lower_enum_arm_body(module, builder, arm)?
         if not builder.closed[builder.current]:
-            reaches_join = true
             value = boundary_operand(builder, arm.result, place_type(builder.locals, target), span)?
             track_rvalue_moves(builder, RvalueKind.Use(value))
             builder.emit(plan_assign(target, RvalueKind.Use(value), span))
-            # Pattern-bound owners are branch locals; release them before restoring the incoming owner snapshot.
+            # Pattern-bound owners are branch locals; release them before the arm's owners meet the others at the join.
             mut branch_owners = builder.owned
             for local in branch_owners:
                 if local not in owners:
                     drop_owned(builder, local, span)
-            if builder.owned != owners:
-                return Err("unsupported Body IR enum match branch ownership change")
-            finish_fallthrough(builder, join, span)
+            arm_ends.append(builder.current)
+            arm_owners.append(builder.owned)
         builder.current = next_arm
         builder.owned = owners
         if slot < 0:
             break
     builder.finish(TerminatorKind.Unreachable, span)
+    join_owners = join_arm_owners(builder, join, arm_ends, arm_owners, span)?
+    reaches_join = len(arm_ends) != 0
     builder.current = join
     builder.closed[join] = not reaches_join
-    builder.owned = owners
+    builder.owned = join_owners
     ty = place_type(builder.locals, target)
     if reaches_join and (ty == PlanType.String or is_nominal_type(ty) or is_owned_collection(ty)):
         builder.owned.append(target.local)
     return Ok(None)
+
+
+def join_arm_owners(
+    mut builder: Builder,
+    join: int,
+    ends: list[int],
+    arm_owners: list[list[int]],
+    span: SourceSpan,
+) -> Result[list[int], str]:
+    """
+    Close each arm reaching the join, keeping live only the incoming owners that every such arm left live.
+
+    Body IR counts last uses across arms in source order, so one arm may move text that another only borrows. Rust
+    drops the surviving value at scope end through a drop flag; text has no observable drop, so releasing it at the
+    end of the arm that kept it is equivalent. Any other owner left live on only some paths stays refused.
+    """
+    mut live: list[int] = []
+    if len(ends) != 0:
+        for local in arm_owners[0]:
+            if kept_by_every_arm(local, arm_owners):
+                live.append(local)
+    for index in range(len(ends)):
+        builder.current = ends[index]
+        builder.owned = arm_owners[index]
+        for local in arm_owners[index]:
+            if local in live:
+                continue
+            if builder.locals[local].ty != PlanType.String:
+                return Err("unsupported Body IR enum match branch ownership change")
+            drop_owned(builder, local, span)
+        finish_fallthrough(builder, join, span)
+    return Ok(live)
+
+
+def kept_by_every_arm(local: int, arm_owners: list[list[int]]) -> bool:
+    """Report whether every arm reaching a join still owns `local`."""
+    for owned in arm_owners:
+        if local not in owned:
+            return false
+    return true
 
 
 def lower_enum_arm_body(module: &BodyIrModule, mut builder: Builder, arm: &RustMatchArm) -> Result[None, str]:
