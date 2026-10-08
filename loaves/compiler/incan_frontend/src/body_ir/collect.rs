@@ -51,7 +51,7 @@ pub(super) fn collect_type_aliases(
                 .clone();
             Some(bir::TypeAliasDeclaration {
                 canonical,
-                ty: semantic_type_from_resolved(type_info.type_alias_target(&item.name)?),
+                ty: parameter_types::checked_semantic_type(type_info.type_alias_target(&item.name)?, type_info),
                 named_type_identities: type_info.declarations.named_type_identities.clone(),
             })
         })
@@ -168,7 +168,7 @@ pub(super) fn collect_local_enum_declarations(
                                 .declarations
                                 .enum_payload_types
                                 .get(&(field.span.start, field.span.end))
-                                .map(semantic_type_from_resolved)
+                                .map(|ty| parameter_types::checked_semantic_type(ty, type_info))
                         })
                         .collect::<Option<Vec<_>>>()?;
                     Some(bir::EnumVariantDeclaration {
@@ -338,14 +338,14 @@ pub(super) fn collect_local_nominal_declarations(
                                 .fields
                                 .iter()
                                 .find(|checked| checked.name == field.node.name)
-                                .map(|checked| semantic_type_from_resolved(&checked.ty))
+                                .map(|checked| parameter_types::checked_semantic_type(&checked.ty, type_info))
                                 .unwrap_or(IncanType::Unknown)
                         } else {
                             type_info
                                 .declarations
                                 .model_field_types
                                 .get(&(field.span.start, field.span.end))
-                                .map(semantic_type_from_resolved)
+                                .map(|ty| parameter_types::checked_semantic_type(ty, type_info))
                                 .unwrap_or(IncanType::Unknown)
                         }
                     })
@@ -378,7 +378,7 @@ fn collect_plain_newtype(
         .declaration_identities
         .get(&(span.start, span.end))?
         .clone();
-    let underlying = semantic_type_from_resolved(&facts.underlying);
+    let underlying = parameter_types::checked_semantic_type(&facts.underlying, type_info);
     let mut derives = facts.automatic_derives.clone();
     if matches!(
         underlying,
@@ -388,6 +388,11 @@ fn collect_plain_newtype(
             derives.push("Clone".to_owned());
         }
         derives.push("Copy".to_owned());
+    }
+    for selection in &facts.explicit_derives {
+        if !derives.contains(selection) {
+            derives.push(selection.clone());
+        }
     }
     Some(bir::NominalDeclaration {
         direct_declaration_id: CompilerNodeId::declaration_span(module_identity, span.start, span.end),

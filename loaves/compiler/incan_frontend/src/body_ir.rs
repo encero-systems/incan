@@ -508,14 +508,17 @@ pub fn is_direct_replacement_model_derive(decorator: &ast::Decorator) -> bool {
         })
 }
 
-/// Admit concrete tuple wrappers with ordinary methods and trait adoptions.
+/// Admit concrete tuple wrappers with builtin derives, ordinary methods, and trait adoptions.
 ///
 /// A trait adopted with type arguments is instantiated from the checker-recorded arguments. Checked construction hooks
 /// and constraints remain refused by the declaration collector; aliases, interop edges, associated types, and generic
 /// methods require additional representation facts and remain outside this profile.
 pub fn is_direct_replacement_plain_newtype(newtype: &ast::NewtypeDecl) -> bool {
     !newtype.is_rusttype
-        && newtype.decorators.is_empty()
+        && newtype
+            .decorators
+            .iter()
+            .all(|decorator| is_direct_replacement_model_derive(&decorator.node))
         && newtype.type_params.is_empty()
         && newtype.rebindings.is_empty()
         && newtype.method_aliases.is_empty()
@@ -583,11 +586,15 @@ pub fn is_direct_native_enum(value: &ast::EnumDecl) -> bool {
 
 /// Determine whether an enum carries the narrow source-local RFC 032 scalar declaration fact.
 ///
-/// This predicate intentionally excludes aliases and all behavior-bearing forms even when they are source-valid:
+/// Builtin derives use the checked native enum layout alongside this scalar registry. This predicate excludes aliases
+/// and other behavior-bearing forms even when they are source-valid:
 /// the direct executor may validate only a canonical literal member and the compiler-provided `.value()` extraction,
 /// not trait dispatch, custom methods, alias canonicalization, generic substitution, or payload construction.
 pub fn is_direct_replacement_value_enum(enum_decl: &ast::EnumDecl) -> bool {
-    enum_decl.decorators.is_empty()
+    enum_decl
+        .decorators
+        .iter()
+        .all(|decorator| is_direct_replacement_model_derive(&decorator.node))
         && enum_decl.type_params.is_empty()
         && enum_decl.value_type.is_some()
         && enum_decl.traits.is_empty()

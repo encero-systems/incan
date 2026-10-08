@@ -1,6 +1,57 @@
 //! Preserve declaration-bound placeholders while projecting checked types into Body IR.
 
-use super::{BodyBuilder, IncanType, ast, bir, semantic_type_from_resolved};
+use super::{BodyBuilder, IncanType, TypeCheckInfo, ast, bir, semantic_type_from_resolved};
+
+/// Project checked nominal spellings onto their declaring carrier names, without resolving source syntax again.
+///
+/// Imported checker types can use package-qualified names while the retained declaration uses its source name.
+/// Only checker-minted canonical bindings authorize this projection. Project assembly still refuses equal carrier
+/// names from distinct owners, so this does not choose between conflicting declarations.
+pub(super) fn checked_semantic_type(ty: &crate::symbols::ResolvedType, facts: &TypeCheckInfo) -> IncanType {
+    retain_checked_nominal_names(semantic_type_from_resolved(ty), facts)
+}
+
+/// Normalize nested checked nominal positions before they cross the Body IR boundary.
+fn retain_checked_nominal_names(ty: IncanType, facts: &TypeCheckInfo) -> IncanType {
+    match ty {
+        IncanType::Named(name) => IncanType::Named(
+            facts
+                .declarations
+                .named_type_identities
+                .get(&name)
+                .map_or(name.clone(), |identity| identity.declaration_name.clone()),
+        ),
+        IncanType::Generic { base, args } => IncanType::Generic {
+            base,
+            args: args
+                .into_iter()
+                .map(|ty| retain_checked_nominal_names(ty, facts))
+                .collect(),
+        },
+        IncanType::Tuple(elements) => IncanType::Tuple(
+            elements
+                .into_iter()
+                .map(|ty| retain_checked_nominal_names(ty, facts))
+                .collect(),
+        ),
+        IncanType::Ref(inner) => IncanType::Ref(Box::new(retain_checked_nominal_names(*inner, facts))),
+        IncanType::RefMut(inner) => IncanType::RefMut(Box::new(retain_checked_nominal_names(*inner, facts))),
+        IncanType::TypeToken(inner) => IncanType::TypeToken(Box::new(retain_checked_nominal_names(*inner, facts))),
+        IncanType::Function {
+            mut params,
+            return_type,
+        } => {
+            for parameter in &mut params {
+                parameter.ty = retain_checked_nominal_names(parameter.ty.clone(), facts);
+            }
+            IncanType::Function {
+                params,
+                return_type: Box::new(retain_checked_nominal_names(*return_type, facts)),
+            }
+        }
+        ty => ty,
+    }
+}
 
 /// Distinguish declared binders from nominal types using the active declaration's retained parameter set.
 ///
@@ -33,7 +84,7 @@ pub(super) fn retain_parameter_type(ty: IncanType, parameters: &[String]) -> Inc
 impl BodyBuilder<'_, '_> {
     /// Convert a checked type while retaining the active declaration's explicit placeholder bindings.
     pub(super) fn checked_type(&self, ty: &crate::symbols::ResolvedType) -> IncanType {
-        retain_parameter_type(semantic_type_from_resolved(ty), &self.type_parameters)
+        retain_parameter_type(checked_semantic_type(ty, self.type_info), &self.type_parameters)
     }
 
     /// Retain an owned value read from an open parameter field at a return or by-value argument boundary.

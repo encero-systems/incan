@@ -3750,10 +3750,13 @@ impl TypeChecker {
                 .and_then(|constructor| info.methods.get(constructor))
                 .and_then(|method| method.identity.clone());
             let automatic_derives = self.newtype_automatic_derive_names(&name, &info);
+            let mut explicit_derives = info.derives.clone();
+            Self::append_implied_derives(&mut explicit_derives);
             self.type_info.declarations.newtype_construction.insert(
                 name.clone(),
                 crate::typechecker::type_info::NewtypeConstructionInfo {
                     automatic_derives,
+                    explicit_derives,
                     type_params: info.type_params.clone(),
                     underlying: info.underlying.clone(),
                     checked_constructor,
