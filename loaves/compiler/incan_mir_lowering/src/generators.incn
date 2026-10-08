@@ -165,6 +165,7 @@ def swap_rvalue(value: RvalueKind, handle: int) -> RvalueKind:
         RvalueKind.UnsizeSlice(value) => return RvalueKind.UnsizeSlice(swap_operand(value, handle))
         # A unit function value names a symbol, not a place, so nothing in it moves.
         RvalueKind.UnitFunction(name) => return RvalueKind.UnitFunction(name)
+        RvalueKind.FrozenText(value) => return RvalueKind.FrozenText(swap_operand(value, handle))
 
 
 def swap_statement(value: StatementKind, handle: int) -> StatementKind:

@@ -34,6 +34,7 @@ pub def primitive_leaf(ty: &RustType, hashed: bool) -> Result[ListLeaf, str]:
                 Primitive.Int => return Ok(ListLeaf.Int)
                 Primitive.Bool => return Ok(ListLeaf.Bool)
                 Primitive.Str => return Ok(ListLeaf.Str)
+                Primitive.FrozenStr => return Ok(ListLeaf.FrozenStr)
                 Primitive.Unit => return Ok(ListLeaf.Unit)
                 Primitive.Float =>
                     if not hashed:

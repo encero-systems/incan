@@ -76,6 +76,7 @@ enum Scalar {
     String,
     StringRef,
     Decimal,
+    FrozenStr,
     StrRef,
     StringArray(i64),
     StrArray(i64),
@@ -116,6 +117,7 @@ enum Leaf {
     U8,
     Unit,
     Decimal,
+    FrozenStr,
 }
 
 impl Leaf {
@@ -131,6 +133,7 @@ impl Leaf {
             ListLeaf::U8 => Leaf::U8,
             ListLeaf::Unit => Leaf::Unit,
             ListLeaf::Decimal => Leaf::Decimal,
+            ListLeaf::FrozenStr => Leaf::FrozenStr,
         }
     }
 }
@@ -193,6 +196,7 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::CheckedInt => Scalar::CheckedInt,
         PlanType::String => Scalar::String,
         PlanType::Decimal => Scalar::Decimal,
+        PlanType::FrozenStr => Scalar::FrozenStr,
         PlanType::StringRef => Scalar::StringRef,
         PlanType::StrRef => Scalar::StrRef,
         PlanType::StringArray(count) => Scalar::StringArray(*count),
@@ -563,6 +567,13 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             Ok(Scalar::UnitFunction)
         }
         RvalueKind::Use(value) => operand(plan, function, value),
+        RvalueKind::FrozenText(value) => {
+            if !matches!(value.kind, OperandKind::Literal(Constant::Text(_))) {
+                return Err(invalid(function, "FrozenStr construction requires static literal text"));
+            }
+            require(function, operand(plan, function, value)?, Scalar::StrRef, "frozen literal")?;
+            Ok(Scalar::FrozenStr)
+        }
         RvalueKind::NumericCast(value, source, target) => {
             let source = scalar(source);
             let target = scalar(target);
@@ -792,6 +803,7 @@ fn source_signature_type(ty: Scalar) -> bool {
                 | Scalar::Unit
                 | Scalar::String
                 | Scalar::Decimal
+                | Scalar::FrozenStr
                 | Scalar::Model(_)
                 | Scalar::Enum(_)
                 | Scalar::List(_, _)
