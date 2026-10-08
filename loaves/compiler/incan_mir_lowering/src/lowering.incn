@@ -1934,7 +1934,8 @@ pub def call_argument_operand(
             RustOperand.Place(read) =>
                 if read.fact != OwnershipFact.MutBorrow:
                     return Err("unsupported Body IR generator argument without mutable borrow fact")
-                return generator_reference(builder, list_root_place(builder, read.place, span)?, span)
+                root = list_root_place(builder, read.place, span)?
+                return generator_reference(builder, root, span)
             _ => return Err("unsupported Body IR constant generator argument")
     if ty == PlanType.String:
         text = display_operand(builder, value, span)?
@@ -3945,10 +3946,14 @@ def list_next(
         return Err("unsupported Body IR non-builtin list IterNext")
     receiver = operand_list_place(builder, iterator, span)?
     match zip_shape(builder.locals[receiver.local].ty):
-        Some(_shape) => return zip_next(builder, receiver, list_root_place(builder, destination, span)?, span)
+        Some(_shape) =>
+            target = list_root_place(builder, destination, span)?
+            return zip_next(builder, receiver, target, span)
         None => pass
     match generator_shape(builder.locals[receiver.local].ty):
-        Some(_shape) => return generator_next(builder, receiver, list_root_place(builder, destination, span)?, span)
+        Some(_shape) =>
+            target = list_root_place(builder, destination, span)?
+            return generator_next(builder, receiver, target, span)
         None => pass
     ty = builder.locals[receiver.local].ty
     mut element = PlanType.Unit
