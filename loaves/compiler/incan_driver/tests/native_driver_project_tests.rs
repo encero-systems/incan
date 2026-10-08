@@ -41,9 +41,22 @@ fn pinned_driver_rustc() -> Result<PathBuf, Box<dyn std::error::Error>> {
 
 /// Run the explicit publisher in the fixture-owned home and preserve full failure diagnostics.
 fn bake(project: &Path, home: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    bake_with_reuse_requirement(project, home, false)
+}
+
+/// A warm diagnostic refuses a completed-output miss before any frontend, inspection, or publisher fallback.
+fn bake_with_reuse_requirement(
+    project: &Path,
+    home: &Path,
+    require_completed: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut command = support::repo_command();
     support::configure_explicit_oven_bake_command(&mut command)?;
+    if require_completed {
+        command.env("INCAN_TEST_REQUIRE_COMPLETED_BAKE_REUSE", "1");
+    }
     let rustc = pinned_driver_rustc()?;
+    let timing = support::command_timing_started();
     let output = command
         .env("RUSTC", rustc)
         .args(["oven", "bake", "--project"])
@@ -51,6 +64,21 @@ fn bake(project: &Path, home: &Path) -> Result<(), Box<dyn std::error::Error>> {
         .env("INCAN_HOME", home)
         .env("RUSTC_BOOTSTRAP", "ambient-unit")
         .output()?;
+    support::report_command_timing(
+        &format!(
+            "fixture bake {}",
+            project.file_name().ok_or("project has no name")?.to_string_lossy()
+        ),
+        timing,
+    );
+    if std::env::var_os("INCAN_OVEN_TRACE_REUSE").is_some() {
+        eprintln!(
+            "fixture {}:\n{}\n{}",
+            project.display(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
     success(&output, &format!("Oven bake {}", project.display()));
     Ok(())
 }
@@ -1513,6 +1541,194 @@ fn numeric_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
         &fixture.sysroot,
         &fixture.formatting,
     )
+}
+
+/// Measure the actual unchanged graph with expensive fallback forbidden and retain numeric parity evidence.
+#[test]
+#[ignore = "machine-local diagnostic of the 50 ms completed fixture graph reuse budget"]
+fn unchanged_fixture_graph_reuse_meets_budget() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let started = std::time::Instant::now();
+    for name in ["library", "lowering", "driver", "formatting-caller"] {
+        bake_with_reuse_requirement(&fixture.root.join(name), &fixture.home, true)?;
+    }
+    let elapsed = started.elapsed();
+    eprintln!(
+        "completed fixture graph reuse: {:.3} ms",
+        elapsed.as_secs_f64() * 1000.0
+    );
+    corpus::check_numerics(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("warm-reuse-numerics")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+    )?;
+    assert!(
+        elapsed < std::time::Duration::from_millis(50),
+        "completed graph reuse took {elapsed:?}, budget is 50 ms"
+    );
+    Ok(())
+}
+
+/// Verify the profile-specific base, portable package entries, and local native bytes used by completed reuse.
+fn diagnose_fixture_package(
+    project: &Path,
+    packaged: &incan_driver::build::OvenPackagedLibraryLoafProfile,
+    output: &incan_driver::build::OvenStoredProjectOutput,
+    store: &oven_store::store::OvenStore,
+) -> Result<(), Box<dyn std::error::Error>> {
+    packaged.receipt.verify_identity()?;
+    assert_eq!(packaged.receipt.identity, output.payload.receipt_identity);
+    assert_eq!(packaged.receipt.build_unit_identity, output.payload.build_unit_identity);
+    assert_eq!(packaged.receipt.intent, output.intent);
+    assert_eq!(
+        output.payload.package_loaf_store_relative_path.as_deref(),
+        Some("target/lib/oven/loafs")
+    );
+    assert_eq!(packaged.entries, output.payload.required_project_loafs);
+    let native = output
+        .payload
+        .files
+        .iter()
+        .find(|file| file.output_relative_path == "output/native")
+        .ok_or("no native output")?;
+    assert_eq!(packaged.library_digest, native.digest);
+    assert_eq!(
+        Path::new(&native.caller_relative_path).strip_prefix("target/lib")?,
+        Path::new(&packaged.library_relative_path)
+    );
+    assert_eq!(
+        oven_store::digest_bytes(&fs::read(
+            project.join("target/lib").join(&packaged.library_relative_path)
+        )?),
+        native.digest
+    );
+    let package_store = oven_store::store::OvenStore::new(project.join("target/lib/oven/loafs"), *store.limits());
+    for entry in &packaged.entries {
+        entry.receipt.verify_identity()?;
+        assert_eq!(entry.receipt.intent, packaged.receipt.intent);
+        if let Some(base) = &entry.base_loaf_identity {
+            let available = oven_rustc::loaf::resolve_compiler_owned_loaf_by_identity(&packaged.receipt, base)?;
+            eprintln!(
+                "lowering/{}: package base {base}, available {}",
+                output.profile,
+                available.is_some()
+            );
+            assert!(available.is_some(), "profile-specific package base is unavailable");
+        }
+        let selected = package_store.select_payloads_matching_for_execution(|header| {
+            header.identity == entry.identity
+                && header.kind == entry.kind
+                && header.receipt_identity == entry.receipt.identity
+                && header.build_unit_identity == entry.receipt.build_unit_identity
+                && header.intent == entry.receipt.intent
+        })?;
+        assert_eq!(selected.len(), 1, "exact package entry must remain available");
+    }
+    Ok(())
+}
+
+/// Inspect the persisted lowering's complete reuse boundary without baking or changing its fixture inputs.
+#[test]
+#[ignore = "machine-local diagnostic of persisted fixture reuse authority"]
+fn completed_lowering_reuse_authority_diagnostic() -> Result<(), Box<dyn std::error::Error>> {
+    use incan_driver::build::output_selection::{
+        baked_project_owner_identity, matching_baked_project_outputs_with_source_authority,
+    };
+    use incan_driver::build::source_authority::{
+        baked_project_lock_dependencies_fingerprint, digest_baked_project_source_authority, project_bake_receipt_path,
+    };
+    use incan_driver::build::{OvenBakeProjectTarget, OvenPackagedLibraryLoafManifest};
+    use oven_rustc::rustc::{OvenProjectInspectionConstituent, load_project_inspection_authority};
+    use oven_store::store::{OvenStore, OvenStoreLimits};
+
+    let root = support::explicit_bake_workspace().ok_or("diagnostic requires the persisted fixture workspace")?;
+    let project = root.join("lowering");
+    let entrypoint = project.join("src/lib.incn");
+    let source = digest_baked_project_source_authority(&project)?;
+    let lock = baked_project_lock_dependencies_fingerprint(&project)?;
+    let compiler = oven_store::digest_bytes(&fs::read(support::incan_debug_binary())?);
+    let store = OvenStore::new(
+        root.join("home/oven/store/v2"),
+        OvenStoreLimits::new(
+            oven_store::DEFAULT_OVEN_MAX_PHYSICAL_BYTES,
+            oven_store::DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES,
+            oven_store::DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES,
+        ),
+    );
+    let package: OvenPackagedLibraryLoafManifest =
+        serde_json::from_slice(&fs::read(project.join("target/lib/oven/package-loafs.json"))?)?;
+    assert_eq!(package.profiles.len(), 2);
+    assert_eq!(package.compiler_version, incan_lang::version::INCAN_VERSION);
+    let mut inspection_ref = None;
+    for profile in ["debug", "release"] {
+        let receipt: oven_store::OvenReceipt = serde_json::from_slice(&fs::read(project_bake_receipt_path(
+            &project,
+            OvenBakeProjectTarget::Library,
+            &entrypoint,
+            profile,
+        )?)?)?;
+        receipt.verify_identity()?;
+        let candidates = matching_baked_project_outputs_with_source_authority(
+            &store,
+            &project,
+            &entrypoint,
+            OvenBakeProjectTarget::Library,
+            profile,
+            &source,
+            Some((&receipt.intent.target, &receipt.intent.toolchain)),
+        )?;
+        eprintln!(
+            "lowering/{profile}: source {source}; lock {lock:?}; {} verified candidates",
+            candidates.len()
+        );
+        let output = candidates
+            .into_iter()
+            .find(|output| {
+                output.payload.compiler_identity_digest.as_deref() == Some(&compiler)
+                    && output.payload.lock_dependencies_fingerprint == lock
+            })
+            .ok_or("no exact source/compiler/lock candidate")?;
+        assert_eq!(receipt.identity, output.payload.receipt_identity);
+        assert_eq!(receipt.build_unit_identity, output.payload.build_unit_identity);
+        let reference = output
+            .payload
+            .inspection_authority
+            .as_ref()
+            .ok_or("no inspection authority")?;
+        if let Some(previous) = &inspection_ref {
+            assert_eq!(previous, reference, "both profiles must share one inspection authority");
+        } else {
+            inspection_ref = Some(reference.clone());
+        }
+        let authority = load_project_inspection_authority(
+            &store,
+            reference,
+            &baked_project_owner_identity(&project)?,
+            &source,
+            incan_lang::version::INCAN_VERSION,
+        )?;
+        for constituent in &authority.payload.constituents {
+            if let OvenProjectInspectionConstituent::ReleaseLoaf {
+                loaf_identity, receipt, ..
+            } = constituent
+            {
+                let available = oven_rustc::loaf::resolve_compiler_owned_loaf_by_identity(receipt, loaf_identity)?;
+                eprintln!(
+                    "lowering/{profile}: release base {loaf_identity}, available {}",
+                    available.is_some()
+                );
+                assert!(available.is_some(), "recorded release base is unavailable");
+            }
+        }
+        incan_driver::lock::registry_sources::prepare_project_registry_source_authorities(authority)?;
+        assert_eq!(package.source_authority_digest, source);
+        let packaged = package.profiles.get(profile).ok_or("missing packaged profile")?;
+        diagnose_fixture_package(&project, packaged, &output, &store)?;
+        eprintln!("lowering/{profile}: inspection and package boundaries validated");
+    }
+    bake_with_reuse_requirement(&project, &root.join("home"), true)?;
+    Ok(())
 }
 
 /// Prove concrete class and model trait methods and a static trait default against legacy.

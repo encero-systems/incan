@@ -3342,12 +3342,104 @@ fn verify_materialized_files(root: &Path, manifest: &OvenArtifactManifest) -> Re
         .fold(0_u64, |total, file| total.saturating_add(file.logical_bytes)))
 }
 
-/// Hash one immutable materialized file in bounded memory while preserving exact byte-count verification.
+/// Metadata for one exact open file, including replacement and preserved-mtime edits.
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct MaterializedFileStamp {
+    length: u64,
+    modified: u128,
+    identity: Vec<u64>,
+}
+
+/// A local acceleration record populated only from observed artifact bytes.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MaterializedFileDigest {
+    stamp: MaterializedFileStamp,
+    digest: String,
+}
+
+/// Bind metadata to the held regular-file handle; unsupported platforms always hash bytes.
+fn materialized_file_stamp(file: &File) -> io::Result<MaterializedFileStamp> {
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(io::Error::other("materialized artifact must be a regular file"));
+    }
+    let modified = metadata
+        .modified()?
+        .duration_since(UNIX_EPOCH)
+        .map_err(io::Error::other)?
+        .as_nanos();
+    #[cfg(unix)]
+    let identity = {
+        use std::os::unix::fs::MetadataExt;
+        vec![
+            metadata.dev(),
+            metadata.ino(),
+            metadata.ctime().cast_unsigned(),
+            metadata.ctime_nsec().cast_unsigned(),
+        ]
+    };
+    #[cfg(not(unix))]
+    let identity = Vec::new();
+    Ok(MaterializedFileStamp {
+        length: metadata.len(),
+        modified,
+        identity,
+    })
+}
+
+/// Keep acceleration outside the published store inventory; staging and caller paths remain uncached.
+fn materialized_digest_cache_path(path: &Path) -> Option<PathBuf> {
+    let canonical = fs::canonicalize(path).ok()?;
+    let entries = canonical
+        .ancestors()
+        .find(|ancestor| ancestor.file_name().is_some_and(|name| name == ENTRIES_DIRECTORY))?;
+    let store = entries.parent()?;
+    Some(store.parent()?.join("oven-file-digests-v1").join(format!(
+        "{:x}.json",
+        Sha256::digest(canonical.as_os_str().as_encoded_bytes())
+    )))
+}
+
+/// Publish a complete hash record atomically; a write failure only forfeits future acceleration.
+fn publish_materialized_file_digest(path: &Path, record: &MaterializedFileDigest) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::other("digest cache has no parent"))?;
+    fs::create_dir_all(parent)?;
+    let sequence = STAGING_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let staged = parent.join(format!(".digest-{}-{sequence}.tmp", std::process::id()));
+    let result = crate::write_receipt_staged(&serde_json::to_vec(record)?, &staged, path, parent);
+    if result.is_err() {
+        let _removed = fs::remove_file(&staged);
+    }
+    result
+}
+
+/// Hash one materialized file with observed-stat acceleration and exact byte-count verification.
 fn digest_materialized_file(path: &Path) -> Result<(u64, String), OvenStoreError> {
     let mut file = File::open(path).map_err(|source| OvenStoreError::Io {
         path: path.to_path_buf(),
         source,
     })?;
+    let before = materialized_file_stamp(&file).map_err(|source| OvenStoreError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let cache_path = materialized_digest_cache_path(path);
+    if !before.identity.is_empty()
+        && let Some(record) = cache_path
+            .as_ref()
+            .and_then(|path| fs::read(path).ok())
+            .and_then(|bytes| serde_json::from_slice::<MaterializedFileDigest>(&bytes).ok())
+        && record.stamp == before
+        && record
+            .digest
+            .strip_prefix("sha256:")
+            .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    {
+        return Ok((before.length, record.digest));
+    }
     let mut hasher = Sha256::new();
     let mut logical_bytes = 0_u64;
     let mut buffer = [0_u8; 64 * 1024];
@@ -3371,7 +3463,27 @@ fn digest_materialized_file(path: &Path) -> Result<(u64, String), OvenStoreError
                 message: "materialized artifact byte count exceeds the supported accounting range".to_string(),
             })?;
     }
-    Ok((logical_bytes, format!("sha256:{}", hex::encode(hasher.finalize()))))
+    let after = materialized_file_stamp(&file).map_err(|source| OvenStoreError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    if before != after || logical_bytes != before.length {
+        return Err(OvenStoreError::Integrity {
+            identity: path.display().to_string(),
+            message: "materialized artifact changed while hashing".into(),
+        });
+    }
+    let digest = format!("sha256:{}", hex::encode(hasher.finalize()));
+    if let Some(path) = cache_path {
+        let _published = publish_materialized_file_digest(
+            &path,
+            &MaterializedFileDigest {
+                stamp: before,
+                digest: digest.clone(),
+            },
+        );
+    }
+    Ok((logical_bytes, digest))
 }
 
 /// Collect regular materialized files while rejecting links and non-file entry types.
@@ -4320,6 +4432,60 @@ pub(crate) mod tests {
     use std::collections::BTreeMap;
     use std::fs::{self, OpenOptions};
     use std::path::{Path, PathBuf};
+
+    /// Stat-bound hashes invalidate same-length preserved-mtime edits and malformed records.
+    #[test]
+    fn materialized_file_freshness_rejects_preserved_mtime_edits() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("store/entries/fixture.loaf/artifacts/native");
+        fs::create_dir_all(source.parent().ok_or("artifact has no parent")?)?;
+        fs::write(&source, b"native bytes")?;
+        let first = super::digest_materialized_file(&source)?;
+        assert_eq!(first, super::digest_materialized_file(&source)?);
+        let modified = fs::metadata(&source)?.modified()?;
+        fs::write(&source, b"edited bytes")?;
+        fs::File::options()
+            .write(true)
+            .open(&source)?
+            .set_times(fs::FileTimes::new().set_modified(modified))?;
+        let changed = super::digest_materialized_file(&source)?;
+        assert_ne!(first, changed);
+        let cache = super::materialized_digest_cache_path(&source).ok_or("artifact has no cache path")?;
+        fs::write(&cache, b"malformed")?;
+        assert_eq!(changed, super::digest_materialized_file(&source)?);
+        let replacement = root.path().join("replacement");
+        fs::write(&replacement, b"native bytes")?;
+        fs::File::options()
+            .write(true)
+            .open(&replacement)?
+            .set_times(fs::FileTimes::new().set_modified(modified))?;
+        fs::rename(&replacement, &source)?;
+        assert_eq!(first, super::digest_materialized_file(&source)?);
+        Ok(())
+    }
+
+    /// Measure native artifact hash validation independently of whole graph setup.
+    #[test]
+    fn materialized_file_freshness_reports_cold_and_warm_times() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let artifact = root.path().join("store/entries/fixture.loaf/artifacts/native");
+        fs::create_dir_all(artifact.parent().ok_or("artifact has no parent")?)?;
+        fs::copy(std::env::current_exe()?, &artifact)?;
+        let started = std::time::Instant::now();
+        let digest = super::digest_materialized_file(&artifact)?;
+        let cold = started.elapsed();
+        let started = std::time::Instant::now();
+        for _ in 0..4 {
+            assert_eq!(digest, super::digest_materialized_file(&artifact)?);
+        }
+        eprintln!(
+            "materialized freshness: {} bytes, cold {:.3} ms, four warm probes {:.3} ms",
+            digest.0,
+            cold.as_secs_f64() * 1000.0,
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+        Ok(())
+    }
 
     /// Relative directory entries and exact file bytes in a published store.
     type PublishedInventory = BTreeMap<PathBuf, Option<Vec<u8>>>;
