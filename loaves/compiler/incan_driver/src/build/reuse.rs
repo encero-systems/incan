@@ -98,6 +98,30 @@ fn remember_project_output(receipt_path: &Path, identity: &str) {
     }
 }
 
+/// Select an exact packaged constituent under its execution lease without enumerating unrelated entries.
+///
+/// The immutable address narrows the search only: kind, receipt, build unit and intent must still agree. If the
+/// address cannot be selected, the ordinary receipt-aware search preserves its existing missing/corrupt behavior.
+fn select_package_entry_for_execution(
+    store: &OvenStore,
+    entry: &oven_rustc::plan::OvenPackagedLibraryLoafEntry,
+) -> Result<Vec<oven_store::store::OvenStoreExecutionPayload>, oven_store::store::OvenStoreError> {
+    let matches = |stored: &oven_store::store::OvenArtifactManifest| {
+        stored.identity == entry.identity
+            && stored.kind == entry.kind
+            && stored.receipt_identity == entry.receipt.identity
+            && stored.build_unit_identity == entry.receipt.build_unit_identity
+            && stored.intent == entry.receipt.intent
+    };
+    match store.select_payloads_for_execution(std::slice::from_ref(&entry.identity)) {
+        Ok(selected) => Ok(selected
+            .into_iter()
+            .filter(|payload| matches(&payload.manifest))
+            .collect()),
+        Err(_) => store.select_payloads_matching_for_execution(matches),
+    }
+}
+
 /// Restore and validate the portable package handoff carried by reused library outputs.
 fn restore_reused_library_package(
     project_root: &Path,
@@ -191,23 +215,11 @@ fn restore_reused_library_package(
             {
                 return Ok(false);
             }
-            let packaged = package_store.select_payloads_matching_for_execution(|stored| {
-                stored.identity == entry.identity
-                    && stored.kind == entry.kind
-                    && stored.receipt_identity == entry.receipt.identity
-                    && stored.build_unit_identity == entry.receipt.build_unit_identity
-                    && stored.intent == entry.receipt.intent
-            });
+            let packaged = select_package_entry_for_execution(&package_store, entry);
             match packaged {
                 Ok(selected) if selected.len() == 1 => {}
                 Ok(selected) if selected.is_empty() => {
-                    let source = store.select_payloads_matching_for_execution(|stored| {
-                        stored.identity == entry.identity
-                            && stored.kind == entry.kind
-                            && stored.receipt_identity == entry.receipt.identity
-                            && stored.build_unit_identity == entry.receipt.build_unit_identity
-                            && stored.intent == entry.receipt.intent
-                    });
+                    let source = select_package_entry_for_execution(store, entry);
                     if source.map_or(true, |selected| selected.len() != 1) {
                         return Ok(false);
                     }
@@ -859,6 +871,18 @@ mod tests {
         let (foreign, _, _) =
             crate::build::test_support::fixture_project_output_publication(project.path(), "release", "foreign")?;
         assert!(located_project_output(&store, &receipt_path, &foreign)?.is_none());
+        let mut entry = oven_rustc::plan::OvenPackagedLibraryLoafEntry {
+            receipt: receipt.clone(),
+            identity: output.identity.clone(),
+            kind: OvenArtifactKind::ProjectOutput,
+            base_loaf_identity: None,
+        };
+        assert_eq!(select_package_entry_for_execution(&store, &entry)?.len(), 1);
+        entry.receipt = foreign;
+        assert!(select_package_entry_for_execution(&store, &entry)?.is_empty());
+        entry.receipt = receipt.clone();
+        entry.identity = format!("sha256:{}", "0".repeat(64));
+        assert!(select_package_entry_for_execution(&store, &entry)?.is_empty());
         fs::write(receipt_path.with_extension("output.json"), b"\"../../not-an-identity\"")?;
         assert!(located_project_output(&store, &receipt_path, &receipt)?.is_none());
         remember_project_output(&receipt_path, &format!("sha256:{}", "0".repeat(64)));
