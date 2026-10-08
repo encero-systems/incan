@@ -527,6 +527,16 @@ def unit_enum_comparison(
     )
 
 
+def scalar_operator_type(ty: PlanType) -> bool:
+    """
+    Recognize the operand carriers a native binary operator accepts.
+
+    The checker selects a plain operator where an operand's type was still a type parameter, so a trait default
+    instantiated at text or a nominal reaches here with a carrier that needs a helper the checker never chose.
+    """
+    return numeric_carrier(ty) or ty == PlanType.Bool
+
+
 def enum_comparison_place(builder: Builder, operand: &RustOperand, span: SourceSpan) -> Result[Place, str]:
     """Read the already-evaluated checked operand place before borrowing its native discriminant."""
     match operand:
@@ -584,6 +594,8 @@ def scalar_rvalue(
                 return Err("unsupported Body IR mixed numeric arithmetic without retained coercion")
             if left_type == PlanType.Decimal:
                 return Ok(RvalueKind.Use(decimal_comparison(builder, operator, left_operand, right_operand, span)?))
+            if not scalar_operator_type(left_type):
+                return Err("unsupported Body IR binary operator on nonscalar operands")
             return Ok(RvalueKind.Binary(binary_operator(operator)?, left_operand, right_operand))
         RustRvalue.IsInstance(value=value, value_ty=ty, target=target) =>
             return lower_union_isinstance(builder, value, ty, target.ty, span)
