@@ -2,6 +2,96 @@
 
 use super::*;
 
+/// Fresh caller directories reuse an admitted library, while changed source cannot borrow its cached bytes.
+#[test]
+fn generated_library_store_reuses_across_outputs_and_refuses_stale_sources() -> Result<(), Box<dyn std::error::Error>> {
+    let project = tempfile::tempdir()?;
+    let output = tempfile::tempdir()?;
+    let artifact_root = tempfile::tempdir()?;
+    let store_root = tempfile::tempdir()?;
+    let store = OvenStore::new(
+        store_root.path(),
+        OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+    );
+    write_project(project.path())?;
+    fs::create_dir_all(project.path().join("src"))?;
+    let source = project.path().join("src/library.rs");
+    fs::write(&source, "pub fn value() -> u32 { 42 }\n")?;
+    let rustc = rustc_path()?;
+    let input = OvenGeneratedProjectRequest::new(
+        project.path(),
+        "library_store",
+        "0.1.0",
+        rustc_host_target(&rustc)?,
+        rustc_identity(&rustc)?,
+        "debug",
+        Vec::new(),
+    )
+    .with_generated_source("generated-library", &source);
+    let receipt = receipt_generated_project(&input)?;
+    let artifacts = empty_manifest(&receipt);
+    let first_output = output.path().join("first.rlib");
+    let second_output = output.path().join("second.rlib");
+    let first = OvenTrustedDirectRustcTargetRequest {
+        receipt: &receipt,
+        artifacts: &artifacts,
+        artifact_root: artifact_root.path(),
+        artifact_plan: None,
+        rustc: &rustc,
+        source: &source,
+        output: &first_output,
+        crate_name: "library_store",
+        edition: "2024",
+        source_evidence_key: "generated-library",
+        features: &[],
+        prefer_dynamic: false,
+    };
+    let cold = super::super::bake_trusted_direct_rustc_library_in_store(&first, &store)?;
+    assert!(!cold.reused);
+    let second = OvenTrustedDirectRustcTargetRequest {
+        output: &second_output,
+        ..first
+    };
+    let warm = super::super::bake_trusted_direct_rustc_library_in_store(&second, &store)?;
+    assert!(warm.reused);
+    assert_eq!(cold.output_digest, warm.output_digest);
+    assert!(!warm.cargo_process_started);
+
+    fs::write(&second_output, b"invalid caller projection")?;
+    let repaired = super::super::bake_trusted_direct_rustc_library_in_store(&second, &store)?;
+    assert!(repaired.reused);
+    assert_eq!(cold.output_digest, repaired.output_digest);
+    let mut environment_plan = artifacts.materialize(artifact_root.path(), &receipt.intent)?;
+    environment_plan
+        .compile_environment
+        .insert("CARGO_PKG_DESCRIPTION".to_string(), "different environment".to_string());
+    let environment_request = OvenTrustedDirectRustcTargetRequest {
+        artifact_plan: Some(&environment_plan),
+        ..second
+    };
+    let environment_changed = super::super::bake_trusted_direct_rustc_library_in_store(&environment_request, &store)?;
+    assert!(
+        !environment_changed.reused,
+        "a changed declared environment must invalidate store reuse"
+    );
+    fs::write(&source, "pub fn value() -> u32 { 43 }\n")?;
+    assert!(matches!(
+        super::super::bake_trusted_direct_rustc_library_in_store(&second, &store),
+        Err(OvenRustcError::SourceEvidenceMismatch { .. })
+    ));
+    let changed = receipt_generated_project(&input)?;
+    let changed_artifacts = empty_manifest(&changed);
+    let changed_request = OvenTrustedDirectRustcTargetRequest {
+        receipt: &changed,
+        artifacts: &changed_artifacts,
+        ..second
+    };
+    let rebuilt = super::super::bake_trusted_direct_rustc_library_in_store(&changed_request, &store)?;
+    assert!(!rebuilt.reused);
+    assert_ne!(cold.output_digest, rebuilt.output_digest);
+    Ok(())
+}
+
 #[test]
 fn failed_direct_rustc_report_keeps_the_bounded_invocation() {
     let mut command = Command::new("rustc");
@@ -1395,4 +1485,112 @@ fn publisher_vocab_probe_refuses_a_target_unit_with_a_stale_host_dependency() ->
     assert!(message.contains("fixture_consumer"));
     assert!(message.contains("fixture_dependency"));
     Ok(())
+}
+
+/// Runner proof exercises receipt-bound binary and harness linking in two caller-owned roots.
+///
+/// Linux requires byte equality; the macOS scaffold checks identity and execution because executable debug maps
+/// retain output paths under the existing Apple policy. Source belongs inside the immutable artifact root.
+///
+/// The runner launches this test binary with hostile cc/ld on PATH; RUSTC remains an explicit toolchain path.
+/// Retained outputs let the runner compare normalized archives as well as receipt and output identities.
+fn native_binary_and_harness_proof(compare_artifacts: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let rustc = super::super::resolve_active_rustc()?;
+    let target = rustc_host_target(&rustc)?;
+    let link_identity =
+        super::super::pinned_link_closure_identity(&rustc, &target)?.ok_or("missing native link closure")?;
+    let temporary = tempfile::tempdir()?;
+    let base = std::env::var_os("INCAN_LINK_PROOF_OUT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| temporary.path().to_path_buf());
+    let mut records = Vec::new();
+    for name in ["a", "b"] {
+        let root = base.join(name);
+        let artifact_root = root.join("artifacts");
+        fs::create_dir_all(&artifact_root)?;
+        let source = artifact_root.join("probe.rs");
+        fs::write(
+            &source,
+            "fn main() { assert_eq!(2 + 2, 4); }\n#[test] fn runs() { main(); }\n",
+        )?;
+        let receipt = oven_store::receipt_with_build_unit_input(
+            &receipt_generated_project(
+                &OvenGeneratedProjectRequest::new(
+                    &root,
+                    "linux_probe",
+                    "1.0.0",
+                    &target,
+                    super::super::rustc_identity(&rustc)?,
+                    "debug",
+                    Vec::new(),
+                )
+                .with_generated_source("probe", &source),
+            )?,
+            "link-closure",
+            &link_identity,
+        )?;
+        let artifacts = empty_manifest(&receipt);
+        let binary = super::super::bake_direct_rustc_run(&super::super::OvenDirectRustcRunRequest {
+            receipt: receipt.clone(),
+            artifacts: artifacts.clone(),
+            artifact_root: artifact_root.clone(),
+            rustc: rustc.clone(),
+            source: source.clone(),
+            output: root.join("probe"),
+            crate_name: "linux_probe".to_string(),
+            edition: "2024".to_string(),
+            source_evidence_key: "probe".to_string(),
+        })?;
+        assert!(!binary.cargo_process_started);
+        assert!(Command::new(&binary.output).status()?.success());
+        let harness = bake_direct_rustc_test(&OvenDirectRustcTestRequest {
+            receipt: receipt.clone(),
+            artifacts,
+            artifact_root: artifact_root.clone(),
+            rustc: rustc.clone(),
+            source,
+            output: root.join("probe-test"),
+            crate_name: "linux_probe".to_string(),
+            edition: "2024".to_string(),
+            source_evidence_key: "probe".to_string(),
+        })?;
+        assert!(Command::new(&harness.output).status()?.success());
+        records.push(
+            serde_json::json!({"receipt": receipt.identity, "build": receipt.build_unit_identity,
+            "link": link_identity, "binary": binary.output_digest,
+            "harness": super::super::digest_bytes(&fs::read(harness.output)?)}),
+        );
+    }
+    for key in ["receipt", "build", "link"] {
+        assert_eq!(records[0][key], records[1][key]);
+    }
+    if compare_artifacts {
+        assert_eq!(records[0], records[1]);
+    }
+    fs::write(
+        base.join("binary-identities.json"),
+        serde_json::to_vec_pretty(&records)?,
+    )?;
+    Ok(())
+}
+
+/// Linux runner entry point refuses a different host rather than reporting an unrun Linux proof.
+#[test]
+#[ignore = "requires a native GNU Linux runner"]
+fn linux_native_binary_and_harness_proof() -> Result<(), Box<dyn std::error::Error>> {
+    let target = rustc_host_target(&super::super::resolve_active_rustc()?)?;
+    if !matches!(
+        target.as_str(),
+        "x86_64-unknown-linux-gnu" | "aarch64-unknown-linux-gnu"
+    ) {
+        return Err("this proof requires native GNU Linux".into());
+    }
+    native_binary_and_harness_proof(true)
+}
+
+/// Execute the same receipt-bound runner scaffold on macOS before handing it to Linux runners.
+#[test]
+#[cfg(target_os = "macos")]
+fn pinned_binary_receipt_proof() -> Result<(), Box<dyn std::error::Error>> {
+    native_binary_and_harness_proof(false)
 }

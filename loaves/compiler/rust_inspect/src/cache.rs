@@ -37,8 +37,8 @@ use crate::loader::RustWorkspace;
 
 /// Cache for [`RustWorkspace`] instances and extracted [`RustItemMetadata`].
 ///
-/// The workspace is loaded at most once per canonical manifest directory; item metadata is stored per `(workspace_root,
-/// canonical_path)` and reused without re-querying salsa.
+/// Workspaces and items are reused per canonical root. Loaf-only roots also bind their frozen source authority:
+/// replacing that graph invalidates the loaded workspace and its positive, negative, and alias metadata.
 ///
 /// This type is internal plumbing for the toolchain-locked inspection subsystem. Its persistence format and negative
 /// lookup behavior are implementation details unless promoted through the crate-level API.
@@ -208,12 +208,35 @@ fn legacy_versioned_workspace_fingerprint(root: &Path, inspector_version: &str) 
     Ok(hex::encode(hasher.finalize()))
 }
 
-/// Hash the workspace files that affect rust-inspect extraction results for this generated Cargo workspace.
+/// Hash the declarations and selected source authority that govern extraction for this inspection workspace.
 ///
-/// `Cargo.lock` does not content-checksum `path = "..."` dependencies, so an edit to a local path-dependency crate
-/// leaves `Cargo.toml`/`Cargo.lock` byte-identical. Path-dependency directories are hashed alongside them so an edit
-/// to a hand-written interop crate invalidates this cache instead of serving stale extracted metadata.
+/// Loaf-only roots bind their probe, frozen graph, and receipt-sealed source catalog without reading Cargo metadata.
+/// Compatibility roots retain their manifest, lock, and editable path dependencies because Cargo locks do not
+/// checksum local source bytes.
 fn hash_workspace_fingerprint_inputs(hasher: &mut Sha256, root: &Path) -> Result<(), RustMetadataError> {
+    if root.join(crate::loader::OVEN_LOAF_ONLY_INSPECTION_MARKER).is_file() {
+        hasher.update(b"loaf-only-inspection/1\0");
+        for relative in [
+            "loaf.toml",
+            "src/main.rs",
+            "src/lib.rs",
+            crate::loader::OVEN_DIRECT_LOAF_PROJECT_FILE,
+            crate::loader::OVEN_DIRECT_INSPECTION_AUTHORITY_FILE,
+        ] {
+            hasher.update(relative.as_bytes());
+            hasher.update([0]);
+            match fs::read(root.join(relative)) {
+                Ok(bytes) => {
+                    hasher.update(b"present\0");
+                    hasher.update(bytes);
+                }
+                Err(error) if error.kind() == ErrorKind::NotFound => hasher.update(b"absent\0"),
+                Err(error) => return Err(error.into()),
+            }
+            hasher.update([0xff]);
+        }
+        return Ok(());
+    }
     hasher.update(fs::read(root.join("Cargo.toml"))?);
     match fs::read(root.join("Cargo.lock")) {
         Ok(lock) => hasher.update(lock),
@@ -265,6 +288,9 @@ fn disk_cache_fingerprint_matches(
 ) -> Result<bool, RustMetadataError> {
     if envelope.workspace_fingerprint == current_fingerprint {
         return Ok(true);
+    }
+    if root.join(crate::loader::OVEN_LOAF_ONLY_INSPECTION_MARKER).is_file() {
+        return Ok(false);
     }
     let legacy_fingerprint = legacy_versioned_workspace_fingerprint(root, envelope.inspector_version.as_str())?;
     Ok(envelope.workspace_fingerprint == legacy_fingerprint)
@@ -386,6 +412,15 @@ fn load_disk_cache_into_memory(
 
 /// Ensure the workspace-local disk cache has been loaded once for this process.
 fn ensure_disk_cache_loaded(inner: &mut CacheInner, root: &Path) -> Result<DiskCacheLoadReport, RustMetadataError> {
+    if root.join(crate::loader::OVEN_LOAF_ONLY_INSPECTION_MARKER).is_file()
+        && let Some(previous) = inner
+            .disk_cache_state
+            .get(root)
+            .and_then(|state| state.workspace_fingerprint.as_ref())
+        && previous != &workspace_fingerprint(root)?
+    {
+        invalidate_workspace_cache(inner, root);
+    }
     if inner.disk_cache_state.get(root).is_some_and(|state| state.loaded) {
         let items = inner
             .items
@@ -408,6 +443,41 @@ fn ensure_disk_cache_loaded(inner: &mut CacheInner, root: &Path) -> Result<DiskC
     state.workspace_fingerprint = fingerprint;
     state.loaded = true;
     Ok(report)
+}
+
+/// Drop one root's extracted metadata, loaded workspace, and alias indexes when its authority changes.
+///
+/// Source indexes keyed by other immutable source roots remain available to their consumers. Root-local indexes
+/// and positive/negative completeness state cannot cross a frozen-graph replacement.
+fn invalidate_workspace_cache(inner: &mut CacheInner, root: &Path) {
+    inner.workspaces.retain(|(workspace_root, _), _| workspace_root != root);
+    inner.items.retain(|(workspace_root, _), _| workspace_root != root);
+    inner
+        .definition_aliases
+        .retain(|(workspace_root, _), _| workspace_root != root);
+    inner
+        .dependency_manifest_dirs
+        .retain(|(workspace_root, _), _| workspace_root != root);
+    inner.root_crate_names.remove(root);
+    inner.crate_reexport_aliases.remove(root);
+    inner.root_dependency_reexport_paths.remove(root);
+    inner.generated_include_owners.remove(root);
+    inner
+        .source_public_reexport_paths
+        .retain(|key, _| key.source_root != root);
+    inner
+        .source_inherent_method_indexes
+        .retain(|key, _| key.source_root != root);
+    inner
+        .fast_failed_items
+        .retain(|(workspace_root, _)| workspace_root != root);
+    inner
+        .complete_items
+        .retain(|(workspace_root, _)| workspace_root != root);
+    inner
+        .failed_items
+        .retain(|(workspace_root, _), _| workspace_root != root);
+    inner.disk_cache_state.remove(root);
 }
 
 /// Build the current workspace-local disk cache snapshot.
@@ -746,10 +816,7 @@ fn manifest_dependency_crate_entries(manifest: &toml::Value, table: &str, names:
 
 /// Return normalized direct dependency crate names for a generated root workspace.
 fn load_root_dependency_crate_names(root: &Path) -> Vec<String> {
-    let Ok(payload) = fs::read_to_string(root.join("Cargo.toml")) else {
-        return Vec::new();
-    };
-    let Ok(manifest) = toml::from_str::<toml::Value>(payload.as_str()) else {
+    let Ok(manifest) = crate::loader::read_inspection_source_manifest(root) else {
         return Vec::new();
     };
     let mut names = Vec::new();
@@ -766,10 +833,7 @@ fn load_root_dependency_crate_names(root: &Path) -> Vec<String> {
 /// The generated-source fallback uses this to distinguish local relative paths from external dependency paths while it
 /// normalizes syntax-only field and variant metadata.
 fn load_dependency_crate_names(root: &Path) -> HashSet<String> {
-    let Ok(payload) = fs::read_to_string(root.join("Cargo.toml")) else {
-        return HashSet::new();
-    };
-    let Ok(manifest) = toml::from_str::<toml::Value>(payload.as_str()) else {
+    let Ok(manifest) = crate::loader::read_inspection_source_manifest(root) else {
         return HashSet::new();
     };
     let mut names = HashSet::new();
@@ -781,10 +845,7 @@ fn load_dependency_crate_names(root: &Path) -> HashSet<String> {
 
 /// Load the crate names declared by the generated root workspace so root out-dir extraction only runs for root items.
 fn load_root_crate_names(root: &Path) -> Vec<String> {
-    let Ok(payload) = fs::read_to_string(root.join("Cargo.toml")) else {
-        return Vec::new();
-    };
-    let Ok(manifest) = toml::from_str::<toml::Value>(payload.as_str()) else {
+    let Ok(manifest) = crate::loader::read_inspection_source_manifest(root) else {
         return Vec::new();
     };
     let mut names = Vec::new();
@@ -854,10 +915,7 @@ fn use_item_is_plain_public(use_item: &ast::Use) -> bool {
 
 /// Load root-level public crate re-export aliases from a dependency crate's library source.
 fn load_crate_reexport_aliases(root: &Path) -> HashMap<String, String> {
-    let Ok(payload) = fs::read_to_string(root.join("Cargo.toml")) else {
-        return HashMap::new();
-    };
-    let Ok(manifest) = toml::from_str::<toml::Value>(payload.as_str()) else {
+    let Ok(manifest) = crate::loader::read_inspection_source_manifest(root) else {
         return HashMap::new();
     };
     let source_path = manifest_lib_source_path(root, &manifest);
@@ -938,10 +996,7 @@ fn collect_crate_module_glob_reexport_paths(
 
 /// Load public root-facing module paths for crate-wide glob reexports from one dependency root.
 fn load_crate_module_glob_reexport_paths(root: &Path, crate_name: &str) -> HashMap<String, String> {
-    let Ok(payload) = fs::read_to_string(root.join("Cargo.toml")) else {
-        return HashMap::new();
-    };
-    let Ok(manifest) = toml::from_str::<toml::Value>(payload.as_str()) else {
+    let Ok(manifest) = crate::loader::read_inspection_source_manifest(root) else {
         return HashMap::new();
     };
     let source_path = manifest_lib_source_path(root, &manifest);
@@ -1058,8 +1113,7 @@ pub(crate) fn cargo_configured_target_dir(root: &Path) -> PathBuf {
 /// units of one package, and only the unit built from this version's sources defines the items this dependency
 /// exposes. A workspace-inherited version is not resolvable here and yields `None`, which disables the filter.
 fn dependency_manifest_version(dep_root: &Path) -> Option<String> {
-    let payload = fs::read_to_string(dep_root.join("Cargo.toml")).ok()?;
-    let manifest = toml::from_str::<toml::Value>(payload.as_str()).ok()?;
+    let manifest = crate::loader::read_inspection_source_manifest(dep_root).ok()?;
     manifest.get("package")?.get("version")?.as_str().map(str::to_string)
 }
 
@@ -1309,10 +1363,7 @@ fn collect_generated_include_owners_from_source(
 
 /// Load generated-file owner modules from the dependency crate source that includes build-script output.
 fn load_generated_include_owners(dep_root: &Path) -> HashMap<String, Vec<Vec<String>>> {
-    let Ok(payload) = fs::read_to_string(dep_root.join("Cargo.toml")) else {
-        return HashMap::new();
-    };
-    let Ok(manifest) = toml::from_str::<toml::Value>(payload.as_str()) else {
+    let Ok(manifest) = crate::loader::read_inspection_source_manifest(dep_root) else {
         return HashMap::new();
     };
     let mut owners = HashMap::new();
@@ -3169,8 +3220,7 @@ fn source_item_segments_for_reexport_target(
 
 /// Return the crate-root source file for a dependency source root.
 fn dependency_root_source_path(source_root: &Path) -> Option<PathBuf> {
-    let payload = fs::read_to_string(source_root.join("Cargo.toml")).ok()?;
-    let manifest = toml::from_str::<toml::Value>(payload.as_str()).ok()?;
+    let manifest = crate::loader::read_inspection_source_manifest(source_root).ok()?;
     Some(manifest_lib_source_path(source_root, &manifest))
 }
 
@@ -3268,8 +3318,7 @@ fn dependency_source_metadata_from_reexport_target(
             .and_then(|dep_root| non_root_dependency_manifest_dir(root, dep_root))
             .or_else(|| sysroot_crate_source_root(inner, target_crate))
     {
-        let payload = fs::read_to_string(target_root.join("Cargo.toml")).ok()?;
-        let manifest = toml::from_str::<toml::Value>(payload.as_str()).ok()?;
+        let manifest = crate::loader::read_inspection_source_manifest(&target_root).ok()?;
         let target_source_path = manifest_lib_source_path(&target_root, &manifest);
         let mut target_external_crates = load_dependency_crate_names(&target_root);
         if let Some(library_root) = rust_library_source_root(inner)
@@ -3294,6 +3343,12 @@ fn dependency_source_metadata_from_reexport_target(
         );
     }
 
+    if external_crates.contains(target_crate) {
+        // The target names an external crate whose source root is not available here. Reading the path as local
+        // instead would misresolve it, and for a glob re-export of that crate (`pub use dep::*`) it re-enters this
+        // source with an ever longer `dep::dep::...` path, which the visited set cannot catch.
+        return None;
+    }
     let root_source_path = dependency_root_source_path(source_root).unwrap_or_else(|| source_path.to_path_buf());
     dependency_source_metadata_from_source(
         &root_source_path,
@@ -3727,8 +3782,7 @@ fn dependency_source_metadata(
     if item_segments.is_empty() {
         return None;
     }
-    let payload = fs::read_to_string(dep_root.join("Cargo.toml")).ok()?;
-    let manifest = toml::from_str::<toml::Value>(payload.as_str()).ok()?;
+    let manifest = crate::loader::read_inspection_source_manifest(dep_root).ok()?;
     let source_path = manifest_lib_source_path(dep_root, &manifest);
     let external_crates = load_dependency_crate_names(dep_root);
     dependency_source_metadata_from_source(
@@ -5179,29 +5233,7 @@ impl RustMetadataCache {
             path: root.clone(),
             message: format!("metadata cache lock poisoned: {e}"),
         })?;
-        inner
-            .workspaces
-            .retain(|(workspace_root, _), _| workspace_root != &root);
-        inner.items.retain(|(workspace_root, _), _| workspace_root != &root);
-        inner
-            .definition_aliases
-            .retain(|(workspace_root, _), _| workspace_root != &root);
-        inner
-            .dependency_manifest_dirs
-            .retain(|(workspace_root, _), _| workspace_root != &root);
-        inner
-            .root_crate_names
-            .retain(|workspace_root, _| workspace_root != &root);
-        inner
-            .crate_reexport_aliases
-            .retain(|workspace_root, _| workspace_root != &root);
-        inner
-            .fast_failed_items
-            .retain(|(workspace_root, _)| workspace_root != &root);
-        inner
-            .failed_items
-            .retain(|(workspace_root, _), _| workspace_root != &root);
-        inner.disk_cache_state.remove(&root);
+        invalidate_workspace_cache(&mut inner, &root);
         Ok(())
     }
 

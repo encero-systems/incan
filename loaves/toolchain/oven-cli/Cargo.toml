@@ -25,6 +25,7 @@ std_async = ["incan_frontend/std_async", "incan_provider/std_async", "incan_driv
 std_decorators = ["incan_frontend/std_decorators", "incan_provider/std_decorators", "incan_driver/std_decorators"]
 
 [dependencies]
+semver = "1.0.27"
 incan_lang = { workspace = true }
 incan_driver = { workspace = true, features = ["cli"] }
 incan_frontend = { workspace = true }
@@ -43,6 +44,7 @@ sha2 = "0.10.9"
 rustix = { version = "1.1.4", features = ["fs", "time"] }
 tempfile = "3"
 toml = "0.9"
+toml_edit = { version = "0.25", features = ["parse", "serde"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]

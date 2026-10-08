@@ -170,6 +170,17 @@ pub enum ToolsMetadataCommand {
 /// Explicit Oven Alpha lifecycle commands.
 #[derive(Subcommand, Debug)]
 pub enum OvenCommand {
+    /// Convert selected Cargo workspace library closures into authored Loaf declarations once
+    ConvertCargo {
+        /// Workspace owning Cargo.toml and Cargo.lock; read only during this explicit adoption
+        #[arg(long, default_value = ".")]
+        workspace: PathBuf,
+        /// Library project directories relative to the workspace; may be repeated
+        #[arg(long, required = true)]
+        project: Vec<PathBuf>,
+    },
+    /// Compile a pinned adopted-Loaf closure without Cargo or build-script execution
+    CompileClosure(CompileClosureArgs),
     /// Transfer one compiler-selected SDK between CI jobs under a bound envelope
     #[command(hide = true)]
     SdkHandoff {
@@ -342,6 +353,28 @@ pub enum OvenCommand {
         #[command(subcommand)]
         command: OvenLegacyCargoCommand,
     },
+    /// Run one authored compiler test root against the receipt-selected native SDK closure
+    #[command(hide = true)]
+    CompilerNativeTests {
+        /// Source checkout owning the test root and its authored Loaf dependencies
+        #[arg(long, default_value = ".")]
+        compiler_root: PathBuf,
+        /// Checkout-relative Rust libtest source with a sibling `.loaf.toml` declaration
+        #[arg(long)]
+        target: PathBuf,
+        /// Exact inventory-verified case, including explicitly selected ignored cases
+        #[arg(long = "exact")]
+        exact_names: Vec<String>,
+        /// Caller-owned output; kept outputs reuse the receipt-bound executable
+        #[arg(long)]
+        output: PathBuf,
+        /// Persistent source workspaces for explicit native fixture bakes
+        #[arg(long)]
+        explicit_bake_workspace: PathBuf,
+        /// Compiler executable matching the prepared SDK units
+        #[arg(long)]
+        rustc: PathBuf,
+    },
     /// Compile and run the stored compiler workspace native suite through a direct-rustc plan
     CompilerLibtests {
         /// Repository root containing the compiler Cargo package and src/lib.rs
@@ -475,6 +508,35 @@ pub enum OvenCommand {
         #[arg(long = "format", value_enum, default_value = "text")]
         format: OvenOutputFormat,
     },
+}
+
+/// Physical inputs and policy for the shared adopted-closure executor.
+#[derive(Args, Debug)]
+pub struct CompileClosureArgs {
+    /// Index checkout whose committed files supply facts
+    #[arg(long)]
+    pub pin: PathBuf,
+    /// Full index commit identity, used for every read
+    #[arg(long)]
+    pub index_commit: String,
+    /// JSON root requests with target and host triples
+    #[arg(long)]
+    pub roots: PathBuf,
+    /// Compilation profile
+    #[arg(long, value_parser = ["debug", "release"])]
+    pub profile: String,
+    /// Closure result JSON destination
+    #[arg(long)]
+    pub out: PathBuf,
+    /// Optional existing resolution; omission runs the Incan resolver at the supplied index commit
+    #[arg(long)]
+    pub lock: Option<PathBuf>,
+    /// Digest-addressed source archive directory
+    #[arg(long)]
+    pub blobs: Option<PathBuf>,
+    /// Selected compiler; defaults to the active pinned compiler
+    #[arg(long)]
+    pub rustc: Option<PathBuf>,
 }
 
 /// CI-only SDK provider-store transport operations.

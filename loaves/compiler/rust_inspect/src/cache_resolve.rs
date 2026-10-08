@@ -29,8 +29,7 @@ fn normalize_crate_name(name: &str) -> String {
 /// sealed sources as individually addressed roots instead, so support both layouts without ever searching ambient
 /// sources when a caller supplies an explicit authority list.
 fn exact_registry_package_dir(root: &Path, package: &str, version: &str) -> Option<PathBuf> {
-    let manifest_path = root.join("Cargo.toml");
-    let manifest = toml::from_str::<toml::Value>(fs::read_to_string(manifest_path).ok()?.as_str()).ok()?;
+    let manifest = crate::loader::read_inspection_source_manifest(root).ok()?;
     let manifest_package = manifest.get("package")?.get("name")?.as_str()?;
     let manifest_version = manifest.get("package")?.get("version")?.as_str()?;
     (manifest_package == package && manifest_version == version).then(|| root.to_path_buf())
@@ -48,8 +47,7 @@ pub(crate) fn crate_name_for_path(canonical_path: &str) -> &str {
 /// subprocess merely to recover a path Cargo was just given. Package aliases use Cargo's `package = "..."` spelling
 /// while Rust imports use underscores, so both dependency keys and declared package names are normalized.
 pub(crate) fn dependency_manifest_dir_from_manifest(root: &Path, crate_name: &str) -> Option<PathBuf> {
-    let manifest_path = root.join("Cargo.toml");
-    let manifest = toml::from_str::<toml::Value>(&fs::read_to_string(manifest_path).ok()?).ok()?;
+    let manifest = crate::loader::read_inspection_source_manifest(root).ok()?;
     let normalized = normalize_crate_name(crate_name);
 
     let direct = ["dependencies", "dev-dependencies", "build-dependencies"]
@@ -218,7 +216,7 @@ fn cargo_registry_src_roots() -> Vec<PathBuf> {
 /// `package` rename. A requirement spelled as a bare string or as a `version` field both count; a path or workspace
 /// declaration without a version yields `None`.
 fn root_manifest_version_requirement(root: &Path, normalized_crate_name: &str) -> Option<semver::VersionReq> {
-    let manifest = toml::from_str::<toml::Value>(fs::read_to_string(root.join("Cargo.toml")).ok()?.as_str()).ok()?;
+    let manifest = crate::loader::read_inspection_source_manifest(root).ok()?;
     let mut tables = Vec::new();
     for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
         if let Some(table) = manifest.get(section).and_then(toml::Value::as_table) {
@@ -329,12 +327,45 @@ fn dependency_manifest_dir_from_lock(
     dependency_manifest_dir_from_lock_with_search_roots(root, crate_name, search_roots)
 }
 
-/// Resolve the best-known dependency manifest directory for `crate_name` from compiler-authored workspace inputs.
+/// Select a retained dependency source from a frozen Loaf graph, or resolve an explicit compatibility workspace.
+///
+/// Loaf roots never fall through to declaration, lock, or ambient registry readers. An unavailable or ambiguous
+/// frozen binding stays unavailable, including when a caller retries from a dependency's source-only root.
 pub(crate) fn dependency_manifest_dir_for_crate(
     root: &Path,
     crate_name: &str,
     registry_src_roots: Option<&[PathBuf]>,
 ) -> Option<PathBuf> {
+    if root.join(crate::loader::OVEN_LOAF_ONLY_INSPECTION_MARKER).is_file() || root.join("loaf.toml").is_file() {
+        return frozen_dependency_source(root, crate_name);
+    }
     dependency_manifest_dir_from_manifest(root, crate_name)
         .or_else(|| dependency_manifest_dir_from_lock(root, crate_name, registry_src_roots))
+}
+
+/// Select one unambiguous retained source from the frozen graph, without consulting declarations or a lock.
+///
+/// Missing and ambiguous roots stay unavailable. In particular, a local SDK source with no root graph cannot turn
+/// its authored path dependencies into a fresh resolution; the caller may retry against its owning probe graph.
+fn frozen_dependency_source(root: &Path, crate_name: &str) -> Option<PathBuf> {
+    let bytes = fs::read(root.join(crate::loader::OVEN_DIRECT_LOAF_PROJECT_FILE)).ok()?;
+    let graph: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let sources = crate::loader::oven_inspection_registry_source_roots(root).ok()?;
+    let normalized = normalize_crate_name(crate_name);
+    let mut selected = std::collections::BTreeSet::new();
+    for record in graph.get("crates")?.as_array()? {
+        let name = record.get("display_name")?.as_str()?;
+        if normalize_crate_name(name) != normalized {
+            continue;
+        }
+        let module = Path::new(record.get("root_module")?.as_str()?).canonicalize().ok()?;
+        let source = sources
+            .iter()
+            .filter(|source| module.starts_with(source))
+            .max_by_key(|source| source.components().count())?;
+        selected.insert(source.clone());
+    }
+    let mut selected = selected.into_iter();
+    let source = selected.next()?;
+    selected.next().is_none().then_some(source)
 }

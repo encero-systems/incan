@@ -1,8 +1,17 @@
 [project]
 name = "incan_stdlib_core"
-version = "0.5.0"
+version = "0.6.0-dev.6"
 license = "Apache-2.0"
 private = true
 
+[rust]
+name = "incan_std_core"
+type = "lib"
+edition = "2024"
+
 [rust.source]
 root = "rust"
+
+[dependencies]
+incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
+incan_derive = { loaf = "incan_derive", path = "../derive/incan_derive", version = "0.6.0-dev.6" }

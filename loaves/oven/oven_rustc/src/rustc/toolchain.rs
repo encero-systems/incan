@@ -445,6 +445,207 @@ pub fn rustc_sysroot(rustc: &Path) -> Result<PathBuf, OvenRustcError> {
     Ok(sysroot)
 }
 
+/// A sysroot holding the selected compiler's `rust-std` component and compiler/linker runtimes, for `--sysroot`.
+///
+/// Rustc searches its whole target library directory for crates, and optional components install into that same
+/// directory: `rustc-dev` alone adds hundreds of compiler-internal libraries beside std, and their presence changes
+/// the metadata rustc writes for an ordinary dependency. Compiling against a sysroot that holds only the files the
+/// `rust-std-<target>` manifest lists makes a unit's bytes independent of which components a machine installed.
+/// Host LLD and its LLVM runtime accompany the compiler; optional Rust crates never enter the library catalog.
+/// The directory is keyed by the normalization policy, compiler commit and manifest digest, built once per temporary
+/// root, and reused.
+pub fn normalized_std_sysroot(rustc: &Path, target: &str) -> Result<PathBuf, OvenRustcError> {
+    let sysroot = rustc_sysroot(rustc)?;
+    let manifest_path = sysroot.join("lib/rustlib").join(format!("manifest-rust-std-{target}"));
+    let manifest = fs::read(&manifest_path).map_err(|source| OvenRustcError::Io {
+        path: manifest_path.clone(),
+        source,
+    })?;
+    let commit = rustc_commit_hash(rustc).unwrap_or_else(|| "unknown".to_string());
+    let key = oven_store::digest_bytes(&[b"pinned-linker-v3\0", commit.as_bytes(), b"\0", &manifest].concat())
+        .replace(':', "-");
+    let root = env::temp_dir().join("incan-oven-std-sysroot").join(&key);
+    if root.join(".complete").is_file() {
+        return Ok(root);
+    }
+    let staging = root.with_extension(format!("staging-{}", std::process::id()));
+    copy_listed_std_files(&sysroot, &manifest, &staging)?;
+    copy_compiler_runtime(&sysroot, &staging)?;
+    copy_pinned_linker(&sysroot, &staging, &rustc_host_target(rustc)?)?;
+    fs::write(staging.join(".complete"), b"").map_err(|source| OvenRustcError::Io {
+        path: staging.clone(),
+        source,
+    })?;
+    match fs::rename(&staging, &root) {
+        Ok(()) => Ok(root),
+        // A concurrent build published the same content first; its copy is equivalent.
+        Err(_) if root.join(".complete").is_file() => {
+            let _ = fs::remove_dir_all(&staging);
+            Ok(root)
+        }
+        Err(source) => Err(OvenRustcError::Io { path: root, source }),
+    }
+}
+
+/// Retain host LLD and its optional LLVM runtime beside the normalized compiler instead of discovering a host linker.
+fn copy_pinned_linker(sysroot: &Path, staging: &Path, host: &str) -> Result<(), OvenRustcError> {
+    let relative = PathBuf::from("lib/rustlib").join(host).join("bin/rust-lld");
+    let source = sysroot.join(&relative);
+    if !source.is_file() {
+        return Ok(());
+    }
+    let destination = staging.join(relative);
+    let parent = destination.parent().ok_or_else(|| OvenRustcError::InvalidInput {
+        field: "pinned linker",
+        message: "has no parent directory".to_string(),
+    })?;
+    fs::create_dir_all(parent).map_err(|source| OvenRustcError::Io {
+        path: parent.to_path_buf(),
+        source,
+    })?;
+    fs::copy(&source, destination).map_err(|error| OvenRustcError::Io {
+        path: source,
+        source: error,
+    })?;
+    // `rust-lld` loads `@rpath/libLLVM.dylib` through `@loader_path/../lib`, i.e. `lib/rustlib/<host>/lib`. That copy
+    // belongs to the optional `llvm-tools` component; the `rustc` component always ships the identical library at the
+    // sysroot's top-level `lib`. Taking it from `rustc` makes the normalized sysroot the same whether or not a host
+    // installed `llvm-tools`, and an Apple linker that would not load refuses here rather than at the first link.
+    if !cfg!(target_os = "macos") {
+        return Ok(());
+    }
+    let llvm_source = sysroot.join("lib/libLLVM.dylib");
+    if !llvm_source.is_file() {
+        return Err(OvenRustcError::InvalidInput {
+            field: "pinned linker",
+            message: format!(
+                "rust-lld needs libLLVM.dylib, but the rustc component has none at {}",
+                llvm_source.display()
+            ),
+        });
+    }
+    let destination = staging.join("lib/rustlib").join(host).join("lib/libLLVM.dylib");
+    let parent = destination.parent().ok_or_else(|| OvenRustcError::InvalidInput {
+        field: "pinned linker runtime",
+        message: "has no parent directory".to_string(),
+    })?;
+    fs::create_dir_all(parent).map_err(|source| OvenRustcError::Io {
+        path: parent.to_path_buf(),
+        source,
+    })?;
+    link_runtime_library(&llvm_source, &destination).map_err(|source| OvenRustcError::Io {
+        path: llvm_source,
+        source,
+    })?;
+    Ok(())
+}
+
+/// The compiler executable inside a normalized sysroot built by [`normalized_std_sysroot`].
+///
+/// Rustc finds its own sysroot from where its driver library really lives, and from that sysroot it decides whether
+/// the optional `rust-src` component is installed; with it, std's source files enter a crate's metadata differently
+/// and the crate hash changes. Running the copy inside the normalized sysroot, which never holds `rust-src`, makes
+/// that decision the same on every host. `None` when the selected toolchain had no executable to copy.
+pub fn normalized_rustc(std_sysroot: &Path) -> Option<PathBuf> {
+    let executable = std_sysroot
+        .join("bin")
+        .join(if cfg!(windows) { "rustc.exe" } else { "rustc" });
+    executable.is_file().then_some(executable)
+}
+
+/// Place the compiler executable and its runtime libraries in a staging sysroot.
+///
+/// The executable and the driver library are copied, because the driver's real location is what rustc reports as
+/// its sysroot; every other top-level runtime library (LLVM, sanitizer runtimes) is linked to the installed file.
+fn copy_compiler_runtime(sysroot: &Path, staging: &Path) -> Result<(), OvenRustcError> {
+    let executable = if cfg!(windows) { "rustc.exe" } else { "rustc" };
+    let installed = sysroot.join("bin").join(executable);
+    let library = sysroot.join("lib");
+    if !installed.is_file() || !library.is_dir() {
+        // A toolchain without its own executable beside the libraries (a proxy or test fixture) keeps running the
+        // selected compiler with `--sysroot`; `normalized_rustc` then reports no copied executable.
+        return Ok(());
+    }
+    let bin = staging.join("bin");
+    fs::create_dir_all(&bin).map_err(|source| OvenRustcError::Io {
+        path: bin.clone(),
+        source,
+    })?;
+    fs::copy(&installed, bin.join(executable)).map_err(|source| OvenRustcError::Io {
+        path: installed,
+        source,
+    })?;
+    let entries = fs::read_dir(&library).map_err(|source| OvenRustcError::Io {
+        path: library.clone(),
+        source,
+    })?;
+    let staged_library = staging.join("lib");
+    fs::create_dir_all(&staged_library).map_err(|source| OvenRustcError::Io {
+        path: staged_library.clone(),
+        source,
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|source| OvenRustcError::Io {
+            path: library.clone(),
+            source,
+        })?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let destination = staged_library.join(entry.file_name());
+        let is_driver = entry.file_name().to_string_lossy().starts_with("librustc_driver");
+        let placed = if is_driver {
+            fs::copy(&path, &destination).map(|_| ())
+        } else {
+            link_runtime_library(&path, &destination)
+        };
+        placed.map_err(|source| OvenRustcError::Io { path, source })?;
+    }
+    Ok(())
+}
+
+/// Link one installed runtime library into a staging sysroot without copying its bytes.
+#[cfg(unix)]
+fn link_runtime_library(installed: &Path, destination: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(installed, destination)
+}
+
+/// Copy one installed runtime library where symbolic links are not available.
+#[cfg(not(unix))]
+fn link_runtime_library(installed: &Path, destination: &Path) -> std::io::Result<()> {
+    fs::copy(installed, destination).map(|_| ())
+}
+
+/// Copy each `file:` entry of a `rust-std` manifest from the sysroot into a staging sysroot at the same relative path.
+fn copy_listed_std_files(sysroot: &Path, manifest: &[u8], staging: &Path) -> Result<(), OvenRustcError> {
+    let listing = String::from_utf8_lossy(manifest);
+    for relative in listing.lines().filter_map(|line| line.strip_prefix("file:")) {
+        if Path::new(relative)
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            return Err(OvenRustcError::InvalidInput {
+                field: "rust-std manifest",
+                message: format!("entry is not sysroot-relative: {relative}"),
+            });
+        }
+        let destination = staging.join(relative);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).map_err(|source| OvenRustcError::Io {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+        let source_path = sysroot.join(relative);
+        fs::copy(&source_path, &destination).map_err(|source| OvenRustcError::Io {
+            path: source_path,
+            source,
+        })?;
+    }
+    Ok(())
+}
+
 /// Resolve the Rustdoc executable from the same verified sysroot as a receipt-selected compiler.
 pub fn rustdoc_for_rustc(rustc: &Path) -> Result<PathBuf, OvenRustcError> {
     let rustdoc = rustc_sysroot(rustc)?.join("bin/rustdoc");

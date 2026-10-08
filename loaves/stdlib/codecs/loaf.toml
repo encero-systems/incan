@@ -7,3 +7,6 @@ private = true
 [sdk]
 profile = "minimal"
 components = ["stdlib-system"]
+
+[dependencies]
+crc32fast = { loaf = "crates-io/crc32fast", version = "1", features = [], default-features = true }

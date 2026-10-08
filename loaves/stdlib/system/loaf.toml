@@ -6,3 +6,9 @@ private = true
 
 [sdk]
 profile = "minimal"
+
+[dependencies]
+byteorder = { loaf = "crates-io/byteorder", version = "1", features = [], default-features = true }
+encoding_rs = { loaf = "crates-io/encoding_rs", version = "0.8", features = [], default-features = true }
+rustix = { loaf = "crates-io/rustix", version = "1.1", features = ["fs"], default-features = true }
+tempfile = { loaf = "crates-io/tempfile", version = "3", features = [], default-features = true }

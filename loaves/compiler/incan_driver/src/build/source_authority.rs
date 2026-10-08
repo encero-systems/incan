@@ -30,6 +30,37 @@ pub(super) fn current_compiler_identity_digest() -> CliResult<String> {
     super::file_freshness::digest_file(&executable).map_err(|error| CliError::failure(error.to_string()))
 }
 
+/// Hash Incan token content without source positions, preserving literals and indentation.
+///
+/// Comments do not affect generated code or the Rust query surface. Other authority files remain byte-exact,
+/// and sources requiring contextual vocabulary retain byte-exact authority rather than losing raw fragment content.
+fn digest_project_authority_file(path: &Path, bytes: &[u8]) -> CliResult<String> {
+    if path.extension().is_none_or(|extension| extension != "incn") {
+        return Ok(digest_bytes(bytes));
+    }
+    let source = std::str::from_utf8(bytes)
+        .map_err(|error| CliError::failure(format!("invalid Incan source {}: {error}", path.display())))?;
+    let Ok(tokens) = incan_frontend::lexer::lex(source) else {
+        return Ok(digest_bytes(bytes));
+    };
+    if incan_frontend::parser::parse(&tokens).is_err() {
+        return Ok(digest_bytes(bytes));
+    }
+    let mut content = String::from("incan-token-authority-v1\n");
+    for token in tokens {
+        let mut kind = token.kind;
+        if let incan_frontend::lexer::TokenKind::FString(parts) = &mut kind {
+            for part in parts {
+                if let incan_frontend::lexer::FStringPart::Expr { offset, .. } = part {
+                    *offset = 0;
+                }
+            }
+        }
+        content.push_str(&format!("{kind:?}\n"));
+    }
+    Ok(digest_bytes(content.as_bytes()))
+}
+
 impl ProjectSourceAuthorityDigester {
     /// Digest the exact build-input graph for one project without observing generated or unrelated files.
     pub fn digest(&mut self, project_root: &Path) -> CliResult<String> {
@@ -124,7 +155,11 @@ impl ProjectSourceAuthorityDigester {
         let mut records = BTreeMap::from([
             (
                 "project-build-inputs".to_string(),
-                digest_baked_project_build_tree(&canonical_root, &manifest)?,
+                digest_baked_project_build_tree(
+                    &canonical_root,
+                    &manifest,
+                    self.development_root.as_ref() == Some(&canonical_root),
+                )?,
             ),
             (
                 "project-dependency-selections".to_string(),
@@ -252,6 +287,19 @@ fn append_provider_artifact_authority(
 /// Each ordinary call owns a fresh memo, preserving the existing behavior outside explicit project bake orchestration.
 pub fn digest_baked_project_source_authority(project_root: &Path) -> CliResult<String> {
     ProjectSourceAuthorityDigester::default().digest(project_root)
+}
+
+/// Hash the baked dependency closure while excluding only this project's own Incan source files.
+///
+/// Manifests, locks, path-provider sources, vocabulary and other inputs remain exact. This digest authorizes fresh
+/// development compilation against the retained inspection closure, never replay of a stale native project output.
+pub fn digest_project_development_dependencies(project_root: &Path) -> CliResult<String> {
+    let root = fs::canonicalize(project_root).map_err(|error| CliError::failure(error.to_string()))?;
+    ProjectSourceAuthorityDigester {
+        development_root: Some(root),
+        ..Default::default()
+    }
+    .digest(project_root)
 }
 
 /// Digest one effective project's portable dependency selections without walking dependency source twice.
@@ -393,7 +441,11 @@ fn digest_baked_project_lock_authority(lock_path: &Path, project_root: &Path) ->
 }
 
 /// Hash only the declared Incan project inputs that can affect a normal build.
-fn digest_baked_project_build_tree(project_root: &Path, manifest: &ProjectManifest) -> CliResult<String> {
+fn digest_baked_project_build_tree(
+    project_root: &Path,
+    manifest: &ProjectManifest,
+    omit_incan_sources: bool,
+) -> CliResult<String> {
     /// Record one regular authority file under a caller-selected portable key.
     fn append_named_file(path: &Path, record_key: String, records: &mut BTreeMap<String, String>) -> CliResult<()> {
         let metadata = fs::symlink_metadata(path).map_err(|error| {
@@ -408,12 +460,13 @@ fn digest_baked_project_build_tree(project_root: &Path, manifest: &ProjectManife
                 path.display()
             )));
         }
-        let digest = super::file_freshness::digest_file(path).map_err(|error| {
+        let bytes = fs::read(path).map_err(|error| {
             CliError::failure(format!(
                 "Oven Alpha cannot hash project build authority at {}: {error}",
                 path.display()
             ))
         })?;
+        let digest = digest_project_authority_file(path, &bytes)?;
         if records.insert(record_key.clone(), digest).is_some() {
             return Err(CliError::failure(format!(
                 "Oven Alpha project build authority contains duplicate path `{record_key}`"
@@ -443,6 +496,7 @@ fn digest_baked_project_build_tree(project_root: &Path, manifest: &ProjectManife
         directory: &Path,
         records: &mut BTreeMap<String, String>,
         already_recorded: &HashSet<PathBuf>,
+        omit_incan_sources: bool,
     ) -> CliResult<()> {
         let mut entries = fs::read_dir(directory)
             .map_err(|error| {
@@ -484,8 +538,10 @@ fn digest_baked_project_build_tree(project_root: &Path, manifest: &ProjectManife
                 ) {
                     continue;
                 }
-                collect_directory(root, &path, records, already_recorded)?;
-            } else if !already_recorded.contains(&path) {
+                collect_directory(root, &path, records, already_recorded, omit_incan_sources)?;
+            } else if !already_recorded.contains(&path)
+                && !(omit_incan_sources && path.extension().is_some_and(|extension| extension == "incn"))
+            {
                 append_file(root, &path, records)?;
             }
         }
@@ -530,7 +586,26 @@ fn digest_baked_project_build_tree(project_root: &Path, manifest: &ProjectManife
         ))
     })?;
     if canonical_source_root.starts_with(&canonical_project_root) {
-        collect_directory(project_root, &source_root, &mut records, &already_recorded)?;
+        collect_directory(
+            project_root,
+            &source_root,
+            &mut records,
+            &already_recorded,
+            omit_incan_sources,
+        )?;
+    } else if omit_incan_sources {
+        let mut configured_records = BTreeMap::new();
+        collect_directory(
+            &canonical_source_root,
+            &canonical_source_root,
+            &mut configured_records,
+            &HashSet::new(),
+            true,
+        )?;
+        let payload = serde_json::to_vec(&configured_records).map_err(|error| {
+            CliError::failure(format!("failed to serialize configured dependency authority: {error}"))
+        })?;
+        records.insert("configured-source-root".to_string(), digest_bytes(&payload));
     } else {
         records.insert(
             "configured-source-root".to_string(),
@@ -560,7 +635,9 @@ fn digest_baked_project_build_tree(project_root: &Path, manifest: &ProjectManife
                 entrypoint.display()
             )));
         }
-        append_named_file(&entrypoint, format!("declared-executable:{relative}"), &mut records)?;
+        if !omit_incan_sources {
+            append_named_file(&entrypoint, format!("declared-executable:{relative}"), &mut records)?;
+        }
     }
 
     if let Some(configured_path) = manifest.vocab.as_ref().and_then(|vocab| vocab.crate_path.as_deref()) {
@@ -850,6 +927,104 @@ mod tests {
             "fixture source authority only: four projects, cold {:.3} ms, warm {:.3} ms",
             cold.as_secs_f64() * 1000.0,
             started.elapsed().as_secs_f64() * 1000.0
+        );
+        Ok(())
+    }
+
+    /// Development authority excludes caller Incan sources but retains provider and non-Incan content.
+    #[test]
+    fn development_dependencies_bind_provider_sources_and_assets() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let provider = tempfile::tempdir()?;
+        fs::create_dir(project.path().join("src"))?;
+        fs::create_dir(provider.path().join("src"))?;
+        fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
+        fs::write(project.path().join("src/config.json"), "{}")?;
+        fs::write(provider.path().join("loaf.toml"), "[project]\nname='provider'\n")?;
+        fs::write(
+            provider.path().join("src/lib.incn"),
+            "pub def value() -> int:\n    return 1\n",
+        )?;
+        fs::write(
+            project.path().join("loaf.toml"),
+            format!(
+                "[project]\nname='consumer'\n[dependencies]\nprovider={{path='{}'}}\n",
+                provider.path().display()
+            ),
+        )?;
+        let initial = digest_project_development_dependencies(project.path())?;
+        fs::write(
+            project.path().join("src/main.incn"),
+            "def main() -> None:\n    print(42)\n",
+        )?;
+        assert_eq!(initial, digest_project_development_dependencies(project.path())?);
+        fs::write(
+            provider.path().join("src/lib.incn"),
+            "pub def value() -> int:\n    return 2\n",
+        )?;
+        let changed_provider = digest_project_development_dependencies(project.path())?;
+        assert_ne!(initial, changed_provider);
+        fs::write(project.path().join("src/config.json"), "{\"changed\":true}")?;
+        assert_ne!(
+            changed_provider,
+            digest_project_development_dependencies(project.path())?
+        );
+        Ok(())
+    }
+
+    /// Configured external source roots remain caller sources; their assets still bind development authority.
+    #[test]
+    fn development_dependencies_support_external_source_roots() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let source = tempfile::tempdir()?;
+        fs::write(
+            project.path().join("loaf.toml"),
+            format!(
+                "[project]\nname='consumer'\n[build]\nsource-root='{}'\n",
+                source.path().display()
+            ),
+        )?;
+        fs::write(source.path().join("main.incn"), "def main() -> None:\n    pass\n")?;
+        fs::write(source.path().join("config.json"), "{}")?;
+        let dependencies = digest_project_development_dependencies(project.path())?;
+        let authored = digest_baked_project_source_authority(project.path())?;
+        fs::write(source.path().join("main.incn"), "def main() -> None:\n    print(42)\n")?;
+        assert_eq!(dependencies, digest_project_development_dependencies(project.path())?);
+        assert_ne!(authored, digest_baked_project_source_authority(project.path())?);
+        fs::write(source.path().join("config.json"), "{\"changed\":true}")?;
+        assert_ne!(dependencies, digest_project_development_dependencies(project.path())?);
+        Ok(())
+    }
+
+    /// Comment edits preserve authority while literals and executable tokens remain inputs.
+    #[test]
+    fn incan_authority_ignores_comments_but_preserves_executable_content() -> Result<(), Box<dyn std::error::Error>> {
+        let path = Path::new("src/main.incn");
+        let source = b"def main() -> None:\n    print(\"# literal\")\n";
+        let initial = digest_project_authority_file(path, source)?;
+        assert_eq!(
+            initial,
+            digest_project_authority_file(
+                path,
+                b"# header\ndef main() -> None:\n    print(\"# literal\") # inline\n# trailing\n"
+            )?
+        );
+        assert_ne!(
+            initial,
+            digest_project_authority_file(path, b"def main() -> None:\n    print(\"changed\")\n")?
+        );
+        assert_ne!(
+            initial,
+            digest_project_authority_file(path, b"def main() -> None:\n    pass\nprint(\"# literal\")\n")?
+        );
+        let incomplete = b"def main() -> None:\n    print(\"";
+        assert_eq!(
+            digest_project_authority_file(path, incomplete)?,
+            digest_bytes(incomplete)
+        );
+        assert_ne!(
+            digest_project_authority_file(Path::new("input.txt"), b"one")?,
+            digest_project_authority_file(Path::new("input.txt"), b"two")?
         );
         Ok(())
     }

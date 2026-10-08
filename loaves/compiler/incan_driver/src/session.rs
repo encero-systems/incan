@@ -32,8 +32,8 @@ use incan_frontend::typechecker::TypeCheckInfo;
 use incan_frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_frontend::{diagnostics, lexer, parser, vocab_desugar_pass};
 use incan_provider::inventory::{
-    discover_or_reuse_published_sdk_inventory, prepare_or_discover_sdk_inventory, provider_used_module_paths,
-    resolve_sdk_component_selection, sdk_provider_bootstrap_namespace_roots, validate_component_inventory_selection,
+    discover_or_reuse_published_sdk_inventory, provider_used_module_paths, resolve_sdk_component_selection,
+    sdk_provider_bootstrap_namespace_roots, validate_component_inventory_selection,
 };
 use incan_provider::requirements::{
     DependencyManifestMode, SdkInventorySource, parser_only_library_manifest_index,
@@ -280,7 +280,7 @@ impl CompilationSession {
             rust_edition: self
                 .manifest
                 .as_ref()
-                .and_then(|manifest| manifest.build.as_ref().and_then(|build| build.rust_edition.clone())),
+                .and_then(|manifest| manifest.rust_edition().map(str::to_string)),
             provider_plan: &provider_plan,
         })
     }
@@ -299,7 +299,7 @@ impl CompilationSession {
         Self::discover_with_dependency_mode_and_sdk_source(
             entry_path,
             DependencyManifestMode::FullArtifacts,
-            SdkInventorySource::PrepareLegacyCargoIfAbsent,
+            SdkInventorySource::PrepareNativeIfAbsent,
             feature_selection,
             sdk_profile_override,
         )
@@ -354,6 +354,26 @@ impl CompilationSession {
         )
     }
 
+    /// Construct a publisher session from the partial inventory and explicit reserved namespace grants.
+    ///
+    /// The caller retains native receipts and frozen inspection authority. Discovery never prepares another SDK
+    /// generation or relies on a process-global bootstrap marker while checking this component.
+    pub fn discover_for_native_sdk_component(
+        entry_path: &Path,
+        inventory: &SdkInventory,
+        namespace_roots: &BTreeSet<String>,
+        native_facets: &BTreeSet<String>,
+    ) -> CliResult<Self> {
+        Self::discover_with_inputs(
+            entry_path,
+            DependencyManifestMode::ParserOnly,
+            SdkInventorySource::DiscoverOnly,
+            &FeatureSelection::default(),
+            None,
+            Some((inventory, namespace_roots, native_facets)),
+        )
+    }
+
     /// Discover project context with either full dependency artifacts or parser-only dependency metadata.
     fn discover_with_dependency_mode_and_sdk_source(
         entry_path: &Path,
@@ -362,18 +382,63 @@ impl CompilationSession {
         feature_selection: &FeatureSelection,
         sdk_profile_override: Option<&str>,
     ) -> CliResult<Self> {
+        Self::discover_with_inputs(
+            entry_path,
+            dependency_mode,
+            sdk_source,
+            feature_selection,
+            sdk_profile_override,
+            None,
+        )
+    }
+
+    /// Resolve ordinary session inputs or consume the publisher's explicit component context.
+    fn discover_with_inputs(
+        entry_path: &Path,
+        dependency_mode: DependencyManifestMode,
+        sdk_source: SdkInventorySource,
+        feature_selection: &FeatureSelection,
+        sdk_profile_override: Option<&str>,
+        native_sdk: Option<(&SdkInventory, &BTreeSet<String>, &BTreeSet<String>)>,
+    ) -> CliResult<Self> {
         let inferred_project_root = resolve_project_root(entry_path);
         let manifest = discover_effective_project_manifest(&inferred_project_root)?;
+        let manifest = match (manifest, native_sdk) {
+            (Some(manifest), Some((_, _, facets))) => Some(
+                manifest.with_effective_dependencies(
+                    manifest
+                        .library_dependencies()
+                        .iter()
+                        .filter(|(name, _)| !facets.contains(name.as_str()))
+                        .map(|(name, spec)| (name.clone(), spec.clone())),
+                    manifest
+                        .rust_dependencies()
+                        .iter()
+                        .map(|(name, spec)| (name.clone(), spec.clone())),
+                    manifest
+                        .rust_dev_dependencies()
+                        .iter()
+                        .map(|(name, spec)| (name.clone(), spec.clone())),
+                ),
+            ),
+            (manifest, _) => manifest,
+        };
         let project_root = manifest
             .as_ref()
             .map(|manifest| manifest.project_root().to_path_buf())
             .unwrap_or(inferred_project_root);
         let source_root = resolve_source_root(&project_root, manifest.as_ref());
-        let sdk_inventory = match sdk_source {
-            SdkInventorySource::PrepareLegacyCargoIfAbsent => prepare_or_discover_sdk_inventory()?,
-            // An Oven command never builds the providers, but it reuses the inventory `incan check` published for a
-            // source checkout, so both parse a file with the same standard-library vocabulary (#1774).
-            SdkInventorySource::DiscoverOnly => discover_or_reuse_published_sdk_inventory()?,
+        let sdk_inventory = if let Some((inventory, _, _)) = native_sdk {
+            Some(Arc::new(inventory.clone()))
+        } else {
+            match sdk_source {
+                SdkInventorySource::PrepareNativeIfAbsent => {
+                    crate::build::native_sdk::prepare_or_discover_sdk_inventory()?
+                }
+                // An Oven command never builds the providers, but it reuses the inventory `incan check` published for a
+                // source checkout, so both parse a file with the same standard-library vocabulary (#1774).
+                SdkInventorySource::DiscoverOnly => discover_or_reuse_published_sdk_inventory()?,
+            }
         };
         let package_feature_plan = manifest
             .as_ref()
@@ -455,7 +520,10 @@ impl CompilationSession {
         )?;
         let library_imported_vocab = library_manifest_index.library_imported_vocab();
         let library_imported_dsl_surfaces = library_manifest_index.library_imported_dsl_surfaces();
-        let bootstrap_sdk_namespace_roots = sdk_provider_bootstrap_namespace_roots(&project_root)?;
+        let bootstrap_sdk_namespace_roots = match native_sdk {
+            Some((_, roots, _)) => roots.clone(),
+            None => sdk_provider_bootstrap_namespace_roots(&project_root)?,
+        };
         let provider_plan = Arc::new(
             ProviderPlan::from_resolved_inputs(
                 library_manifest_index.clone(),
@@ -955,7 +1023,7 @@ mod tests {
 
     /// The Oven session reuses the SDK inventory the check session published for a source checkout (#1774).
     ///
-    /// `incan check` builds its session with [`SdkInventorySource::PrepareLegacyCargoIfAbsent`] and publishes the
+    /// `incan check` builds its session with [`SdkInventorySource::PrepareNativeIfAbsent`] and publishes the
     /// checkout's component providers; `incan run`, `build` and `oven bake` build theirs with
     /// [`SdkInventorySource::DiscoverOnly`] and never build providers. Before #1774 the Oven session found no
     /// inventory in a checkout and parsed without the standard library's vocabulary. The suite exports
@@ -995,17 +1063,13 @@ mod tests {
             return Ok(());
         }
 
-        // ---- A synthetic compiler checkout whose component catalog publishes without building anything ----
+        // ---- A synthetic checkout with native companions and an empty component catalog ----
         let tmp = tempfile::tempdir()?;
         let checkout = tmp.path().join("checkout");
         let stdlib_root = checkout.join("loaves/stdlib");
         std::fs::create_dir_all(checkout.join("loaves/compiler/incan_emit/src"))?;
         std::fs::create_dir_all(&stdlib_root)?;
-        std::fs::write(checkout.join("Cargo.toml"), "[workspace]\nmembers = []\n")?;
-        std::fs::write(
-            checkout.join("loaves/compiler/incan_emit/Cargo.toml"),
-            "[package]\nname = \"incan_emit\"\n",
-        )?;
+        write_session_native_sdk_fixture(&checkout)?;
         std::fs::write(
             stdlib_root.join(incan_provider::SDK_SOURCE_CATALOG_FILE),
             format!(
@@ -1032,7 +1096,9 @@ mod tests {
             .env("INCAN_STDLIB_DIR", &stdlib_root)
             .env("INCAN_SOURCE_ROOT", &checkout)
             .env(incan_provider::sdk_store::INTERNAL_SDK_PROVIDER_STORE_ENV, &store)
-            // Publication needs a builder executable to name; an empty catalog never launches it.
+            .env("INCAN_SDK_NATIVE_BLOBS", &checkout)
+            .env("INCAN_SDK_NATIVE_INDEX", &checkout)
+            // The fixture executable contributes identity; native preparation never launches it.
             .env("CARGO_BIN_EXE_incan", &current_exe)
             .env_remove(incan_provider::inventory::SDK_INVENTORY_OVERRIDE_ENV)
             .env_remove(incan_provider::sdk_store::INTERNAL_SDK_PROVIDER_PATH_FILE_ENV)
@@ -1049,6 +1115,45 @@ mod tests {
             stdout.contains("1 passed"),
             "the child must run exactly this test, not an empty filter:\n{stdout}"
         );
+        Ok(())
+    }
+
+    /// Supply receipt-bound native companions for the discovery regression without registry resolution.
+    fn write_session_native_sdk_fixture(checkout: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        std::fs::write(
+            checkout.join("loaves/stdlib/sdk-lock.json"),
+            r#"{"schema":"incan.oven.loaf-resolution/1","units":[]}"#,
+        )?;
+        for (relative, name, kind) in [
+            ("loaves/kernel/incan_lang", "fixture_lang", "lib"),
+            ("loaves/kernel/incan_vocab", "fixture_vocab", "lib"),
+            ("loaves/stdlib/derive/incan_derive", "fixture_derive", "proc-macro"),
+            (
+                "loaves/stdlib/derive/incan_web_macros",
+                "fixture_web_macros",
+                "proc-macro",
+            ),
+        ] {
+            let root = checkout.join(relative);
+            std::fs::create_dir_all(root.join("src"))?;
+            std::fs::write(
+                root.join("loaf.toml"),
+                format!(
+                    "[project]\nname='{name}'\nversion='1.0.0'\n[rust]\nname='{name}'\ntype='{kind}'\nedition='2024'\n"
+                ),
+            )?;
+            std::fs::write(
+                root.join("src/lib.rs"),
+                if kind == "proc-macro" {
+                    "extern crate proc_macro; #[proc_macro] pub fn identity(input: proc_macro::TokenStream) -> proc_macro::TokenStream { input }"
+                } else {
+                    "pub fn value() -> u8 { 1 }"
+                },
+            )?;
+            std::fs::write(root.join("Cargo.toml"), "poisoned metadata")?;
+            std::fs::write(root.join("Cargo.lock"), "poisoned lock")?;
+            std::fs::write(root.join("build.rs"), "compile_error!(\"must remain inert\");")?;
+        }
         Ok(())
     }
 

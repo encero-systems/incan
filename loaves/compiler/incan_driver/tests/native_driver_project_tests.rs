@@ -39,7 +39,7 @@ fn pinned_driver_rustc() -> Result<PathBuf, Box<dyn std::error::Error>> {
     Ok(PathBuf::from(String::from_utf8(output.stdout)?.trim()))
 }
 
-/// Run the explicit publisher in the fixture-owned home and preserve full failure diagnostics.
+/// Bake one debug fixture in the persistent Oven home and preserve full failure diagnostics.
 fn bake(project: &Path, home: &Path) -> Result<(), Box<dyn std::error::Error>> {
     bake_with_reuse_requirement(project, home, false)
 }
@@ -105,6 +105,40 @@ fn success(output: &Output, operation: &str) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+/// Retain a debug runtime's receipt-selected native plan, including its immutable output leases.
+///
+/// Native SDK publication supplies a stored direct-Rustc plan. Older installed toolchains supply a compiler-owned
+/// Loaf instead; both paths validate the same receipt and keep their selected closure alive through execution.
+fn runtime_plan(runtime: &Path) -> Result<oven_rustc::plan::OvenDirectRustcPlanSelection, Box<dyn std::error::Error>> {
+    let path = oven_store::default_receipt_path(runtime).with_file_name("library-debug-receipt.json");
+    let receipt: oven_store::OvenReceipt = serde_json::from_slice(&fs::read(path)?)?;
+    let store = oven_store::store::OvenStore::new(
+        oven_store::store::store_root_for_home(&support::oven_fixture_home()?),
+        oven_store::store::OvenStoreLimits::new(
+            oven_store::DEFAULT_OVEN_MAX_PHYSICAL_BYTES,
+            oven_store::DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES,
+            oven_store::DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES,
+        ),
+    );
+    if incan_provider::inventory::discover_or_reuse_published_sdk_inventory()?
+        .is_some_and(|inventory| inventory.root.join(".sealed-native-units.json").is_file())
+    {
+        let manifest = oven_model::manifest::ProjectManifest::load(&runtime.join("loaf.toml"))?;
+        let dependencies = manifest.rust_dependencies().values().cloned().collect::<Vec<_>>();
+        return Ok(
+            incan_driver::build::native_sdk::select_prepared_native_sdk_plan(&store, &receipt, &dependencies)?.1,
+        );
+    }
+    if let Some(plan) = oven_rustc::plan::selection::select_receipt_direct_rustc_execution_plan(&store, &receipt)? {
+        return Ok(oven_rustc::plan::OvenDirectRustcPlanSelection::Stored(Box::new(plan)));
+    }
+    let loaf = oven_rustc::loaf::resolve_compiler_owned_loaf_for_registry_dependencies(&receipt, &[])?
+        .ok_or("runtime fixture has no receipt-selected native closure")?;
+    Ok(oven_rustc::plan::OvenDirectRustcPlanSelection::ToolchainLoaf(Box::new(
+        loaf,
+    )))
 }
 
 /// Startup refusals precede output creation, including a substituted loaded driver library.
@@ -236,6 +270,36 @@ fn prepare_source_driver(root: &Path, repo: &Path) -> Result<std::path::PathBuf,
     Ok(driver)
 }
 
+/// Fresh fixture roots share the plan library's immutable debug output and retain its native SDK closure.
+#[test]
+fn oven_plan_fixture_shares_debug_native_output() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let source = support::repo_root().join("loaves/compiler/incan_mir_plan");
+    let home = support::oven_fixture_home()?;
+    let mut outputs = Vec::new();
+    for name in ["first", "second"] {
+        let project = root.path().join(name);
+        copy_tree(&source.join("src"), &project.join("src"))?;
+        fs::copy(source.join("loaf.toml"), project.join("loaf.toml"))?;
+        bake(&project, &home)?;
+        let plan = runtime_plan(&project)?;
+        assert!(matches!(
+            plan,
+            oven_rustc::plan::OvenDirectRustcPlanSelection::Stored(_)
+        ));
+        assert!(!project.join("target/lib/oven/release").exists());
+        assert!(!oven_store::default_receipt_path(&project).is_file());
+        outputs.push(oven_store::digest_bytes(&fs::read(
+            project.join("target/lib/oven/debug/libincan_mir_plan.rlib"),
+        )?));
+    }
+    assert_eq!(
+        outputs[0], outputs[1],
+        "identical authored sources must select the same debug output bytes"
+    );
+    Ok(())
+}
+
 /// Publish the compiler Loafs, then reuse one driver bake for native output, spans, and typed refusals.
 #[test]
 fn oven_driver_compiles_scalar_plan_and_refuses_invalid_inputs() -> Result<(), Box<dyn std::error::Error>> {
@@ -261,16 +325,10 @@ fn oven_driver_compiles_scalar_plan_and_refuses_invalid_inputs() -> Result<(), B
     )?;
     bake(&runtime_caller, home)?;
     let sysroot = &fixture.sysroot;
-    for profile in ["debug", "release"] {
-        let receipt_path = if profile == "release" {
-            oven_store::default_receipt_path(&runtime)
-        } else {
-            oven_store::default_receipt_path(&runtime).with_file_name("library-debug-receipt.json")
-        };
-        let receipt: oven_store::OvenReceipt = serde_json::from_slice(&fs::read(receipt_path)?)?;
-        let closure = oven_rustc::loaf::resolve_compiler_owned_loaf_for_registry_dependencies(&receipt, &[])?
-            .ok_or("runtime fixture must select its compiler-owned native closure")?;
-        let directories = &closure.artifact_plan.dependency_search_paths;
+    {
+        let profile = "debug";
+        let closure = runtime_plan(&runtime)?;
+        let directories = &closure.artifact_plan().dependency_search_paths;
         let binary = fixture.driver_binary(profile);
         let runtime_rlib = runtime
             .join("target/lib/oven")
@@ -315,10 +373,10 @@ fn oven_driver_compiles_scalar_plan_and_refuses_invalid_inputs() -> Result<(), B
         check_startup_refusals(&binary, &source, root, sysroot, &runtime_rlib)?;
         check_source_pipeline(&binary, root, &fixture.sysroot, formatting, profile)?;
     }
-    let release = fixture.driver_binary("release");
-    corpus::check_strings(&release, root, &fixture.sysroot, formatting)?;
+    let debug = fixture.driver_binary("debug");
+    corpus::check_strings(&debug, root, &fixture.sysroot, formatting)?;
     for name in ["fib", "collatz", "mandelbrot"] {
-        corpus::check_benchmark(&release, root, &fixture.sysroot, formatting, name)?;
+        corpus::check_benchmark(&debug, root, &fixture.sysroot, formatting, name)?;
     }
     Ok(())
 }
@@ -402,7 +460,7 @@ fn bake_driver_fixture() -> Result<DriverFixture, Box<dyn std::error::Error>> {
     let (root, temporary) = fixture_root()?;
     let repo = support::repo_root();
     let driver = prepare_source_driver(&root, &repo)?;
-    let home = root.join("home");
+    let home = support::oven_fixture_home()?;
     bake(&root.join("library"), &home)?;
     bake(&root.join("lowering"), &home)?;
     bake(&driver, &home)?;
@@ -458,15 +516,7 @@ fn check_source_pipeline(
         &source,
         "def twice(mut n: int) -> int:\n  n += n\n  return n\n\ndef main() -> None:\n  mut total = 0\n  for i in range(5, -1, -2):\n    if i == 3:\n      continue\n    total += twice(i)\n  println(f\"total={total} float={float(total)} div={-7 // 3} mod={-7 % 3}\")\n",
     )?;
-    let receipt_path = oven_store::default_receipt_path(runtime);
-    let receipt_path = if profile == "debug" {
-        receipt_path.with_file_name("library-debug-receipt.json")
-    } else {
-        receipt_path
-    };
-    let receipt: oven_store::OvenReceipt = serde_json::from_slice(&fs::read(receipt_path)?)?;
-    let closure = oven_rustc::loaf::resolve_compiler_owned_loaf_for_registry_dependencies(&receipt, &[])?
-        .ok_or("formatting runtime has no retained native closure")?;
+    let closure = runtime_plan(runtime)?;
     let binary = root.join(format!("checked-source-{profile}"));
     let library = runtime
         .join("target/lib/oven")
@@ -482,10 +532,10 @@ fn check_source_pipeline(
         .arg(sysroot)
         .arg("--extern")
         .arg(format!("incan_native_runtime={}", library.display()));
-    for (name, artifact) in &closure.artifact_plan.externs {
+    for (name, artifact) in &closure.artifact_plan().externs {
         command.arg("--extern").arg(format!("{name}={}", artifact.display()));
     }
-    for directory in &closure.artifact_plan.dependency_search_paths {
+    for directory in &closure.artifact_plan().dependency_search_paths {
         command.arg("--search").arg(directory);
     }
     success(&command.output()?, "checked source native compilation");
@@ -507,11 +557,11 @@ fn assert_native_legacy_bytes(name: &str, program: &str, stdout: &[u8]) -> Resul
     let root = fixture.scratch(name)?;
     let source = root.join(format!("{name}.incn"));
     fs::write(&source, program)?;
-    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
     let native = root.join("native");
     success(
         &corpus::source_command(
-            &fixture.driver_binary("release"),
+            &fixture.driver_binary("debug"),
             &source,
             &native,
             &fixture.sysroot,
@@ -603,9 +653,9 @@ fn direct_route_stdlib_imports_match_legacy() -> Result<(), Box<dyn std::error::
         &source,
         "from std.math import gcd as common, sqrt as root\nimport std.math\nfrom std.derives.comparison import Eq\n\ndef gcd(a: int, b: int) -> int:\n  return a + b\n\ndef main() -> None:\n  println(common(b=18, a=48))\n  println(math.lcm(4, 6))\n  println(gcd(4, 6))\n  println(root(16.0))\n  println(math.sqrt(25.0))\n",
     )?;
-    let closure = corpus::runtime_closure(runtime, "release")?;
+    let closure = corpus::runtime_closure(runtime)?;
     let native = root.join("imports-native");
-    let binary = fixture.driver_binary("release");
+    let binary = fixture.driver_binary("debug");
     check_async_frontend_refusal(&binary, &root, sysroot, &closure)?;
     success(
         &corpus::source_command(&binary, &source, &native, sysroot, &closure).output()?,
@@ -702,11 +752,11 @@ def main() -> None:
         Err(error) => println(error)
 "#,
     )?;
-    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
     let native = root.join("native");
     success(
         &corpus::source_command(
-            &fixture.driver_binary("release"),
+            &fixture.driver_binary("debug"),
             &source,
             &native,
             &fixture.sysroot,
@@ -786,11 +836,11 @@ fn direct_route_function_values_and_closures_match_legacy() -> Result<(), Box<dy
     let legacy = Command::new(legacy_root.join("oven/release/closures")).output()?;
     success(&legacy, "legacy function values and closure expressions execution");
     assert_eq!(legacy.stdout, b"8\n10\n5\n12\n14\n42\n41\n43\n43\n42\n5\n");
-    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
     let native = root.join("native");
     success(
         &corpus::source_command(
-            &fixture.driver_binary("release"),
+            &fixture.driver_binary("debug"),
             &source,
             &native,
             &fixture.sysroot,
@@ -837,11 +887,11 @@ fn direct_route_sized_numeric_closures_match_legacy() -> Result<(), Box<dyn std:
     let legacy = Command::new(legacy_root.join("oven/release/sized_closures")).output()?;
     success(&legacy, "legacy sized-numeric closure execution");
     assert_eq!(legacy.stdout, b"1410065408\n-589934592\n-343\n");
-    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
     let native = root.join("native");
     success(
         &corpus::source_command(
-            &fixture.driver_binary("release"),
+            &fixture.driver_binary("debug"),
             &source,
             &native,
             &fixture.sysroot,
@@ -886,11 +936,11 @@ fn check_function_item_values(fixture: &DriverFixture, root: &Path) -> Result<()
     let legacy = Command::new(legacy_root.join("oven/release/function_items")).output()?;
     success(&legacy, "legacy function-item execution");
     assert_eq!(legacy.stdout, b"8\n10\n12\nhello\n");
-    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
     let native = root.join("function_items_native");
     success(
         &corpus::source_command(
-            &fixture.driver_binary("release"),
+            &fixture.driver_binary("debug"),
             &source,
             &native,
             &fixture.sysroot,
@@ -941,7 +991,7 @@ fn check_async_frontend_refusal(
 fn plain_model_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     corpus::check_plain_model(
-        &fixture.driver_binary("release"),
+        &fixture.driver_binary("debug"),
         &fixture.scratch("plain-model")?,
         &fixture.sysroot,
         &fixture.formatting,
@@ -953,7 +1003,7 @@ fn plain_model_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>>
 fn type_parameter_function_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     corpus::check_builtin_source(
-        &fixture.driver_binary("release"),
+        &fixture.driver_binary("debug"),
         &fixture.scratch("type-parameter-function")?,
         &fixture.sysroot,
         &fixture.formatting,
@@ -979,7 +1029,7 @@ def main() -> None:
 fn type_parameter_class_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     corpus::check_builtin_source(
-        &fixture.driver_binary("release"),
+        &fixture.driver_binary("debug"),
         &fixture.scratch("type-parameter-class")?,
         &fixture.sysroot,
         &fixture.formatting,
@@ -1029,7 +1079,7 @@ def main() -> None:
 fn type_parameter_model_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     corpus::check_builtin_source(
-        &fixture.driver_binary("release"),
+        &fixture.driver_binary("debug"),
         &fixture.scratch("type-parameter-model")?,
         &fixture.sysroot,
         &fixture.formatting,
@@ -1108,7 +1158,7 @@ def main() -> None:
 fn type_parameter_carrier_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     corpus::check_builtin_source(
-        &fixture.driver_binary("release"),
+        &fixture.driver_binary("debug"),
         &fixture.scratch("type-parameter-carrier")?,
         &fixture.sysroot,
         &fixture.formatting,
@@ -1135,7 +1185,7 @@ def main() -> None:
 fn direct_route_lists_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     corpus::check_lists(
-        &fixture.driver_binary("release"),
+        &fixture.driver_binary("debug"),
         &fixture.scratch("lists")?,
         &fixture.sysroot,
         &fixture.formatting,
@@ -1171,11 +1221,11 @@ def main() -> None:
         println(item[0])
 "#,
     )?;
-    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
     let native = root.join("tuple-lists-native");
     success(
         &corpus::source_command(
-            &fixture.driver_binary("release"),
+            &fixture.driver_binary("debug"),
             &source,
             &native,
             &fixture.sysroot,
@@ -1230,11 +1280,11 @@ def main() -> None:
         println(item.text)
 "#,
     )?;
-    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
     let native = root.join("model-lists-native");
     success(
         &corpus::source_command(
-            &fixture.driver_binary("release"),
+            &fixture.driver_binary("debug"),
             &source,
             &native,
             &fixture.sysroot,
@@ -1287,11 +1337,11 @@ def main() -> None:
     println(copied[3])
 "#,
     )?;
-    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
     let native = root.join("bytes-native");
     success(
         &corpus::source_command(
-            &fixture.driver_binary("release"),
+            &fixture.driver_binary("debug"),
             &source,
             &native,
             &fixture.sysroot,
@@ -1346,11 +1396,11 @@ def main() -> None:
     println(("left", 1) in keys)
 "#,
     )?;
-    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
     let native = root.join("hash-leaves-native");
     success(
         &corpus::source_command(
-            &fixture.driver_binary("release"),
+            &fixture.driver_binary("debug"),
             &source,
             &native,
             &fixture.sysroot,
@@ -1412,11 +1462,11 @@ def main() -> None:
     println(values[1])
 "#,
     )?;
-    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
     let native = root.join("decimals-native");
     success(
         &corpus::source_command(
-            &fixture.driver_binary("release"),
+            &fixture.driver_binary("debug"),
             &source,
             &native,
             &fixture.sysroot,
@@ -1484,11 +1534,11 @@ def main() -> None:
     println(words["k"])
 "#,
     )?;
-    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
     let native = root.join("frozen-strings-native");
     success(
         &corpus::source_command(
-            &fixture.driver_binary("release"),
+            &fixture.driver_binary("debug"),
             &source,
             &native,
             &fixture.sysroot,
@@ -1524,7 +1574,7 @@ def main() -> None:
 fn source_class_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     corpus::check_source_class(
-        &fixture.driver_binary("release"),
+        &fixture.driver_binary("debug"),
         &fixture.scratch("source-class")?,
         &fixture.sysroot,
         &fixture.formatting,
@@ -1536,7 +1586,7 @@ fn source_class_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>
 fn numeric_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     corpus::check_numerics(
-        &fixture.driver_binary("release"),
+        &fixture.driver_binary("debug"),
         &fixture.scratch("numerics")?,
         &fixture.sysroot,
         &fixture.formatting,
@@ -1736,7 +1786,7 @@ fn completed_lowering_reuse_authority_diagnostic() -> Result<(), Box<dyn std::er
 fn source_trait_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     corpus::check_source_trait(
-        &fixture.driver_binary("release"),
+        &fixture.driver_binary("debug"),
         &fixture.scratch("source-trait")?,
         &fixture.sysroot,
         &fixture.formatting,
@@ -1748,7 +1798,7 @@ fn source_trait_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>
 fn direct_route_collections_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     corpus::check_collections(
-        &fixture.driver_binary("release"),
+        &fixture.driver_binary("debug"),
         &fixture.scratch("collections")?,
         &fixture.sysroot,
         &fixture.formatting,
@@ -1825,11 +1875,11 @@ def main() -> None:
     let native = root.join("native");
     success(
         &corpus::source_command(
-            &fixture.driver_binary("release"),
+            &fixture.driver_binary("debug"),
             &source,
             &native,
             &fixture.sysroot,
-            &corpus::runtime_closure(&fixture.formatting, "release")?,
+            &corpus::runtime_closure(&fixture.formatting)?,
         )
         .output()?,
         "generator native compilation",
@@ -1866,11 +1916,11 @@ def main() -> None:
         "def mark(value: int) -> int:\n    println(value)\n    return value\n\ndef values(first: int, second: int) -> Generator[int]:\n    yield first\n    yield second\n\ndef main() -> None:\n    pending = values(second=mark(2), first=mark(1))\n    for value in pending:\n        println(value)\n",
     )?;
     let rejected = corpus::source_command(
-        &fixture.driver_binary("release"),
+        &fixture.driver_binary("debug"),
         &named,
         &root.join("named-native"),
         &fixture.sysroot,
-        &corpus::runtime_closure(&fixture.formatting, "release")?,
+        &corpus::runtime_closure(&fixture.formatting)?,
     )
     .output()?;
     assert!(!rejected.status.success());
@@ -1885,7 +1935,7 @@ def main() -> None:
 fn direct_route_generator_numeric_yields_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     corpus::check_builtin_source(
-        &fixture.driver_binary("release"),
+        &fixture.driver_binary("debug"),
         &fixture.scratch("generator-numeric-yields")?,
         &fixture.sysroot,
         &fixture.formatting,
@@ -1961,11 +2011,11 @@ def main() -> None:
     println(label(text))
 "#,
     )?;
-    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
     let native = root.join("native");
     success(
         &corpus::source_command(
-            &fixture.driver_binary("release"),
+            &fixture.driver_binary("debug"),
             &source,
             &native,
             &fixture.sysroot,
@@ -2038,11 +2088,11 @@ def main() -> None:
     println(message.text())
 "#,
     )?;
-    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
     let native = root.join("native");
     success(
         &corpus::source_command(
-            &fixture.driver_binary("release"),
+            &fixture.driver_binary("debug"),
             &source,
             &native,
             &fixture.sysroot,
@@ -2074,7 +2124,7 @@ def main() -> None:
     )?;
     let checked_output = root.join("checked-native");
     let refused = corpus::source_command(
-        &fixture.driver_binary("release"),
+        &fixture.driver_binary("debug"),
         &checked_source,
         &checked_output,
         &fixture.sysroot,
@@ -2127,10 +2177,10 @@ def main() -> None:
         &source,
         "enum Shape:\n    Square(int)\n    Empty\n\ndef main() -> None:\n    println(Shape.Square(2) == Shape.Square(3))\n",
     )?;
-    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
     let binary = root.join("native");
     let refused = corpus::source_command(
-        &fixture.driver_binary("release"),
+        &fixture.driver_binary("debug"),
         &source,
         &binary,
         &fixture.sysroot,
@@ -2231,7 +2281,7 @@ fn structural_matches_output_matches_legacy() -> Result<(), Box<dyn std::error::
 fn declarations_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     corpus::check_declarations(
-        &fixture.driver_binary("release"),
+        &fixture.driver_binary("debug"),
         &fixture.scratch("declarations")?,
         &fixture.sysroot,
         &fixture.formatting,
@@ -2392,10 +2442,10 @@ fn check_declaration_case(
     let source = root.join(format!("{name}.incn"));
     fs::write(&source, text)?;
     let native = root.join("native");
-    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
     success(
         &corpus::source_command(
-            &fixture.driver_binary("release"),
+            &fixture.driver_binary("debug"),
             &source,
             &native,
             &fixture.sysroot,
@@ -2583,11 +2633,11 @@ def main() -> None:
     println(defaulted("text", 8))
 "#,
     )?;
-    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
     let native = root.join("native");
     success(
         &corpus::source_command(
-            &fixture.driver_binary("release"),
+            &fixture.driver_binary("debug"),
             &source,
             &native,
             &fixture.sysroot,
@@ -2621,7 +2671,7 @@ def main() -> None:
     )?;
     let refused_binary = root.join("refused-union");
     let refusal = corpus::source_command(
-        &fixture.driver_binary("release"),
+        &fixture.driver_binary("debug"),
         &refused_source,
         &refused_binary,
         &fixture.sysroot,
@@ -2643,7 +2693,7 @@ def main() -> None:
 fn direct_route_string_methods_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     corpus::check_string_methods(
-        &fixture.driver_binary("release"),
+        &fixture.driver_binary("debug"),
         &fixture.scratch("string-methods")?,
         &fixture.sysroot,
         &fixture.formatting,
@@ -2655,7 +2705,7 @@ fn direct_route_string_methods_match_legacy() -> Result<(), Box<dyn std::error::
 fn direct_route_booleans_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     corpus::check_builtin_source(
-        &fixture.driver_binary("release"),
+        &fixture.driver_binary("debug"),
         &fixture.scratch("booleans")?,
         &fixture.sysroot,
         &fixture.formatting,
@@ -2678,7 +2728,7 @@ def main() -> None:
 fn direct_route_builtins_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     corpus::check_builtin_source(
-        &fixture.driver_binary("release"),
+        &fixture.driver_binary("debug"),
         &fixture.scratch("builtins")?,
         &fixture.sysroot,
         &fixture.formatting,
@@ -2727,11 +2777,11 @@ fn direct_route_modules_match_legacy() -> Result<(), Box<dyn std::error::Error>>
         root.join("src/facade/__init__.incn"),
         "pub from helper import calculate as exported\n",
     )?;
-    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
     let native = root.join("native");
     success(
         &corpus::source_command(
-            &fixture.driver_binary("release"),
+            &fixture.driver_binary("debug"),
             &source,
             &native,
             &fixture.sysroot,
@@ -2793,11 +2843,11 @@ fn direct_route_packages_match_legacy() -> Result<(), Box<dyn std::error::Error>
     let mut publish = support::cli_project::configured_incan_command(&library, &["oven", "bake", "--project", "."]);
     support::configure_explicit_oven_bake_command(&mut publish)?;
     success(&publish.output()?, "package publication");
-    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
     let native = root.join("native");
     success(
         &corpus::source_command(
-            &fixture.driver_binary("release"),
+            &fixture.driver_binary("debug"),
             &source,
             &native,
             &fixture.sysroot,
@@ -2981,11 +3031,11 @@ fn assert_package_routes_match(
     stdout: &[u8],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let source = root.join("src/main.incn");
-    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
     let native = root.join("native");
     success(
         &corpus::source_command(
-            &fixture.driver_binary("release"),
+            &fixture.driver_binary("debug"),
             &source,
             &native,
             &fixture.sysroot,
@@ -3239,10 +3289,10 @@ def main() -> None:
 "#,
     )?;
     let native = root.join("native");
-    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
     success(
         &corpus::source_command(
-            &fixture.driver_binary("release"),
+            &fixture.driver_binary("debug"),
             &source,
             &native,
             &fixture.sysroot,
@@ -3282,7 +3332,7 @@ def main() -> None:
         fs::write(&refused_source, source_text)?;
         let refused_output = root.join(format!("{name}-native"));
         let refused = corpus::source_command(
-            &fixture.driver_binary("release"),
+            &fixture.driver_binary("debug"),
             &refused_source,
             &refused_output,
             &fixture.sysroot,
@@ -3476,7 +3526,7 @@ def main() -> None:
 fn direct_route_tuple_zip_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     corpus::check_builtin_source(
-        &fixture.driver_binary("release"),
+        &fixture.driver_binary("debug"),
         &fixture.scratch("tuple-zip")?,
         &fixture.sysroot,
         &fixture.formatting,
@@ -3511,7 +3561,7 @@ fn direct_route_tuple_zip_matches_legacy() -> Result<(), Box<dyn std::error::Err
 fn direct_route_enumerate_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     corpus::check_builtin_source(
-        &fixture.driver_binary("release"),
+        &fixture.driver_binary("debug"),
         &fixture.scratch("enumerate")?,
         &fixture.sysroot,
         &fixture.formatting,
@@ -3674,9 +3724,9 @@ fn check_project_case(name: &str, text: &str, expected_stdout: &[u8]) -> Result<
     let main = support::cli_project::write_minimal_project(&root, name, "")?;
     fs::write(&main, text)?;
     let native = root.join("native");
-    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
     let mut command = corpus::source_command(
-        &fixture.driver_binary("release"),
+        &fixture.driver_binary("debug"),
         &main,
         &native,
         &fixture.sysroot,
@@ -3694,6 +3744,16 @@ fn check_project_case(name: &str, text: &str, expected_stdout: &[u8]) -> Result<
     assert_eq!(actual.stdout, expected.stdout);
     assert_eq!(actual.stdout, expected_stdout);
     Ok(())
+}
+
+/// The adopted math unit is an explicit receipt-selected dependency on both native routes.
+#[test]
+fn direct_route_native_sdk_math_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "native_sdk_math",
+        "from std.math import sqrt\n\ndef main() -> None:\n    println(sqrt(81.0))\n",
+        b"9.0\n",
+    )
 }
 
 /// Explicit Debug formatting preserves scalar spelling, text escaping, and repeated list reads.

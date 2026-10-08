@@ -267,7 +267,25 @@ pub fn select_current_debug_project_outputs(
     native_target: &str,
     toolchain: &str,
 ) -> CliResult<Option<Vec<(OvenBakeProjectTarget, OvenStoredProjectOutput)>>> {
-    let project_identity = baked_project_owner_identity(project_root)?;
+    select_debug_project_outputs(
+        store,
+        project_root,
+        targets,
+        source_authority_digest,
+        native_target,
+        toolchain,
+        None,
+    )
+}
+
+/// Read verified local bake receipts before inspecting candidate payloads, retaining exact target lineages.
+#[cfg(feature = "rust_inspect")]
+fn debug_project_output_expectations(
+    project_root: &Path,
+    targets: &[(OvenBakeProjectTarget, PathBuf)],
+    native_target: &str,
+    toolchain: &str,
+) -> CliResult<Option<Vec<CurrentDebugProjectOutputExpectation>>> {
     let mut expected = Vec::with_capacity(targets.len());
     for (target, entrypoint) in targets {
         let Some(entrypoint_relative_path) = project_relative_entrypoint(project_root, entrypoint) else {
@@ -296,6 +314,24 @@ pub fn select_current_debug_project_outputs(
             receipt,
         });
     }
+    Ok(Some(expected))
+}
+
+/// Select local bake lineages for exact replay or fresh development compilation against unchanged dependencies.
+#[cfg(feature = "rust_inspect")]
+fn select_debug_project_outputs(
+    store: &OvenStore,
+    project_root: &Path,
+    targets: &[(OvenBakeProjectTarget, PathBuf)],
+    source_authority_digest: &str,
+    native_target: &str,
+    toolchain: &str,
+    dependency_authority_digest: Option<&str>,
+) -> CliResult<Option<Vec<(OvenBakeProjectTarget, OvenStoredProjectOutput)>>> {
+    let project_identity = baked_project_owner_identity(project_root)?;
+    let Some(expected) = debug_project_output_expectations(project_root, targets, native_target, toolchain)? else {
+        return Ok(None);
+    };
     let candidates = store
         .select_payloads_matching_for_execution(|manifest| {
             manifest.kind == OvenArtifactKind::ProjectOutput
@@ -357,7 +393,9 @@ pub fn select_current_debug_project_outputs(
             if payload.project_target != expected.target.as_str()
                 || payload.target_identity != expected.target_identity
                 || payload.project_identity != project_identity
-                || payload.source_authority_digest != source_authority_digest
+                || (payload.source_authority_digest != source_authority_digest
+                    && !dependency_authority_digest
+                        .is_some_and(|digest| payload.dependency_authority_digest.as_deref() == Some(digest)))
                 || payload.compiler_version != INCAN_VERSION
                 || payload.entrypoint_relative_path != expected.entrypoint_relative_path
                 || payload.receipt_identity != expected.receipt.identity
@@ -435,10 +473,11 @@ fn select_coherent_project_outputs(
         .collect()
 }
 
-/// Load immutable Rust-inspection lineage from all source-current baked debug outputs.
+/// Load immutable Rust-inspection lineage from local baked debug outputs for development compilation.
 ///
-/// This is command-scoped authority preparation for `incan test`: the caller opens one bounded store, computes one
-/// source digest, and retains both completed-output and exact entry leases across all scheduled harness batches.
+/// This is command-scoped authority preparation for check, run and test. Own-source edits may reuse dependency
+/// authority recorded by the same local bake; native output replay still requires exact source authority. The caller
+/// retains both completed-output and inspection-entry leases across all scheduled harness batches.
 /// Missing target output is a cache miss; nonempty malformed or absent lineage is an explicit rebake error.
 #[cfg(feature = "rust_inspect")]
 pub fn load_current_project_registry_source_authorities(
@@ -450,13 +489,15 @@ pub fn load_current_project_registry_source_authorities(
     let rustc = resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?;
     let target = rustc_host_target(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
     let toolchain = rustc_identity(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
-    let Some(outputs) = select_current_debug_project_outputs(
+    let dependency_authority_digest = super::source_authority::digest_project_development_dependencies(project_root)?;
+    let Some(outputs) = select_debug_project_outputs(
         store,
         project_root,
         &targets,
         &source_authority_digest,
         &target,
         &toolchain,
+        Some(&dependency_authority_digest),
     )?
     else {
         return Ok(None);
@@ -481,6 +522,7 @@ pub fn load_current_project_registry_source_authorities(
             "source-current debug project outputs disagree on their singular Rust inspection authority; rerun `incan oven bake --project .`",
         ));
     }
+    let source_authority_digest = preferred.1.payload.source_authority_digest.clone();
     let project_identity = preferred.1.payload.project_identity.clone();
     let compiler_version = preferred.1.payload.compiler_version.clone();
     let output_leases = outputs.into_iter().map(|(_, output)| output._lease).collect();
@@ -759,6 +801,86 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
+    /// Own-source edits reuse only the inspection lineage; changed manifest authority remains refused.
+    #[test]
+    fn development_selection_preserves_dependency_authority() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        fs::create_dir(project.path().join("src"))?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = 'fixture'\n")?;
+        fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
+        let (receipt, payload, files) =
+            crate::build::test_support::fixture_project_output_publication(project.path(), "debug", "development")?;
+        oven_store::write_receipt(
+            &receipt,
+            project_bake_receipt_path(
+                project.path(),
+                OvenBakeProjectTarget::Executable,
+                &project.path().join("src/main.incn"),
+                "debug",
+            )?,
+        )?;
+        let store_root = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            store_root.path(),
+            oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        crate::build::publication::publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        let dependencies = super::super::source_authority::digest_project_development_dependencies(project.path())?;
+        fs::write(
+            project.path().join("src/main.incn"),
+            "def added() -> int:\n    return 42\n\ndef main() -> None:\n    pass\n",
+        )?;
+        let current = digest_baked_project_source_authority(project.path())?;
+        assert_ne!(current, payload.source_authority_digest);
+        assert_eq!(
+            dependencies,
+            super::super::source_authority::digest_project_development_dependencies(project.path())?
+        );
+        let targets = discover_oven_bake_project_targets(project.path())?;
+        assert!(
+            select_debug_project_outputs(
+                &store,
+                project.path(),
+                &targets,
+                &current,
+                &receipt.intent.target,
+                &receipt.intent.toolchain,
+                Some(&dependencies)
+            )?
+            .is_some()
+        );
+        assert!(
+            select_current_debug_project_outputs(
+                &store,
+                project.path(),
+                &targets,
+                &current,
+                &receipt.intent.target,
+                &receipt.intent.toolchain
+            )
+            .is_err()
+        );
+        fs::write(
+            project.path().join("loaf.toml"),
+            "[project]\nname = 'fixture'\nversion = '2.0.0'\n",
+        )?;
+        let changed = super::super::source_authority::digest_project_development_dependencies(project.path())?;
+        assert_ne!(dependencies, changed);
+        assert!(
+            select_debug_project_outputs(
+                &store,
+                project.path(),
+                &targets,
+                &current,
+                &receipt.intent.target,
+                &receipt.intent.toolchain,
+                Some(&changed)
+            )
+            .is_err()
+        );
+        Ok(())
+    }
+
     #[test]
     fn project_output_loaf_selects_only_the_exact_authored_project_before_frontend_work()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -799,6 +921,7 @@ mod tests {
             target_identity: OvenBakeProjectTarget::Executable.as_str().to_string(),
             project_identity: baked_project_owner_identity(project.path())?,
             source_authority_digest: digest_baked_project_source_authority(project.path())?,
+            dependency_authority_digest: None,
             lock_dependencies_fingerprint: baked_project_lock_dependencies_fingerprint(project.path())?,
             compiler_identity_digest: None,
             compiler_version: INCAN_VERSION.to_string(),
