@@ -127,6 +127,7 @@ pub fn rvalue<'tcx>(
             mir::Rvalue::Cast(mir::CastKind::IntToInt, operand(tcx, sources, value)?, tcx.types.i64)
         }
         RvalueKind::Use(value) => mir::Rvalue::Use(operand(tcx, sources, value)?, mir::WithRetag::Yes),
+<<<<<<< ours
         RvalueKind::NumericCast(value, source, target) => {
             let source_float = matches!(source, PlanType::Float | PlanType::F32 | PlanType::F64);
             let target_float = matches!(target, PlanType::Float | PlanType::F32 | PlanType::F64);
@@ -138,6 +139,25 @@ pub fn rvalue<'tcx>(
             };
             mir::Rvalue::Cast(kind, operand(tcx, sources, value)?, native_type(tcx, target)?)
         }
+=======
+        RvalueKind::FunctionItem(callee) => mir::Rvalue::Use(
+            mir::Operand::function_handle(
+                tcx,
+                crate::callees::resolve(tcx, callee)?,
+                [],
+                sources.span(&callee.span)?,
+            ),
+            mir::WithRetag::Yes,
+        ),
+        RvalueKind::ReifyFunction(value) => mir::Rvalue::Cast(
+            mir::CastKind::PointerCoercion(
+                rustc_middle::ty::adjustment::PointerCoercion::ReifyFnPointer,
+                mir::CoercionSource::Implicit,
+            ),
+            operand(tcx, sources, value)?,
+            native_type(tcx, destination_type)?,
+        ),
+>>>>>>> theirs
         RvalueKind::IntToFloat(value) => {
             mir::Rvalue::Cast(mir::CastKind::IntToFloat, operand(tcx, sources, value)?, tcx.types.f64)
         }

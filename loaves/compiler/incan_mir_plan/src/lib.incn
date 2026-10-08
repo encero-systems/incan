@@ -65,11 +65,18 @@ pub enum PlanType:
 
     Sized numeric variants preserve their exact Rust carriers. CheckedNumeric stores its named sized carrier; its value projection retains the carrier type. Tuple elements retain their ordered types and own any string elements. Array lengths are exact nonnegative counts. CheckedInt and arrays are body temporaries; shared slice variants already include their reference. StringRef
     borrows an owned String, while StrRef is a string literal's shared str view.
+<<<<<<< ours
     List stores its primitive leaf element and a positive nesting
     depth; ListRef and ListMutRef borrow that same Vec representation.
     ModelRef and ModelMutRef retain shared and mutable nominal receiver references.
     Set and Dict retain the legacy HashSet and HashMap leaf arguments; their
     reference variants preserve caller-owned storage. Float keys are not admitted.
+=======
+    FunctionPointer retains its inputs followed by exactly one return entry;
+    the vector is never empty, including for a zero-argument function.
+    FunctionItem keeps that same signature and the proven source declaration's
+    name; it remains distinct from a pointer until an explicit reification.
+>>>>>>> theirs
     """
 
     Int
@@ -107,6 +114,7 @@ pub enum PlanType:
     ModelMutRef(int, str)
     StringSlice
     StrSlice
+<<<<<<< ours
     # A homogeneous list: its primitive leaf element and nesting depth.
     List(ListLeaf, int)
     ListRef(ListLeaf, int)
@@ -127,6 +135,10 @@ pub def tuple_element_type(element: TupleElement) -> PlanType:
         TupleElement.Bool => return PlanType.Bool
         TupleElement.Unit => return PlanType.Unit
         TupleElement.String => return PlanType.String
+=======
+    FunctionPointer(list[PlanType])
+    FunctionItem(str, list[PlanType])
+>>>>>>> theirs
 
 
 @derive(Clone, PartialEq)
@@ -259,6 +271,8 @@ pub enum RvalueKind:
     Borrow(Place)
     MutBorrow(Place)
     UnsizeSlice(Operand)
+    FunctionItem(Callee)
+    ReifyFunction(Operand)
 
 
 @derive(Clone, PartialEq)
@@ -288,14 +302,22 @@ pub model Statement:
 
 @derive(Clone, PartialEq)
 pub enum CalleeKind:
+<<<<<<< ours
     """A planned function, canonical external path, checked model clone, or explicit generic external instantiation."""
+=======
+    """A planned or canonical external declaration, or a local item/pointer operand with its retained type."""
+>>>>>>> theirs
 
     Planned(str)
     External(str)
     CloneEnum(int, str)
     CloneModel(int, str)
+<<<<<<< ours
     Instantiated(str, PlanType)
     InstantiatedPair(str, PlanType, PlanType)
+=======
+    Value(Operand)
+>>>>>>> theirs
 
 
 @derive(Clone, PartialEq)

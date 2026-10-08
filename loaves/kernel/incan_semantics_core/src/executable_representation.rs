@@ -756,6 +756,7 @@ mod tests {
     }
 
     /// A checked, empty unit function has executable coverage distinct from an uncovered export.
+    /// Build a scalar fixture with a stable canonical identity and no callable signature proof.
     fn body(name: &str, ordinal: usize) -> Body {
         let identity = identity(name, ordinal);
         Body {
@@ -773,6 +774,7 @@ mod tests {
             name: name.into(),
             span: identity.declaration_span,
             return_type: IncanType::Primitive(IncanPrimitiveType::Unit),
+            callable_representation: None,
             named_type_identities: Default::default(),
             locals: Vec::new(),
             params: Vec::new(),

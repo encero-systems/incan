@@ -1,8 +1,12 @@
 """Scalar, collection, and nominal layout admission from canonical frontend records."""
 
+<<<<<<< ours
 pub from frame import place_type
 from collections import primitive_leaf
 from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive
+=======
+from rust::incan_semantics_core import IncanType as RustType
+>>>>>>> theirs
 from rust::incan_semantics_core::body_ir import (
     NominalDeclaration,
     ConstructorTarget,
@@ -10,6 +14,7 @@ from rust::incan_semantics_core::body_ir import (
     Place as RustPlace,
     PlaceElem as RustPlaceElem,
 )
+<<<<<<< ours
 from pub::incan_mir_plan import ListLeaf, PlanType, Local, Place, Projection, SourceSpan
 from numerics import numeric_type
 from tuples import tuple_type, generic_tuple_type, type_name, tuple_slot
@@ -18,12 +23,22 @@ from pub::incan_mir_plan import tuple_element_type
 
 pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Result[PlanType, str]:
     """Translate checked scalar and collection types, resolving source-local nominals only against retained declarations."""
+=======
+from pub::incan_mir_plan import PlanType, Local, Place, Projection, SourceSpan
+from types import primitive_type
+from closures import function_pointer_type
+
+
+pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Result[PlanType, str]:
+    """Admit primitive and callable types; resolve source-local nominals only against their retained registry."""
+>>>>>>> theirs
     match ty:
         RustType.Named(name) =>
             for index in range(len(declarations)):
                 if declarations[index].name == str(name):
                     return Ok(PlanType.Model(index, str(name)))
             return Err(f"unsupported Body IR nominal type {name}")
+<<<<<<< ours
         RustType.Primitive(primitive) =>
             match primitive:
                 Primitive.Numeric(kind) => return numeric_type(kind)
@@ -50,6 +65,11 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                 PlanType.List(leaf, depth) => return Ok(PlanType.List(leaf, depth + 1))
                 _ => return Err(f"unsupported Body IR list element {ty}")
         _ => return Err(f"unsupported Body IR type {type_name(ty)}")
+=======
+        RustType.Primitive(primitive) => return primitive_type(primitive)
+        RustType.Function(params=parameters, return_type=result) => return function_pointer_type(parameters, result)
+        _ => return Err(f"unsupported Body IR type {ty}")
+>>>>>>> theirs
 
 
 pub def model_place(

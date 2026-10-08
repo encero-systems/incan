@@ -10,6 +10,7 @@ use rustc_middle::ty::TyCtxt;
 /// separately.
 pub fn resolve(tcx: TyCtxt<'_>, callee: &Callee) -> Result<DefId, PlanError> {
     match &callee.kind {
+<<<<<<< ours
         CalleeKind::Planned(name) => tcx
             .hir_crate_items(())
             .free_items()
@@ -17,6 +18,12 @@ pub fn resolve(tcx: TyCtxt<'_>, callee: &Callee) -> Result<DefId, PlanError> {
             .find(|def| tcx.opt_item_name(*def).is_some_and(|symbol| symbol.as_str() == name))
             .ok_or_else(|| PlanError::UnknownCallee(name.clone())),
         CalleeKind::Instantiated(path, _) | CalleeKind::InstantiatedPair(path, _, _) => external(tcx, path),
+=======
+        CalleeKind::Planned(name) => planned(tcx, name),
+        CalleeKind::Value(_) => Err(PlanError::UnknownCallee(
+            "local callable has no declaration callee".into(),
+        )),
+>>>>>>> theirs
         CalleeKind::External(path) => external(tcx, path),
         CalleeKind::CloneModel(_, _) | CalleeKind::CloneEnum(_, _) => {
             let trait_id = tcx
@@ -32,7 +39,22 @@ pub fn resolve(tcx: TyCtxt<'_>, callee: &Callee) -> Result<DefId, PlanError> {
     }
 }
 
+<<<<<<< ours
 /// Walk only public module children, rejecting nonfunction callees before constructing MIR.
+=======
+/// Resolve only a source-local function item admitted by the plan's canonical frontend identity.
+pub fn planned(tcx: TyCtxt<'_>, name: &str) -> Result<DefId, PlanError> {
+    tcx.hir_crate_items(())
+        .free_items()
+        .map(|item| item.owner_id.to_def_id())
+        .find(|def| {
+            tcx.def_kind(*def) == DefKind::Fn && tcx.opt_item_name(*def).is_some_and(|symbol| symbol.as_str() == name)
+        })
+        .ok_or_else(|| PlanError::UnknownCallee(name.into()))
+}
+
+/// Walk only public module children, rejecting nonfunction and generic callees before constructing MIR.
+>>>>>>> theirs
 pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
     let mut segments = path.split("::");
     let root = segments.next().ok_or_else(|| PlanError::UnknownCallee(path.into()))?;

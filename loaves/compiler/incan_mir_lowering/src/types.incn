@@ -1,0 +1,15 @@
+"""Native primitive representations shared by nominal and callable admission."""
+
+from rust::incan_semantics_core import IncanPrimitiveType as Primitive
+from pub::incan_mir_plan import PlanType
+
+
+pub def primitive_type(primitive: &Primitive) -> Result[PlanType, str]:
+    """Map the admitted primitive vocabulary once and name every other primitive refusal."""
+    match primitive:
+        Primitive.Int => return Ok(PlanType.Int)
+        Primitive.Float => return Ok(PlanType.Float)
+        Primitive.Bool => return Ok(PlanType.Bool)
+        Primitive.Unit => return Ok(PlanType.Unit)
+        Primitive.Str => return Ok(PlanType.String)
+        _ => return Err(f"unsupported Body IR primitive type {primitive}")

@@ -44,6 +44,60 @@ pub from pub::incan_mir_plan import (
     Unwind,
     scalar_example,
 )
+<<<<<<< ours
+=======
+from pub::incan_mir_plan import assign as plan_assign, block as plan_block, place as plan_place
+# ---- The checked Body IR, read through Rust interop ----
+from rust::incan_semantics_core import IncanType as RustType, HirSourceSpan as RustSpan
+from rust::incan_semantics_core::body_ir import (
+    NominalDeclaration as RustNominalDeclaration,
+    AggregateKind as RustAggregateKind,
+    ArgumentBinding as RustArgumentBinding,
+    ArgumentElement as RustArgumentElement,
+    BinOp,
+    Block as RustBlock,
+    Body as RustBody,
+    BodyIrModule as RustBodyIrModule,
+    BuiltinFnId as RustBuiltin,
+    CallableParamDefault,
+    CallableTarget,
+    Callee as RustCallee,
+    Constant as RustConstant,
+    FormatPart as RustFormatPart,
+    FormatStyle as RustFormatStyle,
+    HelperOp as RustHelper,
+    NamedCallableTarget as RustNamedCallableTarget,
+    LocalCallableTarget as RustLocalCallableTarget,
+    Operand as RustOperand,
+    OwnershipFact,
+    Place as RustPlace,
+    Rvalue as RustRvalue,
+    Statement as RustStatement,
+    StatementKind as RustStatementKind,
+    StdlibDelegation as RustStdlibDelegation,
+    UnOp,
+)
+# ---- Admission helpers owned by this Loaf ----
+from models import model_type, model_place, place_type, constructor_index
+from numbers import float_operand
+from strings import text_helper
+from closures import (
+    validate_callable_representation,
+    source_function_item,
+    function_assignment,
+    callable_copy_type,
+    callable_signature,
+    function_pointer_storage,
+)
+
+
+pub type BodyIrModule = rusttype RustBodyIrModule:
+    """The frontend-owned canonical module, borrowed without conversion or duplication."""
+
+
+pub type BodyStatementKind = rusttype RustStatementKind:
+    """The real checked statement vocabulary used by borrowed boundary conformance tests."""
+>>>>>>> theirs
 
 
 pub def validate_module(module: &BodyIrModule) -> Result[int, str]:
@@ -57,6 +111,7 @@ pub def count_continues(module: &BodyIrModule) -> Result[int, str]:
 
 
 pub def is_continue(statement: &BodyStatementKind) -> bool:
+<<<<<<< ours
     """Inspect the real borrowed statement enum through the original caller surface."""
     return checked_is_continue(statement)
 
@@ -74,3 +129,1542 @@ pub def lower_program(
 ) -> Result[Plan, str]:
     """Delegate project lowering while preserving the canonical caller boundary and source provenance."""
     return lower_checked_program(modules, sources, files, entry)
+=======
+    """Read the real Body IR statement enum through a shared borrow."""
+    match statement:
+        BodyStatementKind.Continue => return true
+        _ => return false
+
+
+def location(span: &RustSpan, source: str, file: str) -> SourceSpan:
+    """Map the checked byte offset to the source line and byte column."""
+    mut start = 0
+    mut number = 1
+    offset = int(span.start)
+    for line in source.split("\n"):
+        # Columns count bytes, as rustc's do, so measure the line's UTF-8 width rather than its characters.
+        width = len(line.encode())
+        if offset <= start + width:
+            return SourceSpan(file=file, line=number, column=offset - start + 1)
+        start += width + 1
+        number += 1
+    return SourceSpan(file=file, line=number, column=1)
+
+
+def scalar_place(builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+    """Map a local or proven model field into the native frame, which reserves local zero for return."""
+    return model_place(builder.nominals, builder.locals, value, span)
+
+
+def scalar_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+    """Preserve each scalar read's checked ownership fact rather than inferring it."""
+    match value:
+        RustOperand.Place(read) => return place_read(builder, read.place, read.fact, span)
+        RustOperand.Constant(constant) => return scalar_constant(constant, span)
+
+
+def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, span: SourceSpan) -> Result[Operand, str]:
+    """Turn a place read into a copy or move exactly as Body IR's ownership fact says."""
+    target = scalar_place(builder, value, span)?
+    if callable_copy_type(place_type(builder.locals, target)):
+        match fact:
+            OwnershipFact.Unknown => return Err("unsupported Body IR unknown callable ownership")
+            OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable callable borrow")
+            _ => return Ok(read_place(target, false, span))
+    # Model clones use their derived implementation; string clones and borrows are handled by `display_operand`.
+    match fact:
+        OwnershipFact.Copy => return Ok(Operand(kind=OperandKind.Copy(target), span=span))
+        OwnershipFact.Move =>
+            if target.projection != Projection.Whole and place_type(builder.locals, target) == PlanType.String:
+                return Err("unsupported Body IR partial model move")
+            return Ok(Operand(kind=OperandKind.Move(target), span=span))
+        OwnershipFact.Clone => return clone_model_operand(builder, target, span)
+        OwnershipFact.Borrow => return Err("unsupported Body IR ownership Borrow outside formatting")
+        OwnershipFact.MutBorrow => return Err("unsupported Body IR ownership MutBorrow")
+        OwnershipFact.Unknown => return Err("unsupported Body IR ownership Unknown")
+
+
+def scalar_constant(constant: &RustConstant, span: SourceSpan) -> Result[Operand, str]:
+    """Turn a scalar literal into a plan constant; other literal kinds are refused by name."""
+    match constant.clone():
+        RustConstant.Int(number) => return Ok(literal(Constant.Int(number), span))
+        RustConstant.Float(text) => return Ok(literal(Constant.Float(float(str(text))), span))
+        RustConstant.Bool(flag) => return Ok(literal(Constant.Bool(flag), span))
+        RustConstant.Unit => return Ok(literal(Constant.Unit, span))
+        RustConstant.TypedNumeric(_value) => return Err("unsupported Body IR TypedNumeric")
+        RustConstant.Str(_value) => return Err("unsupported Body IR Str constant")
+        RustConstant.Bytes(_value) => return Err("unsupported Body IR Bytes constant")
+        RustConstant.None => return Err("unsupported Body IR None constant")
+
+
+def literal(constant: Constant, span: SourceSpan) -> Operand:
+    """Wrap a plan constant as an operand."""
+    return Operand(kind=OperandKind.Literal(constant), span=span)
+
+
+def read_place(place: Place, moved: bool, span: SourceSpan) -> Operand:
+    """Choose an explicit native move or copy from a known typed local."""
+    if moved:
+        return Operand(kind=OperandKind.Move(place), span=span)
+    return Operand(kind=OperandKind.Copy(place), span=span)
+
+
+def text_literal(text: str, span: SourceSpan) -> Operand:
+    """Retain static text without an implicit allocation."""
+    return literal(Constant.Text(text), span)
+
+
+def operand_type(mut builder: Builder, operand: Operand) -> Result[PlanType, str]:
+    """The plan type an operand carries: its local's declared type, or its literal's type."""
+    match operand.kind:
+        OperandKind.Copy(place) => return Ok(place_type(builder.locals, place))
+        OperandKind.Move(place) => return Ok(place_type(builder.locals, place))
+        OperandKind.Literal(constant) =>
+            match constant:
+                Constant.Int(_value) => return Ok(PlanType.Int)
+                Constant.Float(_value) => return Ok(PlanType.Float)
+                Constant.Bool(_value) => return Ok(PlanType.Bool)
+                _ => return Err("unsupported Body IR constant operand type")
+
+
+def binary_operator(operator: &BinOp) -> Result[BinaryOp, str]:
+    """Translate only native scalar operations; operators with runtime semantics are separate calls."""
+    # Python-semantics `//` and `%` go through runtime helpers (`lower_numeric_helper`), never a native operator.
+    match operator:
+        BinOp.Add => return Ok(BinaryOp.Add)
+        BinOp.Sub => return Ok(BinaryOp.Subtract)
+        BinOp.Mul => return Ok(BinaryOp.Multiply)
+        BinOp.Div => return Ok(BinaryOp.Divide)
+        BinOp.Eq => return Ok(BinaryOp.Equal)
+        BinOp.Ne => return Ok(BinaryOp.NotEqual)
+        BinOp.Lt => return Ok(BinaryOp.Less)
+        BinOp.Le => return Ok(BinaryOp.LessEqual)
+        BinOp.Gt => return Ok(BinaryOp.Greater)
+        BinOp.Ge => return Ok(BinaryOp.GreaterEqual)
+        BinOp.FloorDiv => return Err("Body IR FloorDiv requires its runtime helper")
+        BinOp.Mod => return Err("Body IR Mod requires its runtime helper")
+        BinOp.Pow => return Err("unsupported Body IR Pow")
+        BinOp.BitAnd => return Err("unsupported Body IR BitAnd")
+        BinOp.BitOr => return Err("unsupported Body IR BitOr")
+        BinOp.BitXor => return Err("unsupported Body IR BitXor")
+        BinOp.Shl => return Err("unsupported Body IR Shl")
+        BinOp.Shr => return Err("unsupported Body IR Shr")
+        BinOp.Is => return Err("unsupported Body IR Is")
+        BinOp.IsNot => return Err("unsupported Body IR IsNot")
+        BinOp.And => return Err("unsupported Body IR And")
+        BinOp.Or => return Err("unsupported Body IR Or")
+
+
+def scalar_rvalue(mut builder: Builder, value: &RustRvalue, span: SourceSpan) -> Result[RvalueKind, str]:
+    """Read the checked expression without interpreting generated Rust syntax."""
+    match value:
+        RustRvalue.Use(operand) => return Ok(RvalueKind.Use(scalar_operand(builder, operand, span)?))
+        RustRvalue.UnaryOp(operator, operand) =>
+            match operator:
+                UnOp.Not => return Ok(RvalueKind.Unary(UnaryOp.Not, scalar_operand(builder, operand, span)?))
+                UnOp.Neg => return Ok(RvalueKind.Unary(UnaryOp.Negate, scalar_operand(builder, operand, span)?))
+                _ => return Err("unsupported Body IR unary operator Invert")
+        RustRvalue.BinaryOp(operator, left, right) =>
+            if operator == BinOp.Div:
+                if not float_operand(builder.nominals, builder.locals, left, span)? or not float_operand(
+                    builder.nominals,
+                    builder.locals,
+                    right,
+                    span,
+                )?:
+                    return Err("unsupported Body IR non-float true division operands")
+            return Ok(
+                RvalueKind.Binary(
+                    binary_operator(operator)?,
+                    scalar_operand(builder, left, span)?,
+                    scalar_operand(builder, right, span)?,
+                ),
+            )
+        RustRvalue.IsInstance(value=_value, value_ty=_ty, target=_target) =>
+            return Err("unsupported Body IR IsInstance")
+        RustRvalue.Aggregate(kind, elements) => return model_aggregate(builder, kind, elements, span)
+        RustRvalue.Dict(_entries) => return Err("unsupported Body IR Dict")
+        RustRvalue.ValueEnumVariant(_target) => return Err("unsupported Body IR ValueEnumVariant")
+        RustRvalue.FieldlessEnumVariant(_target) => return Err("unsupported Body IR FieldlessEnumVariant")
+        RustRvalue.ResultVariant(_value) => return Err("unsupported Body IR ResultVariant")
+        RustRvalue.Format(_parts) => return Err("unsupported Body IR Format")
+        RustRvalue.Closure(params=_params, captured_operands=_captures, body=_body) =>
+            return Err("unsupported Body IR Closure")
+        RustRvalue.Generator(source=_source, captured_operands=_captures, body=_body) =>
+            return Err("unsupported Body IR Generator")
+        RustRvalue.Match(scrutinee=_value, arms=_arms) => return Err("unsupported Body IR Match")
+
+
+model Builder:
+    """
+    Construction state for one function's native frame.
+
+    `owned` lists the locals that currently hold an initialized value needing a drop, in initialization order.
+    `closed` marks blocks whose terminator is final, so an `if` whose branches both return leaves its join closed.
+    `loops` holds each enclosing loop's (header, after) blocks, and `loop_owners` the owners live when it began.
+    """
+
+    locals: list[Local]
+    blocks: list[BasicBlock]
+    current: int
+    source: str
+    file: str
+    loops: list[tuple[int, int]]
+    loop_owners: list[list[int]]
+    externals: list[ExternalFunction]
+    owned: list[int]
+    closed: list[bool]
+    nominals: list[RustNominalDeclaration]
+    function_pointer_locals: list[int]
+
+    def new_block(mut self, span: SourceSpan) -> int:
+        """Allocate a block before connecting edges, preserving index stability."""
+        index = len(self.blocks)
+        self.blocks.append(plan_block([], TerminatorKind.Unreachable, span))
+        self.closed.append(false)
+        return index
+
+    def finish(mut self, exit: TerminatorKind, span: SourceSpan) -> None:
+        """Close the active block; callers must select a new block before emitting."""
+        self.blocks[self.current].terminator = Terminator(kind=exit, span=span)
+        self.closed[self.current] = true
+
+    def emit(mut self, statement: Statement) -> None:
+        """Append one operation to the selected native block."""
+        self.blocks[self.current].statements.append(statement)
+
+
+def temporary(mut builder: Builder, ty: PlanType, span: SourceSpan) -> Place:
+    """Reserve one typed temporary without assuming it is already initialized."""
+    index = len(builder.locals)
+    builder.locals.append(Local(ty=ty, span=span))
+    return plan_place(index, span)
+
+
+def finish_fallthrough(mut builder: Builder, target: int, span: SourceSpan) -> None:
+    """Connect an open block while retaining explicit return and loop exits."""
+    if not builder.closed[builder.current]:
+        builder.finish(TerminatorKind.Goto(target), span)
+
+
+def forget_owned(mut builder: Builder, index: int) -> None:
+    """Remove an initialized owner after its value moves or drops."""
+    mut retained: list[int] = []
+    for live in builder.owned:
+        if live != index:
+            retained.append(live)
+    builder.owned = retained
+
+
+def drop_owned(mut builder: Builder, index: int, span: SourceSpan) -> None:
+    """Drop a known initialized owner and continue in a fresh normal block."""
+    if index not in builder.owned:
+        return
+    forget_owned(builder, index)
+    successor = builder.new_block(span)
+    builder.finish(TerminatorKind.Drop(plan_place(index, span), successor, Unwind.Continue), span)
+    builder.current = successor
+
+
+def drop_all_owned(mut builder: Builder, span: SourceSpan) -> None:
+    """Release every remaining owner, newest first, before a function returns."""
+    while len(builder.owned) != 0:
+        drop_owned(builder, builder.owned[-1], span)
+
+
+def track_rvalue_moves(mut builder: Builder, value: RvalueKind) -> None:
+    """Remove transferred whole owners before building cleanup edges."""
+    match value:
+        RvalueKind.Use(operand) => forget_moved_arguments(builder, [operand])
+        RvalueKind.Model(_index, operands) => forget_moved_arguments(builder, operands)
+        _ => pass
+
+
+def forget_moved_arguments(mut builder: Builder, arguments: list[Operand]) -> None:
+    """Forget only moved whole locals; partial moves are refused before constructing a plan."""
+    for argument in arguments:
+        match argument.kind:
+            OperandKind.Move(value) =>
+                if value.projection == Projection.Whole:
+                    forget_owned(builder, value.local)
+            _ => pass
+
+
+def is_model_type(ty: PlanType) -> bool:
+    """Identify model owners alongside owned strings when transferring call results."""
+    match ty:
+        PlanType.Model(_index, _name) => return true
+        _ => return false
+
+
+def cleanup_exit(mut builder: Builder, span: SourceSpan) -> int:
+    """
+    Build the unwind path for the current owners and return its first block.
+
+    The chain drops owners newest first and ends in `UnwindResume`. It is built back to front: each new block drops
+    one more owner and continues to the block built before it. A destructor that panics while unwinding terminates
+    rather than unwinding twice.
+    """
+    mut target = builder.new_block(span)
+    builder.blocks[target].cleanup = true
+    builder.blocks[target].terminator = Terminator(kind=TerminatorKind.UnwindResume, span=span)
+    # Index rather than iterate: each step allocates a block on `builder`, which a live borrow of `owned` would forbid.
+    for slot in range(len(builder.owned)):
+        index = builder.owned[slot]
+        current = builder.new_block(span)
+        builder.blocks[current].cleanup = true
+        builder.blocks[current].terminator = Terminator(
+            kind=TerminatorKind.Drop(plan_place(index, span), target, Unwind.Terminate),
+            span=span,
+        )
+        target = current
+    return target
+
+
+def verify_branch_owners(reachable: bool, owned: list[int], incoming: list[int]) -> Result[None, str]:
+    """
+    Refuse a branch that leaves different owners live than it started with.
+
+    Merging such branches would need conditional drop flags; refusing keeps every drop on an initialized value.
+    """
+    if reachable and owned != incoming:
+        return Err("unsupported Body IR owned-value branch merge")
+    return Ok(None)
+
+
+def drop_loop_owners(mut builder: Builder, span: SourceSpan) -> Result[None, str]:
+    """
+    Release the owners created inside the innermost loop before leaving or repeating it.
+
+    Owners live when the loop began must still be live: the loop body may not consume them, since a second iteration
+    would read a moved value.
+    """
+    incoming = builder.loop_owners[-1]
+    for owner in incoming:
+        if owner not in builder.owned:
+            return Err("unsupported Body IR loop changes incoming formatting ownership")
+    retained = builder.owned
+    # Newest first, matching the order normal scope exits drop in.
+    for index in range(len(retained)):
+        owner = retained[len(retained) - index - 1]
+        if owner not in incoming:
+            drop_owned(builder, owner, span)
+    return Ok(None)
+
+
+def terminate_call(
+    mut builder: Builder,
+    callee: CalleeKind,
+    arguments: list[Operand],
+    destination: Place,
+    span: SourceSpan,
+) -> None:
+    """Emit a call that continues in a fresh block and unwinds through the current owners' cleanup chain."""
+    # A moved argument is the callee's to drop now, so it leaves the owners before the cleanup chain is built.
+    forget_moved_arguments(builder, arguments)
+    continuation = builder.new_block(span)
+    cleanup = cleanup_exit(builder, span)
+    call = TerminatorKind.Call(
+        Callee(kind=callee, span=span),
+        arguments,
+        destination,
+        continuation,
+        Unwind.Cleanup(cleanup),
+    )
+    builder.finish(call, span)
+    builder.current = continuation
+
+
+def external_call(
+    mut builder: Builder,
+    name: str,
+    parameters: list[PlanType],
+    result: PlanType,
+    arguments: list[Operand],
+    destination: Place,
+    span: SourceSpan,
+) -> None:
+    """Declare a monomorphic runtime signature and emit its unwinding call."""
+    builder.externals.append(ExternalFunction(path=name, parameters=parameters, return_type=result, span=span))
+    terminate_call(builder, CalleeKind.External(name), arguments, destination, span)
+    # A returned String is a new owner: it is dropped at scope exit or on unwind like any other.
+    if result == PlanType.String:
+        builder.owned.append(destination.local)
+
+
+def lower_block(module: &BodyIrModule, mut builder: Builder, block: &RustBlock) -> Result[None, str]:
+    """Lower a retained lexical block and stop after a terminating source statement."""
+    for statement in block.stmts:
+        lower_statement(module, builder, statement)?
+        # Anything after a return, break or continue is unreachable, so the rest of the block is not lowered.
+        if builder.closed[builder.current]:
+            return Ok(None)
+    return Ok(None)
+
+
+def lower_statement(module: &BodyIrModule, mut builder: Builder, statement: &RustStatement) -> Result[None, str]:
+    """Preserve statement order and refuse constructs outside the supported slice."""
+    span = location(statement.span, builder.source, builder.file)
+    match statement.kind:
+        RustStatementKind.Assign(place=destination, rvalue=value) =>
+            return lower_assignment(module, builder, destination, value, span)
+        RustStatementKind.If(cond=condition, then_block=then_body, else_block=else_body) =>
+            return lower_if(module, builder, condition, then_body, else_body, span)
+        RustStatementKind.Loop(body=body) => return lower_loop(module, builder, body, span)
+        RustStatementKind.Return(value=value) => return lower_return(builder, value, span)
+        RustStatementKind.Break(value=value) =>
+            match value:
+                Some(_operand) => return Err("unsupported Body IR value-producing Break")
+                None => return lower_loop_exit(builder, false, span)
+        RustStatementKind.Continue => return lower_loop_exit(builder, true, span)
+        RustStatementKind.Drop(local=local) =>
+            index = int(local.index()) + 1
+            drop_owned(builder, index, span)
+            builder.emit(Statement(kind=StatementKind.StorageDead(index), span=span))
+        RustStatementKind.Expr(value=value) =>
+            # An expression statement only needs its operand to be valid; its value is discarded.
+            return lower_discarded_operand(builder, value, span)
+        RustStatementKind.Call(destination=_destination, callee=_callee, args=_args, may_panic=_may_panic) =>
+            return lower_call(module, builder, statement, span)
+        RustStatementKind.Await(destination=_destination, awaited=_awaited) => return Err("unsupported Body IR Await")
+        RustStatementKind.Race(destination=_destination, arms=_arms) => return Err("unsupported Body IR Race")
+        RustStatementKind.Yield(value=_value) => return Err("unsupported Body IR Yield")
+        RustStatementKind.Assert(kind=_kind, message=_message, may_panic=_panic) =>
+            return Err("unsupported Body IR Assert")
+        RustStatementKind.TryPropagate(destination=_destination, operand=_operand, error_routing=_routing) =>
+            return Err("unsupported Body IR TryPropagate")
+        RustStatementKind.IterNext(destination=_destination, iterator=_iterator, protocol=_protocol) =>
+            return Err("unsupported Body IR IterNext")
+        RustStatementKind.Unsupported(description=description) =>
+            return Err(f"unsupported Body IR Unsupported: {description}")
+    return Ok(None)
+
+
+def lower_return(mut builder: Builder, value: &Option[RustOperand], span: SourceSpan) -> Result[None, str]:
+    """Store the result in the return slot, drop every live owner, and return."""
+    mut result = literal(Constant.Unit, span)
+    match value:
+        Some(operand) =>
+            if builder.locals[0].ty == PlanType.String:
+                text = display_operand(builder, operand, span)?
+                forget_owned(builder, text.local)
+                result = read_place(text, true, span)
+            else:
+                result = scalar_operand(builder, operand, span)?
+                track_rvalue_moves(builder, RvalueKind.Use(result))
+        None => pass
+    if callable_copy_type(builder.locals[0].ty):
+        assign_callable(builder, plan_place(0, span), result, true, span)?
+    else:
+        builder.emit(plan_assign(plan_place(0, span), RvalueKind.Use(result), span))
+    drop_all_owned(builder, span)
+    builder.finish(TerminatorKind.Return, span)
+    return Ok(None)
+
+
+def lower_loop_exit(mut builder: Builder, repeat: bool, span: SourceSpan) -> Result[None, str]:
+    """Leave the innermost loop (`break`) or start its next iteration (`continue`), dropping its owners first."""
+    if len(builder.loops) == 0:
+        return Err("Body IR Break or Continue outside Loop")
+    drop_loop_owners(builder, span)?
+    header, after = builder.loops[-1]
+    if repeat:
+        builder.finish(TerminatorKind.Goto(header), span)
+    else:
+        builder.finish(TerminatorKind.Goto(after), span)
+    return Ok(None)
+
+
+def lower_assignment(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    destination: &RustPlace,
+    value: &RustRvalue,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Assign a checked value to a local, routing strings, formatting and runtime-semantics operators first."""
+    target = scalar_place(builder, destination, span)?
+    match source_function_item(module, value)?:
+        Some(item) =>
+            name, ty = item
+            if target.projection != Projection.Whole:
+                return Err("unsupported Body IR projected function-item construction")
+            builder.locals[target.local].ty = ty
+            builder.emit(
+                plan_assign(target, RvalueKind.FunctionItem(Callee(kind=CalleeKind.Planned(name), span=span)), span),
+            )
+            return Ok(None)
+        None => pass
+    match value:
+        RustRvalue.Use(value) =>
+            if callable_copy_type(place_type(builder.locals, target)):
+                operand = scalar_operand(builder, value, span)?
+                return assign_callable(builder, target, operand, target.local in builder.function_pointer_locals, span)
+        _ => pass
+    if place_type(builder.locals, target) == PlanType.String:
+        return lower_string_assignment(builder, target, value, span)
+    match value:
+        RustRvalue.Format(parts) => return lower_format(builder, target, parts, span)
+        RustRvalue.BinaryOp(operator, left, right) =>
+            match operator:
+                BinOp.FloorDiv => return lower_numeric_helper(builder, target, left, right, "py_floor_div", span)
+                BinOp.Mod => return lower_numeric_helper(builder, target, left, right, "py_mod", span)
+                _ => pass
+        _ => pass
+    mut operation = scalar_rvalue(builder, value, span)?
+    track_rvalue_moves(builder, operation)
+    if place_type(builder.locals, target) == PlanType.Int:
+        operation = negation_as_subtraction(operation, span)
+        if is_checked_int_operation(operation):
+            return lower_checked_int_assignment(builder, target, operation, span)
+    if is_model_type(place_type(builder.locals, target)) and target.projection == Projection.Whole:
+        drop_owned(builder, target.local, span)
+    builder.emit(plan_assign(target, operation, span))
+    if is_model_type(place_type(builder.locals, target)) and target.local not in builder.owned:
+        builder.owned.append(target.local)
+    return Ok(None)
+
+
+def negation_as_subtraction(operation: RvalueKind, span: SourceSpan) -> RvalueKind:
+    """Rewrite integer `-x` as `0 - x`, so it gets the same overflow check as any other subtraction."""
+    match operation:
+        RvalueKind.Unary(operator, operand) =>
+            if operator == UnaryOp.Negate:
+                return RvalueKind.Binary(BinaryOp.Subtract, literal(Constant.Int(0), span), operand)
+        _ => pass
+    return operation
+
+
+def is_checked_int_operation(operation: RvalueKind) -> bool:
+    """Whether an integer operation can overflow: `+`, `-` and `*` panic on overflow, as the legacy route does."""
+    match operation:
+        RvalueKind.Binary(operator, _left, _right) =>
+            return operator == BinaryOp.Add or operator == BinaryOp.Subtract or operator == BinaryOp.Multiply
+        _ => return false
+
+
+def lower_checked_int_assignment(
+    mut builder: Builder,
+    target: Place,
+    operation: RvalueKind,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Lower an overflow-checked integer operation the way rustc's own MIR does.
+
+    The operation writes a (value, overflowed) pair; an overflow assertion branches to a panic (unwinding through the
+    current owners' cleanup) or continues, and only then is the value copied into the destination.
+    """
+    match operation:
+        RvalueKind.Binary(operator, left, right) =>
+            pair = len(builder.locals)
+            builder.locals.append(Local(ty=PlanType.CheckedInt, span=span))
+            builder.emit(plan_assign(plan_place(pair, span), operation, span))
+            next_block = builder.new_block(span)
+            flag = read_place(Place(local=pair, projection=Projection.Overflow, span=span), false, span)
+            cleanup = cleanup_exit(builder, span)
+            assertion = TerminatorKind.AssertOverflow(flag, operator, left, right, next_block, Unwind.Cleanup(cleanup))
+            builder.finish(assertion, span)
+            builder.current = next_block
+            result = read_place(Place(local=pair, projection=Projection.Value, span=span), false, span)
+            builder.emit(plan_assign(target, RvalueKind.Use(result), span))
+            return Ok(None)
+        _ => return Err("checked integer lowering expects a binary operation")
+
+
+def lower_if(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    condition: &RustOperand,
+    then_body: &RustBlock,
+    else_body: &Option[RustBlock],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Lower both branches into their own blocks and join them in a common successor."""
+    then_index = builder.new_block(span)
+    else_index = builder.new_block(span)
+    after = builder.new_block(span)
+    # `SwitchBool` takes its false target first, then its true target.
+    # Legacy E0499: materialize before borrowing the builder receiver again, until dev.8.
+    condition_value = scalar_operand(builder, condition, span)?
+    builder.finish(TerminatorKind.SwitchBool(condition_value, else_index, then_index), span)
+
+    # Each branch starts from the owners live before the `if`, and must end with the same ones if it falls through.
+    incoming = builder.owned
+    builder.current = then_index
+    lower_block(module, builder, then_body)?
+    then_reaches = not builder.closed[builder.current]
+    verify_branch_owners(then_reaches, builder.owned, incoming)?
+    finish_fallthrough(builder, after, span)
+
+    builder.owned = incoming
+    builder.current = else_index
+    match else_body:
+        Some(body) => lower_block(module, builder, body)?
+        None => pass
+    else_reaches = not builder.closed[builder.current]
+    verify_branch_owners(else_reaches, builder.owned, incoming)?
+    finish_fallthrough(builder, after, span)
+
+    builder.owned = incoming
+    builder.current = after
+    # If neither branch falls through (both return, break or continue), the join is unreachable.
+    builder.closed[after] = not (then_reaches or else_reaches)
+    return Ok(None)
+
+
+def lower_loop(module: &BodyIrModule, mut builder: Builder, body: &RustBlock, span: SourceSpan) -> Result[None, str]:
+    """Lower a normalized loop: a header block that the body jumps back to, and an `after` block for `break`."""
+    header = builder.new_block(span)
+    after = builder.new_block(span)
+    builder.finish(TerminatorKind.Goto(header), span)
+    builder.current = header
+    incoming = builder.owned
+    builder.loops.append((header, after))
+    builder.loop_owners.append(incoming)
+    lower_block(module, builder, body)?
+    # Falling off the end of the body repeats the loop, which drops the iteration's owners like a `continue`.
+    if not builder.closed[builder.current]:
+        drop_loop_owners(builder, span)?
+    _loop = builder.loops.pop()
+    _owners = builder.loop_owners.pop()
+    finish_fallthrough(builder, header, span)
+    builder.owned = incoming
+    builder.current = after
+    return Ok(None)
+
+
+def lower_call(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    statement: &RustStatement,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Dispatch by the retained callee kind, preserving the call's operand and result facts."""
+    match statement.kind:
+        RustStatementKind.Call(destination=destination, callee=callee, args=arguments, may_panic=_may_panic) =>
+            match callee:
+                RustCallee.Function(callable) =>
+                    match callable:
+                        CallableTarget.Named(target) =>
+                            return lower_named_target(module, builder, target, arguments, destination, span)
+                        CallableTarget.Local(target) =>
+                            return lower_callable_value(builder, target, arguments, destination, span)
+                        _ => return Err("unsupported Body IR local callable value")
+                RustCallee.Method(_target) => return Err("unsupported Body IR Method")
+                RustCallee.Helper(helper) => return lower_runtime_helper(builder, helper, arguments, destination, span)
+                RustCallee.ProviderOperation(_operation) => return Err("unsupported Body IR ProviderOperation")
+        _ => return Err("expected Body IR Call")
+
+
+def lower_named_target(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &RustNamedCallableTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Call a builtin, a same-module function, or a proven stdlib forwarder, all selected by identity, never a name."""
+    if len(target.type_args) != 0:
+        return Err("unsupported Body IR generic NamedCallableTarget")
+    match target.builtin:
+        Some(builtin) => return lower_builtin(builder, builtin, arguments, destination, span)
+        None => pass
+    match target.canonical:
+        None => return Err("unsupported Body IR builtin or unproven NamedCallableTarget")
+        Some(identity) =>
+            # Without a body in this module, the target may be an imported stdlib function that the frontend proved
+            # forwards to a Rust call.
+            match module.body_for_canonical_target(identity):
+                None => return lower_stdlib_delegation(module, builder, target, arguments, destination, span)
+                Some(body) => return lower_local_call(builder, target, body, arguments, destination, span)
+
+
+def lower_local_call(
+    mut builder: Builder,
+    target: &RustNamedCallableTarget,
+    body: &RustBody,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Call a same-module function, after checking that the call site's direct identity names that same body."""
+    match target.direct_call_id:
+        None => return Err("unsupported Body IR non-local NamedCallableTarget")
+        Some(call_id) =>
+            if call_id != body.direct_call_id:
+                return Err("Body IR call identity disagrees with target body")
+    operands = ordered_arguments(builder, target.binding, arguments, body, span)?
+    mut output = plan_place(0, span)
+    # A call whose result is unused still needs somewhere to put it.
+    match destination:
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+        None =>
+            output = temporary(builder, model_type(builder.nominals, body.return_type)?, span)
+    result_type = model_type(builder.nominals, body.return_type)?
+    return lower_callable_result(builder, CalleeKind.Planned(str(body.name)), operands, output, result_type, span)
+
+
+def lower_callable_result(
+    mut builder: Builder,
+    callee: CalleeKind,
+    operands: list[Operand],
+    output: Place,
+    result_type: PlanType,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Preserve owned return replacement and unwind cleanup identically for declared and locally held callees."""
+    if result_type == PlanType.String or is_model_type(result_type):
+        result = temporary(builder, result_type, span)
+        terminate_call(builder, callee, operands, result, span)
+        builder.owned.append(result.local)
+        drop_owned(builder, output.local, span)
+        forget_owned(builder, result.local)
+        builder.emit(plan_assign(output, RvalueKind.Use(read_place(result, true, span)), span))
+        builder.owned.append(output.local)
+    else:
+        terminate_call(builder, callee, operands, output, span)
+    return Ok(None)
+
+
+def lower_stdlib_delegation(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &RustNamedCallableTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Call the Rust function an imported stdlib function forwards to.
+
+    The frontend records a delegation only for a forwarder it proved transparent: its only statement returns one Rust
+    call with every parameter passed through in order. Calling that Rust function directly is therefore the call the
+    legacy route makes, selected by the checker's canonical identity and native path, never by a spelling.
+    """
+    match target.direct_call_id:
+        Some(_identity) => return Err("Body IR imported delegation has a local call identity")
+        None => pass
+    for delegation in module.stdlib_delegations:
+        match target.canonical:
+            None => return Err("unsupported Body IR unproven stdlib call target")
+            Some(identity) =>
+                if identity != delegation.canonical:
+                    continue
+        return lower_delegated_call(builder, delegation, target, arguments, destination, span)
+    return Err("unsupported Body IR imported or unresolved canonical call target")
+
+
+def lower_delegated_call(
+    mut builder: Builder,
+    delegation: &RustStdlibDelegation,
+    target: &RustNamedCallableTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Emit the external call for one matched delegation, with its checked scalar signature."""
+    mut parameters: list[PlanType] = []
+    for parameter in delegation.parameters:
+        parameters.append(model_type(builder.nominals, parameter)?)
+    result = model_type(builder.nominals, delegation.return_type)?
+    operands = ordered_slot_operands(builder, target.binding, arguments, parameters, span)?
+    mut output = temporary(builder, result, span)
+    match destination:
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+        None => pass
+    match delegation.rust_path():
+        None => return Err("unsupported Body IR stdlib delegation native identity")
+        Some(path) =>
+            external_call(builder, path, parameters, result, operands, output, span)
+            return Ok(None)
+
+
+def ordered_arguments(
+    mut builder: Builder,
+    binding: &RustArgumentBinding,
+    elements: &list[RustArgumentElement],
+    body: &RustBody,
+    span: SourceSpan,
+) -> Result[list[Operand], str]:
+    """Use the body's parameter types when materializing arguments in source order."""
+    mut types: list[PlanType] = []
+    for parameter in body.params:
+        ty = model_type(builder.nominals, parameter.ty)?
+        if is_model_type(ty) and parameter.mutable:
+            return Err("unsupported Body IR mutable model parameter")
+        if ty == PlanType.String and parameter.mutable:
+            return Err("unsupported Body IR mutable String argument")
+        types.append(ty)
+    return ordered_slot_operands(builder, binding, elements, types, span)
+
+
+def ordered_slot_operands(
+    mut builder: Builder,
+    binding: &RustArgumentBinding,
+    elements: &list[RustArgumentElement],
+    types: list[PlanType],
+    span: SourceSpan,
+) -> Result[list[Operand], str]:
+    """
+    Place the written arguments into the callee's declared parameter slots.
+
+    Body IR has already evaluated the arguments in written order; the binding says which slot each one fills.
+    Defaults, missing slots, named or spread elements are refused.
+    """
+    count = len(types)
+    match binding:
+        RustArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults) =>
+            if len(defaults) != 0 or len(bindings) != len(elements) or len(bindings) != count:
+                return Err("unsupported Body IR defaulted or incomplete ArgumentBinding")
+            # Start every slot as a placeholder, then fill each exactly once.
+            mut operands: list[Operand] = []
+            for _index in range(count):
+                operands.append(literal(Constant.Unit, span))
+            mut occupied: list[int] = []
+            for index in range(len(elements)):
+                slot = int(bindings[index].slot)
+                if slot < 0 or slot >= count or slot in occupied:
+                    return Err("invalid Body IR argument slot map")
+                occupied.append(slot)
+                match elements[index].as_one():
+                    Some(value) =>
+                        if types[slot] == PlanType.String:
+                            text = display_operand(builder, value, span)?
+                            operands[slot] = read_place(text, true, span)
+                        else:
+                            operand = scalar_operand(builder, value, span)?
+                            operands[slot] = function_argument(builder, types[slot], operand, span)?
+                    None => return Err("unsupported Body IR named or spread ArgumentElement")
+            return Ok(operands)
+        _ => return Err("unsupported Body IR unresolved ArgumentBinding")
+
+
+def fixed_arguments(
+    mut builder: Builder,
+    elements: &list[RustArgumentElement],
+    span: SourceSpan,
+) -> Result[list[Operand], str]:
+    """Read already ordered positional elements, refusing spreading by name."""
+    mut result: list[Operand] = []
+    for element in elements:
+        match element.as_one():
+            Some(value) => result.append(scalar_operand(builder, value, span)?)
+            None => return Err("unsupported Body IR spread ArgumentElement")
+    return Ok(result)
+
+
+def lower_numeric_helper(
+    mut builder: Builder,
+    destination: Place,
+    left: &RustOperand,
+    right: &RustOperand,
+    operation: str,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Call the runtime's Python-semantics `//` or `%`, which handle negative operands and division by zero."""
+    ty = place_type(builder.locals, destination)
+    mut suffix = ""
+    match ty:
+        PlanType.Int =>
+            suffix = "i64"
+        PlanType.Float =>
+            suffix = "f64"
+        _ => return Err("unsupported Body IR division or modulo type")
+    path = f"incan_std_core::num::{operation}_{suffix}"
+    arguments = [scalar_operand(builder, left, span)?, scalar_operand(builder, right, span)?]
+    external_call(builder, path, [ty, ty], ty, arguments, destination, span)
+    return Ok(None)
+
+
+def lower_runtime_helper(
+    mut builder: Builder,
+    helper: &RustHelper,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Dispatch retained runtime helper identities."""
+    match text_helper(helper):
+        Some((name, result)) => return lower_text_helper(builder, name, result, arguments, destination, span)
+        None => pass
+    match helper:
+        RustHelper.RangeValidate =>
+            if len(arguments) != 3:
+                return Err("invalid Body IR RangeValidate arity")
+            int_triple = [PlanType.Int, PlanType.Int, PlanType.Int]
+            output = temporary(builder, PlanType.Unit, span)
+            path = "incan_native_runtime::validate_range"
+            # Legacy E0499: materialize arguments before the outer mutable borrow, until dev.8.
+            operands = fixed_arguments(builder, arguments, span)?
+            external_call(builder, path, int_triple, PlanType.Unit, operands, output, span)
+            return Ok(None)
+        _ => return Err(f"unsupported Body IR Helper {helper.as_str()}")
+
+
+def lower_builtin(
+    mut builder: Builder,
+    builtin: &RustBuiltin,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Dispatch checked builtin identities rather than matching source spellings."""
+    match builtin:
+        RustBuiltin.Print => return lower_print(builder, arguments, span)
+        RustBuiltin.Float => return lower_float_builtin(builder, arguments, destination, span)
+        RustBuiltin.Str => return lower_str_builtin(builder, arguments, destination, span)
+        _ => return Err(f"unsupported Body IR builtin {builtin:?}")
+
+
+def lower_print(mut builder: Builder, arguments: &list[RustArgumentElement], span: SourceSpan) -> Result[None, str]:
+    """Format the arguments separated by single spaces, as `println` does, and print the line."""
+    # `parts` holds the literal text around each value: "" before the first, " " between values, "" after the last.
+    mut parts = [""]
+    mut values: list[Place] = []
+    for argument in arguments:
+        match argument.as_one():
+            Some(value) => values.append(display_operand(builder, value, span)?)
+            None => return Err("unsupported Body IR spread print argument")
+        parts.append(" ")
+    parts[-1] = ""
+    text = temporary(builder, PlanType.String, span)
+    format_parts(builder, text, parts, values, span)
+    output = temporary(builder, PlanType.Unit, span)
+    path = "incan_native_runtime::println_text"
+    external_call(builder, path, [PlanType.String], PlanType.Unit, [read_place(text, true, span)], output, span)
+    return Ok(None)
+
+
+def lower_float_builtin(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """`float()`: `0.0` with no argument, a conversion of an `int`, or a `float` unchanged."""
+    match destination:
+        None => return Err("Body IR Float has no destination")
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+            operands = fixed_arguments(builder, arguments, span)?
+            if len(operands) == 0:
+                builder.emit(plan_assign(output, RvalueKind.Use(literal(Constant.Float(0.0), span)), span))
+                return Ok(None)
+            if len(operands) != 1:
+                return Err("unsupported Body IR Float arity")
+            operand = operands[0]
+            match operand_type(builder, operand)?:
+                PlanType.Int => builder.emit(plan_assign(output, RvalueKind.IntToFloat(operand), span))
+                PlanType.Float => builder.emit(plan_assign(output, RvalueKind.Use(operand), span))
+                _ => return Err("unsupported Body IR Float input type")
+            return Ok(None)
+
+
+def clone_model_operand(mut builder: Builder, value: Place, span: SourceSpan) -> Result[Operand, str]:
+    """Materialize the checker's clone fact through the model's real derived Clone implementation."""
+    match place_type(builder.locals, value):
+        PlanType.Model(index, name) =>
+            reference = temporary(builder, PlanType.ModelRef(index, name), span)
+            builder.emit(plan_assign(reference, RvalueKind.Borrow(value), span))
+            result = temporary(builder, PlanType.Model(index, name), span)
+            terminate_call(
+                builder,
+                CalleeKind.CloneModel(index, name),
+                [read_place(reference, false, span)],
+                result,
+                span,
+            )
+            builder.owned.append(result.local)
+            return Ok(read_place(result, true, span))
+        _ => return Err("unsupported Body IR ownership Clone outside models or formatting")
+
+
+def model_aggregate(
+    mut builder: Builder,
+    kind: &RustAggregateKind,
+    elements: &list[RustArgumentElement],
+    span: SourceSpan,
+) -> Result[RvalueKind, str]:
+    """Require a proven plain-model constructor before materializing its canonical field operands."""
+    match kind:
+        RustAggregateKind.Constructor(target) =>
+            index = constructor_index(builder.nominals, target, len(elements))?
+            operands = model_field_operands(builder, index, elements, span)?
+            return Ok(RvalueKind.Model(index, operands))
+        _ => return Err("unsupported Body IR Aggregate outside plain models")
+
+
+def model_field_operands(
+    mut builder: Builder,
+    index: int,
+    elements: &list[RustArgumentElement],
+    span: SourceSpan,
+) -> Result[list[Operand], str]:
+    """Materialize the frontend's canonical field order, preserving string and model ownership facts."""
+    declaration = builder.nominals[index]
+    mut operands: list[Operand] = []
+    for slot in range(len(elements)):
+        match elements[slot].as_one():
+            Some(value) =>
+                if model_type(builder.nominals, declaration.field_types[slot])? == PlanType.String:
+                    text = display_operand(builder, value, span)?
+                    operands.append(read_place(text, true, span))
+                else:
+                    operands.append(scalar_operand(builder, value, span)?)
+            None => return Err("unsupported Body IR spread model field")
+    return Ok(operands)
+
+
+def lower_string_field_assignment(
+    mut builder: Builder,
+    destination: Place,
+    value: &RustRvalue,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Evaluate replacement text before dropping the old field, retaining its initialized parent owner."""
+    mut replacement = temporary(builder, PlanType.String, span)
+    match value:
+        RustRvalue.Use(operand) =>
+            replacement = display_operand(builder, operand, span)?
+        RustRvalue.Format(parts) => lower_format(builder, replacement, parts, span)?
+        _ => return Err("unsupported Body IR string field Rvalue outside formatting")
+    continuation = builder.new_block(span)
+    cleanup = cleanup_exit(builder, span)
+    builder.finish(TerminatorKind.Drop(destination, continuation, Unwind.Cleanup(cleanup)), span)
+    builder.current = continuation
+    forget_owned(builder, replacement.local)
+    builder.emit(plan_assign(destination, RvalueKind.Use(read_place(replacement, true, span)), span))
+    return Ok(None)
+
+
+def lower_format(
+    mut builder: Builder,
+    destination: Place,
+    retained: &list[RustFormatPart],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Lower an f-string: keep its literal boundaries and display each value; debug formatting is refused."""
+    mut parts = [""]
+    mut values: list[Place] = []
+    for part in retained:
+        append_format_part(builder, part, parts, values, span)?
+    format_parts(builder, destination, parts, values, span)
+    return Ok(None)
+
+
+def append_format_part(
+    mut builder: Builder,
+    part: &RustFormatPart,
+    mut parts: list[str],
+    mut values: list[Place],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Add one f-string part: literal text extends the current text run, a value starts a new one.
+
+    `parts` always has one more entry than `values`: the text before, between and after the values.
+    """
+    match part:
+        RustFormatPart.Literal(text) =>
+            parts[-1] += str(text)
+        RustFormatPart.Expr(operand=value, style=style) =>
+            match style:
+                RustFormatStyle.Display => pass
+                RustFormatStyle.Debug => return Err("unsupported Body IR FormatStyle.Debug")
+            values.append(display_operand(builder, value, span)?)
+            parts.append("")
+    return Ok(None)
+
+
+def format_parts(
+    mut builder: Builder,
+    destination: Place,
+    parts: list[str],
+    values: list[Place],
+    span: SourceSpan,
+) -> None:
+    """
+    Call `incan_std_core::strings::fstring(&[&str], &[String])`, the helper the legacy route's f-strings use.
+
+    The literal texts and the displayed values become two fixed-size arrays, borrowed as slices for the call. The
+    value array takes ownership of the displayed strings and is dropped after the call.
+    """
+    literals = temporary(builder, PlanType.StrArray(len(parts)), span)
+    mut texts: list[Operand] = []
+    for part in parts:
+        texts.append(text_literal(part, span))
+    builder.emit(plan_assign(literals, RvalueKind.Array(texts), span))
+
+    strings = temporary(builder, PlanType.StringArray(len(values)), span)
+    mut operands: list[Operand] = []
+    for value in values:
+        operands.append(read_place(value, true, span))
+        # Each displayed string moves into the array, so the array now owns it.
+        forget_owned(builder, value.local)
+    builder.emit(plan_assign(strings, RvalueKind.Array(operands), span))
+    builder.owned.append(strings.local)
+
+    # `&[T; N]` coerces to `&[T]`: borrow each array, then unsize the borrow into a slice.
+    literal_reference = temporary(builder, PlanType.StrArrayRef(len(parts)), span)
+    string_reference = temporary(builder, PlanType.StringArrayRef(len(values)), span)
+    builder.emit(plan_assign(literal_reference, RvalueKind.Borrow(literals), span))
+    builder.emit(plan_assign(string_reference, RvalueKind.Borrow(strings), span))
+    literal_slice = temporary(builder, PlanType.StrSlice, span)
+    string_slice = temporary(builder, PlanType.StringSlice, span)
+    builder.emit(plan_assign(literal_slice, RvalueKind.UnsizeSlice(read_place(literal_reference, false, span)), span))
+    builder.emit(plan_assign(string_slice, RvalueKind.UnsizeSlice(read_place(string_reference, false, span)), span))
+
+    slices = [read_place(literal_slice, false, span), read_place(string_slice, false, span)]
+    path = "incan_std_core::strings::fstring"
+    external_call(builder, path, [PlanType.StrSlice, PlanType.StringSlice], PlanType.String, slices, destination, span)
+    drop_owned(builder, strings.local, span)
+
+
+def display_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+    """Produce an owned `String` holding a value's display text, honoring the value's ownership fact."""
+    # A cloned or borrowed string is copied into a new owned string; the original stays where it is.
+    match value:
+        RustOperand.Place(read) =>
+            match read.fact:
+                OwnershipFact.Clone => return clone_display_place(builder, read.place, span)
+                OwnershipFact.Borrow => return clone_display_place(builder, read.place, span)
+                _ => pass
+        RustOperand.Constant(constant) =>
+            match constant.clone():
+                RustConstant.Str(text) => return Ok(owned_literal(builder, str(text), span))
+                _ => pass
+    operand = scalar_operand(builder, value, span)?
+    ty = operand_type(builder, operand)?
+    if ty == PlanType.String:
+        return display_string_operand(builder, operand, span)
+    mut name = ""
+    match ty:
+        PlanType.Int =>
+            name = "format_int"
+        PlanType.Float =>
+            name = "format_float"
+        PlanType.Bool =>
+            name = "format_bool"
+        _ => return Err("unsupported Body IR display type")
+    result = temporary(builder, PlanType.String, span)
+    external_call(builder, f"incan_native_runtime::{name}", [ty], PlanType.String, [operand], result, span)
+    return Ok(result)
+
+
+def display_string_operand(mut builder: Builder, operand: Operand, span: SourceSpan) -> Result[Place, str]:
+    """A string displays as itself: a moved string is used directly, a copied one is cloned."""
+    match operand.kind:
+        OperandKind.Move(place) => return Ok(place)
+        OperandKind.Copy(place) => return clone_text(builder, place, span)
+        _ => return Err("unsupported Body IR string display ownership")
+
+
+def clone_display_place(mut builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+    """Honor a retained string clone or shared display borrow by cloning the string."""
+    place = scalar_place(builder, value, span)?
+    if place_type(builder.locals, place) != PlanType.String:
+        return Err("unsupported Body IR nonscalar display borrow")
+    return clone_text(builder, place, span)
+
+
+def clone_text(mut builder: Builder, place: Place, span: SourceSpan) -> Result[Place, str]:
+    """Clone a string local into a new owned string through the runtime, borrowing the original."""
+    reference = temporary(builder, PlanType.StringRef, span)
+    builder.emit(plan_assign(reference, RvalueKind.Borrow(place), span))
+    result = temporary(builder, PlanType.String, span)
+    path = "incan_native_runtime::clone_text"
+    external_call(
+        builder,
+        path,
+        [PlanType.StringRef],
+        PlanType.String,
+        [read_place(reference, false, span)],
+        result,
+        span,
+    )
+    return Ok(result)
+
+
+def owned_literal(mut builder: Builder, text: str, span: SourceSpan) -> Place:
+    """Allocate an owned string from literal text, through the same runtime concatenation the legacy route uses."""
+    result = temporary(builder, PlanType.String, span)
+    arguments = [text_literal(text, span), text_literal("", span)]
+    path = "incan_std_core::strings::str_concat"
+    external_call(builder, path, [PlanType.StrRef, PlanType.StrRef], PlanType.String, arguments, result, span)
+    return result
+
+
+def lower_string_assignment(
+    mut builder: Builder,
+    destination: Place,
+    value: &RustRvalue,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Evaluate a replacement before dropping its old value, preserving retained text ownership."""
+    if destination.projection != Projection.Whole:
+        return lower_string_field_assignment(builder, destination, value, span)
+    match value:
+        RustRvalue.Format(parts) =>
+            text = temporary(builder, PlanType.String, span)
+            lower_format(builder, text, parts, span)?
+            forget_owned(builder, text.local)
+            drop_owned(builder, destination.local, span)
+            builder.emit(plan_assign(destination, RvalueKind.Use(read_place(text, true, span)), span))
+            builder.owned.append(destination.local)
+            return Ok(None)
+        RustRvalue.Use(operand) =>
+            text = display_operand(builder, operand, span)?
+            forget_owned(builder, text.local)
+            drop_owned(builder, destination.local, span)
+            builder.emit(plan_assign(destination, RvalueKind.Use(read_place(text, true, span)), span))
+            builder.owned.append(destination.local)
+            return Ok(None)
+        _ => return Err("unsupported Body IR string Rvalue outside formatting")
+
+
+def lower_discarded_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[None, str]:
+    """Evaluate discarded text through retained ownership facts and drop its materialized owner."""
+    mut is_text = false
+    match value:
+        RustOperand.Constant(constant) =>
+            match constant:
+                RustConstant.Str(_text) =>
+                    is_text = true
+                _ => pass
+        RustOperand.Place(read) =>
+            place = scalar_place(builder, read.place, span)?
+            is_text = place_type(builder.locals, place) == PlanType.String
+    if is_text:
+        text = display_operand(builder, value, span)?
+        drop_owned(builder, text.local, span)
+    else:
+        _ = scalar_operand(builder, value, span)?
+    return Ok(None)
+
+
+def borrow_text_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+    """Borrow an owned string for a helper without transferring its owner."""
+    match value:
+        RustOperand.Place(read) =>
+            place = scalar_place(builder, read.place, span)?
+            if place_type(builder.locals, place) != PlanType.String:
+                return Err("unsupported Body IR non-string text operand")
+            match read.fact:
+                OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable String borrow")
+                OwnershipFact.Unknown => return Err("unsupported Body IR unknown String ownership")
+                _ => pass
+            reference = temporary(builder, PlanType.StringRef, span)
+            builder.emit(plan_assign(reference, RvalueKind.Borrow(place), span))
+            return Ok(read_place(reference, false, span))
+        RustOperand.Constant(constant) =>
+            match constant:
+                RustConstant.Str(text) =>
+                    owner = owned_literal(builder, str(text), span)
+                    reference = temporary(builder, PlanType.StringRef, span)
+                    builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))
+                    return Ok(read_place(reference, false, span))
+                _ => return Err("unsupported Body IR non-string text constant")
+
+
+def lower_text_helper(
+    mut builder: Builder,
+    name: str,
+    result: PlanType,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Bind the retained string-helper identity to shared operands and its monomorphic runtime entry."""
+    if len(arguments) != 2:
+        return Err("invalid Body IR string helper arity")
+    mut operands: list[Operand] = []
+    for argument in arguments:
+        match argument.as_one():
+            Some(value) => operands.append(borrow_text_operand(builder, value, span)?)
+            None => return Err("unsupported Body IR spread string helper argument")
+    text = temporary(builder, result, span)
+    external_call(
+        builder,
+        f"incan_native_runtime::{name}",
+        [PlanType.StringRef, PlanType.StringRef],
+        result,
+        operands,
+        text,
+        span,
+    )
+    match destination:
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+            forget_owned(builder, text.local)
+            drop_owned(builder, output.local, span)
+            builder.emit(plan_assign(output, RvalueKind.Use(read_place(text, result == PlanType.String, span)), span))
+            if result == PlanType.String:
+                builder.owned.append(output.local)
+        None => drop_owned(builder, text.local, span)
+    return Ok(None)
+
+
+def lower_str_builtin(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Materialize str() using the same scalar display conversions as legacy formatting."""
+    mut text = plan_place(0, span)
+    if len(arguments) == 0:
+        text = owned_literal(builder, "", span)
+    elif len(arguments) == 1:
+        match arguments[0].as_one():
+            Some(value) =>
+                text = display_operand(builder, value, span)?
+            None => return Err("unsupported Body IR spread str argument")
+    else:
+        return Err("unsupported Body IR str arity")
+    match destination:
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+            forget_owned(builder, text.local)
+            drop_owned(builder, output.local, span)
+            builder.emit(plan_assign(output, RvalueKind.Use(read_place(text, true, span)), span))
+            builder.owned.append(output.local)
+        None => drop_owned(builder, text.local, span)
+    return Ok(None)
+
+
+pub def lower_module(module: &BodyIrModule, source: str, file: str) -> Result[Plan, str]:
+    """Validate first, then lower every body; any unsupported fact refuses the whole module."""
+    _ = validate_module(module)?
+    if len(module.fieldless_enum_declarations) != 0 or len(module.value_enum_declarations) != 0:
+        return Err("unsupported Body IR fieldless enum or value enum declaration")
+    models = lower_model_declarations(module, file)?
+    mut functions: list[Function] = []
+    mut externals: list[ExternalFunction] = []
+    for body in module.bodies:
+        # Planned calls name their callee, so two bodies with one name would be ambiguous.
+        for retained in functions:
+            if retained.name == str(body.name):
+                return Err(f"unsupported Body IR overloaded function {body.name}")
+        function, runtime = lower_function(module, body, source, file)?
+        functions.append(function)
+        merge_externals(externals, runtime)
+    return Ok(
+        Plan(models=models, functions=functions, externals=externals, span=SourceSpan(file=file, line=1, column=1)),
+    )
+
+
+def lower_model_declarations(module: &BodyIrModule, file: str) -> Result[list[ModelDeclaration], str]:
+    """Retain checked field layout and derives for admitted plain model declarations."""
+    mut models: list[ModelDeclaration] = []
+    for declaration in module.nominal_declarations:
+        if declaration.has_field_defaults:
+            return Err(f"unsupported Body IR model defaults on {declaration.name}")
+        mut fields: list[Parameter] = []
+        for slot in range(len(declaration.fields)):
+            fields.append(
+                Parameter(
+                    name=str(declaration.fields[slot]),
+                    ty=model_type(module.nominal_declarations, declaration.field_types[slot])?,
+                    span=SourceSpan(file=file, line=1, column=1),
+                ),
+            )
+        models.append(
+            ModelDeclaration(
+                name=str(declaration.name),
+                public=declaration.public,
+                fields=fields,
+                field_public=declaration.field_public,
+                derives=declaration.derives,
+                span=SourceSpan(file=file, line=1, column=1),
+            ),
+        )
+    return Ok(models)
+
+
+def merge_externals(mut externals: list[ExternalFunction], additions: list[ExternalFunction]) -> None:
+    """Add each runtime function the plan does not declare yet; one declaration per path."""
+    for external in additions:
+        mut found = false
+        for retained in externals:
+            if retained.path == external.path:
+                found = true
+        if not found:
+            externals.append(external)
+
+
+def lower_function(
+    module: &BodyIrModule,
+    body: &RustBody,
+    source: str,
+    file: str,
+) -> Result[tuple[Function, list[ExternalFunction]], str]:
+    """Build one function's native frame from its checked locals, parameters and body."""
+    if body.is_async:
+        return Err("unsupported Body IR async Body")
+    match body.extern_delegation:
+        Some(_delegation) => return Err("unsupported Body IR ExternDelegation")
+        None => pass
+    validate_callable_representation(body)?
+    span = location(body.span, source, file)
+    return_type = model_type(module.nominal_declarations, body.return_type)?
+    mut builder = Builder(
+        locals=frame_locals(module, body, return_type, span, source, file)?,
+        blocks=[],
+        current=0,
+        source=source,
+        file=file,
+        loops=[],
+        loop_owners=[],
+        externals=[],
+        owned=[],
+        closed=[],
+        nominals=module.nominal_declarations,
+        function_pointer_locals=function_pointer_storage(body),
+    )
+    parameters = frame_parameters(module, body, source, file)?
+    _ = builder.new_block(span)
+    for index in range(len(parameters)):
+        if parameters[index].ty == PlanType.String or is_model_type(parameters[index].ty):
+            builder.owned.append(index + 1)
+    lower_block(module, builder, body.block)?
+    # A body that falls off its end returns unit; any other return type must have returned explicitly.
+    if not builder.closed[builder.current]:
+        if return_type != PlanType.Unit:
+            return Err("Body IR non-unit body has no retained Return")
+        builder.emit(plan_assign(plan_place(0, span), RvalueKind.Use(literal(Constant.Unit, span)), span))
+        drop_all_owned(builder, span)
+        builder.finish(TerminatorKind.Return, span)
+    function = Function(
+        name=body.name,
+        parameters=parameters,
+        return_type=return_type,
+        locals=builder.locals,
+        blocks=builder.blocks,
+        span=span,
+    )
+    return Ok((function, builder.externals))
+
+
+def assign_callable(
+    mut builder: Builder,
+    target: Place,
+    value: Operand,
+    pointer_storage: bool,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Store a Copy callable with its retained item type or the source-required function-pointer coercion."""
+    if target.projection != Projection.Whole:
+        return Err("unsupported Body IR projected callable assignment")
+    source = operand_type(builder, value)?
+    ty, operation = function_assignment(place_type(builder.locals, target), source, value, pointer_storage)?
+    builder.locals[target.local].ty = ty
+    builder.emit(plan_assign(target, operation, span))
+    return Ok(None)
+
+
+def function_argument(mut builder: Builder, ty: PlanType, value: Operand, span: SourceSpan) -> Result[Operand, str]:
+    """Reify an item passed into a function-pointer signature without changing its inferred binding type."""
+    match ty:
+        PlanType.FunctionPointer(_signature) =>
+            source = operand_type(builder, value)?
+            _type, operation = function_assignment(ty, source, value, true)?
+            match operation:
+                RvalueKind.ReifyFunction(_value) =>
+                    result = temporary(builder, ty, span)
+                    builder.emit(plan_assign(result, operation, span))
+                    return Ok(read_place(result, false, span))
+                _ => return Ok(value)
+        _ => return Ok(value)
+
+
+def lower_callable_value(
+    mut builder: Builder,
+    target: &RustLocalCallableTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Call an admitted function item or pointer; closure environments retain a distinct named refusal."""
+    callable = scalar_place(builder, target.operand.place, span)?
+    signature = callable_signature(place_type(builder.locals, callable))?
+    if len(signature) == 0:
+        return Err("invalid Body IR callable signature without return type")
+    mut parameters: list[PlanType] = []
+    for index in range(len(signature) - 1):
+        parameters.append(signature[index])
+    operands = ordered_slot_operands(builder, target.binding, arguments, parameters, span)?
+    result = signature[-1]
+    mut output = temporary(builder, result, span)
+    match destination:
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+        None => pass
+    value = place_read(builder, target.operand.place, target.operand.fact, span)?
+    return lower_callable_result(builder, CalleeKind.Value(value), operands, output, result, span)
+
+
+def frame_locals(
+    module: &BodyIrModule,
+    body: &RustBody,
+    return_type: PlanType,
+    span: SourceSpan,
+    source: str,
+    file: str,
+) -> Result[list[Local], str]:
+    """The frame's locals: the return slot first, then Body IR's locals in `LocalId` order."""
+    mut locals = [Local(ty=return_type, span=span)]
+    for local in body.locals:
+        if int(local.id.index()) + 1 != len(locals):
+            return Err("Body IR local order disagrees with LocalId")
+        locals.append(
+            Local(ty=model_type(module.nominal_declarations, local.ty)?, span=location(local.span, source, file)),
+        )
+    return Ok(locals)
+
+
+def frame_parameters(module: &BodyIrModule, body: &RustBody, source: str, file: str) -> Result[list[Parameter], str]:
+    """The frame's parameters, in declaration order; mutable string, mutable model, and defaulted parameters are refused."""
+    mut parameters: list[Parameter] = []
+    for parameter in body.params:
+        ty = model_type(module.nominal_declarations, parameter.ty)?
+        if is_model_type(ty) and parameter.mutable:
+            return Err("unsupported Body IR mutable model parameter")
+        if ty == PlanType.String and parameter.mutable:
+            return Err("unsupported Body IR mutable String parameter")
+        # Parameters are the first locals, so the n-th parameter must be local n.
+        if int(parameter.local.index()) != len(parameters):
+            return Err("Body IR parameter order disagrees with scalar frame")
+        match parameter.default:
+            CallableParamDefault.Required => pass
+            _ => return Err("unsupported Body IR defaulted parameter")
+        parameters.append(Parameter(name=parameter.name, ty=ty, span=location(parameter.span, source, file)))
+    return Ok(parameters)
+# =====================================================================================================================
+# Boundary types and validation
+# =====================================================================================================================
+# =====================================================================================================================
+# Translating checked values
+# =====================================================================================================================
+# =====================================================================================================================
+# The frame builder and ownership
+# =====================================================================================================================
+# =====================================================================================================================
+# Statements and control flow
+# =====================================================================================================================
+# =====================================================================================================================
+# Calls
+# =====================================================================================================================
+# =====================================================================================================================
+# Plain model construction and field replacement
+# =====================================================================================================================
+# =====================================================================================================================
+# Formatting and strings
+# =====================================================================================================================
+# =====================================================================================================================
+# Module and function entry points
+# =====================================================================================================================
+>>>>>>> theirs

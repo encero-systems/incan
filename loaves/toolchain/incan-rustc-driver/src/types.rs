@@ -4,9 +4,14 @@ use crate::error::PlanError;
 use crate::plan::{ListLeaf, PlanType, SizedNumeric, tuple_element_type};
 use rustc_middle::ty::{Ty, TyCtxt};
 
+<<<<<<< ours
 /// Translate admitted scalar, model, and collection types to their canonical native representations.
 ///
 /// List references preserve source parameter borrowing; checked pairs and other shared references are body-internal.
+=======
+/// Translate an admitted scalar, model, or callable type. Checked pairs and shared references are body-internal and
+/// never appear in source signatures.
+>>>>>>> theirs
 pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, PlanError> {
     Ok(match ty {
         PlanType::EnumTag => tcx.types.isize,
@@ -66,6 +71,8 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::ISize => tcx.types.isize,
         PlanType::USize => tcx.types.usize,
         PlanType::Bool => tcx.types.bool,
+        PlanType::FunctionPointer(signature) => function_pointer_type(tcx, signature)?,
+        PlanType::FunctionItem(name, _) => Ty::new_fn_def(tcx, crate::callees::planned(tcx, name)?, []),
         PlanType::Unit => tcx.types.unit,
         PlanType::CheckedInt => Ty::new_tup(tcx, &[tcx.types.i64, tcx.types.bool]),
         PlanType::String => string_type(tcx)?,
@@ -90,6 +97,20 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
             Ty::new_slice(tcx, native_type(tcx, &PlanType::StrRef)?),
         ),
     })
+}
+
+/// Build a safe Rust-ABI function pointer from its checked inputs and final return entry.
+fn function_pointer_type<'tcx>(tcx: TyCtxt<'tcx>, signature: &[PlanType]) -> Result<Ty<'tcx>, PlanError> {
+    let (result, parameters) = signature.split_last().ok_or_else(|| PlanError::Invalid {
+        function: "function pointer".into(),
+        reason: "callable signature has no return type".into(),
+    })?;
+    let inputs = parameters
+        .iter()
+        .map(|ty| native_type(tcx, ty))
+        .collect::<Result<Vec<_>, _>>()?;
+    let signature = tcx.mk_fn_sig_safe_rust_abi(inputs, native_type(tcx, result)?);
+    Ok(Ty::new_fn_ptr(tcx, rustc_middle::ty::Binder::dummy(signature)))
 }
 
 /// Resolve the real standard String definition rather than manufacturing an ADT layout.
