@@ -5,6 +5,25 @@
 
 use super::*;
 
+/// Checked integer helpers retain concrete receiver and result types in Body IR.
+#[test]
+fn checked_integer_helper_locals_retain_types() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n    high: u8 = 250\n    value = high.checked_add(10u8)\n    println(high.wrapping_add(10u8))\n    wide: i16 = 300\n    resized = wide.try_resize[u8]()\n",
+        &["integer_helpers"],
+    )?;
+    for body in &module.bodies {
+        for local in &body.locals {
+            assert!(
+                !local.ty.to_string().contains('?'),
+                "unresolved local: {local:?}\n{}",
+                body.render_snapshot()
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Constructor temporaries use the open sides settled by their binding and in-place match contexts.
 #[test]
 fn settled_constructor_spans_retain_payload_types() -> Result<(), Box<dyn std::error::Error>> {
