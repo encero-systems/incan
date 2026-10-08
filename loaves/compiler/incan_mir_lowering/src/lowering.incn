@@ -1763,7 +1763,10 @@ def callable_argument(
             match source:
                 PlanType.FunctionItem(name, _held) =>
                     constructor = f"__incan_item_closure_{name}"
-                    synthesize(builder, closure_constructor(constructor, name, [], signature, span))
+                    # The environment belongs to the item, not to this call site: every function passing the item
+                    # synthesizes the identical constructor, so the plan keeps one copy.
+                    anchor = SourceSpan(file=builder.file, line=1, column=1)
+                    synthesize(builder, closure_constructor(constructor, name, [], signature, anchor))
                     boxed = temporary(builder, PlanType.Closure(signature), span)
                     terminate_call(builder, CalleeKind.Planned(constructor), [], boxed, span)
                     builder.owned.append(boxed.local)
