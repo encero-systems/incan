@@ -168,14 +168,14 @@ fn array_type<'tcx>(tcx: TyCtxt<'tcx>, element: Ty<'tcx>, count: i64) -> Result<
     Ok(Ty::new_array(tcx, element, count))
 }
 
-/// Resolve a previously injected source model; no external nominal can enter by spelling alone.
+/// Resolve an injected model or its concrete layout alias; aliases retain the same underlying source-named ADT.
 pub fn model_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Result<Ty<'tcx>, PlanError> {
     let definition = tcx
         .hir_crate_items(())
         .free_items()
         .map(|item| item.owner_id.to_def_id())
         .find(|def| {
-            tcx.def_kind(*def) == rustc_hir::def::DefKind::Struct
+            matches!(tcx.def_kind(*def), rustc_hir::def::DefKind::Struct | rustc_hir::def::DefKind::TyAlias)
                 && tcx.opt_item_name(*def).is_some_and(|symbol| symbol.as_str() == name)
         })
         .ok_or_else(|| PlanError::Invalid {

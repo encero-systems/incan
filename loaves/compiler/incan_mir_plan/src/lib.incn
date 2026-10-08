@@ -424,7 +424,7 @@ pub model Plan:
 @derive(Clone, PartialEq)
 pub model ModelDeclaration:
     """
-    Checked field layout and implicit derives for one nongeneric source model or plain newtype.
+    Checked field layout and implicit derives for one concrete source nominal layout.
 
     A newtype has exactly one public field named `0`, emitted as a tuple slot; named model fields retain their names.
     """
@@ -435,6 +435,8 @@ pub model ModelDeclaration:
     pub field_public: list[bool]
     pub derives: list[str]
     pub span: SourceSpan
+    # A specialized carrier keeps its source name for derived Debug and declaration metadata.
+    pub source_name: str = ""
 
 
 @derive(Clone, PartialEq)

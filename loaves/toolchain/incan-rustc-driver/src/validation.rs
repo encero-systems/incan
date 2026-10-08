@@ -1180,7 +1180,7 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
 
 /// Validate named model layouts and single-slot newtypes, rejecting cyclic layouts before invoking rustc.
 fn validate_models(plan: &Plan) -> Result<(), PlanError> {
-    let mut names: BTreeSet<_> = plan.functions.iter().map(|function| &function.name).collect();
+    let mut names: BTreeSet<_> = plan.functions.iter().map(|function| function.name.clone()).collect();
     for (index, declaration) in plan.models.iter().enumerate() {
         span(&declaration.span)?;
         let tuple = declaration.fields.len() == 1 && declaration.fields[0].name == "0";
@@ -1192,7 +1192,11 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
                 && declaration.derives.iter().collect::<BTreeSet<_>>().len() == declaration.derives.len()
         };
         if !identifier(&declaration.name)
-            || !names.insert(&declaration.name)
+            || !names.insert(declaration.name.clone())
+            || (!declaration.source_name.is_empty() && !identifier(&declaration.source_name))
+            || (!declaration.source_name.is_empty()
+                && declaration.source_name != declaration.name
+                && !names.insert(crate::declarations::model_module_name(declaration)))
             || declaration.fields.len() != declaration.field_public.len()
             || !derives_valid
         {

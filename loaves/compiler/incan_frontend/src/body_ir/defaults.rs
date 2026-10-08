@@ -25,6 +25,7 @@ pub(super) fn attach_model_field_defaults(
             facts,
             IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Unit),
         );
+        builder.type_parameters = declaration.type_parameters.clone();
         let scope = builder.new_scope(None, span);
 
         // ---- Canonical field slots and deferred computations ----

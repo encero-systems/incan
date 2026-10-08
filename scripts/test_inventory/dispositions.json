@@ -5783,6 +5783,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/nominal_parameters.rs": {
+      "disposition": "keep",
+      "notes": "Checked model owner binders, method frames and deferred field defaults retained for direct-route specialization; frontend facts without legacy emission.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/operators_literals_and_assignment.rs": {
       "disposition": "keep",
       "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",

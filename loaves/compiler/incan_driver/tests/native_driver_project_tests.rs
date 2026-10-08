@@ -721,6 +721,56 @@ def main() -> None:
     )
 }
 
+/// Prove model owner layouts, independent method arguments, defaults, and source Debug names against legacy.
+#[test]
+fn type_parameter_model_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("type-parameter-model")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def identity[T](value: T) -> T:
+    return value
+
+@derive(Debug)
+model Envelope[T]:
+    pub value: T
+    pub label: str = "label"
+
+    def get(self) -> T:
+        return self.value
+
+    def forward(self) -> T:
+        return identity[T](self.value)
+
+    def pick[U](self, value: U) -> U:
+        return value
+
+@derive(Debug)
+model Marker[T]:
+    pub label: str
+
+def read[T](value: Envelope[T]) -> T:
+    return value.value
+
+def main() -> None:
+    whole = Envelope[int](value=42)
+    text = Envelope[str](value="stored")
+    marker = Marker[int](label="marker")
+    println(whole.get())
+    println(text.forward())
+    println(read(text))
+    println(whole.pick[str]("picked"))
+    println(text.pick(true))
+    println(whole.label)
+    println(f"{whole:?}")
+    println(f"{text:?}")
+    println(f"{marker:?}")
+"#,
+    )
+}
+
 /// Prove carriers retained only inside closed function instances, including forwarded calls, against legacy.
 #[test]
 fn type_parameter_carrier_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

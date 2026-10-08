@@ -306,7 +306,7 @@ pub struct NominalDeclaration {
     pub derives: Vec<String>,
     /// Checked nominal bindings needed by those field types; serialized publications retain only referenced entries.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
-    /// Ordered checker-retained declaration parameters used to close class layouts at checked uses.
+    /// Ordered checker-retained declaration parameters used to close nominal layouts at checked uses.
     #[serde(default)]
     pub type_parameters: Vec<String>,
     /// Number of declared type parameters, agreeing with [`Self::type_parameters`].

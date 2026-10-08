@@ -217,9 +217,6 @@ fn validate_declarations(
 fn model_refusal_feature(model: &incan_frontend::ast::ModelDecl) -> String {
 
     // ---- Structural declaration features ----
-    if !model.type_params.is_empty() {
-        return "type parameters".to_owned();
-    }
     if model.traits.iter().any(|adoption| !adoption.node.type_args.is_empty()) {
         return "generic trait adoption".to_owned();
     }
@@ -236,8 +233,8 @@ fn model_refusal_feature(model: &incan_frontend::ast::ModelDecl) -> String {
     }
 
     // ---- Method facts ----
-    if model.methods.iter().any(|method| !method.node.type_params.is_empty() || !method.node.decorators.is_empty()) {
-        return "generic or decorated methods".to_owned();
+    if model.methods.iter().any(|method| !method.node.decorators.is_empty()) {
+        return "decorated methods".to_owned();
     }
 
     // ---- Decorator expansion ----

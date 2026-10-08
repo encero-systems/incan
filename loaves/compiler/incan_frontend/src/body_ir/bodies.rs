@@ -228,14 +228,7 @@ pub(super) fn lower_method_body(
         .declarations
         .method_bindings_by_span
         .get(&(decl_span.start, decl_span.end));
-    let mut type_parameters = lowering_facts
-        .type_info
-        .declarations
-        .class_layouts
-        .get(owner_name)
-        .map(|layout| layout.type_params.clone())
-        .or_else(|| lowering_facts.type_info.traits.type_params.get(owner_name).cloned())
-        .unwrap_or_default();
+    let mut type_parameters = owner_parameter_names(receiver_ty, owner_name, lowering_facts.type_info);
     type_parameters.extend(method.type_params.iter().map(|parameter| parameter.name.clone()));
     let owner_return_type = binding
         .map(|binding| semantic_type_from_resolved(&binding.return_type))
@@ -371,6 +364,26 @@ pub(super) fn owner_self_type(owner_name: &str, owner_type_params: &[ast::TypePa
                 .collect(),
         }
     }
+}
+
+/// Read declaration binders from the explicit owner frame, preserving the trait registry for a `Self` receiver.
+/// The frontend constructs this frame from the accepted owner declaration; these placeholders never come from values.
+fn owner_parameter_names(receiver_ty: &IncanType, owner_name: &str, type_info: &TypeCheckInfo) -> Vec<String> {
+    if let IncanType::Generic { args, .. } = receiver_ty {
+        return args
+            .iter()
+            .filter_map(|argument| match argument {
+                IncanType::TypeVar(name) => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+    }
+    type_info
+        .traits
+        .type_params
+        .get(owner_name)
+        .cloned()
+        .unwrap_or_default()
 }
 
 /// Make a value-returning body's trailing expression its `return` (#2025).

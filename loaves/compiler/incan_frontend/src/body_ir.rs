@@ -430,8 +430,8 @@ struct FunctionDefaultSource {
 ///
 /// This is deliberately a source-local data-model shape, not a general nominal-semantics predicate. The replacement
 /// runtime admits builtin Rust derives, checked JSON protocol derives, and field aliases without serde renames, but
-/// cannot execute other model decorators or generic substitution without retained facts. Non-generic methods remain
-/// separate bodies; adopted trait slots are retained in the module implementation registry. Field defaults have
+/// cannot execute other model decorators. Ordered owner and method binders remain placeholders for checked concrete
+/// instance selection; adopted trait slots are retained in the module implementation registry. Field defaults have
 /// declaration-owned deferred computations; each construction's checked binding selects the omitted slots without
 /// repeating source expressions at call sites.
 pub fn is_direct_replacement_plain_model(model: &ast::ModelDecl) -> bool {
@@ -478,15 +478,11 @@ pub fn is_direct_replacement_checked_model(model: &ast::ModelDecl, type_info: &T
 
 /// Keep the structural admission boundary shared by builtin and checked serde derive selections.
 fn has_direct_replacement_model_shape(model: &ast::ModelDecl) -> bool {
-    model.type_params.is_empty()
-        && model.traits.iter().all(|adoption| adoption.node.type_args.is_empty())
+    model.traits.iter().all(|adoption| adoption.node.type_args.is_empty())
         && model.method_aliases.is_empty()
         && model.method_partials.is_empty()
         && model.properties.is_empty()
-        && model
-            .methods
-            .iter()
-            .all(|method| method.node.type_params.is_empty() && method.node.decorators.is_empty())
+        && model.methods.iter().all(|method| method.node.decorators.is_empty())
 }
 
 /// Admit only the bare builtin derive decorator whose complete native trait selection Body IR retains.

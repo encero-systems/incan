@@ -15,7 +15,7 @@ from numerics import numeric_type
 from tuples import tuple_type, generic_tuple_type, type_name, tuple_slot
 from pub::incan_mir_plan import tuple_element_type
 from generators import generator_type
-from nominal_instances import class_symbol
+from nominal_instances import nominal_symbol
 
 
 pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Result[PlanType, str]:
@@ -44,7 +44,7 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
         RustType.Generic(base=base, args=arguments) =>
             for index in range(len(declarations)):
                 declaration = declarations[index]
-                if declaration.type_parameter_count != 0 and declaration.canonical.declaration_name == str(base) and declaration.name == class_symbol(
+                if declaration.type_parameter_count != 0 and declaration.canonical.declaration_name == str(base) and declaration.name == nominal_symbol(
                     str(base),
                     arguments,
                 ):
