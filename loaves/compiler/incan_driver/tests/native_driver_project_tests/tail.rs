@@ -238,3 +238,74 @@ def main() -> None:
 "#,
     )
 }
+
+/// List slices copy their selection through legacy's Python-style helper, including omitted, negative and stepped
+/// components and the zero-step failure.
+#[test]
+fn list_slices_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_case(
+        "list_slices",
+        r#"
+def program_result() -> list[int]:
+    values = [40, 2]
+    return values[0:1]
+
+def show(values: list[int]) -> None:
+    mut text = ""
+    for value in values:
+        text = text + f"{value},"
+    println(text)
+
+def main() -> None:
+    show(program_result())
+    values = [1, 2, 3, 4, 5]
+    show(values[1:3])
+    show(values[:2])
+    show(values[3:])
+    show(values[::2])
+    show(values[-2:])
+    show(values[::-1])
+    start = 1
+    show(values[start:start + 2])
+    names = ["a", "b", "c"]
+    tail = names[1:]
+    println(tail[0])
+    println(tail[1])
+    copy = values[:]
+    println(len(copy))
+"#,
+    )?;
+    let actual = compare_with_legacy(
+        "list_slice_zero_step",
+        "def main() -> None:\n    values = [1, 2]\n    step = 0\n    part = values[::step]\n    println(len(part))\n",
+    )?;
+    assert!(!actual.status.success());
+    Ok(())
+}
+
+/// Fields of a model element read out of a list copy scalars and clone owned values, as legacy's element reads do.
+#[test]
+fn list_element_fields_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_case(
+        "list_element_fields",
+        r#"
+type Email = newtype str
+
+model User:
+    email: Email
+    age: int
+    name: str
+
+def main() -> None:
+    user = User(email=Email("ada@example.com"), age=36, name="Ada")
+    mut users: list[User] = [user]
+    users.append(User(email=Email("bo@example.com"), age=41, name="Bo"))
+    println(users[0].email.0)
+    println(users[1].age)
+    println(users[1].name)
+    first = users[0].name
+    println(first + "!")
+    println(len(users))
+"#,
+    )
+}

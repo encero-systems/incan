@@ -114,7 +114,7 @@ from generators import (
 from project import project_context
 from traits import method_index, specialize_traits, validate_static_receiver
 from decls import lower_model_declarations, static_slot, static_accessors
-from models import model_type, model_place, constructor_index
+from models import model_type, model_place, constructor_index, field_slot
 from model_values import (
     debug_model_operand,
     display_model_operand,
@@ -2575,8 +2575,19 @@ def checked_list_argument(
         RustOperand.Place(read) =>
             if mutable and read.fact != OwnershipFact.MutBorrow:
                 return Err("unsupported Body IR list argument without mutable borrow fact")
+            if not mutable and len(read.place.projection) != 0 and is_list(
+                builder.locals[list_base_place(builder, read.place, span)?.local].ty,
+            ):
+                return projected_list_argument(builder, read.place, span)
             return list_borrow(builder, list_root_place(builder, read.place, span)?, mutable, span)
         _ => return Err("unsupported Body IR constant list argument")
+
+
+def projected_list_argument(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Operand, str]:
+    """Copy an indexed or sliced list out for a shared list parameter; the copy stays owned until its scope ends."""
+    match indexed_read(builder, source, span)?.kind:
+        OperandKind.Move(place) => return list_borrow(builder, place, false, span)
+        _ => return Err("unsupported Body IR projected non-list argument")
 
 
 def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
@@ -2631,13 +2642,22 @@ def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -
 
 
 def indexed_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Operand, str]:
-    """Use the retained list projection and legacy negative-index error behavior."""
+    """Use the retained list projection and legacy negative-index error behavior; a final slice copies a new list."""
     if len(source.projection) == 0:
         return Err("unsupported Body IR list read without index")
     mut place = list_base_place(builder, source, span)?
+    last = len(source.projection) - 1
     for slot in range(len(source.projection)):
-        argument = list_index_operand(builder, source, slot, span)?
-        place = read_list_element(builder, place, argument, span)?
+        match source.projection[slot]:
+            PlaceElem.Slice(start=_start, end=_end, step=_step) =>
+                if slot != last:
+                    return Err("unsupported Body IR projection after list slice")
+                place = read_list_slice(builder, place, source.projection[slot], span)?
+            PlaceElem.Field(name=_name, canonical=_canonical, structural=_structural) =>
+                place = read_element_field(builder, place, source.projection[slot], span)?
+            _ =>
+                argument = list_index_operand(builder, source, slot, span)?
+                place = read_list_element(builder, place, argument, span)?
     ty = builder.locals[place.local].ty
     return Ok(read_place(place, ty == PlanType.String or is_owned_list(ty) or is_nominal_type(ty), span))
 
@@ -2659,6 +2679,80 @@ def read_list_element(mut builder: Builder, place: Place, argument: Operand, spa
         span,
     )
     return Ok(output)
+
+
+def read_list_slice(mut builder: Builder, place: Place, projection: &PlaceElem, span: SourceSpan) -> Result[Place, str]:
+    """Copy the selected elements into a new owned list through legacy's Python-style slice helper."""
+    leaf, depth = require_list_shape(builder.locals[place.local].ty, "unsupported Body IR slicing non-list")?
+    mut bounds: list[Operand] = []
+    # Each component travels with its presence, so an omitted bound or step keeps the slice default.
+    match projection:
+        PlaceElem.Slice(start=start, end=end, step=step) =>
+            match start:
+                Some(value) => bounds.extend(slice_bound(builder, value, span)?)
+                None => bounds.extend(absent_slice_bound(span))
+            match end:
+                Some(value) => bounds.extend(slice_bound(builder, value, span)?)
+                None => bounds.extend(absent_slice_bound(span))
+            match step:
+                Some(value) => bounds.extend(slice_bound(builder, value, span)?)
+                None => bounds.extend(absent_slice_bound(span))
+        _ => return Err("unsupported Body IR list slice or field projection")
+    reference = list_borrow(builder, place, false, span)?
+    output = temporary(builder, PlanType.List(leaf, depth), span)
+    mut operands = [reference]
+    operands.extend(bounds)
+    list_call(
+        builder,
+        "slice_list",
+        list_element(leaf, depth),
+        [PlanType.ListRef(leaf, depth), PlanType.Int, PlanType.Bool, PlanType.Int, PlanType.Bool, PlanType.Int, PlanType.Bool],
+        PlanType.List(leaf, depth),
+        operands,
+        output,
+        span,
+    )
+    return Ok(output)
+
+
+def read_element_field(
+    mut builder: Builder,
+    place: Place,
+    projection: &PlaceElem,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Read one field of a model element already copied out of a list, copying scalars and cloning owned values."""
+    match place_type(builder.locals, place):
+        PlanType.Model(owner, _name) =>
+            declaration = builder.nominals[owner]
+            slot = field_slot(projection, declaration)?
+            ty = model_type(builder.nominals, declaration.field_types[slot])?
+            field = Place(local=place.local, projection=Projection.Field(slot, ty), span=span)
+            if ty == PlanType.String:
+                return clone_text(builder, field, span)
+            if is_nominal_type(ty):
+                match clone_nominal_operand(builder, field, span)?.kind:
+                    OperandKind.Move(cloned) => return Ok(cloned)
+                    _ => return Err("invalid Body IR cloned list element field")
+            if not numeric_carrier(ty) and ty != PlanType.Bool:
+                return Err("unsupported Body IR list element field type")
+            output = temporary(builder, ty, span)
+            builder.emit(plan_assign(output, RvalueKind.Use(read_place(field, false, span)), span))
+            return Ok(output)
+        _ => return Err("unsupported Body IR list slice or field projection")
+
+
+def slice_bound(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[list[Operand], str]:
+    """Pass a written slice bound or step as a present int component."""
+    operand = scalar_operand(builder, value, span)?
+    if operand_type(builder, operand)? != PlanType.Int:
+        return Err("unsupported Body IR non-int list slice component")
+    return Ok([operand, literal(Constant.Bool(true), span)])
+
+
+def absent_slice_bound(span: SourceSpan) -> list[Operand]:
+    """Mark an omitted slice bound or step absent, as legacy passes `None` for it."""
+    return [literal(Constant.Int(0), span), literal(Constant.Bool(false), span)]
 
 
 def list_base_place(builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Place, str]:
