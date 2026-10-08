@@ -9,6 +9,7 @@ from rust::incan_semantics_core::body_ir import (
     Operand as RustOperand,
     OwnershipFact,
     ArgumentElement as RustArgumentElement,
+    NamedCallableTarget,
 )
 from pub::incan_mir_plan import PlanType, Local, RvalueKind, SourceSpan, EnumDeclaration
 from models import model_place
@@ -60,7 +61,40 @@ pub def function_name(module: &BodyIrModule, body: &Body) -> str:
                     symbol += symbol_component(str(body.name))
                 return symbol
             None => pass
+    if len(body.type_parameters) != 0:
+        return f"__incan_body_{body.span.start}{symbol_component(str(body.name))}"
     return f"__incan_body_{body.span.start}"
+
+
+pub def static_type_arguments(module: &BodyIrModule, target: &NamedCallableTarget) -> Result[list[RustType], str]:
+    """Prefix method arguments with the checked generic class receiver's ordered owner arguments."""
+    mut arguments = static_owner_arguments(module, target)?
+    for argument in target.type_args:
+        arguments.append(argument.clone())
+    return Ok(arguments)
+
+
+def static_owner_arguments(module: &BodyIrModule, target: &NamedCallableTarget) -> Result[list[RustType], str]:
+    """Read class bindings from the checked receiver, retaining no borrowed foreign vector."""
+    match target.receiver_type:
+        Some(ty) =>
+            match ty:
+                RustType.Generic(base=base, args=arguments) =>
+                    for declaration in module.nominal_declarations:
+                        if declaration.canonical.kind != SemanticSourceTargetKind.Class or declaration.canonical.declaration_name != str(
+                            base,
+                        ):
+                            continue
+                        if int(declaration.type_parameter_count) != len(arguments):
+                            return Err(f"unsupported Body IR static class type argument arity on {base}")
+                        mut retained: list[RustType] = []
+                        for argument in arguments:
+                            retained.append(argument.clone())
+                        return Ok(retained)
+                    return Err(f"unsupported Body IR static class receiver {base}")
+                _ => pass
+        None => pass
+    return Ok([])
 
 
 pub def body_module_identity(body: &Body) -> Result[str, str]:

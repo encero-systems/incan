@@ -272,7 +272,7 @@ fn build_body_ir_module_v0_with_provider_operations(
         provider_operations,
         rust_module: program.rust_module_path.as_ref().map(|path| path.node.as_str()),
     };
-    defaults::attach_model_field_defaults(program, &mut nominal_declarations, &lowering_facts);
+    defaults::attach_nominal_field_defaults(program, &mut nominal_declarations, &lowering_facts);
     let mut bodies = program
         .declarations
         .iter()
@@ -525,20 +525,47 @@ pub fn is_direct_replacement_plain_newtype(newtype: &ast::NewtypeDecl) -> bool {
 /// Admit source classes whose fields and method bodies have complete direct-route facts.
 ///
 /// Ordered owner parameters and method parameters are retained for checked instance scheduling. Inheritance,
-/// decorators, properties, aliases, and defaults remain refused.
+/// properties and aliases remain refused. Field defaults use declaration-owned deferred computations, shared with
+/// models. Explicit Clone and Debug selections repeat the class's automatic derives and need no additional facts.
+/// Built-in classmethod and staticmethod decorators use the checker's receiver and constructor facts; user-defined
+/// decorator chains remain refused because their replacement callable must cross the declaration boundary.
 pub fn is_direct_replacement_class(class: &ast::ClassDecl) -> bool {
-    class.decorators.is_empty()
+    class
+        .decorators
+        .iter()
+        .all(|decorator| is_direct_replacement_class_automatic_derive(&decorator.node))
         && class.traits.iter().all(|adoption| adoption.node.type_args.is_empty())
         && class.extends.is_none()
         && class.method_aliases.is_empty()
         && class.method_partials.is_empty()
         && class.properties.is_empty()
         && class.declarative_members.is_empty()
-        && class
-            .fields
-            .iter()
-            .all(|field| field.node.metadata.alias.is_none() && field.node.default.is_none())
-        && class.methods.iter().all(|method| method.node.decorators.is_empty())
+        && class.fields.iter().all(|field| field.node.metadata.alias.is_none())
+        && class.methods.iter().all(|method| {
+            method.node.decorators.iter().all(|decorator| {
+                decorator.node.args.is_empty()
+                    && decorator.node.type_args.is_empty()
+                    && matches!(
+                        incan_lang::lang::decorators::from_segments(&decorator.node.path.segments),
+                        Some(
+                            incan_lang::lang::decorators::DecoratorId::StaticMethod
+                                | incan_lang::lang::decorators::DecoratorId::ClassMethod
+                        )
+                    )
+            })
+        })
+}
+
+/// Admit only explicit repetitions of the automatic class derives already retained by the nominal collector.
+/// Other derives remain refused until their checked selection crosses the declaration boundary.
+fn is_direct_replacement_class_automatic_derive(decorator: &ast::Decorator) -> bool {
+    decorator.name == "derive"
+        && decorator.path.segments == ["derive"]
+        && decorator.type_args.is_empty()
+        && decorator.args.iter().all(|argument| {
+            matches!(argument, ast::DecoratorArg::Positional(value) if matches!(&value.node,
+                ast::Expr::Ident(name) if matches!(name.as_str(), "Clone" | "Debug")))
+        })
 }
 
 /// Determine whether an enum carries the narrow source-local fieldless normal-enum declaration fact.

@@ -1011,6 +1011,38 @@ fn source_class_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>
     )
 }
 
+/// Explicit automatic class derives preserve construction, receiver reads, and mutation against legacy.
+#[test]
+fn class_automatic_derives_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "class_automatic_derives",
+        "@derive(Clone, Debug)\nclass Counter:\n    value: int\n\n    def get(self) -> int:\n        return self.value\n\n    def bump(mut self) -> None:\n        self.value += 1\n\ndef main() -> None:\n    mut counter = Counter(value=41)\n    println(counter.get())\n    counter.bump()\n    println(counter.get())\n",
+        None,
+    )
+}
+
+/// Omitted class fields evaluate their defaults once per construction; supplied fields suppress those effects.
+#[test]
+fn class_field_defaults_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "class_field_defaults",
+        "def secret() -> int:\n    println(99)\n    return 7\n\nclass Vault:\n    pub label: int\n    hidden: int = secret()\n\n    def reveal(self) -> int:\n        return self.hidden\n\ndef main() -> None:\n    first = Vault(label=1)\n    second = Vault(label=2, hidden=9)\n    println(first.reveal())\n    println(second.reveal())\n",
+        None,
+    )
+}
+
+/// Classmethods construct explicitly instantiated owners with the same output as legacy.
+#[test]
+fn classmethod_type_arguments_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "classmethod_type_arguments",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_functions_and_projections/classmethod_with_explicit_type_arguments.incn"
+        ),
+        None,
+    )
+}
+
 /// Prove canonical scalar casts and default values byte-identical to legacy.
 #[test]
 fn numeric_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

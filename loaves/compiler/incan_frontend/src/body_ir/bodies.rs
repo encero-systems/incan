@@ -241,6 +241,13 @@ pub(super) fn lower_method_body(
         .map(|binding| semantic_type_from_resolved(&binding.return_type))
         .map(|ty| parameter_types::retain_parameter_type(ty, &type_parameters))
         .unwrap_or(IncanType::Unknown);
+    // Nominal Self returns use the same checked owner substitution as ordinary Self parameters. Trait defaults
+    // retain their open Self receiver for the later concrete implementation specialization.
+    let owner_return_type = if owner_return_type == IncanType::SelfType {
+        receiver_ty.clone()
+    } else {
+        owner_return_type
+    };
 
     let mut builder = BodyBuilder::new(lowering_facts, owner_return_type.clone());
     builder.type_parameters = type_parameters;
@@ -327,11 +334,17 @@ pub(super) fn lower_method_body(
     }
 
     Some(bir::Body {
-        type_parameters: method
-            .type_params
-            .iter()
-            .map(|parameter| parameter.name.clone())
-            .collect(),
+        // Instance methods close their owner through the receiver-layout pass. Associated methods have no
+        // receiver frame, so callable scheduling must retain the owner parameters alongside method parameters.
+        type_parameters: if method.receiver.is_none() {
+            builder.type_parameters.clone()
+        } else {
+            method
+                .type_params
+                .iter()
+                .map(|parameter| parameter.name.clone())
+                .collect()
+        },
         decl_id,
         direct_call_id,
         canonical: binding.and_then(|binding| binding.identity.clone()),

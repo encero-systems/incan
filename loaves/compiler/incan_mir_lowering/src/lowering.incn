@@ -99,7 +99,14 @@ from rust::incan_semantics_core::body_ir import (
 )
 # ---- Admission helpers owned by this Loaf ----
 from rust::incan_semantics_core import SymbolOrigin, canonical_module_identity
-from classes import frame_type, function_name, body_module_identity, body_type_bindings, method_receiver
+from classes import (
+    frame_type,
+    function_name,
+    body_module_identity,
+    body_type_bindings,
+    method_receiver,
+    static_type_arguments,
+)
 from tuple_iterators import zip_shape, zip_call, clone_zip, zip_next, initialize_zip_iterator, enumerated_element
 from generators import (
     generator_shape,
@@ -1223,7 +1230,8 @@ def lower_type_parameter_call(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Schedule the checker-selected closed frame, refusing every unadmitted type argument before use."""
-    closed = checked_type_arguments(builder, target.type_args)?
+    _ = validate_static_receiver(module, target)?
+    closed = checked_type_arguments(builder, static_type_arguments(module, target)?)?
     concrete_body = instantiate(body, closed)?
     builder.instances.append(Instance(body=body.clone(), arguments=closed))
     return lower_local_call(module, builder, target, concrete_body, arguments, destination, span)

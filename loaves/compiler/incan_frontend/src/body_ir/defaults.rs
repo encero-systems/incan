@@ -2,17 +2,19 @@
 
 use super::*;
 
-/// Retain each admitted model's field defaults in a declaration-owned frame, evaluated only for omitted slots.
-pub(super) fn attach_model_field_defaults(
+/// Retain each admitted model or class's field defaults in a declaration-owned frame, evaluated only for omitted slots.
+pub(super) fn attach_nominal_field_defaults(
     program: &ast::Program,
     declarations: &mut [bir::NominalDeclaration],
     facts: &BodyIrLoweringFacts<'_, '_>,
 ) {
     for source in &program.declarations {
-        let ast::Declaration::Model(model) = &source.node else {
-            continue;
+        let (name, fields) = match &source.node {
+            ast::Declaration::Model(model) => (&model.name, &model.fields),
+            ast::Declaration::Class(class) => (&class.name, &class.fields),
+            _ => continue,
         };
-        let Some(declaration) = declarations.iter_mut().find(|value| value.name == model.name) else {
+        let Some(declaration) = declarations.iter_mut().find(|value| value.name == *name) else {
             continue;
         };
         if !declaration.has_field_defaults {
@@ -29,7 +31,7 @@ pub(super) fn attach_model_field_defaults(
 
         // ---- Canonical field slots and deferred computations ----
         let mut params = Vec::new();
-        for (field, ty) in model.fields.iter().zip(&declaration.field_types) {
+        for (field, ty) in fields.iter().zip(&declaration.field_types) {
             let local =
                 builder.declare_new_local(field.node.name.clone(), ty.clone(), scope, hir_span(field.span), &[]);
             builder.locals[local.index()].origin = bir::LocalOrigin::Parameter;
