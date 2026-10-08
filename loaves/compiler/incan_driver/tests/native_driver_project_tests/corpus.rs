@@ -2,6 +2,47 @@
 
 use super::*;
 
+/// Primitive and flat tuple match parity, including rejected string literals and branch-owned bindings.
+pub(super) const STRUCTURAL_MATCHES_SOURCE: &str = r#"
+def pick(number: int) -> str:
+    match number:
+        1 => "one"
+        _ => "other"
+
+def describe(pair: tuple[int, str]) -> str:
+    match pair:
+        (0, _) => return "zero"
+        (_, "answer") => return "answer"
+        (number, word) => return f"{number + 1} {word.upper()}"
+
+def classify(code: str) -> str:
+    mut kind = "other"
+    match code:
+        "a" => kind = "alpha"
+        "b" => kind = "beta"
+        _ => pass
+    return kind
+
+def main() -> None:
+    println(pick(1))
+    println(pick(2))
+    println(classify("b"))
+    println(classify("z"))
+    pair: tuple[int, str] = (42, "hello")
+    println(describe(pair))
+    println(describe((0, "unused")))
+    println(describe((7, "answer")))
+    match pair:
+        (0, "absent") => println("wrong")
+        (number, word) => println(f"{number} {word}")
+    println(pair)
+    flag = true
+    match flag:
+        false => println("wrong")
+        true => println("true")
+        _ => println("wrong")
+"#;
+
 /// Primitive static-list parity, including an argument that changes the same cell before its outer append.
 pub(super) const LIST_STATICS_SOURCE: &str = r#"
 static ITEMS: list[int] = [1]

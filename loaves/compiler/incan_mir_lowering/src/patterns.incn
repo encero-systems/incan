@@ -1,0 +1,101 @@
+"""Checked primitive and flat tuple pattern tests for direct-route match dispatch."""
+
+from rust::incan_semantics_core::body_ir import Pattern as RustPattern, Constant as RustConstant
+from pub::incan_mir_plan import PlanType, Place, SourceSpan, RvalueKind, BinaryOp, Constant, TerminatorKind
+from pub::incan_mir_plan import assign as plan_assign
+from frame import Builder, temporary, place_type, read_place, literal, external_call, drop_owned
+from tuples import tuple_fields, is_tuple_type
+from text_plan import owned_literal
+
+
+pub def pattern_tests(
+    mut builder: Builder,
+    source: Place,
+    pattern: &RustPattern,
+    selected: int,
+    rejected: int,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Test retained literals and tuple components before any arm binding becomes initialized."""
+    match pattern:
+        RustPattern.Wildcard => builder.finish(TerminatorKind.Goto(selected), span)
+        RustPattern.Var(_binding) => builder.finish(TerminatorKind.Goto(selected), span)
+        RustPattern.Literal(value) =>
+            condition = literal_test(builder, source, value, span)?
+            builder.finish(TerminatorKind.SwitchBool(read_place(condition, false, span), rejected, selected), span)
+        RustPattern.Tuple(items) =>
+            ty = place_type(builder.locals, source)
+            if not is_tuple_type(ty):
+                return Err("invalid Body IR tuple pattern carrier")
+            fields = tuple_fields(source, ty, span)?
+            if len(fields) != len(items):
+                return Err("invalid Body IR tuple pattern layout")
+            for index in range(len(items)):
+                next_component = builder.new_block(span)
+                pattern_tests(builder, fields[index], items[index], next_component, rejected, span)?
+                builder.current = next_component
+            builder.finish(TerminatorKind.Goto(selected), span)
+        _ => return Err("unsupported Body IR structural match pattern")
+    return Ok(None)
+
+
+def literal_test(mut builder: Builder, source: Place, value: &RustConstant, span: SourceSpan) -> Result[Place, str]:
+    """Compare an exact primitive literal carrier, borrowing strings through the existing equality runtime."""
+    ty = place_type(builder.locals, source)
+    match value:
+        RustConstant.Str(text) =>
+            if ty != PlanType.String:
+                return Err("invalid Body IR string pattern carrier")
+            return text_literal_test(builder, source, str(text), span)
+        _ => pass
+    mut constant = Constant.Unit
+    mut expected = PlanType.Unit
+    match value.clone():
+        RustConstant.Int(number) =>
+            constant = Constant.Int(number)
+            expected = PlanType.Int
+        RustConstant.Float(text) =>
+            constant = Constant.Float(float(str(text)))
+            expected = PlanType.Float
+        RustConstant.Bool(flag) =>
+            constant = Constant.Bool(flag)
+            expected = PlanType.Bool
+        RustConstant.Unit => pass
+        _ => return Err("unsupported Body IR nonprimitive literal pattern")
+    if ty != expected:
+        return Err("invalid Body IR literal pattern carrier")
+    result = temporary(builder, PlanType.Bool, span)
+    if ty == PlanType.Unit:
+        builder.emit(plan_assign(result, RvalueKind.Use(literal(Constant.Bool(true), span)), span))
+    else:
+        builder.emit(
+            plan_assign(
+                result,
+                RvalueKind.Binary(BinaryOp.Equal, read_place(source, false, span), literal(constant, span)),
+                span,
+            ),
+        )
+    return Ok(result)
+
+
+def text_literal_test(mut builder: Builder, source: Place, text: str, span: SourceSpan) -> Result[Place, str]:
+    """Borrow both strings for equality and keep the materialized literal in the frame's owner ledger."""
+    value = owned_literal(builder, text, span)
+    builder.owned.append(value.local)
+    source_ref = temporary(builder, PlanType.StringRef, span)
+    value_ref = temporary(builder, PlanType.StringRef, span)
+    builder.emit(plan_assign(source_ref, RvalueKind.Borrow(source), span))
+    builder.emit(plan_assign(value_ref, RvalueKind.Borrow(value), span))
+    result = temporary(builder, PlanType.Bool, span)
+    external_call(
+        builder,
+        "incan_native_runtime::equal_text",
+        [PlanType.StringRef, PlanType.StringRef],
+        PlanType.Bool,
+        [read_place(source_ref, false, span), read_place(value_ref, false, span)],
+        result,
+        span,
+    )
+    # Release the literal before branching: a rejected earlier tuple field never initializes later literals.
+    drop_owned(builder, value.local, span)
+    return Ok(result)
