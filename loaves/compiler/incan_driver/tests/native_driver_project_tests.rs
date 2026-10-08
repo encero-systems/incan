@@ -2724,6 +2724,73 @@ def main() -> None:
     Ok(())
 }
 
+/// Model method aliases call their checked target bodies and preserve receiver changes and argument order.
+#[test]
+fn model_method_aliases_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "model_method_aliases",
+        r#"model Counter:
+    value: int
+    current = read
+    advance = add
+    combined = combine
+
+    def read(self) -> int:
+        return self.value
+
+    def add(mut self, amount: int) -> None:
+        self.value += amount
+
+    def combine(self, first: int, second: int) -> int:
+        return self.value + first * 10 + second
+
+def main() -> None:
+    mut counter = Counter(value=10)
+    println(counter.current())
+    counter.advance(amount=3)
+    println(counter.read())
+    counter.add(2)
+    println(counter.current())
+    println(counter.combined(second=2, first=1))
+    println(counter.combine(1, 2))
+"#,
+        None,
+    )
+}
+
+/// Source Partial wrappers preserve overrideable presets, residual defaults, and callable aliases.
+#[test]
+fn source_partial_function_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "source_partial_function",
+        r#"def suffix() -> str:
+    println("default evaluated")
+    return "text"
+
+pub def route(method: str, path: str, tail: str = suffix()) -> str:
+    return method + path + tail
+
+pub get = partial route(method="GET")
+renamed = get
+
+def scale(k: int, n: int) -> int:
+    return k * n
+
+negative = partial scale(k=-2)
+
+def main() -> None:
+    println(get(path="/health"))
+    println(get("GET", "/ready", tail="!"))
+    println(get(method="POST", path="/x", tail="!"))
+    println(renamed(path="/alias", tail="!"))
+    println(get(path="/again"))
+    println(negative(n=3))
+    println(negative(k=4, n=3))
+"#,
+        None,
+    )
+}
+
 /// List display preserves legacy Debug spelling, escaping, nesting, and repeated owner reads.
 #[test]
 fn list_display_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

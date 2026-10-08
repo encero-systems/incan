@@ -132,44 +132,47 @@ impl BodyIrModule {
         })
     }
 
-    /// Whether a function or retained nominal method has its own canonical declaration identity and span-derived
-    /// direct-call id. Methods must belong to a retained nominal or trait owner whose span contains them; an instance
-    /// receiver must match that owner.
+    /// Whether a function, source Partial forwarding body, or retained nominal method has its own canonical declaration
+    /// identity and span-derived direct-call id. Methods must belong to a retained nominal or trait owner whose
+    /// span contains them; an instance receiver must match that owner.
     pub fn body_has_canonical_direct_call_id(&self, body: &Body) -> bool {
         body.direct_call_id == CompilerNodeId::declaration_span(self.module_id.path(), body.span.start, body.span.end)
             && body.canonical.as_ref().is_some_and(|canonical| {
                 let namespace = match canonical.kind {
-                    SemanticSourceTargetKind::Function => SymbolNamespace::OrdinaryLexical,
+                    SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Partial => {
+                        SymbolNamespace::OrdinaryLexical
+                    }
                     SemanticSourceTargetKind::Method => SymbolNamespace::Member,
                     _ => return false,
                 };
                 canonical.declaration_name == body.name
                     && self.declaration_id_for_canonical(canonical, namespace, canonical.kind.clone())
                         == Some(body.direct_call_id.clone())
-                    && (canonical.kind == SemanticSourceTargetKind::Function
-                        || self.nominal_declarations.iter().any(|owner| {
-                            self.is_well_formed_nominal_declaration(owner)
-                                && canonical.origin == owner.canonical.origin
-                                && declares_member(&owner.canonical, canonical)
-                                && body.locals.first().is_none_or(|receiver| {
-                                    !matches!(receiver.origin, LocalOrigin::Receiver { .. })
-                                        || receiver.ty == nominal_receiver_type(owner)
-                                })
-                        })
-                        || self.trait_declarations.iter().any(|owner| {
-                            self.declaration_id_for_canonical(
-                                owner,
-                                SymbolNamespace::OrdinaryLexical,
-                                SemanticSourceTargetKind::Trait,
-                            )
-                            .is_some()
-                                && canonical.origin == owner.origin
-                                && declares_member(owner, canonical)
-                                && body.locals.first().is_none_or(|receiver| {
-                                    !matches!(receiver.origin, LocalOrigin::Receiver { .. })
-                                        || receiver.ty == crate::IncanType::SelfType
-                                })
-                        }))
+                    && (matches!(
+                        canonical.kind,
+                        SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Partial
+                    ) || self.nominal_declarations.iter().any(|owner| {
+                        self.is_well_formed_nominal_declaration(owner)
+                            && canonical.origin == owner.canonical.origin
+                            && declares_member(&owner.canonical, canonical)
+                            && body.locals.first().is_none_or(|receiver| {
+                                !matches!(receiver.origin, LocalOrigin::Receiver { .. })
+                                    || receiver.ty == nominal_receiver_type(owner)
+                            })
+                    }) || self.trait_declarations.iter().any(|owner| {
+                        self.declaration_id_for_canonical(
+                            owner,
+                            SymbolNamespace::OrdinaryLexical,
+                            SemanticSourceTargetKind::Trait,
+                        )
+                        .is_some()
+                            && canonical.origin == owner.origin
+                            && declares_member(owner, canonical)
+                            && body.locals.first().is_none_or(|receiver| {
+                                !matches!(receiver.origin, LocalOrigin::Receiver { .. })
+                                    || receiver.ty == crate::IncanType::SelfType
+                            })
+                    }))
             })
     }
 

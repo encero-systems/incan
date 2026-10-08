@@ -224,12 +224,12 @@ pub(super) fn collect_function_default_sources(program: &ast::Program) -> Functi
 pub(super) fn collect_local_function_declarations(program: &ast::Program) -> LocalFunctionDeclarations {
     let mut declarations = LocalFunctionDeclarations::new();
     for declaration in &program.declarations {
-        if let ast::Declaration::Function(function) = &declaration.node {
-            declarations
-                .entry(function.name.clone())
-                .or_default()
-                .push(declaration.span);
-        }
+        let name = match &declaration.node {
+            ast::Declaration::Function(function) => &function.name,
+            ast::Declaration::Partial(partial) => &partial.name,
+            _ => continue,
+        };
+        declarations.entry(name.clone()).or_default().push(declaration.span);
     }
     declarations
 }
