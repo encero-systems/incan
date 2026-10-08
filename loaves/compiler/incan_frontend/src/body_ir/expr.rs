@@ -109,7 +109,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                             bir::Constant::Float(number.to_string())
                         }
                         ConstValue::Bool(flag) => bir::Constant::Bool(*flag),
-                        ConstValue::FrozenStr(text) => bir::Constant::Str(text.clone()),
+                        ConstValue::FrozenStr(text) => bir::Constant::FrozenStr(text.clone()),
                         _ => {
                             let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
                             return bir::Operand::place(place, fact, last_use);

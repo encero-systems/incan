@@ -56,7 +56,7 @@ from pub::incan_mir_plan import (
 from pub::incan_mir_plan import assign as plan_assign, place as plan_place
 from bytes_plan import bytes_literal
 from decimal_plan import decimal_literal, decimal_comparison, is_decimal_literal
-from frozen_plan import frozen_literal
+from frozen_plan import frozen_literal, literal_text
 # ---- The checked Body IR, read through Rust interop ----
 from rust::incan_semantics_core import IncanType as RustType, HirSourceSpan as RustSpan
 from rust::incan_semantics_core::body_ir import (
@@ -110,7 +110,9 @@ from unions import (
     collect_unions,
     lower_union_declarations,
     union_pattern_slot,
-    union_test_slot,
+    union_test_slots,
+    test_union_tag,
+    union_members,
     union_projection,
     union_injection,
 )
@@ -297,6 +299,7 @@ pub def scalar_operand(mut builder: Builder, value: &RustOperand, span: SourceSp
         RustOperand.Constant(constant) =>
             match constant:
                 RustConstant.Str(text) => return Ok(read_place(owned_literal(builder, str(text), span), true, span))
+                RustConstant.FrozenStr(_text) => return frozen_literal(builder, constant, span)
                 RustConstant.TypedNumeric(value) =>
                     if is_decimal_literal(value):
                         return decimal_literal(builder, value, span)
@@ -348,6 +351,7 @@ def scalar_constant(constant: &RustConstant, span: SourceSpan) -> Result[Operand
         RustConstant.Unit => return Ok(literal(Constant.Unit, span))
         RustConstant.TypedNumeric(value) => return Ok(literal(numeric_constant(value)?, span))
         RustConstant.Str(_value) => return Err("unsupported Body IR Str constant")
+        RustConstant.FrozenStr(_value) => return Err("Body IR FrozenStr constant requires its retained carrier")
         RustConstant.Bytes(_value) => return Err("unsupported Body IR Bytes constant")
         RustConstant.None => return Err("unsupported Body IR None constant")
 
@@ -1351,12 +1355,16 @@ def lower_text_scalar_conversion(
             match value:
                 RustOperand.Constant(constant) =>
                     match constant:
+                        RustConstant.FrozenStr(_text) =>
+                            return Err(
+                                "unsupported Body IR static text numeric conversion: legacy emits an invalid cast",
+                            )
                         RustConstant.Str(_text) =>
                             text_input = true
                         _ => pass
                 RustOperand.Place(read) =>
                     place = scalar_place(builder, read.place, span)?
-                    text_input = place_type(builder.locals, place) == PlanType.String
+                    text_input = place_type(builder.locals, place) in [PlanType.String, PlanType.FrozenStr]
             if not text_input:
                 return Ok(false)
             text = display_operand(builder, value, span)?
@@ -1643,9 +1651,9 @@ pub def display_operand(mut builder: Builder, value: &RustOperand, span: SourceS
                 OwnershipFact.Borrow => return clone_display_place(builder, read.place, span)
                 _ => pass
         RustOperand.Constant(constant) =>
-            match constant.clone():
-                RustConstant.Str(text) => return Ok(owned_literal(builder, str(text), span))
-                _ => pass
+            match literal_text(constant):
+                Some(text) => return Ok(owned_literal(builder, text, span))
+                None => pass
     operand = value_operand(builder, value, span)?
     return display_plan_operand(builder, operand, span)
 
@@ -1773,13 +1781,13 @@ def borrow_text_operand(mut builder: Builder, value: &RustOperand, span: SourceS
             builder.emit(plan_assign(reference, RvalueKind.Borrow(place), span))
             return Ok(read_place(reference, false, span))
         RustOperand.Constant(constant) =>
-            match constant:
-                RustConstant.Str(text) =>
-                    owner = owned_literal(builder, str(text), span)
+            match literal_text(constant):
+                Some(text) =>
+                    owner = owned_literal(builder, text, span)
                     reference = temporary(builder, PlanType.StringRef, span)
                     builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))
                     return Ok(read_place(reference, false, span))
-                _ => return Err("unsupported Body IR non-string text constant")
+                None => return Err("unsupported Body IR non-string text constant")
 
 
 def lower_text_helper(
@@ -3024,6 +3032,9 @@ def enum_payload_read(
         OwnershipFact.Borrow => pass
         OwnershipFact.Move => pass
         _ => return Err("unsupported Body IR enum payload binding ownership")
+    # The canonical frozen wrapper's Clone is its Copy value; it owns no allocation or custom clone hook.
+    if place_type(builder.locals, place) == PlanType.FrozenStr:
+        return Ok(read_place(place, false, span))
     if is_list(place_type(builder.locals, place)):
         return carrier_payload_value(builder, place, span)
     # Legacy matches a cloned enum by value. Cloning just the selected payload preserves that owned-binding contract
@@ -3116,7 +3127,16 @@ def boundary_operand(
     """Materialize union construction before passing or returning an owned value."""
     if target == PlanType.FrozenStr:
         return frozen_operand(builder, value, span)
-    operand = typed_carrier_operand(builder, value, target, span)?
+    mut operand = typed_carrier_operand(builder, value, target, span)?
+    if operand_type(builder, operand)? == PlanType.FrozenStr:
+        match target:
+            PlanType.Enum(owner, _name) =>
+                if owner >= len(builder.enums) and owner < len(builder.enums) + len(builder.unions):
+                    members = union_members(builder.nominals, builder.enums, builder.unions[owner - len(builder.enums)])?
+                    if PlanType.FrozenStr not in members and PlanType.String in members:
+                        text = display_plan_operand(builder, operand, span)?
+                        operand = read_place(text, true, span)
+            _ => pass
     operation = union_injection(
         builder.nominals,
         builder.enums,
@@ -3149,11 +3169,14 @@ def lower_union_isinstance(
         PlanType.Int => return Ok(RvalueKind.Use(literal(Constant.Bool(source_ty == member), span)))
         PlanType.Float => return Ok(RvalueKind.Use(literal(Constant.Bool(source_ty == member), span)))
         PlanType.Bool => return Ok(RvalueKind.Use(literal(Constant.Bool(source_ty == member), span)))
-        PlanType.String => return Ok(RvalueKind.Use(literal(Constant.Bool(source_ty == member), span)))
+        PlanType.String =>
+            return Ok(RvalueKind.Use(literal(Constant.Bool(member in [PlanType.String, PlanType.FrozenStr]), span)))
+        PlanType.FrozenStr =>
+            return Ok(RvalueKind.Use(literal(Constant.Bool(member in [PlanType.String, PlanType.FrozenStr]), span)))
         _ => pass
     owner = enum_owner(source_ty)?
-    slot = union_test_slot(builder.nominals, builder.enums, builder.unions, owner, member)?
-    if slot < 0:
+    slots = union_test_slots(builder.nominals, builder.enums, builder.unions, owner, member)?
+    if len(slots) == 0:
         return Ok(RvalueKind.Use(literal(Constant.Bool(false), span)))
     match value:
         RustOperand.Place(read) =>
@@ -3162,7 +3185,7 @@ def lower_union_isinstance(
             tag = temporary(builder, PlanType.Int, span)
             builder.emit(plan_assign(raw_tag, RvalueKind.Discriminant(source), span))
             builder.emit(plan_assign(tag, RvalueKind.TagToInt(read_place(raw_tag, false, span)), span))
-            return Ok(RvalueKind.Binary(BinaryOp.Equal, read_place(tag, false, span), literal(Constant.Int(slot), span)))
+            return Ok(test_union_tag(builder, tag, slots, span))
         _ => return Err("unsupported Body IR nonplace union isinstance")
 
 
@@ -3315,9 +3338,15 @@ def lower_truth_builtin(
             external_call(builder, f"incan_native_runtime::{name}", [ty], result, [operand], output, span)
             return Ok(None)
         None => pass
-    if ty in [PlanType.String, PlanType.StringRef]:
+    if ty in [PlanType.String, PlanType.StringRef, PlanType.FrozenStr]:
         match arguments[0].as_one():
             Some(value) =>
+                # Legacy's StaticStr constant falls through bool() to true, even for empty text.
+                match value:
+                    RustOperand.Constant(RustConstant.FrozenStr(_text)) =>
+                        builder.emit(plan_assign(output, RvalueKind.Use(literal(Constant.Bool(true), span)), span))
+                        return Ok(None)
+                    _ => pass
                 reference = borrow_text_operand(builder, value, span)?
                 external_call(
                     builder,
@@ -3475,6 +3504,7 @@ def argument_type(
             place = scalar_place(builder, read.place, span)?
             return Ok(place_type(builder.locals, place))
         Some(RustOperand.Constant(RustConstant.Str(_text))) => return Ok(PlanType.String)
+        Some(RustOperand.Constant(RustConstant.FrozenStr(_text))) => return Ok(PlanType.FrozenStr)
         Some(value) =>
             operand = value_operand(builder, value, span)?
             return operand_type(builder, operand)
@@ -3600,12 +3630,17 @@ def typed_carrier_operand(
     ty: PlanType,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Materialize a None operand only where the checked call or return fixes a concrete Option carrier."""
+    """Materialize checked carrier and text conversions at a concrete call, return, or collection boundary."""
     if ty == PlanType.FrozenStr:
         return frozen_operand(builder, operand, span)
     match operand:
         RustOperand.Constant(RustConstant.None) => return none_operand(builder, ty, span)
-        _ => return value_operand(builder, operand, span)
+        _ => pass
+    value = value_operand(builder, operand, span)?
+    if ty == PlanType.String and operand_type(builder, value)? == PlanType.FrozenStr:
+        text = display_plan_operand(builder, value, span)?
+        return Ok(read_place(text, true, span))
+    return Ok(value)
 
 
 def frozen_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:

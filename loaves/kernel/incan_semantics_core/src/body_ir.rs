@@ -1049,6 +1049,11 @@ pub enum Constant {
     TypedNumeric(TypedNumericConstant),
     Bool(bool),
     Str(String),
+    /// Static frozen text retained by the checker, including source-local text constants.
+    ///
+    /// This carries the Copy frozen identity through union injection; an ordinary owned string must not be
+    /// reclassified as frozen merely because its bytes happen to equal a literal.
+    FrozenStr(String),
     /// A `b"..."` byte-string literal, represented as an **owned buffer** rather than a borrowed slice.
     ///
     /// This is deliberately its own variant instead of a reuse of [`Self::Str`]. `bytes` and `str` are distinct
@@ -1127,8 +1132,8 @@ impl TypedNumericConstant {
 impl Constant {
     /// Render a deterministic maintainer-facing spelling for this constant.
     ///
-    /// A byte string renders every byte as a `\xNN` escape rather than as text, so a snapshot can never read a
-    /// `bytes` constant as the `str` constant it is not.
+    /// Frozen text carries an explicit type marker. A byte string renders every byte as a `\xNN` escape rather than as
+    /// text, so a snapshot can never read a `bytes` constant as the `str` constant it is not.
     fn render_snapshot(&self) -> String {
         match self {
             Self::Int(v) => format!("const({v})"),
@@ -1136,6 +1141,7 @@ impl Constant {
             Self::TypedNumeric(value) => format!("const<{}>({value:?})", value.type_name()),
             Self::Bool(v) => format!("const({v})"),
             Self::Str(v) => format!("const({v:?})"),
+            Self::FrozenStr(v) => format!("const<FrozenStr>({v:?})"),
             Self::Bytes(bytes) => {
                 let mut rendered = String::from("const(b\"");
                 for byte in bytes {
