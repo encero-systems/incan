@@ -29,7 +29,7 @@ pub model SourceSpan:
 
 @derive(Clone, PartialEq)
 pub enum ListLeaf:
-    """Scalar, flat tuple, and retained model leaves; hashed collections admit only their checked scalar subset."""
+    """Scalar, flat tuple, and retained model leaves; hash keys exclude floats and models, and dictionary values stay scalar."""
 
     Int
     Float
@@ -37,6 +37,9 @@ pub enum ListLeaf:
     Str
     Tuple(list[TupleElement])
     Model(int, str)
+    U8
+    Unit
+    Decimal
 
 
 @derive(Clone, PartialEq)
@@ -73,6 +76,7 @@ pub enum PlanType:
     Generator retains the legacy lazy runtime wrapper, with depth zero for primitive elements.
     GeneratorMutRef advances caller-owned state. GeneratorYield and GeneratorYieldRef are producer-only runtime
     handles; they never represent source values or eagerly collected elements.
+    ZipIterator retains two independent owned list snapshots; its reference variants retain shared read or exclusive poll authority.
     """
 
     Int
@@ -100,6 +104,7 @@ pub enum PlanType:
     Tuple(list[TupleElement])
     String
     StringRef
+    Decimal
     StrRef
     StringArray(int)
     StrArray(int)
@@ -122,6 +127,10 @@ pub enum PlanType:
     Dict(ListLeaf, ListLeaf)
     DictRef(ListLeaf, ListLeaf)
     DictMutRef(ListLeaf, ListLeaf)
+    # Lazy zip over independent owned list snapshots; references retain poll authority.
+    ZipIterator(TupleElement, TupleElement)
+    ZipIteratorRef(TupleElement, TupleElement)
+    ZipIteratorMutRef(TupleElement, TupleElement)
     # Lazy runtime generators retain the admitted immediate element representation.
     Generator(ListLeaf, int)
     GeneratorMutRef(ListLeaf, int)
@@ -138,6 +147,9 @@ pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
         ListLeaf.Str => return PlanType.String
         ListLeaf.Tuple(elements) => return PlanType.Tuple(elements)
         ListLeaf.Model(index, name) => return PlanType.Model(index, name)
+        ListLeaf.U8 => return PlanType.U8
+        ListLeaf.Unit => return PlanType.Unit
+        ListLeaf.Decimal => return PlanType.Decimal
 
 
 pub def tuple_element_type(element: TupleElement) -> PlanType:

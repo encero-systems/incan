@@ -61,7 +61,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.lower_chained_assignment(chained_assignment, remaining, scope, span, out)
             }
             ast::Statement::Return(value) => {
-                let value = value.as_ref().map(|v| self.lower_expr_to_operand(v, scope, out));
+                let value = value.as_ref().map(|v| {
+                    let operand = self.lower_expr_to_operand(v, scope, out);
+                    self.owned_parameter_operand(v, operand)
+                });
                 out.push(bir::Statement {
                     kind: bir::StatementKind::Return { value },
                     span,
@@ -150,7 +153,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let mut ty = self
             .type_info
             .assignment_binding_type(assignment_span)
-            .map(semantic_type_from_resolved)
+            .map(|ty| self.checked_type(ty))
             .or_else(|| self.callable_value_ty(&assignment.value))
             .unwrap_or_else(|| self.resolve_ty(assignment.value.span));
         let materializes_range = self.expr_has_materialized_range_layout(&assignment.value);
@@ -346,7 +349,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let lhs_ty = self
             .type_info
             .resolved_write_type(compound_assignment.name_span, &compound_assignment.name)
-            .map(semantic_type_from_resolved)
+            .map(|ty| self.checked_type(ty))
             .unwrap_or(IncanType::Unknown);
         let place = if let Some(identity) = target_identity {
             self.identity_bindings

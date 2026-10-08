@@ -54,6 +54,7 @@ from pub::incan_mir_plan import (
     scalar_example,
 )
 from pub::incan_mir_plan import assign as plan_assign, place as plan_place
+from bytes_plan import bytes_literal
 # ---- The checked Body IR, read through Rust interop ----
 from rust::incan_semantics_core import IncanType as RustType, HirSourceSpan as RustSpan
 from rust::incan_semantics_core::body_ir import (
@@ -98,13 +99,15 @@ from rust::incan_semantics_core::body_ir import (
 )
 # ---- Admission helpers owned by this Loaf ----
 from rust::incan_semantics_core import SymbolOrigin, canonical_module_identity
-from classes import frame_type, function_name, body_module_identity, method_receiver
+from classes import frame_type, function_name, body_module_identity, body_type_bindings, method_receiver
+from tuple_iterators import zip_shape, zip_call, clone_zip, zip_next, initialize_zip_iterator, enumerated_element
 from generators import (
     generator_shape,
     generator_constructor,
     producer_frame,
     producer_name,
     generator_yield,
+    generator_element,
     generator_collect,
     generator_reference,
     generator_next,
@@ -112,6 +115,7 @@ from generators import (
     is_generator_reference,
 )
 from project import project_context
+from nominal_instances import specialize_nominals
 from traits import method_index, specialize_traits, validate_static_receiver
 from decls import lower_model_declarations, static_slot, static_accessors
 from models import model_type, model_place, constructor_index, field_slot
@@ -138,6 +142,7 @@ from tuples import is_tuple_type, tuple_has_owners, tuple_aggregate, clone_tuple
 from text_plan import format_parts, clone_text, owned_literal
 from options import (
     intrinsic_declarations,
+    retain_body_carriers,
     intrinsic_pattern,
     propagate_result,
     carrier_layout,
@@ -216,6 +221,7 @@ from assertions import lower_assertion
 from async_ import future_type, future_declarations, construct_future, await_future, async_entry, evaluator_name
 from defaults import default_arguments, default_type, model_default_arguments
 from externs import delegated_function
+from type_parameters import Instance, instantiate, substitute
 # =====================================================================================================================
 # Boundary types and validation
 # =====================================================================================================================
@@ -342,6 +348,10 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
                 return Err("unsupported Body IR partial model move")
             return Ok(Operand(kind=OperandKind.Move(target), span=span))
         OwnershipFact.Clone =>
+            # A checked clone of an open parameter becomes Rust's copy-valued Clone on concrete scalar instances.
+            ty = place_type(builder.locals, target)
+            if numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit:
+                return Ok(Operand(kind=OperandKind.Copy(target), span=span))
             if is_tuple_type(place_type(builder.locals, target)):
                 return clone_tuple_operand(builder, target, span)
             if place_type(builder.locals, target) == PlanType.String:
@@ -486,9 +496,10 @@ def scalar_rvalue(
     module: &BodyIrModule,
     mut builder: Builder,
     value: &RustRvalue,
+    expected: PlanType,
     span: SourceSpan,
 ) -> Result[RvalueKind, str]:
-    """Read the checked expression without interpreting generated Rust syntax."""
+    """Read the checked expression; the retained destination carrier selects a proven constructor's closed layout."""
     match value:
         RustRvalue.Use(operand) => return Ok(RvalueKind.Use(value_operand(builder, operand, span)?))
         RustRvalue.UnaryOp(operator, operand) =>
@@ -523,7 +534,8 @@ def scalar_rvalue(
             return Ok(RvalueKind.Binary(binary_operator(operator)?, left_operand, right_operand))
         RustRvalue.IsInstance(value=value, value_ty=ty, target=target) =>
             return lower_union_isinstance(builder, value, ty, target.ty, span)
-        RustRvalue.Aggregate(kind, elements) => return checked_aggregate(module, builder, kind, elements, span)
+        RustRvalue.Aggregate(kind, elements) =>
+            return checked_aggregate(module, builder, kind, elements, expected, span)
         RustRvalue.Dict(_entries) => return Err("unsupported Body IR Dict")
         RustRvalue.ValueEnumVariant(target) =>
             owner, variant = value_variant(builder.enums, builder.value_enums, target)?
@@ -544,10 +556,11 @@ def scalar_rvalue(
 
 
 def is_nominal_type(ty: PlanType) -> bool:
-    """Identify model and enum owners alongside owned strings when transferring call results."""
+    """Identify nominal, generator, zip, and tuple values whose owned payloads require transfer or destruction."""
     match ty:
         PlanType.Enum(_index, _name) => return true
         PlanType.Model(_index, _name) => return true
+        PlanType.ZipIterator(_left, _right) => return true
         PlanType.Generator(_leaf, _depth) => return true
         PlanType.Tuple(_elements) => return tuple_has_owners(ty)
         _ => return false
@@ -625,9 +638,7 @@ pub def lower_statement(module: &BodyIrModule, mut builder: Builder, statement: 
                 None => return Err("unsupported Body IR Await without destination")
         RustStatementKind.Race(destination=destination, arms=arms) =>
             return lower_ready_race(module, builder, destination, arms, span)
-        RustStatementKind.Yield(value=value) =>
-            yielded = value_operand(builder, value, span)?
-            return generator_yield(builder, yielded, span)
+        RustStatementKind.Yield(value=value) => return lower_yield(builder, value, span)
         RustStatementKind.Assert(kind=kind, message=message, may_panic=_panic) =>
             return lower_assertion(builder, kind, message, span)
         RustStatementKind.TryPropagate(destination=destination, operand=operand, error_routing=routing) =>
@@ -770,6 +781,18 @@ def lower_loop_exit(mut builder: Builder, repeat: bool, span: SourceSpan) -> Res
     return Ok(None)
 
 
+def lower_yield(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[None, str]:
+    """Apply the checked generator's element boundary conversion before transferring an owned yield."""
+    if builder.generator_handle < 0:
+        return Err("unsupported Body IR Yield outside generator producer")
+    match builder.locals[builder.generator_handle].ty:
+        PlanType.GeneratorYield(leaf, depth) =>
+            operand = value_operand(builder, value, span)?
+            converted = coerce_numeric_operand(builder, operand, generator_element(leaf, depth), span)?
+            return generator_yield(builder, converted, span)
+        _ => return Err("invalid native generator yield handle")
+
+
 def lower_assignment(
     module: &BodyIrModule,
     mut builder: Builder,
@@ -808,6 +831,14 @@ def lower_local_assignment(
     if target.local in builder.borrowed_items:
         return Err("unsupported Body IR mutation of borrowed list iteration item")
     match builder.locals[target.local].ty:
+        PlanType.ZipIteratorMutRef(_left, _right) =>
+            match value:
+                RustRvalue.Use(RustOperand.Place(read)) =>
+                    if read.fact != OwnershipFact.Borrow:
+                        return Err("unsupported Body IR zip iteration source ownership")
+                    source = list_root_place(builder, read.place, span)?
+                    return initialize_zip_iterator(builder, target, source, span)
+                _ => return Err("unsupported Body IR zip iterator initialization")
         PlanType.GeneratorMutRef(_leaf, _depth) =>
             match value:
                 RustRvalue.Use(value) =>
@@ -844,7 +875,7 @@ def lower_local_assignment(
             if compare_models(builder, target, operator, left, right, span)?:
                 return Ok(None)
         _ => pass
-    mut operation = scalar_rvalue(module, builder, value, span)?
+    mut operation = scalar_rvalue(module, builder, value, place_type(builder.locals, target), span)?
     ty = place_type(builder.locals, target)
     match operation:
         RvalueKind.Use(operand) =>
@@ -1079,7 +1110,7 @@ def lower_value_enum_method(
         if result_type == PlanType.String:
             lower_string_assignment(builder, output, raw, span)?
         else:
-            operation = scalar_rvalue(module, builder, raw, span)?
+            operation = scalar_rvalue(module, builder, raw, result_type, span)?
             builder.emit(plan_assign(output, operation, span))
         builder.finish(TerminatorKind.Goto(join), span)
         builder.current = next
@@ -1116,7 +1147,14 @@ def lower_method_call(
         Some(owner) => return lower_value_enum_method(module, builder, owner, arguments, destination, span)
         None => pass
     index = method_index(module, target, builder.locals[builder.local_offset:], arguments[0], span)?
-    body = module.bodies[index]
+    mut body = module.bodies[index].clone()
+    if len(body.type_parameters) != 0:
+        closed = checked_type_arguments(builder, target.type_args)?
+        builder.instances.append(Instance(body=body.clone(), arguments=closed))
+        body = instantiate(body, closed)?
+    else:
+        if len(target.type_args) != 0:
+            return Err("unsupported Body IR type arguments on a method without type parameters")
     receiver_type, borrow = method_receiver(
         module,
         builder.locals[builder.local_offset:],
@@ -1151,21 +1189,55 @@ def lower_named_target(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Call a builtin, a retained project function, or a proven stdlib forwarder selected by canonical identity."""
-    if len(target.type_args) != 0:
-        return Err("unsupported Body IR generic NamedCallableTarget")
     match target.builtin:
-        Some(builtin) => return lower_builtin(builder, builtin, arguments, destination, span)
+        Some(builtin) =>
+            if len(target.type_args) != 0:
+                return Err("unsupported Body IR builtin type arguments")
+            return lower_builtin(builder, builtin, arguments, destination, span)
         None => pass
     match target.canonical:
         None => return Err("unsupported Body IR builtin or unproven NamedCallableTarget")
         Some(_identity) =>
             # Without a retained project body, only a frontend-proven stdlib forwarder may reach a native Rust call.
             match program_body_index(module, target):
-                None => return lower_stdlib_delegation(module, builder, target, arguments, destination, span)
+                None =>
+                    if len(target.type_args) != 0:
+                        return Err("unsupported Body IR nonlocal function with type parameters")
+                    return lower_stdlib_delegation(module, builder, target, arguments, destination, span)
                 Some(index) =>
                     body = module.bodies[index]
+                    if len(body.type_parameters) != 0:
+                        return lower_type_parameter_call(module, builder, target, body, arguments, destination, span)
+                    if len(target.type_args) != 0:
+                        return Err("unsupported Body IR type arguments on a function without type parameters")
                     _ = validate_static_receiver(module, target)?
                     return lower_local_call(module, builder, target, body, arguments, destination, span)
+
+
+def lower_type_parameter_call(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &RustNamedCallableTarget,
+    body: &RustBody,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Schedule the checker-selected closed frame, refusing every unadmitted type argument before use."""
+    closed = checked_type_arguments(builder, target.type_args)?
+    concrete_body = instantiate(body, closed)?
+    builder.instances.append(Instance(body=body.clone(), arguments=closed))
+    return lower_local_call(module, builder, target, concrete_body, arguments, destination, span)
+
+
+def checked_type_arguments(builder: Builder, arguments: list[RustType]) -> Result[list[RustType], str]:
+    """Close checker-recorded call arguments in the active declaration binding and require admitted carriers."""
+    mut closed: list[RustType] = []
+    for argument in arguments:
+        concrete: RustType = substitute(argument, builder.type_parameters, builder.type_arguments)?
+        _ = native_source_type(builder.nominals, builder.enums, builder.unions, concrete, builder.intrinsics)?
+        closed.append(concrete.clone())
+    return Ok(closed)
 
 
 def program_body_index(module: &BodyIrModule, target: &RustNamedCallableTarget) -> Option[int]:
@@ -1531,12 +1603,105 @@ def lower_builtin(
         RustBuiltin.Print => return lower_print(builder, arguments, destination, span)
         RustBuiltin.Sum => return lower_sequence_builtin(builder, builtin, arguments, destination, span)
         RustBuiltin.Sorted => return lower_sequence_builtin(builder, builtin, arguments, destination, span)
+        RustBuiltin.Zip => return lower_zip_builtin(builder, arguments, destination, span)
+        RustBuiltin.Enumerate => return lower_enumerate_builtin(builder, arguments, destination, span)
         RustBuiltin.Len => return lower_list_builtin(builder, arguments, destination, span)
         RustBuiltin.Float => return lower_scalar_conversion(builder, arguments, destination, false, span)
         RustBuiltin.Int => return lower_scalar_conversion(builder, arguments, destination, true, span)
         RustBuiltin.Str => return lower_str_builtin(builder, arguments, destination, span)
         RustBuiltin.JsonStringify => return lower_model_json_builtin(builder, arguments, destination, span)
         _ => return Err(f"unsupported Body IR builtin {builtin:?}")
+
+
+def lower_zip_builtin(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Construct lazy zip only from canonical identity and two checked primitive-list arguments."""
+    if len(arguments) != 2:
+        return Err("unsupported Body IR zip arity")
+    output = call_destination(builder, destination, PlanType.Unit, span)?
+    match zip_shape(builder.locals[output.local].ty):
+        None => return Err("unsupported Body IR zip checked destination")
+        Some((left, right)) =>
+            first = argument_value(builder, arguments, 0, span)?
+            second = argument_value(builder, arguments, 1, span)?
+            first_type = operand_type(builder, first)?
+            second_type = operand_type(builder, second)?
+            if list_shape(first_type) == None or list_shape(second_type) == None:
+                return Err("unsupported Body IR zip non-list operands")
+            first_leaf, first_depth = require_list_shape(first_type, "unsupported Body IR zip left")?
+            second_leaf, second_depth = require_list_shape(second_type, "unsupported Body IR zip right")?
+            if list_element(first_leaf, first_depth) != tuple_element_type(left) or list_element(
+                second_leaf,
+                second_depth,
+            ) != tuple_element_type(right):
+                return Err("unsupported Body IR zip checked operand type")
+            drop_owned(builder, output.local, span)
+            zip_call(
+                builder,
+                "zip_lists",
+                left,
+                right,
+                [first_type, second_type],
+                PlanType.ZipIterator(left, right),
+                [first, second],
+                output,
+                span,
+            )
+            builder.owned.append(output.local)
+            return Ok(None)
+
+
+def lower_enumerate_builtin(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Materialize the checked builtin's zero-based tuple list from admitted list or text inputs."""
+    if len(arguments) != 1:
+        return Err("invalid Body IR enumerate arity")
+    source_type = argument_type(builder, arguments, 0, span)?
+    mut element_type = PlanType.String
+    if source_type not in [PlanType.String, PlanType.StringRef]:
+        leaf, depth = require_list_shape(source_type, "unsupported Body IR enumerate non-list or text source")?
+        element_type = list_element(leaf, depth)
+    element = enumerated_element(element_type)?
+    result = PlanType.List(ListLeaf.Tuple([TupleElement.Int, element]), 1)
+    output = call_destination(builder, destination, result, span)?
+    if place_type(builder.locals, output) != result:
+        return Err("unsupported Body IR enumerate checked destination")
+    drop_owned(builder, output.local, span)
+    if source_type in [PlanType.String, PlanType.StringRef]:
+        reference = text_argument(builder, arguments, 0, span)?
+        external_call(
+            builder,
+            "incan_native_runtime::enumerate_text",
+            [PlanType.StringRef],
+            result,
+            [reference],
+            output,
+            span,
+        )
+        builder.owned.append(output.local)
+    else:
+        receiver = argument_place(builder, arguments, 0, span)?
+        leaf, depth = require_list_shape(source_type, "unsupported Body IR enumerate source layout")?
+        reference = list_borrow(builder, receiver, false, span)?
+        list_call(
+            builder,
+            "enumerate_list",
+            element_type,
+            [PlanType.ListRef(leaf, depth)],
+            result,
+            [reference],
+            output,
+            span,
+        )
+    return Ok(None)
 
 
 def lower_model_json_builtin(
@@ -1814,6 +1979,7 @@ def checked_aggregate(
     mut builder: Builder,
     kind: &RustAggregateKind,
     elements: &list[RustArgumentElement],
+    expected: PlanType,
     span: SourceSpan,
 ) -> Result[RvalueKind, str]:
     """Materialize a tuple or a proven plain-model constructor with its retained field order and ownership."""
@@ -1860,7 +2026,7 @@ def checked_aggregate(
                     None => return Err("unsupported Body IR spread tuple element")
             return Ok(tuple_aggregate(operands))
         RustAggregateKind.Constructor(target) =>
-            index = constructor_index(builder.nominals, target, len(elements))?
+            index = constructor_index(builder.nominals, target, len(elements), expected)?
             match target.binding:
                 RustArgumentBinding.Resolved(arguments=_arguments, defaulted_slots=defaults) =>
                     if len(defaults) == 0:
@@ -2009,6 +2175,9 @@ pub def display_operand(mut builder: Builder, value: &RustOperand, span: SourceS
     match value:
         RustOperand.Place(read) =>
             place = scalar_place(builder, read.place, span)?
+            if is_list(place_type(builder.locals, place)):
+                operand = value_operand(builder, value, span)?
+                return display_plan_operand(builder, operand, span)
             match place_type(builder.locals, place):
                 PlanType.Enum(owner, name) =>
                     if owner >= len(builder.enums) + len(builder.unions):
@@ -2036,6 +2205,8 @@ pub def display_operand(mut builder: Builder, value: &RustOperand, span: SourceS
 def display_plan_operand(mut builder: Builder, operand: Operand, span: SourceSpan) -> Result[Place, str]:
     """Format a materialized scalar without re-reading its source ownership fact."""
     ty = operand_type(builder, operand)?
+    if is_owned_list(ty):
+        return debug_plan_operand(builder, operand, span)
     if ty == PlanType.String:
         return display_string_operand(builder, operand, span)
     if has_sized_numeric(ty):
@@ -2061,6 +2232,19 @@ def display_plan_operand(mut builder: Builder, operand: Operand, span: SourceSpa
         _ => return Err("unsupported Body IR display type")
     result = temporary(builder, PlanType.String, span)
     external_call(builder, f"incan_native_runtime::{name}", [ty], PlanType.String, [operand], result, span)
+    return Ok(result)
+
+
+def debug_plan_operand(mut builder: Builder, operand: Operand, span: SourceSpan) -> Result[Place, str]:
+    """Invoke legacy Debug on an admitted carrier after its read ownership has been materialized."""
+    ty = operand_type(builder, operand)?
+    path = "incan_native_runtime::debug_value"
+    result = temporary(builder, PlanType.String, span)
+    builder.externals.append(
+        ExternalFunction(path=path, type_arguments=[ty], parameters=[ty], return_type=PlanType.String, span=span),
+    )
+    terminate_call(builder, CalleeKind.Instantiated(path, ty), [operand], result, span)
+    builder.owned.append(result.local)
     return Ok(result)
 
 
@@ -2228,7 +2412,8 @@ pub def lower_program(
         return Err("invalid Body IR project source provenance")
     for module in modules:
         _ = validate_module(module)?
-    context, checked = project_context(modules, entry)?
+    source_context, checked = project_context(modules, entry)?
+    context = specialize_nominals(source_context)?
     mut has_main = false
     for body in checked[entry].bodies:
         if function_name(context, body) == "main":
@@ -2236,18 +2421,28 @@ pub def lower_program(
     if not has_main:
         return Err("unsupported Body IR project without selected main entrypoint")
     unions = collect_unions(context)
-    intrinsics = intrinsic_declarations(context, files[entry])?
+    mut intrinsics = intrinsic_declarations(context, files[entry])?
     models = lower_model_declarations(context, files[entry])?
     mut enums = lower_enum_declarations(context, files[entry])?
-    for declaration in intrinsics:
-        enums.append(declaration)
-    for declaration in future_declarations(context, files[entry], intrinsics)?:
-        enums.append(declaration)
     mut functions: list[Function] = []
     mut externals: list[ExternalFunction] = []
+    mut instances: list[Instance] = []
     for index in range(len(checked)):
-        for body in checked[index].bodies:
-            function, runtime = lower_function(context, body, unions, sources[index], files[index], intrinsics)?
+        for body in context.bodies:
+            if body_module_identity(body)? != str(checked[index].module_id.path()):
+                continue
+            if len(body.type_parameters) != 0:
+                continue
+            function, runtime, pending = lower_function(
+                context,
+                body,
+                unions,
+                sources[index],
+                files[index],
+                intrinsics,
+                [],
+            )?
+            instances.extend(pending)
             for retained in functions:
                 if retained.name == function.name:
                     return Err(f"unsupported Body IR overloaded function {body.name}")
@@ -2258,6 +2453,15 @@ pub def lower_program(
                 merge_externals(externals, [entry_runtime])
             append_generator_constructor(functions, context, body, sources[index], files[index], intrinsics)?
             merge_externals(externals, runtime)
+    mut owners: list[str] = []
+    for module in checked:
+        owners.append(str(module.module_id.path()))
+    _ = lower_instances(context, instances, unions, sources, files, owners, functions, externals, intrinsics)?
+    # Instances may add intrinsic declarations, so the intrinsic and future declarations join the plan last.
+    for declaration in intrinsics:
+        enums.append(declaration)
+    for declaration in future_declarations(context, files[entry], intrinsics)?:
+        enums.append(declaration)
     return Ok(
         Plan(
             enums=enums,
@@ -2270,29 +2474,29 @@ pub def lower_program(
 
 
 pub def lower_module(module: &BodyIrModule, source: str, file: str) -> Result[Plan, str]:
-    """Validate first, then lower every body; any unsupported fact refuses the whole module."""
+    """Validate declarations first, then lower ordinary bodies and each checked type-parameter instance used by them."""
     _ = validate_module(module)?
-    specialized = specialize_traits(module)?
+    traits = specialize_traits(module)?
+    specialized = specialize_nominals(traits)?
     return lower_concrete_module(specialized, source, file)
 
 
 def lower_concrete_module(module: &BodyIrModule, source: str, file: str) -> Result[Plan, str]:
-    """Lower ordinary bodies and closed trait defaults after validating the original identities."""
+    """Lower ordinary bodies, closed trait defaults, and the worklist of checker-selected function instances."""
     unions = collect_unions(module)
-    intrinsics = intrinsic_declarations(module, file)?
+    mut intrinsics = intrinsic_declarations(module, file)?
     models = lower_model_declarations(module, file)?
     mut enums = lower_enum_declarations(module, file)?
-    for declaration in intrinsics:
-        enums.append(declaration)
-    for declaration in future_declarations(module, file, intrinsics)?:
-        enums.append(declaration)
     mut functions: list[Function] = []
     mut externals: list[ExternalFunction] = []
+    mut instances: list[Instance] = []
     for body in module.bodies:
+        if len(body.type_parameters) != 0:
+            continue
         for retained in functions:
             if retained.name == function_name(module, body):
                 return Err(f"unsupported Body IR overloaded function {body.name}")
-        function, runtime = lower_function(module, body, unions, source, file, intrinsics)?
+        function, runtime, pending = lower_function(module, body, unions, source, file, intrinsics, [])?
         functions.append(function)
         if body.is_async and function_name(module, body) == "main":
             entry_function, entry_runtime = async_entry(function)
@@ -2300,6 +2504,23 @@ def lower_concrete_module(module: &BodyIrModule, source: str, file: str) -> Resu
             merge_externals(externals, [entry_runtime])
         append_generator_constructor(functions, module, body, source, file, intrinsics)?
         merge_externals(externals, runtime)
+        instances.extend(pending)
+    _ = lower_instances(
+        module,
+        instances,
+        unions,
+        [source],
+        [file],
+        [str(module.module_id.path())],
+        functions,
+        externals,
+        intrinsics,
+    )?
+    # Instances may add intrinsic declarations, so the intrinsic and future declarations join the plan last.
+    for declaration in intrinsics:
+        enums.append(declaration)
+    for declaration in future_declarations(module, file, intrinsics)?:
+        enums.append(declaration)
     return Ok(
         Plan(
             enums=enums,
@@ -2344,6 +2565,67 @@ def append_generator_constructor(
         None => return Err("unsupported Body IR generator return type")
 
 
+def lower_instances(
+    module: &BodyIrModule,
+    mut instances: list[Instance],
+    unions: list[RustType],
+    sources: list[str],
+    files: list[str],
+    owners: list[str],
+    mut functions: list[Function],
+    mut externals: list[ExternalFunction],
+    mut intrinsics: list[EnumDeclaration],
+) -> Result[None, str]:
+    """Drain checked instance requests using their original declaring module's source provenance."""
+    mut completed: list[Instance] = []
+    mut cursor = 0
+    while cursor < len(instances):
+        instance = instances[cursor]
+        cursor += 1
+        if instance_is_retained(instance, completed):
+            continue
+        body = instantiate(instance.body, instance.arguments)?
+        owner = body_module_identity(body)?
+        mut source_index = -1
+        for index in range(len(owners)):
+            if owners[index] == owner:
+                source_index = index
+        if source_index < 0:
+            return Err("unsupported Body IR instance without source provenance")
+        retain_body_carriers(module, intrinsics, body, files[source_index])?
+        function, runtime, pending = lower_function(
+            module,
+            body,
+            unions,
+            sources[source_index],
+            files[source_index],
+            intrinsics,
+            instance.arguments,
+        )?
+        retain_instance(functions, function)?
+        completed.append(instance)
+        merge_externals(externals, runtime)
+        instances.extend(pending)
+    return Ok(None)
+
+
+def instance_is_retained(instance: Instance, completed: list[Instance]) -> bool:
+    """Deduplicate by checked declaration identity and arguments; an emitted spelling is never execution authority."""
+    for retained in completed:
+        if retained.body.canonical == instance.body.canonical and retained.arguments == instance.arguments and retained.body.locals == instance.body.locals:
+            return true
+    return false
+
+
+def retain_instance(mut functions: list[Function], function: Function) -> Result[None, str]:
+    """Refuse a native instance symbol that collides with another retained source declaration."""
+    for retained in functions:
+        if retained.name == function.name:
+            return Err(f"unsupported Body IR type parameter instance symbol collision {function.name}")
+    functions.append(function)
+    return Ok(None)
+
+
 def merge_externals(mut externals: list[ExternalFunction], additions: list[ExternalFunction]) -> None:
     """Add each runtime function the plan does not declare yet; one declaration per path and generic instantiation."""
     for external in additions:
@@ -2362,14 +2644,17 @@ def lower_function(
     source: str,
     file: str,
     intrinsics: list[EnumDeclaration],
-) -> Result[tuple[Function, list[ExternalFunction]], str]:
-    """Build one function's native frame from its checked locals, parameters and body."""
+    type_arguments: list[RustType],
+) -> Result[tuple[Function, list[ExternalFunction], list[Instance]], str]:
+    """Build a concrete frame and retain the checked bindings needed to schedule calls to further instances."""
     span = location(body.span, source, file)
     match body.extern_delegation:
         Some(delegation) =>
             if body.is_async or body.is_generator():
                 return Err("unsupported Body IR async or generator ExternDelegation")
-            return delegated_function(
+            if len(type_arguments) != 0:
+                return Err("unsupported Body IR generic ExternDelegation")
+            function, externals = delegated_function(
                 evaluator_name(module, body),
                 delegation.rust_path(),
                 frame_parameters(module, body, source, file, intrinsics)?,
@@ -2381,7 +2666,8 @@ def lower_function(
                     intrinsics,
                 )?,
                 span,
-            )
+            )?
+            return Ok((function, externals, []))
         None => pass
     declared_type = native_source_type(
         module.nominal_declarations,
@@ -2396,12 +2682,17 @@ def lower_function(
             capture = frame_type(module, body.locals[int(parameter.local.index())], intrinsics)?
             if list_parameter_type(capture, parameter.mutable) != capture:
                 return Err("unsupported Body IR borrowed generator parameter")
+            match capture:
+                PlanType.ModelRef(_owner, _name) => return Err("unsupported Body IR borrowed generator receiver")
+                PlanType.ModelMutRef(_owner, _name) => return Err("unsupported Body IR borrowed generator receiver")
+                _ => pass
         return_type = PlanType.Unit
     if function_name(module, body) == "main" and return_type != PlanType.Unit:
         return Err("unsupported Body IR non-unit native main")
     if body.is_async and function_name(module, body) == "main" and len(body.params) != 0:
         return Err("unsupported Body IR async entry signature")
     parameters = frame_parameters(module, body, source, file, intrinsics)?
+    names, bindings = body_type_bindings(module, body, type_arguments)?
     mut builder = Builder(
         locals=frame_locals(module, body, unions, return_type, span, source, file, intrinsics)?,
         parameter_count=len(parameters),
@@ -2425,6 +2716,9 @@ def lower_function(
         local_offset=0,
         generator_handle=-1,
         unions=unions,
+        instances=[],
+        type_parameters=names,
+        type_arguments=bindings,
     )
     _ = builder.new_block(span)
     if body.is_generator():
@@ -2464,7 +2758,7 @@ def lower_function(
                 producer_frame(function, builder.generator_handle, leaf, depth)
                 function.name = producer_name(function.name)
             None => return Err("unsupported Body IR generator return type")
-    return Ok((function, builder.externals))
+    return Ok((function, builder.externals, builder.instances))
 
 
 def frame_locals(
@@ -2491,6 +2785,10 @@ def frame_locals(
                 ty = frame_type(module, local, intrinsics)?
         index = int(local.id.index()) + 1
         if index in iterators:
+            match zip_shape(ty):
+                Some((left, right)) =>
+                    ty = PlanType.ZipIteratorMutRef(left, right)
+                None => pass
             match generator_shape(ty):
                 Some((leaf, depth)) =>
                     ty = PlanType.GeneratorMutRef(leaf, depth)
@@ -2580,6 +2878,14 @@ def checked_list_argument(
             ):
                 return projected_list_argument(builder, read.place, span)
             return list_borrow(builder, list_root_place(builder, read.place, span)?, mutable, span)
+        RustOperand.Constant(constant) =>
+            match constant:
+                RustConstant.Bytes(_bytes) =>
+                    if mutable:
+                        return Err("unsupported Body IR mutable byte literal argument")
+                    literal_place = bytes_literal(builder, constant, span)?
+                    return list_borrow(builder, literal_place, false, span)
+                _ => return Err("unsupported Body IR constant list argument")
         _ => return Err("unsupported Body IR constant list argument")
 
 
@@ -2594,6 +2900,9 @@ def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -
     """Materialize owned list and string values using each checked read's fact."""
     match value:
         RustOperand.Constant(constant) =>
+            match constant:
+                RustConstant.Bytes(_bytes) => return Ok(read_place(bytes_literal(builder, constant, span)?, true, span))
+                _ => pass
             match constant.clone():
                 RustConstant.Str(text) =>
                     text_place = owned_literal(builder, str(text), span)
@@ -2611,6 +2920,14 @@ def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -
                 return indexed_read(builder, read.place, span)
             place = scalar_place(builder, read.place, span)?
             ty = place_type(builder.locals, place)
+            match zip_shape(ty):
+                Some(_shape) =>
+                    if read.fact == OwnershipFact.Move:
+                        return Ok(read_place(place, true, span))
+                    if read.fact == OwnershipFact.Clone or read.fact == OwnershipFact.Borrow:
+                        return clone_zip(builder, place, span)
+                    return Err("unsupported Body IR zip value ownership")
+                None => pass
             match list_shape(ty):
                 Some((leaf, depth)) =>
                     if read.fact == OwnershipFact.Move and ty == PlanType.List(leaf, depth):
@@ -3130,6 +3447,9 @@ def list_next(
     if not is_builtin_iteration(protocol) or len(builder.loops) == 0:
         return Err("unsupported Body IR non-builtin list IterNext")
     receiver = operand_list_place(builder, iterator, span)?
+    match zip_shape(builder.locals[receiver.local].ty):
+        Some(_shape) => return zip_next(builder, receiver, list_root_place(builder, destination, span)?, span)
+        None => pass
     match generator_shape(builder.locals[receiver.local].ty):
         Some(_shape) => return generator_next(builder, receiver, list_root_place(builder, destination, span)?, span)
         None => pass
@@ -3329,6 +3649,11 @@ def dictionary_index_read(mut builder: Builder, source: &RustPlace, span: Source
     types = collection_arguments(ty)
     if len(types) != 2:
         return Err("unsupported Body IR set indexing")
+    # Legacy dictionary indexing requires Display for its missing-key diagnostic; tuples and unit lack that bound.
+    match types[0]:
+        PlanType.Tuple(_elements) => return Err("unsupported Body IR tuple dictionary key lookup: legacy Display bound")
+        PlanType.Unit => return Err("unsupported Body IR unit dictionary key lookup: legacy Display bound")
+        _ => pass
     mut key = read_place(receiver, false, span)
     match source.projection[0]:
         PlaceElem.Index(index) =>

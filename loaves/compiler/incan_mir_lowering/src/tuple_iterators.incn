@@ -1,0 +1,167 @@
+"""Checked flat-tuple zip polling and indexed builtin enumeration layouts."""
+
+from pub::incan_mir_plan import (
+    PlanType,
+    TupleElement,
+    ListLeaf,
+    Place,
+    Projection,
+    Operand,
+    SourceSpan,
+    RvalueKind,
+    TerminatorKind,
+    ExternalFunction,
+    CalleeKind,
+)
+from pub::incan_mir_plan import assign as plan_assign, tuple_element_type
+from frame import Builder, temporary, terminate_call, read_place, drop_owned
+from builtins import list_call
+
+
+pub def zip_shape(ty: PlanType) -> Option[tuple[TupleElement, TupleElement]]:
+    """Recognize a zip owner or its retained poll reference."""
+    match ty:
+        PlanType.ZipIterator(left, right) => return Some((left, right))
+        PlanType.ZipIteratorRef(left, right) => return Some((left, right))
+        PlanType.ZipIteratorMutRef(left, right) => return Some((left, right))
+        _ => return None
+
+
+pub def zip_reference(mut builder: Builder, source: Place, mutable: bool, span: SourceSpan) -> Result[Operand, str]:
+    """Borrow a snapshot or reborrow its exclusive loop handle without duplicating reference ownership."""
+    match zip_shape(builder.locals[source.local].ty):
+        None => return Err("unsupported Body IR zip reference receiver")
+        Some((left, right)) =>
+            mut root = source
+            if builder.locals[source.local].ty != PlanType.ZipIterator(left, right):
+                if mutable and builder.locals[source.local].ty == PlanType.ZipIteratorRef(left, right):
+                    return Err("unsupported Body IR mutable zip through shared reference")
+                root.projection = Projection.Deref(PlanType.ZipIterator(left, right))
+            mut ty = PlanType.ZipIteratorRef(left, right)
+            mut operation = RvalueKind.Borrow(root)
+            if mutable:
+                ty = PlanType.ZipIteratorMutRef(left, right)
+                operation = RvalueKind.MutBorrow(root)
+            reference = temporary(builder, ty, span)
+            builder.emit(plan_assign(reference, operation, span))
+            return Ok(read_place(reference, mutable, span))
+
+
+pub def zip_call(
+    mut builder: Builder,
+    name: str,
+    left: TupleElement,
+    right: TupleElement,
+    parameters: list[PlanType],
+    result: PlanType,
+    arguments: list[Operand],
+    output: Place,
+    span: SourceSpan,
+) -> None:
+    """Keep the exact two runtime type arguments and signature beside each canonical call."""
+    first = tuple_element_type(left)
+    second = tuple_element_type(right)
+    path = f"incan_native_runtime::{name}"
+    builder.externals.append(
+        ExternalFunction(path=path, type_arguments=[first, second], parameters=parameters, return_type=result, span=span),
+    )
+    terminate_call(builder, CalleeKind.InstantiatedPair(path, first, second), arguments, output, span)
+
+
+pub def clone_zip(mut builder: Builder, source: Place, span: SourceSpan) -> Result[Operand, str]:
+    """Snapshot both lists and their cursors for a checked value-preserving read."""
+    match zip_shape(builder.locals[source.local].ty):
+        None => return Err("unsupported Body IR zip clone receiver")
+        Some((left, right)) =>
+            reference = zip_reference(builder, source, false, span)?
+            ty = PlanType.ZipIterator(left, right)
+            output = temporary(builder, ty, span)
+            zip_call(
+                builder,
+                "clone_zip",
+                left,
+                right,
+                [PlanType.ZipIteratorRef(left, right)],
+                ty,
+                [reference],
+                output,
+                span,
+            )
+            builder.owned.append(output.local)
+            return Ok(read_place(output, true, span))
+
+
+pub def initialize_zip_iterator(
+    mut builder: Builder,
+    destination: Place,
+    source: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Borrow the checked consumed zip state for one normalized loop without inventing another value read."""
+    reference = zip_reference(builder, source, true, span)?
+    builder.emit(plan_assign(destination, RvalueKind.Use(reference), span))
+    return Ok(None)
+
+
+pub def zip_next(mut builder: Builder, receiver: Place, output: Place, span: SourceSpan) -> Result[None, str]:
+    """Poll one pair and branch to the loop exit on exhaustion, disposing of the temporary buffer on both edges."""
+    if len(builder.loops) == 0:
+        return Err("unsupported Body IR zip polling outside loop")
+    match zip_shape(builder.locals[receiver.local].ty):
+        None => return Err("unsupported Body IR zip poll receiver")
+        Some((left, right)) =>
+            element = PlanType.Tuple([left, right])
+            if builder.locals[output.local].ty != element:
+                return Err("unsupported Body IR zip IterNext destination")
+            storage_type = PlanType.List(ListLeaf.Tuple([left, right]), 1)
+            storage = temporary(builder, storage_type, span)
+            list_call(builder, "empty_list", element, [], storage_type, [], storage, span)
+            reference = temporary(builder, PlanType.ListMutRef(ListLeaf.Tuple([left, right]), 1), span)
+            builder.emit(plan_assign(reference, RvalueKind.MutBorrow(storage), span))
+            source = zip_reference(builder, receiver, true, span)?
+            available = temporary(builder, PlanType.Bool, span)
+            zip_call(
+                builder,
+                "poll_zip",
+                left,
+                right,
+                [PlanType.ZipIteratorMutRef(left, right), PlanType.ListMutRef(ListLeaf.Tuple([left, right]), 1)],
+                PlanType.Bool,
+                [source, read_place(reference, true, span)],
+                available,
+                span,
+            )
+            exhausted = builder.new_block(span)
+            selected = builder.new_block(span)
+            owners = builder.owned
+            builder.finish(TerminatorKind.SwitchBool(read_place(available, false, span), exhausted, selected), span)
+            builder.current = exhausted
+            drop_owned(builder, storage.local, span)
+            builder.finish(TerminatorKind.Goto(builder.loops[-1][1]), span)
+            builder.current = selected
+            builder.owned = owners
+            drop_owned(builder, output.local, span)
+            final_reference = temporary(builder, PlanType.ListMutRef(ListLeaf.Tuple([left, right]), 1), span)
+            builder.emit(plan_assign(final_reference, RvalueKind.MutBorrow(storage), span))
+            list_call(
+                builder,
+                "pop_list",
+                element,
+                [PlanType.ListMutRef(ListLeaf.Tuple([left, right]), 1)],
+                element,
+                [read_place(final_reference, true, span)],
+                output,
+                span,
+            )
+            drop_owned(builder, storage.local, span)
+            return Ok(None)
+
+
+pub def enumerated_element(ty: PlanType) -> Result[TupleElement, str]:
+    """Require a flat scalar or text item before constructing the builtin's indexed tuple layout."""
+    match ty:
+        PlanType.Int => return Ok(TupleElement.Int)
+        PlanType.Float => return Ok(TupleElement.Float)
+        PlanType.Bool => return Ok(TupleElement.Bool)
+        PlanType.String => return Ok(TupleElement.String)
+        _ => return Err("unsupported Body IR enumerate nested element layout")

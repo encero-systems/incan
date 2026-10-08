@@ -28,6 +28,8 @@ An omitted object denotes a package with no published executable representation.
 
 Coverage is declared for the manifest's public canonical identities. A callable fragment carries its required public declarations and type context. Public fields, enum variants, and abstract trait methods can refer to their declaring type's context. Aliases and facades resolve to the original declaration; they do not create another executable body.
 
+A checked package module binding selects a namespace in the admitted dependency graph and requires no executable fragment. Calls and type references through that binding retain their own canonical executable requirements.
+
 Coverage can be partial. The published content excludes private declarations and private type layouts. A public body that needs either remains uncovered, as does a body containing an unsupported operation or an unresolved reference. An uncovered required public declaration also leaves its callers uncovered. An empty supported function is covered; it is distinct from an absent executable declaration.
 
 Published fragments represent functions and methods, checker-evaluated scalar and text constants, nongeneric erased type aliases including unions, admitted model and class layouts, concrete trait implementation records, trait identities, normal enum payload layouts, fieldless enums, and scalar value enums. A body is covered when Body IR represents all of it and its types and references satisfy the public executable closure checks. A trait default retains its abstract receiver until concrete implementation specialization. Published function bodies have no original source text; native execution uses source-less diagnostic spans for their package identities.

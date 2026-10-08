@@ -926,7 +926,8 @@ pub struct DeclarationArtifacts {
     /// Explicit builtin, canonical serde, and implicit native derives selected for source models, in legacy emission
     /// order. Derived Display remains a semantic selection, not a Rust macro.
     pub model_derives: HashMap<String, Vec<String>>,
-    /// Accepted foreign nominal bindings retained before lexical checker context is discarded.
+    /// Active module-scope nominal identities from source and package bindings, retained before lexical checker
+    /// context is discarded.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
     /// Exact selected foreign origins retained from accepted bindings for native representation projection.
     pub named_type_origins: std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>,
@@ -1425,11 +1426,11 @@ pub struct CallArtifacts {
     /// Lowering consumes these plans to rewrite fixed/static unpack operands into ordinary IR call arguments. This
     /// keeps backend emission from re-deriving the frontend's binding decision from raw IR shape.
     pub fixed_unpack_plans: HashMap<(usize, usize), FixedUnpackPlan>,
-    /// RFC 054: For call expressions that used explicit bracketed type arguments, maps the **full call expression
-    /// span** `(start, end)` to the final monomorphized type arguments in callee type-parameter order.
+    /// Map a full call expression span `(start, end)` to its checked type arguments in declaration order.
     ///
-    /// Populated only after a successful generic function or method check when `[...]` was present; lowering prefers
-    /// this over re-lowering AST type nodes so `_` placeholders never reach codegen as `IrType::Unknown`.
+    /// Functions retain both inferred and explicit bindings; methods retain explicit bindings (RFC 054). Body IR
+    /// consumes these decisions for native instantiation. Legacy emission consumes them only for written `[...]`,
+    /// preserving Rust inference on other calls and ensuring `_` never reaches codegen as `IrType::Unknown`.
     ///
     /// ## Span stability
     ///

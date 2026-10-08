@@ -147,6 +147,11 @@ pub fn resolve_executable_requirements(
             .ok_or_else(|| ExecutableResolutionError::UnknownPackage {
                 library: library.clone(),
             })?;
+        // A checked module binding selects an admitted package namespace; it has no executable body. Calls and
+        // type uses retain their own canonical requirements and must still resolve from the selected artifact.
+        if identity.kind == incan_semantics_core::SemanticSourceTargetKind::Module {
+            continue;
+        }
         if !opened.contains_key(library) {
             let surface = OpenSurface::open(package, &identity)?;
             resolved.content_bytes_verified += surface.content_bytes_verified;
