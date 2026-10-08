@@ -139,7 +139,7 @@ impl BodyIrModule {
                             && declares_member(&owner.canonical, canonical)
                             && body.locals.first().is_none_or(|receiver| {
                                 !matches!(receiver.origin, LocalOrigin::Receiver { .. })
-                                    || receiver.ty == crate::IncanType::Named(owner.name.clone())
+                                    || receiver.ty == nominal_receiver_type(owner)
                             })
                     }) || self.trait_declarations.iter().any(|owner| {
                         self.declaration_id_for_canonical(
@@ -190,6 +190,12 @@ impl BodyIrModule {
 
     /// Whether a retained model, class, or newtype layout agrees with its checked canonical identities.
     pub fn is_well_formed_nominal_declaration(&self, declaration: &NominalDeclaration) -> bool {
+        if declaration.type_parameters.len() != declaration.type_parameter_count
+            || declaration.type_parameters.iter().any(String::is_empty)
+            || declaration.type_parameters.iter().collect::<BTreeSet<_>>().len() != declaration.type_parameters.len()
+        {
+            return false;
+        }
         if declaration.canonical.kind == SemanticSourceTargetKind::Newtype {
             return self.declaration_id_for_canonical(
                 &declaration.canonical,
@@ -305,6 +311,23 @@ impl BodyIrModule {
                     && declares_member(canonical, variant_canonical)
                     && variant_canonical.declaration_name == variant_name
             })
+    }
+}
+
+/// Return the declaration's open receiver type in its retained parameter order, never a concrete inferred use.
+fn nominal_receiver_type(owner: &NominalDeclaration) -> crate::IncanType {
+    if owner.type_parameters.is_empty() {
+        crate::IncanType::Named(owner.name.clone())
+    } else {
+        crate::IncanType::Generic {
+            base: owner.name.clone(),
+            args: owner
+                .type_parameters
+                .iter()
+                .cloned()
+                .map(crate::IncanType::TypeVar)
+                .collect(),
+        }
     }
 }
 

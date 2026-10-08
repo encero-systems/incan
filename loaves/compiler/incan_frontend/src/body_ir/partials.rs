@@ -216,6 +216,7 @@ pub(super) fn lower_source_partial(
         direct_call_id,
         canonical: binding.and_then(|binding| binding.identity.clone()),
         name: partial.name.clone(),
+        type_parameters: Vec::new(),
         span,
         return_type,
         named_type_identities: facts.type_info.declarations.named_type_identities.clone(),

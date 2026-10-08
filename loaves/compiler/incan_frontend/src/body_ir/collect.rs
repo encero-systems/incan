@@ -3,6 +3,61 @@
 
 use super::*;
 
+/// Retain checker-evaluated constants once; unsupported aggregate and symbolic constants remain absent.
+pub(super) fn collect_constants(program: &ast::Program, type_info: &TypeCheckInfo) -> Vec<bir::ConstantDeclaration> {
+    program
+        .declarations
+        .iter()
+        .filter_map(|declaration| {
+            let ast::Declaration::Const(item) = &declaration.node else {
+                return None;
+            };
+            let canonical = type_info
+                .declarations
+                .declaration_identities
+                .get(&(declaration.span.start, declaration.span.end))?
+                .clone();
+            let value = match type_info.const_value(&item.name)? {
+                crate::typechecker::ConstValue::Int(value) => bir::Constant::Int(*value),
+                crate::typechecker::ConstValue::Float(value) => bir::Constant::Float(value.to_string()),
+                crate::typechecker::ConstValue::Bool(value) => bir::Constant::Bool(*value),
+                crate::typechecker::ConstValue::FrozenStr(value) => bir::Constant::Str(value.clone()),
+                _ => return None,
+            };
+            Some(bir::ConstantDeclaration { canonical, value })
+        })
+        .collect()
+}
+
+/// Retain alias-expanded nongeneric type declarations and their checker-proven nominal references.
+pub(super) fn collect_type_aliases(
+    program: &ast::Program,
+    type_info: &TypeCheckInfo,
+) -> Vec<bir::TypeAliasDeclaration> {
+    program
+        .declarations
+        .iter()
+        .filter_map(|declaration| {
+            let ast::Declaration::TypeAlias(item) = &declaration.node else {
+                return None;
+            };
+            if !item.type_params.is_empty() {
+                return None;
+            }
+            let canonical = type_info
+                .declarations
+                .declaration_identities
+                .get(&(declaration.span.start, declaration.span.end))?
+                .clone();
+            Some(bir::TypeAliasDeclaration {
+                canonical,
+                ty: semantic_type_from_resolved(type_info.type_alias_target(&item.name)?),
+                named_type_identities: type_info.declarations.named_type_identities.clone(),
+            })
+        })
+        .collect()
+}
+
 /// Retain only scalar literal statics, whose lazy initialization has no user-visible evaluation effects.
 pub(super) fn collect_scalar_statics(program: &ast::Program, type_info: &TypeCheckInfo) -> Vec<bir::StaticDeclaration> {
     program
@@ -246,6 +301,7 @@ pub(super) fn collect_local_nominal_declarations(
                     })
                     .collect(),
                 named_type_identities: type_info.declarations.named_type_identities.clone(),
+                type_parameters: class_layout.map_or_else(Vec::new, |layout| layout.type_params.clone()),
                 type_parameter_count,
             })
         })
@@ -295,6 +351,7 @@ fn collect_plain_newtype(
         field_default_body: None,
         derives,
         named_type_identities: type_info.declarations.named_type_identities.clone(),
+        type_parameters: Vec::new(),
         type_parameter_count: 0,
     })
 }
@@ -454,10 +511,13 @@ pub(super) fn collect_local_trait_declarations(
 /// Retain non-generic local trait slots and their checked concrete implementation identities.
 ///
 /// Successful typechecking already proves adoption and method compatibility. This registry retains only local,
-/// unambiguous method declarations; imported, generic, and overloaded implementations never gain a guessed target.
+/// unambiguous method declarations with admitted owner layouts; imported, generic, and overloaded implementations never
+/// gain a guessed target. A refused checked newtype constructor cannot contribute an implementation without its owner
+/// layout.
 pub(super) fn collect_local_trait_implementations(
     program: &ast::Program,
     type_info: &TypeCheckInfo,
+    nominal_declarations: &[bir::NominalDeclaration],
 ) -> Vec<bir::TraitImplementation> {
     let mut implementations = Vec::new();
     for declaration in &program.declarations {
@@ -466,6 +526,9 @@ pub(super) fn collect_local_trait_implementations(
                 (&model.traits, &model.methods)
             }
             ast::Declaration::Class(class) if is_direct_replacement_class(class) => (&class.traits, &class.methods),
+            ast::Declaration::Newtype(newtype) if is_direct_replacement_plain_newtype(newtype) => {
+                (&newtype.traits, &newtype.methods)
+            }
             _ => continue,
         };
         let Some(owner) = type_info
@@ -475,6 +538,12 @@ pub(super) fn collect_local_trait_implementations(
         else {
             continue;
         };
+        if !nominal_declarations
+            .iter()
+            .any(|declaration| &declaration.canonical == owner)
+        {
+            continue;
+        }
         for adoption in adoptions {
             if !adoption.node.type_args.is_empty() {
                 continue;

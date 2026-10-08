@@ -61,7 +61,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.lower_chained_assignment(chained_assignment, remaining, scope, span, out)
             }
             ast::Statement::Return(value) => {
-                let value = value.as_ref().map(|v| self.lower_expr_to_operand(v, scope, out));
+                let value = value.as_ref().map(|v| {
+                    let operand = self.lower_expr_to_operand(v, scope, out);
+                    self.owned_parameter_operand(v, operand)
+                });
                 out.push(bir::Statement {
                     kind: bir::StatementKind::Return { value },
                     span,
@@ -147,14 +150,23 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // slots, and `LocalCallableTarget::binding` records the resulting declaration mapping. Keeping this type on
         // the binding makes the local call contract agree with the `Rvalue::Closure` that creates the value.
         let assignment_span = ast::Span::new(span.start, span.end);
-        let ty = self
+        let mut ty = self
             .type_info
             .assignment_binding_type(assignment_span)
-            .map(semantic_type_from_resolved)
+            .map(|ty| self.checked_type(ty))
             .or_else(|| self.callable_value_ty(&assignment.value))
             .unwrap_or_else(|| self.resolve_ty(assignment.value.span));
         let materializes_range = self.expr_has_materialized_range_layout(&assignment.value);
         let value = self.lower_expr_to_operand(&assignment.value, scope, out);
+        // Future construction is a distinct Body IR value even when the surface checker exposes its output type.
+        // Preserve that carrier through a binding or alias instead of silently turning it into a scalar copy.
+        if let bir::Operand::Place(read) = &value
+            && let Some(local) = read.place.local_id()
+            && let IncanType::Generic { base, .. } = &self.locals[local.index()].ty
+            && base == "Awaitable"
+        {
+            ty = self.locals[local.index()].ty.clone();
+        }
         let binding_span = hir_span(assignment.name_span);
         let target_identity = self
             .type_info
@@ -337,7 +349,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let lhs_ty = self
             .type_info
             .resolved_write_type(compound_assignment.name_span, &compound_assignment.name)
-            .map(semantic_type_from_resolved)
+            .map(|ty| self.checked_type(ty))
             .unwrap_or(IncanType::Unknown);
         let place = if let Some(identity) = target_identity {
             self.identity_bindings

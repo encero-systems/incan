@@ -226,6 +226,12 @@ fn build_body_ir_module_v0_with_provider_operations(
 ) -> bir::BodyIrModule {
     let module_identity = body_ir_module_identity(module_path);
     let module_id = CompilerNodeId::module(module_identity.clone());
+    let constant_declarations = collect::collect_constants(program, type_info);
+    let published_constants = context
+        .iter()
+        .flat_map(|module| module.constant_declarations.iter())
+        .map(|declaration| (declaration.canonical.clone(), declaration.value.clone()))
+        .collect::<HashMap<_, _>>();
     let function_default_sources = collect_function_default_sources(program);
     let local_function_declarations = collect_local_function_declarations(program);
     let mut nominal_declarations = collect_local_nominal_declarations(program, &module_identity, type_info);
@@ -255,6 +261,7 @@ fn build_body_ir_module_v0_with_provider_operations(
         }
     }
     let lowering_facts = BodyIrLoweringFacts {
+        published_constants: &published_constants,
         type_info,
         function_default_sources: &function_default_sources,
         local_function_declarations: &local_function_declarations,
@@ -318,8 +325,10 @@ fn build_body_ir_module_v0_with_provider_operations(
         .collect::<Vec<_>>();
     apply_top_level_input_contract_refusal(program, &mut bodies);
     bir::BodyIrModule {
+        constant_declarations,
+        type_alias_declarations: collect::collect_type_aliases(program, type_info),
         trait_declarations: collect::collect_local_trait_declarations(program, type_info),
-        trait_implementations: collect::collect_local_trait_implementations(program, type_info),
+        trait_implementations: collect::collect_local_trait_implementations(program, type_info, &nominal_declarations),
         enum_declarations: collect_local_enum_declarations(program, &module_identity, type_info),
         stdlib_delegations: stdlib_delegations::collect(type_info),
         static_declarations: collect::collect_scalar_statics(program, type_info),
@@ -397,6 +406,7 @@ type LocalValueEnumDeclarations = HashMap<String, bir::ValueEnumDeclaration>;
 /// identities and representations a later direct executor needs. Keeping the bundle explicit avoids widening any
 /// individual lowering helper's parameter surface as profiles add one bounded source-local fact at a time.
 struct BodyIrLoweringFacts<'type_info, 'source> {
+    published_constants: &'source HashMap<CanonicalSymbolId, bir::Constant>,
     type_info: &'type_info TypeCheckInfo,
     function_default_sources: &'source FunctionDefaultSources,
     local_function_declarations: &'source LocalFunctionDeclarations,
@@ -496,26 +506,32 @@ pub fn is_direct_replacement_model_derive(decorator: &ast::Decorator) -> bool {
         })
 }
 
-/// Admit only a concrete tuple wrapper whose construction adds no hooks, constraints, or trait behavior.
+/// Admit concrete tuple wrappers with ordinary methods and nongeneric trait adoptions.
+///
+/// Checked construction hooks and constraints remain refused by the declaration collector; aliases, interop edges,
+/// associated types, and generic methods require additional representation facts and remain outside this profile.
 pub fn is_direct_replacement_plain_newtype(newtype: &ast::NewtypeDecl) -> bool {
     !newtype.is_rusttype
         && newtype.decorators.is_empty()
         && newtype.type_params.is_empty()
-        && newtype.traits.is_empty()
+        && newtype.traits.iter().all(|adoption| adoption.node.type_args.is_empty())
         && newtype.rebindings.is_empty()
         && newtype.method_aliases.is_empty()
         && newtype.method_partials.is_empty()
         && newtype.associated_types.is_empty()
         && newtype.interop_edges.is_empty()
-        && newtype.methods.is_empty()
+        && newtype
+            .methods
+            .iter()
+            .all(|method| method.node.type_params.is_empty() && method.node.decorators.is_empty())
 }
 
 /// Admit source classes whose fields and method bodies have complete direct-route facts.
 ///
-/// Inheritance, generic substitution, decorators, properties, aliases, and defaults remain refused.
+/// Ordered owner parameters and method parameters are retained for checked instance scheduling. Inheritance,
+/// decorators, properties, aliases, and defaults remain refused.
 pub fn is_direct_replacement_class(class: &ast::ClassDecl) -> bool {
     class.decorators.is_empty()
-        && class.type_params.is_empty()
         && class.traits.iter().all(|adoption| adoption.node.type_args.is_empty())
         && class.extends.is_none()
         && class.method_aliases.is_empty()
@@ -526,10 +542,7 @@ pub fn is_direct_replacement_class(class: &ast::ClassDecl) -> bool {
             .fields
             .iter()
             .all(|field| field.node.metadata.alias.is_none() && field.node.default.is_none())
-        && class
-            .methods
-            .iter()
-            .all(|method| method.node.type_params.is_empty() && method.node.decorators.is_empty())
+        && class.methods.iter().all(|method| method.node.decorators.is_empty())
 }
 
 /// Determine whether an enum carries the narrow source-local fieldless normal-enum declaration fact.
@@ -550,14 +563,18 @@ pub fn is_direct_replacement_fieldless_enum(enum_decl: &ast::EnumDecl) -> bool {
             .all(|variant| variant.node.fields.is_empty() && variant.node.value.is_none())
 }
 
-/// Admit normal enum layouts only when no methods, aliases, value backing, or generic substitution are required.
+/// Admit normal enum layouts and plain value-enum layouts without methods, aliases, or generic substitution.
+///
+/// A value enum also retains its separate canonical raw-value registry; its unit layout alone never authorizes scalar
+/// extraction.
 pub fn is_direct_native_enum(value: &ast::EnumDecl) -> bool {
-    value.type_params.is_empty()
-        && value.value_type.is_none()
-        && value.traits.is_empty()
-        && value.variant_aliases.is_empty()
-        && value.methods.is_empty()
-        && value.decorators.iter().all(|decorator| decorator.node.name == "derive")
+    is_direct_replacement_value_enum(value)
+        || (value.type_params.is_empty()
+            && value.value_type.is_none()
+            && value.traits.is_empty()
+            && value.variant_aliases.is_empty()
+            && value.methods.is_empty()
+            && value.decorators.iter().all(|decorator| decorator.node.name == "derive"))
 }
 
 /// Determine whether an enum carries the narrow source-local RFC 032 scalar declaration fact.
@@ -595,6 +612,8 @@ const fn hir_span(span: ast::Span) -> HirSourceSpan {
 /// Per-function lowering state: fresh local/scope allocation, current name bindings, and accumulated body-level
 /// facts (runtime requirements, panic facts, which locals have been moved out of their declaring scope).
 struct BodyBuilder<'type_info, 'source> {
+    /// Immutable values decoded from the selected package representation, indexed by canonical declaration.
+    published_constants: &'source HashMap<CanonicalSymbolId, bir::Constant>,
     type_info: &'type_info TypeCheckInfo,
     /// Source defaults for top-level partial targets, retained only until they lower into Body IR.
     function_default_sources: &'source FunctionDefaultSources,
@@ -612,6 +631,8 @@ struct BodyBuilder<'type_info, 'source> {
     provider_operations: &'source ProviderOperationCatalog,
     /// Checked return type of the function/method currently being lowered, used only to retain `?` error routing.
     owner_return_type: IncanType,
+    /// Explicit owner and callable binders whose checked types remain placeholders at this boundary.
+    type_parameters: Vec<String>,
     locals: Vec<bir::LocalDecl>,
     scopes: Vec<bir::ScopeInfo>,
     /// Current source-name -> local binding.
@@ -668,9 +689,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             local_nominal_declarations: lowering_facts.local_nominal_declarations,
             local_fieldless_enum_declarations: lowering_facts.local_fieldless_enum_declarations,
             local_value_enum_declarations: lowering_facts.local_value_enum_declarations,
+            published_constants: lowering_facts.published_constants,
             module_identity: lowering_facts.module_identity,
             provider_operations: lowering_facts.provider_operations,
             owner_return_type,
+            type_parameters: Vec::new(),
             locals: Vec::new(),
             scopes: Vec::new(),
             bindings: HashMap::new(),
@@ -714,7 +737,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     fn resolve_ty(&self, span: ast::Span) -> IncanType {
         self.type_info
             .expr_type(span)
-            .map(semantic_type_from_resolved)
+            .map(|ty| self.checked_type(ty))
             .unwrap_or(IncanType::Unknown)
     }
 
@@ -1196,6 +1219,7 @@ mod reads;
 mod collect;
 
 mod bodies;
+mod parameter_types;
 mod partials;
 
 mod primitives;

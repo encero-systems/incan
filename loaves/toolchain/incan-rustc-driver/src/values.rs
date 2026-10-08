@@ -111,6 +111,11 @@ pub fn binary(op: &BinaryOp, checked: bool) -> mir::BinOp {
         BinaryOp::LessEqual => mir::BinOp::Le,
         BinaryOp::Greater => mir::BinOp::Gt,
         BinaryOp::GreaterEqual => mir::BinOp::Ge,
+        BinaryOp::BitAnd => mir::BinOp::BitAnd,
+        BinaryOp::BitOr => mir::BinOp::BitOr,
+        BinaryOp::BitXor => mir::BinOp::BitXor,
+        BinaryOp::ShiftLeft => mir::BinOp::Shl,
+        BinaryOp::ShiftRight => mir::BinOp::Shr,
     }
 }
 
@@ -122,6 +127,22 @@ pub fn rvalue<'tcx>(
     destination_type: &PlanType,
 ) -> Result<mir::Rvalue<'tcx>, PlanError> {
     Ok(match value {
+        RvalueKind::UnitFunction(name) => {
+            let def = tcx
+                .hir_crate_items(())
+                .free_items()
+                .map(|item| item.owner_id.to_def_id())
+                .find(|def| tcx.opt_item_name(*def).is_some_and(|symbol| symbol.as_str() == name))
+                .ok_or_else(|| PlanError::UnknownCallee(name.clone()))?;
+            mir::Rvalue::Cast(
+                mir::CastKind::PointerCoercion(
+                    rustc_middle::ty::adjustment::PointerCoercion::ReifyFnPointer(rustc_hir::Safety::Safe),
+                    mir::CoercionSource::Implicit,
+                ),
+                mir::Operand::function_handle(tcx, def, [], rustc_span::DUMMY_SP),
+                native_type(tcx, &PlanType::UnitFunction)?,
+            )
+        }
         RvalueKind::Discriminant(value) => mir::Rvalue::Discriminant(place(tcx, value)?),
         RvalueKind::TagToInt(value) => {
             mir::Rvalue::Cast(mir::CastKind::IntToInt, operand(tcx, sources, value)?, tcx.types.i64)
@@ -151,6 +172,7 @@ pub fn rvalue<'tcx>(
             match op {
                 UnaryOp::Not => mir::UnOp::Not,
                 UnaryOp::Negate => mir::UnOp::Neg,
+                UnaryOp::Invert => mir::UnOp::Not,
             },
             operand(tcx, sources, value)?,
         ),

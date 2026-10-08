@@ -52,6 +52,7 @@ pub(super) fn attach_model_field_defaults(
             builder.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
         }
         declaration.field_default_body = Some(Box::new(bir::Body {
+            type_parameters: Vec::new(),
             decl_id: declaration.direct_declaration_id.clone(),
             direct_call_id: declaration.direct_declaration_id.clone(),
             canonical: Some(declaration.canonical.clone()),
