@@ -27,6 +27,12 @@ fn statement<'tcx>(
                 crate::plan::Projection::Field(_, ty)
                 | crate::plan::Projection::DerefField(_, ty)
                 | crate::plan::Projection::Deref(ty) => ty,
+                crate::plan::Projection::Fields(fields) | crate::plan::Projection::DerefFields(fields) => {
+                    &fields.last().ok_or_else(|| PlanError::Invalid {
+                        function: function.name.clone(),
+                        reason: "field path must retain at least one field".into(),
+                    })?.ty
+                }
                 _ => &function.locals[values::index(destination.local)?].ty,
             };
             mir::StatementKind::Assign(Box::new((

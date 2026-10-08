@@ -191,8 +191,16 @@ pub model Local:
 
 
 @derive(Clone, PartialEq)
+pub model FieldProjection:
+    """One canonical field slot and its exact retained native type."""
+
+    pub slot: int
+    pub ty: PlanType
+
+
+@derive(Clone, PartialEq)
 pub enum Projection:
-    """Whole local, checked component, typed reference dereference, nominal field, or downcast enum payload."""
+    """Whole local, checked component, typed reference dereference, canonical field path, or downcast enum payload."""
 
     Whole
     NumericValue(PlanType)
@@ -202,6 +210,8 @@ pub enum Projection:
     Field(int, PlanType)
     Deref(PlanType)
     DerefField(int, PlanType)
+    Fields(list[FieldProjection])
+    DerefFields(list[FieldProjection])
 
 
 @derive(Clone, PartialEq)

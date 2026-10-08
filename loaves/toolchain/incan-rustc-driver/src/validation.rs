@@ -383,6 +383,45 @@ fn local(function: &Function, index: i64) -> Result<Scalar, PlanError> {
         })
 }
 
+/// Require a field path's root to have its explicit owned or receiver-reference shape.
+fn field_owner(function: &Function, ty: Scalar, dereference: bool) -> Result<Scalar, PlanError> {
+    if !dereference {
+        return Ok(ty);
+    }
+    match ty {
+        Scalar::ModelRef(owner) | Scalar::ModelMutRef(owner) => Ok(Scalar::Model(owner)),
+        _ => Err(invalid(function, "field dereference requires a nominal receiver reference")),
+    }
+}
+
+/// Validate one field against its retained tuple or nominal layout before allowing another path step.
+fn projected_field(
+    plan: &Plan,
+    function: &Function,
+    owner: Scalar,
+    slot: i64,
+    field_type: &PlanType,
+) -> Result<Scalar, PlanError> {
+    let expected = match owner {
+        Scalar::Tuple(elements) => usize::try_from(slot)
+            .ok()
+            .and_then(|slot| elements.get(slot))
+            .cloned()
+            .ok_or_else(|| invalid(function, "unknown tuple field"))?,
+        Scalar::Model(owner) => {
+            let model = model(plan, owner).ok_or_else(|| invalid(function, "unknown model owner"))?;
+            let field = usize::try_from(slot)
+                .ok()
+                .and_then(|slot| model.fields.get(slot))
+                .ok_or_else(|| invalid(function, "unknown model field"))?;
+            scalar(&field.ty)
+        }
+        _ => return Err(invalid(function, "field projection requires a matching nominal or tuple owner")),
+    };
+    require(function, scalar(field_type), &expected, "projected field type")?;
+    Ok(expected)
+}
+
 /// Resolve checked arithmetic, list dereferences, and nominal projections, verifying reference shape and canonical
 /// pointee or field type.
 fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, PlanError> {
@@ -424,33 +463,18 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
             Ok(pointee)
         }
         Projection::Field(slot, field_type) | Projection::DerefField(slot, field_type) => {
-            if let Scalar::Tuple(elements) = &ty {
-                let field = usize::try_from(*slot)
-                    .ok()
-                    .and_then(|slot| elements.get(slot))
-                    .ok_or_else(|| invalid(function, "unknown tuple field"))?;
-                require(
-                    function,
-                    scalar(field_type),
-                    field.clone(),
-                    "projected tuple field type",
-                )?;
-                return Ok(field.clone());
+            let owner = field_owner(function, ty, matches!(value.projection, Projection::DerefField(..)))?;
+            projected_field(plan, function, owner, *slot, field_type)
+        }
+        Projection::Fields(fields) | Projection::DerefFields(fields) => {
+            if fields.is_empty() {
+                return Err(invalid(function, "field path must retain at least one field"));
             }
-            let owner = match (&value.projection, ty) {
-                (Projection::Field(..), Scalar::Model(owner)) => owner,
-                (Projection::DerefField(..), Scalar::ModelRef(owner) | Scalar::ModelMutRef(owner)) => owner,
-                _ => {
-                    return Err(invalid(function, "field projection requires a matching nominal owner"));
-                }
-            };
-            let model = model(plan, owner).ok_or_else(|| invalid(function, "unknown model owner"))?;
-            let field = usize::try_from(*slot)
-                .ok()
-                .and_then(|slot| model.fields.get(slot))
-                .ok_or_else(|| invalid(function, "unknown model field"))?;
-            require(function, scalar(field_type), &scalar(&field.ty), "projected field type")?;
-            Ok(scalar(field_type))
+            let mut owner = field_owner(function, ty, matches!(value.projection, Projection::DerefFields(_)))?;
+            for field in fields {
+                owner = projected_field(plan, function, owner, field.slot, &field.ty)?;
+            }
+            Ok(owner)
         }
         Projection::NumericValue(kind)
             if sized_numeric(&scalar(kind)).is_some_and(|kind| ty == Scalar::CheckedNumeric(kind)) =>

@@ -43,6 +43,17 @@ pub fn place<'tcx>(tcx: TyCtxt<'tcx>, value: &Place) -> Result<mir::Place<'tcx>,
             FieldIdx::from_usize(index(*slot)?),
             native_type(tcx, ty)?,
         ),
+        Projection::Fields(fields) | Projection::DerefFields(fields) => {
+            let mut projected = if matches!(value.projection, Projection::DerefFields(_)) {
+                tcx.mk_place_deref(place)
+            } else {
+                place
+            };
+            for field in fields {
+                projected = tcx.mk_place_field(projected, FieldIdx::from_usize(index(field.slot)?), native_type(tcx, &field.ty)?);
+            }
+            projected
+        }
         Projection::NumericValue(ty) => tcx.mk_place_field(place, FieldIdx::from_u32(0), native_type(tcx, ty)?),
         Projection::Value => tcx.mk_place_field(place, FieldIdx::from_u32(0), tcx.types.i64),
         Projection::Overflow => tcx.mk_place_field(place, FieldIdx::from_u32(1), tcx.types.bool),
