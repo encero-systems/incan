@@ -1,43 +1,43 @@
 """Exact Decimal128 construction and value comparisons shared with legacy execution."""
 
-from rust::incan_std_core::num import Decimal128
+from rust::incan_std_core::num import Decimal128 as NativeDecimal128
 
 
-pub def decimal_from_parts(coefficient: i128, scale: u8) -> Decimal128:
+pub def decimal_from_parts(coefficient: i128, scale: u8) -> NativeDecimal128:
     """Preserve the checked coefficient and written fractional scale without a float conversion."""
-    return Decimal128.new(coefficient, scale)
+    return NativeDecimal128.new(coefficient, scale)
 
 
-pub def format_decimal(value: Decimal128) -> str:
+pub def format_decimal(value: NativeDecimal128) -> str:
     """Render the carrier's written scale through its canonical Display implementation."""
     return str(value)
 
 
-pub def equal_decimal(left: Decimal128, right: Decimal128) -> bool:
+pub def equal_decimal(left: NativeDecimal128, right: NativeDecimal128) -> bool:
     """Compare numeric values independently of their written scales."""
     return left == right
 
 
-pub def unequal_decimal(left: Decimal128, right: Decimal128) -> bool:
+pub def unequal_decimal(left: NativeDecimal128, right: NativeDecimal128) -> bool:
     """Apply the legacy carrier's numeric inequality."""
     return left != right
 
 
-pub def less_decimal(left: Decimal128, right: Decimal128) -> bool:
+pub def less_decimal(left: NativeDecimal128, right: NativeDecimal128) -> bool:
     """Apply the legacy carrier's numeric ordering."""
     return left < right
 
 
-pub def less_equal_decimal(left: Decimal128, right: Decimal128) -> bool:
+pub def less_equal_decimal(left: NativeDecimal128, right: NativeDecimal128) -> bool:
     """Apply the legacy carrier's inclusive numeric ordering."""
     return left <= right
 
 
-pub def greater_decimal(left: Decimal128, right: Decimal128) -> bool:
+pub def greater_decimal(left: NativeDecimal128, right: NativeDecimal128) -> bool:
     """Apply the legacy carrier's reverse numeric ordering."""
     return left > right
 
 
-pub def greater_equal_decimal(left: Decimal128, right: Decimal128) -> bool:
+pub def greater_equal_decimal(left: NativeDecimal128, right: NativeDecimal128) -> bool:
     """Apply the legacy carrier's inclusive reverse numeric ordering."""
     return left >= right

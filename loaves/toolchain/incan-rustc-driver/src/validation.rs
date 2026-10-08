@@ -50,6 +50,7 @@ fn numeric(kind: &SizedNumeric) -> Numeric {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Scalar {
     UnitFunction,
+    Decimal,
     Int,
     Float,
     I8,
@@ -110,6 +111,7 @@ enum Leaf {
     Float,
     Bool,
     Str,
+    Decimal,
     Tuple(Vec<Scalar>),
     Model(i64),
     U8,
@@ -124,6 +126,7 @@ impl Leaf {
             ListLeaf::Float => Leaf::Float,
             ListLeaf::Bool => Leaf::Bool,
             ListLeaf::Str => Leaf::Str,
+            ListLeaf::Decimal => Leaf::Decimal,
             ListLeaf::Tuple(elements) => Leaf::Tuple(elements.iter().map(|element| scalar(&tuple_element_type(element.clone()))).collect()),
             ListLeaf::Model(index, _) => Leaf::Model(*index),
             ListLeaf::U8 => Leaf::U8,
@@ -141,6 +144,7 @@ fn tuple_leaf(element: &crate::plan::TupleElement) -> Leaf {
 fn scalar(ty: &PlanType) -> Scalar {
     match ty {
         PlanType::UnitFunction => Scalar::UnitFunction,
+        PlanType::Decimal => Scalar::Decimal,
         PlanType::ZipIterator(left, right) => Scalar::ZipIterator(tuple_leaf(left), tuple_leaf(right)),
         PlanType::ZipIteratorRef(left, right) => Scalar::ZipIteratorRef(tuple_leaf(left), tuple_leaf(right)),
         PlanType::ZipIteratorMutRef(left, right) => Scalar::ZipIteratorMutRef(tuple_leaf(left), tuple_leaf(right)),

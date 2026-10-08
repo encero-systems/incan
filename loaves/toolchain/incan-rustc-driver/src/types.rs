@@ -17,6 +17,14 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
             Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, zip_type(tcx, left, right)?)
         }
         PlanType::EnumTag => tcx.types.isize,
+        // The plan admits Decimal before the driver maps it to `incan_std_core::num::Decimal128`; refuse by name
+        // rather than guess a layout until that mapping lands.
+        PlanType::Decimal => {
+            return Err(PlanError::Invalid {
+                function: "decimal".into(),
+                reason: "unsupported plan type Decimal without a native Decimal128 mapping".into(),
+            });
+        }
         PlanType::Generator(leaf, depth) => generator_type(tcx, "Generator", leaf, *depth)?,
         PlanType::GeneratorMutRef(leaf, depth) => Ty::new_mut_ref(
             tcx,
