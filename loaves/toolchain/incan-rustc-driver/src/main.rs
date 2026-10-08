@@ -18,6 +18,7 @@ mod adapter;
 mod bodies;
 mod callees;
 mod captured_generators;
+mod closures;
 mod declarations;
 mod error;
 mod frontend;

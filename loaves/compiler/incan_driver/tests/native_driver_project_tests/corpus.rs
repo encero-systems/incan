@@ -269,7 +269,7 @@ pub(super) fn source_command(
     sysroot: &Path,
     closure: &NativeClosure,
 ) -> Command {
-    let mut command = Command::new(driver);
+    let mut command = super::driver_command(driver);
     command
         .env_remove("RUSTC_BOOTSTRAP")
         .arg("--source")

@@ -80,6 +80,8 @@ pub enum PlanType:
     GeneratorMutRef advances caller-owned state. GeneratorYield and GeneratorYieldRef are producer-only runtime
     handles; they never represent source values or eagerly collected elements.
     ZipIterator retains two independent owned list snapshots; its reference variants retain shared read or exclusive poll authority.
+    FunctionPointer retains its inputs followed by exactly one return entry; the vector is never empty, including for a zero-argument function. FunctionItem keeps that same signature and the proven source declaration's name; it remains distinct from a pointer until an explicit reification.
+    Closure owns a boxed callable object with that signature layout, holding its captures by value; ClosureRef is the shared view a closure-holding parameter receives. Their inputs are tuple-element types, because a call packs them into one argument tuple.
     """
 
     Int
@@ -140,6 +142,10 @@ pub enum PlanType:
     GeneratorMutRef(ListLeaf, int)
     GeneratorYield(ListLeaf, int)
     GeneratorYieldRef(ListLeaf, int)
+    FunctionPointer(list[PlanType])
+    FunctionItem(str, list[PlanType])
+    Closure(list[PlanType])
+    ClosureRef(list[PlanType])
 
 
 pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
@@ -309,6 +315,10 @@ pub enum RvalueKind:
     Borrow(Place)
     MutBorrow(Place)
     UnsizeSlice(Operand)
+    FunctionItem(Callee)
+    ReifyFunction(Operand)
+    # Borrow an owned closure's callable object as the shared view a call or closure-holding parameter takes.
+    ClosureObject(Place)
 
 
 @derive(Clone, PartialEq)
@@ -338,7 +348,7 @@ pub model Statement:
 
 @derive(Clone, PartialEq)
 pub enum CalleeKind:
-    """A planned function, canonical external path, checked model clone, explicit generic instantiation, or an exact legacy generator runtime operation."""
+    """A planned function, canonical external path, checked model clone, explicit generic instantiation, exact legacy generator runtime operation, or a local item/pointer operand with its retained type."""
 
     Planned(str)
     External(str)
@@ -351,6 +361,12 @@ pub enum CalleeKind:
     SpawnGenerator(str, ListLeaf, int)
     YieldGenerator(ListLeaf, int)
     CollectGenerator(ListLeaf, int)
+    Value(Operand)
+    # A synthesized constructor's boxed environment. Its closure forwards the leading captured parameters, then its own
+    # inputs, to the named lifted function; the count says how many of that function's parameters are captures.
+    ClosureBody(str, int)
+    # Invoke a borrowed callable object of this signature with one packed argument tuple.
+    CallClosure(list[PlanType])
 
 
 @derive(Clone, PartialEq)

@@ -85,7 +85,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         type_args: Vec::new(),
                         args: Vec::new(),
                     };
-                    return self.lower_partial(&partial, expr.span, scope, out);
+                    let value = self.lower_partial(&partial, expr.span, scope, out);
+                    self.retain_function_item(out);
+                    return value;
                 }
                 let Some(place) = self.place_for_name(name, expr.span, &ty) else {
                     return self.unsupported_operand(

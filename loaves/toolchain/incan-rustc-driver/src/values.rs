@@ -200,6 +200,28 @@ pub fn rvalue<'tcx>(
             };
             mir::Rvalue::Cast(kind, operand(tcx, sources, value)?, native_type(tcx, target)?)
         }
+        RvalueKind::FunctionItem(callee) => mir::Rvalue::Use(
+            mir::Operand::function_handle(
+                tcx,
+                crate::callees::resolve(tcx, callee)?,
+                [],
+                sources.span(&callee.span)?,
+            ),
+            mir::WithRetag::Yes,
+        ),
+        RvalueKind::ClosureObject(value) => mir::Rvalue::Ref(
+            tcx.lifetimes.re_erased,
+            mir::BorrowKind::Shared,
+            place(tcx, value)?.project_deeper(&[mir::ProjectionElem::Deref], tcx),
+        ),
+        RvalueKind::ReifyFunction(value) => mir::Rvalue::Cast(
+            mir::CastKind::PointerCoercion(
+                rustc_middle::ty::adjustment::PointerCoercion::ReifyFnPointer(rustc_hir::Safety::Safe),
+                mir::CoercionSource::Implicit,
+            ),
+            operand(tcx, sources, value)?,
+            native_type(tcx, destination_type)?,
+        ),
         RvalueKind::IntToFloat(value) => {
             mir::Rvalue::Cast(mir::CastKind::IntToFloat, operand(tcx, sources, value)?, tcx.types.f64)
         }

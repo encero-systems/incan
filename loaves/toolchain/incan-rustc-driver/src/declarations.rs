@@ -136,6 +136,24 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
         PlanType::CheckedNumeric(kind) => {
             ast::TyKind::Tup(thin_vec![numeric_ty(kind, span), ty(&PlanType::Bool, span)])
         }
+        PlanType::FunctionPointer(signature) => function_pointer_ast(signature, span),
+        PlanType::Closure(signature) => {
+            let mut path = ast::Path::from_ident(ident("Box", span));
+            path.segments[0].args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
+                span,
+                args: thin_vec![ast::AngleBracketedArg::Arg(ast::GenericArg::Type(callable_object_ast(
+                    signature, span
+                )))],
+            })));
+            ast::TyKind::Path(None, path)
+        }
+        PlanType::ClosureRef(signature) => ast::TyKind::Ref(
+            None,
+            ast::MutTy {
+                ty: callable_object_ast(signature, span),
+                mutbl: ast::Mutability::Not,
+            },
+        ),
         PlanType::CheckedInt => ast::TyKind::Tup(thin_vec![ty(&PlanType::Int, span), ty(&PlanType::Bool, span)]),
         other => {
             let name = match other {
@@ -191,6 +209,70 @@ fn generator_ty(name: &str, leaf: &ListLeaf, depth: i64, span: Span) -> Box<ast:
         span,
         tokens: None,
     })
+}
+
+/// Spell `dyn Fn(inputs) -> output` structurally for a boxed closure or a closure-holding parameter.
+pub(crate) fn callable_object_ast(signature: &[PlanType], span: Span) -> Box<ast::Ty> {
+    let (inputs, output) = match signature.split_last() {
+        Some((result, parameters)) => (
+            parameters.iter().map(|parameter| ty(parameter, span)).collect(),
+            ty(result, span),
+        ),
+        None => (ThinVec::new(), ty(&PlanType::Unit, span)),
+    };
+    let mut path = ast::Path::from_ident(ident("Fn", span));
+    path.segments[0].args = Some(Box::new(ast::GenericArgs::Parenthesized(ast::ParenthesizedArgs {
+        span,
+        inputs,
+        inputs_span: span,
+        output: ast::FnRetTy::Ty(output),
+    })));
+    let bound = ast::GenericBound::Trait(ast::PolyTraitRef::new(
+        ThinVec::new(),
+        path,
+        ast::TraitBoundModifiers::NONE,
+        span,
+        ast::Parens::No,
+    ));
+    Box::new(ast::Ty {
+        id: ast::DUMMY_NODE_ID,
+        kind: ast::TyKind::TraitObject(vec![bound], ast::TraitObjectSyntax::Dyn),
+        span,
+        tokens: None,
+    })
+}
+
+/// Construct a function-pointer signature structurally; preflight has proved a final return entry exists.
+fn function_pointer_ast(signature: &[PlanType], span: Span) -> ast::TyKind {
+    let Some((result, parameters)) = signature.split_last() else {
+        unreachable!("preflight rejects empty function-pointer signatures");
+    };
+    let inputs = parameters
+        .iter()
+        .map(|parameter| ast::Param {
+            attrs: ThinVec::new(),
+            ty: ty(parameter, span),
+            pat: Box::new(ast::Pat {
+                id: ast::DUMMY_NODE_ID,
+                kind: ast::PatKind::Wild,
+                span,
+                tokens: None,
+            }),
+            id: ast::DUMMY_NODE_ID,
+            span,
+            is_placeholder: false,
+        })
+        .collect();
+    ast::TyKind::FnPtr(Box::new(ast::FnPtrTy {
+        safety: ast::Safety::Default,
+        ext: ast::Extern::None,
+        generic_params: ThinVec::new(),
+        decl: Box::new(ast::FnDecl {
+            inputs,
+            output: ast::FnRetTy::Ty(ty(result, span)),
+        }),
+        decl_span: span,
+    }))
 }
 
 /// A diverging placeholder satisfies every admitted signature; `mir_built` replaces its body.
@@ -256,7 +338,9 @@ pub fn function(function: &Function, span: Span) -> Box<ast::Item> {
             contract: None,
             define_opaque: None,
             body: Some(
-                crate::captured_generators::declaration_body(function, span).unwrap_or_else(|| placeholder(span)),
+                crate::captured_generators::declaration_body(function, span)
+                    .or_else(|| crate::closures::declaration_body(function, span))
+                    .unwrap_or_else(|| placeholder(span)),
             ),
             eii_impls: ThinVec::new(),
         })),

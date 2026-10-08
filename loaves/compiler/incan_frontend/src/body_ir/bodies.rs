@@ -171,6 +171,20 @@ pub(super) fn lower_function_body(
         name: function.name.clone(),
         span: hir_span(decl_span),
         return_type: owner_return_type,
+        callable_representation: Some(bir::CallableRepresentation {
+            function_pointer_locals: builder.function_pointer_locals,
+            closure_holding_locals: builder.closure_holding_locals,
+            closure_holding_parameters: function
+                .params
+                .iter()
+                .zip(&param_locals)
+                .filter(|(param, _)| lowering_facts.type_info.is_closure_holding_param(param.span))
+                .map(|(_, local)| *local)
+                .collect(),
+            closure_holding_return: lowering_facts
+                .type_info
+                .is_closure_returning_type(function.return_type.span),
+        }),
         named_type_identities: lowering_facts.type_info.declarations.named_type_identities.clone(),
         locals: builder.locals,
         params,
@@ -338,6 +352,20 @@ pub(super) fn lower_method_body(
         name: method.name.clone(),
         span: hir_span(decl_span),
         return_type: owner_return_type,
+        callable_representation: Some(bir::CallableRepresentation {
+            function_pointer_locals: builder.function_pointer_locals,
+            closure_holding_locals: builder.closure_holding_locals,
+            closure_holding_parameters: method
+                .params
+                .iter()
+                .filter(|param| lowering_facts.type_info.is_closure_holding_param(param.span))
+                .filter_map(|param| params.iter().find(|retained| retained.span == hir_span(param.span)))
+                .map(|param| param.local)
+                .collect(),
+            closure_holding_return: lowering_facts
+                .type_info
+                .is_closure_returning_type(method.return_type.span),
+        }),
         named_type_identities: lowering_facts.type_info.declarations.named_type_identities.clone(),
         locals: builder.locals,
         params,
