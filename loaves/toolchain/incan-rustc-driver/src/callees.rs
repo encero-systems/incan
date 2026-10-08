@@ -56,6 +56,9 @@ fn generator_method(
 }
 
 /// Walk only public module children, rejecting nonfunction callees before constructing MIR.
+///
+/// A final segment after a struct names one of that struct's public inherent associated functions, which is how a
+/// provider-crate method or static method is reached by its projected symbol.
 pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
     let mut segments = path.split("::");
     let root = segments.next().ok_or_else(|| PlanError::UnknownCallee(path.into()))?;
@@ -66,20 +69,40 @@ pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
         .ok_or_else(|| PlanError::UnknownCallee(path.into()))?;
     let mut current = krate.as_def_id();
     for segment in segments {
-        if tcx.def_kind(current) != DefKind::Mod {
-            return Err(PlanError::UnknownCallee(path.into()));
+        current = match tcx.def_kind(current) {
+            DefKind::Mod => tcx
+                .module_children(current)
+                .iter()
+                .find(|child| child.ident.name.as_str() == segment && child.vis.is_public())
+                .and_then(|child| child.res.opt_def_id()),
+            DefKind::Struct => inherent_function(tcx, current, segment),
+            _ => None,
         }
-        current = tcx
-            .module_children(current)
-            .iter()
-            .find(|child| child.ident.name.as_str() == segment && child.vis.is_public())
-            .and_then(|child| child.res.opt_def_id())
-            .ok_or_else(|| PlanError::UnknownCallee(path.into()))?;
+        .ok_or_else(|| PlanError::UnknownCallee(path.into()))?;
     }
-    if tcx.def_kind(current) != DefKind::Fn {
+    if !matches!(tcx.def_kind(current), DefKind::Fn | DefKind::AssocFn) {
         return Err(PlanError::UnknownCallee(path.into()));
     }
     Ok(current)
+}
+
+/// Select one public inherent associated function of a nongeneric struct by its exact symbol.
+fn inherent_function(tcx: TyCtxt<'_>, owner: DefId, symbol: &str) -> Option<DefId> {
+    if tcx.generics_of(owner).count() != 0 {
+        return None;
+    }
+    let mut found = tcx
+        .inherent_impls(owner)
+        .iter()
+        .flat_map(|implementation| tcx.associated_item_def_ids(*implementation))
+        .copied()
+        .filter(|def| {
+            tcx.def_kind(*def) == DefKind::AssocFn
+                && tcx.item_name(*def).as_str() == symbol
+                && tcx.visibility(*def).is_public()
+        });
+    let selected = found.next()?;
+    found.next().is_none().then_some(selected)
 }
 
 /// Instantiate explicit plan arguments after checking their count against the resolved metadata declaration.

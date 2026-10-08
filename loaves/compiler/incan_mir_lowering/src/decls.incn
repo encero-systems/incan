@@ -1,8 +1,15 @@
 """Runtime layouts of checked source-local declarations; erased aliases have no storage."""
 
-from rust::incan_semantics_core::body_ir import BodyIrModule, StaticDeclaration, GlobalPlace
+from rust::incan_semantics_core import IncanType as RustType
+from rust::incan_semantics_core::body_ir import (
+    BodyIrModule,
+    StaticDeclaration,
+    GlobalPlace,
+    NominalDeclaration as RustNominalDeclaration,
+)
 from pub::incan_mir_plan import EnumDeclaration, ModelDeclaration, Parameter, SourceSpan, PlanType
 from unions import native_source_type, collect_unions
+from models import plan_model_name
 
 
 pub def static_slot(declarations: list[StaticDeclaration], value: &GlobalPlace) -> Result[int, str]:
@@ -36,29 +43,93 @@ pub def lower_model_declarations(
     for declaration in module.nominal_declarations:
         if declaration.has_field_defaults and "Default" in declaration.derives:
             return Err(f"unsupported Body IR derived Default over field defaults on {declaration.name}")
+        native_path = native_model_path(declaration)
         mut fields: list[Parameter] = []
-        for slot in range(len(declaration.fields)):
-            fields.append(
-                Parameter(
-                    name=str(declaration.fields[slot]),
-                    ty=native_source_type(
-                        module.nominal_declarations,
-                        module.enum_declarations,
-                        unions,
-                        declaration.field_types[slot],
-                        intrinsics,
-                    )?,
-                    span=SourceSpan(file=file, line=1, column=1),
-                ),
-            )
+        mut field_public: list[bool] = []
+        if native_path == "":
+            fields = model_fields(module, declaration, unions, intrinsics, file)?
+            field_public = declaration.field_public
+        else:
+            provided = provider_fields(module, declaration, unions, intrinsics, file)
+            fields = provided[0]
+            field_public = provided[1]
         models.append(
             ModelDeclaration(
-                name=str(declaration.name),
+                name=plan_model_name(declaration),
                 public=declaration.public,
                 fields=fields,
-                field_public=declaration.field_public,
+                field_public=field_public,
                 derives=declaration.derives,
                 span=SourceSpan(file=file, line=1, column=1),
+                native_path=native_path,
             ),
         )
     return Ok(models)
+
+
+def model_fields(
+    module: &BodyIrModule,
+    declaration: &RustNominalDeclaration,
+    unions: list[RustType],
+    intrinsics: list[EnumDeclaration],
+    file: str,
+) -> Result[list[Parameter], str]:
+    """Resolve each checked source field slot, in canonical order, to its native representation."""
+    mut fields: list[Parameter] = []
+    for slot in range(len(declaration.fields)):
+        fields.append(
+            Parameter(
+                name=str(declaration.fields[slot]),
+                ty=native_source_type(
+                    module.nominal_declarations,
+                    module.enum_declarations,
+                    unions,
+                    declaration.field_types[slot],
+                    intrinsics,
+                )?,
+                span=SourceSpan(file=file, line=1, column=1),
+            ),
+        )
+    return Ok(fields)
+
+
+def provider_fields(
+    module: &BodyIrModule,
+    declaration: &RustNominalDeclaration,
+    unions: list[RustType],
+    intrinsics: list[EnumDeclaration],
+    file: str,
+) -> tuple[list[Parameter], list[bool]]:
+    """
+    Keep every provider-crate slot in declaration order without requiring its private storage to be representable.
+
+    A public field whose checked type resolves keeps that type and stays projectable; every other slot keeps its
+    name with a unit placeholder and is marked non-public, so neither a plan nor its adapter can read it.
+    """
+    mut fields: list[Parameter] = []
+    mut public: list[bool] = []
+    for slot in range(len(declaration.fields)):
+        mut ty = PlanType.Unit
+        mut readable = false
+        if declaration.field_public[slot]:
+            match native_source_type(
+                module.nominal_declarations,
+                module.enum_declarations,
+                unions,
+                declaration.field_types[slot],
+                intrinsics,
+            ):
+                Ok(resolved) =>
+                    ty = resolved
+                    readable = true
+                Err(_reason) => pass
+        fields.append(Parameter(name=str(declaration.fields[slot]), ty=ty, span=SourceSpan(file=file, line=1, column=1)))
+        public.append(readable)
+    return (fields, public)
+
+
+def native_model_path(declaration: &RustNominalDeclaration) -> str:
+    """Carry a provider-crate nominal's checked path into the plan; source nominals have none."""
+    match declaration.native_path:
+        Some(path) => return str(path)
+        None => return ""

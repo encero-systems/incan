@@ -20,7 +20,10 @@ def nominal_place(builder: Builder, value: &RustOperand, span: SourceSpan) -> Re
             mut place = model_place(builder.nominals, builder.locals[builder.local_offset:], read.place, span)?
             place.local += builder.local_offset
             match place_type(builder.locals, place):
-                PlanType.Model(_owner, _name) => return Ok(Some(place))
+                PlanType.Model(owner, _name) =>
+                    if builder.nominals[owner].native_path.is_some():
+                        return Err("unsupported Body IR standard-library nominal formatting or comparison")
+                    return Ok(Some(place))
                 _ => pass
         _ => pass
     return Ok(None)

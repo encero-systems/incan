@@ -25,6 +25,9 @@ pub def collect_unions(module: &BodyIrModule) -> list[RustType]:
         for local in body.locals:
             retain_union(unions, local.ty)
     for declaration in module.nominal_declarations:
+        # Provider-crate nominals stay opaque, so their private storage types need no union carrier.
+        if declaration.native_path.is_some():
+            continue
         for ty in declaration.field_types:
             retain_union(unions, ty)
     for declaration in module.enum_declarations:

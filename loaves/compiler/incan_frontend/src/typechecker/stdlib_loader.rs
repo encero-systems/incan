@@ -150,32 +150,35 @@ impl StdlibAstCache {
     pub(crate) fn callable_source_identity(&mut self, identity: &CanonicalSymbolId) -> Option<CanonicalSymbolId> {
         use incan_semantics_core::SymbolOrigin;
         let path = match &identity.origin {
-            SymbolOrigin::Module(path) => path.clone(),
-            SymbolOrigin::Package { module_path, .. } => std::iter::once(stdlib::STDLIB_ROOT.to_string())
-                .chain(module_path.iter().cloned())
-                .collect(),
+            SymbolOrigin::Module(path) if stdlib::is_any_stdlib_path(path) => path.clone(),
+            SymbolOrigin::Package { library, module_path } => Self::sdk_source_module(library, module_path)?,
             _ => return None,
         };
-        if !stdlib::is_any_stdlib_path(&path) {
-            return None;
-        }
         let source = self.lookup_identity(&path, &identity.declaration_name)?;
         let mut published = source.clone();
         if let SymbolOrigin::Package { library, module_path } = &identity.origin {
-            let sources = crate::provider::stdlib_sources::StdlibSources::discover()?;
-            let owner = sources.owner_of(path.get(1)?)?;
-            let manifest: toml::Value =
-                toml::from_str(&std::fs::read_to_string(owner.project_root.join("loaf.toml")).ok()?).ok()?;
-            let name = manifest.get("project")?.get("name")?.as_str()?;
-            if name != library {
-                return None;
-            }
             published.origin = SymbolOrigin::Package {
                 library: library.clone(),
                 module_path: module_path.clone(),
             };
         }
         (published == *identity).then_some(source)
+    }
+
+    /// Return the stdlib source module a published SDK package path names, only when the catalog component that owns
+    /// the namespace is exactly `library`; any other package cannot gain a stdlib source identity.
+    pub(crate) fn sdk_source_module(library: &str, module_path: &[String]) -> Option<Vec<String>> {
+        let path = std::iter::once(stdlib::STDLIB_ROOT.to_string())
+            .chain(module_path.iter().cloned())
+            .collect::<Vec<_>>();
+        if !stdlib::is_any_stdlib_path(&path) {
+            return None;
+        }
+        let sources = crate::provider::stdlib_sources::StdlibSources::discover()?;
+        let owner = sources.owner_of(path.get(1)?)?;
+        let manifest: toml::Value =
+            toml::from_str(&std::fs::read_to_string(owner.project_root.join("loaf.toml")).ok()?).ok()?;
+        (manifest.get("project")?.get("name")?.as_str()? == library).then_some(path)
     }
 
     /// Load the declaring source for an exact stdlib function identity, retaining imports and only its selected

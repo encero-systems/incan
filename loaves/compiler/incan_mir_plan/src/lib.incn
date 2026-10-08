@@ -419,6 +419,8 @@ pub model ModelDeclaration:
     Checked field layout and implicit derives for one nongeneric source model or plain newtype.
 
     A newtype has exactly one public field named `0`, emitted as a tuple slot; named model fields retain their names.
+    A declaration with a native path names a provider-crate nominal by that path: its fields are the checked layout
+    for projections, and the plan neither declares nor constructs it.
     """
 
     pub name: str
@@ -427,6 +429,8 @@ pub model ModelDeclaration:
     pub field_public: list[bool]
     pub derives: list[str]
     pub span: SourceSpan
+    # A standard-library nominal owned by its provider crate: named by this path, never declared by the plan.
+    pub native_path: str = ""
 
 
 @derive(Clone, PartialEq)

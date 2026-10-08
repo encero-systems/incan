@@ -412,6 +412,13 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
                 }
             };
             let model = model(plan, owner).ok_or_else(|| invalid(function, "unknown model owner"))?;
+            let readable = usize::try_from(*slot)
+                .ok()
+                .and_then(|slot| model.field_public.get(slot))
+                .is_some_and(|public| *public);
+            if !model.native_path.is_empty() && !readable {
+                return Err(invalid(function, "standard-library field is not readable"));
+            }
             let field = usize::try_from(*slot)
                 .ok()
                 .and_then(|slot| model.fields.get(slot))
@@ -776,12 +783,13 @@ fn source_signature_type(ty: Scalar) -> bool {
         )
 }
 
-/// Runtime signatures additionally admit shared text and slice views, whose regions metadata checking erases.
+/// Runtime signatures additionally admit shared text and slice views and nominal receiver references, whose regions
+/// metadata checking erases.
 fn external_signature_type(ty: Scalar) -> bool {
     source_signature_type(ty.clone())
         || matches!(
             ty,
-            Scalar::StringRef | Scalar::StrRef | Scalar::StringSlice | Scalar::StrSlice | Scalar::EnumRef(_) | Scalar::ModelRef(_) | Scalar::GeneratorYieldRef(_, _)
+            Scalar::StringRef | Scalar::StrRef | Scalar::StringSlice | Scalar::StrSlice | Scalar::EnumRef(_) | Scalar::ModelRef(_) | Scalar::ModelMutRef(_) | Scalar::GeneratorYieldRef(_, _)
         )
 }
 
@@ -1151,6 +1159,10 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
     let mut names: BTreeSet<_> = plan.functions.iter().map(|function| &function.name).collect();
     for (index, declaration) in plan.models.iter().enumerate() {
         span(&declaration.span)?;
+        if !declaration.native_path.is_empty() {
+            validate_provider_nominal(declaration)?;
+            continue;
+        }
         let tuple = declaration.fields.len() == 1 && declaration.fields[0].name == "0";
         let derives_valid = if tuple {
             declaration.derives == ["Debug", "Clone"] || declaration.derives == ["Debug", "Clone", "Copy"]
@@ -1191,6 +1203,28 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
                 }
             }
         }
+    }
+    Ok(())
+}
+
+/// A provider-crate nominal names itself by a `crate::module::Name` path; its slots keep their names, and a slot that
+/// is not readable carries a unit placeholder. The adapter proves readable slots against metadata before MIR exists.
+fn validate_provider_nominal(declaration: &crate::plan::ModelDeclaration) -> Result<(), PlanError> {
+    let segments: Vec<&str> = declaration.native_path.split("::").collect();
+    if declaration.name != declaration.native_path
+        || segments.len() < 2
+        || !segments.iter().all(|segment| identifier(segment))
+        || declaration.fields.len() != declaration.field_public.len()
+        || declaration
+            .fields
+            .iter()
+            .zip(&declaration.field_public)
+            .any(|(field, public)| !identifier(&field.name) || (!*public && field.ty != PlanType::Unit))
+    {
+        return Err(PlanError::Invalid {
+            function: declaration.name.clone(),
+            reason: "invalid standard-library nominal declaration".into(),
+        });
     }
     Ok(())
 }

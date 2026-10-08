@@ -4,7 +4,14 @@ use super::*;
 
 /// Compile one program on both routes, run each binary in its own copy of one scratch directory, and require the same
 /// exit status, stdout, and stderr; the native observables are returned for exact assertions.
-fn stdlib_parity(fixture: &DriverFixture, name: &str, program: &str) -> Result<Output, Box<dyn std::error::Error>> {
+///
+/// Both binaries run under the same `environment`: a variable with a value is set, and one without is removed.
+fn stdlib_parity(
+    fixture: &DriverFixture,
+    name: &str,
+    program: &str,
+    environment: &[(&str, Option<&str>)],
+) -> Result<Output, Box<dyn std::error::Error>> {
     let root = fixture.scratch(name)?;
     let source = root.join(format!("{name}.incn"));
     fs::write(&source, program)?;
@@ -35,10 +42,19 @@ fn stdlib_parity(fixture: &DriverFixture, name: &str, program: &str) -> Result<O
     let native_run = root.join("native-run");
     fs::create_dir_all(&legacy_run)?;
     fs::create_dir_all(&native_run)?;
-    let expected = Command::new(legacy.join("oven/release").join(name))
-        .current_dir(&legacy_run)
-        .output()?;
-    let actual = Command::new(native).current_dir(&native_run).output()?;
+    let run = |binary: PathBuf, directory: &Path| {
+        let mut command = Command::new(binary);
+        command.current_dir(directory);
+        for (variable, value) in environment {
+            match value {
+                Some(value) => command.env(variable, value),
+                None => command.env_remove(variable),
+            };
+        }
+        command.output()
+    };
+    let expected = run(legacy.join("oven/release").join(name), &legacy_run)?;
+    let actual = run(native, &native_run)?;
     assert_eq!(actual.status.code(), expected.status.code());
     assert_eq!(
         String::from_utf8_lossy(&actual.stderr),
@@ -60,6 +76,8 @@ fn direct_route_stdlib_matches_legacy() -> Result<(), Box<dyn std::error::Error>
     let fixture = driver_fixture()?;
     builtins_match_legacy(fixture)?;
     option_model_fields_match_legacy(fixture)?;
+    environ_calls_match_legacy(fixture)?;
+    io_fields_match_legacy(fixture)?;
     Ok(())
 }
 
@@ -110,6 +128,7 @@ def main() -> None:
         Ok(_) => println("unexpected write")
         Err(error) => println(error)
 "#,
+        &[],
     )?;
     let stdout = String::from_utf8(values.stdout)?;
     assert!(stdout.starts_with("[1,2]\n[1.5,2.0]\n[true,false]\n[\"a\\\"b\",\"line\\n\"]\n[[1],[2,3]]\n-1\n5\n-0.5\n9.0\nfalse\ntrue\napple zoo 3\nzoo\nwritten\nhello file\n"), "{stdout}");
@@ -122,6 +141,7 @@ def main() -> None:
     println("before")
     println(max(values))
 "#,
+        &[],
     )?;
     assert!(!empty.status.success());
     Ok(())
@@ -171,10 +191,83 @@ def main() -> None:
     println(greeting())
     println(greeting(Some("cy")))
 "#,
+        &[],
     )?;
     assert_eq!(
         String::from_utf8(output.stdout)?,
         "3\n-1\n2\nbob\nanonymous\nb\nnobody\ncy\n"
     );
+    Ok(())
+}
+
+/// Generic and overloaded standard-library functions, an Option result, a Result whose error is a provider-crate class,
+/// `?` propagation, and a method on that class match legacy for an unset, a text, and an unparsable variable.
+fn environ_calls_match_legacy(fixture: &DriverFixture) -> Result<(), Box<dyn std::error::Error>> {
+    let output = stdlib_parity(
+        fixture,
+        "stdlib_environ",
+        r#"
+from std.environ import EnvironError, get_as, get_optional
+
+
+def read(key: str) -> Result[None, EnvironError]:
+    optional: Option[int] = get_as[int](key)?
+    match optional:
+        Some(value) => println(value)
+        None => println("absent")
+    defaulted: int = get_as[int](key, 7)?
+    println(defaulted)
+    match get_optional(key):
+        Some(value) => println(value)
+        None => println("fallback")
+    return Ok(None)
+
+
+def main() -> None:
+    for key in ["INCAN_NATIVE_SDK_UNSET", "INCAN_NATIVE_SDK_NUMBER", "INCAN_NATIVE_SDK_TEXT"]:
+        match read(key):
+            Ok(_) => println("ok")
+            Err(error) => println(error.message())
+"#,
+        &[
+            ("INCAN_NATIVE_SDK_UNSET", None),
+            ("INCAN_NATIVE_SDK_NUMBER", Some("42")),
+            ("INCAN_NATIVE_SDK_TEXT", Some("forty-two")),
+        ],
+    )?;
+    assert!(String::from_utf8(output.stdout)?.starts_with("absent\n7\nfallback\nok\n42\n42\n42\nok\n"));
+    Ok(())
+}
+
+/// A provider-crate function and methods produce standard-library values whose public fields and methods match legacy,
+/// including the error a short read returns.
+fn io_fields_match_legacy(fixture: &DriverFixture) -> Result<(), Box<dyn std::error::Error>> {
+    let output = stdlib_parity(
+        fixture,
+        "stdlib_io_fields",
+        r#"
+from std.io import BytesIO, IoError
+
+
+def describe(outcome: Result[bytes, IoError]) -> None:
+    match outcome:
+        Ok(data) => println(len(data))
+        Err(error) =>
+            println(error.kind)
+            println(error.detail)
+            println(error.position)
+            println(error.message())
+
+
+def main() -> None:
+    describe(BytesIO(b"AB").read_exact(4))
+    describe(BytesIO(b"ABCD").read_exact(2))
+    buffer = BytesIO(b"abcdef")
+    describe(buffer.read(2))
+    describe(buffer.read(10))
+"#,
+        &[],
+    )?;
+    assert!(String::from_utf8(output.stdout)?.contains("unexpected_eof\n"));
     Ok(())
 }

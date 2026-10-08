@@ -148,7 +148,8 @@ impl rustc_driver::Callbacks for Callbacks {
             }
             krate.items.push(item);
         }
-        for model in &self.plan.models {
+        // A provider-crate nominal already exists in dependency metadata; only source nominals become items.
+        for model in self.plan.models.iter().filter(|model| model.native_path.is_empty()) {
             let span = match sources.span(&model.span) {
                 Ok(span) => span,
                 Err(error) => compiler.sess.dcx().fatal(error.to_string()),
@@ -203,8 +204,14 @@ impl rustc_driver::Callbacks for Callbacks {
         rustc_driver::Compilation::Continue
     }
 
-    /// Verify admitted external signatures against canonical dependency metadata before any planned MIR is built.
+    /// Verify admitted external signatures and provider-crate nominal layouts against canonical dependency metadata
+    /// before any planned MIR is built.
     fn after_expansion(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'_>) -> rustc_driver::Compilation {
+        for model in self.plan.models.iter().filter(|model| !model.native_path.is_empty()) {
+            if let Err(error) = crate::types::verify_provider_layout(tcx, model) {
+                refuse(tcx, error);
+            }
+        }
         for external in &self.plan.externals {
             let def = match callees::external(tcx, &external.path) {
                 Ok(def) => def,

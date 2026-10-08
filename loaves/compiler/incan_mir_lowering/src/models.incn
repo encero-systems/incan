@@ -26,7 +26,7 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
         RustType.Named(name) =>
             for index in range(len(declarations)):
                 if declarations[index].name == str(name):
-                    return Ok(PlanType.Model(index, str(name)))
+                    return Ok(PlanType.Model(index, plan_model_name(declarations[index])))
             return Err(f"unsupported Body IR nominal type {name}")
         RustType.Primitive(primitive) =>
             match primitive:
@@ -58,6 +58,13 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                 PlanType.List(leaf, depth) => return Ok(PlanType.List(leaf, depth + 1))
                 _ => return Err(f"unsupported Body IR list element {ty}")
         _ => return Err(f"unsupported Body IR type {type_name(ty)}")
+
+
+pub def plan_model_name(declaration: &NominalDeclaration) -> str:
+    """Name a provider-crate nominal by its checked native path and a source nominal by its declared name."""
+    match declaration.native_path:
+        Some(path) => return str(path)
+        None => return str(declaration.name)
 
 
 pub def carrier_type(carriers: list[EnumDeclaration], carrier_offset: int, ty: &RustType) -> Option[PlanType]:
@@ -119,6 +126,8 @@ pub def carrier_model_place(
                 PlanType.Model(owner, _name) =>
                     declaration = declarations[owner]
                     slot = field_slot(value.projection[0], declaration)?
+                    if declaration.native_path.is_some() and not declaration.field_public[slot]:
+                        return Err("unsupported Body IR private standard-library field projection")
                     ty = field_type(declarations, carriers, carrier_offset, declaration.field_types[slot])?
                     return Ok(Place(local=index, projection=Projection.Field(slot, ty), span=span))
                 PlanType.Tuple(elements) =>
@@ -164,6 +173,8 @@ pub def constructor_index(
                 declaration = declarations[index]
                 if identity != declaration.direct_declaration_id:
                     continue
+                if declaration.native_path.is_some():
+                    return Err("unsupported Body IR standard-library nominal construction")
                 # Aliases change diagnostic spelling, never the retained constructor identity or physical layout.
                 if target.canonical != Some(declaration.canonical) or target.canonical_field_layout != Some(
                     declaration.fields,
@@ -210,6 +221,8 @@ def receiver_field(
         return Err("unsupported Body IR nested receiver projection")
     declaration = declarations[owner]
     slot = field_slot(value.projection[0], declaration)?
+    if declaration.native_path.is_some() and not declaration.field_public[slot]:
+        return Err("unsupported Body IR private standard-library field projection")
     ty = field_type(declarations, carriers, carrier_offset, declaration.field_types[slot])?
     return Ok(Place(local=index, projection=Projection.DerefField(slot, ty), span=span))
 

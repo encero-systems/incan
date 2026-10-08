@@ -321,6 +321,7 @@ fn build_body_ir_module_v0_with_provider_operations(
         })
         .collect::<Vec<_>>();
     apply_top_level_input_contract_refusal(program, &mut bodies);
+    let (sdk_nominal_declarations, sdk_callables) = sdk::collect(type_info, &bodies);
     bir::BodyIrModule {
         constant_declarations,
         type_alias_declarations: collect::collect_type_aliases(program, type_info),
@@ -328,6 +329,8 @@ fn build_body_ir_module_v0_with_provider_operations(
         trait_implementations: collect::collect_local_trait_implementations(program, type_info, &nominal_declarations),
         enum_declarations: collect_local_enum_declarations(program, &module_identity, type_info),
         stdlib_delegations: stdlib_delegations::collect(type_info),
+        sdk_nominal_declarations,
+        sdk_callables,
         static_declarations: collect::collect_scalar_statics(program, type_info),
         module_id,
         nominal_declarations,
@@ -1190,6 +1193,7 @@ mod async_;
 mod literals;
 
 mod calls;
+mod sdk;
 mod stdlib_delegations;
 
 mod operators;

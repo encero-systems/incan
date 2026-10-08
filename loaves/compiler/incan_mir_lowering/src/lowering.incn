@@ -92,13 +92,15 @@ from rust::incan_semantics_core::body_ir import (
     Statement as RustStatement,
     StatementKind as RustStatementKind,
     StdlibDelegation as RustStdlibDelegation,
+    SdkCallable,
+    SdkReceiver,
     UnOp,
     PlaceElem,
     MethodTarget,
     IterProtocol,
 )
 # ---- Admission helpers owned by this Loaf ----
-from rust::incan_semantics_core import SymbolOrigin, canonical_module_identity
+from rust::incan_semantics_core import CanonicalSymbolId, SymbolOrigin, canonical_module_identity
 from classes import frame_type, function_name, body_module_identity, method_receiver
 from generators import (
     generator_shape,
@@ -1125,6 +1127,9 @@ def lower_method_call(
             if identity.origin == SymbolOrigin.Builtin:
                 return lower_list_method(builder, target, arguments, destination, span)
         None => return Err("unsupported Body IR Method without canonical identity")
+    match sdk_callable(module, target.canonical):
+        Some(callable) => return lower_sdk_method(builder, callable, target, arguments, destination, span)
+        None => pass
     if len(arguments) == 0:
         return Err("invalid Body IR Method missing receiver")
     if is_json_serialize_method(target):
@@ -1168,6 +1173,10 @@ def lower_named_target(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Call a builtin, a retained project function, or a proven stdlib forwarder selected by canonical identity."""
+    match sdk_callable(module, target.canonical):
+        Some(callable) =>
+            return lower_sdk_call(builder, callable, target.type_args, target.binding, arguments, destination, span)
+        None => pass
     if len(target.type_args) != 0:
         return Err("unsupported Body IR generic NamedCallableTarget")
     match target.builtin:
@@ -1328,6 +1337,175 @@ def lower_delegated_call(
         Some(path) =>
             external_call(builder, path, parameters, result, operands, output, span)
             return Ok(None)
+
+
+def sdk_callable(module: &BodyIrModule, identity: &Option[CanonicalSymbolId]) -> Option[SdkCallable]:
+    """Select the checked provider-crate signature recorded for exactly this callable identity."""
+    match identity:
+        Some(canonical) =>
+            for callable in module.sdk_callables:
+                if callable.canonical == canonical.clone():
+                    return Some(callable.clone())
+        None => pass
+    return None
+
+
+def lower_sdk_call(
+    mut builder: Builder,
+    callable: SdkCallable,
+    type_args: &list[RustType],
+    binding: &RustArgumentBinding,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Call a provider-crate function or static method by its checked native path and signature."""
+    if callable.receiver.is_some():
+        return Err("invalid Body IR standard-library method called without a receiver")
+    parameters = sdk_parameter_types(builder, callable, type_args)?
+    operands = ordered_slot_operands(builder, binding, arguments, parameters, span)?
+    return emit_sdk_call(builder, callable, type_args, parameters, operands, destination, span)
+
+
+def lower_sdk_method(
+    mut builder: Builder,
+    callable: SdkCallable,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Borrow a provider-crate receiver as its checked receiver mode requires, then call the compiled method."""
+    mut mutable = false
+    match callable.receiver:
+        Some(SdkReceiver.Shared) => pass
+        Some(SdkReceiver.Mutable) =>
+            mutable = true
+        None => return Err("unsupported Body IR standard-library static method on a receiver")
+    if len(arguments) == 0:
+        return Err("invalid Body IR Method missing receiver")
+    receiver = argument_place(builder, arguments, 0, span)?
+    match place_type(builder.locals, receiver):
+        PlanType.Model(owner, name) =>
+            mut reference_type = PlanType.ModelRef(owner, name)
+            mut borrow = RvalueKind.Borrow(receiver)
+            if mutable:
+                reference_type = PlanType.ModelMutRef(owner, name)
+                borrow = RvalueKind.MutBorrow(receiver)
+            reference = temporary(builder, reference_type, span)
+            builder.emit(plan_assign(reference, borrow, span))
+            parameters = sdk_parameter_types(builder, callable, target.type_args)?
+            ordinary = ordered_slot_operands(builder, target.binding, arguments, parameters, span, 1)?
+            mut operands = [read_place(reference, mutable, span)]
+            mut signature = [reference_type]
+            for index in range(len(parameters)):
+                operands.append(ordinary[index])
+                signature.append(parameters[index])
+            return emit_sdk_call(builder, callable, target.type_args, signature, operands, destination, span)
+        _ => return Err("unsupported Body IR standard-library method receiver")
+
+
+def sdk_parameter_types(
+    builder: Builder,
+    callable: &SdkCallable,
+    type_args: &list[RustType],
+) -> Result[list[PlanType], str]:
+    """Resolve declared parameters; a parameter that is exactly a type parameter takes the call's checked argument."""
+    if len(type_args) != len(callable.type_parameters):
+        return Err("unsupported Body IR standard-library call type arguments")
+    mut resolved: list[PlanType] = []
+    for ty in callable.parameters:
+        parameter = instantiated_parameter(callable, type_args, ty)
+        resolved.append(sdk_type(builder, parameter)?)
+    return Ok(resolved)
+
+
+def instantiated_parameter(callable: &SdkCallable, type_args: &list[RustType], ty: &RustType) -> RustType:
+    """Substitute a parameter written as one declared type variable; nested uses stay unresolved and refuse."""
+    match ty:
+        RustType.TypeVar(name) =>
+            for index in range(len(callable.type_parameters)):
+                if str(callable.type_parameters[index]) == str(name):
+                    return type_args[index].clone()
+        _ => pass
+    return ty.clone()
+
+
+def emit_sdk_call(
+    mut builder: Builder,
+    callable: SdkCallable,
+    type_args: &list[RustType],
+    parameters: list[PlanType],
+    operands: list[Operand],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Instantiate the call's checked type argument and move an owned result into its whole destination local."""
+    if len(type_args) != len(callable.type_parameters) or len(type_args) > 1:
+        return Err("unsupported Body IR standard-library call type arguments")
+    output, result = sdk_call_destination(builder, callable, len(type_args) != 0, destination, span)?
+    path = str(callable.native_path)
+    mut kind = CalleeKind.External(path)
+    mut instantiation: list[PlanType] = []
+    if len(type_args) == 1:
+        argument = native_source_type(builder.nominals, builder.enums, builder.unions, type_args[0], builder.intrinsics)?
+        instantiation = [argument]
+        kind = CalleeKind.Instantiated(path, argument)
+    external = ExternalFunction(
+        path=path,
+        type_arguments=instantiation,
+        parameters=parameters,
+        return_type=result,
+        span=span,
+    )
+    builder.externals.append(external)
+    if result != PlanType.String and not is_nominal_type(result) and not is_owned_collection(result):
+        terminate_call(builder, kind, operands, output, span)
+        return Ok(None)
+    value = temporary(builder, result, span)
+    terminate_call(builder, kind, operands, value, span)
+    builder.owned.append(value.local)
+    drop_owned(builder, output.local, span)
+    forget_owned(builder, value.local)
+    builder.emit(plan_assign(output, RvalueKind.Use(read_place(value, true, span)), span))
+    builder.owned.append(output.local)
+    return Ok(None)
+
+
+def sdk_call_destination(
+    mut builder: Builder,
+    callable: SdkCallable,
+    generic: bool,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[tuple[Place, PlanType], str]:
+    """
+    Select a whole destination local and its result type.
+
+    A generic declaration's result mentions its type parameters, so its checked destination is the instantiation;
+    a nongeneric declaration's result must equal its destination exactly.
+    """
+    match destination:
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+            if output.projection != Projection.Whole:
+                return Err("unsupported Body IR projected standard-library call destination")
+            result = place_type(builder.locals, output)
+            if not generic:
+                declared = sdk_type(builder, callable.return_type)?
+                if declared != result:
+                    return Err("invalid Body IR standard-library call destination type")
+            return Ok((output, result))
+        None =>
+            if generic:
+                return Err("unsupported Body IR discarded generic standard-library call")
+            result = sdk_type(builder, callable.return_type)?
+            return Ok((temporary(builder, result, span), result))
+
+
+def sdk_type(builder: Builder, ty: &RustType) -> Result[PlanType, str]:
+    """Resolve one checked provider-crate signature type against the plan's retained layouts."""
+    return native_source_type(builder.nominals, builder.enums, builder.unions, ty, builder.intrinsics)
 
 
 def ordered_arguments(
@@ -1859,6 +2037,8 @@ def clone_nominal_operand(mut builder: Builder, value: Place, span: SourceSpan) 
     """Materialize the checker's clone fact through a source nominal's real derived Clone implementation."""
     match place_type(builder.locals, value):
         PlanType.Model(index, name) =>
+            if builder.nominals[index].native_path.is_some() and "Clone" not in builder.nominals[index].derives:
+                return Err("unsupported Body IR clone of a standard-library nominal without Clone")
             reference = temporary(builder, PlanType.ModelRef(index, name), span)
             builder.emit(plan_assign(reference, RvalueKind.Borrow(value), span))
             result = temporary(builder, PlanType.Model(index, name), span)

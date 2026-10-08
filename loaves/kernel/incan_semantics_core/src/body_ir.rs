@@ -74,6 +74,14 @@ pub struct BodyIrModule {
     /// Source-local scalar statics with effect-free literal initializers; all other initializers must refuse.
     #[serde(default)]
     pub static_declarations: Vec<StaticDeclaration>,
+    /// Standard-library nominals compiled into active SDK components and referenced by this module's checked types.
+    /// Every record carries [`NominalDeclaration::native_path`]; source-local declarations never appear here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sdk_nominal_declarations: Vec<NominalDeclaration>,
+    /// Standard-library functions and methods compiled into active SDK components and called by this module, with
+    /// their checked signatures. Calls to other imported implementations have no record and must refuse.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sdk_callables: Vec<SdkCallable>,
     /// Identity of the owning module, matching [`crate::HirModule::id`].
     pub module_id: CompilerNodeId,
     /// Source-local plain-model and plain-newtype declarations whose construction layout is available to a direct
@@ -152,6 +160,37 @@ pub struct StdlibDelegation {
     /// Declaration-order parameter types; argument binding still belongs to the call site.
     pub parameters: Vec<IncanType>,
     /// The declared wrapper result type, verified against native metadata before execution.
+    pub return_type: IncanType,
+}
+
+/// How an SDK instance method receives its receiver in the provider crate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SdkReceiver {
+    /// The method reads its receiver through a shared reference (`self`).
+    Shared,
+    /// The method changes its receiver through a mutable reference (`mut self`).
+    Mutable,
+}
+
+/// A checked standard-library callable compiled into an active SDK component, with its declared signature.
+///
+/// The record exists only for a checker-selected identity owned by an active SDK package. Its path is the provider
+/// item the legacy route reaches through the `__incan_std` facade; consumers must still verify the signature
+/// against native metadata and must never recover the path from a call site's spelling.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SdkCallable {
+    /// Exact checker-selected declaration identity, as the consumer references it.
+    pub canonical: CanonicalSymbolId,
+    /// Provider-crate path of the compiled item: `library::module::symbol` for a function, or
+    /// `library::module::Owner::symbol` for a method, where `symbol` is the RFC 120 projection of `canonical`.
+    pub native_path: String,
+    /// Receiver mode of an instance method; `None` for a free function or a static method.
+    pub receiver: Option<SdkReceiver>,
+    /// Declared type parameter names in order, instantiated from the call site's checked type arguments.
+    pub type_parameters: Vec<String>,
+    /// Declaration-order parameter types, excluding any receiver; a type parameter appears as its `TypeVar`.
+    pub parameters: Vec<IncanType>,
+    /// Declared result type.
     pub return_type: IncanType,
 }
 
@@ -307,6 +346,13 @@ pub struct NominalDeclaration {
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
     /// Number of declared type parameters; this profile admits only zero.
     pub type_parameter_count: usize,
+    /// Provider-crate path of a standard-library nominal compiled into an active SDK component, such as
+    /// `incan_stdlib_system::io::IoError`; `None` for every source-local or package-fragment declaration.
+    ///
+    /// A record with a path describes storage the provider crate owns: its fields are the checked public layout in
+    /// declaration order, and a consumer must neither declare nor construct it, only name, move, drop and read it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_path: Option<String>,
 }
 
 /// One source-local fieldless normal enum retained for direct identity comparison.
@@ -4500,6 +4546,8 @@ mod tests {
             type_alias_declarations: Vec::new(),
             module_id: CompilerNodeId::new(CompilerNodeKind::Module, "m"),
             stdlib_delegations: Vec::new(),
+            sdk_nominal_declarations: Vec::new(),
+            sdk_callables: Vec::new(),
             enum_declarations: Vec::new(),
             static_declarations: Vec::new(),
             nominal_declarations: Vec::new(),
