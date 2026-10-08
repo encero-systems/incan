@@ -8,6 +8,7 @@ from rust::incan_std_core::collections import (
     list_count as runtime_count,
     list_index as runtime_index,
     list_get_mut as runtime_get_mut,
+    list_slice as runtime_slice,
 )
 from std.derives.comparison import Eq, Ord
 
@@ -84,6 +85,31 @@ pub def remove_list[T](mut values: list[T], index: int) -> None:
 pub def swap_list[T](mut values: list[T], left: int, right: int) -> None:
     """Swap two elements with the legacy negative-index and bounds behavior."""
     values.swap(left, right)
+
+
+pub def slice_list[T with Clone](
+    values: &list[T],
+    start: int,
+    has_start: bool,
+    end: int,
+    has_end: bool,
+    step: int,
+    has_step: bool,
+) -> list[T]:
+    """Copy a Python-style list slice through the legacy helper; an absent component keeps the slice default."""
+    return runtime_slice(
+        values,
+        slice_component(start, has_start),
+        slice_component(end, has_end),
+        slice_component(step, has_step),
+    )
+
+
+def slice_component(value: int, present: bool) -> Option[int]:
+    """Keep an omitted slice component absent, as legacy passes `None` for it."""
+    if present:
+        return Some(value)
+    return None
 
 
 pub def concat_list[T with Clone](left: &list[T], right: &list[T]) -> list[T]:
