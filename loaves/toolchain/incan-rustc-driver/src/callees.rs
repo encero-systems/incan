@@ -10,12 +10,14 @@ use rustc_middle::ty::TyCtxt;
 /// Explicit plan arguments are checked separately.
 pub fn resolve(tcx: TyCtxt<'_>, callee: &Callee) -> Result<DefId, PlanError> {
     match &callee.kind {
-        CalleeKind::Planned(name) => tcx
-            .hir_crate_items(())
-            .free_items()
-            .map(|item| item.owner_id.to_def_id())
-            .find(|def| tcx.opt_item_name(*def).is_some_and(|symbol| symbol.as_str() == name))
-            .ok_or_else(|| PlanError::UnknownCallee(name.clone())),
+        CalleeKind::Planned(name) => planned(tcx, name),
+        CalleeKind::Value(_) => Err(PlanError::UnknownCallee(
+            "local callable has no declaration callee".into(),
+        )),
+        CalleeKind::CallClosure(_) => fn_call(tcx),
+        CalleeKind::ClosureBody(..) => Err(PlanError::UnknownCallee(
+            "closure constructors keep rustc's own body".into(),
+        )),
         CalleeKind::Instantiated(path, _) | CalleeKind::InstantiatedPair(path, _, _) => external(tcx, path),
         CalleeKind::SpawnGenerator(_, leaf, depth) => generator_method(tcx, "Generator", "spawn", leaf, *depth),
         CalleeKind::YieldGenerator(leaf, depth) => generator_method(tcx, "GeneratorYield", "yield_value", leaf, *depth),
@@ -53,6 +55,30 @@ fn generator_method(
         .copied()
         .find(|def| tcx.item_name(*def).as_str() == member)
         .ok_or_else(|| PlanError::UnknownCallee(format!("{owner}::{member}")))
+}
+
+/// Select `Fn::call` from the language item, the one method a borrowed callable object is invoked through.
+pub fn fn_call(tcx: TyCtxt<'_>) -> Result<DefId, PlanError> {
+    let fn_trait = tcx
+        .lang_items()
+        .fn_trait()
+        .ok_or_else(|| PlanError::UnknownCallee("Fn".into()))?;
+    tcx.associated_item_def_ids(fn_trait)
+        .iter()
+        .copied()
+        .find(|def| tcx.item_name(*def).as_str() == "call")
+        .ok_or_else(|| PlanError::UnknownCallee("Fn::call".into()))
+}
+
+/// Resolve only a source-local function item admitted by the plan's canonical frontend identity.
+pub fn planned(tcx: TyCtxt<'_>, name: &str) -> Result<DefId, PlanError> {
+    tcx.hir_crate_items(())
+        .free_items()
+        .map(|item| item.owner_id.to_def_id())
+        .find(|def| {
+            tcx.def_kind(*def) == DefKind::Fn && tcx.opt_item_name(*def).is_some_and(|symbol| symbol.as_str() == name)
+        })
+        .ok_or_else(|| PlanError::UnknownCallee(name.into()))
 }
 
 /// Walk only public module children, rejecting nonfunction callees before constructing MIR.

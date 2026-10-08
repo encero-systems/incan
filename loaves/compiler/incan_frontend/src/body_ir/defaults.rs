@@ -25,6 +25,7 @@ pub(super) fn attach_model_field_defaults(
             facts,
             IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Unit),
         );
+        builder.type_parameters = declaration.type_parameters.clone();
         let scope = builder.new_scope(None, span);
 
         // ---- Canonical field slots and deferred computations ----
@@ -59,6 +60,8 @@ pub(super) fn attach_model_field_defaults(
             name: declaration.name.clone(),
             span,
             return_type: IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Unit),
+            // Field slots carry no checker callable-representation proof, so consumers refuse function-typed fields.
+            callable_representation: None,
             named_type_identities: facts.type_info.declarations.named_type_identities.clone(),
             param_locals: params.iter().map(|param| param.local).collect(),
             params,

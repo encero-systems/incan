@@ -187,7 +187,7 @@ fn newtype_methods_retain_layout_without_erasing_validation() -> Result<(), Box<
     Ok(())
 }
 
-/// Only effect-free scalar initialization reaches the persistent native storage profile.
+/// Literal scalar and string initialization retain canonical storage without admitting effectful initializers.
 #[test]
 fn scalar_static_retains_canonical_initializer() -> Result<(), Box<dyn std::error::Error>> {
     let module = build(
@@ -197,11 +197,24 @@ fn scalar_static_retains_canonical_initializer() -> Result<(), Box<dyn std::erro
     let [declaration] = module.static_declarations.as_slice() else {
         return Err("expected one retained scalar static".into());
     };
-    assert_eq!(declaration.initial, bir::Constant::Int(4));
+    assert_eq!(
+        declaration.initial,
+        bir::StaticInitializer::Literal(bir::Constant::Int(4))
+    );
     assert!(module.is_well_formed_static_declaration(declaration));
     let mut malformed = declaration.clone();
-    malformed.initial = bir::Constant::Bool(true);
+    malformed.initial = bir::StaticInitializer::Literal(bir::Constant::Bool(true));
     assert!(!module.is_well_formed_static_declaration(&malformed));
+    let text = build(
+        "static TEXT: str = \"hello\"\n\ndef main() -> str:\n    return TEXT\n",
+        &["m", "string_static"],
+    )?;
+    assert_eq!(text.static_declarations.len(), 1);
+    assert_eq!(
+        text.static_declarations[0].initial,
+        bir::StaticInitializer::Literal(bir::Constant::Str("hello".into()))
+    );
+    assert!(text.is_well_formed_static_declaration(&text.static_declarations[0]));
     let effectful = build(
         "def initial() -> int:\n    return 4\n\nstatic COUNT: int = initial()\n\ndef main() -> int:\n    return COUNT\n",
         &["m", "effectful_static"],

@@ -83,6 +83,10 @@ fn mir_built<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> &'tcx Steal<Body<'tcx>
             && name.is_some_and(|name| name.as_str() == function.name)
     });
     match function {
+        // A closure constructor keeps rustc's own body, built from its injected boxing expression.
+        Some(function) if crate::closures::constructor(function).is_some() => {
+            (rustc_interface::DEFAULT_QUERY_PROVIDERS.queries.mir_built)(tcx, def)
+        }
         Some(function) => match if crate::captured_generators::producer(function).is_some() {
             crate::captured_generators::constructor(tcx, def, function)
         } else {
@@ -100,12 +104,23 @@ fn mir_built<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> &'tcx Steal<Body<'tcx>
                         .is_some_and(|name| name.as_str() == function.name)
                     && crate::captured_generators::producer(function).is_some()
             });
-            match constructor {
-                Some(function) => match crate::captured_generators::callback(tcx, def, function) {
+            let closure = plan.functions.iter().find(|function| {
+                tcx.def_kind(def) == rustc_hir::def::DefKind::Closure
+                    && tcx
+                        .opt_item_name(parent)
+                        .is_some_and(|name| name.as_str() == function.name)
+                    && crate::closures::constructor(function).is_some()
+            });
+            match (constructor, closure) {
+                (Some(function), _) => match crate::captured_generators::callback(tcx, def, function) {
                     Ok(body) => tcx.alloc_steal_mir(body),
                     Err(error) => refuse(tcx, error),
                 },
-                None => (rustc_interface::DEFAULT_QUERY_PROVIDERS.queries.mir_built)(tcx, def),
+                (None, Some(function)) => match crate::closures::callback(tcx, def, function) {
+                    Ok(body) => tcx.alloc_steal_mir(body),
+                    Err(error) => refuse(tcx, error),
+                },
+                (None, None) => (rustc_interface::DEFAULT_QUERY_PROVIDERS.queries.mir_built)(tcx, def),
             }
         }
     }
@@ -153,15 +168,7 @@ impl rustc_driver::Callbacks for Callbacks {
                 Ok(span) => span,
                 Err(error) => compiler.sess.dcx().fatal(error.to_string()),
             };
-            let mut item = declarations::model(model, span);
-            for derive in model.derives.iter().filter(|derive| derive.as_str() != "Display") {
-                item.attrs.push(declarations::derive_attribute(
-                    &compiler.sess.psess.attr_id_generator,
-                    derive,
-                    span,
-                ));
-            }
-            krate.items.push(item);
+            krate.items.extend(declarations::model_items(model, &compiler.sess.psess.attr_id_generator, span));
         }
         for function in &self.plan.functions {
             let span = match sources.span(&function.span) {

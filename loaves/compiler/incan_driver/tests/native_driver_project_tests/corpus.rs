@@ -2,6 +2,100 @@
 
 use super::*;
 
+/// Primitive and flat tuple match parity, including rejected string literals and branch-owned bindings.
+pub(super) const STRUCTURAL_MATCHES_SOURCE: &str = r#"
+def pick(number: int) -> str:
+    match number:
+        1 => "one"
+        _ => "other"
+
+def describe(pair: tuple[int, str]) -> str:
+    match pair:
+        (0, _) => return "zero"
+        (_, "answer") => return "answer"
+        (number, word) => return f"{number + 1} {word.upper()}"
+
+def classify(code: str) -> str:
+    mut kind = "other"
+    match code:
+        "a" => kind = "alpha"
+        "b" => kind = "beta"
+        _ => pass
+    return kind
+
+def main() -> None:
+    println(pick(1))
+    println(pick(2))
+    println(classify("b"))
+    println(classify("z"))
+    pair: tuple[int, str] = (42, "hello")
+    println(describe(pair))
+    println(describe((0, "unused")))
+    println(describe((7, "answer")))
+    match pair:
+        (0, "absent") => println("wrong")
+        (number, word) => println(f"{number} {word}")
+    println(pair)
+    flag = true
+    match flag:
+        false => println("wrong")
+        true => println("true")
+        _ => println("wrong")
+"#;
+
+/// Primitive static-list parity, including an argument that changes the same cell before its outer append.
+pub(super) const LIST_STATICS_SOURCE: &str = r#"
+static ITEMS: list[int] = [1]
+static FLAGS: list[bool] = [true, false]
+static TEXTS: list[str] = ["alpha"]
+static REALS: list[float] = [1.5]
+
+def push(value: int) -> None:
+    ITEMS.append(value)
+
+def argument_effect() -> int:
+    ITEMS.append(8)
+    return 9
+
+def snapshot() -> list[int]:
+    return ITEMS
+
+def total() -> int:
+    mut result = 0
+    for item in ITEMS:
+        result += item
+    return result
+
+def main() -> None:
+    live = ITEMS
+    first = snapshot()
+    push(2)
+    println(len(live))
+    ITEMS.append(argument_effect())
+    live.extend([5, 6])
+    live.swap(0, 5)
+    println(live[0])
+    println(live.pop())
+    live.remove(0)
+    println(len(ITEMS))
+    println(total())
+    println(len(first))
+    mut detached = ITEMS
+    detached = [7]
+    detached.append(10)
+    println(len(detached))
+    println(len(ITEMS))
+    ITEMS = [3]
+    println(live[0])
+    println(FLAGS[0])
+    FLAGS.append(true)
+    println(len(FLAGS))
+    TEXTS.append("beta")
+    println(TEXTS[1])
+    REALS.append(2.5)
+    println(REALS[1])
+"#;
+
 /// Exercise newtype construction and projection, aliases, scalar constants, and static mutation against legacy.
 pub(super) fn check_declarations(
     driver: &Path,
@@ -203,6 +297,10 @@ fn compile_source(
 }
 
 /// Construct the exact direct-route invocation so bounded census execution shares dependency selection.
+///
+/// The driver resolves its pinned `rustc_driver` through its own runpath and refuses any other loaded copy. On Linux
+/// the suite runner exports `LD_LIBRARY_PATH` for test executables, and that search path outranks a runpath, so the
+/// driver would load the sysroot's second, byte-identical copy and refuse every program; it does not inherit it.
 pub(super) fn source_command(
     driver: &Path,
     source: &Path,
@@ -210,9 +308,10 @@ pub(super) fn source_command(
     sysroot: &Path,
     closure: &NativeClosure,
 ) -> Command {
-    let mut command = Command::new(driver);
+    let mut command = super::driver_command(driver);
     command
         .env_remove("RUSTC_BOOTSTRAP")
+        .env_remove("LD_LIBRARY_PATH")
         .arg("--source")
         .arg(source)
         .arg("native_corpus")

@@ -5,6 +5,72 @@
 
 use super::*;
 
+/// Checked integer helpers retain concrete receiver and result types in Body IR.
+#[test]
+fn checked_integer_helper_locals_retain_types() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n    high: u8 = 250\n    value = high.checked_add(10u8)\n    println(high.wrapping_add(10u8))\n    wide: i16 = 300\n    resized = wide.try_resize[u8]()\n",
+        &["integer_helpers"],
+    )?;
+    for body in &module.bodies {
+        for local in &body.locals {
+            assert!(
+                !local.ty.to_string().contains('?'),
+                "unresolved local: {local:?}\n{}",
+                body.render_snapshot()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Constructor temporaries use the open sides settled by their binding and in-place match contexts.
+#[test]
+fn settled_constructor_spans_retain_payload_types() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n    value = Ok(7)\n    match value:\n        Ok(number) => println(number)\n        Err(_) => pass\n    match Ok(8):\n        Ok(number) => println(number)\n        Err(_) => pass\n",
+        &["settled_constructors"],
+    )?;
+    for body in &module.bodies {
+        for local in &body.locals {
+            assert!(!local.ty.to_string().contains('?'), "unresolved local: {local:?}");
+        }
+    }
+    Ok(())
+}
+
+/// Nested intrinsic constructors retain the contextual payload types that their checked call parameters require.
+#[test]
+fn nested_carrier_arguments_retain_checked_payload_types() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def describe(value: Result[Option[int], str]) -> str:\n    match value:\n        Ok(Some(0)) => return \"zero\"\n        Ok(Some(n)) => return f\"{n}\"\n        Ok(None) => return \"empty\"\n        Err(message) => return message\n\ndef main() -> None:\n    println(describe(Ok(Some(7))))\n    println(describe(Ok(None)))\n    println(describe(Err(\"boom\")))\n";
+    let module = build(source, &["nested_carriers"])?;
+    for body in &module.bodies {
+        for local in &body.locals {
+            assert!(
+                !local.ty.to_string().contains('?'),
+                "unresolved local in {}: {local:?}",
+                body.name
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Empty nested literals carry the peer-proven storage types at every Body IR local.
+#[test]
+fn nested_empty_list_locals_retain_checked_element_types() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n    rows = [[], [\"x\"]]\n    deep = [[[]], [[\"y\"]]]\n",
+        &["nested_empty_lists"],
+    )?;
+    let body = body_named(&module, "main")?;
+    assert!(!body.locals.is_empty());
+    for local in &body.locals {
+        assert!(!local.ty.to_string().contains('?'), "unresolved local: {local:?}");
+    }
+    Ok(())
+}
+
 /// Operand and recursive place lowering retain checked tuple indices rather than temporary unary results.
 #[test]
 fn checked_negative_tuple_indices_remain_constant_projections() -> Result<(), Box<dyn std::error::Error>> {

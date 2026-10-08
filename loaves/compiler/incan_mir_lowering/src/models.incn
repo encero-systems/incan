@@ -2,7 +2,7 @@
 
 pub from frame import place_type
 from collections import primitive_leaf
-from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive
+from rust::incan_semantics_core import IncanType as RustType
 from rust::incan_semantics_core::body_ir import (
     NominalDeclaration,
     ConstructorTarget,
@@ -11,15 +11,16 @@ from rust::incan_semantics_core::body_ir import (
     PlaceElem as RustPlaceElem,
 )
 from pub::incan_mir_plan import ListLeaf, PlanType, Local, Place, Projection, SourceSpan
-from numerics import numeric_type
 from tuples import tuple_type, generic_tuple_type, type_name, tuple_slot
 from pub::incan_mir_plan import tuple_element_type
 from generators import generator_type
-from nominal_instances import class_symbol
+from nominal_instances import nominal_symbol
+from types import primitive_type
+from closures import function_pointer_type
 
 
 pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Result[PlanType, str]:
-    """Translate checked scalar and collection types, resolving source-local nominals only against retained declarations."""
+    """Translate checked scalar, collection, and callable types, resolving source-local nominals only against retained declarations."""
     match generator_type(ty):
         Some(result) => return result
         None => pass
@@ -29,22 +30,14 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                 if declarations[index].name == str(name):
                     return Ok(PlanType.Model(index, str(name)))
             return Err(f"unsupported Body IR nominal type {name}")
-        RustType.Primitive(primitive) =>
-            match primitive:
-                Primitive.Numeric(kind) => return numeric_type(kind)
-                Primitive.Int => return Ok(PlanType.Int)
-                Primitive.Float => return Ok(PlanType.Float)
-                Primitive.Bool => return Ok(PlanType.Bool)
-                Primitive.Unit => return Ok(PlanType.Unit)
-                Primitive.Str => return Ok(PlanType.String)
-                Primitive.Bytes => return Ok(PlanType.List(ListLeaf.U8, 1))
-                _ => return Err(f"unsupported Body IR primitive type {primitive}")
+        RustType.Primitive(primitive) => return primitive_type(primitive)
+        RustType.Function(params=parameters, return_type=result) => return function_pointer_type(parameters, result)
         RustType.Tuple(elements) => return tuple_type(elements)
         RustType.Decimal(precision=_precision, scale=_scale) => return Ok(PlanType.Decimal)
         RustType.Generic(base=base, args=arguments) =>
             for index in range(len(declarations)):
                 declaration = declarations[index]
-                if declaration.type_parameter_count != 0 and declaration.canonical.declaration_name == str(base) and declaration.name == class_symbol(
+                if declaration.type_parameter_count != 0 and declaration.canonical.declaration_name == str(base) and declaration.name == nominal_symbol(
                     str(base),
                     arguments,
                 ):
@@ -63,6 +56,7 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                 PlanType.String => return Ok(PlanType.List(ListLeaf.Str, 1))
                 PlanType.U8 => return Ok(PlanType.List(ListLeaf.U8, 1))
                 PlanType.Decimal => return Ok(PlanType.List(ListLeaf.Decimal, 1))
+                PlanType.FrozenStr => return Ok(PlanType.List(ListLeaf.FrozenStr, 1))
                 PlanType.Tuple(elements) => return Ok(PlanType.List(ListLeaf.Tuple(elements), 1))
                 PlanType.Model(index, name) => return Ok(PlanType.List(ListLeaf.Model(index, name), 1))
                 PlanType.List(leaf, depth) => return Ok(PlanType.List(leaf, depth + 1))

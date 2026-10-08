@@ -103,7 +103,7 @@ pub fn select_checked_caller_exports_with_body_ir(
                  `caller::incan` requires a direct declaration or a checked same-name packaged public import"
             ));
         }
-        export_representability(export, &exports_by_name, body_ir_identity)
+        export_representability(export, &exports_by_name, &mut BTreeSet::new(), body_ir_identity)
             .map_err(|reason| format!("caller export `{library}::{name}` is not representable: {reason}"))?;
         selected.push(name.clone());
     }
@@ -136,9 +136,13 @@ fn is_root_declaration(export: &CheckedNamedExport) -> bool {
 }
 
 /// Validate one selected checked export and every nominal type reachable from its public shape.
+///
+/// `visiting` holds the nominal types on the current path. It is threaded through every field, variant, and parameter
+/// rather than restarted per member, so a recursive public shape such as an enum holding a list of itself terminates.
 fn export_representability(
     export: &CheckedNamedExport,
     exports: &BTreeMap<&str, &CheckedNamedExport>,
+    visiting: &mut BTreeSet<String>,
     body_ir_identity: bool,
 ) -> Result<(), String> {
     match &export.kind {
@@ -150,9 +154,9 @@ fn export_representability(
                 return Err("functions with type parameters are unsupported".to_string());
             }
             for parameter in &function.params {
-                type_representability(&parameter.ty, exports, &mut BTreeSet::new(), body_ir_identity)?;
+                type_representability(&parameter.ty, exports, visiting, body_ir_identity)?;
             }
-            type_representability(&function.return_type, exports, &mut BTreeSet::new(), body_ir_identity)
+            type_representability(&function.return_type, exports, visiting, body_ir_identity)
         }
         CheckedExportKind::Model(model) => {
             if !model.type_params.is_empty() {
@@ -162,7 +166,7 @@ fn export_representability(
                 if field.visibility != Visibility::Public {
                     return Err(format!("model field `{}` is not public", field.name));
                 }
-                type_representability(&field.ty, exports, &mut BTreeSet::new(), body_ir_identity)?;
+                type_representability(&field.ty, exports, visiting, body_ir_identity)?;
             }
             Ok(())
         }
@@ -172,14 +176,14 @@ fn export_representability(
             }
             for variant in &enum_export.variants {
                 for field in &variant.fields {
-                    type_representability(field, exports, &mut BTreeSet::new(), body_ir_identity)?;
+                    type_representability(field, exports, visiting, body_ir_identity)?;
                 }
             }
             Ok(())
         }
         CheckedExportKind::Newtype(newtype) if newtype.is_rusttype => {
             if body_ir_identity && newtype.type_params.is_empty() && is_body_ir_rust_path(&newtype.underlying) {
-                type_representability(&newtype.underlying, exports, &mut BTreeSet::new(), true)
+                type_representability(&newtype.underlying, exports, visiting, true)
             } else {
                 Err("rusttype exports are unsupported".to_string())
             }
@@ -215,7 +219,7 @@ fn type_representability(
             let export = exports
                 .get(name.as_str())
                 .ok_or_else(|| format!("nominal type `{name}` is not a checked public export"))?;
-            let result = export_representability(export, exports, body_ir_identity);
+            let result = export_representability(export, exports, visiting, body_ir_identity);
             visiting.remove(name);
             result
         }
@@ -391,6 +395,18 @@ const RAW: &str = r##"a quote " hidden::caller::incan::ignored"##;
             let exports = checked_exports(&other)?;
             assert!(select_checked_caller_exports_with_body_ir("lowering", &requested, &exports, true).is_err());
         }
+        Ok(())
+    }
+
+    /// A public enum whose variant holds a list of itself is checked once per path rather than recursing until the
+    /// compiler thread overflows its stack.
+    #[test]
+    fn checked_selection_terminates_on_recursive_public_shapes() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "pub enum Shape:\n    Leaf(int)\n    Many(list[Shape])\n\n\npub model Holder:\n    pub shape: Shape\n\n\npub def leaf() -> Holder:\n    return Holder(shape=Shape.Leaf(1))\n";
+        let exports = checked_exports(source)?;
+        let requested = BTreeSet::from(["Holder".to_string(), "Shape".to_string(), "leaf".to_string()]);
+        let selected = select_checked_caller_exports("policy", &requested, &exports)?;
+        assert_eq!(selected.exports, vec!["Holder", "Shape", "leaf"]);
         Ok(())
     }
 

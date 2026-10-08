@@ -71,7 +71,7 @@ pub struct BodyIrModule {
     /// implementations are absent and must refuse.
     #[serde(default)]
     pub stdlib_delegations: Vec<StdlibDelegation>,
-    /// Source-local scalar statics with effect-free literal initializers; all other initializers must refuse.
+    /// Source-local statics with effect-free literal initializers; all other initializers must refuse.
     #[serde(default)]
     pub static_declarations: Vec<StaticDeclaration>,
     /// Identity of the owning module, matching [`crate::HirModule::id`].
@@ -135,10 +135,19 @@ pub struct TypeAliasDeclaration {
 pub struct StaticDeclaration {
     /// Exact checker-selected storage identity, independent of aliases at its uses.
     pub canonical: CanonicalSymbolId,
-    /// Checked scalar carrier type.
+    /// Checked carrier type; initializer validation must preserve its exact element types.
     pub ty: IncanType,
-    /// Literal initialization value; repeated reads must not reinitialize an assigned cell.
-    pub initial: Constant,
+    /// Effect-free initialization value; repeated reads must not reinitialize an assigned cell.
+    pub initial: StaticInitializer,
+}
+
+/// Checked effect-free storage initialization, independent of its eventual native representation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum StaticInitializer {
+    /// One primitive literal, interpreted in the storage declaration's checked carrier.
+    Literal(Constant),
+    /// An ordered list of primitive literals, each checked against the declaration's element type.
+    List(Vec<Constant>),
 }
 
 /// A source-owned stdlib callable's proven transparent native delegation and scalar signature.
@@ -252,14 +261,32 @@ impl BodyIrModule {
 }
 
 /// One non-generic concrete adopter's implementation of a source-local trait method.
+///
+/// The adopter's traits include every source-local supertrait its adoptions reach, so a supertrait slot is retained
+/// with the body that fills it for this adopter.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TraitImplementation {
     /// Concrete nominal owner, matched against the retained layout registry.
     pub owner: CanonicalSymbolId,
     /// Trait slot identity minted by the checker.
     pub method: CanonicalSymbolId,
-    /// Implementing method identity, or the trait slot itself for an inherited default.
+    /// Implementing method identity: the adopter's own method, the slot's default, or the default a directly adopted
+    /// subtrait declares for the slot.
     pub implementation: CanonicalSymbolId,
+    /// Checked type arguments of the trait whose default `implementation` is, one per type parameter of that trait.
+    ///
+    /// Empty for the adopter's own method and for a default of a trait without type parameters.
+    #[serde(default)]
+    pub type_arguments: Vec<TraitTypeArgument>,
+}
+
+/// One trait type parameter bound to the type argument the checker recorded for an adoption.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TraitTypeArgument {
+    /// The type parameter as the trait declares it.
+    pub parameter: String,
+    /// The checked type the adoption binds it to.
+    pub argument: IncanType,
 }
 
 /// The exact local declaration and canonical field layout for one direct-executable plain model or class.
@@ -306,7 +333,7 @@ pub struct NominalDeclaration {
     pub derives: Vec<String>,
     /// Checked nominal bindings needed by those field types; serialized publications retain only referenced entries.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
-    /// Ordered checker-retained declaration parameters used to close class layouts at checked uses.
+    /// Ordered checker-retained declaration parameters used to close nominal layouts at checked uses.
     #[serde(default)]
     pub type_parameters: Vec<String>,
     /// Number of declared type parameters, agreeing with [`Self::type_parameters`].
@@ -447,6 +474,26 @@ impl ValueEnumVariantDeclaration {
     }
 }
 
+/// Checked callable representation choices for a declaration's signature.
+///
+/// The function type describes the call surface, but does not distinguish a function pointer from a parameter or
+/// return that must hold a capturing closure. These checker facts preserve that distinction without asking a
+/// consumer to rediscover it from the declaration's syntax or its body's uses.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CallableRepresentation {
+    /// Explicitly annotated local bindings that require function-pointer coercion rather than inferred item storage.
+    #[serde(default)]
+    pub function_pointer_locals: Vec<LocalId>,
+    /// Local bindings whose checked callable value holds an environment, including bindings annotated with a
+    /// function type. They infer the closure's own type rather than require function-pointer coercion.
+    #[serde(default)]
+    pub closure_holding_locals: Vec<LocalId>,
+    /// Parameter locals whose checked function type accepts closures through an `Fn` bound.
+    pub closure_holding_parameters: Vec<LocalId>,
+    /// The checked return type holds a capturing closure through an opaque `Fn` implementation.
+    pub closure_holding_return: bool,
+}
+
 /// Body IR v0 for a single function or method.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Body {
@@ -473,6 +520,10 @@ pub struct Body {
     pub span: HirSourceSpan,
     /// Fully resolved source return type used to validate direct-execution results.
     pub return_type: IncanType,
+    /// Signature representation facts retained from the checker. Older representations have no such proof;
+    /// consumers must refuse callable signatures when this is absent rather than assume function-pointer coercion.
+    #[serde(default)]
+    pub callable_representation: Option<CallableRepresentation>,
     /// Checked nominal bindings used by this body's retained type positions. Publication prunes unused bindings,
     /// rebases source-local identities, and records their public requirements; consumers never resolve the keys.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
@@ -537,6 +588,14 @@ impl ExternDelegation {
 }
 
 impl Body {
+    /// Store this already-checked body in the recursive representation used by deferred nominal field defaults.
+    ///
+    /// This allocation preserves every retained fact unchanged and keeps Rust recursive-storage plumbing out of
+    /// the Incan lowering. Consumers must still validate and specialize the body before storing it.
+    pub fn into_box(self) -> Box<Self> {
+        Box::new(self)
+    }
+
     /// Return the locals in this body whose type is not [`crate::types::AbiV0Ownership::CopyOrTrivial`] and are
     /// therefore drop-relevant if a panic unwinds through this body.
     ///
@@ -1777,6 +1836,11 @@ impl DefaultComputation {
 /// own parameters and captures show up in the ordinary `locals:` listing like any other local.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ClosureBody {
+    /// Whether this computation came from a named function read. Its canonical item identity lives once in the
+    /// forwarding call. A source closure expression or partial remains distinct even when it forwards the same
+    /// arguments without captures.
+    #[serde(default)]
+    pub function_item: bool,
     /// The closure's own captured-binding locals, in the same order as [`Rvalue::Closure::captured_operands`] --
     /// `capture_locals[i]` is where a read of the `i`-th captured operand's value is durably bound inside the
     /// closure body, so subsequent reads inside the body see it as an ordinary local rather than re-reading the
@@ -3741,6 +3805,7 @@ mod tests {
     use super::*;
     use crate::{CompilerNodeKind, IncanPrimitiveType, SemanticSourceTargetKind};
 
+    /// Build a scalar-only body for structural and serialization tests, without callable representation facts.
     fn sample_body() -> Body {
         let decl_id = CompilerNodeId::declaration("m", "add");
         let direct_call_id = CompilerNodeId::declaration_span("m", 0, 30);
@@ -3755,6 +3820,7 @@ mod tests {
             name: "add".to_string(),
             span: HirSourceSpan::new(0, 30),
             return_type: IncanType::Primitive(IncanPrimitiveType::Int),
+            callable_representation: None,
             named_type_identities: Default::default(),
             locals: vec![
                 LocalDecl {
@@ -4344,6 +4410,7 @@ mod tests {
                             false,
                         )],
                         body: Box::new(ClosureBody {
+                            function_item: false,
                             capture_locals: vec![capture_local],
                             stmts: Vec::new(),
                             result: Operand::place(
