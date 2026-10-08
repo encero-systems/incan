@@ -119,6 +119,11 @@ pub def intrinsic_pattern(declaration: EnumDeclaration, pattern: &RustPattern) -
                     ) == "Some" and len(fields) == 1:
                         validate_payload_patterns(fields)?
                         return Ok(1)
+                    # A bare `None` constructor, as an `assert value is None` pattern spells it.
+                    if declaration.carrier == "Option" and canonical.origin == SymbolOrigin.Builtin and canonical.declaration_name == "None" and str(
+                        variant,
+                    ) == "None" and len(fields) == 0:
+                        return Ok(0)
                 None => pass
         RustPattern.Result(variant=variant, fields=fields) =>
             if declaration.carrier != "Result" or len(fields) != 1:

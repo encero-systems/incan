@@ -212,6 +212,17 @@ impl rustc_driver::Callbacks for Callbacks {
 
     /// Verify admitted external signatures against canonical dependency metadata before any planned MIR is built.
     fn after_expansion(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'_>) -> rustc_driver::Compilation {
+        match instantiate_generic_externals(tcx, &self.plan) {
+            Ok(Some(plan)) => {
+                self.plan = Arc::new(plan);
+                match PLAN.lock() {
+                    Ok(mut slot) => *slot = Some(Arc::clone(&self.plan)),
+                    Err(_) => tcx.dcx().fatal(DriverError::State.to_string()),
+                }
+            }
+            Ok(None) => {}
+            Err(error) => refuse(tcx, error),
+        }
         for external in &self.plan.externals {
             let def = match callees::external(tcx, &external.path) {
                 Ok(def) => def,
@@ -249,6 +260,54 @@ impl rustc_driver::Callbacks for Callbacks {
         }
         rustc_driver::Compilation::Continue
     }
+}
+
+/// Give each generic external declared without type arguments its inferred ones, and its calls the matching
+/// instantiated callee, so signature verification and MIR construction see one explicit instantiation.
+fn instantiate_generic_externals(tcx: TyCtxt<'_>, plan: &Plan) -> Result<Option<Plan>, PlanError> {
+    use crate::plan::{CalleeKind, TerminatorKind};
+    let mut instantiated = plan.clone();
+    let mut inferred = std::collections::BTreeMap::new();
+    for external in &mut instantiated.externals {
+        if !external.type_arguments.is_empty() {
+            continue;
+        }
+        let def = callees::external(tcx, &external.path)?;
+        if tcx.generics_of(def).count() == 0 {
+            continue;
+        }
+        external.type_arguments = callees::inferred_arguments(tcx, def, external)?;
+        inferred.insert(external.path.clone(), external.type_arguments.clone());
+    }
+    if inferred.is_empty() {
+        return Ok(None);
+    }
+    for block in instantiated
+        .functions
+        .iter_mut()
+        .flat_map(|function| function.blocks.iter_mut())
+    {
+        let TerminatorKind::Call(callee, ..) = &mut block.terminator.kind else {
+            continue;
+        };
+        let CalleeKind::External(path) = &callee.kind else {
+            continue;
+        };
+        let Some(types) = inferred.get(path) else {
+            continue;
+        };
+        callee.kind = match types.as_slice() {
+            [ty] => CalleeKind::Instantiated(path.clone(), ty.clone()),
+            [key, value] => CalleeKind::InstantiatedPair(path.clone(), key.clone(), value.clone()),
+            _ => {
+                return Err(PlanError::Invalid {
+                    function: path.clone(),
+                    reason: "an inferred external instantiation admits one or two type arguments".into(),
+                });
+            }
+        };
+    }
+    Ok(Some(instantiated))
 }
 
 /// Compile a plan supplied directly by an Incan caller function into a native binary.
