@@ -37,3 +37,4 @@ Start from the [design-record template](TEMPLATE.md) when proposing a new decisi
 | [DD-0002](0002_single_pinned_rust_version.md)            | Pin one Rust version and one generated-project edition                           | Accepted  | v0.7 planning |
 | [DD-0003](0003_replacement_program_output_contract.md)   | Deliver replacement program output during execution and bind it into the receipt | Withdrawn | v0.6          |
 | [DD-0004](0004_native_route_through_the_pinned_rustc.md) | Isolate the native compiler driver in a pinned Loaf                              | Accepted  | v0.6          |
+| [DD-0005](0005_cargo_free_development_contract.md)       | Cargo-free development with eager dependencies and Just Enough Compilation       | Accepted  | v0.6          |
