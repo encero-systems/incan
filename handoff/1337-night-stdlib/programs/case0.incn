@@ -1,0 +1,39 @@
+def encoded(values: list[str]) -> str:
+    return json_stringify(values)
+
+
+def main() -> None:
+    println(json_stringify([1, 2]))
+    println(json_stringify([1.5, 2.0]))
+    println(json_stringify([true, false]))
+    println(encoded(["a\"b", "line\n"]))
+    println(json_stringify([[1], [2, 3]]))
+    ints = [3, -1, 4, -1, 5]
+    floats = [2.5, -0.5, 9.0]
+    flags = [true, false, true]
+    words = ["pear", "apple", "zoo"]
+    println(min(ints))
+    println(max(ints))
+    println(min(floats))
+    println(max(floats))
+    println(min(flags))
+    println(max(flags))
+    mut lowest = min(words)
+    highest: str = max(words)
+    println(f"{lowest} {highest} {len(words)}")
+    lowest = max(words)
+    println(lowest)
+    match write_file("probe.txt", "hello file"):
+        Ok(_) => println("written")
+        Err(error) => println(f"write failed: {error}")
+    path = "probe.txt"
+    match read_file(path):
+        Ok(data) => println(data)
+        Err(error) => println(f"read failed: {error}")
+    missing = read_file("missing/probe.txt")
+    match missing:
+        Ok(data) => println(f"unexpected: {data}")
+        Err(error) => println(error)
+    match write_file("missing/probe.txt", "text"):
+        Ok(_) => println("unexpected write")
+        Err(error) => println(error)

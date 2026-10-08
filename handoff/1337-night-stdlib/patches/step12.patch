@@ -1,0 +1,731 @@
+diff --git a/loaves/compiler/incan_driver/tests/native_driver_project_tests.rs b/loaves/compiler/incan_driver/tests/native_driver_project_tests.rs
+index a33f79c6..60e9daaa 100644
+--- a/loaves/compiler/incan_driver/tests/native_driver_project_tests.rs
++++ b/loaves/compiler/incan_driver/tests/native_driver_project_tests.rs
+@@ -455,6 +455,8 @@ fn check_source_pipeline(
+ 
+ #[path = "native_driver_project_tests/census.rs"]
+ mod census;
++#[path = "native_driver_project_tests/stdlib.rs"]
++mod stdlib;
+ 
+ /// Imported aliases and module-qualified scalar calls preserve canonical binding and legacy output; async vocabulary
+ /// reaches lowering.
+diff --git a/loaves/compiler/incan_mir_lowering/src/builtins.incn b/loaves/compiler/incan_mir_lowering/src/builtins.incn
+index 22e0b1fe..14310e8e 100644
+--- a/loaves/compiler/incan_mir_lowering/src/builtins.incn
++++ b/loaves/compiler/incan_mir_lowering/src/builtins.incn
+@@ -1,8 +1,21 @@
+ """Admission of monomorphic scalar builtins by checked identity and representation."""
+ 
+ from rust::incan_semantics_core::body_ir import BuiltinFnId
+-from pub::incan_mir_plan import PlanType, Place, SourceSpan, Operand, ExternalFunction, CalleeKind
+-from frame import Builder, terminate_call, external_call, value_type
++from pub::incan_mir_plan import PlanType, Place, SourceSpan, Operand, ExternalFunction, CalleeKind, ListLeaf
++from frame import (
++    Builder,
++    terminate_call,
++    external_call,
++    value_type,
++    temporary,
++    read_place,
++    drop_owned,
++    forget_owned,
++    place_type,
++)
++from options import carrier_layout
++from pub::incan_mir_plan import Projection, RvalueKind
++from pub::incan_mir_plan import assign as plan_assign
+ from collections import is_owned_collection
+ from tuples import tuple_has_owners
+ 
+@@ -23,6 +36,58 @@ pub def scalar_builtin(builtin: &BuiltinFnId, ty: PlanType) -> Option[tuple[str,
+     return None
+ 
+ 
++pub def extremum_entry(builtin: &BuiltinFnId, leaf: ListLeaf) -> Result[tuple[str, PlanType], str]:
++    """Select the runtime wrapper whose legacy body reaches the same copied, cloned, or float min or max helper."""
++    mut operation = "min"
++    if builtin == BuiltinFnId.Max:
++        operation = "max"
++    match leaf:
++        ListLeaf.Int => return Ok((f"{operation}_int", PlanType.Int))
++        ListLeaf.Float => return Ok((f"{operation}_float", PlanType.Float))
++        ListLeaf.Bool => return Ok((f"{operation}_bool", PlanType.Bool))
++        ListLeaf.Str => return Ok((f"{operation}_text", PlanType.String))
++        _ => return Err(f"unsupported Body IR builtin {builtin:?} element")
++
++
++pub def file_builtin_entry(builtin: &BuiltinFnId) -> tuple[str, int, PlanType]:
++    """Name the runtime wrapper, text arity, and Ok payload of the checked read_file or write_file contract."""
++    if builtin == BuiltinFnId.WriteFile:
++        return ("write_text_file", 2, PlanType.Unit)
++    return ("read_text_file", 1, PlanType.String)
++
++
++pub def emit_file_builtin(
++    mut builder: Builder,
++    name: str,
++    payload: PlanType,
++    operands: list[Operand],
++    destination: Place,
++    span: SourceSpan,
++) -> Result[None, str]:
++    """Require the checked Result[payload, str] carrier, then move the runtime's owned result into the destination."""
++    if destination.projection != Projection.Whole:
++        return Err("unsupported Body IR projected file builtin destination")
++    ty = place_type(builder.locals, destination)
++    _owner, declaration = carrier_layout(builder, ty)?
++    success = declaration.variants[0].fields
++    failure = declaration.variants[1].fields
++    if declaration.carrier != "Result" or success != [payload] or failure != [PlanType.String]:
++        return Err("unsupported Body IR file builtin result type")
++    mut parameters: list[PlanType] = []
++    for _operand in operands:
++        parameters.append(PlanType.StringRef)
++    path = f"incan_native_runtime::{name}"
++    builder.externals.append(ExternalFunction(path=path, parameters=parameters, return_type=ty, span=span))
++    result = temporary(builder, ty, span)
++    terminate_call(builder, CalleeKind.External(path), operands, result, span)
++    builder.owned.append(result.local)
++    drop_owned(builder, destination.local, span)
++    forget_owned(builder, result.local)
++    builder.emit(plan_assign(destination, RvalueKind.Use(read_place(result, true, span)), span))
++    builder.owned.append(destination.local)
++    return Ok(None)
++
++
+ pub def list_call(
+     mut builder: Builder,
+     name: str,
+diff --git a/loaves/compiler/incan_mir_lowering/src/decls.incn b/loaves/compiler/incan_mir_lowering/src/decls.incn
+index aee26900..0a6efd02 100644
+--- a/loaves/compiler/incan_mir_lowering/src/decls.incn
++++ b/loaves/compiler/incan_mir_lowering/src/decls.incn
+@@ -25,7 +25,11 @@ pub def static_accessors(ty: PlanType) -> Result[tuple[str, str], str]:
+         _ => return Err("unsupported Body IR static carrier")
+ 
+ 
+-pub def lower_model_declarations(module: &BodyIrModule, file: str) -> Result[list[ModelDeclaration], str]:
++pub def lower_model_declarations(
++    module: &BodyIrModule,
++    file: str,
++    intrinsics: list[EnumDeclaration],
++) -> Result[list[ModelDeclaration], str]:
+     """Retain checked field layout and derives for admitted plain model, class, and newtype declarations."""
+     unions = collect_unions(module)
+     mut models: list[ModelDeclaration] = []
+@@ -42,7 +46,7 @@ pub def lower_model_declarations(module: &BodyIrModule, file: str) -> Result[lis
+                         module.enum_declarations,
+                         unions,
+                         declaration.field_types[slot],
+-                        [],
++                        intrinsics,
+                     )?,
+                     span=SourceSpan(file=file, line=1, column=1),
+                 ),
+diff --git a/loaves/compiler/incan_mir_lowering/src/defaults.incn b/loaves/compiler/incan_mir_lowering/src/defaults.incn
+index 0ffbbbd4..4de2157f 100644
+--- a/loaves/compiler/incan_mir_lowering/src/defaults.incn
++++ b/loaves/compiler/incan_mir_lowering/src/defaults.incn
+@@ -7,7 +7,7 @@ from rust::incan_semantics_core::body_ir import (
+     CallableParamDefault,
+     Operand as RustOperand,
+ )
+-from pub::incan_mir_plan import Operand, OperandKind, Constant, PlanType, SourceSpan, Local
++from pub::incan_mir_plan import Operand, OperandKind, Constant, EnumDeclaration, PlanType, SourceSpan, Local
+ from unions import native_source_type
+ from frame import literal
+ from lowering import BodyIrModule, call_argument_operand, lower_statement
+@@ -83,7 +83,7 @@ pub def evaluate_default(
+     span: SourceSpan,
+ ) -> Result[Operand, str]:
+     """Isolate default-local identities from caller locals and drop temporary owners after extracting the result."""
+-    _ = default_type(ty)?
++    _ = default_type(ty, builder.intrinsics, len(builder.enums))?
+     match body.params[index].default:
+         CallableParamDefault.Source(computation) =>
+             incoming = builder.owned
+@@ -125,11 +125,20 @@ pub def evaluate_default(
+         _ => return Err("unsupported Body IR unavailable defaulted parameter")
+ 
+ 
+-pub def default_type(ty: PlanType) -> Result[None, str]:
+-    """Admit only the scalar and string default representations covered by this lane."""
++pub def default_type(ty: PlanType, carriers: list[EnumDeclaration], carrier_offset: int) -> Result[None, str]:
++    """
++    Admit the scalar, string, and retained standard-carrier default representations.
++
++    A carrier slot follows the source enums, so its index and injected name must both match a retained carrier.
++    """
+     match ty:
+         PlanType.Int => return Ok(None)
+         PlanType.Float => return Ok(None)
+         PlanType.Bool => return Ok(None)
+         PlanType.String => return Ok(None)
++        PlanType.Enum(index, name) =>
++            carrier = index - carrier_offset
++            if carrier >= 0 and carrier < len(carriers) and carriers[carrier].name == name:
++                return Ok(None)
++            return Err("unsupported Body IR defaulted parameter type")
+         _ => return Err("unsupported Body IR defaulted parameter type")
+diff --git a/loaves/compiler/incan_mir_lowering/src/enums.incn b/loaves/compiler/incan_mir_lowering/src/enums.incn
+index 1922cb04..26f8cc63 100644
+--- a/loaves/compiler/incan_mir_lowering/src/enums.incn
++++ b/loaves/compiler/incan_mir_lowering/src/enums.incn
+@@ -12,7 +12,7 @@ from rust::incan_semantics_core::body_ir import (
+     OwnershipFact,
+ )
+ from pub::incan_mir_plan import EnumDeclaration, EnumVariant, PlanType, SourceSpan
+-from models import model_type as plain_model_type
++from models import model_type as plain_model_type, carrier_type
+ 
+ 
+ pub def enum_type(declarations: list[RustEnumDeclaration], ty: &RustType) -> Option[PlanType]:
+@@ -132,9 +132,9 @@ pub def native_source_type(
+     intrinsics: list[EnumDeclaration],
+ ) -> Result[PlanType, str]:
+     """Resolve retained standard carriers and source enums before delegating the existing scalar/model boundary."""
+-    for index in range(len(intrinsics)):
+-        if intrinsics[index].source_type == str(ty):
+-            return Ok(PlanType.Enum(len(declarations) + index, intrinsics[index].name))
++    match carrier_type(intrinsics, len(declarations), ty):
++        Some(carrier) => return Ok(carrier)
++        None => pass
+     match enum_type(declarations, ty):
+         Some(result) => return Ok(result)
+         None => return plain_model_type(nominals, ty)
+diff --git a/loaves/compiler/incan_mir_lowering/src/lowering.incn b/loaves/compiler/incan_mir_lowering/src/lowering.incn
+index 597e14d9..74d0e981 100644
+--- a/loaves/compiler/incan_mir_lowering/src/lowering.incn
++++ b/loaves/compiler/incan_mir_lowering/src/lowering.incn
+@@ -115,7 +115,7 @@ from generators import (
+ from project import project_context
+ from traits import method_index, specialize_traits, validate_static_receiver
+ from decls import lower_model_declarations, static_slot, static_accessors
+-from models import model_type, model_place, constructor_index
++from models import model_type, carrier_model_place, constructor_index
+ from model_values import (
+     debug_model_operand,
+     display_model_operand,
+@@ -160,7 +160,15 @@ from numerics import (
+     sized_signed_integer,
+     numeric_carrier,
+ )
+-from builtins import scalar_builtin, list_call, emit_boolean_operator, emit_power_operator
++from builtins import (
++    scalar_builtin,
++    list_call,
++    emit_boolean_operator,
++    emit_power_operator,
++    extremum_entry,
++    file_builtin_entry,
++    emit_file_builtin,
++)
+ from strings import text_helper, emit_text_helper, text_helper_arity
+ from frame import (
+     place_type,
+@@ -311,7 +319,14 @@ def scalar_place(builder: Builder, value: &RustPlace, span: SourceSpan) -> Resul
+             target.local += builder.local_offset
+             return Ok(target)
+         None => pass
+-    mut target = model_place(builder.nominals, builder.locals[builder.local_offset:], value, span)?
++    mut target = carrier_model_place(
++        builder.nominals,
++        builder.intrinsics,
++        len(builder.enums),
++        builder.locals[builder.local_offset:],
++        value,
++        span,
++    )?
+     target.local += builder.local_offset
+     return Ok(target)
+ 
+@@ -335,9 +350,9 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
+     match fact:
+         OwnershipFact.Copy => return Ok(Operand(kind=OperandKind.Copy(target), span=span))
+         OwnershipFact.Move =>
+-            if target.projection != Projection.Whole and (place_type(builder.locals, target) == PlanType.String or tuple_has_owners(
+-                place_type(builder.locals, target),
+-            )):
++            moved = place_type(builder.locals, target)
++            owner = moved == PlanType.String or tuple_has_owners(moved) or is_enum_type(moved)
++            if target.projection != Projection.Whole and owner:
+                 return Err("unsupported Body IR partial model move")
+             return Ok(Operand(kind=OperandKind.Move(target), span=span))
+         OwnershipFact.Clone =>
+@@ -350,8 +365,13 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
+         OwnershipFact.Borrow =>
+             if is_tuple_type(place_type(builder.locals, target)):
+                 return clone_tuple_operand(builder, target, span)
++            # Body IR borrows every non-Copy field read, so a carrier or enum copied out of a model field is its clone.
+             match target.projection:
+                 Projection.VariantField(_variant, _slot, _ty) => return enum_payload_read(builder, target, fact, span)
++                Projection.Field(_slot, ty) =>
++                    if is_model_type(builder.locals[target.local].ty) and clonable_enum(builder, ty):
++                        return clone_nominal_operand(builder, target, span)
++                    return Err("unsupported Body IR ownership Borrow outside formatting")
+                 _ => return Err("unsupported Body IR ownership Borrow outside formatting")
+         OwnershipFact.MutBorrow => return Err("unsupported Body IR ownership MutBorrow")
+         OwnershipFact.Unknown => return Err("unsupported Body IR ownership Unknown")
+@@ -509,6 +529,37 @@ def scalar_rvalue(
+ # =====================================================================================================================
+ 
+ 
++def is_enum_type(ty: PlanType) -> bool:
++    """Identify source enums, unions, and standard carriers, whose field moves would leave a partially moved owner."""
++    match ty:
++        PlanType.Enum(_index, _name) => return true
++        _ => return false
++
++
++def is_model_type(ty: PlanType) -> bool:
++    """Identify a model owner, whose non-Copy field reads Body IR records as borrows."""
++    match ty:
++        PlanType.Model(_index, _name) => return true
++        _ => return false
++
++
++def clonable_enum(builder: Builder, ty: PlanType) -> bool:
++    """
++    Whether a source enum or retained standard carrier derives the Clone a copied-out field read calls.
++
++    Unions are excluded: they share the slots after the source enums, so a carrier must also match by name.
++    """
++    match ty:
++        PlanType.Enum(index, name) =>
++            if index < len(builder.enums):
++                return "Clone" in builder.enums[index].derives
++            carrier = index - len(builder.enums)
++            if carrier >= len(builder.intrinsics) or builder.intrinsics[carrier].name != name:
++                return false
++            return "Clone" in builder.intrinsics[carrier].derives
++        _ => return false
++
++
+ def is_nominal_type(ty: PlanType) -> bool:
+     """Identify model and enum owners alongside owned strings when transferring call results."""
+     match ty:
+@@ -1497,6 +1548,10 @@ def lower_builtin(
+         RustBuiltin.Print => return lower_print(builder, arguments, destination, span)
+         RustBuiltin.Sum => return lower_sequence_builtin(builder, builtin, arguments, destination, span)
+         RustBuiltin.Sorted => return lower_sequence_builtin(builder, builtin, arguments, destination, span)
++        RustBuiltin.Min => return lower_sequence_builtin(builder, builtin, arguments, destination, span)
++        RustBuiltin.Max => return lower_sequence_builtin(builder, builtin, arguments, destination, span)
++        RustBuiltin.ReadFile => return lower_file_builtin(builder, builtin, arguments, destination, span)
++        RustBuiltin.WriteFile => return lower_file_builtin(builder, builtin, arguments, destination, span)
+         RustBuiltin.Len => return lower_list_builtin(builder, arguments, destination, span)
+         RustBuiltin.Float => return lower_scalar_conversion(builder, arguments, destination, false, span)
+         RustBuiltin.Int => return lower_scalar_conversion(builder, arguments, destination, true, span)
+@@ -1505,6 +1560,26 @@ def lower_builtin(
+         _ => return Err(f"unsupported Body IR builtin {builtin:?}")
+ 
+ 
++def lower_file_builtin(
++    mut builder: Builder,
++    builtin: &RustBuiltin,
++    arguments: &list[RustArgumentElement],
++    destination: &Option[RustPlace],
++    span: SourceSpan,
++) -> Result[None, str]:
++    """Borrow the text operands of read_file or write_file; legacy's wrong-arity error results stay refused."""
++    name, arity, payload = file_builtin_entry(builtin)
++    if len(arguments) != arity:
++        return Err(f"unsupported Body IR builtin {builtin:?} arity")
++    mut operands: list[Operand] = []
++    for index in range(arity):
++        operands.append(text_argument(builder, arguments, index, span)?)
++    match destination:
++        Some(place) =>
++            return emit_file_builtin(builder, name, payload, operands, scalar_place(builder, place, span)?, span)
++        None => return Err(f"unsupported Body IR discarded builtin {builtin:?} result")
++
++
+ def lower_model_json_builtin(
+     mut builder: Builder,
+     arguments: &list[RustArgumentElement],
+@@ -1547,6 +1622,10 @@ def serialize_scalar_json(
+             place = scalar_place(builder, read.place, span)?
+             if place_type(builder.locals, place) == PlanType.String:
+                 return serialize_json_text(builder, value, result, span)
++            match place_type(builder.locals, place):
++                PlanType.List(leaf, depth) => return serialize_json_list(builder, place, leaf, depth, result, span)
++                PlanType.ListRef(leaf, depth) => return serialize_json_list(builder, place, leaf, depth, result, span)
++                _ => pass
+     operand = value_operand(builder, value, span)?
+     ty = operand_type(builder, operand)?
+     mut name = ""
+@@ -1562,6 +1641,39 @@ def serialize_scalar_json(
+     return Ok(None)
+ 
+ 
++def serialize_json_list(
++    mut builder: Builder,
++    place: Place,
++    leaf: ListLeaf,
++    depth: int,
++    result: Place,
++    span: SourceSpan,
++) -> Result[None, str]:
++    """Borrow a scalar-leaf list into the generic serde boundary that legacy's json_stringify reaches."""
++    match leaf:
++        ListLeaf.Int => pass
++        ListLeaf.Float => pass
++        ListLeaf.Bool => pass
++        ListLeaf.Str => pass
++        _ => return Err("unsupported Body IR JSON serialization list element")
++    ty = PlanType.List(leaf, depth)
++    reference = list_borrow(builder, place, false, span)?
++    path = "incan_native_runtime::serialize_model"
++    builder.externals.append(
++        ExternalFunction(
++            path=path,
++            type_arguments=[ty],
++            parameters=[PlanType.ListRef(leaf, depth)],
++            return_type=PlanType.String,
++            span=span,
++        ),
++    )
++    drop_owned(builder, result.local, span)
++    terminate_call(builder, CalleeKind.Instantiated(path, ty), [reference], result, span)
++    builder.owned.append(result.local)
++    return Ok(None)
++
++
+ def serialize_json_text(
+     mut builder: Builder,
+     value: &RustOperand,
+@@ -2221,7 +2333,7 @@ pub def lower_program(
+         return Err("unsupported Body IR project without selected main entrypoint")
+     unions = collect_unions(context)
+     intrinsics = intrinsic_declarations(context, files[entry])?
+-    models = lower_model_declarations(context, files[entry])?
++    models = lower_model_declarations(context, files[entry], intrinsics)?
+     mut enums = lower_enum_declarations(context, files[entry])?
+     for declaration in intrinsics:
+         enums.append(declaration)
+@@ -2264,7 +2376,7 @@ def lower_concrete_module(module: &BodyIrModule, source: str, file: str) -> Resu
+     """Lower ordinary bodies and closed trait defaults after validating the original identities."""
+     unions = collect_unions(module)
+     intrinsics = intrinsic_declarations(module, file)?
+-    models = lower_model_declarations(module, file)?
++    models = lower_model_declarations(module, file, intrinsics)?
+     mut enums = lower_enum_declarations(module, file)?
+     for declaration in intrinsics:
+         enums.append(declaration)
+@@ -2479,7 +2591,7 @@ def frame_parameters(
+     file: str,
+     intrinsics: list[EnumDeclaration],
+ ) -> Result[list[Parameter], str]:
+-    """The frame's parameters, in declaration order; mutable string, mutable model, and defaulted parameters are refused."""
++    """The frame's parameters in declaration order, refusing mutable string or model parameters and unadmitted defaults."""
+     mut parameters: list[Parameter] = []
+     for parameter in body.params:
+         ty = frame_type(module, body.locals[int(parameter.local.index())], intrinsics)?
+@@ -2492,7 +2604,7 @@ def frame_parameters(
+         match parameter.default:
+             CallableParamDefault.Required => pass
+             _ =>
+-                _ = default_type(ty)?
++                _ = default_type(ty, intrinsics, len(module.enum_declarations))?
+         mut name = str(parameter.name)
+         if name == "self":
+             name = "__incan_self"
+@@ -3434,6 +3546,9 @@ def bind_payload_fields(
+     span: SourceSpan,
+ ) -> Result[None, str]:
+     """Bind checked payload locals through the shared downcast and ownership path."""
++    # A downcast projects the whole enum local, so a carrier read through a model field must be copied out first.
++    if source.projection != Projection.Whole:
++        return Err("unsupported Body IR projected enum payload binding")
+     for slot in range(len(fields)):
+         match fields[slot]:
+             RustPattern.Var(binding) =>
+@@ -3612,6 +3727,9 @@ def bind_enum_fields(
+     span: SourceSpan,
+ ) -> Result[None, str]:
+     """Bind checked enum payload slots through the same downcast and ownership path for source enums and unions."""
++    # A downcast projects the whole enum local, so a carrier read through a model field must be copied out first.
++    if source.projection != Projection.Whole:
++        return Err("unsupported Body IR projected enum payload binding")
+     for slot in range(len(fields)):
+         match fields[slot]:
+             RustPattern.Var(binding) =>
+@@ -3634,7 +3752,7 @@ def lower_sequence_builtin(
+     destination: &Option[RustPlace],
+     span: SourceSpan,
+ ) -> Result[None, str]:
+-    """Admit homogeneous list sorting and the legacy integer sum domain."""
++    """Admit homogeneous list sorting, scalar min and max, and the legacy integer sum domain."""
+     if len(arguments) != 1:
+         return Err("unsupported Body IR sequence builtin arity")
+     receiver = argument_place(builder, arguments, 0, span)?
+@@ -3649,6 +3767,26 @@ def lower_sequence_builtin(
+                     return Err("unsupported Body IR builtin Sorted tuple containing float")
+             _ => pass
+     reference = borrowed_list_argument(builder, arguments, 0, false, span)?
++    if builtin == RustBuiltin.Min or builtin == RustBuiltin.Max:
++        name, result = extremum_entry(builtin, leaf)?
++        # Legacy's checker admits min and max only over owned lists, so the runtime wrapper consumes a copy.
++        copied = temporary(builder, PlanType.List(leaf, depth), span)
++        list_call(
++            builder,
++            "clone_list",
++            list_element(leaf, depth),
++            [PlanType.ListRef(leaf, depth)],
++            PlanType.List(leaf, depth),
++            [reference],
++            copied,
++            span,
++        )
++        output = call_destination(builder, destination, result, span)?
++        drop_owned(builder, output.local, span)
++        parameters = [PlanType.List(leaf, depth)]
++        operands = [read_place(copied, true, span)]
++        external_call(builder, f"incan_native_runtime::{name}", parameters, result, operands, output, span)
++        return Ok(None)
+     if builtin == RustBuiltin.Sum:
+         mut name = "sum_int"
+         if leaf == ListLeaf.Bool:
+diff --git a/loaves/compiler/incan_mir_lowering/src/models.incn b/loaves/compiler/incan_mir_lowering/src/models.incn
+index ea662876..0340a87d 100644
+--- a/loaves/compiler/incan_mir_lowering/src/models.incn
++++ b/loaves/compiler/incan_mir_lowering/src/models.incn
+@@ -10,7 +10,7 @@ from rust::incan_semantics_core::body_ir import (
+     Place as RustPlace,
+     PlaceElem as RustPlaceElem,
+ )
+-from pub::incan_mir_plan import ListLeaf, PlanType, Local, Place, Projection, SourceSpan
++from pub::incan_mir_plan import EnumDeclaration, ListLeaf, PlanType, Local, Place, Projection, SourceSpan
+ from numerics import numeric_type
+ from tuples import tuple_type, generic_tuple_type, type_name, tuple_slot
+ from pub::incan_mir_plan import tuple_element_type
+@@ -60,13 +60,45 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
+         _ => return Err(f"unsupported Body IR type {type_name(ty)}")
+ 
+ 
++pub def carrier_type(carriers: list[EnumDeclaration], carrier_offset: int, ty: &RustType) -> Option[PlanType]:
++    """Resolve a retained standard carrier by its checked source type; carrier owners follow the source enums."""
++    for index in range(len(carriers)):
++        if carriers[index].source_type == str(ty):
++            return Some(PlanType.Enum(carrier_offset + index, carriers[index].name))
++    return None
++
++
++def field_type(
++    declarations: list[NominalDeclaration],
++    carriers: list[EnumDeclaration],
++    carrier_offset: int,
++    ty: &RustType,
++) -> Result[PlanType, str]:
++    """Admit a retained carrier field before the scalar, collection, and model layout boundary."""
++    match carrier_type(carriers, carrier_offset, ty):
++        Some(carrier) => return Ok(carrier)
++        None => return model_type(declarations, ty)
++
++
+ pub def model_place(
+     declarations: list[NominalDeclaration],
+     locals: list[Local],
+     value: &RustPlace,
+     span: SourceSpan,
+ ) -> Result[Place, str]:
+-    """Require the checker-selected field identity before selecting its canonical layout slot."""
++    """Resolve a checked place for callers whose field reads never need a retained standard carrier."""
++    return carrier_model_place(declarations, [], 0, locals, value, span)
++
++
++pub def carrier_model_place(
++    declarations: list[NominalDeclaration],
++    carriers: list[EnumDeclaration],
++    carrier_offset: int,
++    locals: list[Local],
++    value: &RustPlace,
++    span: SourceSpan,
++) -> Result[Place, str]:
++    """Require the checker-selected field identity before selecting its slot; carrier fields use the retained carriers."""
+     match value.local_id():
+         Some(local) =>
+             index = int(local.index()) + 1
+@@ -77,7 +109,7 @@ pub def model_place(
+                         return Ok(
+                             Place(local=index, projection=Projection.Deref(PlanType.Model(owner_index, name)), span=span),
+                         )
+-                    return receiver_field(declarations, index, owner_index, value, span)
++                    return receiver_field(declarations, carriers, carrier_offset, index, owner_index, value, span)
+                 None => pass
+             if len(value.projection) == 0:
+                 return Ok(Place(local=index, projection=Projection.Whole, span=span))
+@@ -87,7 +119,7 @@ pub def model_place(
+                 PlanType.Model(owner, _name) =>
+                     declaration = declarations[owner]
+                     slot = field_slot(value.projection[0], declaration)?
+-                    ty = model_type(declarations, declaration.field_types[slot])?
++                    ty = field_type(declarations, carriers, carrier_offset, declaration.field_types[slot])?
+                     return Ok(Place(local=index, projection=Projection.Field(slot, ty), span=span))
+                 PlanType.Tuple(elements) =>
+                     slot = tuple_slot(value.projection[0], len(elements))?
+@@ -166,6 +198,8 @@ def validate_constructor_binding(binding: &ArgumentBinding, count: int, fields:
+ 
+ def receiver_field(
+     declarations: list[NominalDeclaration],
++    carriers: list[EnumDeclaration],
++    carrier_offset: int,
+     index: int,
+     owner: int,
+     value: &RustPlace,
+@@ -176,7 +210,7 @@ def receiver_field(
+         return Err("unsupported Body IR nested receiver projection")
+     declaration = declarations[owner]
+     slot = field_slot(value.projection[0], declaration)?
+-    ty = model_type(declarations, declaration.field_types[slot])?
++    ty = field_type(declarations, carriers, carrier_offset, declaration.field_types[slot])?
+     return Ok(Place(local=index, projection=Projection.DerefField(slot, ty), span=span))
+ 
+ 
+diff --git a/loaves/compiler/incan_mir_lowering/src/options.incn b/loaves/compiler/incan_mir_lowering/src/options.incn
+index 9b181ca0..05cbe12a 100644
+--- a/loaves/compiler/incan_mir_lowering/src/options.incn
++++ b/loaves/compiler/incan_mir_lowering/src/options.incn
+@@ -131,8 +131,11 @@ pub def intrinsic_pattern(declaration: EnumDeclaration, pattern: &RustPattern) -
+ 
+ 
+ pub def intrinsic_declarations(module: &BodyIrModule, file: str) -> Result[list[EnumDeclaration], str]:
+-    """Collect concrete checked carriers in stable body/local order, admitting only existing payload types."""
++    """Collect concrete checked carriers in stable field, body, and local order, admitting only existing payload types."""
+     mut declarations: list[EnumDeclaration] = lower_union_declarations(module, file)?
++    for nominal in module.nominal_declarations:
++        for ty in nominal.field_types:
++            retain_carrier(module, declarations, ty, file)?
+     for body in module.bodies:
+         retain_carrier(module, declarations, body.return_type, file)?
+         for local in body.locals:
+diff --git a/loaves/compiler/incan_native_runtime/src/builtins.incn b/loaves/compiler/incan_native_runtime/src/builtins.incn
+index b93edc08..00aed636 100644
+--- a/loaves/compiler/incan_native_runtime/src/builtins.incn
++++ b/loaves/compiler/incan_native_runtime/src/builtins.incn
+@@ -81,3 +81,53 @@ pub def power_f64(left: float, right: float) -> float:
+ pub def power_f32(left: f32, right: f32) -> f32:
+     """Retain single-precision exponentiation through legacy exact-width emission."""
+     return left ** right
++
++
++pub def min_int(values: list[int]) -> int:
++    """Use legacy's copied minimum and its empty-sequence ValueError."""
++    return min(values)
++
++
++pub def max_int(values: list[int]) -> int:
++    """Use legacy's copied maximum and its empty-sequence ValueError."""
++    return max(values)
++
++
++pub def min_float(values: list[float]) -> float:
++    """Use legacy's float minimum, including its NaN-skipping reduction."""
++    return min(values)
++
++
++pub def max_float(values: list[float]) -> float:
++    """Use legacy's float maximum, including its NaN-skipping reduction."""
++    return max(values)
++
++
++pub def min_bool(values: list[bool]) -> bool:
++    """Use legacy's copied minimum over booleans."""
++    return min(values)
++
++
++pub def max_bool(values: list[bool]) -> bool:
++    """Use legacy's copied maximum over booleans."""
++    return max(values)
++
++
++pub def min_text(values: list[str]) -> str:
++    """Clone the least string exactly as legacy's cloned minimum does."""
++    return min(values)
++
++
++pub def max_text(values: list[str]) -> str:
++    """Clone the greatest string exactly as legacy's cloned maximum does."""
++    return max(values)
++
++
++pub def write_text_file(path: &str, content: &str) -> Result[None, str]:
++    """Write through the legacy builtin, whose error is the host message as text."""
++    return write_file(path, content)
++
++
++pub def read_text_file(path: &str) -> Result[str, str]:
++    """Read through the legacy builtin, whose error is the host message as text."""
++    return read_file(path)
+diff --git a/loaves/compiler/incan_native_runtime/src/lib.incn b/loaves/compiler/incan_native_runtime/src/lib.incn
+index 16a6c0fb..84110083 100644
+--- a/loaves/compiler/incan_native_runtime/src/lib.incn
++++ b/loaves/compiler/incan_native_runtime/src/lib.incn
+@@ -36,6 +36,8 @@ pub from collections import (
+ pub from builtins import power_i64, power_f64, power_f32
+ pub from builtins import sum_int, sum_bool, truth_text, truth_list
+ pub from builtins import absolute_int, truth_int, truth_float, truth_bool, boolean_and, boolean_or
++pub from builtins import min_int, max_int, min_float, max_float, min_bool, max_bool, min_text, max_text
++pub from builtins import write_text_file, read_text_file
+ from rust::incan_std_core::iter import range as runtime_range
+ pub from statics import (
+     read_static_int,
+diff --git a/scripts/test_inventory/dispositions.json b/scripts/test_inventory/dispositions.json
+index d5e95933..32d81640 100644
+--- a/scripts/test_inventory/dispositions.json
++++ b/scripts/test_inventory/dispositions.json
+@@ -598,6 +598,14 @@
+       "split_target": "",
+       "twin": ""
+     },
++    "loaves/compiler/incan_driver/tests/native_driver_project_tests/stdlib.rs": {
++      "disposition": "keep",
++      "notes": "Direct-route standard-library builtins, carriers and provider-crate items compared byte for byte with legacy output",
++      "owner": 1337,
++      "split_required": false,
++      "split_target": "",
++      "twin": ""
++    },
+     "loaves/compiler/incan_driver/tests/protected_builtin_binding_tests.rs": {
+       "disposition": "keep",
+       "notes": "lex/parse/typecheck only.",
+diff --git a/workspaces/docs-site/docs/contributing/reference/test_corpus_inventory.md b/workspaces/docs-site/docs/contributing/reference/test_corpus_inventory.md
+index 2211695d..cc3e0db2 100644
+--- a/workspaces/docs-site/docs/contributing/reference/test_corpus_inventory.md
++++ b/workspaces/docs-site/docs/contributing/reference/test_corpus_inventory.md
+@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
+ 
+ | Disposition | Tests | Files | Fixture cases |
+ |---|---:|---:|---:|
+-| keep | 3351 | 223 | 431 |
++| keep | 3352 | 224 | 431 |
+ | re-point | 1481 | 91 | 1047 |
+ | retire | 1505 | 153 | 0 |
+ | unaffected | 1662 | 159 | 5 |
+ | unreviewed | 0 | 0 | 0 |
+-| **Total** | **7999** | **626** | **1483** |
++| **Total** | **8000** | **627** | **1483** |
+ 
+ - Retire-class tests: 1505, of which twinned 1022, dies 294, open 189 (neither yet).
+ - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
+@@ -127,7 +127,7 @@ The collector counts these in the text of each test function and of the file-loc
+ 
+ `Lines` is the file length; `Test lines` is the test region the split threshold applies to: the `#[cfg(test)]` modules when the file has any, otherwise the whole file. `Twins` is `twinned/retire-class` and `Dies` the number recorded `dies`, for files with retire-class tests. Per-test rows follow a file only when it carries per-test overrides.
+ 
+-### `loaves/compiler/incan_driver` (445 tests in 65 files: keep 167, re-point 19, retire 103, unaffected 156)
++### `loaves/compiler/incan_driver` (446 tests in 66 files: keep 168, re-point 19, retire 103, unaffected 156)
+ 
+ | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
+ |---|---:|---:|---:|---|---:|---:|---|---|---|---|
+@@ -190,8 +190,9 @@ The collector counts these in the text of each test function and of the file-loc
+ | `loaves/compiler/incan_driver/tests/generated_rust_callability_artifact_tests.rs` | 1 | 258 | 258 | retire | 1/1 | 0 | - | #1561 | text 1, run 1, checker 1 | The generated Cargo manifests and the `transforms.rs`/`main.rs` text (fn-pointer parameters, qualified provider calls) die with #654; the surviving observable, the consumer run printing `2 3 4` (a `Callable` value passed across a `pub::` package boundary, which no other test runs), is the twin: a project fixture carrying the producer under `deps/callability_core`, which the runner bakes before `incan run` (harness-deps). |
+ | `loaves/compiler/incan_driver/tests/generated_rust_native_consumer_tests.rs` | 1 | 367 | 367 | retire | 0/1 | 1 | - | #1561 | run 1 | public generated-Rust artifact contract (RFC 120 projections, native consumers, audit) |
+ | `loaves/compiler/incan_driver/tests/mir_plan_contract_tests.rs` | 3 | 140 | 140 | keep | - | - | - | #1337 | checker 1, parser 1 | public Incan scalar native-plan contract and required sibling dependency boundary |
+-| `loaves/compiler/incan_driver/tests/native_driver_project_tests.rs` | 38 | 2186 | 2186 | keep | - | - | required | #1337 | run 37, checker 4 | Oven-built pinned native driver; scalar plan and real Body IR lowering; unchanged benchmark byte parity and opt-in census of every behavior fixture |
++| `loaves/compiler/incan_driver/tests/native_driver_project_tests.rs` | 38 | 2188 | 2188 | keep | - | - | required | #1337 | run 37, checker 4 | Oven-built pinned native driver; scalar plan and real Body IR lowering; unchanged benchmark byte parity and opt-in census of every behavior fixture |
+ | `loaves/compiler/incan_driver/tests/native_driver_project_tests/census.rs` | 2 | 373 | 373 | keep | - | - | - | #1337 | - | Direct-route census refusal grouping and bounded process capture; route-independent measurement support |
++| `loaves/compiler/incan_driver/tests/native_driver_project_tests/stdlib.rs` | 1 | 166 | 166 | keep | - | - | - | #1337 | run 1 | Direct-route standard-library builtins, carriers and provider-crate items compared byte for byte with legacy output |
+ | `loaves/compiler/incan_driver/tests/protected_builtin_binding_tests.rs` | 3 | 141 | 141 | keep | - | - | - | #1561 | checker 3, parser 3 | lex/parse/typecheck only. |
+ | `loaves/compiler/incan_driver/tests/protected_generic_binding_tests.rs` | 2 | 106 | 106 | keep | - | - | - | #1561 | checker 2, parser 2 | lex/parse/typecheck only. |
+ | `loaves/compiler/incan_driver/tests/rust_caller_project_tests.rs` | 3 | 151 | 151 | keep | - | - | - | #1337 | run 3 | receipt-bound direct-rustc Rust caller facet integration, refusal, runtime, and identity coverage |

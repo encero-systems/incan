@@ -1,0 +1,15 @@
+model Profile:
+    name: str
+    nick: Option[str]
+
+
+def label(profile: Profile) -> str:
+    nick = profile.nick
+    match nick:
+        Some(value) => return value
+        None => return "anonymous"
+
+
+def main() -> None:
+    first = Profile(name="ada", nick=None)
+    println(label(first))

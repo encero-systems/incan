@@ -1,0 +1,28 @@
+model Profile:
+    name: str
+    nick: Option[str] = None
+    count: Option[int] = None
+    tags: Option[list[int]] = None
+
+
+def label(profile: Profile) -> str:
+    nick = profile.nick
+    match nick:
+        Some(value) => return value
+        None => return "anonymous"
+
+
+def main() -> None:
+    first = Profile(name="ada")
+    second = Profile(name="bob", nick=Some("b"), count=Some(3), tags=Some([1, 2]))
+    count = second.count
+    println(count.unwrap_or(0))
+    missing = first.count
+    println(missing.unwrap_or(-1))
+    tags = second.tags
+    match tags:
+        Some(values) => println(len(values))
+        None => println("no tags")
+    println(second.name)
+    println(label(first))
+    println(label(second))

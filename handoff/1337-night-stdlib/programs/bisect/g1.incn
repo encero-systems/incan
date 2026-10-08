@@ -1,0 +1,9 @@
+def greeting(nick: Option[str]) -> str:
+    match nick:
+        Some(value) => return value
+        None => return "nobody"
+
+
+def main() -> None:
+    println(greeting(None))
+    println(greeting(Some("cy")))

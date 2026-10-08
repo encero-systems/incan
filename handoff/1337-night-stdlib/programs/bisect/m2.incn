@@ -1,0 +1,8 @@
+model Profile:
+    name: str
+    count: Option[int] = None
+
+
+def main() -> None:
+    first = Profile(name="ada", count=Some(3))
+    println(first.name)

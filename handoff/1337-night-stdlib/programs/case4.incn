@@ -1,0 +1,19 @@
+from std.io import BytesIO, IoError
+
+
+def describe(outcome: Result[bytes, IoError]) -> None:
+    match outcome:
+        Ok(data) => println(len(data))
+        Err(error) =>
+            println(error.kind)
+            println(error.detail)
+            println(error.position)
+            println(error.message())
+
+
+def main() -> None:
+    describe(BytesIO(b"AB").read_exact(4))
+    describe(BytesIO(b"ABCD").read_exact(2))
+    buffer = BytesIO(b"abcdef")
+    describe(buffer.read(2))
+    describe(buffer.read(10))

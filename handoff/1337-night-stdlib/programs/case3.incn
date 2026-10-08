@@ -1,0 +1,21 @@
+from std.environ import EnvironError, get_as, get_optional
+
+
+def read(key: str) -> Result[None, EnvironError]:
+    optional: Option[int] = get_as[int](key)?
+    match optional:
+        Some(value) => println(value)
+        None => println("absent")
+    defaulted: int = get_as[int](key, 7)?
+    println(defaulted)
+    match get_optional(key):
+        Some(value) => println(value)
+        None => println("fallback")
+    return Ok(None)
+
+
+def main() -> None:
+    for key in ["INCAN_NATIVE_SDK_UNSET", "INCAN_NATIVE_SDK_NUMBER", "INCAN_NATIVE_SDK_TEXT"]:
+        match read(key):
+            Ok(_) => println("ok")
+            Err(error) => println(error.message())

@@ -1,0 +1,13 @@
+model Profile:
+    name: str
+    nick: Option[str] = None
+    count: Option[int] = None
+    tags: Option[list[int]] = None
+
+
+def main() -> None:
+    second = Profile(name="bob", nick=Some("b"), count=Some(3), tags=Some([1, 2]))
+    tags = second.tags
+    match tags:
+        Some(values) => println(len(values))
+        None => println("no tags")

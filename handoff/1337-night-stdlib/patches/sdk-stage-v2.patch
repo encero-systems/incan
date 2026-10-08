@@ -1,0 +1,1272 @@
+diff --git a/loaves/compiler/incan_driver/tests/body_ir_caller_project_tests.rs b/loaves/compiler/incan_driver/tests/body_ir_caller_project_tests.rs
+index 93980052..dba2c077 100644
+--- a/loaves/compiler/incan_driver/tests/body_ir_caller_project_tests.rs
++++ b/loaves/compiler/incan_driver/tests/body_ir_caller_project_tests.rs
+@@ -133,7 +133,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
+     let mut module = BodyIrModule {
+         constant_declarations: Vec::new(),
+         type_alias_declarations: Vec::new(),
+-        module_id: CompilerNodeId::module("fixture"), stdlib_delegations: vec![], static_declarations: vec![], enum_declarations: vec![], nominal_declarations: vec![],
++        module_id: CompilerNodeId::module("fixture"), stdlib_delegations: vec![], sdk_nominal_declarations: vec![], sdk_callables: vec![], static_declarations: vec![], enum_declarations: vec![], nominal_declarations: vec![],
+         fieldless_enum_declarations: vec![], value_enum_declarations: vec![], trait_declarations: vec![], trait_implementations: vec![], bodies: vec![synthetic_body()],
+     };
+     assert_eq!(validate_module(&module), Ok(1));
+diff --git a/loaves/compiler/incan_driver/tests/native_driver_project_tests/stdlib.rs b/loaves/compiler/incan_driver/tests/native_driver_project_tests/stdlib.rs
+index bdea5e04..db5b7419 100644
+--- a/loaves/compiler/incan_driver/tests/native_driver_project_tests/stdlib.rs
++++ b/loaves/compiler/incan_driver/tests/native_driver_project_tests/stdlib.rs
+@@ -4,7 +4,14 @@ use super::*;
+ 
+ /// Compile one program on both routes, run each binary in its own copy of one scratch directory, and require the same
+ /// exit status, stdout, and stderr; the native observables are returned for exact assertions.
+-fn stdlib_parity(fixture: &DriverFixture, name: &str, program: &str) -> Result<Output, Box<dyn std::error::Error>> {
++///
++/// Both binaries run under the same `environment`: a variable with a value is set, and one without is removed.
++fn stdlib_parity(
++    fixture: &DriverFixture,
++    name: &str,
++    program: &str,
++    environment: &[(&str, Option<&str>)],
++) -> Result<Output, Box<dyn std::error::Error>> {
+     let root = fixture.scratch(name)?;
+     let source = root.join(format!("{name}.incn"));
+     fs::write(&source, program)?;
+@@ -35,10 +42,19 @@ fn stdlib_parity(fixture: &DriverFixture, name: &str, program: &str) -> Result<O
+     let native_run = root.join("native-run");
+     fs::create_dir_all(&legacy_run)?;
+     fs::create_dir_all(&native_run)?;
+-    let expected = Command::new(legacy.join("oven/release").join(name))
+-        .current_dir(&legacy_run)
+-        .output()?;
+-    let actual = Command::new(native).current_dir(&native_run).output()?;
++    let run = |binary: PathBuf, directory: &Path| {
++        let mut command = Command::new(binary);
++        command.current_dir(directory);
++        for (variable, value) in environment {
++            match value {
++                Some(value) => command.env(variable, value),
++                None => command.env_remove(variable),
++            };
++        }
++        command.output()
++    };
++    let expected = run(legacy.join("oven/release").join(name), &legacy_run)?;
++    let actual = run(native, &native_run)?;
+     assert_eq!(actual.status.code(), expected.status.code());
+     assert_eq!(
+         String::from_utf8_lossy(&actual.stderr),
+@@ -60,6 +76,8 @@ fn direct_route_stdlib_matches_legacy() -> Result<(), Box<dyn std::error::Error>
+     let fixture = driver_fixture()?;
+     builtins_match_legacy(fixture)?;
+     option_model_fields_match_legacy(fixture)?;
++    environ_calls_match_legacy(fixture)?;
++    io_fields_match_legacy(fixture)?;
+     Ok(())
+ }
+ 
+@@ -110,6 +128,7 @@ def main() -> None:
+         Ok(_) => println("unexpected write")
+         Err(error) => println(error)
+ "#,
++        &[],
+     )?;
+     let stdout = String::from_utf8(values.stdout)?;
+     assert!(stdout.starts_with("[1,2]\n[1.5,2.0]\n[true,false]\n[\"a\\\"b\",\"line\\n\"]\n[[1],[2,3]]\n-1\n5\n-0.5\n9.0\nfalse\ntrue\napple zoo 3\nzoo\nwritten\nhello file\n"), "{stdout}");
+@@ -122,6 +141,7 @@ def main() -> None:
+     println("before")
+     println(max(values))
+ "#,
++        &[],
+     )?;
+     assert!(!empty.status.success());
+     Ok(())
+@@ -171,6 +191,7 @@ def main() -> None:
+     println(greeting())
+     println(greeting(Some("cy")))
+ "#,
++        &[],
+     )?;
+     assert_eq!(
+         String::from_utf8(output.stdout)?,
+@@ -178,3 +199,75 @@ def main() -> None:
+     );
+     Ok(())
+ }
++
++/// Generic and overloaded standard-library functions, an Option result, a Result whose error is a provider-crate class,
++/// `?` propagation, and a method on that class match legacy for an unset, a text, and an unparsable variable.
++fn environ_calls_match_legacy(fixture: &DriverFixture) -> Result<(), Box<dyn std::error::Error>> {
++    let output = stdlib_parity(
++        fixture,
++        "stdlib_environ",
++        r#"
++from std.environ import EnvironError, get_as, get_optional
++
++
++def read(key: str) -> Result[None, EnvironError]:
++    optional: Option[int] = get_as[int](key)?
++    match optional:
++        Some(value) => println(value)
++        None => println("absent")
++    defaulted: int = get_as[int](key, 7)?
++    println(defaulted)
++    match get_optional(key):
++        Some(value) => println(value)
++        None => println("fallback")
++    return Ok(None)
++
++
++def main() -> None:
++    for key in ["INCAN_NATIVE_SDK_UNSET", "INCAN_NATIVE_SDK_NUMBER", "INCAN_NATIVE_SDK_TEXT"]:
++        match read(key):
++            Ok(_) => println("ok")
++            Err(error) => println(error.message())
++"#,
++        &[
++            ("INCAN_NATIVE_SDK_UNSET", None),
++            ("INCAN_NATIVE_SDK_NUMBER", Some("42")),
++            ("INCAN_NATIVE_SDK_TEXT", Some("forty-two")),
++        ],
++    )?;
++    assert!(String::from_utf8(output.stdout)?.starts_with("absent\n7\nfallback\nok\n42\n42\n42\nok\n"));
++    Ok(())
++}
++
++/// A provider-crate function and methods produce standard-library values whose public fields and methods match legacy,
++/// including the error a short read returns.
++fn io_fields_match_legacy(fixture: &DriverFixture) -> Result<(), Box<dyn std::error::Error>> {
++    let output = stdlib_parity(
++        fixture,
++        "stdlib_io_fields",
++        r#"
++from std.io import BytesIO, IoError
++
++
++def describe(outcome: Result[bytes, IoError]) -> None:
++    match outcome:
++        Ok(data) => println(len(data))
++        Err(error) =>
++            println(error.kind)
++            println(error.detail)
++            println(error.position)
++            println(error.message())
++
++
++def main() -> None:
++    describe(BytesIO(b"AB").read_exact(4))
++    describe(BytesIO(b"ABCD").read_exact(2))
++    buffer = BytesIO(b"abcdef")
++    describe(buffer.read(2))
++    describe(buffer.read(10))
++"#,
++        &[],
++    )?;
++    assert!(String::from_utf8(output.stdout)?.contains("unexpected_eof\n"));
++    Ok(())
++}
+diff --git a/loaves/compiler/incan_frontend/src/body_ir.rs b/loaves/compiler/incan_frontend/src/body_ir.rs
+index 14e6e4f2..239043b3 100644
+--- a/loaves/compiler/incan_frontend/src/body_ir.rs
++++ b/loaves/compiler/incan_frontend/src/body_ir.rs
+@@ -321,6 +321,7 @@ fn build_body_ir_module_v0_with_provider_operations(
+         })
+         .collect::<Vec<_>>();
+     apply_top_level_input_contract_refusal(program, &mut bodies);
++    let (sdk_nominal_declarations, sdk_callables) = sdk::collect(type_info, &bodies);
+     bir::BodyIrModule {
+         constant_declarations,
+         type_alias_declarations: collect::collect_type_aliases(program, type_info),
+@@ -328,6 +329,8 @@ fn build_body_ir_module_v0_with_provider_operations(
+         trait_implementations: collect::collect_local_trait_implementations(program, type_info, &nominal_declarations),
+         enum_declarations: collect_local_enum_declarations(program, &module_identity, type_info),
+         stdlib_delegations: stdlib_delegations::collect(type_info),
++        sdk_nominal_declarations,
++        sdk_callables,
+         static_declarations: collect::collect_scalar_statics(program, type_info),
+         module_id,
+         nominal_declarations,
+@@ -1190,6 +1193,7 @@ mod async_;
+ mod literals;
+ 
+ mod calls;
++mod sdk;
+ mod stdlib_delegations;
+ 
+ mod operators;
+diff --git a/loaves/compiler/incan_frontend/src/body_ir/collect.rs b/loaves/compiler/incan_frontend/src/body_ir/collect.rs
+index b8907533..5abaae81 100644
+--- a/loaves/compiler/incan_frontend/src/body_ir/collect.rs
++++ b/loaves/compiler/incan_frontend/src/body_ir/collect.rs
+@@ -302,6 +302,7 @@ pub(super) fn collect_local_nominal_declarations(
+                     .collect(),
+                 named_type_identities: type_info.declarations.named_type_identities.clone(),
+                 type_parameter_count,
++                native_path: None,
+             })
+         })
+         .collect()
+@@ -351,6 +352,7 @@ fn collect_plain_newtype(
+         derives,
+         named_type_identities: type_info.declarations.named_type_identities.clone(),
+         type_parameter_count: 0,
++        native_path: None,
+     })
+ }
+ /// Retain exact source-local fieldless normal-enum declaration and unit-member facts in source order.
+diff --git a/loaves/compiler/incan_frontend/src/executable_resolution.rs b/loaves/compiler/incan_frontend/src/executable_resolution.rs
+index 3871d190..9698e792 100644
+--- a/loaves/compiler/incan_frontend/src/executable_resolution.rs
++++ b/loaves/compiler/incan_frontend/src/executable_resolution.rs
+@@ -193,6 +193,8 @@ pub fn resolve_executable_requirements(
+             trait_implementations: Vec::new(),
+             module_id: CompilerNodeId::module(owner),
+             stdlib_delegations: Vec::new(),
++            sdk_nominal_declarations: Vec::new(),
++            sdk_callables: Vec::new(),
+             enum_declarations: Vec::new(),
+             static_declarations: Vec::new(),
+             nominal_declarations: Vec::new(),
+diff --git a/loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs b/loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs
+index e60623bc..87023e2f 100644
+--- a/loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs
++++ b/loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs
+@@ -150,26 +150,13 @@ impl StdlibAstCache {
+     pub(crate) fn callable_source_identity(&mut self, identity: &CanonicalSymbolId) -> Option<CanonicalSymbolId> {
+         use incan_semantics_core::SymbolOrigin;
+         let path = match &identity.origin {
+-            SymbolOrigin::Module(path) => path.clone(),
+-            SymbolOrigin::Package { module_path, .. } => std::iter::once(stdlib::STDLIB_ROOT.to_string())
+-                .chain(module_path.iter().cloned())
+-                .collect(),
++            SymbolOrigin::Module(path) if stdlib::is_any_stdlib_path(path) => path.clone(),
++            SymbolOrigin::Package { library, module_path } => Self::sdk_source_module(library, module_path)?,
+             _ => return None,
+         };
+-        if !stdlib::is_any_stdlib_path(&path) {
+-            return None;
+-        }
+         let source = self.lookup_identity(&path, &identity.declaration_name)?;
+         let mut published = source.clone();
+         if let SymbolOrigin::Package { library, module_path } = &identity.origin {
+-            let sources = crate::provider::stdlib_sources::StdlibSources::discover()?;
+-            let owner = sources.owner_of(path.get(1)?)?;
+-            let manifest: toml::Value =
+-                toml::from_str(&std::fs::read_to_string(owner.project_root.join("loaf.toml")).ok()?).ok()?;
+-            let name = manifest.get("project")?.get("name")?.as_str()?;
+-            if name != library {
+-                return None;
+-            }
+             published.origin = SymbolOrigin::Package {
+                 library: library.clone(),
+                 module_path: module_path.clone(),
+@@ -178,6 +165,22 @@ impl StdlibAstCache {
+         (published == *identity).then_some(source)
+     }
+ 
++    /// Return the stdlib source module a published SDK package path names, only when the catalog component that owns
++    /// the namespace is exactly `library`; any other package cannot gain a stdlib source identity.
++    pub(crate) fn sdk_source_module(library: &str, module_path: &[String]) -> Option<Vec<String>> {
++        let path = std::iter::once(stdlib::STDLIB_ROOT.to_string())
++            .chain(module_path.iter().cloned())
++            .collect::<Vec<_>>();
++        if !stdlib::is_any_stdlib_path(&path) {
++            return None;
++        }
++        let sources = crate::provider::stdlib_sources::StdlibSources::discover()?;
++        let owner = sources.owner_of(path.get(1)?)?;
++        let manifest: toml::Value =
++            toml::from_str(&std::fs::read_to_string(owner.project_root.join("loaf.toml")).ok()?).ok()?;
++        (manifest.get("project")?.get("name")?.as_str()? == library).then_some(path)
++    }
++
+     /// Load the declaring source for an exact stdlib function identity, retaining imports and only its selected
+     /// function. Re-exports are followed by identity before this boundary; overloads or stale spans are refused.
+     pub fn callable_program(&mut self, identity: &CanonicalSymbolId) -> Option<ast::Program> {
+diff --git a/loaves/compiler/incan_mir_lowering/src/decls.incn b/loaves/compiler/incan_mir_lowering/src/decls.incn
+index 0a6efd02..11422cb8 100644
+--- a/loaves/compiler/incan_mir_lowering/src/decls.incn
++++ b/loaves/compiler/incan_mir_lowering/src/decls.incn
+@@ -1,8 +1,15 @@
+ """Runtime layouts of checked source-local declarations; erased aliases have no storage."""
+ 
+-from rust::incan_semantics_core::body_ir import BodyIrModule, StaticDeclaration, GlobalPlace
++from rust::incan_semantics_core import IncanType as RustType
++from rust::incan_semantics_core::body_ir import (
++    BodyIrModule,
++    StaticDeclaration,
++    GlobalPlace,
++    NominalDeclaration as RustNominalDeclaration,
++)
+ from pub::incan_mir_plan import EnumDeclaration, ModelDeclaration, Parameter, SourceSpan, PlanType
+ from unions import native_source_type, collect_unions
++from models import plan_model_name
+ 
+ 
+ pub def static_slot(declarations: list[StaticDeclaration], value: &GlobalPlace) -> Result[int, str]:
+@@ -36,29 +43,93 @@ pub def lower_model_declarations(
+     for declaration in module.nominal_declarations:
+         if declaration.has_field_defaults and "Default" in declaration.derives:
+             return Err(f"unsupported Body IR derived Default over field defaults on {declaration.name}")
++        native_path = native_model_path(declaration)
+         mut fields: list[Parameter] = []
+-        for slot in range(len(declaration.fields)):
+-            fields.append(
+-                Parameter(
+-                    name=str(declaration.fields[slot]),
+-                    ty=native_source_type(
+-                        module.nominal_declarations,
+-                        module.enum_declarations,
+-                        unions,
+-                        declaration.field_types[slot],
+-                        intrinsics,
+-                    )?,
+-                    span=SourceSpan(file=file, line=1, column=1),
+-                ),
+-            )
++        mut field_public: list[bool] = []
++        if native_path == "":
++            fields = model_fields(module, declaration, unions, intrinsics, file)?
++            field_public = declaration.field_public
++        else:
++            provided = provider_fields(module, declaration, unions, intrinsics, file)
++            fields = provided[0]
++            field_public = provided[1]
+         models.append(
+             ModelDeclaration(
+-                name=str(declaration.name),
++                name=plan_model_name(declaration),
+                 public=declaration.public,
+                 fields=fields,
+-                field_public=declaration.field_public,
++                field_public=field_public,
+                 derives=declaration.derives,
+                 span=SourceSpan(file=file, line=1, column=1),
++                native_path=native_path,
+             ),
+         )
+     return Ok(models)
++
++
++def model_fields(
++    module: &BodyIrModule,
++    declaration: &RustNominalDeclaration,
++    unions: list[RustType],
++    intrinsics: list[EnumDeclaration],
++    file: str,
++) -> Result[list[Parameter], str]:
++    """Resolve each checked source field slot, in canonical order, to its native representation."""
++    mut fields: list[Parameter] = []
++    for slot in range(len(declaration.fields)):
++        fields.append(
++            Parameter(
++                name=str(declaration.fields[slot]),
++                ty=native_source_type(
++                    module.nominal_declarations,
++                    module.enum_declarations,
++                    unions,
++                    declaration.field_types[slot],
++                    intrinsics,
++                )?,
++                span=SourceSpan(file=file, line=1, column=1),
++            ),
++        )
++    return Ok(fields)
++
++
++def provider_fields(
++    module: &BodyIrModule,
++    declaration: &RustNominalDeclaration,
++    unions: list[RustType],
++    intrinsics: list[EnumDeclaration],
++    file: str,
++) -> tuple[list[Parameter], list[bool]]:
++    """
++    Keep every provider-crate slot in declaration order without requiring its private storage to be representable.
++
++    A public field whose checked type resolves keeps that type and stays projectable; every other slot keeps its
++    name with a unit placeholder and is marked non-public, so neither a plan nor its adapter can read it.
++    """
++    mut fields: list[Parameter] = []
++    mut public: list[bool] = []
++    for slot in range(len(declaration.fields)):
++        mut ty = PlanType.Unit
++        mut readable = false
++        if declaration.field_public[slot]:
++            match native_source_type(
++                module.nominal_declarations,
++                module.enum_declarations,
++                unions,
++                declaration.field_types[slot],
++                intrinsics,
++            ):
++                Ok(resolved) =>
++                    ty = resolved
++                    readable = true
++                Err(_reason) => pass
++        fields.append(Parameter(name=str(declaration.fields[slot]), ty=ty, span=SourceSpan(file=file, line=1, column=1)))
++        public.append(readable)
++    return (fields, public)
++
++
++def native_model_path(declaration: &RustNominalDeclaration) -> str:
++    """Carry a provider-crate nominal's checked path into the plan; source nominals have none."""
++    match declaration.native_path:
++        Some(path) => return str(path)
++        None => return ""
+diff --git a/loaves/compiler/incan_mir_lowering/src/lowering.incn b/loaves/compiler/incan_mir_lowering/src/lowering.incn
+index 74d0e981..647b2b7e 100644
+--- a/loaves/compiler/incan_mir_lowering/src/lowering.incn
++++ b/loaves/compiler/incan_mir_lowering/src/lowering.incn
+@@ -92,13 +92,15 @@ from rust::incan_semantics_core::body_ir import (
+     Statement as RustStatement,
+     StatementKind as RustStatementKind,
+     StdlibDelegation as RustStdlibDelegation,
++    SdkCallable,
++    SdkReceiver,
+     UnOp,
+     PlaceElem,
+     MethodTarget,
+     IterProtocol,
+ )
+ # ---- Admission helpers owned by this Loaf ----
+-from rust::incan_semantics_core import SymbolOrigin, canonical_module_identity
++from rust::incan_semantics_core import CanonicalSymbolId, SymbolOrigin, canonical_module_identity
+ from classes import frame_type, function_name, body_module_identity, method_receiver
+ from generators import (
+     generator_shape,
+@@ -1125,6 +1127,9 @@ def lower_method_call(
+             if identity.origin == SymbolOrigin.Builtin:
+                 return lower_list_method(builder, target, arguments, destination, span)
+         None => return Err("unsupported Body IR Method without canonical identity")
++    match sdk_callable(module, target.canonical):
++        Some(callable) => return lower_sdk_method(builder, callable, target, arguments, destination, span)
++        None => pass
+     if len(arguments) == 0:
+         return Err("invalid Body IR Method missing receiver")
+     if is_json_serialize_method(target):
+@@ -1168,6 +1173,10 @@ def lower_named_target(
+     span: SourceSpan,
+ ) -> Result[None, str]:
+     """Call a builtin, a retained project function, or a proven stdlib forwarder selected by canonical identity."""
++    match sdk_callable(module, target.canonical):
++        Some(callable) =>
++            return lower_sdk_call(builder, callable, target.type_args, target.binding, arguments, destination, span)
++        None => pass
+     if len(target.type_args) != 0:
+         return Err("unsupported Body IR generic NamedCallableTarget")
+     match target.builtin:
+@@ -1330,6 +1339,175 @@ def lower_delegated_call(
+             return Ok(None)
+ 
+ 
++def sdk_callable(module: &BodyIrModule, identity: &Option[CanonicalSymbolId]) -> Option[SdkCallable]:
++    """Select the checked provider-crate signature recorded for exactly this callable identity."""
++    match identity:
++        Some(canonical) =>
++            for callable in module.sdk_callables:
++                if callable.canonical == canonical.clone():
++                    return Some(callable.clone())
++        None => pass
++    return None
++
++
++def lower_sdk_call(
++    mut builder: Builder,
++    callable: SdkCallable,
++    type_args: &list[RustType],
++    binding: &RustArgumentBinding,
++    arguments: &list[RustArgumentElement],
++    destination: &Option[RustPlace],
++    span: SourceSpan,
++) -> Result[None, str]:
++    """Call a provider-crate function or static method by its checked native path and signature."""
++    if callable.receiver.is_some():
++        return Err("invalid Body IR standard-library method called without a receiver")
++    parameters = sdk_parameter_types(builder, callable, type_args)?
++    operands = ordered_slot_operands(builder, binding, arguments, parameters, span)?
++    return emit_sdk_call(builder, callable, type_args, parameters, operands, destination, span)
++
++
++def lower_sdk_method(
++    mut builder: Builder,
++    callable: SdkCallable,
++    target: &MethodTarget,
++    arguments: &list[RustArgumentElement],
++    destination: &Option[RustPlace],
++    span: SourceSpan,
++) -> Result[None, str]:
++    """Borrow a provider-crate receiver as its checked receiver mode requires, then call the compiled method."""
++    mut mutable = false
++    match callable.receiver:
++        Some(SdkReceiver.Shared) => pass
++        Some(SdkReceiver.Mutable) =>
++            mutable = true
++        None => return Err("unsupported Body IR standard-library static method on a receiver")
++    if len(arguments) == 0:
++        return Err("invalid Body IR Method missing receiver")
++    receiver = argument_place(builder, arguments, 0, span)?
++    match place_type(builder.locals, receiver):
++        PlanType.Model(owner, name) =>
++            mut reference_type = PlanType.ModelRef(owner, name)
++            mut borrow = RvalueKind.Borrow(receiver)
++            if mutable:
++                reference_type = PlanType.ModelMutRef(owner, name)
++                borrow = RvalueKind.MutBorrow(receiver)
++            reference = temporary(builder, reference_type, span)
++            builder.emit(plan_assign(reference, borrow, span))
++            parameters = sdk_parameter_types(builder, callable, target.type_args)?
++            ordinary = ordered_slot_operands(builder, target.binding, arguments, parameters, span, 1)?
++            mut operands = [read_place(reference, mutable, span)]
++            mut signature = [reference_type]
++            for index in range(len(parameters)):
++                operands.append(ordinary[index])
++                signature.append(parameters[index])
++            return emit_sdk_call(builder, callable, target.type_args, signature, operands, destination, span)
++        _ => return Err("unsupported Body IR standard-library method receiver")
++
++
++def sdk_parameter_types(
++    builder: Builder,
++    callable: &SdkCallable,
++    type_args: &list[RustType],
++) -> Result[list[PlanType], str]:
++    """Resolve declared parameters; a parameter that is exactly a type parameter takes the call's checked argument."""
++    if len(type_args) != len(callable.type_parameters):
++        return Err("unsupported Body IR standard-library call type arguments")
++    mut resolved: list[PlanType] = []
++    for ty in callable.parameters:
++        parameter = instantiated_parameter(callable, type_args, ty)
++        resolved.append(sdk_type(builder, parameter)?)
++    return Ok(resolved)
++
++
++def instantiated_parameter(callable: &SdkCallable, type_args: &list[RustType], ty: &RustType) -> RustType:
++    """Substitute a parameter written as one declared type variable; nested uses stay unresolved and refuse."""
++    match ty:
++        RustType.TypeVar(name) =>
++            for index in range(len(callable.type_parameters)):
++                if str(callable.type_parameters[index]) == str(name):
++                    return type_args[index].clone()
++        _ => pass
++    return ty.clone()
++
++
++def emit_sdk_call(
++    mut builder: Builder,
++    callable: SdkCallable,
++    type_args: &list[RustType],
++    parameters: list[PlanType],
++    operands: list[Operand],
++    destination: &Option[RustPlace],
++    span: SourceSpan,
++) -> Result[None, str]:
++    """Instantiate the call's checked type argument and move an owned result into its whole destination local."""
++    if len(type_args) != len(callable.type_parameters) or len(type_args) > 1:
++        return Err("unsupported Body IR standard-library call type arguments")
++    output, result = sdk_call_destination(builder, callable, len(type_args) != 0, destination, span)?
++    path = str(callable.native_path)
++    mut kind = CalleeKind.External(path)
++    mut instantiation: list[PlanType] = []
++    if len(type_args) == 1:
++        argument = native_source_type(builder.nominals, builder.enums, builder.unions, type_args[0], builder.intrinsics)?
++        instantiation = [argument]
++        kind = CalleeKind.Instantiated(path, argument)
++    external = ExternalFunction(
++        path=path,
++        type_arguments=instantiation,
++        parameters=parameters,
++        return_type=result,
++        span=span,
++    )
++    builder.externals.append(external)
++    if result != PlanType.String and not is_nominal_type(result) and not is_owned_collection(result):
++        terminate_call(builder, kind, operands, output, span)
++        return Ok(None)
++    value = temporary(builder, result, span)
++    terminate_call(builder, kind, operands, value, span)
++    builder.owned.append(value.local)
++    drop_owned(builder, output.local, span)
++    forget_owned(builder, value.local)
++    builder.emit(plan_assign(output, RvalueKind.Use(read_place(value, true, span)), span))
++    builder.owned.append(output.local)
++    return Ok(None)
++
++
++def sdk_call_destination(
++    mut builder: Builder,
++    callable: SdkCallable,
++    generic: bool,
++    destination: &Option[RustPlace],
++    span: SourceSpan,
++) -> Result[tuple[Place, PlanType], str]:
++    """
++    Select a whole destination local and its result type.
++
++    A generic declaration's result mentions its type parameters, so its checked destination is the instantiation;
++    a nongeneric declaration's result must equal its destination exactly.
++    """
++    match destination:
++        Some(place) =>
++            output = scalar_place(builder, place, span)?
++            if output.projection != Projection.Whole:
++                return Err("unsupported Body IR projected standard-library call destination")
++            result = place_type(builder.locals, output)
++            if not generic:
++                declared = sdk_type(builder, callable.return_type)?
++                if declared != result:
++                    return Err("invalid Body IR standard-library call destination type")
++            return Ok((output, result))
++        None =>
++            if generic:
++                return Err("unsupported Body IR discarded generic standard-library call")
++            result = sdk_type(builder, callable.return_type)?
++            return Ok((temporary(builder, result, span), result))
++
++
++def sdk_type(builder: Builder, ty: &RustType) -> Result[PlanType, str]:
++    """Resolve one checked provider-crate signature type against the plan's retained layouts."""
++    return native_source_type(builder.nominals, builder.enums, builder.unions, ty, builder.intrinsics)
++
++
+ def ordered_arguments(
+     module: &BodyIrModule,
+     mut builder: Builder,
+@@ -1859,6 +2037,8 @@ def clone_nominal_operand(mut builder: Builder, value: Place, span: SourceSpan)
+     """Materialize the checker's clone fact through a source nominal's real derived Clone implementation."""
+     match place_type(builder.locals, value):
+         PlanType.Model(index, name) =>
++            if builder.nominals[index].native_path.is_some() and "Clone" not in builder.nominals[index].derives:
++                return Err("unsupported Body IR clone of a standard-library nominal without Clone")
+             reference = temporary(builder, PlanType.ModelRef(index, name), span)
+             builder.emit(plan_assign(reference, RvalueKind.Borrow(value), span))
+             result = temporary(builder, PlanType.Model(index, name), span)
+diff --git a/loaves/compiler/incan_mir_lowering/src/model_values.incn b/loaves/compiler/incan_mir_lowering/src/model_values.incn
+index 33461e14..3ea5f08e 100644
+--- a/loaves/compiler/incan_mir_lowering/src/model_values.incn
++++ b/loaves/compiler/incan_mir_lowering/src/model_values.incn
+@@ -20,7 +20,10 @@ def nominal_place(builder: Builder, value: &RustOperand, span: SourceSpan) -> Re
+             mut place = model_place(builder.nominals, builder.locals[builder.local_offset:], read.place, span)?
+             place.local += builder.local_offset
+             match place_type(builder.locals, place):
+-                PlanType.Model(_owner, _name) => return Ok(Some(place))
++                PlanType.Model(owner, _name) =>
++                    if builder.nominals[owner].native_path.is_some():
++                        return Err("unsupported Body IR standard-library nominal formatting or comparison")
++                    return Ok(Some(place))
+                 _ => pass
+         _ => pass
+     return Ok(None)
+diff --git a/loaves/compiler/incan_mir_lowering/src/models.incn b/loaves/compiler/incan_mir_lowering/src/models.incn
+index 0340a87d..913557e4 100644
+--- a/loaves/compiler/incan_mir_lowering/src/models.incn
++++ b/loaves/compiler/incan_mir_lowering/src/models.incn
+@@ -26,7 +26,7 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
+         RustType.Named(name) =>
+             for index in range(len(declarations)):
+                 if declarations[index].name == str(name):
+-                    return Ok(PlanType.Model(index, str(name)))
++                    return Ok(PlanType.Model(index, plan_model_name(declarations[index])))
+             return Err(f"unsupported Body IR nominal type {name}")
+         RustType.Primitive(primitive) =>
+             match primitive:
+@@ -60,6 +60,13 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
+         _ => return Err(f"unsupported Body IR type {type_name(ty)}")
+ 
+ 
++pub def plan_model_name(declaration: &NominalDeclaration) -> str:
++    """Name a provider-crate nominal by its checked native path and a source nominal by its declared name."""
++    match declaration.native_path:
++        Some(path) => return str(path)
++        None => return str(declaration.name)
++
++
+ pub def carrier_type(carriers: list[EnumDeclaration], carrier_offset: int, ty: &RustType) -> Option[PlanType]:
+     """Resolve a retained standard carrier by its checked source type; carrier owners follow the source enums."""
+     for index in range(len(carriers)):
+@@ -119,6 +126,8 @@ pub def carrier_model_place(
+                 PlanType.Model(owner, _name) =>
+                     declaration = declarations[owner]
+                     slot = field_slot(value.projection[0], declaration)?
++                    if declaration.native_path.is_some() and not declaration.field_public[slot]:
++                        return Err("unsupported Body IR private standard-library field projection")
+                     ty = field_type(declarations, carriers, carrier_offset, declaration.field_types[slot])?
+                     return Ok(Place(local=index, projection=Projection.Field(slot, ty), span=span))
+                 PlanType.Tuple(elements) =>
+@@ -164,6 +173,8 @@ pub def constructor_index(
+                 declaration = declarations[index]
+                 if identity != declaration.direct_declaration_id:
+                     continue
++                if declaration.native_path.is_some():
++                    return Err("unsupported Body IR standard-library nominal construction")
+                 # Aliases change diagnostic spelling, never the retained constructor identity or physical layout.
+                 if target.canonical != Some(declaration.canonical) or target.canonical_field_layout != Some(
+                     declaration.fields,
+@@ -210,6 +221,8 @@ def receiver_field(
+         return Err("unsupported Body IR nested receiver projection")
+     declaration = declarations[owner]
+     slot = field_slot(value.projection[0], declaration)?
++    if declaration.native_path.is_some() and not declaration.field_public[slot]:
++        return Err("unsupported Body IR private standard-library field projection")
+     ty = field_type(declarations, carriers, carrier_offset, declaration.field_types[slot])?
+     return Ok(Place(local=index, projection=Projection.DerefField(slot, ty), span=span))
+ 
+diff --git a/loaves/compiler/incan_mir_lowering/src/options.incn b/loaves/compiler/incan_mir_lowering/src/options.incn
+index 05cbe12a..5d8e36b9 100644
+--- a/loaves/compiler/incan_mir_lowering/src/options.incn
++++ b/loaves/compiler/incan_mir_lowering/src/options.incn
+@@ -134,6 +134,9 @@ pub def intrinsic_declarations(module: &BodyIrModule, file: str) -> Result[list[
+     """Collect concrete checked carriers in stable field, body, and local order, admitting only existing payload types."""
+     mut declarations: list[EnumDeclaration] = lower_union_declarations(module, file)?
+     for nominal in module.nominal_declarations:
++        # Provider-crate nominals stay opaque, so their private storage types need no carrier.
++        if nominal.native_path.is_some():
++            continue
+         for ty in nominal.field_types:
+             retain_carrier(module, declarations, ty, file)?
+     for body in module.bodies:
+diff --git a/loaves/compiler/incan_mir_lowering/src/project.incn b/loaves/compiler/incan_mir_lowering/src/project.incn
+index 05850517..4b70fbc2 100644
+--- a/loaves/compiler/incan_mir_lowering/src/project.incn
++++ b/loaves/compiler/incan_mir_lowering/src/project.incn
+@@ -1,5 +1,6 @@
+ """Shared declaration context for a project whose individual owning modules have been validated."""
+ 
++from rust::incan_semantics_core import CanonicalSymbolId
+ from rust::incan_semantics_core::body_ir import BodyIrModule
+ from traits import specialize_traits
+ 
+@@ -19,6 +20,8 @@ pub def project_context(
+     context.trait_implementations.clear()
+     context.static_declarations.clear()
+     context.stdlib_delegations.clear()
++    context.sdk_nominal_declarations.clear()
++    context.sdk_callables.clear()
+     mut checked: list[BodyIrModule] = []
+     for module in modules:
+         specialized = specialize_traits(module)?
+@@ -60,4 +63,35 @@ pub def project_context(
+         for index in range(len(module.stdlib_delegations)):
+             declaration = module.stdlib_delegations[index].clone()
+             context.stdlib_delegations.push(declaration.clone())
++        for index in range(len(module.sdk_callables)):
++            callable = module.sdk_callables[index].clone()
++            if not retained_callable(context, callable.canonical):
++                context.sdk_callables.push(callable.clone())
++        for index in range(len(module.sdk_nominal_declarations)):
++            declaration = module.sdk_nominal_declarations[index].clone()
++            if not retained_sdk_nominal(context, declaration.canonical):
++                context.sdk_nominal_declarations.push(declaration.clone())
++    # Provider-crate nominals follow every source layout, so source model indices stay those of the source plan.
++    for index in range(len(context.sdk_nominal_declarations)):
++        declaration = context.sdk_nominal_declarations[index].clone()
++        for retained in range(len(context.nominal_declarations)):
++            if context.nominal_declarations[retained].name == declaration.name:
++                return Err(f"unsupported Body IR ambiguous project nominal carrier {declaration.name}")
++        context.nominal_declarations.push(declaration.clone())
+     return Ok((context, checked))
++
++
++def retained_callable(context: &BodyIrModule, identity: &CanonicalSymbolId) -> bool:
++    """Keep one checked SDK signature per callable identity across the modules that call it."""
++    for callable in context.sdk_callables:
++        if callable.canonical == identity.clone():
++            return true
++    return false
++
++
++def retained_sdk_nominal(context: &BodyIrModule, identity: &CanonicalSymbolId) -> bool:
++    """Keep one provider-crate layout per nominal identity across the modules that name it."""
++    for declaration in context.sdk_nominal_declarations:
++        if declaration.canonical == identity.clone():
++            return true
++    return false
+diff --git a/loaves/compiler/incan_mir_lowering/src/unions.incn b/loaves/compiler/incan_mir_lowering/src/unions.incn
+index abad188e..1b320312 100644
+--- a/loaves/compiler/incan_mir_lowering/src/unions.incn
++++ b/loaves/compiler/incan_mir_lowering/src/unions.incn
+@@ -25,6 +25,9 @@ pub def collect_unions(module: &BodyIrModule) -> list[RustType]:
+         for local in body.locals:
+             retain_union(unions, local.ty)
+     for declaration in module.nominal_declarations:
++        # Provider-crate nominals stay opaque, so their private storage types need no union carrier.
++        if declaration.native_path.is_some():
++            continue
+         for ty in declaration.field_types:
+             retain_union(unions, ty)
+     for declaration in module.enum_declarations:
+diff --git a/loaves/compiler/incan_mir_plan/src/lib.incn b/loaves/compiler/incan_mir_plan/src/lib.incn
+index 0d35ea66..2b1f7c7d 100644
+--- a/loaves/compiler/incan_mir_plan/src/lib.incn
++++ b/loaves/compiler/incan_mir_plan/src/lib.incn
+@@ -419,6 +419,8 @@ pub model ModelDeclaration:
+     Checked field layout and implicit derives for one nongeneric source model or plain newtype.
+ 
+     A newtype has exactly one public field named `0`, emitted as a tuple slot; named model fields retain their names.
++    A declaration with a native path names a provider-crate nominal by that path: its fields are the checked layout
++    for projections, and the plan neither declares nor constructs it.
+     """
+ 
+     pub name: str
+@@ -427,6 +429,8 @@ pub model ModelDeclaration:
+     pub field_public: list[bool]
+     pub derives: list[str]
+     pub span: SourceSpan
++    # A standard-library nominal owned by its provider crate: named by this path, never declared by the plan.
++    pub native_path: str = ""
+ 
+ 
+ @derive(Clone, PartialEq)
+diff --git a/loaves/compiler/incan_native_runtime/src/lib.incn b/loaves/compiler/incan_native_runtime/src/lib.incn
+index 84110083..ca9c1fca 100644
+--- a/loaves/compiler/incan_native_runtime/src/lib.incn
++++ b/loaves/compiler/incan_native_runtime/src/lib.incn
+@@ -39,6 +39,8 @@ pub from builtins import absolute_int, truth_int, truth_float, truth_bool, boole
+ pub from builtins import min_int, max_int, min_float, max_float, min_bool, max_bool, min_text, max_text
+ pub from builtins import write_text_file, read_text_file
+ from rust::incan_std_core::iter import range as runtime_range
++# Direct plans call compiled standard-library items by crate path; re-exporting one links the system component.
++pub from std.environ import EnvironError
+ pub from statics import (
+     read_static_int,
+     write_static_int,
+diff --git a/loaves/kernel/incan_semantics_core/src/body_ir.rs b/loaves/kernel/incan_semantics_core/src/body_ir.rs
+index e69d8cc4..898b025b 100644
+--- a/loaves/kernel/incan_semantics_core/src/body_ir.rs
++++ b/loaves/kernel/incan_semantics_core/src/body_ir.rs
+@@ -74,6 +74,14 @@ pub struct BodyIrModule {
+     /// Source-local scalar statics with effect-free literal initializers; all other initializers must refuse.
+     #[serde(default)]
+     pub static_declarations: Vec<StaticDeclaration>,
++    /// Standard-library nominals compiled into active SDK components and referenced by this module's checked types.
++    /// Every record carries [`NominalDeclaration::native_path`]; source-local declarations never appear here.
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub sdk_nominal_declarations: Vec<NominalDeclaration>,
++    /// Standard-library functions and methods compiled into active SDK components and called by this module, with
++    /// their checked signatures. Calls to other imported implementations have no record and must refuse.
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub sdk_callables: Vec<SdkCallable>,
+     /// Identity of the owning module, matching [`crate::HirModule::id`].
+     pub module_id: CompilerNodeId,
+     /// Source-local plain-model and plain-newtype declarations whose construction layout is available to a direct
+@@ -155,6 +163,37 @@ pub struct StdlibDelegation {
+     pub return_type: IncanType,
+ }
+ 
++/// How an SDK instance method receives its receiver in the provider crate.
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
++pub enum SdkReceiver {
++    /// The method reads its receiver through a shared reference (`self`).
++    Shared,
++    /// The method changes its receiver through a mutable reference (`mut self`).
++    Mutable,
++}
++
++/// A checked standard-library callable compiled into an active SDK component, with its declared signature.
++///
++/// The record exists only for a checker-selected identity owned by an active SDK package. Its path is the provider
++/// item the legacy route reaches through the `__incan_std` facade; consumers must still verify the signature
++/// against native metadata and must never recover the path from a call site's spelling.
++#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
++pub struct SdkCallable {
++    /// Exact checker-selected declaration identity, as the consumer references it.
++    pub canonical: CanonicalSymbolId,
++    /// Provider-crate path of the compiled item: `library::module::symbol` for a function, or
++    /// `library::module::Owner::symbol` for a method, where `symbol` is the RFC 120 projection of `canonical`.
++    pub native_path: String,
++    /// Receiver mode of an instance method; `None` for a free function or a static method.
++    pub receiver: Option<SdkReceiver>,
++    /// Declared type parameter names in order, instantiated from the call site's checked type arguments.
++    pub type_parameters: Vec<String>,
++    /// Declaration-order parameter types, excluding any receiver; a type parameter appears as its `TypeVar`.
++    pub parameters: Vec<IncanType>,
++    /// Declared result type.
++    pub return_type: IncanType,
++}
++
+ impl StdlibDelegation {
+     /// Materialize only a checker-proven Rust call target path, never a source-module identity. An unresolved
+     /// `RustItem` still requires native metadata validation before execution.
+@@ -307,6 +346,13 @@ pub struct NominalDeclaration {
+     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
+     /// Number of declared type parameters; this profile admits only zero.
+     pub type_parameter_count: usize,
++    /// Provider-crate path of a standard-library nominal compiled into an active SDK component, such as
++    /// `incan_stdlib_system::io::IoError`; `None` for every source-local or package-fragment declaration.
++    ///
++    /// A record with a path describes storage the provider crate owns: its fields are the checked public layout in
++    /// declaration order, and a consumer must neither declare nor construct it, only name, move, drop and read it.
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub native_path: Option<String>,
+ }
+ 
+ /// One source-local fieldless normal enum retained for direct identity comparison.
+@@ -4500,6 +4546,8 @@ mod tests {
+             type_alias_declarations: Vec::new(),
+             module_id: CompilerNodeId::new(CompilerNodeKind::Module, "m"),
+             stdlib_delegations: Vec::new(),
++            sdk_nominal_declarations: Vec::new(),
++            sdk_callables: Vec::new(),
+             enum_declarations: Vec::new(),
+             static_declarations: Vec::new(),
+             nominal_declarations: Vec::new(),
+diff --git a/loaves/kernel/incan_semantics_core/src/executable_representation.rs b/loaves/kernel/incan_semantics_core/src/executable_representation.rs
+index 9da22460..23f6f6b2 100644
+--- a/loaves/kernel/incan_semantics_core/src/executable_representation.rs
++++ b/loaves/kernel/incan_semantics_core/src/executable_representation.rs
+@@ -962,6 +962,8 @@ mod tests {
+             trait_implementations: Vec::new(),
+             module_id: CompilerNodeId::module("lib"),
+             stdlib_delegations: Vec::new(),
++            sdk_nominal_declarations: Vec::new(),
++            sdk_callables: Vec::new(),
+             enum_declarations: Vec::new(),
+             static_declarations: Vec::new(),
+             nominal_declarations: Vec::new(),
+@@ -1377,6 +1379,7 @@ mod tests {
+             derives: vec![],
+             named_type_identities: Default::default(),
+             type_parameter_count: 0,
++            native_path: None,
+         });
+         let public = BTreeSet::from([identity("exported", 1), type_id.clone()]);
+         let bytes = publish(&module, &public)?;
+@@ -1508,6 +1511,7 @@ mod tests {
+             derives: vec![],
+             named_type_identities: Default::default(),
+             type_parameter_count: 0,
++            native_path: None,
+         });
+         let public = BTreeSet::from([identity("exported", 1), published_type.clone()]);
+         let bytes = publish(&input, &public)?;
+diff --git a/loaves/toolchain/incan-rustc-driver/src/adapter.rs b/loaves/toolchain/incan-rustc-driver/src/adapter.rs
+index 1a8274a6..10655e1b 100644
+--- a/loaves/toolchain/incan-rustc-driver/src/adapter.rs
++++ b/loaves/toolchain/incan-rustc-driver/src/adapter.rs
+@@ -148,7 +148,8 @@ impl rustc_driver::Callbacks for Callbacks {
+             }
+             krate.items.push(item);
+         }
+-        for model in &self.plan.models {
++        // A provider-crate nominal already exists in dependency metadata; only source nominals become items.
++        for model in self.plan.models.iter().filter(|model| model.native_path.is_empty()) {
+             let span = match sources.span(&model.span) {
+                 Ok(span) => span,
+                 Err(error) => compiler.sess.dcx().fatal(error.to_string()),
+@@ -203,8 +204,14 @@ impl rustc_driver::Callbacks for Callbacks {
+         rustc_driver::Compilation::Continue
+     }
+ 
+-    /// Verify admitted external signatures against canonical dependency metadata before any planned MIR is built.
++    /// Verify admitted external signatures and provider-crate nominal layouts against canonical dependency metadata
++    /// before any planned MIR is built.
+     fn after_expansion(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'_>) -> rustc_driver::Compilation {
++        for model in self.plan.models.iter().filter(|model| !model.native_path.is_empty()) {
++            if let Err(error) = crate::types::verify_provider_layout(tcx, model) {
++                refuse(tcx, error);
++            }
++        }
+         for external in &self.plan.externals {
+             let def = match callees::external(tcx, &external.path) {
+                 Ok(def) => def,
+diff --git a/loaves/toolchain/incan-rustc-driver/src/callees.rs b/loaves/toolchain/incan-rustc-driver/src/callees.rs
+index 12df6812..aa5d9ed5 100644
+--- a/loaves/toolchain/incan-rustc-driver/src/callees.rs
++++ b/loaves/toolchain/incan-rustc-driver/src/callees.rs
+@@ -56,6 +56,9 @@ fn generator_method(
+ }
+ 
+ /// Walk only public module children, rejecting nonfunction callees before constructing MIR.
++///
++/// A final segment after a struct names one of that struct's public inherent associated functions, which is how a
++/// provider-crate method or static method is reached by its projected symbol.
+ pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
+     let mut segments = path.split("::");
+     let root = segments.next().ok_or_else(|| PlanError::UnknownCallee(path.into()))?;
+@@ -66,22 +69,42 @@ pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
+         .ok_or_else(|| PlanError::UnknownCallee(path.into()))?;
+     let mut current = krate.as_def_id();
+     for segment in segments {
+-        if tcx.def_kind(current) != DefKind::Mod {
+-            return Err(PlanError::UnknownCallee(path.into()));
++        current = match tcx.def_kind(current) {
++            DefKind::Mod => tcx
++                .module_children(current)
++                .iter()
++                .find(|child| child.ident.name.as_str() == segment && child.vis.is_public())
++                .and_then(|child| child.res.opt_def_id()),
++            DefKind::Struct => inherent_function(tcx, current, segment),
++            _ => None,
+         }
+-        current = tcx
+-            .module_children(current)
+-            .iter()
+-            .find(|child| child.ident.name.as_str() == segment && child.vis.is_public())
+-            .and_then(|child| child.res.opt_def_id())
+-            .ok_or_else(|| PlanError::UnknownCallee(path.into()))?;
++        .ok_or_else(|| PlanError::UnknownCallee(path.into()))?;
+     }
+-    if tcx.def_kind(current) != DefKind::Fn {
++    if !matches!(tcx.def_kind(current), DefKind::Fn | DefKind::AssocFn) {
+         return Err(PlanError::UnknownCallee(path.into()));
+     }
+     Ok(current)
+ }
+ 
++/// Select one public inherent associated function of a nongeneric struct by its exact symbol.
++fn inherent_function(tcx: TyCtxt<'_>, owner: DefId, symbol: &str) -> Option<DefId> {
++    if tcx.generics_of(owner).count() != 0 {
++        return None;
++    }
++    let mut found = tcx
++        .inherent_impls(owner)
++        .iter()
++        .flat_map(|implementation| tcx.associated_item_def_ids(*implementation))
++        .copied()
++        .filter(|def| {
++            tcx.def_kind(*def) == DefKind::AssocFn
++                && tcx.item_name(*def).as_str() == symbol
++                && tcx.visibility(*def).is_public()
++        });
++    let selected = found.next()?;
++    found.next().is_none().then_some(selected)
++}
++
+ /// Instantiate explicit plan arguments after checking their count against the resolved metadata declaration.
+ pub fn arguments<'tcx>(
+     tcx: TyCtxt<'tcx>,
+diff --git a/loaves/toolchain/incan-rustc-driver/src/declarations.rs b/loaves/toolchain/incan-rustc-driver/src/declarations.rs
+index 2c4f356a..f6f06e3b 100644
+--- a/loaves/toolchain/incan-rustc-driver/src/declarations.rs
++++ b/loaves/toolchain/incan-rustc-driver/src/declarations.rs
+@@ -10,6 +10,17 @@ fn ident(name: &str, span: Span) -> Ident {
+     Ident::new(Symbol::intern(name), span)
+ }
+ 
++/// Name a plan nominal: a source item by its single identifier, or a provider-crate nominal by its checked
++/// `crate::module::Name` path, resolved through the explicit dependency closure.
++fn nominal_path(name: &str, span: Span) -> ast::Path {
++    let mut segments = name.split("::");
++    let mut path = ast::Path::from_ident(ident(segments.next().unwrap_or(name), span));
++    for segment in segments {
++        path.segments.push(ast::PathSegment::from_ident(ident(segment, span)));
++    }
++    path
++}
++
+ /// Declare the exact owned or borrowed runtime handle, leaving other plan types to their ordinary declaration path.
+ fn generator_signature_ty(kind: &PlanType, span: Span) -> Option<Box<ast::Ty>> {
+     let (name, leaf, depth, mutability) = match kind {
+@@ -146,7 +157,7 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
+                 PlanType::Model(_, name) | PlanType::Enum(_, name) => name.as_str(),
+                 _ => "bool",
+             };
+-            ast::TyKind::Path(None, ast::Path::from_ident(ident(name, span)))
++            ast::TyKind::Path(None, nominal_path(name, span))
+         }
+     };
+     Box::new(ast::Ty {
+diff --git a/loaves/toolchain/incan-rustc-driver/src/types.rs b/loaves/toolchain/incan-rustc-driver/src/types.rs
+index 619ea237..612e80f5 100644
+--- a/loaves/toolchain/incan-rustc-driver/src/types.rs
++++ b/loaves/toolchain/incan-rustc-driver/src/types.rs
+@@ -154,8 +154,13 @@ fn array_type<'tcx>(tcx: TyCtxt<'tcx>, element: Ty<'tcx>, count: i64) -> Result<
+     Ok(Ty::new_array(tcx, element, count))
+ }
+ 
+-/// Resolve a previously injected source model; no external nominal can enter by spelling alone.
++/// Resolve a previously injected source model, or a provider-crate nominal by its checked crate path.
++///
++/// A path name never falls back to a local item: it must walk public metadata to a nongeneric struct.
+ pub fn model_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Result<Ty<'tcx>, PlanError> {
++    if name.contains("::") {
++        return provider_nominal_type(tcx, name);
++    }
+     let definition = tcx
+         .hir_crate_items(())
+         .free_items()
+@@ -171,6 +176,66 @@ pub fn model_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Result<Ty<'tcx>, PlanE
+     Ok(tcx.type_of(definition).instantiate_identity().skip_normalization())
+ }
+ 
++/// Walk a provider crate's public module children to the exact nongeneric struct a native-path nominal names.
++fn provider_nominal_type<'tcx>(tcx: TyCtxt<'tcx>, path: &str) -> Result<Ty<'tcx>, PlanError> {
++    let missing = || PlanError::Invalid {
++        function: path.into(),
++        reason: "standard-library nominal is missing from the native dependency closure".into(),
++    };
++    let mut segments = path.split("::");
++    let root = segments.next().ok_or_else(missing)?;
++    let mut definition = tcx
++        .crates(())
++        .iter()
++        .find(|krate| tcx.crate_name(**krate).as_str() == root)
++        .map(|krate| krate.as_def_id())
++        .ok_or_else(missing)?;
++    for segment in segments {
++        if tcx.def_kind(definition) != rustc_hir::def::DefKind::Mod {
++            return Err(missing());
++        }
++        definition = tcx
++            .module_children(definition)
++            .iter()
++            .find(|child| child.ident.name.as_str() == segment && child.vis.is_public())
++            .and_then(|child| child.res.opt_def_id())
++            .ok_or_else(missing)?;
++    }
++    if tcx.def_kind(definition) != rustc_hir::def::DefKind::Struct || tcx.generics_of(definition).count() != 0 {
++        return Err(missing());
++    }
++    Ok(tcx.type_of(definition).instantiate_identity().skip_normalization())
++}
++
++/// Prove a provider-crate nominal's readable plan slots against its metadata: the same field count and, for every
++/// readable slot, the same name, public visibility and native type, so a field projection reads exactly that field.
++pub fn verify_provider_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration) -> Result<(), PlanError> {
++    let invalid = |reason: &str| PlanError::Invalid {
++        function: model.name.clone(),
++        reason: reason.into(),
++    };
++    let ty = provider_nominal_type(tcx, &model.native_path)?;
++    let rustc_middle::ty::Adt(adt, arguments) = ty.kind() else {
++        return Err(invalid("standard-library nominal is not a struct"));
++    };
++    let variant = adt.non_enum_variant();
++    if variant.fields.len() != model.fields.len() {
++        return Err(invalid("standard-library field layout differs from metadata"));
++    }
++    for ((field, public), declared) in model.fields.iter().zip(&model.field_public).zip(variant.fields.iter()) {
++        if !*public {
++            continue;
++        }
++        if declared.name.as_str() != field.name
++            || !declared.vis.is_public()
++            || declared.ty(tcx, arguments) != native_type(tcx, &field.ty)?
++        {
++            return Err(invalid("standard-library field differs from metadata"));
++        }
++    }
++    Ok(())
++}
++
+ /// Select the primitive leaf and wrap it in the standard Vec ADT once per retained list dimension.
+ fn list_type<'tcx>(tcx: TyCtxt<'tcx>, leaf: &ListLeaf, depth: i64) -> Result<Ty<'tcx>, PlanError> {
+     let mut element = collection_leaf_type(tcx, leaf)?;
+diff --git a/loaves/toolchain/incan-rustc-driver/src/validation.rs b/loaves/toolchain/incan-rustc-driver/src/validation.rs
+index f43ddce2..65905a51 100644
+--- a/loaves/toolchain/incan-rustc-driver/src/validation.rs
++++ b/loaves/toolchain/incan-rustc-driver/src/validation.rs
+@@ -412,6 +412,13 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
+                 }
+             };
+             let model = model(plan, owner).ok_or_else(|| invalid(function, "unknown model owner"))?;
++            let readable = usize::try_from(*slot)
++                .ok()
++                .and_then(|slot| model.field_public.get(slot))
++                .is_some_and(|public| *public);
++            if !model.native_path.is_empty() && !readable {
++                return Err(invalid(function, "standard-library field is not readable"));
++            }
+             let field = usize::try_from(*slot)
+                 .ok()
+                 .and_then(|slot| model.fields.get(slot))
+@@ -776,12 +783,13 @@ fn source_signature_type(ty: Scalar) -> bool {
+         )
+ }
+ 
+-/// Runtime signatures additionally admit shared text and slice views, whose regions metadata checking erases.
++/// Runtime signatures additionally admit shared text and slice views and nominal receiver references, whose regions
++/// metadata checking erases.
+ fn external_signature_type(ty: Scalar) -> bool {
+     source_signature_type(ty.clone())
+         || matches!(
+             ty,
+-            Scalar::StringRef | Scalar::StrRef | Scalar::StringSlice | Scalar::StrSlice | Scalar::EnumRef(_) | Scalar::ModelRef(_) | Scalar::GeneratorYieldRef(_, _)
++            Scalar::StringRef | Scalar::StrRef | Scalar::StringSlice | Scalar::StrSlice | Scalar::EnumRef(_) | Scalar::ModelRef(_) | Scalar::ModelMutRef(_) | Scalar::GeneratorYieldRef(_, _)
+         )
+ }
+ 
+@@ -1151,6 +1159,10 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
+     let mut names: BTreeSet<_> = plan.functions.iter().map(|function| &function.name).collect();
+     for (index, declaration) in plan.models.iter().enumerate() {
+         span(&declaration.span)?;
++        if !declaration.native_path.is_empty() {
++            validate_provider_nominal(declaration)?;
++            continue;
++        }
+         let tuple = declaration.fields.len() == 1 && declaration.fields[0].name == "0";
+         let derives_valid = if tuple {
+             declaration.derives == ["Debug", "Clone"] || declaration.derives == ["Debug", "Clone", "Copy"]
+@@ -1195,6 +1207,28 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
+     Ok(())
+ }
+ 
++/// A provider-crate nominal names itself by a `crate::module::Name` path; its slots keep their names, and a slot that
++/// is not readable carries a unit placeholder. The adapter proves readable slots against metadata before MIR exists.
++fn validate_provider_nominal(declaration: &crate::plan::ModelDeclaration) -> Result<(), PlanError> {
++    let segments: Vec<&str> = declaration.native_path.split("::").collect();
++    if declaration.name != declaration.native_path
++        || segments.len() < 2
++        || !segments.iter().all(|segment| identifier(segment))
++        || declaration.fields.len() != declaration.field_public.len()
++        || declaration
++            .fields
++            .iter()
++            .zip(&declaration.field_public)
++            .any(|(field, public)| !identifier(&field.name) || (!*public && field.ty != PlanType::Unit))
++    {
++        return Err(PlanError::Invalid {
++            function: declaration.name.clone(),
++            reason: "invalid standard-library nominal declaration".into(),
++        });
++    }
++    Ok(())
++}
++
+ /// Identify named sized carriers; ordinary scalars have no sized identity.
+ fn sized_numeric(ty: &Scalar) -> Option<Numeric> {
+     match ty {
+diff --git a/workspaces/docs-site/docs/contributing/reference/test_corpus_inventory.md b/workspaces/docs-site/docs/contributing/reference/test_corpus_inventory.md
+index cc3e0db2..30443ea4 100644
+--- a/workspaces/docs-site/docs/contributing/reference/test_corpus_inventory.md
++++ b/workspaces/docs-site/docs/contributing/reference/test_corpus_inventory.md
+@@ -192,7 +192,7 @@ The collector counts these in the text of each test function and of the file-loc
+ | `loaves/compiler/incan_driver/tests/mir_plan_contract_tests.rs` | 3 | 140 | 140 | keep | - | - | - | #1337 | checker 1, parser 1 | public Incan scalar native-plan contract and required sibling dependency boundary |
+ | `loaves/compiler/incan_driver/tests/native_driver_project_tests.rs` | 38 | 2188 | 2188 | keep | - | - | required | #1337 | run 37, checker 4 | Oven-built pinned native driver; scalar plan and real Body IR lowering; unchanged benchmark byte parity and opt-in census of every behavior fixture |
+ | `loaves/compiler/incan_driver/tests/native_driver_project_tests/census.rs` | 2 | 373 | 373 | keep | - | - | - | #1337 | - | Direct-route census refusal grouping and bounded process capture; route-independent measurement support |
+-| `loaves/compiler/incan_driver/tests/native_driver_project_tests/stdlib.rs` | 1 | 166 | 166 | keep | - | - | - | #1337 | run 1 | Direct-route standard-library builtins, carriers and provider-crate items compared byte for byte with legacy output |
++| `loaves/compiler/incan_driver/tests/native_driver_project_tests/stdlib.rs` | 1 | 274 | 274 | keep | - | - | - | #1337 | run 1 | Direct-route standard-library builtins, carriers and provider-crate items compared byte for byte with legacy output |
+ | `loaves/compiler/incan_driver/tests/protected_builtin_binding_tests.rs` | 3 | 141 | 141 | keep | - | - | - | #1561 | checker 3, parser 3 | lex/parse/typecheck only. |
+ | `loaves/compiler/incan_driver/tests/protected_generic_binding_tests.rs` | 2 | 106 | 106 | keep | - | - | - | #1561 | checker 2, parser 2 | lex/parse/typecheck only. |
+ | `loaves/compiler/incan_driver/tests/rust_caller_project_tests.rs` | 3 | 151 | 151 | keep | - | - | - | #1337 | run 3 | receipt-bound direct-rustc Rust caller facet integration, refusal, runtime, and identity coverage |
+@@ -1808,7 +1808,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
+ | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
+ |---|---:|---:|---:|---|---:|---:|---|---|---|---|
+ | `loaves/compiler/incan_frontend/src/api_metadata.rs` | 17 | 3778 | 944 | keep | - | - | - | #1561 | checker 17, parser 17 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
+-| `loaves/compiler/incan_frontend/src/body_ir.rs` | 2 | 1280 | 49 | keep | - | - | - | #1561 | - | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
++| `loaves/compiler/incan_frontend/src/body_ir.rs` | 2 | 1284 | 49 | keep | - | - | - | #1561 | - | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
+ | `loaves/compiler/incan_frontend/src/body_ir/stdlib_delegations.rs` | 1 | 139 | 28 | keep | - | - | - | #1337 | checker 1 | Canonical SDK Package forwarding proof rejects wrong owners and stale declaration spans without emitted spelling dispatch. |
+ | `loaves/compiler/incan_frontend/src/body_ir/tests/async_and_race.rs` | 15 | 412 | 412 | keep | - | - | - | #1561 | replacement 1 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+ | `loaves/compiler/incan_frontend/src/body_ir/tests/calls_and_arguments.rs` | 58 | 1633 | 1633 | keep | - | - | required | #1561 | parser 1 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+@@ -1847,7 +1847,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
+ | `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/rust_boundary.rs` | 44 | 2565 | 1457 | keep | - | - | - | #1561 | text 2, checker 44, parser 1 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
+ | `loaves/compiler/incan_frontend/src/typechecker/collect/stdlib_imports.rs` | 1 | 5064 | 32 | keep | - | - | - | #1561 | checker 1 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
+ | `loaves/compiler/incan_frontend/src/typechecker/identity_surface_tests.rs` | 8 | 284 | 284 | keep | - | - | - | #1561 | checker 8, parser 8 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
+-| `loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs` | 31 | 3257 | 1115 | keep | - | - | - | #1561 | parser 30 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
++| `loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs` | 31 | 3260 | 1115 | keep | - | - | - | #1561 | parser 30 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
+ | `loaves/compiler/incan_frontend/src/typechecker/tests/async_and_iteration.rs` | 60 | 1273 | 1273 | keep | - | - | - | #1561 | checker 43, parser 1 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+ | `loaves/compiler/incan_frontend/src/typechecker/tests/bounds_and_derives.rs` | 41 | 1280 | 1280 | keep | - | - | - | #1561 | checker 23, parser 13 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+ | `loaves/compiler/incan_frontend/src/typechecker/tests/builtin_collection_method_arity.rs` | 2 | 97 | 97 | keep | - | - | - | #1561 | checker 2 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+@@ -2530,11 +2530,11 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
+ | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
+ |---|---:|---:|---:|---|---:|---:|---|---|---|---|
+ | `loaves/kernel/incan_semantics_core/src/authority.rs` | 9 | 344 | 177 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
+-| `loaves/kernel/incan_semantics_core/src/body_ir.rs` | 32 | 4801 | 1095 | keep | - | - | - | #1561 | replacement 1 | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
++| `loaves/kernel/incan_semantics_core/src/body_ir.rs` | 32 | 4849 | 1097 | keep | - | - | - | #1561 | replacement 1 | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
+ | `loaves/kernel/incan_semantics_core/src/closure_digest.rs` | 12 | 430 | 226 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
+ | `loaves/kernel/incan_semantics_core/src/dependencies.rs` | 4 | 317 | 155 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
+ | `loaves/kernel/incan_semantics_core/src/emitted_symbol.rs` | 7 | 559 | 177 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
+-| `loaves/kernel/incan_semantics_core/src/executable_representation.rs` | 18 | 1637 | 747 | keep | - | - | - | #1561 | replacement 17 | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
++| `loaves/kernel/incan_semantics_core/src/executable_representation.rs` | 18 | 1641 | 751 | keep | - | - | - | #1561 | replacement 17 | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
+ | `loaves/kernel/incan_semantics_core/src/facts.rs` | 12 | 1494 | 408 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
+ | `loaves/kernel/incan_semantics_core/src/hir.rs` | 2 | 242 | 66 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
+ | `loaves/kernel/incan_semantics_core/src/namespace.rs` | 7 | 148 | 78 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |

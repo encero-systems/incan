@@ -1,0 +1,15 @@
+def label(nick: Option[str]) -> str:
+    match nick:
+        Some(value) => return value
+        None => return "anonymous"
+
+
+def main() -> None:
+    tags: Option[list[int]] = Some([1, 2])
+    match tags:
+        Some(values) => println(len(values))
+        None => println("no tags")
+    count: Option[int] = Some(3)
+    println(count.unwrap_or(0))
+    nick: Option[str] = Some("b")
+    println(label(nick))
