@@ -1141,6 +1141,32 @@ def main() -> None:
     for body in &module.bodies {
         assert!(module.body_has_canonical_direct_call_id(body));
     }
+    let mut adopter = module.clone();
+    adopter.trait_declarations.clear();
+    adopter.bodies.retain(|body| {
+        body.locals
+            .first()
+            .is_none_or(|local| local.ty != incan_semantics_core::IncanType::SelfType)
+    });
+    let mut provider = module.clone();
+    provider.nominal_declarations.clear();
+    provider.trait_implementations.clear();
+    provider.bodies.retain(|body| {
+        body.locals
+            .first()
+            .is_some_and(|local| local.ty == incan_semantics_core::IncanType::SelfType)
+    });
+    let project = [adopter.clone(), provider];
+    for implementation in &adopter.trait_implementations {
+        assert!(!adopter.is_well_formed_trait_implementation(implementation));
+        assert!(adopter.is_well_formed_project_trait_implementation(implementation, &project));
+        let mut tampered = implementation.clone();
+        tampered.method.origin = incan_semantics_core::SymbolOrigin::Builtin;
+        assert!(!adopter.is_well_formed_project_trait_implementation(&tampered, &project));
+        let mut tampered = implementation.clone();
+        tampered.method.declaration_span.end = source.len() + 1;
+        assert!(!adopter.is_well_formed_project_trait_implementation(&tampered, &project));
+    }
     let doubled = body_named(&module, "doubled")?;
     let required = module
         .trait_implementations
@@ -1182,5 +1208,26 @@ def main() -> None:
         })
         .ok_or("the mutable default must retain its method call")?;
     assert_eq!(target.canonical.as_ref(), Some(&bump.method));
+    Ok(())
+}
+
+/// Source defaults remain executable when the same owner adopts aliased compiler-provided protocols.
+#[test]
+fn source_trait_slots_exclude_compiler_provided_protocols() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "from std.derives.comparison import Eq as Comparable\nfrom std.serde.json import Serialize as Json\n\ntrait Reading:\n    def get(self) -> int: ...\n    def doubled(self) -> int:\n        return self.get() + self.get()\n\nmodel Counter with Reading, Comparable, Json:\n    value: int\n    def get(self) -> int:\n        return self.value\n    def __eq__(self, other: Counter) -> bool:\n        return self.value == other.value\n";
+    let module = build(source, &["m", "source_protocol_boundary"])?;
+    assert_eq!(
+        module.trait_implementations.len(),
+        2,
+        "{:#?}",
+        module.trait_implementations
+    );
+    for implementation in &module.trait_implementations {
+        assert!(matches!(
+            implementation.method.declaration_name.as_str(),
+            "get" | "doubled"
+        ));
+        assert!(module.is_well_formed_trait_implementation(implementation));
+    }
     Ok(())
 }

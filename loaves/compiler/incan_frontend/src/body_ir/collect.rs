@@ -508,12 +508,12 @@ pub(super) fn collect_local_trait_declarations(
         .collect()
 }
 
-/// Retain non-generic local trait slots and their checked concrete implementation identities.
+/// Retain non-generic visible trait slots and their checked concrete implementation identities.
 ///
-/// Successful typechecking already proves adoption and method compatibility. This registry retains only local,
-/// unambiguous method declarations with admitted owner layouts; imported, generic, and overloaded implementations never
-/// gain a guessed target. A refused checked newtype constructor cannot contribute an implementation without its owner
-/// layout.
+/// Successful typechecking already proves adoption and method compatibility. Imported default slots use the checker's
+/// retained identities and default-body facts; their executable bodies must still be supplied by the owning module.
+/// Generic and overloaded implementations never gain a guessed target. A refused checked newtype constructor cannot
+/// contribute an implementation without its owner layout.
 pub(super) fn collect_local_trait_implementations(
     program: &ast::Program,
     type_info: &TypeCheckInfo,
@@ -548,27 +548,24 @@ pub(super) fn collect_local_trait_implementations(
             if !adoption.node.type_args.is_empty() {
                 continue;
             }
-            let Some(trait_decl) = program.declarations.iter().find_map(|item| match &item.node {
-                ast::Declaration::Trait(trait_decl)
-                    if trait_decl.name == adoption.node.name && trait_decl.type_params.is_empty() =>
-                {
-                    Some(trait_decl)
-                }
-                _ => None,
-            }) else {
+            if !type_info
+                .traits
+                .type_params
+                .get(&adoption.node.name)
+                .is_some_and(Vec::is_empty)
+            {
                 continue;
-            };
-            for slot in &trait_decl.methods {
-                let Some(method) = type_info
-                    .traits
-                    .method_identities
-                    .get(&(trait_decl.name.clone(), slot.node.name.clone()))
-                else {
+            }
+            for ((trait_name, slot_name), method) in &type_info.traits.method_identities {
+                if trait_name != &adoption.node.name
+                    || !is_executable_source_trait_slot(method)
+                    || type_info.traits.sdk_method_identities.contains(method)
+                {
                     continue;
-                };
+                }
                 let candidates = methods
                     .iter()
-                    .filter(|candidate| candidate.node.name == slot.node.name)
+                    .filter(|candidate| candidate.node.name == *slot_name)
                     .collect::<Vec<_>>();
                 let implementation = match candidates.as_slice() {
                     [candidate] => type_info
@@ -576,7 +573,7 @@ pub(super) fn collect_local_trait_implementations(
                         .method_bindings_by_span
                         .get(&(candidate.span.start, candidate.span.end))
                         .and_then(|binding| binding.identity.as_ref()),
-                    [] if slot.node.body.is_some() => Some(method),
+                    [] if type_info.traits.default_method_identities.contains(method) => Some(method),
                     _ => None,
                 };
                 if let Some(implementation) = implementation {
@@ -589,5 +586,20 @@ pub(super) fn collect_local_trait_implementations(
             }
         }
     }
+    implementations.sort_by(|left, right| {
+        (&left.owner, &left.method, &left.implementation).cmp(&(&right.owner, &right.method, &right.implementation))
+    });
     implementations
+}
+
+/// Keep compiler-provided stdlib and Rust protocols out of executable source-trait dispatch records.
+///
+/// Their canonical methods describe protocol/derive contracts, not physical bodies supplied by project modules.
+/// Ordinary project and package source identities remain eligible; aliases never change this boundary.
+fn is_executable_source_trait_slot(identity: &incan_semantics_core::CanonicalSymbolId) -> bool {
+    match &identity.origin {
+        incan_semantics_core::SymbolOrigin::Module(path) => !incan_lang::lang::stdlib::is_any_stdlib_path(path),
+        incan_semantics_core::SymbolOrigin::Package { .. } => true,
+        incan_semantics_core::SymbolOrigin::Builtin | incan_semantics_core::SymbolOrigin::RustCrate(_) => false,
+    }
 }

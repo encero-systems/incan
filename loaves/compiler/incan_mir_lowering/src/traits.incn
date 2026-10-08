@@ -16,16 +16,39 @@ from models import model_type, model_place, place_type
 
 pub def specialize_traits(module: &BodyIrModule) -> Result[BodyIrModule, str]:
     """Instantiate open default receivers only for frontend-retained concrete implementations."""
+    mut result = retain_closed_bodies(module)
+    result = with_default_bodies(result, module, module)
+    return Ok(result)
+
+
+pub def specialize_project_traits(module: &BodyIrModule, modules: &list[BodyIrModule]) -> Result[BodyIrModule, str]:
+    """Close defaults for checked adopters across the project while retaining each body's canonical identity."""
+    mut result = retain_closed_bodies(module)
+    for adopter in modules:
+        result = with_default_bodies(result, module, adopter)
+    return Ok(result)
+
+
+def retain_closed_bodies(module: &BodyIrModule) -> BodyIrModule:
+    """Retain bodies whose receiver is already concrete before instantiating open defaults."""
     mut result = module.clone()
     result.bodies.clear()
     for body in module.bodies:
         if len(body.locals) == 0 or body.locals[0].ty != RustType.SelfType:
             result.bodies.push(body.clone())
+    return result
+
+
+def with_default_bodies(result: &BodyIrModule, module: &BodyIrModule, adopter: &BodyIrModule) -> BodyIrModule:
+    """Return a module with default instances selected by one adopter's exact checked implementation identities."""
+    mut selected = result.clone()
+    for body in module.bodies:
+        if len(body.locals) == 0 or body.locals[0].ty != RustType.SelfType:
             continue
-        for implementation in module.trait_implementations:
+        for implementation in adopter.trait_implementations:
             if body.canonical == Some(implementation.implementation):
-                result.bodies.push(specialize_body(body, str(implementation.owner.declaration_name)))
-    return Ok(result)
+                selected.bodies.push(specialize_body(body, str(implementation.owner.declaration_name)))
+    return selected
 
 
 def specialize_body(body: &Body, owner: str) -> Body:

@@ -10,8 +10,8 @@ use sha2::{Digest, Sha256};
 use crate::ast::{Expr, ParamKind, Span, Spanned, Visibility};
 use crate::library_exports::{CheckedParamDefault, CheckedPresetValue};
 use crate::symbols::{
-    CallableParam, FunctionOverloadInfo, ImplementationTypeParamInfo, NewtypePrimitiveConstraint, ResolvedType,
-    TypeBoundInfo,
+    CallableParam, FunctionOverloadInfo, ImplementationTypeParamInfo, MethodInfo, NewtypePrimitiveConstraint,
+    ResolvedType, TypeBoundInfo,
 };
 use crate::testing_markers::TestingFixtureScope;
 use incan_lang::interop::{CoercionPolicy, RustFunctionSig};
@@ -666,11 +666,30 @@ pub struct TraitArtifacts {
     /// so lowering cannot look them up in the current module's span-keyed declaration table. This checked map carries
     /// the already-resolved identity across that boundary without reconstructing it from either spelling.
     pub method_identities: HashMap<(String, String), CanonicalSymbolId>,
+    /// Canonical visible trait slots whose checked declaration supplies a default body, including imported traits.
+    /// Consumers still require that body's executable representation; this fact never supplies a missing body.
+    pub default_method_identities: HashSet<CanonicalSymbolId>,
+    /// Trait slots declared by the active compiled SDK providers, preserved through aliases and facade imports.
+    /// Their protocol contracts do not imply executable source bodies in the native project's module set.
+    pub sdk_method_identities: HashSet<CanonicalSymbolId>,
     /// Checked trait slots selected by calls on an open `Self` receiver, keyed by the whole call span.
     ///
     /// Body IR retains these declaration identities for concrete specialization. They remain separate from ordinary
     /// resolved call identities because legacy default expansion selects each adopter's implementation later.
     pub self_method_identities: HashMap<(usize, usize), CanonicalSymbolId>,
+}
+
+impl TraitArtifacts {
+    /// Retain a visible slot's identity and default-body availability together from checked method metadata.
+    pub(crate) fn record_method(&mut self, trait_name: &str, method_name: &str, method: &MethodInfo) {
+        if let Some(identity) = &method.identity {
+            self.method_identities
+                .insert((trait_name.to_owned(), method_name.to_owned()), identity.clone());
+            if method.has_body {
+                self.default_method_identities.insert(identity.clone());
+            }
+        }
+    }
 }
 
 /// Derive expansion metadata imported from dependency modules and manifests.

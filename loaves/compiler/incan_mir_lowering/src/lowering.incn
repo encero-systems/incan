@@ -238,6 +238,24 @@ pub type BodyStatementKind = rusttype RustStatementKind:
 
 pub def validate_module(module: &BodyIrModule) -> Result[int, str]:
     """Validate every retained declaration and body before consuming its facts."""
+    count = validate_declarations_and_bodies(module)?
+    for implementation in module.trait_implementations:
+        if not module.is_well_formed_trait_implementation(implementation):
+            return Err("invalid Body IR trait implementation identity")
+    return Ok(count)
+
+
+def validate_project_module(module: &BodyIrModule, modules: &list[BodyIrModule]) -> Result[int, str]:
+    """Validate local declarations and bodies, resolving trait links in their physical project owners."""
+    count = validate_declarations_and_bodies(module)?
+    for implementation in module.trait_implementations:
+        if not module.is_well_formed_project_trait_implementation(implementation, modules):
+            return Err("invalid Body IR trait implementation identity")
+    return Ok(count)
+
+
+def validate_declarations_and_bodies(module: &BodyIrModule) -> Result[int, str]:
+    """Check retained physical declarations and bodies without resolving cross-module trait links."""
     for declaration in module.static_declarations:
         if not module.is_well_formed_static_declaration(declaration):
             return Err("invalid Body IR static declaration")
@@ -253,9 +271,6 @@ pub def validate_module(module: &BodyIrModule) -> Result[int, str]:
     for declaration in module.value_enum_declarations:
         if not module.is_well_formed_value_enum_declaration(declaration):
             return Err("invalid Body IR value enum declaration identity")
-    for implementation in module.trait_implementations:
-        if not module.is_well_formed_trait_implementation(implementation):
-            return Err("invalid Body IR trait implementation identity")
     for body in module.bodies:
         if not module.body_has_canonical_direct_call_id(body):
             return Err("invalid Body IR body identity")
@@ -2425,7 +2440,7 @@ pub def lower_program(
     if len(sources) != len(modules) or len(files) != len(modules):
         return Err("invalid Body IR project source provenance")
     for module in modules:
-        _ = validate_module(module)?
+        _ = validate_project_module(module, modules)?
     source_context, checked = project_context(modules, entry)?
     context = specialize_nominals(source_context)?
     mut has_main = false

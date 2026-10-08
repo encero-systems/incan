@@ -461,8 +461,21 @@ mod tail;
 
 /// Compile one source through both routes and compare successful execution bytes against a fixed oracle.
 fn assert_native_legacy_bytes(name: &str, program: &str, stdout: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    assert_native_legacy_project_bytes(name, program, &[], stdout)
+}
+
+/// Compare both routes for a source project with explicit module files and one executable entry point.
+fn assert_native_legacy_project_bytes(
+    name: &str,
+    program: &str,
+    modules: &[(&str, &str)],
+    stdout: &[u8],
+) -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     let root = fixture.scratch(name)?;
+    for (file, contents) in modules {
+        fs::write(root.join(file), contents)?;
+    }
     let source = root.join(format!("{name}.incn"));
     fs::write(&source, program)?;
     let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
@@ -545,6 +558,20 @@ fn direct_route_borrowed_text_branches_match_legacy() -> Result<(), Box<dyn std:
         "borrowed_text_branches",
         "def compare(a: str, b: str) -> bool:\n    return not (a == \"x\" and b == \"y\")\n\ndef main() -> None:\n    println(compare(\"x\", \"y\"))\n    println(compare(\"p\", \"y\"))\n    println(compare(\"x\", \"q\"))\n    text = \"retained\"\n    println(bool(text) and bool(\"value\") and not bool(\"\"))\n    println(false and bool(\"skipped\"))\n    println(text)\n",
         b"false\ntrue\ntrue\ntrue\nfalse\nretained\n",
+    )
+}
+
+/// Imported non-generic trait defaults dispatch to the checked concrete adopter across source modules.
+#[test]
+fn direct_route_imported_trait_defaults_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    assert_native_legacy_project_bytes(
+        "imported_trait_defaults",
+        "from reading import Reading as Measure\nfrom std.derives.comparison import Eq as Comparable\nfrom std.serde.json import Serialize as Json\n\nmodel Counter with Measure, Comparable, Json:\n    value: int\n    def get(self) -> int:\n        return self.value\n    def __eq__(self, other: Counter) -> bool:\n        return self.value == other.value\n\ndef main() -> None:\n    value = Counter(value=7)\n    println(value.doubled())\n",
+        &[(
+            "reading.incn",
+            "pub trait Reading:\n    def get(self) -> int: ...\n    def doubled(self) -> int:\n        return self.get() + self.get()\n",
+        )],
+        b"14\n",
     )
 }
 

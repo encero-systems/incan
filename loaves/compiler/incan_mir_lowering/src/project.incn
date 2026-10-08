@@ -1,7 +1,7 @@
 """Shared declaration context for a project whose individual owning modules have been validated."""
 
 from rust::incan_semantics_core::body_ir import BodyIrModule
-from traits import specialize_traits
+from traits import specialize_project_traits
 
 
 pub def project_context(
@@ -21,7 +21,7 @@ pub def project_context(
     context.stdlib_delegations.clear()
     mut checked: list[BodyIrModule] = []
     for module in modules:
-        specialized = specialize_traits(module)?
+        specialized = specialize_project_traits(module, modules)?
         # The imported Rust type has Clone, but List.append cannot prove that trait for a named opaque value.
         # An explicit interop clone is an owned call result and retains the module for both planning views.
         checked.append(specialized.clone())

@@ -160,6 +160,18 @@ impl BodyIrModule {
     /// A default refers back to its own trait slot. An explicit implementation must belong to the concrete owner;
     /// matching method spellings never suffice to establish either relationship.
     pub fn is_well_formed_trait_implementation(&self, value: &crate::body_ir::TraitImplementation) -> bool {
+        self.is_well_formed_project_trait_implementation(value, std::slice::from_ref(self))
+    }
+
+    /// Validate a concrete trait slot using declarations and bodies in their physical project modules.
+    ///
+    /// The adopter must belong to this module. Imported trait slots and default bodies retain their own module's
+    /// canonical provenance; each is validated by that module before a cross-module link is accepted.
+    pub fn is_well_formed_project_trait_implementation(
+        &self,
+        value: &crate::body_ir::TraitImplementation,
+        modules: &[BodyIrModule],
+    ) -> bool {
         value.method.namespace == SymbolNamespace::Member
             && value.method.declaration_name == value.implementation.declaration_name
             && value.implementation.kind == SemanticSourceTargetKind::Method
@@ -167,21 +179,28 @@ impl BodyIrModule {
                 .nominal_declarations
                 .iter()
                 .any(|owner| owner.canonical == value.owner && self.is_well_formed_nominal_declaration(owner))
-            && self.trait_declarations.iter().any(|owner| {
-                self.declaration_id_for_canonical(
-                    owner,
-                    SymbolNamespace::OrdinaryLexical,
-                    SemanticSourceTargetKind::Trait,
-                )
-                .is_some()
-                    && owner.origin == value.method.origin
-                    && declares_member(owner, &value.method)
-                    && value.method.kind == SemanticSourceTargetKind::Method
+            && modules.iter().any(|module| {
+                module.trait_declarations.iter().any(|owner| {
+                    module
+                        .declaration_id_for_canonical(
+                            owner,
+                            SymbolNamespace::OrdinaryLexical,
+                            SemanticSourceTargetKind::Trait,
+                        )
+                        .is_some()
+                        && owner.origin == value.method.origin
+                        && declares_member(owner, &value.method)
+                        && value.method.kind == SemanticSourceTargetKind::Method
+                })
             })
-            && self.bodies.iter().any(|body| {
-                body.canonical.as_ref() == Some(&value.implementation)
-                    && self.body_has_canonical_direct_call_id(body)
-                    && (value.method == value.implementation || declares_member(&value.owner, &value.implementation))
+            && modules.iter().any(|module| {
+                module.bodies.iter().any(|body| {
+                    body.canonical.as_ref() == Some(&value.implementation)
+                        && module.body_has_canonical_direct_call_id(body)
+                        && (value.method == value.implementation
+                            || (value.owner.origin == value.implementation.origin
+                                && declares_member(&value.owner, &value.implementation)))
+                })
             })
     }
 
