@@ -2004,3 +2004,196 @@ def main() -> None:
         None,
     )
 }
+
+/// Supertrait slots dispatch to the body legacy expansion selects, proven where two candidates compete: the adopter's
+/// own method over a subtrait default, and the slot trait's own default over a subtrait default. Defaults that call a
+/// supertrait slot reach each adopter's implementation.
+#[test]
+fn direct_route_supertraits_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "supertraits",
+        r#"
+trait Named:
+    def name(self) -> str: ...
+
+
+trait Tag with Named:
+    def tag(self) -> str: ...
+
+    def loud(self) -> str:
+        """Call a slot of this trait from its default."""
+        return self.tag() + "!"
+
+    def size(self) -> int:
+        """Call a supertrait slot from a subtrait default."""
+        return len(self.tag()) + len(self.name())
+
+    def greet(self, other: Self) -> str:
+        """Call a supertrait slot on another value of the adopting type."""
+        return "hi " + other.name().upper()
+
+
+trait Root:
+    def label(self) -> str: ...
+
+    def show(self) -> str:
+        """Observe which body fills the label slot for each adopter."""
+        return "[" + self.label() + "]"
+
+
+trait Child with Root:
+    def label(self) -> str:
+        """Fill the supertrait slot for adopters without their own label."""
+        return "child"
+
+
+model Label with Tag:
+    text: str
+
+    def name(self) -> str:
+        """Implement the supertrait slot directly."""
+        return "label"
+
+    def tag(self) -> str:
+        """Implement the subtrait slot directly."""
+        return self.text
+
+
+model Plain with Child:
+    value: int
+
+
+class Custom with Child:
+    value: int
+
+    def label(self) -> str:
+        """Take the slot over from the subtrait default."""
+        return "own"
+
+
+trait Base:
+    def label(self) -> str:
+        """Fill this slot with the trait's own default."""
+        return "base"
+
+    def frame(self) -> str:
+        """Observe that the slot keeps its own default over a subtrait's."""
+        return "{" + self.label() + "}"
+
+
+trait Derived with Base:
+    def label(self) -> str:
+        """Refine the slot without taking it over from the supertrait default."""
+        return "derived"
+
+
+model Layered with Derived:
+    value: int
+
+
+def main() -> None:
+    """Dispatch every supertrait slot through concrete receivers."""
+    label = Label(text="x")
+    println(label.loud())
+    println(label.size())
+    println(label.greet(Label(text="y")))
+    println(label.name())
+    println(Plain(value=1).show())
+    println(Plain(value=1).label())
+    println(Custom(value=2).show())
+    println(Custom(value=2).label())
+    println(Layered(value=3).frame())
+"#,
+        b"x!\n6\nhi LABEL\nlabel\n[child]\nchild\n[own]\nown\n{base}\n",
+    )
+}
+
+/// A default of a trait with type parameters runs at each adopter's checked instantiation.
+#[test]
+fn direct_route_trait_type_parameters_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "trait_type_parameters",
+        r#"
+trait Holder[T]:
+    def get(self) -> T: ...
+
+    def pair(self) -> list[T]:
+        """Collect the slot's checked type parameter twice."""
+        return [self.get(), self.get()]
+
+    def first(self) -> T:
+        """Return the type parameter through a local."""
+        value: T = self.get()
+        return value
+
+
+trait Keyed[K] with Holder[K]:
+    def key(self) -> K:
+        """Reach the supertrait slot at the instantiation this subtrait passes on."""
+        return self.first()
+
+
+model Box with Holder[int]:
+    value: int
+
+    def get(self) -> int:
+        """Implement the slot at the adopted instantiation."""
+        return self.value
+
+
+class Name with Keyed[str]:
+    text: str
+
+    def get(self) -> str:
+        """Implement the supertrait slot at the subtrait's instantiation."""
+        return self.text
+
+
+def main() -> None:
+    """Instantiate each default for its adopter."""
+    box = Box(value=4)
+    items = box.pair()
+    println(len(items))
+    println(items[0] + items[1])
+    println(box.first())
+    name = Name(text="incan")
+    println(name.key())
+    println(len(name.pair()))
+    println(name.pair()[1])
+"#,
+        b"2\n8\n4\nincan\n2\nincan\n",
+    )
+}
+
+/// Compare a single-module program in the minimal project layout behavior fixtures run in, pinning its output.
+///
+/// The fixture harness runs a single-file program as `src/main.incn` of a minimal project through `incan run`, and
+/// that is the legacy reference. A standalone legacy build of the same file is not: it qualifies a call to a
+/// supertrait's method on a concrete adopter as `crate::main::Trait::method`, which only resolves in the project layout.
+fn check_project_case(name: &str, text: &str, expected_stdout: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch(name)?;
+    let main = support::cli_project::write_minimal_project(&root, name, "")?;
+    fs::write(&main, text)?;
+    let native = root.join("native");
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let mut command = corpus::source_command(
+        &fixture.driver_binary("release"),
+        &main,
+        &native,
+        &fixture.sysroot,
+        &closure,
+    );
+    command.current_dir(&root);
+    success(&command.output()?, "native project compilation");
+    let expected = support::repo_command()
+        .current_dir(&root)
+        .args(["run", "src/main.incn"])
+        .output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy project execution");
+    success(&actual, "native project execution");
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(actual.stdout, expected_stdout);
+    Ok(())
+}
