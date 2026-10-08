@@ -54,6 +54,16 @@ fn extern_delegation(
     })
 }
 
+/// A refusal for a declaration whose binding a user-defined decorator chain replaced (RFC 036), or `None`.
+///
+/// The checker rebinds the decorated name to the callable the chain returns, initialized once before `main`. Body IR
+/// has no representation for that binding: a call through the name still targets this declaration's own body. Lowering
+/// the body would run the undecorated function and skip the decorator's effects, so the declaration refuses by name
+/// until the rebinding is represented.
+fn decorator_rebinding(rebound: bool, name: &str) -> Option<Result<bir::ExternDelegation, String>> {
+    rebound.then(|| Err(format!("declaration `{name}` rebound by a user-defined decorator")))
+}
+
 /// Lower a declaration's statements, unless it is an `@rust.extern` whose `...` placeholder must not become code.
 ///
 /// An ordinary body returns its trailing expression when it has a value-returning type (#2025). Returns the body's
@@ -136,9 +146,15 @@ pub(super) fn lower_function_body(
     builder
         .borrowed_parameters
         .extend(params.iter().filter(|param| param.mutable).map(|param| param.local));
+    let rebound = lowering_facts
+        .type_info
+        .declarations
+        .decorated_function_bindings_by_span
+        .contains_key(&(decl_span.start, decl_span.end));
     let (stmts, extern_delegation) = lower_declaration_statements(
         &mut builder,
-        extern_delegation(&function.decorators, &function.name, lowering_facts),
+        decorator_rebinding(rebound, &function.name)
+            .or_else(|| extern_delegation(&function.decorators, &function.name, lowering_facts)),
         &function.body,
         root_scope,
         hir_span(decl_span),
@@ -301,9 +317,15 @@ pub(super) fn lower_method_body(
             .filter(|param| param.mutable && param.name != "self")
             .map(|param| param.local),
     );
+    let rebound = lowering_facts
+        .type_info
+        .declarations
+        .decorated_method_bindings
+        .contains_key(&(owner_name.to_string(), method.name.clone()));
     let (stmts, extern_delegation) = lower_declaration_statements(
         &mut builder,
-        extern_delegation(&method.decorators, &method.name, lowering_facts),
+        decorator_rebinding(rebound, &method.name)
+            .or_else(|| extern_delegation(&method.decorators, &method.name, lowering_facts)),
         body_stmts,
         root_scope,
         hir_span(decl_span),
