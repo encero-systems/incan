@@ -1,0 +1,8 @@
+from pub::facade import build, Item, Mode
+
+
+def main() -> None:
+  item = Item(label="boundary")
+  print(item.label)
+  print(build(1))
+  print(Mode.Fast)

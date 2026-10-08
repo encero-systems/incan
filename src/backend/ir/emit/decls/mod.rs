@@ -603,13 +603,13 @@ impl<'a> IrEmitter<'a> {
                 } else {
                     false
                 };
+            // The leading-underscore convention marks a declaration the stdlib keeps to itself, and it is a property
+            // of the *source* spelling. `emitted_binding_name()` is the RFC 120 projection for anything projected,
+            // and every projection begins with `__`, so reading privacy from it classified each projected stdlib
+            // export as private. Functions are projected and types are not, which is why a facade kept its types and
+            // silently dropped its functions.
             let should_reexport_item = |item: &super::super::decl::IrImportItem| {
-                let binding = if item.is_static {
-                    item.source_binding_name().to_string()
-                } else {
-                    item.emitted_binding_name()
-                };
-                if is_incan_source_stdlib && binding.starts_with('_') {
+                if is_incan_source_stdlib && item.source_binding_name().starts_with('_') {
                     return false;
                 }
                 export_item_import || item.force_reexport
@@ -622,12 +622,13 @@ impl<'a> IrEmitter<'a> {
                     } else {
                         item.emitted_binding_name()
                     };
-                    let private_type_like_binding = binding
+                    let source_binding = item.source_binding_name();
+                    let private_type_like_binding = source_binding
                         .trim_start_matches('_')
                         .chars()
                         .next()
                         .is_some_and(|ch| ch.is_ascii_uppercase());
-                    if is_incan_source_stdlib && binding.starts_with('_') && !private_type_like_binding {
+                    if is_incan_source_stdlib && source_binding.starts_with('_') && !private_type_like_binding {
                         return self.should_emit_import_binding(&binding)
                             || self.should_emit_extension_trait_import(&binding);
                     }
