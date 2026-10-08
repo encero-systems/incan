@@ -112,7 +112,7 @@ pub(super) fn lower_function_body(
         .map(|parameter| parameter.name.clone())
         .collect();
     let owner_return_type = binding
-        .map(|binding| semantic_type_from_resolved(&binding.return_type))
+        .map(|binding| parameter_types::checked_semantic_type(&binding.return_type, lowering_facts.type_info))
         .map(|ty| parameter_types::retain_parameter_type(ty, &type_parameters))
         .unwrap_or(IncanType::Unknown);
 
@@ -261,7 +261,7 @@ pub(super) fn lower_method_body(
     let mut type_parameters = owner_parameter_names(receiver_ty, owner_name, lowering_facts.type_info);
     type_parameters.extend(method.type_params.iter().map(|parameter| parameter.name.clone()));
     let owner_return_type = binding
-        .map(|binding| semantic_type_from_resolved(&binding.return_type))
+        .map(|binding| parameter_types::checked_semantic_type(&binding.return_type, lowering_facts.type_info))
         .map(|ty| parameter_types::retain_parameter_type(ty, &type_parameters))
         .unwrap_or(IncanType::Unknown);
 
