@@ -219,3 +219,22 @@ def main() -> None:
     assert!(!actual.status.success());
     Ok(())
 }
+
+/// A union with a list member keeps legacy's payload identity, injects either member and tests its tag.
+#[test]
+fn list_union_member_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_case(
+        "list_union_member",
+        r#"
+def probe(value: int | List[int]) -> bool:
+    println("checked")
+    return isinstance(value, int)
+
+def main() -> None:
+    println(probe(1))
+    println(probe([1, 2]))
+    items: List[int] = [3]
+    println(probe(items))
+"#,
+    )
+}
