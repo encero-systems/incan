@@ -2744,3 +2744,44 @@ def main() -> None:
         None,
     )
 }
+
+/// Model list fields use legacy index and slice semantics while preserving their owner and copied results.
+#[test]
+fn model_list_projection_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "model_list_projections",
+        r#"
+model Bucket:
+    values: list[int]
+    words: list[str]
+    rows: list[list[int]]
+
+    def last(self) -> int:
+        return self.values[-1]
+
+def bound(label: str, value: int) -> int:
+    println(label)
+    return value
+
+def main() -> None:
+    bucket = Bucket(values=[40, 2, 7, 9], words=["first", "second"], rows=[[1, 2], [3, 4]])
+    println(bucket.values[0])
+    println(bucket.last())
+    println(bucket.values[bound("index", -2)])
+    println(bucket.values[bound("start", 0):bound("end", 3):bound("step", 2)])
+    println(bucket.values[:])
+    println(bucket.values[::-1])
+    println(bucket.values[-3:-1])
+    println(bucket.values[50:100])
+    println(bucket.words[0])
+    mut copied = bucket.words[:1]
+    copied[0] = "changed"
+    println(copied)
+    println(bucket.words)
+    println(bucket.rows[1][-1])
+    println(bucket.rows[:1])
+    println(bucket.values)
+"#,
+        None,
+    )
+}

@@ -77,21 +77,34 @@ pub def model_place(
     span: SourceSpan,
 ) -> Result[Place, str]:
     """Require every checker-selected field identity before projecting its retained canonical layout."""
+    return model_prefix(declarations, locals, value, len(value.projection), span)
+
+
+pub def model_prefix(
+    declarations: list[NominalDeclaration],
+    locals: list[Local],
+    value: &RustPlace,
+    count: int,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Project a checked leading field path without copying or changing the frontend place."""
+    if count < 0 or count > len(value.projection):
+        return Err("invalid Body IR model field prefix length")
     match value.local_id():
         None => return Err("unsupported Body IR global place")
         Some(local) =>
             index = int(local.index()) + 1
             match receiver_owner(locals[index].ty):
                 Some((owner, name)) =>
-                    if len(value.projection) == 0:
+                    if count == 0:
                         return Ok(
                             Place(local=index, projection=Projection.Deref(PlanType.Model(owner, name)), span=span),
                         )
-                    return receiver_field(declarations, index, owner, value, span)
+                    return receiver_field(declarations, index, owner, value, count, span)
                 None => pass
-            if len(value.projection) == 0:
+            if count == 0:
                 return Ok(Place(local=index, projection=Projection.Whole, span=span))
-            fields = field_path(declarations, locals[index].ty, value)?
+            fields = field_path(declarations, locals[index].ty, value, count)?
             if len(fields) == 1:
                 slot = fields[0].slot
                 ty = fields[0].ty
@@ -103,11 +116,13 @@ def field_path(
     declarations: list[NominalDeclaration],
     root: PlanType,
     value: &RustPlace,
+    count: int,
 ) -> Result[list[FieldProjection], str]:
     """Resolve each field against its actual nominal or tuple owner; indices and slices keep their refusal."""
     mut ty = root
     mut fields: list[FieldProjection] = []
-    for projection in value.projection:
+    for position in range(count):
+        projection = value.projection[position]
         mut slot = 0
         match ty:
             PlanType.Model(owner, _name) =>
@@ -195,10 +210,11 @@ def receiver_field(
     index: int,
     owner: int,
     value: &RustPlace,
+    count: int,
     span: SourceSpan,
 ) -> Result[Place, str]:
     """Project a checked field path through a shared or mutable nominal receiver."""
-    fields = field_path(declarations, PlanType.Model(owner, declarations[owner].name), value)?
+    fields = field_path(declarations, PlanType.Model(owner, declarations[owner].name), value, count)?
     if len(fields) == 1:
         slot = fields[0].slot
         ty = fields[0].ty
