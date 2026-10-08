@@ -144,7 +144,7 @@ from unions import (
     union_projection,
     union_injection,
 )
-from tuples import is_tuple_type, tuple_has_owners, tuple_aggregate, clone_tuple_operand, display_tuple
+from tuples import is_tuple_type, tuple_has_owners, tuple_aggregate, clone_tuple_operand, display_tuple, tuple_fields
 from text_plan import format_parts, clone_text, owned_literal
 from options import (
     intrinsic_declarations,
@@ -173,6 +173,7 @@ from numerics import (
 )
 from builtins import scalar_builtin, list_call, emit_boolean_operator, emit_power_operator
 from strings import text_helper, emit_text_helper, text_helper_arity
+from patterns import pattern_tests
 from frame import (
     place_type,
     Builder,
@@ -4245,6 +4246,9 @@ def lower_enum_match(
         RustOperand.Place(read) =>
             source = scalar_place(builder, read.place, span)?
         _ => return Err("unsupported Body IR nonplace enum match scrutinee")
+    match place_type(builder.locals, source):
+        PlanType.Enum(_owner, _name) => pass
+        _ => return lower_structural_match(module, builder, target, source, arms, span)
     owner = enum_owner(place_type(builder.locals, source))?
     raw_tag = temporary(builder, PlanType.EnumTag, span)
     tag = temporary(builder, PlanType.Int, span)
@@ -4306,6 +4310,104 @@ def lower_enum_match(
     ty = place_type(builder.locals, target)
     if reaches_join and (ty == PlanType.String or is_nominal_type(ty) or is_owned_collection(ty)):
         builder.owned.append(target.local)
+    return Ok(None)
+
+
+def lower_structural_match(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: Place,
+    source: Place,
+    arms: &list[RustMatchArm],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Dispatch primitive and flat tuple patterns in source order with branch-local owned bindings."""
+    source_type = place_type(builder.locals, source)
+    if source_type not in [PlanType.Int, PlanType.Float, PlanType.Bool, PlanType.Unit, PlanType.String] and not is_tuple_type(
+        source_type,
+    ):
+        return Err("unsupported Body IR nonprimitive structural match scrutinee")
+    result_type = place_type(builder.locals, target)
+    join = builder.new_block(span)
+    owners = builder.owned
+    mut reaches_join = false
+    for arm in arms:
+        if arm.guard.is_some():
+            return Err("unsupported Body IR guarded structural match")
+        selected = builder.new_block(span)
+        next_arm = builder.new_block(span)
+        pattern_tests(builder, source, arm.pattern, selected, next_arm, span)?
+        builder.current = selected
+        bind_structural_pattern(builder, source, arm.pattern, span)?
+        lower_enum_arm_body(module, builder, arm)?
+        if not builder.closed[builder.current]:
+            reaches_join = true
+            value = boundary_operand(builder, arm.result, result_type, span)?
+            track_rvalue_moves(builder, RvalueKind.Use(value))
+            builder.emit(plan_assign(target, RvalueKind.Use(value), span))
+            release_match_scratch(builder, owners, span)
+            if builder.owned != owners:
+                return Err("unsupported Body IR structural match branch ownership change")
+            finish_fallthrough(builder, join, span)
+        builder.current = next_arm
+        builder.owned = owners
+    builder.finish(TerminatorKind.Unreachable, span)
+    builder.current = join
+    builder.closed[join] = not reaches_join
+    builder.owned = owners
+    if reaches_join and (result_type == PlanType.String or tuple_has_owners(result_type) or is_nominal_type(result_type) or is_owned_collection(
+        result_type,
+    )):
+        builder.owned.append(target.local)
+    return Ok(None)
+
+
+def release_match_scratch(mut builder: Builder, incoming: list[int], span: SourceSpan) -> None:
+    """Release branch-local bindings and literal materializations without dropping incoming owners."""
+    owners = builder.owned
+    for local in owners:
+        if local not in incoming:
+            drop_owned(builder, local, span)
+
+
+def bind_structural_pattern(
+    mut builder: Builder,
+    source: Place,
+    pattern: &RustPattern,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Initialize arm-scoped locals only after every component of the pattern matched."""
+    match pattern:
+        RustPattern.Var(binding) =>
+            local = int(binding.local.index()) + 1 + builder.local_offset
+            ty = place_type(builder.locals, source)
+            if builder.locals[local].ty != ty:
+                return Err("invalid Body IR structural pattern binding carrier")
+            mut value = read_place(source, false, span)
+            match binding.fact:
+                OwnershipFact.Unknown => return Err("unsupported Body IR pattern binding ownership Unknown")
+                OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable pattern binding")
+                _ => pass
+            if ty == PlanType.String:
+                cloned = clone_text(builder, source, span)?
+                value = read_place(cloned, true, span)
+            else:
+                if is_tuple_type(ty):
+                    value = clone_tuple_operand(builder, source, span)?
+            track_rvalue_moves(builder, RvalueKind.Use(value))
+            builder.emit(plan_assign(plan_place(local, span), RvalueKind.Use(value), span))
+            if ty == PlanType.String or tuple_has_owners(ty):
+                builder.owned.append(local)
+        RustPattern.Tuple(items) =>
+            ty = place_type(builder.locals, source)
+            fields = tuple_fields(source, ty, span)?
+            if len(fields) != len(items):
+                return Err("invalid Body IR tuple pattern binding layout")
+            for index in range(len(items)):
+                bind_structural_pattern(builder, fields[index], items[index], span)?
+        RustPattern.Wildcard => pass
+        RustPattern.Literal(_value) => pass
+        _ => return Err("unsupported Body IR structural pattern binding")
     return Ok(None)
 
 
