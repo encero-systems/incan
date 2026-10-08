@@ -64,14 +64,30 @@ The repository suite has one explicit preparation boundary and one Cargo-guarded
 
 The publisher's one Cargo compilation is the third-party foundation every suite root links, and it is reused by its own key across compiler edits (see [Oven Alpha](../../tooling/explanation/oven_alpha.md) for why). To confirm a reuse, read the bake report: `compiler_suite.prepare.foundation.selection` is `reused-from-store` or `reused-from-mirror` and `compiler_suite.prepare.timing.foundation_build_elapsed_ms` is `0`; a cold or changed foundation reports `built` with its build time. The text report prints the same on its `Third-party foundation:` line. A mirror on `INCAN_OVEN_MIRRORS` is consulted after the local compiler-suite store and before Cargo.
 
-The Makefile owns only this command composition. Oven owns Loaf identity, contents, admission, storage policy, selection, root inventory, and reporting. `make test-one TEST_ROOT=loaves/toolchain/incan-cli/tests/cli_surface_tests.rs` is the fast failure-isolation path; `make test-oven` is the complete local gate. Both pin the explicit publisher to `nightly-2026-03-24`, while the consumer remains direct `rustc`.
+The Makefile owns only this command composition. Oven owns Loaf identity, contents, admission, storage policy, selection, root inventory, and reporting. `make test-oven` is the complete local gate and pins its explicit publisher to `nightly-2026-03-24`, while its consumer remains direct `rustc`.
 
 ```bash
 cargo build -p incan-cli -p incan-lsp
 INCAN_TEST_COMPILER_ALREADY_BUILT=1 make test-prewarm-oven-loafs
-make test-one TEST_ROOT=loaves/toolchain/incan-cli/tests/cli_surface_tests.rs
 make test-oven
 ```
+
+### Measure an authored native test root
+
+Use `make test-one` for a Rust test root with a sibling `<root-name>.loaf.toml` dependency declaration. The native-driver conformance root has this declaration. Make builds the compiler and LSP with Cargo, then guards Cargo out of SDK preparation and test execution. SDK preparation uses the committed `workspaces/oven/compiler-suite-native.json` graph and its pinned registry lock; receipt-verified neighboring native stores can supply cached outputs. It publishes the standard-library family in debug mode. This selected-root path does not prepare the legacy compiler-suite envelope.
+
+```bash
+INCAN_SDK_NATIVE_BLOBS=/path/to/admitted/sha256 \
+INCAN_SDK_NATIVE_INDEX=/path/to/incan.pub-index \
+INCAN_OVEN_BAKE_PROFILES=debug \
+make test-one \
+  TEST_ROOT=loaves/compiler/incan_driver/tests/native_driver_project_tests.rs \
+  TEST_EXACT=plain_model_output_matches_legacy
+```
+
+To measure the direct-route census, use the same command with `TEST_EXACT=direct_route_fixture_census` and set `INCAN_CENSUS_OUT` to the desired evidence directory. Naming an ignored case executes that case; the runner verifies every exact name against the compiled binary's inventory. Without `TEST_EXACT`, it executes the declared complete root with the normal ignored-case policy. A root without an authored sibling declaration refuses rather than entering the Cargo publisher.
+
+Run again without changing the sources, toolchain, graph or native inputs. Make prints separate `compiler-bootstrap` and `native-sdk-and-stdlib-family` phase times. The native closure report under `incan_test_oven_home/cache/providers/sdk-v2/.native/closure-report.json` records compiled, reused, refused and failed units. An unchanged prepared closure must report zero compiled units before it counts as complete reuse. The test report records native plan selection, test compilation, inventory and execution time, along with nested fixture-command timings. Make retains `native-test-report.json` and `native-test-cargo-guard.log` below the target directory. Set `INCAN_TEST_OVEN_TEST_ONE_REPORT` to retain an additional report and transcript archive; without it successful disposable output is reclaimed. Check the SDK guard at `sdk-cargo-guard/invocations.log` below the selected target directory as well as the retained test guard. Keep bootstrap Cargo use separate from both guarded phases.
 
 For retained timing evidence, run the baker command shown by `make -n test-prewarm-oven-loafs`, then the replay command shown by `make -n test-oven`, using fresh task-specific evidence directories. Put a Cargo executable that records its arguments and exits 97 first on `PATH` only for the `compiler-libtests` command. Record these phases independently:
 

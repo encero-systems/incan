@@ -34,10 +34,10 @@ use oven_rustc::loaf::{
     resolve_compiler_owned_loaf_by_identity, resolve_compiler_owned_loaf_for_registry_dependencies,
 };
 use oven_rustc::rustc::{
-    OvenLoadedProjectInspectionAuthority, OvenProjectInspectionConstituent, load_project_inspection_authority,
-    resolve_active_rustc, rustc_host_target, rustc_identity,
+    OvenLoadedProjectInspectionAuthority, OvenProjectInspectionConstituent, OvenRustcError,
+    load_project_inspection_authority, resolve_active_rustc, rustc_host_target, rustc_identity,
 };
-use oven_store::store::{OvenArtifactKind, OvenStore};
+use oven_store::store::{OvenArtifactKind, OvenStore, OvenStoreError};
 
 /// Restore and validate the portable package handoff carried by reused library outputs.
 fn restore_reused_library_package(
@@ -200,6 +200,16 @@ fn release_loaf_constituents_available(constituents: &[OvenProjectInspectionCons
     Ok(true)
 }
 
+/// Treat a missing whole store entry as a cache miss while preserving missing files and all integrity failures.
+///
+/// Inspection authorities outlive inactive constituents under bounded-store pruning. An explicit bake may republish
+/// an evicted constituent; it must not use that recovery path for damaged contents of an entry that still exists.
+fn inspection_constituent_was_evicted(store: &OvenStore, error: &OvenRustcError) -> bool {
+    matches!(error, OvenRustcError::Store(OvenStoreError::Io { path, source })
+        if source.kind() == std::io::ErrorKind::NotFound
+            && path.parent() == Some(store.root().join("entries").as_path()))
+}
+
 /// Return a previously baked project report only when every discovered target/profile remains exact.
 ///
 /// Any stale, absent, or malformed evidence returns a cache miss so the explicit baker can repair it. Selection
@@ -320,14 +330,17 @@ pub fn try_reuse_baked_project(
     {
         return Ok(None);
     }
-    let authority = load_project_inspection_authority(
+    let authority = match load_project_inspection_authority(
         store,
         &authority_ref,
         &baked_project_owner_identity(project_root)?,
         &source_authority_digest,
         INCAN_VERSION,
-    )
-    .map_err(|error| CliError::failure(error.to_string()))?;
+    ) {
+        Ok(authority) => authority,
+        Err(error) if inspection_constituent_was_evicted(store, &error) => return Ok(None),
+        Err(error) => return Err(CliError::failure(error.to_string())),
+    };
     // A cache candidate whose release Loaf the active toolchain no longer ships is a miss, not a fault: the
     // installed family changed underneath a still-valid local receipt (#1444), and an explicit bake exists to
     // refresh exactly that. Corrupt or mismatched authority still fails below, where the candidate is validated.
@@ -649,6 +662,40 @@ mod tests {
     use super::*;
     use oven_rustc::rustc::OvenProjectInspectionConstituent;
     use oven_store::store::OvenArtifactKind;
+
+    /// Policy-evicted constituents decline reuse; a missing file inside an admitted entry still fails closed.
+    #[test]
+    fn evicted_inspection_constituent_declines_cache_reuse() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            directory.path(),
+            oven_store::store::OvenStoreLimits::new(1024, 1024, 1024),
+        );
+        let identity = format!("sha256:{}", "0".repeat(64));
+        let error = store
+            .select_payloads_for_execution(std::slice::from_ref(&identity))
+            .err()
+            .ok_or("missing constituent unexpectedly selected")?;
+        assert!(inspection_constituent_was_evicted(
+            &store,
+            &OvenRustcError::Store(error)
+        ));
+        let damaged = OvenRustcError::Store(OvenStoreError::Io {
+            path: directory
+                .path()
+                .join("entries")
+                .join("sha256-missing")
+                .join("manifest.json"),
+            source: std::io::Error::from(std::io::ErrorKind::NotFound),
+        });
+        assert!(!inspection_constituent_was_evicted(&store, &damaged));
+        let denied = OvenRustcError::Store(OvenStoreError::Io {
+            path: directory.path().join("entries").join("sha256-missing"),
+            source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        });
+        assert!(!inspection_constituent_was_evicted(&store, &denied));
+        Ok(())
+    }
 
     /// A release Loaf the active toolchain does not provide reads as unavailable, while an authority made only of
     /// stored outputs has no release Loaf to be unavailable in the first place.

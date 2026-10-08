@@ -19,6 +19,11 @@ INCAN_TEST_CARGO_BUILD_JOBS ?= $(shell n=$$(( $(INCAN_HOST_CPUS) * 3 / 4 )); if 
 INCAN_TEST_GENERATED_CARGO_TARGET_DIR ?= $(TARGET_DIR)/incan_generated_shared_target
 INCAN_TEST_SDK_PROVIDER_STORE ?= $(TARGET_DIR)/incan_test_sdk_provider_store
 INCAN_TEST_SDK_PROVIDER_PATH_FILE ?= $(TARGET_DIR)/incan_test_sdk_provider_path
+# Fresh target directories can import receipt-verified native outputs from neighboring test/lane stores. These are
+# caches, never resolution authority; the committed compiler graph below supplies the immutable index selection.
+INCAN_TEST_NATIVE_MIRRORS ?= $(shell for candidate in $(abspath $(dir $(TARGET_DIR)))/*/home/cache/providers/sdk-v2/.native/store $(abspath $(dir $(TARGET_DIR)))/*/incan_test_oven_home/cache/providers/sdk-v2/.native/store $(abspath $(dir $(TARGET_DIR)))/*/incan_test_sdk_provider_store/.native/store; do if [ -d "$$candidate/entries" ]; then printf '%s\n' "$$candidate"; fi; done | paste -sd : -)
+INCAN_OVEN_MIRRORS ?= $(INCAN_TEST_NATIVE_MIRRORS)
+INCAN_TEST_NATIVE_COMPILER_GRAPH ?= $(CURDIR)/workspaces/oven/compiler-suite-native.json
 INCAN_TEST_OVEN_HOME ?= $(TARGET_DIR)/incan_test_oven_home
 # Receipt-addressed fixture units survive compiler rebuilds and sibling workspace invocations.
 INCAN_TEST_OVEN_FIXTURE_HOME ?= $(abspath $(dir $(TARGET_DIR))/incan-oven-fixture-home)
@@ -73,6 +78,8 @@ INCAN_TEST_SUITE_TOOLCHAIN ?= 1.98.0
 # Directories whose executables own the C toolchain a recorded native-link fact names (the macOS Command Line Tools).
 INCAN_OVEN_LINK_OWNERS ?= $(if $(filter Darwin,$(shell uname -s)),/Library/Developer/CommandLineTools,)
 TEST_ENV = CARGO_BUILD_JOBS=$(INCAN_TEST_CARGO_BUILD_JOBS) \
+	INCAN_OVEN_MIRRORS="$(INCAN_OVEN_MIRRORS)" \
+	INCAN_SDK_NATIVE_COMPILER_GRAPH="$(INCAN_TEST_NATIVE_COMPILER_GRAPH)" \
 	INCAN_TEST_TMP_ROOT="$(abspath $(INCAN_TEST_TMP_ROOT))" \
 	INCAN_GENERATED_CARGO_TARGET_DIR="$(INCAN_TEST_GENERATED_CARGO_TARGET_DIR)" \
 	INCAN_INTERNAL_SDK_PROVIDER_STORE="$(INCAN_TEST_SDK_PROVIDER_STORE)" \
@@ -510,21 +517,31 @@ test: test-oven
 .PHONY: test-prewarm-sdk
 test-prewarm-sdk:
 	@echo "\033[1mPrewarming compiled SDK providers...\033[0m"
-	@if [ "$(INCAN_TEST_COMPILER_ALREADY_BUILT)" = "1" ]; then \
+	@set -e; phase_started="$$(date +%s)"; \
+	if [ "$(INCAN_TEST_COMPILER_ALREADY_BUILT)" = "1" ]; then \
 		test -x "$(TARGET_DIR)/debug/incan"; \
 	else \
 		$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_PREWARM_TOOLCHAIN)" cargo build -p incan-cli -p incan-lsp; \
-	fi
+	fi; \
+	echo "incan-test-setup-timing phase=compiler-bootstrap seconds=$$(( $$(date +%s) - phase_started ))"
 	@test -n "$(INCAN_SDK_NATIVE_BLOBS)" -a -n "$(INCAN_SDK_NATIVE_INDEX)" || { \
 		echo "SDK preparation needs INCAN_SDK_NATIVE_BLOBS (incan.pub source archives) and INCAN_SDK_NATIVE_INDEX (an incan.pub index checkout)" >&2; \
 		exit 2; }
-	@$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_PREWARM_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
+	@set -e; phase_started="$$(date +%s)"; \
+	mkdir -p "$(TARGET_DIR)/sdk-cargo-guard"; \
+	cp "$(CURDIR)/scripts/cargo-guard/cargo" "$(TARGET_DIR)/sdk-cargo-guard/cargo"; \
+	: > "$(TARGET_DIR)/sdk-cargo-guard/invocations.log"; \
+	PATH="$(TARGET_DIR)/sdk-cargo-guard:$$PATH" \
+	INCAN_OVEN_CARGO_GUARD_LOG="$(TARGET_DIR)/sdk-cargo-guard/invocations.log" \
+	$(TEST_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_PREWARM_TOOLCHAIN)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 \
 		INCAN_STDLIB="$(CURDIR)/loaves/stdlib" \
 		INCAN_STDLIB_DIR="$(CURDIR)/loaves/stdlib" \
 		INCAN_SDK_NATIVE_BLOBS="$(INCAN_SDK_NATIVE_BLOBS)" \
 		INCAN_SDK_NATIVE_INDEX="$(INCAN_SDK_NATIVE_INDEX)" \
 		INCAN_INTERNAL_SDK_PROVIDER_PATH_FILE="$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)" \
-		"$(TARGET_DIR)/debug/incan" prepare-sdk
+		"$(TARGET_DIR)/debug/incan" prepare-sdk; \
+	test ! -s "$(TARGET_DIR)/sdk-cargo-guard/invocations.log"; \
+	echo "incan-test-setup-timing phase=native-sdk-and-stdlib-family seconds=$$(( $$(date +%s) - phase_started ))"
 	@test -s "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)"
 	@test -f "$$(cat "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)")/sdk-inventory.json"
 
@@ -841,7 +858,7 @@ test-timings:
 
 # Keep single-root diagnostics on the same short, invocation-owned scratch policy as full suite replay.
 .PHONY: test-one  ## test - Run one receipt-bound compiler-suite source root (optional TEST_EXACT=module::case)
-test-one: test-prewarm-oven-loafs
+test-one: test-prewarm-sdk
 	@test -n "$(TEST_ROOT)" || { echo "usage: make test-one TEST_ROOT=loaves/toolchain/incan-cli/tests/cli_provider_boundary_tests.rs" >&2; exit 2; }
 	@echo "\033[1mRunning $(TEST_ROOT)$(if $(TEST_EXACT), ($(TEST_EXACT)),) through Oven...\033[0m"
 	@set -e; \
@@ -860,7 +877,6 @@ test-one: test-prewarm-oven-loafs
 		}; \
 		trap cleanup_root_output EXIT; \
 		rustc_path="$$(rustup which --toolchain "$(INCAN_TEST_SUITE_TOOLCHAIN)" rustc)"; \
-		fixture_cargo_path="$$(rustup which --toolchain "$(INCAN_TEST_FIXTURE_CARGO_TOOLCHAIN)" cargo)"; \
 		mkdir -p "$$root_output/cargo-guard"; \
 		cp "$(CURDIR)/scripts/cargo-guard/cargo" "$$root_output/cargo-guard/cargo"; \
 		: > "$$root_output/cargo-guard/invocations.log"; \
@@ -868,17 +884,18 @@ test-one: test-prewarm-oven-loafs
 		PATH="$$root_output/cargo-guard:$$PATH" INCAN_OVEN_CARGO_GUARD_LOG="$$root_output/cargo-guard/invocations.log" \
 			TMPDIR="$$root_tmp" $(TEST_RUNTIME_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_SUITE_TOOLCHAIN)" \
 			CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT="$(TARGET_DIR)" \
-			"$(TARGET_DIR)/debug/incan" oven compiler-libtests \
-				--compiler-root "$(CURDIR)" --rustc "$$rustc_path" --fixture-cargo "$$fixture_cargo_path" \
+			"$(TARGET_DIR)/debug/incan" oven compiler-native-tests \
+				--compiler-root "$(CURDIR)" --rustc "$$rustc_path" \
 				--explicit-bake-workspace "$(INCAN_TEST_OVEN_EXPLICIT_BAKE_WORKSPACE)" \
 				--target "$(TEST_ROOT)" $(if $(TEST_EXACT),--exact "$(TEST_EXACT)") \
-				--output "$$root_output" --store "$(INCAN_TEST_OVEN_COMPILER_SUITE_STORE)" \
-				--format text; \
+				--output "$$root_output"; \
 		if [ -s "$$root_output/cargo-guard/invocations.log" ]; then \
 			echo "\033[31mThe Oven suite must run without Cargo, and these invocations reached the guard:\033[0m" >&2; \
 			sed "s/^/  /" "$$root_output/cargo-guard/invocations.log" >&2; \
 			exit 1; \
 		fi; \
+		cp "$$root_output/cargo-guard/invocations.log" "$(TARGET_DIR)/native-test-cargo-guard.log"; \
+		cp "$$root_output/compiler-suite-report.json" "$(TARGET_DIR)/native-test-report.json"; \
 		root_succeeded=true
 
 # =============================================================================

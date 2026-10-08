@@ -14,6 +14,7 @@ mod harvest;
 mod inventory;
 mod loaf_bake;
 mod loaf_bake_evidence;
+pub(crate) mod native_compiler_tests;
 mod options;
 mod partition_reconciliation;
 mod sdk_handoff;

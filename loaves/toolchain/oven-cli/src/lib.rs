@@ -255,6 +255,21 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
             store: store.into(),
             format,
         }),
+        OvenCommand::CompilerNativeTests {
+            compiler_root,
+            target,
+            exact_names,
+            output,
+            explicit_bake_workspace,
+            rustc,
+        } => commands::oven::native_compiler_tests::run(
+            compiler_root,
+            target,
+            exact_names,
+            output,
+            explicit_bake_workspace,
+            rustc,
+        ),
         OvenCommand::Plan { command } => match command {
             OvenPlanCommand::Publish {
                 receipt,
