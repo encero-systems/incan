@@ -187,6 +187,8 @@ pub enum ExecutableDeclaration {
     FieldlessEnum(FieldlessEnumDeclaration),
     /// Checked public value enum and canonical scalar variants.
     ValueEnum(ValueEnumDeclaration),
+    /// Checked scalar variants together with the identical native carrier and its derive selections.
+    ValueEnumWithLayout(ValueEnumDeclaration, EnumDeclaration),
     /// Checked public normal enum, including its positional payload layouts.
     Enum(EnumDeclaration),
     /// Public trait identity; method bodies are independently addressed fragments.
@@ -206,7 +208,7 @@ impl ExecutableDeclaration {
             Self::Body(body) => body.canonical.as_ref(),
             Self::Nominal(value) => Some(&value.canonical),
             Self::FieldlessEnum(value) => Some(&value.canonical),
-            Self::ValueEnum(value) => Some(&value.canonical),
+            Self::ValueEnum(value) | Self::ValueEnumWithLayout(value, _) => Some(&value.canonical),
             Self::Enum(value) => Some(&value.canonical),
             Self::Trait(value) => Some(value),
             Self::NominalWithTraits(value, _) => Some(&value.canonical),
@@ -489,11 +491,8 @@ fn project_enums(
     // A partially public enum has no executable form, because a consumer matching on it could not name the
     // variants it cannot see. Neither kind carries requirements: a variant has no payload to depend on.
     //
-    // The two loops below are the same shape over two types that share no trait, differing only in the
-    // collection, the refusal label, and the wrapping variant. They are left explicit rather than unified
-    // behind a trait written for exactly two implementors, which would cost more machinery than the
-    // duplication does. The consequence is that they must be changed together: the public-variant gate is the
-    // rule both enforce, and a third enum kind would need a third copy or the trait this deliberately avoids.
+    // Value enums additionally retain their checked native layout: the scalar registry cannot substitute for
+    // the carrier's derive selections or canonical member addresses.
     for value in &module.fieldless_enum_declarations {
         if admitted.contains_key(&value.canonical)
             || !declarations.contains_key(&value.canonical)
@@ -521,6 +520,17 @@ fn project_enums(
         {
             continue;
         }
+        let Some(AdmittedDeclaration {
+            declaration: ExecutableDeclaration::Enum(layout),
+            requirements,
+        }) = admitted.remove(&value.canonical)
+        else {
+            declarations.insert(
+                value.canonical.clone(),
+                DeclarationCoverage::Uncovered(CoverageReason::NoExecutableDeclaration),
+            );
+            continue;
+        };
         let mut value = value.clone();
         stamp_declaration_id(&mut value.direct_declaration_id, &value.canonical, "value enum")?;
         for variant in &mut value.variants {
@@ -529,8 +539,8 @@ fn project_enums(
         admitted.insert(
             value.canonical.clone(),
             AdmittedDeclaration {
-                declaration: ExecutableDeclaration::ValueEnum(value),
-                requirements: BTreeSet::new(),
+                declaration: ExecutableDeclaration::ValueEnumWithLayout(value, layout),
+                requirements,
             },
         );
     }
@@ -601,7 +611,7 @@ fn record_type_context_members(
             ExecutableDeclaration::FieldlessEnum(value) => {
                 value.variants.iter().map(|variant| &variant.canonical).collect()
             }
-            ExecutableDeclaration::ValueEnum(value) => {
+            ExecutableDeclaration::ValueEnum(value) | ExecutableDeclaration::ValueEnumWithLayout(value, _) => {
                 value.variants.iter().map(|variant| &variant.canonical).collect()
             }
             ExecutableDeclaration::Enum(value) => value.variants.iter().map(|variant| &variant.canonical).collect(),
@@ -919,10 +929,12 @@ mod tests {
         }
     }
 
-    /// A checked, empty unit function has executable coverage distinct from an uncovered export.
+    /// Build a checked, empty unit function with a stable canonical identity and no callable signature proof; it has
+    /// executable coverage distinct from an uncovered export.
     fn body(name: &str, ordinal: usize) -> Body {
         let identity = identity(name, ordinal);
         Body {
+            type_parameters: Vec::new(),
             decl_id: CompilerNodeId::declaration_span(
                 "lib",
                 identity.declaration_span.start,
@@ -937,6 +949,7 @@ mod tests {
             name: name.into(),
             span: identity.declaration_span,
             return_type: IncanType::Primitive(IncanPrimitiveType::Unit),
+            callable_representation: None,
             named_type_identities: Default::default(),
             locals: Vec::new(),
             params: Vec::new(),
@@ -1376,6 +1389,7 @@ mod tests {
             field_default_body: None,
             derives: vec![],
             named_type_identities: Default::default(),
+            type_parameters: Vec::new(),
             type_parameter_count: 0,
         });
         let public = BTreeSet::from([identity("exported", 1), type_id.clone()]);
@@ -1507,6 +1521,7 @@ mod tests {
             field_default_body: None,
             derives: vec![],
             named_type_identities: Default::default(),
+            type_parameters: Vec::new(),
             type_parameter_count: 0,
         });
         let public = BTreeSet::from([identity("exported", 1), published_type.clone()]);

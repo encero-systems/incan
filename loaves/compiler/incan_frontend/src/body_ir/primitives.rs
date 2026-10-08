@@ -80,6 +80,14 @@ fn builtin_collection_id(ty: &IncanType) -> Option<CollectionTypeId> {
         _ => None,
     }
 }
+
+/// Collection equality invokes shared `PartialEq` receivers in legacy emission; it never clones or consumes either
+/// operand.
+pub(super) fn collection_equality_borrows(op: ast::BinaryOp, lhs_ty: &IncanType, rhs_ty: &IncanType) -> bool {
+    matches!(op, ast::BinaryOp::Eq | ast::BinaryOp::NotEq)
+        && builtin_collection_id(lhs_ty).is_some()
+        && builtin_collection_id(rhs_ty).is_some()
+}
 /// The mutable collection a `FrozenList`, `FrozenSet` or `FrozenDict` type answers membership like, or `None`.
 fn frozen_collection_counterpart(ty: &IncanType) -> Option<CollectionTypeId> {
     let IncanType::Generic { base, args } = ty else {
@@ -222,15 +230,19 @@ pub(super) fn lower_literal(lit: &ast::Literal) -> bir::Constant {
     }
 }
 
-/// Lower a numeric literal with the canonical type selected by the typechecker.
+/// Lower a literal with the numeric or frozen storage identity selected by the typechecker.
 ///
 /// Ordinary `int` and `float` keep their compact compatibility variants, and an integer literal the checker typed as
 /// a `float` (which `f64` is, RFC 009) becomes the float constant of the same value. Explicit sized numerics and
 /// decimals use [`bir::Constant::TypedNumeric`] so wide integer magnitude, `f32` rounding, and decimal scale cannot be
 /// lost before a replacement backend sees them.
+/// Checked frozen literals retain their static Copy storage rather than becoming ordinary owned text.
 pub(super) fn lower_checked_literal(lit: &ast::Literal, ty: &IncanType) -> bir::Constant {
     use incan_lang::lang::types::numerics::{NumericFamily, NumericTypeId, info_for};
 
+    if let (ast::Literal::String(value), IncanType::Primitive(IncanPrimitiveType::FrozenStr)) = (lit, ty) {
+        return bir::Constant::FrozenStr(value.clone());
+    }
     if let (ast::Literal::Int(value), IncanType::Primitive(IncanPrimitiveType::Float)) = (lit, ty) {
         return bir::Constant::Float((value.magnitude as f64).to_string());
     }

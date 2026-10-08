@@ -2,7 +2,7 @@
 
 pub from frame import place_type
 from collections import primitive_leaf
-from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive
+from rust::incan_semantics_core import IncanType as RustType
 from rust::incan_semantics_core::body_ir import (
     NominalDeclaration,
     ConstructorTarget,
@@ -10,15 +10,26 @@ from rust::incan_semantics_core::body_ir import (
     Place as RustPlace,
     PlaceElem as RustPlaceElem,
 )
-from pub::incan_mir_plan import EnumDeclaration, ListLeaf, PlanType, Local, Place, Projection, SourceSpan
-from numerics import numeric_type
+from pub::incan_mir_plan import (
+    EnumDeclaration,
+    ListLeaf,
+    PlanType,
+    Local,
+    Place,
+    Projection,
+    SourceSpan,
+    FieldProjection,
+)
 from tuples import tuple_type, generic_tuple_type, type_name, tuple_slot
 from pub::incan_mir_plan import tuple_element_type
 from generators import generator_type
+from nominal_instances import nominal_symbol
+from types import primitive_type
+from closures import function_pointer_type
 
 
 pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Result[PlanType, str]:
-    """Translate checked scalar and collection types, resolving source-local nominals only against retained declarations."""
+    """Translate checked scalar, collection, and callable types, resolving source-local nominals only against retained declarations."""
     match generator_type(ty):
         Some(result) => return result
         None => pass
@@ -28,18 +39,18 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                 if declarations[index].name == str(name):
                     return Ok(PlanType.Model(index, str(name)))
             return Err(f"unsupported Body IR nominal type {name}")
-        RustType.Primitive(primitive) =>
-            match primitive:
-                Primitive.Numeric(kind) => return numeric_type(kind)
-                Primitive.Int => return Ok(PlanType.Int)
-                Primitive.Float => return Ok(PlanType.Float)
-                Primitive.Bool => return Ok(PlanType.Bool)
-                Primitive.Unit => return Ok(PlanType.Unit)
-                Primitive.Str => return Ok(PlanType.String)
-                Primitive.Bytes => return Ok(PlanType.List(ListLeaf.U8, 1))
-                _ => return Err(f"unsupported Body IR primitive type {primitive}")
+        RustType.Primitive(primitive) => return primitive_type(primitive)
+        RustType.Function(params=parameters, return_type=result) => return function_pointer_type(parameters, result)
         RustType.Tuple(elements) => return tuple_type(elements)
+        RustType.Decimal(precision=_precision, scale=_scale) => return Ok(PlanType.Decimal)
         RustType.Generic(base=base, args=arguments) =>
+            for index in range(len(declarations)):
+                declaration = declarations[index]
+                if declaration.type_parameter_count != 0 and declaration.canonical.declaration_name == str(base) and declaration.name == nominal_symbol(
+                    str(base),
+                    arguments,
+                ):
+                    return Ok(PlanType.Model(index, str(declaration.name)))
             if base == "Set" and len(arguments) == 1:
                 return Ok(PlanType.Set(primitive_leaf(arguments[0], true)?))
             if base == "Dict" and len(arguments) == 2:
@@ -53,6 +64,8 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                 PlanType.Bool => return Ok(PlanType.List(ListLeaf.Bool, 1))
                 PlanType.String => return Ok(PlanType.List(ListLeaf.Str, 1))
                 PlanType.U8 => return Ok(PlanType.List(ListLeaf.U8, 1))
+                PlanType.Decimal => return Ok(PlanType.List(ListLeaf.Decimal, 1))
+                PlanType.FrozenStr => return Ok(PlanType.List(ListLeaf.FrozenStr, 1))
                 PlanType.Tuple(elements) => return Ok(PlanType.List(ListLeaf.Tuple(elements), 1))
                 PlanType.Model(index, name) => return Ok(PlanType.List(ListLeaf.Model(index, name), 1))
                 PlanType.List(leaf, depth) => return Ok(PlanType.List(leaf, depth + 1))
@@ -86,8 +99,8 @@ pub def model_place(
     value: &RustPlace,
     span: SourceSpan,
 ) -> Result[Place, str]:
-    """Resolve a checked place for callers whose field reads never need a retained standard carrier."""
-    return carrier_model_place(declarations, [], 0, locals, value, span)
+    """Require every checker-selected field identity before projecting its retained canonical layout."""
+    return carrier_model_prefix(declarations, [], 0, locals, value, len(value.projection), span)
 
 
 pub def carrier_model_place(
@@ -98,40 +111,80 @@ pub def carrier_model_place(
     value: &RustPlace,
     span: SourceSpan,
 ) -> Result[Place, str]:
-    """Require the checker-selected field identity before selecting its slot; carrier fields use the retained carriers."""
+    """Project a checked place whose field types may be retained standard carriers."""
+    return carrier_model_prefix(declarations, carriers, carrier_offset, locals, value, len(value.projection), span)
+
+
+pub def model_prefix(
+    declarations: list[NominalDeclaration],
+    locals: list[Local],
+    value: &RustPlace,
+    count: int,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Project a checked leading field path without copying or changing the frontend place."""
+    return carrier_model_prefix(declarations, [], 0, locals, value, count, span)
+
+
+def carrier_model_prefix(
+    declarations: list[NominalDeclaration],
+    carriers: list[EnumDeclaration],
+    carrier_offset: int,
+    locals: list[Local],
+    value: &RustPlace,
+    count: int,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Project a checked leading field path; a field whose type is a retained standard carrier resolves to that carrier."""
+    if count < 0 or count > len(value.projection):
+        return Err("invalid Body IR model field prefix length")
     match value.local_id():
+        None => return Err("unsupported Body IR global place")
         Some(local) =>
             index = int(local.index()) + 1
             match receiver_owner(locals[index].ty):
-                Some(owner) =>
-                    owner_index, name = owner
-                    if len(value.projection) == 0:
+                Some((owner, name)) =>
+                    if count == 0:
                         return Ok(
-                            Place(local=index, projection=Projection.Deref(PlanType.Model(owner_index, name)), span=span),
+                            Place(local=index, projection=Projection.Deref(PlanType.Model(owner, name)), span=span),
                         )
-                    return receiver_field(declarations, carriers, carrier_offset, index, owner_index, value, span)
+                    return receiver_field(declarations, carriers, carrier_offset, index, owner, value, count, span)
                 None => pass
-            if len(value.projection) == 0:
+            if count == 0:
                 return Ok(Place(local=index, projection=Projection.Whole, span=span))
-            if len(value.projection) != 1:
-                return Err("unsupported Body IR nested model projection")
-            match locals[index].ty:
-                PlanType.Model(owner, _name) =>
-                    declaration = declarations[owner]
-                    slot = field_slot(value.projection[0], declaration)?
-                    ty = field_type(declarations, carriers, carrier_offset, declaration.field_types[slot])?
-                    return Ok(Place(local=index, projection=Projection.Field(slot, ty), span=span))
-                PlanType.Tuple(elements) =>
-                    slot = tuple_slot(value.projection[0], len(elements))?
-                    return Ok(
-                        Place(
-                            local=index,
-                            projection=Projection.Field(slot, tuple_element_type(elements[slot])),
-                            span=span,
-                        ),
-                    )
-                _ => return Err("unsupported Body IR nonmodel place projection")
-        None => return Err("unsupported Body IR global place")
+            fields = field_path(declarations, carriers, carrier_offset, locals[index].ty, value, count)?
+            if len(fields) == 1:
+                slot = fields[0].slot
+                ty = fields[0].ty
+                return Ok(Place(local=index, projection=Projection.Field(slot, ty), span=span))
+            return Ok(Place(local=index, projection=Projection.Fields(fields), span=span))
+
+
+def field_path(
+    declarations: list[NominalDeclaration],
+    carriers: list[EnumDeclaration],
+    carrier_offset: int,
+    root: PlanType,
+    value: &RustPlace,
+    count: int,
+) -> Result[list[FieldProjection], str]:
+    """Resolve each field against its actual nominal or tuple owner; indices and slices keep their refusal."""
+    mut ty = root
+    mut fields: list[FieldProjection] = []
+    for position in range(count):
+        projection = value.projection[position]
+        mut slot = 0
+        match ty:
+            PlanType.Model(owner, _name) =>
+                declaration = declarations[owner]
+                slot = field_slot(projection, declaration)?
+                ty = field_type(declarations, carriers, carrier_offset, declaration.field_types[slot])?
+            PlanType.Tuple(elements) =>
+                slot = tuple_slot(projection, len(elements))?
+                ty = tuple_element_type(elements[slot])
+            _ => return Err("unsupported Body IR model index or slice projection")
+        fields.append(FieldProjection(slot=slot, ty=ty))
+    return Ok(fields)
 
 
 pub def field_slot(value: &RustPlaceElem, declaration: &NominalDeclaration) -> Result[int, str]:
@@ -156,11 +209,17 @@ pub def constructor_index(
     declarations: list[NominalDeclaration],
     target: &ConstructorTarget,
     count: int,
+    expected: PlanType,
 ) -> Result[int, str]:
     """Prove the constructor's retained declaration identity, canonical layout, and complete field binding."""
     match target.direct_declaration_id:
         Some(identity) =>
             for index in range(len(declarations)):
+                match expected:
+                    PlanType.Model(owner, _name) =>
+                        if index != owner:
+                            continue
+                    _ => return Err("unsupported Body IR nonnominal constructor destination")
                 declaration = declarations[index]
                 if identity != declaration.direct_declaration_id:
                     continue
@@ -203,15 +262,23 @@ def receiver_field(
     index: int,
     owner: int,
     value: &RustPlace,
+    count: int,
     span: SourceSpan,
 ) -> Result[Place, str]:
-    """Project one canonical field through a borrowed receiver, refusing nested projections."""
-    if len(value.projection) != 1:
-        return Err("unsupported Body IR nested receiver projection")
-    declaration = declarations[owner]
-    slot = field_slot(value.projection[0], declaration)?
-    ty = field_type(declarations, carriers, carrier_offset, declaration.field_types[slot])?
-    return Ok(Place(local=index, projection=Projection.DerefField(slot, ty), span=span))
+    """Project a checked field path through a shared or mutable nominal receiver."""
+    fields = field_path(
+        declarations,
+        carriers,
+        carrier_offset,
+        PlanType.Model(owner, declarations[owner].name),
+        value,
+        count,
+    )?
+    if len(fields) == 1:
+        slot = fields[0].slot
+        ty = fields[0].ty
+        return Ok(Place(local=index, projection=Projection.DerefField(slot, ty), span=span))
+    return Ok(Place(local=index, projection=Projection.DerefFields(fields), span=span))
 
 
 def receiver_owner(ty: PlanType) -> Option[tuple[int, str]]:

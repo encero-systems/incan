@@ -41,9 +41,22 @@ fn pinned_driver_rustc() -> Result<PathBuf, Box<dyn std::error::Error>> {
 
 /// Run the explicit publisher in the fixture-owned home and preserve full failure diagnostics.
 fn bake(project: &Path, home: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    bake_with_reuse_requirement(project, home, false)
+}
+
+/// A warm diagnostic refuses a completed-output miss before any frontend, inspection, or publisher fallback.
+fn bake_with_reuse_requirement(
+    project: &Path,
+    home: &Path,
+    require_completed: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut command = support::repo_command();
     support::configure_explicit_oven_bake_command(&mut command)?;
+    if require_completed {
+        command.env("INCAN_TEST_REQUIRE_COMPLETED_BAKE_REUSE", "1");
+    }
     let rustc = pinned_driver_rustc()?;
+    let timing = support::command_timing_started();
     let output = command
         .env("RUSTC", rustc)
         .args(["oven", "bake", "--project"])
@@ -51,8 +64,37 @@ fn bake(project: &Path, home: &Path) -> Result<(), Box<dyn std::error::Error>> {
         .env("INCAN_HOME", home)
         .env("RUSTC_BOOTSTRAP", "ambient-unit")
         .output()?;
+    support::report_command_timing(
+        &format!(
+            "fixture bake {}",
+            project.file_name().ok_or("project has no name")?.to_string_lossy()
+        ),
+        timing,
+    );
+    if std::env::var_os("INCAN_OVEN_TRACE_REUSE").is_some() {
+        eprintln!(
+            "fixture {}:\n{}\n{}",
+            project.display(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
     success(&output, &format!("Oven bake {}", project.display()));
     Ok(())
+}
+
+/// Start the pinned driver without the caller's dynamic-loader search paths.
+///
+/// The driver must load the `rustc_driver` its runpath names, and its startup check refuses any other copy. On Linux an
+/// inherited `LD_LIBRARY_PATH` is searched before that runpath, and the compiler-suite runner exports one naming the
+/// toolchain's `lib` directory to every libtest child, so an inheriting launch loads rustup's second, byte-identical
+/// copy of the library from the rustc component and the check refuses it (#1755, #1785).
+fn driver_command(driver: &Path) -> Command {
+    let mut command = Command::new(driver);
+    for name in ["LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH"] {
+        command.env_remove(name);
+    }
+    command
 }
 
 /// Assert native success with both output streams available on failure.
@@ -74,7 +116,7 @@ fn check_startup_refusals(
     runtime_rlib: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // ---- Ambient permission and detached sysroot ----
-    let ambient = Command::new(binary)
+    let ambient = driver_command(binary)
         .env("RUSTC_BOOTSTRAP", "1")
         .arg(source)
         .arg("scalar")
@@ -85,7 +127,7 @@ fn check_startup_refusals(
     assert!(!ambient.status.success());
     assert!(String::from_utf8_lossy(&ambient.stderr).contains("Bootstrap"));
     assert!(!root.join("ambient-output").exists());
-    let mismatch = Command::new(binary)
+    let mismatch = driver_command(binary)
         .env_remove("RUSTC_BOOTSTRAP")
         .arg(source)
         .arg("scalar")
@@ -236,7 +278,7 @@ fn oven_driver_compiles_scalar_plan_and_refuses_invalid_inputs() -> Result<(), B
             .join("libnative_output.rlib");
         for mode in ["normal", "overflow", "dangling"] {
             let output_binary = root.join(format!("scalar-{profile}-{mode}"));
-            let compile = Command::new(&binary)
+            let compile = driver_command(&binary)
                 .env_remove("RUSTC_BOOTSTRAP")
                 .arg(&source)
                 .arg("scalar")
@@ -430,7 +472,7 @@ fn check_source_pipeline(
         .join("target/lib/oven")
         .join(profile)
         .join("libincan_native_runtime.rlib");
-    let mut command = Command::new(driver);
+    let mut command = driver_command(driver);
     command
         .env_remove("RUSTC_BOOTSTRAP")
         .args(["--source"])
@@ -457,6 +499,98 @@ fn check_source_pipeline(
 mod census;
 #[path = "native_driver_project_tests/stdlib.rs"]
 mod stdlib;
+
+#[path = "native_driver_project_tests/tail.rs"]
+mod tail;
+
+/// Compile one source through both routes and compare successful execution bytes against a fixed oracle.
+fn assert_native_legacy_bytes(name: &str, program: &str, stdout: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch(name)?;
+    let source = root.join(format!("{name}.incn"));
+    fs::write(&source, program)?;
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let native = root.join("native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native parity compilation",
+    );
+    let legacy = root.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy)
+            .output()?,
+        "legacy parity compilation",
+    );
+    let expected = Command::new(legacy.join("oven/release").join(name)).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy parity execution");
+    success(&actual, "native parity execution");
+    assert_eq!(actual.stdout, stdout);
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(actual.stderr, expected.stderr);
+    Ok(())
+}
+
+/// Nested empty list literals retain checker-proven element types and match legacy bytes.
+#[test]
+fn direct_route_nested_empty_lists_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    assert_native_legacy_bytes(
+        "nested_empty_lists",
+        "def main() -> None:\n    rows = [[], [1]]\n    println(len(rows))\n    println(rows[1][0])\n    deep = [[[]], [[2]]]\n    println(len(deep))\n    println(deep[1][0][0])\n",
+        b"2\n1\n2\n2\n",
+    )
+}
+
+/// Contextual None payloads construct nested intrinsic carriers with their proven types.
+#[test]
+fn direct_route_contextual_none_payloads_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    assert_native_legacy_bytes(
+        "contextual_none_payloads",
+        "def number(value: Result[Option[int], str]) -> int:\n    match value:\n        Ok(optional) => return optional.unwrap_or(0)\n        Err(_) => return -1\n\ndef main() -> None:\n    println(number(Ok(None)))\n    println(number(Ok(Some(7))))\n    println(number(Err(\"failure\")))\n",
+        b"0\n7\n-1\n",
+    )
+}
+
+/// Inferred bindings and in-place matches construct Results with the checker-settled open sides.
+#[test]
+fn direct_route_settled_result_sides_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    assert_native_legacy_bytes(
+        "settled_result_sides",
+        "def value() -> Result[int, str]:\n    inferred = Ok(9)\n    return inferred\n\ndef main() -> None:\n    inferred = Ok(7)\n    match inferred:\n        Ok(number) => println(number)\n        Err(_) => pass\n    match Ok(8):\n        Ok(number) => println(number)\n        Err(_) => pass\n    println(value().unwrap_or(0))\n",
+        b"7\n8\n9\n",
+    )
+}
+
+/// Compiler-generated collection writes in filtered comprehensions preserve canonical dispatch and legacy bytes.
+#[test]
+fn direct_route_comprehension_writes_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    assert_native_legacy_bytes(
+        "comprehension_writes",
+        "def main() -> None:\n    xs = [1, 2, 3, 4]\n    values = [x * x for x in xs if x > 2]\n    indexed = {x: x * x for x in xs if x % 2 == 0}\n    println(values[0])\n    println(values[1])\n    println(indexed[2])\n    println(indexed[4])\n    println(len(xs))\n",
+        b"9\n16\n4\n16\n4\n",
+    )
+}
+
+/// Short-circuit branches release borrowed text literals without changing incoming owners or legacy behavior.
+#[test]
+fn direct_route_borrowed_text_branches_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    assert_native_legacy_bytes(
+        "borrowed_text_branches",
+        "def compare(a: str, b: str) -> bool:\n    return not (a == \"x\" and b == \"y\")\n\ndef main() -> None:\n    println(compare(\"x\", \"y\"))\n    println(compare(\"p\", \"y\"))\n    println(compare(\"x\", \"q\"))\n    text = \"retained\"\n    println(bool(text) and bool(\"value\") and not bool(\"\"))\n    println(false and bool(\"skipped\"))\n    println(text)\n",
+        b"false\ntrue\ntrue\ntrue\nfalse\nretained\n",
+    )
+}
 
 /// Imported aliases and module-qualified scalar calls preserve canonical binding and legacy output; async vocabulary
 /// reaches lowering.
@@ -605,6 +739,175 @@ def main() -> None:
     Ok(())
 }
 
+/// Compare stored function values, callable parameters, and capturing closure expressions with legacy execution.
+#[test]
+fn direct_route_function_values_and_closures_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("closures")?;
+    check_function_item_values(fixture, &root)?;
+    let source = root.join("closures.incn");
+    fs::write(
+        &source,
+        concat!(
+            "def double(value: int) -> int:\n    \"\"\"Double the argument.\"\"\"\n    return value * 2\n\n",
+            "def apply(f: (int) -> int, value: int) -> int:\n    \"\"\"Invoke a function-typed argument.\"\"\"\n    return f(value)\n\n",
+            "def apply_callable(f: Callable[int, int], value: int) -> int:\n    \"\"\"Invoke a Callable-typed argument.\"\"\"\n    return f(value)\n\n",
+            "def make_adder(offset: int) -> (int) -> int:\n    \"\"\"Return a closure owning its offset.\"\"\"\n    return (value) => value + offset\n\n",
+            "def scaled(value: int) -> int:\n    \"\"\"Box the same item as main does, from a second function.\"\"\"\n    return apply_callable(double, value)\n\n",
+            "def main() -> None:\n    \"\"\"Exercise stored, borrowed, returned, and snapshot closures.\"\"\"\n",
+            "    stored = double\n",
+            "    println(stored(4))\n",
+            "    println(apply(double, 5))\n",
+            "    println(apply((value) => value + 1, 4))\n",
+            "    println(apply_callable(double, 6))\n",
+            "    println(scaled(7))\n",
+            "    offset = 2\n",
+            "    add: (int) -> int = (value) => value + offset\n",
+            "    println(add(40))\n",
+            "    println(apply(add, 39))\n",
+            "    println(add(41))\n",
+            "    returned = make_adder(3)\n",
+            "    println(returned(40))\n",
+            "    mut bias = 2\n",
+            "    snapshot: (int) -> int = (value) => value + bias\n",
+            "    bias = 5\n",
+            "    println(snapshot(40))\n",
+            "    println(bias)\n",
+        ),
+    )?;
+    let legacy_root = root.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy function values and closure expressions compilation",
+    );
+    let legacy = Command::new(legacy_root.join("oven/release/closures")).output()?;
+    success(&legacy, "legacy function values and closure expressions execution");
+    assert_eq!(legacy.stdout, b"8\n10\n5\n12\n14\n42\n41\n43\n43\n42\n5\n");
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let native = root.join("native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native function values and closure expressions compilation",
+    );
+    let actual = Command::new(native).output()?;
+    success(&actual, "native function values and closure expressions execution");
+    assert_eq!(actual.stdout, legacy.stdout);
+    Ok(())
+}
+
+/// A closure expression over a sized carrier keeps that carrier's native arithmetic through its lifted function,
+/// pointer reification, and indirect calls: `100000 * 100000` wraps in `i32` exactly as legacy's release build does,
+/// where an `i64` slip would print `10000000000`.
+#[test]
+fn direct_route_sized_numeric_closures_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("sized-closures")?;
+    let source = root.join("sized_closures.incn");
+    fs::write(
+        &source,
+        concat!(
+            "def main() -> None:\n",
+            "    square: (i32) -> i32 = (value) => value * value\n",
+            "    println(square(100000))\n",
+            "    cube: (i32) -> i32 = (value) => value * value * value\n",
+            "    println(cube(2000))\n",
+            "    println(cube(-7))\n",
+        ),
+    )?;
+    let legacy_root = root.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy sized-numeric closure compilation",
+    );
+    let legacy = Command::new(legacy_root.join("oven/release/sized_closures")).output()?;
+    success(&legacy, "legacy sized-numeric closure execution");
+    assert_eq!(legacy.stdout, b"1410065408\n-589934592\n-343\n");
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let native = root.join("native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native sized-numeric closure compilation",
+    );
+    let actual = Command::new(native).output()?;
+    success(&actual, "native sized-numeric closure execution");
+    assert_eq!(actual.stdout, legacy.stdout);
+    Ok(())
+}
+
+/// Prove stored items, aliases, explicit pointer coercions, returned pointers, and indirect invocation separately
+/// before the same focused test exercises closure-holding contracts.
+fn check_function_item_values(fixture: &DriverFixture, root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let source = root.join("function_items.incn");
+    fs::write(
+        &source,
+        concat!(
+            "def double(value: int) -> int:\n    return value * 2\n\n",
+            "def pointer() -> (int) -> int:\n    return double\n\n",
+            "def echo(value: str) -> str:\n    return value\n\n",
+            "def main() -> None:\n",
+            "    stored = double\n    alias = stored\n    typed: (int) -> int = double\n",
+            "    println(alias(4))\n    println(typed(5))\n",
+            "    returned = pointer()\n    println(returned(6))\n",
+            "    stored_echo = echo\n    println(stored_echo(\"hello\"))\n",
+        ),
+    )?;
+    let legacy_root = root.join("function_items_legacy");
+    success(
+        &support::repo_command()
+            .current_dir(root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy function-item compilation",
+    );
+    let legacy = Command::new(legacy_root.join("oven/release/function_items")).output()?;
+    success(&legacy, "legacy function-item execution");
+    assert_eq!(legacy.stdout, b"8\n10\n12\nhello\n");
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let native = root.join("function_items_native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native function-item compilation",
+    );
+    let actual = Command::new(native).output()?;
+    success(&actual, "native function-item execution");
+    assert_eq!(actual.stdout, legacy.stdout);
+    eprintln!("stored function items and pointers matched legacy byte for byte");
+    Ok(())
+}
+
 /// Measure every behavior fixture only when explicitly requested.
 #[test]
 #[ignore = "explicit full direct-route census"]
@@ -644,6 +947,188 @@ fn plain_model_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>>
         &fixture.scratch("plain-model")?,
         &fixture.sysroot,
         &fixture.formatting,
+    )
+}
+
+/// Prove two checked instantiations of a function with type parameters against legacy output.
+#[test]
+fn type_parameter_function_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("type-parameter-function")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def identity[T](value: T) -> T:
+    return value
+
+def forward[T](value: T) -> T:
+    copied = value
+    return identity[T](value)
+
+def main() -> None:
+    println(identity[int](42))
+    println(identity[bool](true))
+    println(identity(7))
+    println(forward[int](9))
+    println(identity[str]("text"))
+"#,
+    )
+}
+
+/// Prove closed class layouts and methods with type parameters against legacy output.
+#[test]
+fn type_parameter_class_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("type-parameter-class")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def identity[T](value: T) -> T:
+    return value
+
+class Box[T]:
+    pub value: T
+
+    def get(self) -> T:
+        return self.value
+
+    def forward(self) -> T:
+        return identity[T](self.value)
+
+    def pick[U](self, value: U) -> U:
+        return value
+
+class Picker:
+    def pick[T](self, value: T) -> T:
+        return value
+
+def read_box(value: Box[int]) -> int:
+    return value.get()
+
+def main() -> None:
+    whole = Box[int](value=42)
+    flag = Box[bool](value=true)
+    text = Box[str](value="stored")
+    println(whole.get())
+    println(read_box(whole))
+    println(text.forward())
+    println(flag.get())
+    println(text.get())
+    println(whole.pick[int](7))
+    println(flag.pick[int](8))
+    picker = Picker()
+    println(picker.pick[int](9))
+    println(picker.pick(true))
+    println(picker.pick[str]("picked"))
+"#,
+    )
+}
+
+/// Prove model owner layouts, independent method arguments, defaults, and source Debug names against legacy.
+#[test]
+fn type_parameter_model_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("type-parameter-model")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def identity[T](value: T) -> T:
+    return value
+
+@derive(Debug)
+model Envelope[T]:
+    pub value: T
+    pub label: str = "label"
+
+    def get(self) -> T:
+        return self.value
+
+    def forward(self) -> T:
+        return identity[T](self.value)
+
+    def pick[U](self, value: U) -> U:
+        return value
+
+@derive(Debug)
+model Marker[T]:
+    pub label: str
+
+def read[T](value: Envelope[T]) -> T:
+    return value.value
+
+def main() -> None:
+    whole = Envelope[int](value=42)
+    text = Envelope[str](value="stored")
+    marker = Marker[int](label="marker")
+    println(whole.get())
+    println(text.forward())
+    println(read(text))
+    println(whole.pick[str]("picked"))
+    println(text.pick(true))
+    println(whole.label)
+    println(f"{whole:?}")
+    println(f"{text:?}")
+    println(f"{marker:?}")
+"#,
+    )
+}
+
+/// Prove inferred constructor carriers close generic function and method arguments without written type arguments.
+#[test]
+fn type_parameter_inferred_model_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("type-parameter-inferred-model")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"model Boxed[T]:
+    pub value: T
+
+def get_value[T](boxed: Boxed[T]) -> T:
+    return boxed.value
+
+class Reader:
+    def read[T](self, boxed: Boxed[T]) -> T:
+        return boxed.value
+
+def main() -> None:
+    reader = Reader()
+    println(get_value(Boxed(value=41)))
+    println(get_value(Boxed(value="forty-one")))
+    println(reader.read(Boxed(value=42)))
+    println(reader.read(Boxed(value="forty-two")))
+"#,
+    )
+}
+
+/// Prove carriers retained only inside closed function instances, including forwarded calls, against legacy.
+#[test]
+fn type_parameter_carrier_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("type-parameter-carrier")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def show[T with Display](value: T) -> None:
+    stored: Option[T] = Some(value)
+    println(stored.unwrap_or(value))
+
+def forward[T with Display](value: T) -> None:
+    show[T](value)
+
+def identity[T](value: Option[T]) -> Option[T]:
+    return value
+
+def main() -> None:
+    forward[int](7)
+    forward[str]("text")
+    println(identity[int](Some(9)).unwrap_or(0))
+"#,
     )
 }
 
@@ -836,6 +1321,206 @@ def main() -> None:
     Ok(())
 }
 
+/// Compare unit and scalar tuple hash-key membership and insertion against legacy, including string ownership.
+#[test]
+fn direct_route_hash_leaves_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("hash-leaves")?;
+    let source = root.join("hash_leaves.incn");
+    fs::write(
+        &source,
+        r#"
+def unit_value() -> None:
+    """Return a concrete unit hash key."""
+    pass
+
+def main() -> None:
+    """Exercise unit keys, tuple keys, duplicate elimination, and owned text."""
+    mut units = {unit_value()}
+    units.add(unit_value())
+    println(len(units))
+    println(unit_value() in units)
+    mut rows: dict[tuple[str, int], int] = {("key", 1): 7}
+    println(("key", 1) in rows)
+    rows.insert(("other", 2), 9)
+    println(len(rows))
+    keys = {("left", 1), ("right", 2)}
+    println(("left", 1) in keys)
+"#,
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let native = root.join("hash-leaves-native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native hash leaves compilation",
+    );
+    let legacy_root = root.join("hash-leaves-legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy hash leaves compilation",
+    );
+    let expected = Command::new(legacy_root.join("oven/release/hash_leaves")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy hash leaves execution");
+    success(&actual, "native hash leaves execution");
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(actual.stdout, b"1\ntrue\ntrue\n2\ntrue\n");
+    Ok(())
+}
+
+/// Compare exact decimal scale, function boundaries, numeric comparisons, and hashed duplicate elimination.
+#[test]
+fn direct_route_decimals_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("decimals")?;
+    let source = root.join("decimals.incn");
+    fs::write(
+        &source,
+        r#"
+def identity(value: decimal[38, 2]) -> decimal[38, 2]:
+    """Retain the written scale across a function boundary."""
+    println(value)
+    return value
+
+def main() -> None:
+    """Observe exact digits, scale, numeric ordering, and collection hashing."""
+    a: decimal[4, 2] = 1.50d
+    b: decimal[3, 1] = 1.5d
+    c: decimal[4, 2] = 1.49d
+    println(a == b)
+    println(a != b)
+    println(c < b)
+    println(c <= b)
+    println(b > c)
+    println(b >= c)
+    println(len({a, b}))
+    println(identity(19.90d))
+    large: decimal[38, 2] = 123456789012345678901234567890123456.78d
+    println(identity(large))
+    values = [a, b]
+    println(values[0])
+    println(values[1])
+"#,
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let native = root.join("decimals-native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native decimal compilation",
+    );
+    let legacy_root = root.join("decimals-legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy decimal compilation",
+    );
+    let expected = Command::new(legacy_root.join("oven/release/decimals")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy decimal execution");
+    success(&actual, "native decimal execution");
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(actual.stdout, b"true\nfalse\ntrue\ntrue\ntrue\ntrue\n1\n19.90\n19.90\n123456789012345678901234567890123456.78\n123456789012345678901234567890123456.78\n1.50\n1.5\n");
+    Ok(())
+}
+
+/// Compare frozen static text, UTF-8 length, copied calls, string conversion, fields, and collection leaves.
+#[test]
+fn direct_route_frozen_strings_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("frozen-strings")?;
+    let source = root.join("frozen_strings.incn");
+    fs::write(
+        &source,
+        r#"
+model Holder:
+    label: FrozenStr
+
+def keep(value: FrozenStr) -> FrozenStr:
+    """Keep the static carrier across copied calls."""
+    return value
+
+def policy() -> FrozenStr:
+    """Return a frozen Unicode literal."""
+    return "é😀"
+
+def label(text: str) -> str:
+    """Accept owned text at an explicit string boundary."""
+    return f"[{text}]"
+
+def main() -> None:
+    """Observe frozen carriers without replacing their storage with owned strings."""
+    println(policy())
+    println(len(policy()))
+    println(keep("strict"))
+    held = Holder(label="held")
+    println(held.label)
+    println(label(held.label))
+    values: list[FrozenStr] = ["left", "right"]
+    copied = values
+    println(copied[0])
+    println(copied[1])
+    words: dict[str, FrozenStr] = {"k": "value"}
+    println(words["k"])
+"#,
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let native = root.join("frozen-strings-native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native frozen strings compilation",
+    );
+    let legacy_root = root.join("frozen-strings-legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy frozen strings compilation",
+    );
+    let expected = Command::new(legacy_root.join("oven/release/frozen_strings")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy frozen strings execution");
+    success(&actual, "native frozen strings execution");
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(
+        actual.stdout,
+        "é😀\n2\nstrict\nheld\n[held]\nleft\nright\nvalue\n".as_bytes()
+    );
+    Ok(())
+}
+
 /// Prove class construction, shared and mutable receivers, and passing classes against legacy.
 #[test]
 fn source_class_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
@@ -858,6 +1543,194 @@ fn numeric_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
         &fixture.sysroot,
         &fixture.formatting,
     )
+}
+
+/// Measure the actual unchanged graph with expensive fallback forbidden and retain numeric parity evidence.
+#[test]
+#[ignore = "machine-local diagnostic of the 50 ms completed fixture graph reuse budget"]
+fn unchanged_fixture_graph_reuse_meets_budget() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let started = std::time::Instant::now();
+    for name in ["library", "lowering", "driver", "formatting-caller"] {
+        bake_with_reuse_requirement(&fixture.root.join(name), &fixture.home, true)?;
+    }
+    let elapsed = started.elapsed();
+    eprintln!(
+        "completed fixture graph reuse: {:.3} ms",
+        elapsed.as_secs_f64() * 1000.0
+    );
+    corpus::check_numerics(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("warm-reuse-numerics")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+    )?;
+    assert!(
+        elapsed < std::time::Duration::from_millis(50),
+        "completed graph reuse took {elapsed:?}, budget is 50 ms"
+    );
+    Ok(())
+}
+
+/// Verify the profile-specific base, portable package entries, and local native bytes used by completed reuse.
+fn diagnose_fixture_package(
+    project: &Path,
+    packaged: &incan_driver::build::OvenPackagedLibraryLoafProfile,
+    output: &incan_driver::build::OvenStoredProjectOutput,
+    store: &oven_store::store::OvenStore,
+) -> Result<(), Box<dyn std::error::Error>> {
+    packaged.receipt.verify_identity()?;
+    assert_eq!(packaged.receipt.identity, output.payload.receipt_identity);
+    assert_eq!(packaged.receipt.build_unit_identity, output.payload.build_unit_identity);
+    assert_eq!(packaged.receipt.intent, output.intent);
+    assert_eq!(
+        output.payload.package_loaf_store_relative_path.as_deref(),
+        Some("target/lib/oven/loafs")
+    );
+    assert_eq!(packaged.entries, output.payload.required_project_loafs);
+    let native = output
+        .payload
+        .files
+        .iter()
+        .find(|file| file.output_relative_path == "output/native")
+        .ok_or("no native output")?;
+    assert_eq!(packaged.library_digest, native.digest);
+    assert_eq!(
+        Path::new(&native.caller_relative_path).strip_prefix("target/lib")?,
+        Path::new(&packaged.library_relative_path)
+    );
+    assert_eq!(
+        oven_store::digest_bytes(&fs::read(
+            project.join("target/lib").join(&packaged.library_relative_path)
+        )?),
+        native.digest
+    );
+    let package_store = oven_store::store::OvenStore::new(project.join("target/lib/oven/loafs"), *store.limits());
+    for entry in &packaged.entries {
+        entry.receipt.verify_identity()?;
+        assert_eq!(entry.receipt.intent, packaged.receipt.intent);
+        if let Some(base) = &entry.base_loaf_identity {
+            let available = oven_rustc::loaf::resolve_compiler_owned_loaf_by_identity(&packaged.receipt, base)?;
+            eprintln!(
+                "lowering/{}: package base {base}, available {}",
+                output.profile,
+                available.is_some()
+            );
+            assert!(available.is_some(), "profile-specific package base is unavailable");
+        }
+        let selected = package_store.select_payloads_matching_for_execution(|header| {
+            header.identity == entry.identity
+                && header.kind == entry.kind
+                && header.receipt_identity == entry.receipt.identity
+                && header.build_unit_identity == entry.receipt.build_unit_identity
+                && header.intent == entry.receipt.intent
+        })?;
+        assert_eq!(selected.len(), 1, "exact package entry must remain available");
+    }
+    Ok(())
+}
+
+/// Inspect the persisted lowering's complete reuse boundary without baking or changing its fixture inputs.
+#[test]
+#[ignore = "machine-local diagnostic of persisted fixture reuse authority"]
+fn completed_lowering_reuse_authority_diagnostic() -> Result<(), Box<dyn std::error::Error>> {
+    use incan_driver::build::output_selection::{
+        baked_project_owner_identity, matching_baked_project_outputs_with_source_authority,
+    };
+    use incan_driver::build::source_authority::{
+        baked_project_lock_dependencies_fingerprint, digest_baked_project_source_authority, project_bake_receipt_path,
+    };
+    use incan_driver::build::{OvenBakeProjectTarget, OvenPackagedLibraryLoafManifest};
+    use oven_rustc::rustc::{OvenProjectInspectionConstituent, load_project_inspection_authority};
+    use oven_store::store::{OvenStore, OvenStoreLimits};
+
+    let root = support::explicit_bake_workspace().ok_or("diagnostic requires the persisted fixture workspace")?;
+    let project = root.join("lowering");
+    let entrypoint = project.join("src/lib.incn");
+    let source = digest_baked_project_source_authority(&project)?;
+    let lock = baked_project_lock_dependencies_fingerprint(&project)?;
+    let compiler = oven_store::digest_bytes(&fs::read(support::incan_debug_binary())?);
+    let store = OvenStore::new(
+        root.join("home/oven/store/v2"),
+        OvenStoreLimits::new(
+            oven_store::DEFAULT_OVEN_MAX_PHYSICAL_BYTES,
+            oven_store::DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES,
+            oven_store::DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES,
+        ),
+    );
+    let package: OvenPackagedLibraryLoafManifest =
+        serde_json::from_slice(&fs::read(project.join("target/lib/oven/package-loafs.json"))?)?;
+    assert_eq!(package.profiles.len(), 2);
+    assert_eq!(package.compiler_version, incan_lang::version::INCAN_VERSION);
+    let mut inspection_ref = None;
+    for profile in ["debug", "release"] {
+        let receipt: oven_store::OvenReceipt = serde_json::from_slice(&fs::read(project_bake_receipt_path(
+            &project,
+            OvenBakeProjectTarget::Library,
+            &entrypoint,
+            profile,
+        )?)?)?;
+        receipt.verify_identity()?;
+        let candidates = matching_baked_project_outputs_with_source_authority(
+            &store,
+            &project,
+            &entrypoint,
+            OvenBakeProjectTarget::Library,
+            profile,
+            &source,
+            Some((&receipt.intent.target, &receipt.intent.toolchain)),
+        )?;
+        eprintln!(
+            "lowering/{profile}: source {source}; lock {lock:?}; {} verified candidates",
+            candidates.len()
+        );
+        let output = candidates
+            .into_iter()
+            .find(|output| {
+                output.payload.compiler_identity_digest.as_deref() == Some(&compiler)
+                    && output.payload.lock_dependencies_fingerprint == lock
+            })
+            .ok_or("no exact source/compiler/lock candidate")?;
+        assert_eq!(receipt.identity, output.payload.receipt_identity);
+        assert_eq!(receipt.build_unit_identity, output.payload.build_unit_identity);
+        let reference = output
+            .payload
+            .inspection_authority
+            .as_ref()
+            .ok_or("no inspection authority")?;
+        if let Some(previous) = &inspection_ref {
+            assert_eq!(previous, reference, "both profiles must share one inspection authority");
+        } else {
+            inspection_ref = Some(reference.clone());
+        }
+        let authority = load_project_inspection_authority(
+            &store,
+            reference,
+            &baked_project_owner_identity(&project)?,
+            &source,
+            incan_lang::version::INCAN_VERSION,
+        )?;
+        for constituent in &authority.payload.constituents {
+            if let OvenProjectInspectionConstituent::ReleaseLoaf {
+                loaf_identity, receipt, ..
+            } = constituent
+            {
+                let available = oven_rustc::loaf::resolve_compiler_owned_loaf_by_identity(receipt, loaf_identity)?;
+                eprintln!(
+                    "lowering/{profile}: release base {loaf_identity}, available {}",
+                    available.is_some()
+                );
+                assert!(available.is_some(), "recorded release base is unavailable");
+            }
+        }
+        incan_driver::lock::registry_sources::prepare_project_registry_source_authorities(authority)?;
+        assert_eq!(package.source_authority_digest, source);
+        let packaged = package.profiles.get(profile).ok_or("missing packaged profile")?;
+        diagnose_fixture_package(&project, packaged, &output, &store)?;
+        eprintln!("lowering/{profile}: inspection and package boundaries validated");
+    }
+    bake_with_reuse_requirement(&project, &root.join("home"), true)?;
+    Ok(())
 }
 
 /// Prove concrete class and model trait methods and a static trait default against legacy.
@@ -1006,6 +1879,36 @@ def main() -> None:
     assert!(
         String::from_utf8_lossy(&rejected.stderr).contains("unsupported Body IR reordered generator ArgumentBinding")
     );
+    Ok(())
+}
+
+/// Compare checked integer and float widening at the generator yield boundary with legacy.
+#[test]
+fn direct_route_generator_numeric_yields_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("generator-numeric-yields")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def integers(value: i8) -> Generator[int]:
+    """Yield a narrow integer through the checked int destination."""
+    yield value
+
+def floats(value: f32) -> Generator[float]:
+    """Yield a narrow float through the checked float destination."""
+    yield value
+
+def main() -> None:
+    """Observe both numeric generator yield conversions."""
+    small: i8 = 7
+    single: f32 = 1.5
+    for value in integers(small):
+        println(value)
+    for value in floats(single):
+        println(value)
+"#,
+    )?;
     Ok(())
 }
 
@@ -1277,6 +2180,52 @@ def main() -> None:
 "#,
         None,
     )
+}
+
+/// String static reads preserve live aliases, detached bindings, assignments, and returned snapshots.
+#[test]
+fn string_statics_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "string_statics",
+        r#"static TEXT: str = "initial"
+
+def read() -> str:
+    return TEXT
+
+def replace(value: str) -> None:
+    TEXT = value
+
+def main() -> None:
+    first = read()
+    live = TEXT
+    mut changing = TEXT
+    println(TEXT)
+    println(read())
+    replace("changed")
+    println(live)
+    println(changing)
+    changing += "!"
+    replace("final")
+    println(live)
+    println(changing)
+    println(first)
+    println(TEXT)
+    println(read())
+"#,
+        None,
+    )
+}
+
+/// Primitive list storage preserves live aliases, detached snapshots, and argument effects before mutations.
+#[test]
+fn list_statics_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case("list_statics", corpus::LIST_STATICS_SOURCE, None)
+}
+
+/// Primitive and tuple patterns preserve literal tests, source arm order, and owned binding snapshots.
+#[test]
+fn structural_matches_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case("structural_matches", corpus::STRUCTURAL_MATCHES_SOURCE, None)
 }
 
 /// Newtypes, erased aliases, scalar constants, and persistent scalar statics retain exactly the legacy output.
@@ -1938,6 +2887,94 @@ fn direct_route_package_sibling_model_matches_legacy() -> Result<(), Box<dyn std
     )
 }
 
+/// Complete the unchanged package enum corpus case, including qualified model payloads and sibling modules.
+#[test]
+fn direct_route_package_enum_surfaces_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("package-enum-surfaces")?;
+    let area = support::fixtures_dir().join("behavior/cli_dependencies");
+    let behavior = support::behavior_fixtures::discover(&area)?
+        .into_iter()
+        .find(|case| case.name == "dependency_enums_sharing_variant_names")
+        .ok_or("package enum surfaces fixture is missing")?;
+    support::behavior_fixtures::materialize(&behavior, &root)?;
+    for provider in &behavior.providers {
+        let mut publish = support::cli_project::configured_incan_command(
+            &root.join(&provider.path),
+            &["oven", "bake", "--project", "."],
+        );
+        support::configure_explicit_oven_bake_command(&mut publish)?;
+        success(&publish.output()?, "enum surfaces package publication");
+    }
+    assert_package_routes_match(fixture, &root, "dependency_enums_sharing_variant_names",
+        b"enter intro\nleave\nenter\nleave\nentering\nleaving\nintro at gate 1\ngone\nnorth at gate 4\nenter 1,2\nleave done\nstart\nstart\nstart 4\n2\n3\n")
+}
+
+/// Published newtypes retain explicit comparison derives and checker-selected ownership clones.
+#[test]
+fn direct_route_package_derived_newtype_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("package-derived-newtype")?;
+    let library = root.join("deps/ids");
+    fs::create_dir_all(library.join("src"))?;
+    fs::create_dir_all(root.join("src"))?;
+    fs::write(
+        root.join("loaf.toml"),
+        "[project]\nname = 'package_derived_newtype'\nversion = '0.1.0'\n[dependencies]\nids = { path = 'deps/ids' }\n",
+    )?;
+    fs::write(
+        library.join("loaf.toml"),
+        "[project]\nname = 'ids'\nversion = '0.1.0'\n",
+    )?;
+    fs::write(
+        library.join("src/lib.incn"),
+        "@derive(Clone, Eq)\npub newtype EntryId = str\n\n@derive(Clone, Eq)\npub newtype Count = int\n\npub def text(value: EntryId) -> str:\n    return value.0\n",
+    )?;
+    fs::write(
+        root.join("src/main.incn"),
+        "from pub::ids import EntryId, Count, text\n\ndef main() -> None:\n    value = EntryId('entry')\n    println(text(value))\n    println(value == EntryId('entry'))\n    count = Count(7)\n    println(count == Count(7))\n",
+    )?;
+    let mut publish = support::cli_project::configured_incan_command(&library, &["oven", "bake", "--project", "."]);
+    support::configure_explicit_oven_bake_command(&mut publish)?;
+    success(&publish.output()?, "derived newtype package publication");
+    assert_package_routes_match(fixture, &root, "package_derived_newtype", b"entry\ntrue\ntrue\n")
+}
+
+/// Published scalar enums retain checked derives and their canonical raw values across package calls.
+#[test]
+fn direct_route_package_derived_value_enum_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("package-derived-value-enum")?;
+    let library = root.join("deps/flows");
+    fs::create_dir_all(library.join("src"))?;
+    fs::create_dir_all(root.join("src"))?;
+    fs::write(
+        root.join("loaf.toml"),
+        "[project]\nname = 'package_derived_value_enum'\nversion = '0.1.0'\n[dependencies]\nflows = { path = 'deps/flows' }\n",
+    )?;
+    fs::write(
+        library.join("loaf.toml"),
+        "[project]\nname = 'flows'\nversion = '0.1.0'\n",
+    )?;
+    fs::write(
+        library.join("src/lib.incn"),
+        "@derive(Clone, Eq)\npub enum Phase(str):\n    Enter = 'entering'\n    Leave = 'leaving'\n\npub def phase() -> Phase:\n    return Phase.Enter\n",
+    )?;
+    fs::write(
+        root.join("src/main.incn"),
+        "from pub::flows import Phase, phase\n\ndef main() -> None:\n    value = phase()\n    println(value.value())\n    println(value == Phase.Enter)\n    println(Phase.Leave.value())\n",
+    )?;
+    let mut publish = support::cli_project::configured_incan_command(&library, &["oven", "bake", "--project", "."]);
+    support::configure_explicit_oven_bake_command(&mut publish)?;
+    success(&publish.output()?, "derived value enum package publication");
+    assert_package_routes_match(
+        fixture,
+        &root,
+        "package_derived_value_enum",
+        b"entering\ntrue\nleaving\n",
+    )
+}
+
 /// Compare a published package consumer's complete native output and exit status against the legacy route.
 fn assert_package_routes_match(
     fixture: &DriverFixture,
@@ -1979,6 +3016,189 @@ fn assert_package_routes_match(
     assert_eq!(actual.stderr, expected.stderr);
     assert_eq!(actual.status.code(), expected.status.code());
     Ok(())
+}
+
+/// Frozen and owned union members retain their identities while isinstance recognizes both as source str.
+#[test]
+fn direct_route_frozen_union_strings_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("frozen-union-strings")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"const NAME: str = "policy"
+const FROZEN: FrozenStr = "frozen"
+const EMPTY: str = ""
+
+type Label = FrozenStr | str | int
+
+def classify(value: Label) -> str:
+    """Match every string storage without widening the integer arm."""
+    if isinstance(value, str):
+        return "text"
+    if isinstance(value, int):
+        return "int"
+    return "other"
+
+def choose(which: int) -> Label:
+    """Construct each retained union member at its checked boundary."""
+    if which == 0:
+        return FROZEN
+    if which == 1:
+        owned: str = "owned"
+        return owned
+    return 7
+
+def frozen_text(value: FrozenStr | int) -> bool:
+    """Accept an evaluated static str constant in the frozen member."""
+    return isinstance(value, str)
+
+def owned_text(value: str | int) -> bool:
+    """Convert a frozen value at an owned-string union boundary."""
+    return isinstance(value, str)
+
+def frozen_target(value: Label) -> bool:
+    """Retain legacy's symmetric string identity for a frozen target."""
+    return isinstance(value, FrozenStr)
+
+def present(value: Option[FrozenStr]) -> str:
+    """Observe a frozen payload through the existing standard Option carrier."""
+    match value:
+        Some(text) => return str(text)
+        None => return "missing"
+
+def frozen_place(value: FrozenStr) -> None:
+    """Observe actual frozen place parsing and empty-text truthiness separately from static constants."""
+    println(bool(value))
+
+def parsed_place(value: FrozenStr) -> None:
+    """Parse borrowed frozen places using the legacy conversion helpers."""
+    println(int(value))
+    println(float(value))
+
+def main() -> None:
+    """Compare copied constants, both string union tags, and nonstring counterexamples."""
+    println(isinstance(FROZEN, str))
+    println(bool(NAME))
+    println(bool(EMPTY))
+    frozen_place(EMPTY)
+    parsed_place("12")
+    println(classify(NAME))
+    println(classify("literal"))
+    println(classify(choose(0)))
+    println(classify(choose(1)))
+    println(classify(choose(2)))
+    println(frozen_text(NAME))
+    println(frozen_text(7))
+    println(owned_text(FROZEN))
+    println(owned_text(7))
+    println(frozen_target(choose(0)))
+    println(frozen_target(choose(1)))
+    println(frozen_target(choose(2)))
+    println(present(Some(NAME)))
+    println(present(None))
+    values: list[str] = [FROZEN]
+    words: dict[str, str] = {"k": FROZEN}
+    println(values[0])
+    println(words["k"])
+"#,
+    )
+}
+
+/// Prove builtin text methods and every numeric resize policy through checked destinations.
+#[test]
+fn direct_route_non_list_methods_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("non-list-methods")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def clone_text(value: str) -> str:
+    """Return an owned observation while retaining the source."""
+    return value.to_string()
+
+def capped(value: i16) -> i8:
+    """Return the checked saturating target carrier."""
+    return value.saturating_resize()
+
+def main() -> None:
+    """Observe canonical text methods and all four resizing policies."""
+    text = "héllo"
+    println(clone_text(text))
+    println(text)
+    println("hello".startswith("he"))
+    println("hello".endswith("lo!"))
+    println(text.startswith("hé"))
+    println(text.endswith("lo"))
+    small: i8 = 120
+    wide: int = small.resize()
+    println(wide)
+    over: int = 300
+    maybe: Option[i8] = over.try_resize()
+    match maybe:
+        Some(value) => println(value)
+        None => println("none")
+    fits: int = 12
+    present: Option[i8] = fits.try_resize()
+    match present:
+        Some(value) => println(value)
+        None => println("none")
+    wrapped: i8 = over.wrapping_resize()
+    println(wrapped)
+    saturated: i8 = over.saturating_resize()
+    println(saturated)
+    println(capped(240))
+"#,
+    )
+}
+
+/// Prove borrowed collection equality, contextual empty operands, and source preservation against legacy.
+#[test]
+fn direct_route_collection_equality_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("collection-equality")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def is_empty(values: list[str]) -> bool:
+    """Compare a borrowed parameter with its checked empty literal."""
+    return values == []
+
+def is_not_empty(values: list[str]) -> bool:
+    """Keep contextual element types with the literal in the other operand position."""
+    return [] != values
+
+def main() -> None:
+    """Compare each admitted collection while retaining its original storage."""
+    println(is_empty([]))
+    println(is_empty(["value"]))
+    println(is_not_empty(["value"]))
+    println(is_not_empty([]))
+    mut words = ["a", "b"]
+    println(words == ["a", "b"])
+    println(words != ["a", "c"])
+    words.append("c")
+    println(len(words))
+    floats = [1.0, 2.0]
+    println(floats == [1.0, 2.0])
+    println(floats != [1.0, 3.0])
+    nested = [[1], [2]]
+    println(nested == [[1], [2]])
+    pairs = [(1, "a"), (2, "b")]
+    println(pairs == [(1, "a"), (2, "b")])
+    keys = {"a", "b"}
+    println(keys == {"b", "a"})
+    println(keys != {"a"})
+    println(len(keys))
+    values = {"x": 1.0, "y": 2.0}
+    println(values == {"y": 2.0, "x": 1.0})
+    println(values != {"x": 1.0, "y": 3.0})
+    println(len(values))
+"#,
+    )
 }
 
 /// Prove tuple construction, typed signatures, constant projections, and simultaneous unpacking against legacy.
@@ -2082,6 +3302,73 @@ def main() -> None:
     Ok(())
 }
 
+/// Model method aliases call their checked target bodies and preserve receiver changes and argument order.
+#[test]
+fn model_method_aliases_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "model_method_aliases",
+        r#"model Counter:
+    value: int
+    current = read
+    advance = add
+    combined = combine
+
+    def read(self) -> int:
+        return self.value
+
+    def add(mut self, amount: int) -> None:
+        self.value += amount
+
+    def combine(self, first: int, second: int) -> int:
+        return self.value + first * 10 + second
+
+def main() -> None:
+    mut counter = Counter(value=10)
+    println(counter.current())
+    counter.advance(amount=3)
+    println(counter.read())
+    counter.add(2)
+    println(counter.current())
+    println(counter.combined(second=2, first=1))
+    println(counter.combine(1, 2))
+"#,
+        None,
+    )
+}
+
+/// Source Partial wrappers preserve overrideable presets, residual defaults, and callable aliases.
+#[test]
+fn source_partial_function_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "source_partial_function",
+        r#"def suffix() -> str:
+    println("default evaluated")
+    return "text"
+
+pub def route(method: str, path: str, tail: str = suffix()) -> str:
+    return method + path + tail
+
+pub get = partial route(method="GET")
+renamed = get
+
+def scale(k: int, n: int) -> int:
+    return k * n
+
+negative = partial scale(k=-2)
+
+def main() -> None:
+    println(get(path="/health"))
+    println(get("GET", "/ready", tail="!"))
+    println(get(method="POST", path="/x", tail="!"))
+    println(renamed(path="/alias", tail="!"))
+    println(get(path="/again"))
+    println(negative(n=3))
+    println(negative(k=4, n=3))
+"#,
+        None,
+    )
+}
+
 /// List display preserves legacy Debug spelling, escaping, nesting, and repeated owner reads.
 #[test]
 fn list_display_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
@@ -2181,6 +3468,348 @@ def main() -> None:
     println(json_stringify(custom))
     println(record.to_json())
     println(record.label)
+"#,
+        None,
+    )
+}
+
+/// Prove lazy primitive-list zip snapshots, tuple items, and independent aliases against legacy.
+#[test]
+fn direct_route_tuple_zip_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("tuple-zip")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def main() -> None:
+    """Observe equal, unequal, empty, and independently aliased zip inputs."""
+    left = [1, 2, 3]
+    right = [10, 20]
+    pairs = zip(left, right)
+    alias = pairs
+    again = pairs
+    for a, b in alias:
+        println(a + b)
+    for a, b in pairs:
+        println(a + b)
+    for a, b in again:
+        println(a + b)
+    for a, b in zip([4], [5]):
+        println(a + b)
+    empty: list[int] = []
+    for a, b in zip(empty, right):
+        println(a + b)
+    for a, b in zip([7, 8], ["x"]):
+        println(a)
+        println(b)
+"#,
+    )?;
+    Ok(())
+}
+
+/// Prove stored and immediate builtin enumeration, deferred yields, and tuple-string ownership against legacy.
+#[test]
+fn direct_route_enumerate_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("enumerate")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def words() -> list[str]:
+    """Show that the enumeration source is evaluated once."""
+    println("source")
+    return ["é", "cat"]
+
+def generated() -> Generator[int]:
+    """Enumerate inside a lazy producer."""
+    for index, value in enumerate([5, 6]):
+        yield index + value
+
+def main() -> None:
+    """Observe stored pairs, source preservation, Unicode, empty inputs, and deferred enumeration."""
+    source = words()
+    stored = enumerate(source)
+    alias = stored
+    for index, value in stored:
+        println(index)
+        println(value)
+    for pair in alias:
+        println(pair.0)
+        println(pair.1)
+    println(source[0])
+    for index, value in enumerate("é猫"):
+        println(index)
+        println(value)
+    for index, value in enumerate([1.5, 2.5]):
+        println(index)
+        println(value)
+    for index, value in enumerate([true, false]):
+        println(index)
+        println(value)
+    empty: list[int] = []
+    println(len(enumerate(empty)))
+    collected = generated().collect()
+    println(collected[0])
+    println(collected[1])
+    for number, label in zip([7], ["zip"]):
+        println(number)
+        println(label)
+"#,
+    )?;
+    Ok(())
+}
+
+/// Supertrait slots dispatch to the body legacy expansion selects, proven where two candidates compete: the adopter's
+/// own method over a subtrait default, and the slot trait's own default over a subtrait default. Defaults that call a
+/// supertrait slot reach each adopter's implementation.
+#[test]
+fn direct_route_supertraits_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "supertraits",
+        r#"
+trait Named:
+    def name(self) -> str: ...
+
+
+trait Tag with Named:
+    def tag(self) -> str: ...
+
+    def loud(self) -> str:
+        """Call a slot of this trait from its default."""
+        return self.tag() + "!"
+
+    def size(self) -> int:
+        """Call a supertrait slot from a subtrait default."""
+        return len(self.tag()) + len(self.name())
+
+    def greet(self, other: Self) -> str:
+        """Call a supertrait slot on another value of the adopting type."""
+        return "hi " + other.name().upper()
+
+
+trait Root:
+    def label(self) -> str: ...
+
+    def show(self) -> str:
+        """Observe which body fills the label slot for each adopter."""
+        return "[" + self.label() + "]"
+
+
+trait Child with Root:
+    def label(self) -> str:
+        """Fill the supertrait slot for adopters without their own label."""
+        return "child"
+
+
+model Label with Tag:
+    text: str
+
+    def name(self) -> str:
+        """Implement the supertrait slot directly."""
+        return "label"
+
+    def tag(self) -> str:
+        """Implement the subtrait slot directly."""
+        return self.text
+
+
+model Plain with Child:
+    value: int
+
+
+class Custom with Child:
+    value: int
+
+    def label(self) -> str:
+        """Take the slot over from the subtrait default."""
+        return "own"
+
+
+trait Base:
+    def label(self) -> str:
+        """Fill this slot with the trait's own default."""
+        return "base"
+
+    def frame(self) -> str:
+        """Observe that the slot keeps its own default over a subtrait's."""
+        return "{" + self.label() + "}"
+
+
+trait Derived with Base:
+    def label(self) -> str:
+        """Refine the slot without taking it over from the supertrait default."""
+        return "derived"
+
+
+model Layered with Derived:
+    value: int
+
+
+def main() -> None:
+    """Dispatch every supertrait slot through concrete receivers."""
+    label = Label(text="x")
+    println(label.loud())
+    println(label.size())
+    println(label.greet(Label(text="y")))
+    println(label.name())
+    println(Plain(value=1).show())
+    println(Plain(value=1).label())
+    println(Custom(value=2).show())
+    println(Custom(value=2).label())
+    println(Layered(value=3).frame())
+"#,
+        b"x!\n6\nhi LABEL\nlabel\n[child]\nchild\n[own]\nown\n{base}\n",
+    )
+}
+
+/// Compare a single-module program in the minimal project layout behavior fixtures run in, pinning its output.
+///
+/// The fixture harness runs a single-file program as `src/main.incn` of a minimal project through `incan run`, and
+/// that is the legacy reference. A standalone legacy build of the same file is not: it qualifies a call to a
+/// supertrait's method on a concrete adopter as `crate::main::Trait::method`, which only resolves in the project
+/// layout.
+fn check_project_case(name: &str, text: &str, expected_stdout: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch(name)?;
+    let main = support::cli_project::write_minimal_project(&root, name, "")?;
+    fs::write(&main, text)?;
+    let native = root.join("native");
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let mut command = corpus::source_command(
+        &fixture.driver_binary("release"),
+        &main,
+        &native,
+        &fixture.sysroot,
+        &closure,
+    );
+    command.current_dir(&root);
+    success(&command.output()?, "native project compilation");
+    let expected = support::repo_command()
+        .current_dir(&root)
+        .args(["run", "src/main.incn"])
+        .output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy project execution");
+    success(&actual, "native project execution");
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(actual.stdout, expected_stdout);
+    Ok(())
+}
+
+/// Explicit Debug formatting preserves scalar spelling, text escaping, and repeated list reads.
+#[test]
+fn scalar_and_list_debug_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "scalar_and_list_debug",
+        r#"def show(mut items: list[int]) -> None:
+    println(f"{items:?}")
+    items.append(3)
+    println(f"{items:?}")
+    println(f"{items:?}")
+
+def main() -> None:
+    text = "quoted \"text\"\nnext"
+    whole: float = 1.0
+    negative: float = -0.0
+    fraction: float = 1.5
+    flag = true
+    count = -7
+    small: u8 = 255
+    println(f"{text:?} {text:?}")
+    println(text)
+    println(f"{whole:?} {negative:?} {fraction:?}")
+    println(f"{flag:?} {count:?} {small:?}")
+    println(f"{1.5:?} {false:?} {42:?}")
+    mut items = [1, 2]
+    show(items)
+    println(f"{items:?}")
+    nested = [[1], [2, 3]]
+    println(f"{nested:?}")
+    println(f"{nested:?}")
+"#,
+        None,
+    )
+}
+
+/// Canonical nested field paths preserve reads, writes, receiver borrowing, and constructor evaluation order.
+#[test]
+fn nested_model_fields_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "nested_model_fields",
+        r#"model Leaf:
+    text: str
+    count: int
+
+model Middle:
+    leaf: Leaf
+
+model Holder:
+    middle: Middle
+
+    def text(self) -> str:
+        return self.middle.leaf.text
+
+    def rename(mut self, text: str) -> None:
+        self.middle.leaf.text = text
+        self.middle.leaf.count += 1
+
+def effect(label: str) -> str:
+    println(label)
+    return label
+
+def main() -> None:
+    mut value = Holder(middle=Middle(leaf=Leaf(count=3, text=effect("first"))))
+    println(value.middle.leaf.text)
+    println(value.text())
+    value.middle.leaf.text = effect("second")
+    println(value.middle.leaf.text)
+    value.rename("third")
+    println(value.middle.leaf.text)
+    println(value.middle.leaf.count)
+    println(value.text())
+"#,
+        None,
+    )
+}
+
+/// Model list fields use legacy index and slice semantics while preserving their owner and copied results.
+#[test]
+fn model_list_projection_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "model_list_projections",
+        r#"
+model Bucket:
+    values: list[int]
+    words: list[str]
+    rows: list[list[int]]
+
+    def last(self) -> int:
+        return self.values[-1]
+
+def bound(label: str, value: int) -> int:
+    println(label)
+    return value
+
+def main() -> None:
+    bucket = Bucket(values=[40, 2, 7, 9], words=["first", "second"], rows=[[1, 2], [3, 4]])
+    println(bucket.values[0])
+    println(bucket.last())
+    println(bucket.values[bound("index", -2)])
+    println(bucket.values[bound("start", 0):bound("end", 3):bound("step", 2)])
+    println(bucket.values[:])
+    println(bucket.values[::-1])
+    println(bucket.values[-3:-1])
+    println(bucket.values[50:100])
+    println(bucket.words[0])
+    mut copied = bucket.words[:1]
+    copied[0] = "changed"
+    println(copied)
+    println(bucket.words)
+    println(bucket.rows[1][-1])
+    println(bucket.rows[:1])
+    println(bucket.values)
 "#,
         None,
     )

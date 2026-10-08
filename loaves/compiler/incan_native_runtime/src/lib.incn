@@ -1,8 +1,23 @@
 """Language formatting and collection helpers used by the direct native route."""
 
+pub from decimals import decimal_from_parts, format_decimal, equal_decimal, unequal_decimal
+pub from decimals import less_decimal, less_equal_decimal, greater_decimal, greater_equal_decimal
+pub from rust::incan_std_core::num import Decimal128 as DecimalCarrier
+pub from frozen_text import format_frozen
+pub from rust::incan_std_core::frozen import FrozenStr as FrozenCarrier
 pub from carriers import format_carrier, clone_carrier_payload
 pub from async_ import run_async_entry
 pub from generators import poll_generator
+pub from pattern_assertions import (
+    missing_some,
+    missing_some_with,
+    unexpected_some,
+    unexpected_some_with,
+    missing_ok,
+    missing_ok_with,
+    missing_err,
+    missing_err_with,
+)
 pub from model_values import (
     debug_model,
     debug_value,
@@ -18,7 +33,9 @@ pub from model_values import (
     greater_model,
     greater_equal_model,
 )
+pub from tuple_iterators import ZipLists, zip_lists, clone_zip, poll_zip, enumerate_list, enumerate_text
 pub from collections import empty_set, insert_set, length_set, contains_set, clone_set
+pub from collections import equal_set, unequal_set, equal_dict, unequal_dict
 pub from collections import extend_list_set, extend_set, extend_dict
 pub from collections import (
     empty_dict,
@@ -27,6 +44,7 @@ pub from collections import (
     contains_dict,
     clone_dict,
     get_dict,
+    optional_dict,
     keys_dict,
     values_dict,
     default_dict,
@@ -40,6 +58,8 @@ pub from builtins import min_int, max_int, min_float, max_float, min_bool, max_b
 pub from builtins import write_text_file, read_text_file
 from rust::incan_std_core::iter import range as runtime_range
 pub from statics import (
+    read_static_text,
+    write_static_text,
     read_static_int,
     write_static_int,
     read_static_float,
@@ -47,8 +67,20 @@ pub from statics import (
     read_static_bool,
     write_static_bool,
 )
+pub from static_lists import (
+    read_static_int_list,
+    write_static_int_list,
+    read_static_float_list,
+    write_static_float_list,
+    read_static_bool_list,
+    write_static_bool_list,
+    read_static_text_list,
+    write_static_text_list,
+)
 from panic_hook import initialize_panic_hook as initialize_entrypoint
 pub from strings import (
+    starts_text,
+    ends_text,
     length_text,
     upper_text,
     lower_text,
@@ -67,7 +99,8 @@ pub from strings import (
     greater_text,
     greater_equal_text,
 )
-pub from lists import empty_list, append_list, length_list, get_list, set_list, clone_list
+pub from lists import empty_list, append_list, length_list, get_list, set_list, clone_list, slice_list
+pub from lists import equal_list, unequal_list
 pub from lists import concat_list, sorted_list, sorted_float
 pub from lists import contains_list
 pub from lists import borrow_list_mut

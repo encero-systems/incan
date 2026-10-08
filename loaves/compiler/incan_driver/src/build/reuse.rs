@@ -10,7 +10,9 @@ use crate::build::output_materialization::{
     caller_project_output_path, materialize_project_output, project_output_projection_is_current,
 };
 use crate::build::output_paths::{validate_packaged_library_metadata_files, validated_project_output_relative_path};
-use crate::build::output_selection::{baked_project_owner_identity, select_baked_project_output_with_source_authority};
+use crate::build::output_selection::{
+    baked_project_owner_identity, matching_baked_project_outputs_with_source_authority,
+};
 use crate::build::package_loafs::{
     copy_receipted_oven_store_entry, decode_packaged_library_loaf_manifest, validated_packaged_library_loaf_profile,
 };
@@ -38,6 +40,63 @@ use oven_rustc::rustc::{
     resolve_active_rustc, rustc_host_target, rustc_identity,
 };
 use oven_store::store::{OvenArtifactKind, OvenStore};
+
+/// Emit cumulative warm-reuse timing only when the caller requests diagnostic output.
+fn trace_reuse_timing(started: std::time::Instant, phase: &str) {
+    if std::env::var_os("INCAN_OVEN_TRACE_REUSE").is_some() {
+        eprintln!("Oven reuse {phase}: {:.3} ms", started.elapsed().as_secs_f64() * 1000.0);
+    }
+}
+
+/// Resolve an optional local locator through the store's verified payload and active-lease boundary.
+///
+/// The locator is only a search hint. Its payload must still match the local receipt here and all current source,
+/// compiler, lock, target and inspection facts at the caller. Missing, malformed or reclaimed hints fall back to
+/// normal store selection; they never authorize execution by themselves.
+fn located_project_output(
+    store: &OvenStore,
+    receipt_path: &Path,
+    receipt: &oven_store::OvenReceipt,
+) -> CliResult<Option<OvenStoredProjectOutput>> {
+    let Some(identity) = fs::read(receipt_path.with_extension("output.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<String>(&bytes).ok())
+        .filter(|identity| {
+            identity
+                .strip_prefix("sha256:")
+                .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        })
+    else {
+        return Ok(None);
+    };
+    let Ok((manifest, root, bytes, lease)) = store.select_payload_for_execution(&identity) else {
+        return Ok(None);
+    };
+    if manifest.kind != OvenArtifactKind::ProjectOutput
+        || manifest.receipt_identity != receipt.identity
+        || manifest.build_unit_identity != receipt.build_unit_identity
+        || manifest.intent != receipt.intent
+    {
+        return Ok(None);
+    }
+    let Ok(payload) = serde_json::from_slice(&bytes) else {
+        return Ok(None);
+    };
+    crate::build::publication::stored_project_output_from_parts(manifest, root, payload, lease).map(Some)
+}
+
+/// Atomically retain a verified output's address as a replaceable local selection hint.
+fn remember_project_output(receipt_path: &Path, identity: &str) {
+    let locator = receipt_path.with_extension("output.json");
+    let staged = locator.with_extension(format!("{}.tmp", std::process::id()));
+    let result = serde_json::to_vec(identity)
+        .map_err(std::io::Error::other)
+        .and_then(|bytes| fs::write(&staged, bytes))
+        .and_then(|()| fs::rename(&staged, &locator));
+    if result.is_err() {
+        let _removed = fs::remove_file(staged);
+    }
+}
 
 /// Restore and validate the portable package handoff carried by reused library outputs.
 fn restore_reused_library_package(
@@ -200,31 +259,33 @@ fn release_loaf_constituents_available(constituents: &[OvenProjectInspectionCons
     Ok(true)
 }
 
-/// Return a previously baked project report only when every discovered target/profile remains exact.
-///
-/// Any stale, absent, or malformed evidence returns a cache miss so the explicit baker can repair it. Selection
-/// completes before any caller projection is restored, and a full hit returns before frontend, codegen, or Rustc.
-pub fn try_reuse_baked_project(
+/// One requested target/profile and its verified local publication receipt.
+type ExpectedReuseOutput = (OvenBakeProjectTarget, PathBuf, String, PathBuf, oven_store::OvenReceipt);
+
+/// One leased output paired with the local receipt it must continue to satisfy.
+type SelectedReuseOutput = (
+    OvenBakeProjectTarget,
+    OvenStoredProjectOutput,
+    PathBuf,
+    oven_store::OvenReceipt,
+);
+
+/// Exact observations that every candidate must satisfy before the shared inspection authority is admitted.
+struct CurrentReuseAuthority<'a> {
+    source_digest: &'a str,
+    compiler_digest: &'a str,
+    lock_fingerprint: &'a Option<String>,
+    target: &'a str,
+    toolchain: &'a str,
+}
+
+/// Read a complete current receipt set before probing any stored payload or recursively scanning source inputs.
+fn expected_reuse_outputs(
     project_root: &Path,
     targets: &[(OvenBakeProjectTarget, PathBuf)],
-    store: &OvenStore,
-    package_features: &FeatureSelection,
-    requested_target: Option<&str>,
-    authority_context: &mut OvenProjectBakeAuthorityContext,
-) -> CliResult<Option<OvenProjectBakeReport>> {
-    // A completed project-output payload is selected only for the default command projection. Feature-qualified project
-    // outputs remain explicit bake results until their selection facts are part of the public normal command payload,
-    // so never reuse the default package export for one.
-    if package_features != &FeatureSelection::default() {
-        return Ok(None);
-    }
-    let rustc = resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?;
-    let target = requested_target.map(str::to_owned).map_or_else(
-        || rustc_host_target(&rustc).map_err(|error| CliError::failure(error.to_string())),
-        Ok,
-    )?;
-    let toolchain = rustc_identity(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
-    let lock_dependencies_fingerprint = baked_project_lock_dependencies_fingerprint(project_root)?;
+    target: &str,
+    toolchain: &str,
+) -> CliResult<Option<Vec<ExpectedReuseOutput>>> {
     let mut expected_outputs = Vec::new();
     for (project_target, entrypoint) in targets {
         for profile in explicit_bake_profiles() {
@@ -252,90 +313,118 @@ pub fn try_reuse_baked_project(
             ));
         }
     }
-    let headers = store
-        .manifests_for_selection()
-        .map_err(|error| CliError::failure(format!("failed to inspect Oven project-output headers: {error}")))?;
-    if expected_outputs.iter().any(|(_, _, _, _, receipt)| {
-        !headers.iter().any(|manifest| {
-            manifest.kind == OvenArtifactKind::ProjectOutput
-                && manifest.receipt_identity == receipt.identity
-                && manifest.build_unit_identity == receipt.build_unit_identity
-                && manifest.intent == receipt.intent
+    Ok(Some(expected_outputs))
+}
+
+/// Resolve local hints and reject absent receipt lineages using headers before paying for source verification.
+fn locate_expected_project_outputs(
+    store: &OvenStore,
+    expected_outputs: &[ExpectedReuseOutput],
+) -> CliResult<Option<Vec<Option<OvenStoredProjectOutput>>>> {
+    let located = expected_outputs
+        .iter()
+        .map(|(_, _, _, path, receipt)| located_project_output(store, path, receipt))
+        .collect::<CliResult<Vec<_>>>()?;
+    let headers = if located.iter().all(Option::is_some) {
+        Vec::new()
+    } else {
+        store
+            .manifests_for_selection()
+            .map_err(|error| CliError::failure(format!("failed to inspect Oven project-output headers: {error}")))?
+    };
+    if expected_outputs
+        .iter()
+        .zip(&located)
+        .any(|((_, _, _, _, receipt), located)| {
+            located.is_none()
+                && !headers.iter().any(|manifest| {
+                    manifest.kind == OvenArtifactKind::ProjectOutput
+                        && manifest.receipt_identity == receipt.identity
+                        && manifest.build_unit_identity == receipt.build_unit_identity
+                        && manifest.intent == receipt.intent
+                })
         })
-    }) {
+    {
         return Ok(None);
     }
 
-    // Only an exact local receipt set with matching immutable store headers earns the recursive authored-source scan.
-    // Headers are a reject-only optimization; exact payload selection below remains the execution authority.
-    // A cache candidate is only tentative until every receipt, payload, and inspection authority validates below.
-    // Do not preserve this pre-refresh lock projection as this command's publication authority: an explicit bake
-    // may refresh an old lock after the cache probe misses, and that compiler-owned refresh is not an authored edit.
-    let source_authority_digest = authority_context.cache_probe_source_authority(project_root)?;
-    let mut selected_outputs = Vec::new();
-    for (project_target, entrypoint, profile, receipt_path, receipt) in expected_outputs {
-        let Some(output) = select_baked_project_output_with_source_authority(
+    Ok(Some(located))
+}
+
+/// Select one exact target/profile, falling back from a stale hint to verified source-current compiler candidates.
+fn select_current_project_output(
+    project_root: &Path,
+    store: &OvenStore,
+    expected: ExpectedReuseOutput,
+    located: Option<OvenStoredProjectOutput>,
+    authority: &CurrentReuseAuthority<'_>,
+) -> CliResult<Option<SelectedReuseOutput>> {
+    let (project_target, entrypoint, profile, receipt_path, receipt) = expected;
+    // Source-equivalent publications from older compiler generations may sort before the current generation.
+    // Select the exact compiler and lock authority before choosing a candidate.
+    let target_identity = crate::build::oven_bake_project_target_identity(project_root, project_target, &entrypoint)?;
+    let relative_entrypoint = crate::build::output_paths::project_relative_entrypoint(project_root, &entrypoint);
+    let located = located.filter(|output| {
+        output.payload.project_target == project_target.as_str()
+            && output.payload.target_identity == target_identity
+            && relative_entrypoint.as_deref() == Some(output.payload.entrypoint_relative_path.as_str())
+            && output.payload.source_authority_digest == authority.source_digest
+            && output.profile == profile
+            && output.payload.compiler_identity_digest.as_deref() == Some(authority.compiler_digest)
+            && output.payload.lock_dependencies_fingerprint == *authority.lock_fingerprint
+    });
+    let output = match located {
+        Some(output) => Some(output),
+        None => matching_baked_project_outputs_with_source_authority(
             store,
             project_root,
             &entrypoint,
             project_target,
             &profile,
-            &source_authority_digest,
-            Some((&target, &toolchain)),
+            authority.source_digest,
+            Some((authority.target, authority.toolchain)),
         )?
-        else {
-            return Ok(None);
-        };
-        if output.payload.lock_dependencies_fingerprint != lock_dependencies_fingerprint {
-            return Ok(None);
-        }
-        match project_target {
-            OvenBakeProjectTarget::Library
-                if output.payload.package_loaf_store_relative_path.as_deref() == Some("target/lib/oven/loafs") => {}
-            OvenBakeProjectTarget::Library => return Ok(None),
-            OvenBakeProjectTarget::Executable
-                if output.payload.package_loaf_store_relative_path.is_none()
-                    && output.payload.required_project_loafs.is_empty() => {}
-            OvenBakeProjectTarget::Executable => return Ok(None),
-        }
-        if receipt.identity != output.payload.receipt_identity
-            || receipt.build_unit_identity != output.payload.build_unit_identity
-            || receipt.intent != output.intent
-        {
-            return Ok(None);
-        }
-        selected_outputs.push((project_target, output, receipt_path, receipt));
+        .into_iter()
+        .find(|output| {
+            output.payload.compiler_identity_digest.as_deref() == Some(authority.compiler_digest)
+                && output.payload.lock_dependencies_fingerprint == *authority.lock_fingerprint
+        }),
+    };
+    let Some(output) = output else {
+        return Ok(None);
+    };
+    match project_target {
+        OvenBakeProjectTarget::Library
+            if output.payload.package_loaf_store_relative_path.as_deref() == Some("target/lib/oven/loafs") => {}
+        OvenBakeProjectTarget::Library => return Ok(None),
+        OvenBakeProjectTarget::Executable
+            if output.payload.package_loaf_store_relative_path.is_none()
+                && output.payload.required_project_loafs.is_empty() => {}
+        OvenBakeProjectTarget::Executable => return Ok(None),
     }
-    let authority_ref = selected_outputs
-        .first()
-        .and_then(|(_, output, _, _)| output.payload.inspection_authority.as_ref())
-        .cloned()
-        .ok_or_else(|| CliError::failure("completed Oven project outputs have no inspection authority"))?;
-    if selected_outputs
-        .iter()
-        .any(|(_, output, _, _)| output.payload.inspection_authority.as_ref() != Some(&authority_ref))
+    if receipt.identity != output.payload.receipt_identity
+        || receipt.build_unit_identity != output.payload.build_unit_identity
+        || receipt.intent != output.intent
     {
         return Ok(None);
     }
-    let authority = load_project_inspection_authority(
-        store,
-        &authority_ref,
-        &baked_project_owner_identity(project_root)?,
-        &source_authority_digest,
-        INCAN_VERSION,
-    )
-    .map_err(|error| CliError::failure(error.to_string()))?;
-    // A cache candidate whose release Loaf the active toolchain no longer ships is a miss, not a fault: the
-    // installed family changed underneath a still-valid local receipt (#1444), and an explicit bake exists to
-    // refresh exactly that. Corrupt or mismatched authority still fails below, where the candidate is validated.
-    if !project_authority_release_loafs_available(&authority)? {
-        return Ok(None);
-    }
-    let _validated_authority = crate::lock::registry_sources::prepare_project_registry_source_authorities(authority)?;
+    Ok(Some((project_target, output, receipt_path, receipt)))
+}
 
+/// Build the reused report and repair projections transactionally only after all selection authorities agree.
+///
+/// The caller retains the prepared inspection authority and every output lease through this handoff. Hints are
+/// optional local acceleration; publication rollback and immutable package verification remain authoritative.
+fn restore_reused_outputs(
+    project_root: &Path,
+    store: &OvenStore,
+    source_authority_digest: &str,
+    selected_outputs: &[SelectedReuseOutput],
+    started: std::time::Instant,
+) -> CliResult<Option<OvenProjectBakeReport>> {
     let mut generated_sources = BTreeMap::new();
     let mut profiles = Vec::new();
-    for (project_target, output, receipt_path, _) in &selected_outputs {
+    for (project_target, output, receipt_path, _) in selected_outputs {
         let generated_relative_path = match project_target {
             OvenBakeProjectTarget::Library => "generated/src/lib.rs",
             OvenBakeProjectTarget::Executable => "generated/src/main.rs",
@@ -388,6 +477,7 @@ pub fn try_reuse_baked_project(
     let library_current = library_outputs.iter().try_fold(true, |current, output| {
         Ok::<_, CliError>(project_output_projection_is_current(project_root, output)? && current)
     })?;
+    trace_reuse_timing(started, "caller projection");
     // A verified warm hit leaves the artifact in place. Repairing a stale projection captures the whole prior
     // library before any profile is copied; a later handoff cache miss must roll back before starting a fresh bake.
     let publication = if library_current {
@@ -405,13 +495,17 @@ pub fn try_reuse_baked_project(
                 materialize_project_output(project_root, output)?;
             }
         }
-        if !restore_reused_library_package(project_root, store, &source_authority_digest, &library_outputs)? {
+        if !restore_reused_library_package(project_root, store, source_authority_digest, &library_outputs)? {
             return Ok(None);
         }
-        for (project_target, output, _, _) in &selected_outputs {
+        trace_reuse_timing(started, "package handoff");
+        for (project_target, output, _, _) in selected_outputs {
             if *project_target == OvenBakeProjectTarget::Executable {
                 materialize_project_output(project_root, output)?;
             }
+        }
+        for (_, output, receipt_path, _) in selected_outputs {
+            remember_project_output(receipt_path, &output.identity);
         }
         Ok(Some(report))
     })();
@@ -419,6 +513,101 @@ pub fn try_reuse_baked_project(
         Some(publication) => publication.finish_reuse(result),
         None => result,
     }
+}
+
+/// Return a previously baked project report only when every discovered target/profile remains exact.
+///
+/// Any stale, absent, or malformed evidence returns a cache miss so the explicit baker can repair it. Selection
+/// completes before any caller projection is restored, and a full hit returns before frontend, codegen, or Rustc.
+pub fn try_reuse_baked_project(
+    project_root: &Path,
+    targets: &[(OvenBakeProjectTarget, PathBuf)],
+    store: &OvenStore,
+    package_features: &FeatureSelection,
+    requested_target: Option<&str>,
+    authority_context: &mut OvenProjectBakeAuthorityContext,
+) -> CliResult<Option<OvenProjectBakeReport>> {
+    let started = std::time::Instant::now();
+    // A completed project-output payload is selected only for the default command projection. Feature-qualified project
+    // outputs remain explicit bake results until their selection facts are part of the public normal command payload,
+    // so never reuse the default package export for one.
+    if package_features != &FeatureSelection::default() {
+        return Ok(None);
+    }
+    let rustc = resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?;
+    let target = requested_target.map(str::to_owned).map_or_else(
+        || rustc_host_target(&rustc).map_err(|error| CliError::failure(error.to_string())),
+        Ok,
+    )?;
+    let toolchain = rustc_identity(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
+    let lock_dependencies_fingerprint = baked_project_lock_dependencies_fingerprint(project_root)?;
+    let Some(expected_outputs) = expected_reuse_outputs(project_root, targets, &target, &toolchain)? else {
+        return Ok(None);
+    };
+    trace_reuse_timing(started, "local receipts");
+    let Some(located) = locate_expected_project_outputs(store, &expected_outputs)? else {
+        return Ok(None);
+    };
+
+    // Only an exact local receipt set with matching immutable store headers earns the recursive authored-source scan.
+    // Headers are a reject-only optimization; exact payload selection below remains the execution authority.
+    // A cache candidate is only tentative until every receipt, payload, and inspection authority validates below.
+    // Do not preserve this pre-refresh lock projection as this command's publication authority: an explicit bake
+    // may refresh an old lock after the cache probe misses, and that compiler-owned refresh is not an authored edit.
+    trace_reuse_timing(started, "store headers");
+    let source_authority_digest = authority_context.cache_probe_source_authority(project_root)?;
+    let compiler_identity_digest = super::source_authority::current_compiler_identity_digest()?;
+    trace_reuse_timing(started, "source and compiler authority");
+    let mut selected_outputs = Vec::new();
+    let current = CurrentReuseAuthority {
+        source_digest: &source_authority_digest,
+        compiler_digest: &compiler_identity_digest,
+        lock_fingerprint: &lock_dependencies_fingerprint,
+        target: &target,
+        toolchain: &toolchain,
+    };
+    for (expected, located) in expected_outputs.into_iter().zip(located) {
+        let Some(selected) = select_current_project_output(project_root, store, expected, located, &current)? else {
+            return Ok(None);
+        };
+        selected_outputs.push(selected);
+    }
+    trace_reuse_timing(started, "output selection");
+    let authority_ref = selected_outputs
+        .first()
+        .and_then(|(_, output, _, _)| output.payload.inspection_authority.as_ref())
+        .cloned()
+        .ok_or_else(|| CliError::failure("completed Oven project outputs have no inspection authority"))?;
+    if selected_outputs
+        .iter()
+        .any(|(_, output, _, _)| output.payload.inspection_authority.as_ref() != Some(&authority_ref))
+    {
+        return Ok(None);
+    }
+    let authority = load_project_inspection_authority(
+        store,
+        &authority_ref,
+        &baked_project_owner_identity(project_root)?,
+        &source_authority_digest,
+        INCAN_VERSION,
+    )
+    .map_err(|error| CliError::failure(error.to_string()))?;
+    // A cache candidate whose release Loaf the active toolchain no longer ships is a miss, not a fault: the
+    // installed family changed underneath a still-valid local receipt (#1444), and an explicit bake exists to
+    // refresh exactly that. Corrupt or mismatched authority still fails below, where the candidate is validated.
+    if !project_authority_release_loafs_available(&authority)? {
+        return Ok(None);
+    }
+    let _validated_authority = crate::lock::registry_sources::prepare_project_registry_source_authorities(authority)?;
+    trace_reuse_timing(started, "inspection authority validation");
+
+    restore_reused_outputs(
+        project_root,
+        store,
+        &source_authority_digest,
+        &selected_outputs,
+        started,
+    )
 }
 
 impl OvenProjectBakeAuthorityContext {
@@ -646,6 +835,36 @@ mod tests {
     use super::*;
     use oven_rustc::rustc::OvenProjectInspectionConstituent;
     use oven_store::store::OvenArtifactKind;
+
+    /// A locator accelerates only an exact receipted payload; malformed and foreign hints cannot authorize it.
+    #[test]
+    fn project_output_locator_requires_the_exact_receipt() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        fs::create_dir(project.path().join("src"))?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = \"fixture\"\n")?;
+        fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
+        let store_root = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            store_root.path(),
+            oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        let (receipt, payload, files) =
+            crate::build::test_support::fixture_project_output_publication(project.path(), "debug", "locator")?;
+        let output = crate::build::publication::publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        let receipt_path = project.path().join("locator-receipt.json");
+        assert!(located_project_output(&store, &receipt_path, &receipt)?.is_none());
+        remember_project_output(&receipt_path, &output.identity);
+        let selected = located_project_output(&store, &receipt_path, &receipt)?.ok_or("exact locator missed")?;
+        assert_eq!(selected.identity, output.identity);
+        let (foreign, _, _) =
+            crate::build::test_support::fixture_project_output_publication(project.path(), "release", "foreign")?;
+        assert!(located_project_output(&store, &receipt_path, &foreign)?.is_none());
+        fs::write(receipt_path.with_extension("output.json"), b"\"../../not-an-identity\"")?;
+        assert!(located_project_output(&store, &receipt_path, &receipt)?.is_none());
+        remember_project_output(&receipt_path, &format!("sha256:{}", "0".repeat(64)));
+        assert!(located_project_output(&store, &receipt_path, &receipt)?.is_none());
+        Ok(())
+    }
 
     /// A release Loaf the active toolchain does not provide reads as unavailable, while an authority made only of
     /// stored outputs has no release Loaf to be unavailable in the first place.

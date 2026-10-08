@@ -596,6 +596,20 @@ impl TypeChecker {
         }
     }
 
+    /// Append builtin derive implications in legacy normalization order without duplicating checked selections.
+    pub(in crate::typechecker) fn append_implied_derives(selected: &mut Vec<String>) {
+        for (derive, implied) in derives::DERIVE_IMPLICATIONS {
+            if selected.iter().any(|name| name == derives::as_str(*derive)) {
+                for implied in *implied {
+                    let name = derives::as_str(*implied).to_owned();
+                    if !selected.contains(&name) {
+                        selected.push(name);
+                    }
+                }
+            }
+        }
+    }
+
     /// Return the derive names lowering adds to a newtype automatically, in emission order (`Debug`, then `Clone`).
     ///
     /// Recorded for lowering with the newtype's construction facts, so lowering and this relation agree on what a

@@ -205,6 +205,22 @@ impl LibraryPublication {
         }
     }
 
+    /// Restore provider state after inspection, including successful inspections that emitted elsewhere.
+    ///
+    /// Returned values must own their evidence or refer to output outside this transaction's artifact root. Recovery
+    /// bytes remain available if restoration fails; an inspection error is retained in the combined diagnostic.
+    pub(crate) fn finish_inspection<T>(self, result: CliResult<T>) -> CliResult<T> {
+        self.restore().map_err(|error| {
+            let original = result.as_ref().err().map_or(String::new(), |error| format!("{error}; "));
+            CliError::failure(format!(
+                "{original}provider inspection restoration failed: {error}. Inspect output {} and retained recovery directory {}",
+                self.output.display(),
+                self.backup.display()
+            ))
+        })?;
+        result
+    }
+
     /// A cache miss after provisional materialization must restore the prior generation before a fresh bake starts.
     pub fn finish_reuse<T>(self, result: CliResult<Option<T>>) -> CliResult<Option<T>> {
         if matches!(result, Ok(None)) {
@@ -395,6 +411,42 @@ mod tests {
 
     use super::LibraryPublication;
     use crate::error::CliError;
+
+    /// Nonpublishing inspection restores existing and absent receipt pointers on success and error.
+    #[test]
+    fn inspection_restores_receipts_without_replacing_artifacts() -> Result<(), Box<dyn Error>> {
+        let project = tempfile::tempdir()?;
+        let output = project.path().join("target/lib");
+        fs::create_dir_all(&output)?;
+        fs::write(output.join("admitted"), "native provider")?;
+        let receipt = project.path().join("receipt.json");
+        let absent = project.path().join("absent.json");
+        fs::write(&receipt, "original receipt")?;
+        for fails in [false, true] {
+            let publication =
+                LibraryPublication::begin_receipt_update(project.path(), vec![receipt.clone(), absent.clone()])?;
+            fs::write(&receipt, "inspection receipt")?;
+            fs::write(&absent, "temporary receipt")?;
+            let result = if fails {
+                Err(CliError::failure("inspection failed"))
+            } else {
+                Ok(7)
+            };
+            let result = publication.finish_inspection(result);
+            if fails {
+                let Err(error) = result else {
+                    return Err("failed inspection unexpectedly succeeded".into());
+                };
+                assert!(error.to_string().contains("inspection failed"));
+            } else {
+                assert_eq!(result?, 7);
+            }
+            assert_eq!(fs::read_to_string(&receipt)?, "original receipt");
+            assert!(!absent.exists());
+            assert_eq!(fs::read_to_string(output.join("admitted"))?, "native provider");
+        }
+        Ok(())
+    }
 
     /// A failure after overwriting one native profile restores Rust, metadata, stale files and external receipts.
     #[test]
