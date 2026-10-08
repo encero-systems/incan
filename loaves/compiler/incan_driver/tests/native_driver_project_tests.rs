@@ -1591,6 +1591,54 @@ def main() -> None:
     )
 }
 
+/// Prove builtin text methods and every numeric resize policy through checked destinations.
+#[test]
+fn direct_route_non_list_methods_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("non-list-methods")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def clone_text(value: str) -> str:
+    """Return an owned observation while retaining the source."""
+    return value.to_string()
+
+def capped(value: i16) -> i8:
+    """Return the checked saturating target carrier."""
+    return value.saturating_resize()
+
+def main() -> None:
+    """Observe canonical text methods and all four resizing policies."""
+    text = "héllo"
+    println(clone_text(text))
+    println(text)
+    println("hello".startswith("he"))
+    println("hello".endswith("lo!"))
+    println(text.startswith("hé"))
+    println(text.endswith("lo"))
+    small: i8 = 120
+    wide: int = small.resize()
+    println(wide)
+    over: int = 300
+    maybe: Option[i8] = over.try_resize()
+    match maybe:
+        Some(value) => println(value)
+        None => println("none")
+    fits: int = 12
+    present: Option[i8] = fits.try_resize()
+    match present:
+        Some(value) => println(value)
+        None => println("none")
+    wrapped: i8 = over.wrapping_resize()
+    println(wrapped)
+    saturated: i8 = over.saturating_resize()
+    println(saturated)
+    println(capped(240))
+"#,
+    )
+}
+
 /// Prove tuple construction, typed signatures, constant projections, and simultaneous unpacking against legacy.
 #[test]
 fn tuple_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

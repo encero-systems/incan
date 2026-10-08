@@ -35,6 +35,8 @@ pub from statics import (
 )
 from panic_hook import initialize_panic_hook as initialize_entrypoint
 pub from strings import (
+    starts_text,
+    ends_text,
     length_text,
     upper_text,
     lower_text,

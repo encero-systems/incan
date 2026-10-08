@@ -142,7 +142,8 @@ from numerics import (
     numeric_carrier,
 )
 from builtins import scalar_builtin, list_call, emit_boolean_operator, emit_power_operator
-from strings import text_helper, emit_text_helper, text_helper_arity
+from strings import text_helper, emit_text_helper, text_helper_arity, text_method
+from resize import resize_policy, emit_resize
 from frame import (
     Builder,
     temporary,
@@ -836,11 +837,11 @@ def lower_method_call(
     match target.intrinsic_carrier:
         Some(_carrier) => return lower_carrier_method(builder, target, arguments, destination, span)
         None => pass
-    # Builtin list members and source methods both retain identities; their origin selects the admission path.
+    # Builtin registry members and source methods both retain identities; their origin selects the admission path.
     match target.canonical:
         Some(identity) =>
             if identity.origin == SymbolOrigin.Builtin:
-                return lower_list_method(builder, target, arguments, destination, span)
+                return lower_builtin_method(builder, target, arguments, destination, span)
         None => return Err("unsupported Body IR Method without canonical identity")
     if len(arguments) == 0:
         return Err("invalid Body IR Method missing receiver")
@@ -2345,14 +2346,14 @@ def borrowed_list_argument(
         None => return Err("unsupported Body IR list argument spread")
 
 
-def lower_list_method(
+def lower_builtin_method(
     mut builder: Builder,
     target: &MethodTarget,
     arguments: &list[RustArgumentElement],
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Admit canonical builtin list members needed by the census, with exact runtime signatures."""
+    """Dispatch retained builtin registry members to text, numeric resize, or collection boundaries."""
     mut member = ""
     match target.canonical:
         Some(identity) =>
@@ -2360,6 +2361,49 @@ def lower_list_method(
                 return Err("unsupported Body IR non-builtin list Method")
             member = str(identity.declaration_name)
         None => return Err("unsupported Body IR Method without canonical identity")
+    receiver_type = argument_type(builder, arguments, 0, span)?
+    match text_method(member, receiver_type):
+        Some((name, result)) => return lower_text_helper(builder, name, result, arguments, destination, span)
+        None => pass
+    match resize_policy(member, receiver_type):
+        Some(policy) =>
+            if len(arguments) != 1:
+                return Err("invalid Body IR resize arity")
+            match destination:
+                Some(place) =>
+                    output = scalar_place(builder, place, span)?
+                    operand = resize_receiver(builder, arguments, span)?
+                    return emit_resize(builder, policy, receiver_type, operand, output, span)
+                None => return Err("unsupported Body IR resize without checked destination")
+        None => pass
+    return lower_list_method(builder, member, arguments, destination, span)
+
+
+def resize_receiver(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Read a canonical numeric method's shared receiver without consuming its Copy storage."""
+    match arguments[0].as_one():
+        Some(RustOperand.Place(read)) =>
+            if read.fact == OwnershipFact.Borrow:
+                place = scalar_place(builder, read.place, span)?
+                if not numeric_carrier(place_type(builder.locals, place)):
+                    return Err("invalid Body IR resize receiver outside numeric storage")
+                return Ok(read_place(place, false, span))
+        _ => pass
+    return argument_value(builder, arguments, 0, span)
+
+
+def lower_list_method(
+    mut builder: Builder,
+    member: str,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Admit already resolved builtin list members with exact runtime signatures."""
     receiver = argument_place(builder, arguments, 0, span)?
     if is_collection(builder.locals[receiver.local].ty):
         return collection_method(builder, member, arguments, destination, span)
