@@ -412,7 +412,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 out.push(bir::Statement {
                     kind: bir::StatementKind::Call {
                         destination: None,
-                        callee: bir::Callee::Method(bir::MethodTarget::synthesized("push")),
+                        callee: bir::Callee::Method(bir::MethodTarget {
+                            canonical: Some(crate::symbols::canonical_builtin_member_identity("List", "append")),
+                            ..bir::MethodTarget::synthesized("push")
+                        }),
                         args: fixed_elements(vec![
                             bir::Operand::place(
                                 bir::Place::from_local(*list_local),
@@ -433,7 +436,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 out.push(bir::Statement {
                     kind: bir::StatementKind::Call {
                         destination: None,
-                        callee: bir::Callee::Method(bir::MethodTarget::synthesized("insert")),
+                        callee: bir::Callee::Method(bir::MethodTarget {
+                            canonical: Some(crate::symbols::canonical_builtin_member_identity("Dict", "insert")),
+                            ..bir::MethodTarget::synthesized("insert")
+                        }),
                         args: fixed_elements(vec![
                             bir::Operand::place(
                                 bir::Place::from_local(*dict_local),

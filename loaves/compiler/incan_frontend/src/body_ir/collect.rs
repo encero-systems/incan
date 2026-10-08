@@ -3,7 +3,62 @@
 
 use super::*;
 
-/// Retain only scalar literal statics, whose lazy initialization has no user-visible evaluation effects.
+/// Retain checker-evaluated constants once; unsupported aggregate and symbolic constants remain absent.
+pub(super) fn collect_constants(program: &ast::Program, type_info: &TypeCheckInfo) -> Vec<bir::ConstantDeclaration> {
+    program
+        .declarations
+        .iter()
+        .filter_map(|declaration| {
+            let ast::Declaration::Const(item) = &declaration.node else {
+                return None;
+            };
+            let canonical = type_info
+                .declarations
+                .declaration_identities
+                .get(&(declaration.span.start, declaration.span.end))?
+                .clone();
+            let value = match type_info.const_value(&item.name)? {
+                crate::typechecker::ConstValue::Int(value) => bir::Constant::Int(*value),
+                crate::typechecker::ConstValue::Float(value) => bir::Constant::Float(value.to_string()),
+                crate::typechecker::ConstValue::Bool(value) => bir::Constant::Bool(*value),
+                crate::typechecker::ConstValue::FrozenStr(value) => bir::Constant::Str(value.clone()),
+                _ => return None,
+            };
+            Some(bir::ConstantDeclaration { canonical, value })
+        })
+        .collect()
+}
+
+/// Retain alias-expanded nongeneric type declarations and their checker-proven nominal references.
+pub(super) fn collect_type_aliases(
+    program: &ast::Program,
+    type_info: &TypeCheckInfo,
+) -> Vec<bir::TypeAliasDeclaration> {
+    program
+        .declarations
+        .iter()
+        .filter_map(|declaration| {
+            let ast::Declaration::TypeAlias(item) = &declaration.node else {
+                return None;
+            };
+            if !item.type_params.is_empty() {
+                return None;
+            }
+            let canonical = type_info
+                .declarations
+                .declaration_identities
+                .get(&(declaration.span.start, declaration.span.end))?
+                .clone();
+            Some(bir::TypeAliasDeclaration {
+                canonical,
+                ty: semantic_type_from_resolved(type_info.type_alias_target(&item.name)?),
+                named_type_identities: type_info.declarations.named_type_identities.clone(),
+            })
+        })
+        .collect()
+}
+
+/// Retain primitive and list literal statics, whose initialization has no user-visible evaluation effects.
 pub(super) fn collect_scalar_statics(program: &ast::Program, type_info: &TypeCheckInfo) -> Vec<bir::StaticDeclaration> {
     program
         .declarations
@@ -12,17 +67,8 @@ pub(super) fn collect_scalar_statics(program: &ast::Program, type_info: &TypeChe
             let ast::Declaration::Static(storage) = &declaration.node else {
                 return None;
             };
-            let ast::Expr::Literal(literal) = &storage.value.node else {
-                return None;
-            };
             let ty = semantic_type_from_resolved(type_info.expr_type(storage.value.span)?);
-            if !matches!(
-                ty,
-                IncanType::Primitive(IncanPrimitiveType::Int | IncanPrimitiveType::Float | IncanPrimitiveType::Bool)
-            ) {
-                return None;
-            }
-            let initial = primitives::lower_checked_literal(literal, &ty);
+            let initial = static_literal_initializer(&storage.value.node, &ty)?;
             let canonical = type_info
                 .declarations
                 .declaration_identities
@@ -31,6 +77,56 @@ pub(super) fn collect_scalar_statics(program: &ast::Program, type_info: &TypeChe
             Some(bir::StaticDeclaration { canonical, ty, initial })
         })
         .collect()
+}
+
+/// Preserve literal values only in their exact checked primitive or list element carrier.
+fn static_literal_initializer(value: &ast::Expr, ty: &IncanType) -> Option<bir::StaticInitializer> {
+    match (value, ty) {
+        (
+            ast::Expr::Literal(literal),
+            IncanType::Primitive(
+                IncanPrimitiveType::Int
+                | IncanPrimitiveType::Float
+                | IncanPrimitiveType::Bool
+                | IncanPrimitiveType::Str,
+            ),
+        ) => Some(bir::StaticInitializer::Literal(primitives::lower_checked_literal(
+            literal, ty,
+        ))),
+        (ast::Expr::List(entries), IncanType::Generic { base, args })
+            if collections::from_str(base) == Some(CollectionTypeId::List) =>
+        {
+            let [element] = args.as_slice() else {
+                return None;
+            };
+            if !matches!(
+                element,
+                IncanType::Primitive(
+                    IncanPrimitiveType::Int
+                        | IncanPrimitiveType::Float
+                        | IncanPrimitiveType::Bool
+                        | IncanPrimitiveType::Str
+                )
+            ) {
+                return None;
+            }
+            let values = entries
+                .iter()
+                .map(|entry| {
+                    let ast::ListEntry::Element(item) = entry else {
+                        return None;
+                    };
+                    let bir::StaticInitializer::Literal(value) = static_literal_initializer(&item.node, element)?
+                    else {
+                        return None;
+                    };
+                    Some(value)
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some(bir::StaticInitializer::List(values))
+        }
+        _ => None,
+    }
 }
 
 /// Retain canonical normal-enum layouts from checked annotation and derive facts, never syntax-based type guesses.
@@ -128,12 +224,12 @@ pub(super) fn collect_function_default_sources(program: &ast::Program) -> Functi
 pub(super) fn collect_local_function_declarations(program: &ast::Program) -> LocalFunctionDeclarations {
     let mut declarations = LocalFunctionDeclarations::new();
     for declaration in &program.declarations {
-        if let ast::Declaration::Function(function) = &declaration.node {
-            declarations
-                .entry(function.name.clone())
-                .or_default()
-                .push(declaration.span);
-        }
+        let name = match &declaration.node {
+            ast::Declaration::Function(function) => &function.name,
+            ast::Declaration::Partial(partial) => &partial.name,
+            _ => continue,
+        };
+        declarations.entry(name.clone()).or_default().push(declaration.span);
     }
     declarations
 }
@@ -154,19 +250,28 @@ pub(super) fn collect_local_nominal_declarations(
             if let ast::Declaration::Newtype(newtype) = &declaration.node {
                 return collect_plain_newtype(declaration.span, newtype, module_identity, type_info);
             }
-            let (name, fields, visibility, type_parameter_count, class_layout) = match &declaration.node {
-                ast::Declaration::Model(model) if is_direct_replacement_plain_model(model) => (
+            let (name, fields, visibility, type_parameters, class_layout) = match &declaration.node {
+                ast::Declaration::Model(model) if is_direct_replacement_checked_model(model, type_info) => (
                     &model.name,
                     &model.fields,
                     model.visibility,
-                    model.type_params.len(),
+                    model
+                        .type_params
+                        .iter()
+                        .map(|parameter| parameter.name.clone())
+                        .collect::<Vec<_>>(),
                     None,
                 ),
                 ast::Declaration::Class(class) if is_direct_replacement_class(class) => (
                     &class.name,
                     &class.fields,
                     class.visibility,
-                    class.type_params.len(),
+                    type_info
+                        .declarations
+                        .class_layouts
+                        .get(&class.name)?
+                        .type_params
+                        .clone(),
                     Some(type_info.declarations.class_layouts.get(&class.name)?),
                 ),
                 _ => return None,
@@ -217,9 +322,14 @@ pub(super) fn collect_local_nominal_declarations(
                     .collect::<Option<Vec<_>>>()?,
                 public: visibility == ast::Visibility::Public,
                 has_field_defaults: fields.iter().any(|field| field.node.default.is_some()),
-                derives: incan_lang::lang::derives::plain_model_derives()
-                    .map(str::to_owned)
-                    .to_vec(),
+                field_default_body: None,
+                derives: if class_layout.is_some() {
+                    incan_lang::lang::derives::plain_model_derives()
+                        .map(str::to_owned)
+                        .to_vec()
+                } else {
+                    type_info.declarations.model_derives.get(name)?.clone()
+                },
                 field_types: fields
                     .iter()
                     .map(|field| {
@@ -239,9 +349,11 @@ pub(super) fn collect_local_nominal_declarations(
                                 .unwrap_or(IncanType::Unknown)
                         }
                     })
+                    .map(|ty| parameter_types::retain_parameter_type(ty, &type_parameters))
                     .collect(),
                 named_type_identities: type_info.declarations.named_type_identities.clone(),
-                type_parameter_count,
+                type_parameter_count: type_parameters.len(),
+                type_parameters,
             })
         })
         .collect()
@@ -287,8 +399,10 @@ fn collect_plain_newtype(
         field_public: vec![true],
         public: newtype.visibility == ast::Visibility::Public,
         has_field_defaults: false,
+        field_default_body: None,
         derives,
         named_type_identities: type_info.declarations.named_type_identities.clone(),
+        type_parameters: Vec::new(),
         type_parameter_count: 0,
     })
 }
@@ -445,21 +559,216 @@ pub(super) fn collect_local_trait_declarations(
         .collect()
 }
 
-/// Retain non-generic local trait slots and their checked concrete implementation identities.
+/// One source-local trait an admitted adopter implements, at the instantiation the checker recorded for it.
+struct AdoptedTrait<'program> {
+    declaration: &'program ast::TraitDecl,
+    /// Checked type arguments, one per trait type parameter.
+    arguments: Vec<ResolvedType>,
+    /// Supertraits this direct adoption reaches, by name; `None` for a trait reached only as a supertrait.
+    direct_ancestors: Option<Vec<String>>,
+}
+
+impl AdoptedTrait<'_> {
+    /// Bind the trait's type parameters to this instantiation's arguments for its default bodies.
+    fn type_arguments(&self) -> Vec<bir::TraitTypeArgument> {
+        self.declaration
+            .type_params
+            .iter()
+            .zip(&self.arguments)
+            .map(|(parameter, argument)| bir::TraitTypeArgument {
+                parameter: parameter.name.clone(),
+                argument: semantic_type_from_resolved(argument),
+            })
+            .collect()
+    }
+}
+
+/// Find the trait this module declares under `name`.
+fn local_trait<'program>(program: &'program ast::Program, name: &str) -> Option<&'program ast::TraitDecl> {
+    program.declarations.iter().find_map(|item| match &item.node {
+        ast::Declaration::Trait(trait_decl) if trait_decl.name == name => Some(trait_decl),
+        _ => None,
+    })
+}
+
+/// Expand one adopted local trait into its local supertraits, instantiating each supertrait clause the checker
+/// resolved with the adopting instantiation's arguments.
+fn local_supertraits<'program>(
+    program: &'program ast::Program,
+    type_info: &TypeCheckInfo,
+    root: &'program ast::TraitDecl,
+    arguments: &[ResolvedType],
+) -> Vec<(&'program ast::TraitDecl, Vec<ResolvedType>)> {
+    let mut reached = Vec::new();
+    let mut seen = HashSet::new();
+    let mut work = vec![(root, arguments.to_vec())];
+    while let Some((declaration, arguments)) = work.pop() {
+        let names = declaration
+            .type_params
+            .iter()
+            .map(|parameter| parameter.name.clone())
+            .collect::<Vec<_>>();
+        let substitution = crate::resolved_type_subst::type_param_subst_map(&names, &arguments);
+        for (name, clause) in type_info
+            .traits
+            .direct_supertraits
+            .get(&declaration.name)
+            .into_iter()
+            .flatten()
+        {
+            let Some(supertrait) = local_trait(program, name) else {
+                continue;
+            };
+            let instantiated = clause
+                .iter()
+                .map(|argument| crate::resolved_type_subst::substitute_resolved_type(argument, &substitution))
+                .collect::<Vec<_>>();
+            if seen.insert((name.clone(), format!("{instantiated:?}"))) {
+                reached.push((supertrait, instantiated.clone()));
+                work.push((supertrait, instantiated));
+            }
+        }
+    }
+    reached
+}
+
+/// Collect the local traits one adopter implements: each direct adoption at its checked arguments, then the local
+/// supertraits those reach.
 ///
-/// Successful typechecking already proves adoption and method compatibility. This registry retains only local,
-/// unambiguous method declarations; imported, generic, and overloaded implementations never gain a guessed target.
+/// A generic trait adopted without recorded arguments contributes nothing. A trait reached at two different
+/// instantiations is dropped entirely, because its slot identities cannot tell the implementations apart.
+fn adopted_local_traits<'program>(
+    program: &'program ast::Program,
+    type_info: &TypeCheckInfo,
+    adoptions: &[ast::Spanned<ast::TraitBound>],
+) -> Vec<AdoptedTrait<'program>> {
+    let mut adopted = Vec::new();
+    for adoption in adoptions {
+        let Some(declaration) = local_trait(program, &adoption.node.name) else {
+            continue;
+        };
+        let arguments = if declaration.type_params.is_empty() {
+            Vec::new()
+        } else {
+            match type_info
+                .traits
+                .adoption_type_args
+                .get(&(adoption.span.start, adoption.span.end))
+            {
+                Some(arguments) if arguments.len() == declaration.type_params.len() => arguments.clone(),
+                _ => continue,
+            }
+        };
+        let supertraits = local_supertraits(program, type_info, declaration, &arguments);
+        adopted.push(AdoptedTrait {
+            declaration,
+            arguments,
+            direct_ancestors: Some(
+                supertraits
+                    .iter()
+                    .map(|(trait_decl, _)| trait_decl.name.clone())
+                    .collect(),
+            ),
+        });
+        adopted.extend(supertraits.into_iter().map(|(declaration, arguments)| AdoptedTrait {
+            declaration,
+            arguments,
+            direct_ancestors: None,
+        }));
+    }
+    let conflicting = adopted
+        .iter()
+        .filter(|candidate| {
+            adopted.iter().any(|other| {
+                other.declaration.name == candidate.declaration.name && other.arguments != candidate.arguments
+            })
+        })
+        .map(|candidate| candidate.declaration.name.clone())
+        .collect::<HashSet<_>>();
+    adopted.retain(|candidate| !conflicting.contains(&candidate.declaration.name));
+    adopted
+}
+
+/// Select the body that fills one trait slot for an adopter, with the type arguments its default needs.
+///
+/// The adopter's own method wins, then the slot trait's default, then the default a directly adopted subtrait of the
+/// slot trait declares, taking those subtraits by name: the order legacy trait expansion fills a slot in.
+fn slot_implementation(
+    type_info: &TypeCheckInfo,
+    adopted: &[AdoptedTrait<'_>],
+    slot_trait: &AdoptedTrait<'_>,
+    slot: &ast::Spanned<ast::MethodDecl>,
+    methods: &[ast::Spanned<ast::MethodDecl>],
+) -> Option<(CanonicalSymbolId, Vec<bir::TraitTypeArgument>)> {
+    let candidates = methods
+        .iter()
+        .filter(|candidate| candidate.node.name == slot.node.name)
+        .collect::<Vec<_>>();
+    match candidates.as_slice() {
+        [candidate] => type_info
+            .declarations
+            .method_bindings_by_span
+            .get(&(candidate.span.start, candidate.span.end))
+            .and_then(|binding| binding.identity.clone())
+            .map(|identity| (identity, Vec::new())),
+        [] if slot.node.body.is_some() => type_info
+            .traits
+            .method_identities
+            .get(&(slot_trait.declaration.name.clone(), slot.node.name.clone()))
+            .map(|identity| (identity.clone(), slot_trait.type_arguments())),
+        [] => {
+            let mut subtraits = adopted
+                .iter()
+                .filter(|candidate| {
+                    candidate
+                        .direct_ancestors
+                        .as_ref()
+                        .is_some_and(|ancestors| ancestors.contains(&slot_trait.declaration.name))
+                })
+                .collect::<Vec<_>>();
+            subtraits.sort_by(|left, right| left.declaration.name.cmp(&right.declaration.name));
+            subtraits.into_iter().find_map(|subtrait| {
+                subtrait
+                    .declaration
+                    .methods
+                    .iter()
+                    .any(|method| method.node.name == slot.node.name && method.node.body.is_some())
+                    .then(|| {
+                        type_info
+                            .traits
+                            .method_identities
+                            .get(&(subtrait.declaration.name.clone(), slot.node.name.clone()))
+                    })
+                    .flatten()
+                    .map(|identity| (identity.clone(), subtrait.type_arguments()))
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Retain local trait slots and their checked concrete implementation identities for each admitted adopter.
+///
+/// Successful typechecking already proves adoption and method compatibility. This registry covers the adopter's local
+/// traits at their checked instantiations and every local supertrait those reach; each slot keeps the body that fills
+/// it and the type arguments that body's trait was adopted at. Imported traits, unrecorded instantiations, and
+/// overloaded implementations never gain a guessed target. A refused checked newtype constructor cannot contribute an
+/// implementation without its owner layout.
 pub(super) fn collect_local_trait_implementations(
     program: &ast::Program,
     type_info: &TypeCheckInfo,
+    nominal_declarations: &[bir::NominalDeclaration],
 ) -> Vec<bir::TraitImplementation> {
     let mut implementations = Vec::new();
     for declaration in &program.declarations {
         let (adoptions, methods) = match &declaration.node {
-            ast::Declaration::Model(model) if is_direct_replacement_plain_model(model) => {
+            ast::Declaration::Model(model) if is_direct_replacement_checked_model(model, type_info) => {
                 (&model.traits, &model.methods)
             }
             ast::Declaration::Class(class) if is_direct_replacement_class(class) => (&class.traits, &class.methods),
+            ast::Declaration::Newtype(newtype) if is_direct_replacement_plain_newtype(newtype) => {
+                (&newtype.traits, &newtype.methods)
+            }
             _ => continue,
         };
         let Some(owner) = type_info
@@ -469,48 +778,39 @@ pub(super) fn collect_local_trait_implementations(
         else {
             continue;
         };
-        for adoption in adoptions {
-            if !adoption.node.type_args.is_empty() {
-                continue;
-            }
-            let Some(trait_decl) = program.declarations.iter().find_map(|item| match &item.node {
-                ast::Declaration::Trait(trait_decl)
-                    if trait_decl.name == adoption.node.name && trait_decl.type_params.is_empty() =>
-                {
-                    Some(trait_decl)
-                }
-                _ => None,
-            }) else {
-                continue;
-            };
-            for slot in &trait_decl.methods {
+        if !nominal_declarations
+            .iter()
+            .any(|declaration| &declaration.canonical == owner)
+        {
+            continue;
+        }
+        let adopted = adopted_local_traits(program, type_info, adoptions);
+        for slot_trait in &adopted {
+            for slot in &slot_trait.declaration.methods {
                 let Some(method) = type_info
                     .traits
                     .method_identities
-                    .get(&(trait_decl.name.clone(), slot.node.name.clone()))
+                    .get(&(slot_trait.declaration.name.clone(), slot.node.name.clone()))
                 else {
                     continue;
                 };
-                let candidates = methods
+                if implementations
                     .iter()
-                    .filter(|candidate| candidate.node.name == slot.node.name)
-                    .collect::<Vec<_>>();
-                let implementation = match candidates.as_slice() {
-                    [candidate] => type_info
-                        .declarations
-                        .method_bindings_by_span
-                        .get(&(candidate.span.start, candidate.span.end))
-                        .and_then(|binding| binding.identity.as_ref()),
-                    [] if slot.node.body.is_some() => Some(method),
-                    _ => None,
-                };
-                if let Some(implementation) = implementation {
-                    implementations.push(bir::TraitImplementation {
-                        owner: owner.clone(),
-                        method: method.clone(),
-                        implementation: implementation.clone(),
-                    });
+                    .any(|existing: &bir::TraitImplementation| &existing.owner == owner && &existing.method == method)
+                {
+                    continue;
                 }
+                let Some((implementation, type_arguments)) =
+                    slot_implementation(type_info, &adopted, slot_trait, slot, methods)
+                else {
+                    continue;
+                };
+                implementations.push(bir::TraitImplementation {
+                    owner: owner.clone(),
+                    method: method.clone(),
+                    implementation,
+                    type_arguments,
+                });
             }
         }
     }

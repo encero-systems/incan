@@ -1,0 +1,24 @@
+"""Static frozen string literals preserve the legacy carrier's lifetime and copy semantics."""
+
+from rust::incan_semantics_core::body_ir import Constant as RustConstant
+from pub::incan_mir_plan import Operand, PlanType, RvalueKind, SourceSpan
+from pub::incan_mir_plan import assign as plan_assign
+from frame import Builder, temporary, read_place, text_literal
+
+
+pub def frozen_literal(mut builder: Builder, value: &RustConstant, span: SourceSpan) -> Result[Operand, str]:
+    """Wrap checked static text only; dynamically allocated text cannot enter a FrozenStr carrier."""
+    match literal_text(value):
+        Some(text) =>
+            output = temporary(builder, PlanType.FrozenStr, span)
+            builder.emit(plan_assign(output, RvalueKind.FrozenText(text_literal(text, span)), span))
+            return Ok(read_place(output, false, span))
+        None => return Err("unsupported Body IR nonstatic FrozenStr literal")
+
+
+pub def literal_text(value: &RustConstant) -> Option[str]:
+    """Read literal bytes for text observation without discarding the constant's retained storage identity."""
+    match value:
+        RustConstant.Str(text) => return Some(str(text))
+        RustConstant.FrozenStr(text) => return Some(str(text))
+        _ => return None

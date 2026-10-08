@@ -49,6 +49,7 @@ fn numeric(kind: &SizedNumeric) -> Numeric {
 /// A local comparison vocabulary; the public types remain the Incan Loaf's own types.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Scalar {
+    UnitFunction,
     Int,
     Float,
     I8,
@@ -74,6 +75,8 @@ enum Scalar {
     Tuple(Vec<Scalar>),
     String,
     StringRef,
+    Decimal,
+    FrozenStr,
     StrRef,
     StringArray(i64),
     StrArray(i64),
@@ -104,16 +107,25 @@ enum Scalar {
     GeneratorMutRef(Leaf, i64),
     GeneratorYield(Leaf, i64),
     GeneratorYieldRef(Leaf, i64),
+    FunctionPointer(Vec<Scalar>),
+    FunctionItem(String, Vec<Scalar>),
+    Closure(Vec<Scalar>),
+    ClosureRef(Vec<Scalar>),
 }
 
-/// The comparison vocabulary's copy of the plan's list leaf, which carries no Rust `Copy` or `Ord` derive.
+/// Comparison mirror of scalar and tuple leaves; the public plan remains Incan-authored.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Leaf {
-    Tuple(Vec<Scalar>),
     Int,
     Float,
     Bool,
     Str,
+    Tuple(Vec<Scalar>),
+    Model(i64),
+    U8,
+    Unit,
+    Decimal,
+    FrozenStr,
 }
 
 impl Leaf {
@@ -124,12 +136,12 @@ impl Leaf {
             ListLeaf::Float => Leaf::Float,
             ListLeaf::Bool => Leaf::Bool,
             ListLeaf::Str => Leaf::Str,
-            ListLeaf::Tuple(elements) => Leaf::Tuple(
-                elements
-                    .iter()
-                    .map(|element| scalar(&tuple_element_type(element.clone())))
-                    .collect(),
-            ),
+            ListLeaf::Tuple(elements) => Leaf::Tuple(elements.iter().map(|element| scalar(&tuple_element_type(element.clone()))).collect()),
+            ListLeaf::Model(index, _) => Leaf::Model(*index),
+            ListLeaf::U8 => Leaf::U8,
+            ListLeaf::Unit => Leaf::Unit,
+            ListLeaf::Decimal => Leaf::Decimal,
+            ListLeaf::FrozenStr => Leaf::FrozenStr,
         }
     }
 }
@@ -146,6 +158,7 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::RangeCursor => Scalar::RangeCursor,
         PlanType::RangeCursorRef => Scalar::RangeCursorRef,
         PlanType::RangeCursorMutRef => Scalar::RangeCursorMutRef,
+        PlanType::UnitFunction => Scalar::UnitFunction,
         PlanType::ZipIterator(left, right) => Scalar::ZipIterator(tuple_leaf(left), tuple_leaf(right)),
         PlanType::ZipIteratorRef(left, right) => Scalar::ZipIteratorRef(tuple_leaf(left), tuple_leaf(right)),
         PlanType::ZipIteratorMutRef(left, right) => Scalar::ZipIteratorMutRef(tuple_leaf(left), tuple_leaf(right)),
@@ -194,6 +207,8 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::Unit => Scalar::Unit,
         PlanType::CheckedInt => Scalar::CheckedInt,
         PlanType::String => Scalar::String,
+        PlanType::Decimal => Scalar::Decimal,
+        PlanType::FrozenStr => Scalar::FrozenStr,
         PlanType::StringRef => Scalar::StringRef,
         PlanType::StrRef => Scalar::StrRef,
         PlanType::StringArray(count) => Scalar::StringArray(*count),
@@ -202,6 +217,12 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::StrArrayRef(count) => Scalar::StrArrayRef(*count),
         PlanType::StringSlice => Scalar::StringSlice,
         PlanType::StrSlice => Scalar::StrSlice,
+        PlanType::FunctionPointer(signature) => Scalar::FunctionPointer(signature.iter().map(scalar).collect()),
+        PlanType::Closure(signature) => Scalar::Closure(signature.iter().map(scalar).collect()),
+        PlanType::ClosureRef(signature) => Scalar::ClosureRef(signature.iter().map(scalar).collect()),
+        PlanType::FunctionItem(name, signature) => {
+            Scalar::FunctionItem(name.clone(), signature.iter().map(scalar).collect())
+        }
     }
 }
 
@@ -246,8 +267,8 @@ pub fn validate(plan: &Plan) -> Result<(), PlanError> {
         if external
             .parameters
             .iter()
-            .any(|ty| !external_signature_type(scalar(ty)))
-            || !external_signature_type(scalar(&external.return_type))
+            .any(|ty| !external_signature_type(&scalar(ty)))
+            || !external_signature_type(&scalar(&external.return_type))
         {
             return Err(PlanError::Invalid {
                 function: external.path.clone(),
@@ -267,6 +288,7 @@ pub fn validate(plan: &Plan) -> Result<(), PlanError> {
         ));
     }
     for function in &plan.functions {
+        validate_closure_constructor(function)?;
         validate_function(plan, function)?;
     }
     Ok(())
@@ -304,7 +326,7 @@ fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> 
         return Err(invalid(function, "locals must include return place and all parameters"));
     }
     if scalar(&function.locals[0].ty) != scalar(&function.return_type)
-        || !source_signature_type(scalar(&function.return_type))
+        || !source_signature_type(&scalar(&function.return_type))
     {
         return Err(invalid(function, "return local must match a scalar return type"));
     }
@@ -314,7 +336,7 @@ fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> 
         if !identifier(&parameter.name) || !parameters.insert(&parameter.name) {
             return Err(invalid(function, "parameter name is invalid or duplicated"));
         }
-        if !(source_signature_type(scalar(&parameter.ty))
+        if !(source_signature_type(&scalar(&parameter.ty))
             || matches!(scalar(&parameter.ty), Scalar::ModelRef(_) | Scalar::ModelMutRef(_)))
             || scalar(&parameter.ty) != scalar(&function.locals[index + 1].ty)
         {
@@ -335,7 +357,7 @@ fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> 
                     span(&value.span)?;
                     let expected = place(plan, function, destination)?;
                     let result = rvalue(plan, function, &value.kind, expected.clone())?;
-                    require(function, expected, result, "assignment")?;
+                    require(function, result, expected, "assignment")?;
                 }
                 StatementKind::StorageLive(index) | StatementKind::StorageDead(index) => {
                     local(function, *index)?;
@@ -367,6 +389,45 @@ fn local(function: &Function, index: i64) -> Result<Scalar, PlanError> {
             function: function.name.clone(),
             index,
         })
+}
+
+/// Require a field path's root to have its explicit owned or receiver-reference shape.
+fn field_owner(function: &Function, ty: Scalar, dereference: bool) -> Result<Scalar, PlanError> {
+    if !dereference {
+        return Ok(ty);
+    }
+    match ty {
+        Scalar::ModelRef(owner) | Scalar::ModelMutRef(owner) => Ok(Scalar::Model(owner)),
+        _ => Err(invalid(function, "field dereference requires a nominal receiver reference")),
+    }
+}
+
+/// Validate one field against its retained tuple or nominal layout before allowing another path step.
+fn projected_field(
+    plan: &Plan,
+    function: &Function,
+    owner: Scalar,
+    slot: i64,
+    field_type: &PlanType,
+) -> Result<Scalar, PlanError> {
+    let expected = match owner {
+        Scalar::Tuple(elements) => usize::try_from(slot)
+            .ok()
+            .and_then(|slot| elements.get(slot))
+            .cloned()
+            .ok_or_else(|| invalid(function, "unknown tuple field"))?,
+        Scalar::Model(owner) => {
+            let model = model(plan, owner).ok_or_else(|| invalid(function, "unknown model owner"))?;
+            let field = usize::try_from(slot)
+                .ok()
+                .and_then(|slot| model.fields.get(slot))
+                .ok_or_else(|| invalid(function, "unknown model field"))?;
+            scalar(&field.ty)
+        }
+        _ => return Err(invalid(function, "field projection requires a matching nominal or tuple owner")),
+    };
+    require(function, scalar(field_type), &expected, "projected field type")?;
+    Ok(expected)
 }
 
 /// Resolve checked arithmetic, list dereferences, and nominal projections, verifying reference shape and canonical
@@ -420,33 +481,18 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
                 require(function, scalar(field_type), &field, "range field projection")?;
                 return Ok(field);
             }
-            if let Scalar::Tuple(elements) = &ty {
-                let field = usize::try_from(*slot)
-                    .ok()
-                    .and_then(|slot| elements.get(slot))
-                    .ok_or_else(|| invalid(function, "unknown tuple field"))?;
-                require(
-                    function,
-                    scalar(field_type),
-                    field.clone(),
-                    "projected tuple field type",
-                )?;
-                return Ok(field.clone());
+            let owner = field_owner(function, ty, matches!(value.projection, Projection::DerefField(..)))?;
+            projected_field(plan, function, owner, *slot, field_type)
+        }
+        Projection::Fields(fields) | Projection::DerefFields(fields) => {
+            if fields.is_empty() {
+                return Err(invalid(function, "field path must retain at least one field"));
             }
-            let owner = match (&value.projection, ty) {
-                (Projection::Field(..), Scalar::Model(owner)) => owner,
-                (Projection::DerefField(..), Scalar::ModelRef(owner) | Scalar::ModelMutRef(owner)) => owner,
-                _ => {
-                    return Err(invalid(function, "field projection requires a matching nominal owner"));
-                }
-            };
-            let model = model(plan, owner).ok_or_else(|| invalid(function, "unknown model owner"))?;
-            let field = usize::try_from(*slot)
-                .ok()
-                .and_then(|slot| model.fields.get(slot))
-                .ok_or_else(|| invalid(function, "unknown model field"))?;
-            require(function, scalar(field_type), scalar(&field.ty), "projected field type")?;
-            Ok(scalar(field_type))
+            let mut owner = field_owner(function, ty, matches!(value.projection, Projection::DerefFields(_)))?;
+            for field in fields {
+                owner = projected_field(plan, function, owner, field.slot, &field.ty)?;
+            }
+            Ok(owner)
         }
         Projection::NumericValue(kind)
             if sized_numeric(&scalar(kind)).is_some_and(|kind| ty == Scalar::CheckedNumeric(kind)) =>
@@ -535,7 +581,7 @@ fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, 
 /// Reject implicit copies of any recursively owned value, including tuple string fields.
 fn owns_values(ty: &Scalar) -> bool {
     match ty {
-        Scalar::String | Scalar::StringArray(_) | Scalar::Model(_) => true,
+        Scalar::String | Scalar::StringArray(_) | Scalar::Model(_) | Scalar::Closure(_) => true,
         Scalar::Tuple(elements) => elements.iter().any(owns_values),
         _ => false,
     }
@@ -561,7 +607,28 @@ fn require(
 /// Validate scalar and aggregate rvalues against their exact destination layout.
 fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar) -> Result<Scalar, PlanError> {
     match value {
+        RvalueKind::UnitFunction(name) => {
+            let callback = plan
+                .functions
+                .iter()
+                .find(|value| &value.name == name)
+                .ok_or_else(|| PlanError::UnknownCallee(name.clone()))?;
+            if !callback.parameters.is_empty() || scalar(&callback.return_type) != Scalar::Unit {
+                return Err(invalid(
+                    function,
+                    "executor callback must take no arguments and return unit",
+                ));
+            }
+            Ok(Scalar::UnitFunction)
+        }
         RvalueKind::Use(value) => operand(plan, function, value),
+        RvalueKind::FrozenText(value) => {
+            if !matches!(value.kind, OperandKind::Literal(Constant::Text(_))) {
+                return Err(invalid(function, "FrozenStr construction requires static literal text"));
+            }
+            require(function, operand(plan, function, value)?, Scalar::StrRef, "frozen literal")?;
+            Ok(Scalar::FrozenStr)
+        }
         RvalueKind::NumericCast(value, source, target) => {
             let source = scalar(source);
             let target = scalar(target);
@@ -618,8 +685,31 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             }
             Ok(expected)
         }
+        RvalueKind::FunctionItem(callee) => {
+            let CalleeKind::Planned(name) = &callee.kind else {
+                return Err(invalid(function, "function item requires a planned source declaration"));
+            };
+            let (mut parameters, result) = signature(plan, function, callee)?;
+            parameters.push(result);
+            Ok(Scalar::FunctionItem(name.clone(), parameters))
+        }
+        RvalueKind::ClosureObject(value) => match place(plan, function, value)? {
+            Scalar::Closure(signature) if matches!(value.projection, Projection::Whole) => {
+                Ok(Scalar::ClosureRef(signature))
+            }
+            _ => Err(invalid(
+                function,
+                "callable-object borrow requires a whole owned closure",
+            )),
+        },
+        RvalueKind::ReifyFunction(value) => {
+            let Scalar::FunctionItem(_, signature) = operand(plan, function, value)? else {
+                return Err(invalid(function, "function-pointer coercion requires a function item"));
+            };
+            Ok(Scalar::FunctionPointer(signature))
+        }
         RvalueKind::IntToFloat(value) => {
-            require(function, operand(plan, function, value)?, Scalar::Int, "int-to-float")?;
+            require(function, operand(plan, function, value)?, &Scalar::Int, "int-to-float")?;
             Ok(Scalar::Float)
         }
         RvalueKind::FloatToInt(value) => {
@@ -634,6 +724,7 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             let ty = operand(plan, function, value)?;
             match op {
                 UnaryOp::Not if ty == Scalar::Bool => Ok(ty),
+                UnaryOp::Invert if integer(&ty) => Ok(ty),
                 UnaryOp::Negate
                     if matches!(
                         ty,
@@ -654,10 +745,14 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
         }
         RvalueKind::Binary(op, left, right) => {
             let ty = operand(plan, function, left)?;
-            require(function, operand(plan, function, right)?, ty.clone(), "binary operands")?;
+            let count = operand(plan, function, right)?;
+            if matches!(op, BinaryOp::ShiftLeft | BinaryOp::ShiftRight) {
+                return shift_result(function, ty, &count);
+            }
+            require(function, count, ty.clone(), "binary operands")?;
             binary_result(function, op, ty, expected)
         }
-        RvalueKind::Array(elements) => validate_array(plan, function, elements, expected),
+        RvalueKind::Array(elements) => validate_array(plan, function, elements, &expected),
         RvalueKind::Range(elements) => {
             require(function, expected, Scalar::RangeValue, "range destination")?;
             let fields = [Scalar::Int, Scalar::Int, Scalar::Int, Scalar::Bool];
@@ -701,11 +796,11 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
                 require(
                     function,
                     operand(plan, function, element)?,
-                    scalar(&field.ty),
+                    &scalar(&field.ty),
                     "model field",
                 )?;
             }
-            Ok(expected)
+            Ok(Scalar::Model(*index))
         }
         RvalueKind::MutBorrow(value) => borrow_result(plan, function, value, true),
         RvalueKind::Borrow(value) => borrow_result(plan, function, value, false),
@@ -774,9 +869,16 @@ fn borrow_result(plan: &Plan, function: &Function, value: &Place, mutable: bool)
     }
 }
 
-/// Source signatures expose scalars, owned text, models, and tuples of admitted types; formatting views stay internal.
-fn source_signature_type(ty: Scalar) -> bool {
-    if let Scalar::Tuple(elements) = &ty {
+/// Source signatures expose scalars, owned text, models, callables, and tuples of admitted types; formatting views
+/// stay internal.
+fn source_signature_type(ty: &Scalar) -> bool {
+    if let Scalar::FunctionPointer(signature) = ty {
+        return !signature.is_empty() && signature.iter().all(source_signature_type);
+    }
+    if let Scalar::Closure(signature) | Scalar::ClosureRef(signature) = ty {
+        return callable_object_signature(signature);
+    }
+    if let Scalar::Tuple(elements) = ty {
         return elements.iter().all(|element| {
             matches!(
                 element,
@@ -784,13 +886,14 @@ fn source_signature_type(ty: Scalar) -> bool {
             )
         });
     }
-    sized_numeric(&ty).is_some()
+    sized_numeric(ty).is_some()
         || matches!(
             ty,
             Scalar::Int
                 | Scalar::RangeValue
                 | Scalar::RangeCursor
                 | Scalar::RangeCursorMutRef
+                | Scalar::UnitFunction
                 | Scalar::ZipIterator(_, _)
                 | Scalar::ZipIteratorMutRef(_, _)
                 | Scalar::Generator(_, _)
@@ -800,6 +903,8 @@ fn source_signature_type(ty: Scalar) -> bool {
                 | Scalar::Bool
                 | Scalar::Unit
                 | Scalar::String
+                | Scalar::Decimal
+                | Scalar::FrozenStr
                 | Scalar::Model(_)
                 | Scalar::Enum(_)
                 | Scalar::List(_, _)
@@ -815,8 +920,8 @@ fn source_signature_type(ty: Scalar) -> bool {
 }
 
 /// Runtime signatures additionally admit shared text and slice views, whose regions metadata checking erases.
-fn external_signature_type(ty: Scalar) -> bool {
-    source_signature_type(ty.clone())
+fn external_signature_type(ty: &Scalar) -> bool {
+    source_signature_type(ty)
         || matches!(
             ty,
             Scalar::RangeCursorRef
@@ -831,7 +936,61 @@ fn external_signature_type(ty: Scalar) -> bool {
         )
 }
 
-/// Refuse an invalid dimension before constructing native array constants, including unused locals.
+/// A callable object's call packs its inputs into one flat tuple, so inputs and the result are scalars or owned text.
+fn callable_object_signature(signature: &[Scalar]) -> bool {
+    !signature.is_empty()
+        && signature.iter().all(|ty| {
+            matches!(
+                ty,
+                Scalar::Int | Scalar::Float | Scalar::Bool | Scalar::Unit | Scalar::String
+            )
+        })
+}
+
+/// Pin a closure constructor to the one shape its native body implements: rustc builds that body from the injected
+/// boxing expression, so any other statement or edge in the plan would silently not execute.
+fn validate_closure_constructor(function: &Function) -> Result<(), PlanError> {
+    let Some((_, count)) = crate::closures::constructor(function) else {
+        return Ok(());
+    };
+    let refused = || {
+        invalid(
+            function,
+            "closure constructor must box its captures in exactly one call",
+        )
+    };
+    let [first, second] = function.blocks.as_slice() else {
+        return Err(refused());
+    };
+    if !first.statements.is_empty()
+        || !second.statements.is_empty()
+        || first.cleanup
+        || second.cleanup
+        || !matches!(second.terminator.kind, TerminatorKind::Return)
+        || !matches!(function.return_type, PlanType::Closure(_))
+        || usize::try_from(count).ok() != Some(function.parameters.len())
+    {
+        return Err(refused());
+    }
+    let TerminatorKind::Call(_, arguments, destination, 1, Unwind::Continue) = &first.terminator.kind else {
+        return Err(refused());
+    };
+    let forwarded = arguments.iter().enumerate().all(|(index, argument)| {
+        matches!(&argument.kind, OperandKind::Copy(place)
+            if matches!(place.projection, Projection::Whole)
+                && usize::try_from(place.local).ok() == Some(index + 1))
+    });
+    if !forwarded
+        || arguments.len() != function.parameters.len()
+        || destination.local != 0
+        || !matches!(destination.projection, Projection::Whole)
+    {
+        return Err(refused());
+    }
+    Ok(())
+}
+
+/// Reject unsupported hashed leaves and invalid dimensions before constructing native types, including unused locals.
 fn validate_array_length(function: &Function, ty: Scalar) -> Result<(), PlanError> {
     match ty {
         Scalar::Generator(_, depth)
@@ -842,6 +1001,25 @@ fn validate_array_length(function: &Function, ty: Scalar) -> Result<(), PlanErro
         {
             Err(invalid(function, "generator element depth must be nonnegative"))
         }
+        Scalar::Set(Leaf::Tuple(elements))
+        | Scalar::SetRef(Leaf::Tuple(elements))
+        | Scalar::SetMutRef(Leaf::Tuple(elements))
+        | Scalar::Dict(Leaf::Tuple(elements), _)
+        | Scalar::DictRef(Leaf::Tuple(elements), _)
+        | Scalar::DictMutRef(Leaf::Tuple(elements), _) if elements.contains(&Scalar::Float) =>
+            Err(invalid(function, "floating-point tuple hashed keys lack Eq and Hash")),
+        Scalar::Dict(_, Leaf::Tuple(_))
+        | Scalar::DictRef(_, Leaf::Tuple(_))
+        | Scalar::DictMutRef(_, Leaf::Tuple(_)) => Err(invalid(function, "tuple dictionary values are not admitted")),
+        Scalar::Set(Leaf::Model(_))
+        | Scalar::SetRef(Leaf::Model(_))
+        | Scalar::SetMutRef(Leaf::Model(_))
+        | Scalar::Dict(Leaf::Model(_), _)
+        | Scalar::DictRef(Leaf::Model(_), _)
+        | Scalar::DictMutRef(Leaf::Model(_), _)
+        | Scalar::Dict(_, Leaf::Model(_))
+        | Scalar::DictRef(_, Leaf::Model(_))
+        | Scalar::DictMutRef(_, Leaf::Model(_)) => Err(invalid(function, "model leaves are admitted only in lists")),
         Scalar::Set(Leaf::Float)
         | Scalar::SetRef(Leaf::Float)
         | Scalar::SetMutRef(Leaf::Float)
@@ -864,10 +1042,15 @@ fn validate_array_length(function: &Function, ty: Scalar) -> Result<(), PlanErro
 }
 
 /// Check a formatting array's exact length and each element against its declared destination type.
-fn validate_array(plan: &Plan, function: &Function, values: &[Operand], expected: Scalar) -> Result<Scalar, PlanError> {
+fn validate_array(
+    plan: &Plan,
+    function: &Function,
+    values: &[Operand],
+    expected: &Scalar,
+) -> Result<Scalar, PlanError> {
     let (element, count) = match expected {
-        Scalar::StringArray(count) => (Scalar::String, count),
-        Scalar::StrArray(count) => (Scalar::StrRef, count),
+        Scalar::StringArray(count) => (Scalar::String, *count),
+        Scalar::StrArray(count) => (Scalar::StrRef, *count),
         _ => {
             return Err(invalid(
                 function,
@@ -882,11 +1065,14 @@ fn validate_array(plan: &Plan, function: &Function, values: &[Operand], expected
         require(
             function,
             operand(plan, function, value)?,
-            element.clone(),
+            &element,
             "formatting array element",
         )?;
     }
-    Ok(expected)
+    Ok(match element {
+        Scalar::String => Scalar::StringArray(count),
+        _ => Scalar::StrArray(count),
+    })
 }
 
 /// Sized integer arithmetic retains its carrier for legacy release wrapping; an explicit pair destination requests
@@ -909,10 +1095,12 @@ fn binary_result(function: &Function, op: &BinaryOp, ty: Scalar, expected: Scala
             | BinaryOp::LessEqual
             | BinaryOp::Greater
             | BinaryOp::GreaterEqual => Ok(Scalar::Bool),
+            BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor if sized_integer(&ty) => Ok(ty),
             _ => Err(invalid(function, "unsupported sized numeric operator")),
         };
     }
     match op {
+        BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor if ty == Scalar::Int => Ok(Scalar::Int),
         BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply if ty == Scalar::Int => Ok(Scalar::CheckedInt),
         BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide if ty == Scalar::Float => {
             Ok(Scalar::Float)
@@ -929,8 +1117,17 @@ fn binary_result(function: &Function, op: &BinaryOp, ty: Scalar, expected: Scala
     }
 }
 
+/// A shift keeps its left operand's integer type and counts with any integer type, as Rust's own shifts do.
+fn shift_result(function: &Function, ty: Scalar, count: &Scalar) -> Result<Scalar, PlanError> {
+    if integer(&ty) && integer(count) {
+        Ok(ty)
+    } else {
+        Err(invalid(function, "shift operands must be integers"))
+    }
+}
+
 /// Resolve a function reference against source-named declarations before invoking rustc.
-fn signature(plan: &Plan, callee: &Callee) -> Result<(Vec<Scalar>, Scalar), PlanError> {
+fn signature(plan: &Plan, function: &Function, callee: &Callee) -> Result<(Vec<Scalar>, Scalar), PlanError> {
     span(&callee.span)?;
     match &callee.kind {
         CalleeKind::SpawnGenerator(name, leaf, depth) => {
@@ -967,6 +1164,55 @@ fn signature(plan: &Plan, callee: &Callee) -> Result<(Vec<Scalar>, Scalar), Plan
             vec![Scalar::Generator(Leaf::of(leaf), *depth)],
             Scalar::List(Leaf::of(leaf), depth + 1),
         )),
+        CalleeKind::CallClosure(signature) => {
+            let signature: Vec<_> = signature.iter().map(scalar).collect();
+            if !callable_object_signature(&signature) {
+                return Err(invalid(
+                    function,
+                    "callable-object call requires flat inputs and a result",
+                ));
+            }
+            let (result, inputs) = signature
+                .split_last()
+                .ok_or_else(|| invalid(function, "callable-object call has no result type"))?;
+            Ok((
+                vec![Scalar::ClosureRef(signature.clone()), Scalar::Tuple(inputs.to_vec())],
+                result.clone(),
+            ))
+        }
+        CalleeKind::ClosureBody(name, count) => {
+            let lifted = plan
+                .functions
+                .iter()
+                .find(|lifted| &lifted.name == name)
+                .ok_or_else(|| PlanError::UnknownCallee(name.clone()))?;
+            let count = usize::try_from(*count)
+                .ok()
+                .filter(|count| *count <= lifted.parameters.len())
+                .ok_or_else(|| invalid(function, "closure capture count exceeds the lifted parameters"))?;
+            let mut object: Vec<_> = lifted.parameters[count..]
+                .iter()
+                .map(|parameter| scalar(&parameter.ty))
+                .collect();
+            object.push(scalar(&lifted.return_type));
+            Ok((
+                lifted.parameters[..count]
+                    .iter()
+                    .map(|parameter| scalar(&parameter.ty))
+                    .collect(),
+                Scalar::Closure(object),
+            ))
+        }
+        CalleeKind::Value(value) => {
+            let mut signature = match operand(plan, function, value)? {
+                Scalar::FunctionPointer(signature) | Scalar::FunctionItem(_, signature) => signature,
+                _ => return Err(invalid(function, "local call requires a callable type")),
+            };
+            let result = signature
+                .pop()
+                .ok_or_else(|| invalid(function, "local callable has no result type"))?;
+            Ok((signature, result))
+        }
         CalleeKind::Planned(name) => {
             let function = plan
                 .functions
@@ -1028,13 +1274,7 @@ fn generator_element(leaf: &ListLeaf, depth: i64) -> Scalar {
     if depth != 0 {
         return Scalar::List(Leaf::of(leaf), depth);
     }
-    match leaf {
-        ListLeaf::Int => Scalar::Int,
-        ListLeaf::Float => Scalar::Float,
-        ListLeaf::Bool => Scalar::Bool,
-        ListLeaf::Str => Scalar::String,
-        ListLeaf::Tuple(elements) => scalar(&PlanType::Tuple(elements.clone())),
-    }
+    scalar(&crate::plan::list_leaf_type(leaf.clone()))
 }
 
 /// Captured spawn is a constructor boundary, not an arbitrary closure operation in an ordinary planned body.
@@ -1073,7 +1313,7 @@ fn terminator(plan: &Plan, function: &Function, value: &TerminatorKind, cleanup:
             require(
                 function,
                 operand(plan, function, condition)?,
-                Scalar::Bool,
+                &Scalar::Bool,
                 "switch condition",
             )?;
             edge(function, *false_target, cleanup)?;
@@ -1083,7 +1323,7 @@ fn terminator(plan: &Plan, function: &Function, value: &TerminatorKind, cleanup:
             if matches!(callee.kind, CalleeKind::SpawnGenerator(..)) && !arguments.is_empty() {
                 validate_generator_constructor(function, arguments)?;
             }
-            let (parameters, result) = signature(plan, callee)?;
+            let (parameters, result) = signature(plan, function, callee)?;
             if parameters.len() != arguments.len() {
                 return Err(invalid(
                     function,
@@ -1091,12 +1331,17 @@ fn terminator(plan: &Plan, function: &Function, value: &TerminatorKind, cleanup:
                 ));
             }
             for (argument, parameter) in arguments.iter().zip(parameters) {
-                require(function, operand(plan, function, argument)?, parameter, "call argument")?;
+                require(
+                    function,
+                    operand(plan, function, argument)?,
+                    &parameter,
+                    "call argument",
+                )?;
             }
             require(
                 function,
                 place(plan, function, destination)?,
-                result,
+                &result,
                 "call destination",
             )?;
             edge(function, *target, cleanup)?;
@@ -1111,7 +1356,7 @@ fn terminator(plan: &Plan, function: &Function, value: &TerminatorKind, cleanup:
             require(
                 function,
                 operand(plan, function, condition)?,
-                Scalar::Bool,
+                &Scalar::Bool,
                 "overflow flag",
             )?;
             let left_type = operand(plan, function, left)?;
@@ -1146,7 +1391,7 @@ fn model(plan: &Plan, index: i64) -> Option<&crate::plan::ModelDeclaration> {
 
 /// Require flat scalar/text tuple layouts and consistent nominal declaration identities.
 fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
-    if matches!(ty, PlanType::Tuple(_)) && !source_signature_type(scalar(ty)) {
+    if matches!(ty, PlanType::Tuple(_)) && !source_signature_type(&scalar(ty)) {
         return Err(PlanError::Invalid {
             function: "tuple".into(),
             reason: "tuple elements must be admitted scalars or owned text".into(),
@@ -1168,6 +1413,45 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
             });
         }
     }
+    if let PlanType::FunctionItem(name, signature) = ty {
+        let function = plan
+            .functions
+            .iter()
+            .find(|function| function.name == *name)
+            .ok_or_else(|| PlanError::UnknownCallee(name.clone()))?;
+        let actual: Vec<_> = signature.iter().map(scalar).collect();
+        let expected: Vec<_> = function
+            .parameters
+            .iter()
+            .map(|parameter| scalar(&parameter.ty))
+            .chain(std::iter::once(scalar(&function.return_type)))
+            .collect();
+        if actual != expected {
+            return Err(invalid(
+                function,
+                "function item signature differs from its declaration",
+            ));
+        }
+    }
+    if let PlanType::Closure(signature) | PlanType::ClosureRef(signature) = ty
+        && !callable_object_signature(&signature.iter().map(scalar).collect::<Vec<_>>())
+    {
+        return Err(PlanError::Invalid {
+            function: "callable object".into(),
+            reason: "callable-object signature requires flat inputs and a final return type".into(),
+        });
+    }
+    if let PlanType::FunctionPointer(signature) = ty {
+        if signature.is_empty() || !signature.iter().all(|ty| source_signature_type(&scalar(ty))) {
+            return Err(PlanError::Invalid {
+                function: "function pointer".into(),
+                reason: "callable signature requires admitted inputs and a final return type".into(),
+            });
+        }
+        for component in signature {
+            validate_model_type(plan, component)?;
+        }
+    }
     if let PlanType::Model(index, name) | PlanType::ModelRef(index, name) | PlanType::ModelMutRef(index, name) = ty {
         if model(plan, *index).is_none_or(|declaration| declaration.name != *name) {
             return Err(PlanError::Invalid {
@@ -1181,17 +1465,23 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
 
 /// Validate named model layouts and single-slot newtypes, rejecting cyclic layouts before invoking rustc.
 fn validate_models(plan: &Plan) -> Result<(), PlanError> {
-    let mut names: BTreeSet<_> = plan.functions.iter().map(|function| &function.name).collect();
+    let mut names: BTreeSet<_> = plan.functions.iter().map(|function| function.name.clone()).collect();
     for (index, declaration) in plan.models.iter().enumerate() {
         span(&declaration.span)?;
         let tuple = declaration.fields.len() == 1 && declaration.fields[0].name == "0";
         let derives_valid = if tuple {
             declaration.derives == ["Debug", "Clone"] || declaration.derives == ["Debug", "Clone", "Copy"]
         } else {
-            declaration.derives == ["Debug", "Clone", "FieldInfo", "IncanClass"]
+            ["Debug", "Clone", "FieldInfo", "IncanClass"].iter().all(|required| declaration.derives.iter().any(|derive| derive == required))
+                && declaration.derives.iter().all(|derive| matches!(derive.as_str(), "Debug" | "Clone" | "FieldInfo" | "IncanClass" | "Eq" | "PartialEq" | "Hash" | "Ord" | "PartialOrd" | "Default" | "Display" | "serde::Serialize" | "serde::Deserialize"))
+                && declaration.derives.iter().collect::<BTreeSet<_>>().len() == declaration.derives.len()
         };
         if !identifier(&declaration.name)
-            || !names.insert(&declaration.name)
+            || !names.insert(declaration.name.clone())
+            || (!declaration.source_name.is_empty() && !identifier(&declaration.source_name))
+            || (!declaration.source_name.is_empty()
+                && declaration.source_name != declaration.name
+                && !names.insert(crate::declarations::model_module_name(declaration)))
             || declaration.fields.len() != declaration.field_public.len()
             || !derives_valid
         {
@@ -1205,7 +1495,11 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
             span(&field.span)?;
             if (!tuple && !identifier(&field.name))
                 || !fields.insert(&field.name)
-                || !source_signature_type(scalar(&field.ty))
+                || !source_signature_type(&scalar(&field.ty))
+                || matches!(
+                    field.ty,
+                    PlanType::FunctionPointer(_) | PlanType::Closure(_) | PlanType::ClosureRef(_)
+                )
             {
                 return Err(PlanError::Invalid {
                     function: declaration.name.clone(),
@@ -1249,6 +1543,11 @@ fn sized_numeric(ty: &Scalar) -> Option<Numeric> {
 /// Sized integer carriers can produce a checked arithmetic pair; floats cannot.
 fn sized_integer(ty: &Scalar) -> bool {
     sized_numeric(&ty).is_some() && !matches!(ty, Scalar::F32 | Scalar::F64)
+}
+
+/// The ordinary and sized integer carriers, the only operands of bit operations.
+fn integer(ty: &Scalar) -> bool {
+    *ty == Scalar::Int || sized_integer(ty)
 }
 
 /// Resolve a source enum layout by its validated plan index.
@@ -1312,7 +1611,7 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
             }
             for field in &variant.fields {
                 validate_model_type(plan, field)?;
-                if !source_signature_type(scalar(field)) {
+                if !source_signature_type(&scalar(field)) {
                     return Err(error());
                 }
                 if let PlanType::Enum(owner, _) = field {

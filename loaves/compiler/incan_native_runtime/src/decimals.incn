@@ -1,0 +1,43 @@
+"""Exact Decimal128 construction and value comparisons shared with legacy execution."""
+
+from rust::incan_std_core::num import Decimal128 as RuntimeDecimal
+
+
+pub def decimal_from_parts(coefficient: i128, scale: u8) -> RuntimeDecimal:
+    """Preserve the checked coefficient and written fractional scale without a float conversion."""
+    return RuntimeDecimal.new(coefficient, scale)
+
+
+pub def format_decimal(value: RuntimeDecimal) -> str:
+    """Render the carrier's written scale through its canonical Display implementation."""
+    return str(value)
+
+
+pub def equal_decimal(left: RuntimeDecimal, right: RuntimeDecimal) -> bool:
+    """Compare numeric values independently of their written scales."""
+    return left == right
+
+
+pub def unequal_decimal(left: RuntimeDecimal, right: RuntimeDecimal) -> bool:
+    """Apply the legacy carrier's numeric inequality."""
+    return left != right
+
+
+pub def less_decimal(left: RuntimeDecimal, right: RuntimeDecimal) -> bool:
+    """Apply the legacy carrier's numeric ordering."""
+    return left < right
+
+
+pub def less_equal_decimal(left: RuntimeDecimal, right: RuntimeDecimal) -> bool:
+    """Apply the legacy carrier's inclusive numeric ordering."""
+    return left <= right
+
+
+pub def greater_decimal(left: RuntimeDecimal, right: RuntimeDecimal) -> bool:
+    """Apply the legacy carrier's reverse numeric ordering."""
+    return left > right
+
+
+pub def greater_equal_decimal(left: RuntimeDecimal, right: RuntimeDecimal) -> bool:
+    """Apply the legacy carrier's inclusive reverse numeric ordering."""
+    return left >= right

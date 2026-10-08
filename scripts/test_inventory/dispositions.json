@@ -587,12 +587,20 @@
       "notes": "Oven-built pinned native driver; scalar plan and real Body IR lowering; unchanged benchmark byte parity and opt-in census of every behavior fixture",
       "owner": 1337,
       "split_required": true,
-      "split_target": "",
+      "split_target": "native_driver_project_tests/collections.rs for focused collection parity cases",
       "twin": ""
     },
     "loaves/compiler/incan_driver/tests/native_driver_project_tests/census.rs": {
       "disposition": "keep",
       "notes": "Direct-route census refusal grouping and bounded process capture; route-independent measurement support",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/tail.rs": {
+      "disposition": "keep",
+      "notes": "Direct-route small statements, operators and places compared byte for byte with legacy output",
       "owner": 1337,
       "split_required": false,
       "split_target": "",
@@ -5731,7 +5739,7 @@
       "disposition": "keep",
       "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
       "owner": 1561,
-      "split_required": false,
+      "split_required": true,
       "split_target": "",
       "twin": ""
     },
@@ -5783,6 +5791,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/nominal_parameters.rs": {
+      "disposition": "keep",
+      "notes": "Checked model owner binders, method frames and deferred field defaults retained for direct-route specialization; frontend facts without legacy emission.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/operators_literals_and_assignment.rs": {
       "disposition": "keep",
       "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
@@ -5810,6 +5826,14 @@
     "loaves/compiler/incan_frontend/src/body_ir/tests/range_bounds.rs": {
       "disposition": "keep",
       "notes": "Retained Body IR source range exhaustion on fallthrough and continue; no generated Rust dependency.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/static_storage.rs": {
+      "disposition": "keep",
+      "notes": "Canonical static storage and live versus detached local storage bindings; frontend-only contract coverage.",
       "owner": 1337,
       "split_required": false,
       "split_target": "",

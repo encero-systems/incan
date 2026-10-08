@@ -1,10 +1,10 @@
 //! Mapping admitted plan types to the pinned rustc representation.
 
 use crate::error::PlanError;
-use crate::plan::{ListLeaf, PlanType, SizedNumeric, tuple_element_type};
+use crate::plan::{ListLeaf, PlanType, SizedNumeric, list_leaf_type, tuple_element_type};
 use rustc_middle::ty::{Ty, TyCtxt};
 
-/// Translate admitted scalar, model, and collection types to their canonical native representations.
+/// Translate admitted scalar, model, collection, and callable types to their canonical native representations.
 ///
 /// List references preserve source parameter borrowing; checked pairs and other shared references are body-internal.
 pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, PlanError> {
@@ -89,9 +89,21 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::ISize => tcx.types.isize,
         PlanType::USize => tcx.types.usize,
         PlanType::Bool => tcx.types.bool,
+        PlanType::FunctionPointer(signature) => function_pointer_type(tcx, signature)?,
+        PlanType::Closure(signature) => Ty::new_box(tcx, callable_object_type(tcx, signature)?),
+        PlanType::ClosureRef(signature) => {
+            Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, callable_object_type(tcx, signature)?)
+        }
+        PlanType::FunctionItem(name, _) => Ty::new_fn_def(tcx, crate::callees::planned(tcx, name)?, tcx.mk_args(&[])),
         PlanType::Unit => tcx.types.unit,
+        PlanType::UnitFunction => Ty::new_fn_ptr(
+            tcx,
+            rustc_middle::ty::Binder::dummy(tcx.mk_fn_sig_safe_rust_abi([], tcx.types.unit)),
+        ),
         PlanType::CheckedInt => Ty::new_tup(tcx, &[tcx.types.i64, tcx.types.bool]),
         PlanType::String => string_type(tcx)?,
+        PlanType::Decimal => decimal_type(tcx)?,
+        PlanType::FrozenStr => frozen_type(tcx)?,
         PlanType::StringRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, string_type(tcx)?),
         PlanType::StrRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, tcx.types.str_),
         PlanType::StringArray(count) => array_type(tcx, string_type(tcx)?, *count)?,
@@ -132,7 +144,7 @@ pub fn generator_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str, leaf: &ListLeaf, dept
             .ok_or_else(|| PlanError::UnknownCallee(format!("incan_std_core::iter::{name}")))?;
     }
     let element = if depth == 0 {
-        primitive_type(tcx, leaf)?
+        collection_leaf_type(tcx, leaf)?
     } else {
         list_type(tcx, leaf, depth)?
     };
@@ -141,6 +153,55 @@ pub fn generator_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str, leaf: &ListLeaf, dept
         tcx.adt_def(definition),
         tcx.mk_args(&[element.into()]),
     ))
+}
+
+/// Build a safe Rust-ABI function pointer from its checked inputs and final return entry.
+fn function_pointer_type<'tcx>(tcx: TyCtxt<'tcx>, signature: &[PlanType]) -> Result<Ty<'tcx>, PlanError> {
+    let (result, parameters) = signature.split_last().ok_or_else(|| PlanError::Invalid {
+        function: "function pointer".into(),
+        reason: "callable signature has no return type".into(),
+    })?;
+    let inputs = parameters
+        .iter()
+        .map(|ty| native_type(tcx, ty))
+        .collect::<Result<Vec<_>, _>>()?;
+    let signature = tcx.mk_fn_sig_safe_rust_abi(inputs, native_type(tcx, result)?);
+    Ok(Ty::new_fn_ptr(tcx, rustc_middle::ty::Binder::dummy(signature)))
+}
+
+/// Build the `dyn Fn(inputs) -> output` object a boxed closure or closure-holding parameter holds.
+///
+/// The object's trait and its `FnOnce::Output` projection come from language items, never from source spellings.
+pub fn callable_object_type<'tcx>(tcx: TyCtxt<'tcx>, signature: &[PlanType]) -> Result<Ty<'tcx>, PlanError> {
+    let (result, parameters) = signature.split_last().ok_or_else(|| PlanError::Invalid {
+        function: "callable object".into(),
+        reason: "callable signature has no return type".into(),
+    })?;
+    let missing = |item: &str| PlanError::UnknownCallee(item.into());
+    let fn_trait = tcx.lang_items().fn_trait().ok_or_else(|| missing("Fn"))?;
+    let output = tcx
+        .lang_items()
+        .fn_once_output()
+        .ok_or_else(|| missing("FnOnce::Output"))?;
+    let arguments = callable_arguments_type(tcx, parameters)?;
+    let predicates = tcx.mk_poly_existential_predicates(&[
+        rustc_middle::ty::Binder::dummy(rustc_middle::ty::ExistentialPredicate::Trait(
+            rustc_middle::ty::ExistentialTraitRef::new(tcx, fn_trait, [arguments]),
+        )),
+        rustc_middle::ty::Binder::dummy(rustc_middle::ty::ExistentialPredicate::Projection(
+            rustc_middle::ty::ExistentialProjection::new(tcx, output, [arguments], native_type(tcx, result)?.into()),
+        )),
+    ]);
+    Ok(Ty::new_dynamic(tcx, predicates, tcx.lifetimes.re_static))
+}
+
+/// The tuple a callable object's call takes, holding each checked input in order.
+pub fn callable_arguments_type<'tcx>(tcx: TyCtxt<'tcx>, parameters: &[PlanType]) -> Result<Ty<'tcx>, PlanError> {
+    let inputs = parameters
+        .iter()
+        .map(|ty| native_type(tcx, ty))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Ty::new_tup(tcx, &inputs))
 }
 
 /// Resolve the real standard String definition rather than manufacturing an ADT layout.
@@ -152,6 +213,27 @@ fn string_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
     Ok(tcx.type_of(definition).instantiate_identity().skip_normalization())
 }
 
+/// Recover Decimal128 from the canonical runtime constructor's return type, preserving its dependency identity.
+fn decimal_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
+    let definition = crate::callees::external(tcx, "incan_native_runtime::decimal_from_parts")?;
+    Ok(tcx.fn_sig(definition).instantiate_identity().skip_binder().output())
+}
+
+/// Recover the dependency-owned FrozenStr identity from its canonical observation wrapper.
+fn frozen_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
+    let definition = crate::callees::external(tcx, "incan_native_runtime::format_frozen")?;
+    tcx.fn_sig(definition)
+        .instantiate_identity()
+        .skip_binder()
+        .inputs()
+        .first()
+        .copied()
+        .ok_or_else(|| PlanError::Invalid {
+            function: "FrozenStr".into(),
+            reason: "the frozen observation wrapper has no carrier argument".into(),
+        })
+}
+
 /// Translate a checked exact array length without a signed or truncating conversion.
 fn array_type<'tcx>(tcx: TyCtxt<'tcx>, element: Ty<'tcx>, count: i64) -> Result<Ty<'tcx>, PlanError> {
     let count = u64::try_from(count).map_err(|_| PlanError::Invalid {
@@ -161,14 +243,14 @@ fn array_type<'tcx>(tcx: TyCtxt<'tcx>, element: Ty<'tcx>, count: i64) -> Result<
     Ok(Ty::new_array(tcx, element, count))
 }
 
-/// Resolve a previously injected source model; no external nominal can enter by spelling alone.
+/// Resolve an injected model or its concrete layout alias; aliases retain the same underlying source-named ADT.
 pub fn model_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Result<Ty<'tcx>, PlanError> {
     let definition = tcx
         .hir_crate_items(())
         .free_items()
         .map(|item| item.owner_id.to_def_id())
         .find(|def| {
-            tcx.def_kind(*def) == rustc_hir::def::DefKind::Struct
+            matches!(tcx.def_kind(*def), rustc_hir::def::DefKind::Struct | rustc_hir::def::DefKind::TyAlias)
                 && tcx.opt_item_name(*def).is_some_and(|symbol| symbol.as_str() == name)
         })
         .ok_or_else(|| PlanError::Invalid {
@@ -180,7 +262,7 @@ pub fn model_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Result<Ty<'tcx>, PlanE
 
 /// Select the primitive leaf and wrap it in the standard Vec ADT once per retained list dimension.
 fn list_type<'tcx>(tcx: TyCtxt<'tcx>, leaf: &ListLeaf, depth: i64) -> Result<Ty<'tcx>, PlanError> {
-    let mut element = primitive_type(tcx, leaf)?;
+    let mut element = collection_leaf_type(tcx, leaf)?;
     if depth < 1 {
         return Err(PlanError::Invalid {
             function: "list".into(),
@@ -241,7 +323,7 @@ fn hash_collection_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str, leaves: &[&ListLeaf
         })?;
     let elements = leaves
         .iter()
-        .map(|leaf| primitive_type(tcx, leaf))
+        .map(|leaf| collection_leaf_type(tcx, leaf))
         .collect::<Result<Vec<_>, _>>()?;
     let arguments = rustc_middle::ty::GenericArgs::for_item(tcx, definition, |parameter, arguments| {
         match usize::try_from(parameter.index)
@@ -259,15 +341,9 @@ fn hash_collection_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str, leaves: &[&ListLeaf
     Ok(Ty::new_adt(tcx, tcx.adt_def(definition), arguments))
 }
 
-/// Map the shared checked primitive leaf once for all collection layouts.
-fn primitive_type<'tcx>(tcx: TyCtxt<'tcx>, leaf: &ListLeaf) -> Result<Ty<'tcx>, PlanError> {
-    match leaf {
-        ListLeaf::Int => Ok(tcx.types.i64),
-        ListLeaf::Float => Ok(tcx.types.f64),
-        ListLeaf::Bool => Ok(tcx.types.bool),
-        ListLeaf::Str => string_type(tcx),
-        ListLeaf::Tuple(elements) => native_type(tcx, &PlanType::Tuple(elements.clone())),
-    }
+/// Map the checked scalar or tuple leaf once for all collection layouts.
+fn collection_leaf_type<'tcx>(tcx: TyCtxt<'tcx>, leaf: &ListLeaf) -> Result<Ty<'tcx>, PlanError> {
+    native_type(tcx, &list_leaf_type(leaf.clone()))
 }
 
 /// Resolve an injected source enum or concrete standard-carrier alias by its validated plan declaration name.

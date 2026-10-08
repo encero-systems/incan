@@ -11,7 +11,7 @@ from rust::incan_semantics_core::body_ir import (
 
 
 pub def list_shape(ty: PlanType) -> Option[tuple[ListLeaf, int]]:
-    """Read an owned or borrowed list's primitive leaf and nesting depth."""
+    """Read an owned or borrowed list's admitted leaf and nesting depth."""
     match ty:
         PlanType.List(leaf, depth) => return Some((leaf, depth))
         PlanType.ListRef(leaf, depth) => return Some((leaf, depth))

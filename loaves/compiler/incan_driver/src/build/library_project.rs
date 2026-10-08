@@ -713,6 +713,24 @@ pub fn prepare_library_project_with_caller_facet(
     library_manifest.contract_metadata.api = Some(checked_api);
     let public_identities =
         incan_frontend::library_manifest::published_layout::public_executable_identities(&library_manifest);
+    // Sibling-module immutable values belong to the same declaring compilation. Retain their canonical context
+    // before projecting bodies, so a public import is not downgraded to an unsupported global-storage read.
+    let executable_modules = modules
+        .iter()
+        .map(|module| {
+            let type_info = checked_type_info_by_path
+                .get(&module.file_path)
+                .ok_or_else(|| CliError::failure("checked library module facts are missing"))?;
+            Ok(
+                incan_frontend::body_ir::build_body_ir_module_v0_with_executable_context(
+                    &module.ast,
+                    &module.path_segments,
+                    type_info,
+                    &executable_modules,
+                ),
+            )
+        })
+        .collect::<Result<Vec<_>, CliError>>()?;
     // A published body is unrepresentable when Body IR has a gap in it, not when one consumer cannot execute it: what
     // a package publishes is a fact about the package, and every consumer reads the same representation.
     let unrepresentable = executable_modules

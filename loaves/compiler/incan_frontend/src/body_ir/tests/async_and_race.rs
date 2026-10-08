@@ -7,6 +7,7 @@ use super::*;
 const ASYNC_PRELUDE: &str =
     "import std.async\n\nasync def fast() -> int:\n  return 1\n\nasync def slow() -> int:\n  return 2\n\n";
 
+/// Await consumes the owned future and records a separately typed resumed destination.
 #[test]
 fn lowers_await_as_an_explicit_suspension_point_with_a_destination() -> Result<(), Box<dyn std::error::Error>> {
     let source = format!("{ASYNC_PRELUDE}async def f() -> int:\n  v = await fast()\n  return v\n");
@@ -22,13 +23,31 @@ fn lowers_await_as_an_explicit_suspension_point_with_a_destination() -> Result<(
     // The suspension carries a destination and the awaited operand's own ownership fact -- the two facts that
     // distinguish it from a generator `yield`, which produces outward and has no destination.
     assert!(
-        snapshot.contains("_1 = await copy(_0, last_use)"),
+        snapshot.contains("_1 = await move(_0, last_use)"),
         "await must record its destination and the awaited read's ownership fact: {snapshot}"
     );
     assert!(
         !snapshot.contains("yield"),
         "await must not be represented as a generator yield: {snapshot}"
     );
+    Ok(())
+}
+
+/// Future construction retains an owned carrier, while the await destination and source binding keep its output.
+#[test]
+fn retains_async_call_carriers_before_await() -> Result<(), Box<dyn std::error::Error>> {
+    let source = format!("{ASYNC_PRELUDE}async def f() -> int:\n  value = await fast()\n  return value\n");
+    let module = build(&source, &["m", "async_carrier"])?;
+    let body = body_named(&module, "f")?;
+    let output = IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Int);
+    let future = IncanType::Generic {
+        base: "Awaitable".to_string(),
+        args: vec![output.clone()],
+    };
+    assert_eq!(body.locals[0].ty, future);
+    assert_eq!(body.locals[1].ty, output);
+    assert_eq!(body.locals[2].ty, output);
+    assert!(body.render_snapshot().contains("await move(_0, last_use)"));
     Ok(())
 }
 
@@ -351,7 +370,9 @@ fn a_prefix_surface_keyword_that_is_not_await_is_refused_rather_than_treated_as_
     let local_fieldless_enum_declarations = LocalFieldlessEnumDeclarations::new();
     let local_value_enum_declarations = LocalValueEnumDeclarations::new();
     let provider_operations = ProviderOperationCatalog::new();
+    let published_constants = HashMap::new();
     let lowering_facts = BodyIrLoweringFacts {
+        published_constants: &published_constants,
         type_info: &type_info,
         function_default_sources: &function_default_sources,
         local_function_declarations: &local_function_declarations,

@@ -6,15 +6,38 @@ use super::*;
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Lower every statement in `stmts` into `out`, within `scope`. Statements are lowered in source order and each
     /// one is given the statement suffix that follows it (`&stmts[index + 1..]`), so last-use countdowns seeded by
-    /// [`Self::declare_new_local`] only count reads that can still occur after the declaration.
+    /// [`Self::declare_new_local`] only count reads that can still occur after the declaration. Nested blocks cannot
+    /// change an enclosing static binding's handle selection: that needs a runtime handle fact, so it refuses
+    /// explicitly rather than retaining whichever branch happened to lower last.
     pub(super) fn lower_block_into(
         &mut self,
         stmts: &[ast::Spanned<ast::Statement>],
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) {
+        // ---- Context: storage bindings in the enclosing scope ----
+        let nested = self.scopes.iter().any(|info| info.id == scope && info.parent.is_some());
+        let enclosing_aliases = self.static_aliases.clone();
+        let enclosing_handles = self.static_binding_locals.clone();
+
+        // ---- Context: source-order statements ----
         for (index, stmt) in stmts.iter().enumerate() {
             self.lower_stmt_into(stmt, &stmts[index + 1..], scope, out);
+        }
+
+        // ---- Context: a handle selected by runtime control flow ----
+        if nested {
+            if enclosing_handles
+                .iter()
+                .any(|local| self.static_aliases.get(local) != enclosing_aliases.get(local))
+            {
+                self.push_unsupported_stmt(
+                    "control-flow-dependent static binding handle".to_string(),
+                    self.scope_span(scope),
+                    out,
+                );
+            }
+            self.static_aliases = enclosing_aliases;
         }
     }
 
@@ -61,7 +84,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.lower_chained_assignment(chained_assignment, remaining, scope, span, out)
             }
             ast::Statement::Return(value) => {
-                let value = value.as_ref().map(|v| self.lower_expr_to_operand(v, scope, out));
+                let value = value.as_ref().map(|v| {
+                    let operand = self.lower_expr_to_operand(v, scope, out);
+                    self.owned_parameter_operand(v, operand)
+                });
                 out.push(bir::Statement {
                     kind: bir::StatementKind::Return { value },
                     span,
@@ -147,14 +173,23 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // slots, and `LocalCallableTarget::binding` records the resulting declaration mapping. Keeping this type on
         // the binding makes the local call contract agree with the `Rvalue::Closure` that creates the value.
         let assignment_span = ast::Span::new(span.start, span.end);
-        let ty = self
+        let mut ty = self
             .type_info
             .assignment_binding_type(assignment_span)
-            .map(semantic_type_from_resolved)
+            .map(|ty| self.checked_type(ty))
             .or_else(|| self.callable_value_ty(&assignment.value))
             .unwrap_or_else(|| self.resolve_ty(assignment.value.span));
         let materializes_range = self.expr_has_materialized_range_layout(&assignment.value);
         let value = self.lower_expr_to_operand(&assignment.value, scope, out);
+        // Future construction is a distinct Body IR value even when the surface checker exposes its output type.
+        // Preserve that carrier through a binding or alias instead of silently turning it into a scalar copy.
+        if let bir::Operand::Place(read) = &value
+            && let Some(local) = read.place.local_id()
+            && let IncanType::Generic { base, .. } = &self.locals[local.index()].ty
+            && base == "Awaitable"
+        {
+            ty = self.locals[local.index()].ty.clone();
+        }
         let binding_span = hir_span(assignment.name_span);
         let target_identity = self
             .type_info
@@ -199,6 +234,20 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 remaining,
             )),
         };
+        if assignment.ty.is_some()
+            && !self.type_info.binds_capturing_callable(assignment_span)
+            && let Some(local) = place.local_id()
+            && matches!(self.locals[local.index()].ty, IncanType::Function { .. })
+            && !self.function_pointer_locals.contains(&local)
+        {
+            self.function_pointer_locals.push(local);
+        }
+        if self.type_info.binds_capturing_callable(assignment_span)
+            && let Some(local) = place.local_id()
+            && !self.closure_holding_locals.contains(&local)
+        {
+            self.closure_holding_locals.push(local);
+        }
         if !place.permits_write() {
             let target = place
                 .global()
@@ -212,6 +261,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let representation = self.operand_representation(&value);
             self.retain_value_representation(local, representation);
         }
+        self.record_static_alias_assignment(assignment, &place, &value);
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {
                 place: place.clone(),
@@ -233,6 +283,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// (`loaves/kernel/incan_syntax/src/parser/stmts.rs`'s `assignment_or_expr_stmt`) -- `fa.compound_op` is purely a
     /// formatter hint for round-tripping `+=` spelling and carries no separate lowering semantics here, so this
     /// only needs to build the write-side place and lower `value` normally.
+    /// Field alias writes remain named refusals because legacy still emits their alias spelling as a Rust field.
     pub(super) fn lower_field_assignment(
         &mut self,
         field_assignment: &ast::FieldAssignmentStmt,
@@ -241,10 +292,22 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) {
         let mut place = self.lower_expr_to_place(&field_assignment.object, scope, out);
-        place.projection.push(bir::PlaceElem::field(
-            field_assignment.field.clone(),
-            self.type_info.resolved_identity(field_assignment.target_span).cloned(),
-        ));
+        let projection = self.lower_checked_field_projection(
+            &field_assignment.object,
+            &field_assignment.field,
+            field_assignment.target_span,
+        );
+        // Legacy writes still emit the source alias as a Rust field (#1337 lane repro). Do not admit a write
+        // that legacy cannot compile merely because the checker already selected its canonical storage.
+        if matches!(&projection, bir::PlaceElem::Field { name, .. } if name != &field_assignment.field) {
+            self.push_unsupported_stmt(
+                format!("model field alias assignment `{}`", field_assignment.field),
+                span,
+                out,
+            );
+            return;
+        }
+        place.projection.push(projection);
         if !place.permits_write() {
             let target = place.global().map_or_else(
                 || "field assignment target".to_string(),
@@ -330,7 +393,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let lhs_ty = self
             .type_info
             .resolved_write_type(compound_assignment.name_span, &compound_assignment.name)
-            .map(semantic_type_from_resolved)
+            .map(|ty| self.checked_type(ty))
             .unwrap_or(IncanType::Unknown);
         let place = if let Some(identity) = target_identity {
             self.identity_bindings
@@ -390,8 +453,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             );
             return;
         }
-        let (fact, last_use) = self.ownership_fact_for_place(&lhs_place, &lhs_ty);
-        let lhs_operand = bir::Operand::place(lhs_place.clone(), fact, last_use);
+        let read_place = self.static_alias_read_place(&lhs_place);
+        let (fact, last_use) = self.ownership_fact_for_place(&read_place, &lhs_ty);
+        let lhs_operand = bir::Operand::place(read_place, fact, last_use);
         let rhs_operand = self.lower_expr_to_operand(&compound_assignment.value, scope, out);
         let result = self.lower_binary_from_operands(
             op,
@@ -404,6 +468,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             span,
             out,
         );
+        if let Some(local) = lhs_place.local_id() {
+            self.static_aliases.remove(&local);
+        }
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {
                 place: lhs_place,

@@ -92,6 +92,9 @@ fn call_operand<'tcx>(
     sources: &Sources<'_>,
     callee: &crate::plan::Callee,
 ) -> Result<mir::Operand<'tcx>, PlanError> {
+    if let crate::plan::CalleeKind::Value(value) = &callee.kind {
+        return operand(tcx, sources, value);
+    }
     let mut arguments = Vec::new();
     match &callee.kind {
         crate::plan::CalleeKind::SpawnGenerator(name, leaf, depth) => {
@@ -110,6 +113,14 @@ fn call_operand<'tcx>(
             arguments.push(generator_element(tcx, leaf, *depth)?.into());
         }
         _ => {}
+    }
+    if let crate::plan::CalleeKind::CallClosure(signature) = &callee.kind {
+        let (_, parameters) = signature.split_last().ok_or_else(|| PlanError::Invalid {
+            function: "callable object".into(),
+            reason: "callable signature has no return type".into(),
+        })?;
+        arguments.push(crate::types::callable_object_type(tcx, signature)?.into());
+        arguments.push(crate::types::callable_arguments_type(tcx, parameters)?.into());
     }
     if let crate::plan::CalleeKind::CloneEnum(_, name) = &callee.kind {
         arguments.push(crate::types::enum_type(tcx, name)?.into());
@@ -139,14 +150,7 @@ fn generator_element<'tcx>(
     depth: i64,
 ) -> Result<rustc_middle::ty::Ty<'tcx>, PlanError> {
     let kind = if depth == 0 {
-        match leaf {
-            crate::plan::ListLeaf::Int => crate::plan::PlanType::Int,
-            crate::plan::ListLeaf::Float => crate::plan::PlanType::Float,
-            crate::plan::ListLeaf::Bool => crate::plan::PlanType::Bool,
-            crate::plan::ListLeaf::Str => crate::plan::PlanType::String,
-
-            crate::plan::ListLeaf::Tuple(elements) => crate::plan::PlanType::Tuple(elements.clone()),
-        }
+        crate::plan::list_leaf_type(leaf.clone())
     } else {
         crate::plan::PlanType::List(leaf.clone(), depth)
     };
