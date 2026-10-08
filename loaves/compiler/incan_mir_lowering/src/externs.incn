@@ -1,0 +1,66 @@
+"""Forward `@rust.extern` declarations to the Rust items they name, as legacy's generated wrapper does."""
+
+from pub::incan_mir_plan import (
+    Callee,
+    CalleeKind,
+    ExternalFunction,
+    Function,
+    Local,
+    Operand,
+    OperandKind,
+    Parameter,
+    PlanType,
+    SourceSpan,
+    Statement,
+    TerminatorKind,
+    Unwind,
+)
+from pub::incan_mir_plan import block, place
+from numerics import has_sized_numeric
+
+
+pub def delegated_function(
+    name: str,
+    path: str,
+    parameters: list[Parameter],
+    result: PlanType,
+    span: SourceSpan,
+) -> Result[tuple[Function, list[ExternalFunction]], str]:
+    """Pass every parameter through in declaration order and return the Rust item's result, moving owned values."""
+    if name == "main":
+        return Err("unsupported Body IR ExternDelegation entrypoint")
+    if not delegated_type(result):
+        return Err("unsupported Body IR ExternDelegation return type")
+    mut locals = [Local(ty=result, span=span)]
+    mut types: list[PlanType] = []
+    mut arguments: list[Operand] = []
+    for index in range(len(parameters)):
+        ty = parameters[index].ty
+        if not delegated_type(ty):
+            return Err("unsupported Body IR ExternDelegation parameter type")
+        locals.append(Local(ty=ty, span=span))
+        types.append(ty)
+        arguments.append(Operand(kind=OperandKind.Move(place(index + 1, span)), span=span))
+    call = TerminatorKind.Call(
+        Callee(kind=CalleeKind.External(path), span=span),
+        arguments,
+        place(0, span),
+        1,
+        Unwind.Continue,
+    )
+    function = Function(
+        name=name,
+        parameters=parameters,
+        return_type=result,
+        locals=locals,
+        blocks=[block([], call, span), block([], TerminatorKind.Return, span)],
+        span=span,
+    )
+    return Ok((function, [ExternalFunction(path=path, parameters=types, return_type=result, span=span)]))
+
+
+def delegated_type(ty: PlanType) -> bool:
+    """Admit the scalar, sized numeric, unit and owned text values legacy's wrapper passes by value."""
+    if has_sized_numeric(ty):
+        return true
+    return ty in [PlanType.Int, PlanType.Float, PlanType.Bool, PlanType.Unit, PlanType.String]

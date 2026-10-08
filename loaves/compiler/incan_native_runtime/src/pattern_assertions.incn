@@ -1,0 +1,51 @@
+"""Fail carrier-pattern assertions through the std.testing helpers that legacy inlines for them."""
+
+from std.testing import assert_is_some, assert_is_none, assert_is_ok, assert_is_err
+
+
+pub def missing_some() -> None:
+    """Fail as `assert value is Some(...)` does on None, keeping std.testing's default message."""
+    nothing: Option[int] = None
+    _ = assert_is_some(nothing)
+
+
+pub def missing_some_with(message: str) -> None:
+    """Fail as `assert value is Some(...), message` does on None."""
+    nothing: Option[int] = None
+    _ = assert_is_some(nothing, message)
+
+
+pub def unexpected_some() -> None:
+    """Fail as `assert value is None` does on Some, keeping std.testing's default message."""
+    something: Option[int] = Some(0)
+    assert_is_none(something)
+
+
+pub def unexpected_some_with(message: str) -> None:
+    """Fail as `assert value is None, message` does on Some."""
+    something: Option[int] = Some(0)
+    assert_is_none(something, message)
+
+
+pub def missing_ok() -> None:
+    """Fail as `assert value is Ok(...)` does on Err, keeping std.testing's default message."""
+    failed: Result[int, int] = Err(0)
+    _ = assert_is_ok(failed)
+
+
+pub def missing_ok_with(message: str) -> None:
+    """Fail as `assert value is Ok(...), message` does on Err."""
+    failed: Result[int, int] = Err(0)
+    _ = assert_is_ok(failed, message)
+
+
+pub def missing_err() -> None:
+    """Fail as `assert value is Err(...)` does on Ok, keeping std.testing's default message."""
+    succeeded: Result[int, int] = Ok(0)
+    _ = assert_is_err(succeeded)
+
+
+pub def missing_err_with(message: str) -> None:
+    """Fail as `assert value is Err(...), message` does on Ok."""
+    succeeded: Result[int, int] = Ok(0)
+    _ = assert_is_err(succeeded, message)

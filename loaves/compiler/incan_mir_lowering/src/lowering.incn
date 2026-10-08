@@ -126,7 +126,7 @@ from nominal_instances import specialize_nominals
 from traits import method_index, specialize_traits, validate_static_receiver
 from decls import lower_model_declarations, static_slot, static_accessors
 from model_lists import model_list_read
-from models import model_type, model_place, constructor_index
+from models import model_type, model_place, constructor_index, field_slot
 from model_values import (
     debug_model_operand,
     display_model_operand,
@@ -246,6 +246,7 @@ from closures import (
     closure_capture_type,
     closure_constructor,
 )
+from externs import delegated_function
 # =====================================================================================================================
 # Boundary types and validation
 # =====================================================================================================================
@@ -327,7 +328,7 @@ def location(span: &RustSpan, source: str, file: str) -> SourceSpan:
     return SourceSpan(file=file, line=number, column=1)
 
 
-def scalar_place(builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+pub def scalar_place(builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
     """Map a local or proven model field into the native frame, which reserves local zero for return."""
     match union_projection(
         builder.nominals,
@@ -3211,11 +3212,27 @@ def lower_function(
     type_arguments: list[RustType],
 ) -> Result[tuple[Function, list[ExternalFunction], list[Instance], list[Function]], str]:
     """Build a concrete frame and retain checked instance requests together with lifted closure functions."""
+    span = location(body.span, source, file)
     match body.extern_delegation:
-        Some(_delegation) => return Err("unsupported Body IR ExternDelegation")
+        Some(delegation) =>
+            if body.is_async or body.is_generator():
+                return Err("unsupported Body IR async or generator ExternDelegation")
+            function, externals = delegated_function(
+                evaluator_name(module, body),
+                delegation.rust_path(),
+                frame_parameters(module, body, source, file, intrinsics)?,
+                native_source_type(
+                    module.nominal_declarations,
+                    module.enum_declarations,
+                    unions,
+                    body.return_type,
+                    intrinsics,
+                )?,
+                span,
+            )?
+            return Ok((function, externals, [], []))
         None => pass
     validate_callable_representation(body)?
-    span = location(body.span, source, file)
     declared_type = return_representation(
         body,
         native_source_type(module.nominal_declarations, module.enum_declarations, unions, body.return_type, intrinsics)?,
@@ -3430,6 +3447,10 @@ def checked_list_argument(
                     None => pass
             if mutable and read.fact != OwnershipFact.MutBorrow:
                 return Err("unsupported Body IR list argument without mutable borrow fact")
+            if not mutable and len(read.place.projection) != 0:
+                base = list_base_place(builder, read.place, span)?
+                if is_list(builder.locals[base.local].ty):
+                    return projected_list_argument(builder, read.place, span)
             root = list_root_place(builder, read.place, span)?
             return list_borrow(builder, root, mutable, span)
         RustOperand.Constant(constant) =>
@@ -3441,6 +3462,13 @@ def checked_list_argument(
                     return list_borrow(builder, literal_place, false, span)
                 _ => return Err("unsupported Body IR constant list argument")
         _ => return Err("unsupported Body IR constant list argument")
+
+
+def projected_list_argument(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Operand, str]:
+    """Copy an indexed or sliced list out for a shared list parameter; the copy stays owned until its scope ends."""
+    match indexed_read(builder, source, span)?.kind:
+        OperandKind.Move(place) => return list_borrow(builder, place, false, span)
+        _ => return Err("unsupported Body IR projected non-list argument")
 
 
 def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
@@ -3509,13 +3537,22 @@ def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -
 
 
 def indexed_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Operand, str]:
-    """Use the retained list projection and legacy negative-index error behavior."""
+    """Use the retained list projection and legacy negative-index error behavior; a final slice copies a new list."""
     if len(source.projection) == 0:
         return Err("unsupported Body IR list read without index")
     mut place = list_base_place(builder, source, span)?
+    last = len(source.projection) - 1
     for slot in range(len(source.projection)):
-        argument = list_index_operand(builder, source, slot, span)?
-        place = read_list_element(builder, place, argument, span)?
+        match source.projection[slot]:
+            PlaceElem.Slice(start=_start, end=_end, step=_step) =>
+                if slot != last:
+                    return Err("unsupported Body IR projection after list slice")
+                place = read_list_slice(builder, place, source.projection[slot], span)?
+            PlaceElem.Field(name=_name, canonical=_canonical, structural=_structural) =>
+                place = read_element_field(builder, place, source.projection[slot], span)?
+            _ =>
+                argument = list_index_operand(builder, source, slot, span)?
+                place = read_list_element(builder, place, argument, span)?
     ty = builder.locals[place.local].ty
     return Ok(read_place(place, ty == PlanType.String or is_owned_list(ty) or is_nominal_type(ty), span))
 
@@ -3542,6 +3579,80 @@ pub def read_list_element(
         span,
     )
     return Ok(output)
+
+
+def read_list_slice(mut builder: Builder, place: Place, projection: &PlaceElem, span: SourceSpan) -> Result[Place, str]:
+    """Copy the selected elements into a new owned list through legacy's Python-style slice helper."""
+    leaf, depth = require_list_shape(builder.locals[place.local].ty, "unsupported Body IR slicing non-list")?
+    mut bounds: list[Operand] = []
+    # Each component travels with its presence, so an omitted bound or step keeps the slice default.
+    match projection:
+        PlaceElem.Slice(start=start, end=end, step=step) =>
+            match start:
+                Some(value) => bounds.extend(slice_bound(builder, value, span)?)
+                None => bounds.extend(absent_slice_bound(span))
+            match end:
+                Some(value) => bounds.extend(slice_bound(builder, value, span)?)
+                None => bounds.extend(absent_slice_bound(span))
+            match step:
+                Some(value) => bounds.extend(slice_bound(builder, value, span)?)
+                None => bounds.extend(absent_slice_bound(span))
+        _ => return Err("unsupported Body IR list slice or field projection")
+    reference = list_borrow(builder, place, false, span)?
+    output = temporary(builder, PlanType.List(leaf, depth), span)
+    mut operands = [reference]
+    operands.extend(bounds)
+    list_call(
+        builder,
+        "slice_list",
+        list_element(leaf, depth),
+        [PlanType.ListRef(leaf, depth), PlanType.Bool, PlanType.Int, PlanType.Bool, PlanType.Int, PlanType.Bool, PlanType.Int],
+        PlanType.List(leaf, depth),
+        operands,
+        output,
+        span,
+    )
+    return Ok(output)
+
+
+def read_element_field(
+    mut builder: Builder,
+    place: Place,
+    projection: &PlaceElem,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Read one field of a model element already copied out of a list, copying scalars and cloning owned values."""
+    match place_type(builder.locals, place):
+        PlanType.Model(owner, _name) =>
+            declaration = builder.nominals[owner]
+            slot = field_slot(projection, declaration)?
+            ty = model_type(builder.nominals, declaration.field_types[slot])?
+            field = Place(local=place.local, projection=Projection.Field(slot, ty), span=span)
+            if ty == PlanType.String:
+                return clone_text(builder, field, span)
+            if is_nominal_type(ty):
+                match clone_nominal_operand(builder, field, span)?.kind:
+                    OperandKind.Move(cloned) => return Ok(cloned)
+                    _ => return Err("invalid Body IR cloned list element field")
+            if not numeric_carrier(ty) and ty != PlanType.Bool:
+                return Err("unsupported Body IR list element field type")
+            output = temporary(builder, ty, span)
+            builder.emit(plan_assign(output, RvalueKind.Use(read_place(field, false, span)), span))
+            return Ok(output)
+        _ => return Err("unsupported Body IR list slice or field projection")
+
+
+def slice_bound(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[list[Operand], str]:
+    """Pass a written slice bound or step as a present int component, presence flag first as `slice_list` takes it."""
+    operand = scalar_operand(builder, value, span)?
+    if operand_type(builder, operand)? != PlanType.Int:
+        return Err("unsupported Body IR non-int list slice component")
+    return Ok([literal(Constant.Bool(true), span), operand])
+
+
+def absent_slice_bound(span: SourceSpan) -> list[Operand]:
+    """Mark an omitted slice bound or step absent, as legacy passes `None` for it."""
+    return [literal(Constant.Bool(false), span), literal(Constant.Int(0), span)]
 
 
 def list_base_place(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Place, str]:
@@ -4087,7 +4198,7 @@ def iterator_assignment(
         _ => return Err("unsupported Body IR list iterator initialization")
 
 
-def list_root_place(mut builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+pub def list_root_place(mut builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
     """Require a bare checked list root before constructing a receiver borrow."""
     if len(value.projection) != 0:
         return Err("unsupported Body IR list root projection")
@@ -4291,6 +4402,8 @@ def collection_method(
         for slot in range(len(types)):
             operands.append(argument_value(builder, arguments, slot + 1, span)?)
         return insert_collection(builder, receiver, operands, span)
+    if member == "Dict.get" and len(arguments) == 2:
+        return optional_dictionary_get(builder, receiver, arguments, destination, span)
     operation, parameters, result = dictionary_method_signature(ty, member, len(arguments))?
     mut operands: list[Operand] = []
     for slot in range(len(parameters)):
@@ -4302,6 +4415,44 @@ def collection_method(
     mut all_operands = [reference]
     all_operands.extend(operands)
     return collection_call(builder, ty, operation, all_parameters, result, all_operands, output, span)
+
+
+def optional_dictionary_get(
+    mut builder: Builder,
+    receiver: Place,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Copy a present value into the checked Option destination, replacing that destination's earlier value."""
+    mut output = plan_place(0, span)
+    match destination:
+        Some(place) =>
+            output = list_root_place(builder, place, span)?
+        None => return Err("unsupported Body IR discarded optional dictionary get")
+    ty = builder.locals[receiver.local].ty
+    types = collection_arguments(ty)
+    result = builder.locals[output.local].ty
+    _owner, declaration = carrier_layout(builder, result)?
+    if declaration.carrier != "Option" or declaration.variants[1].fields != [types[1]]:
+        return Err("unsupported Body IR optional dictionary get carrier")
+    key = argument_value(builder, arguments, 1, span)?
+    reference = borrow_collection(builder, receiver, false, span)?
+    found = temporary(builder, result, span)
+    collection_call(
+        builder,
+        ty,
+        "optional",
+        [collection_reference(ty, false), types[0]],
+        result,
+        [reference, key],
+        found,
+        span,
+    )?
+    drop_owned(builder, output.local, span)
+    builder.emit(plan_assign(output, RvalueKind.Use(read_place(found, true, span)), span))
+    builder.owned.append(output.local)
+    return Ok(None)
 
 
 def iterable_call(
@@ -4355,7 +4506,8 @@ def lower_enum_match(
     builder.emit(plan_assign(tag, RvalueKind.TagToInt(read_place(raw_tag, false, span)), span))
     join = builder.new_block(span)
     owners = builder.owned
-    mut reaches_join = false
+    mut arm_ends: list[int] = []
+    mut arm_owners: list[list[int]] = []
     for arm in arms:
         mut slot = -1
         if owner < len(builder.enums):
@@ -4386,26 +4538,26 @@ def lower_enum_match(
         bind_enum_payload(builder, source, slot, arm.pattern, span)?
         lower_enum_arm_body(module, builder, arm)?
         if not builder.closed[builder.current]:
-            reaches_join = true
             value = boundary_operand(builder, arm.result, place_type(builder.locals, target), span)?
             track_rvalue_moves(builder, RvalueKind.Use(value))
             builder.emit(plan_assign(target, RvalueKind.Use(value), span))
-            # Pattern-bound owners are branch locals; release them before restoring the incoming owner snapshot.
+            # Pattern-bound owners are branch locals; release them before the arm's owners meet the others at the join.
             mut branch_owners = builder.owned
             for local in branch_owners:
                 if local not in owners:
                     drop_owned(builder, local, span)
-            if builder.owned != owners:
-                return Err("unsupported Body IR enum match branch ownership change")
-            finish_fallthrough(builder, join, span)
+            arm_ends.append(builder.current)
+            arm_owners.append(builder.owned)
         builder.current = next_arm
         builder.owned = owners
         if slot < 0:
             break
     builder.finish(TerminatorKind.Unreachable, span)
+    join_owners = join_arm_owners(builder, join, arm_ends, arm_owners, span)?
+    reaches_join = len(arm_ends) != 0
     builder.current = join
     builder.closed[join] = not reaches_join
-    builder.owned = owners
+    builder.owned = join_owners
     ty = place_type(builder.locals, target)
     if reaches_join and (ty == PlanType.String or is_nominal_type(ty) or is_owned_collection(ty)):
         builder.owned.append(target.local)
@@ -4510,6 +4662,46 @@ def bind_structural_pattern(
     return Ok(None)
 
 
+def join_arm_owners(
+    mut builder: Builder,
+    join: int,
+    ends: list[int],
+    arm_owners: list[list[int]],
+    span: SourceSpan,
+) -> Result[list[int], str]:
+    """
+    Close each arm reaching the join, keeping live only the incoming owners that every such arm left live.
+
+    Body IR counts last uses across arms in source order, so one arm may move text that another only borrows. Rust
+    drops the surviving value at scope end through a drop flag; text has no observable drop, so releasing it at the
+    end of the arm that kept it is equivalent. Any other owner left live on only some paths stays refused.
+    """
+    mut live: list[int] = []
+    if len(ends) != 0:
+        for local in arm_owners[0]:
+            if kept_by_every_arm(local, arm_owners):
+                live.append(local)
+    for index in range(len(ends)):
+        builder.current = ends[index]
+        builder.owned = arm_owners[index]
+        for local in arm_owners[index]:
+            if local in live:
+                continue
+            if builder.locals[local].ty != PlanType.String:
+                return Err("unsupported Body IR enum match branch ownership change")
+            drop_owned(builder, local, span)
+        finish_fallthrough(builder, join, span)
+    return Ok(live)
+
+
+def kept_by_every_arm(local: int, arm_owners: list[list[int]]) -> bool:
+    """Report whether every arm reaching a join still owns `local`."""
+    for owned in arm_owners:
+        if local not in owned:
+            return false
+    return true
+
+
 def lower_enum_arm_body(module: &BodyIrModule, mut builder: Builder, arm: &RustMatchArm) -> Result[None, str]:
     """Borrow the retained arm's statements and stop once its control flow terminates."""
     for statement in arm.body_stmts:
@@ -4519,7 +4711,7 @@ def lower_enum_arm_body(module: &BodyIrModule, mut builder: Builder, arm: &RustM
     return Ok(None)
 
 
-def bind_enum_payload(
+pub def bind_enum_payload(
     mut builder: Builder,
     source: Place,
     variant: int,
@@ -4669,6 +4861,17 @@ def static_initial_operand(
 def static_literal_element(value: &RustConstant) -> RustArgumentElement:
     """Return a fresh owned foreign element; legacy append conservatively copies constructors containing name reads."""
     return RustArgumentElement.One(RustOperand.Constant(value.clone()))
+
+
+def read_text_constant(mut builder: Builder, global: &RustGlobalPlace, span: SourceSpan) -> Result[Operand, str]:
+    """Own a copy of a read-only text constant's literal, as legacy's owned read of the constant does."""
+    if global.write_policy != RustGlobalWritePolicy.ReadOnly:
+        return Err("unsupported Body IR static ownership")
+    slot = static_slot(builder.statics, global)?
+    match builder.statics[slot].initial:
+        RustStaticInitializer.Literal(RustConstant.Str(text)) =>
+            return Ok(read_place(owned_literal(builder, str(text), span), true, span))
+        _ => return Err("unsupported Body IR static ownership")
 
 
 def write_static(

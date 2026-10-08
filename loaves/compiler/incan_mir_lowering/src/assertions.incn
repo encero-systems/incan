@@ -1,11 +1,18 @@
-"""Lower checked condition assertions through the legacy assertion runtime contract."""
+"""Lower checked condition and carrier-pattern assertions through the legacy assertion runtime contracts."""
 
-from rust::incan_semantics_core::body_ir import AssertionKind, Operand as RustOperand, Constant as RustConstant
-from pub::incan_mir_plan import PlanType, SourceSpan, TerminatorKind, Constant
-from frame import external_call, literal
+from rust::incan_semantics_core::body_ir import (
+    AssertionKind,
+    Operand as RustOperand,
+    Constant as RustConstant,
+    Pattern as RustPattern,
+)
+from pub::incan_mir_plan import PlanType, SourceSpan, TerminatorKind, Constant, Operand
+from pub::incan_mir_plan import place as plan_place
+from frame import external_call, literal, place_type
 from text_plan import owned_literal
-from lowering import scalar_operand, display_operand
-from frame import Builder, read_place, temporary, drop_owned
+from lowering import scalar_operand, display_operand, scalar_place, bind_enum_payload
+from options import carrier_layout, intrinsic_pattern, variant_condition
+from frame import Builder, read_place, temporary
 
 
 pub def lower_assertion(
@@ -14,12 +21,14 @@ pub def lower_assertion(
     message: &Option[RustOperand],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Branch before materializing failure text; pattern and raises assertions remain refused."""
+    """Branch before materializing failure text; raises assertions remain refused."""
     mut operand = literal(Constant.Bool(false), span)
     match kind:
         AssertionKind.Condition(cond=condition) =>
             operand = scalar_operand(builder, condition, span)?
-        _ => return Err("unsupported Body IR non-condition Assert")
+        AssertionKind.Pattern(scrutinee=scrutinee, pattern=pattern) =>
+            return lower_pattern_assertion(builder, scrutinee, pattern, message, span)
+        _ => return Err("unsupported Body IR raises Assert")
     # Body IR's lazy-message failure block ends in `assert false`; it has no success edge or owner merge.
     match kind:
         AssertionKind.Condition(cond=RustOperand.Constant(RustConstant.Bool(true))) => return Ok(None)
@@ -57,3 +66,64 @@ def lower_failure(mut builder: Builder, message: &Option[RustOperand], span: Sou
     )
     builder.finish(TerminatorKind.Unreachable, span)
     return Ok(None)
+
+
+def lower_pattern_assertion(
+    mut builder: Builder,
+    scrutinee: &RustOperand,
+    pattern: &RustPattern,
+    message: &Option[RustOperand],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Test one `Some`, `None`, `Ok` or `Err` carrier pattern as legacy's inlined std.testing helper does.
+
+    Legacy evaluates an explicit message only on the failing path, while Body IR evaluates it before the assertion,
+    so only a literal message, which has no effects to reorder, is admitted. A mismatch fails through the same
+    std.testing helper; a match binds the payload for later statements.
+    """
+    mut source = plan_place(0, span)
+    match scrutinee:
+        RustOperand.Place(read) =>
+            source = scalar_place(builder, read.place, span)?
+        _ => return Err("unsupported Body IR nonplace pattern Assert scrutinee")
+    mut text = ""
+    mut has_message = false
+    match message:
+        Some(RustOperand.Constant(RustConstant.Str(value))) =>
+            text = str(value)
+            has_message = true
+        Some(_) => return Err("unsupported Body IR computed pattern Assert message")
+        None => pass
+    _owner, declaration = carrier_layout(builder, place_type(builder.locals, source))?
+    slot = intrinsic_pattern(declaration, pattern)?
+    if slot < 0:
+        return Err("unsupported Body IR wildcard pattern Assert")
+    condition = variant_condition(builder, source, slot, span)
+    failed = builder.new_block(span)
+    passed = builder.new_block(span)
+    incoming = builder.owned
+    builder.finish(TerminatorKind.SwitchBool(condition, failed, passed), span)
+    builder.current = failed
+    failure = f"incan_native_runtime::{pattern_failure(declaration.carrier, slot)}"
+    destination = temporary(builder, PlanType.Unit, span)
+    if has_message:
+        payload = read_place(owned_literal(builder, text, span), true, span)
+        external_call(builder, f"{failure}_with", [PlanType.String], PlanType.Unit, [payload], destination, span)
+    else:
+        external_call(builder, failure, [], PlanType.Unit, [], destination, span)
+    builder.finish(TerminatorKind.Unreachable, span)
+    builder.current = passed
+    builder.owned = incoming
+    return bind_enum_payload(builder, source, slot, pattern, span)
+
+
+def pattern_failure(carrier: str, slot: int) -> str:
+    """Name the runtime failure for a carrier pattern; Option's slot one is Some and Result's slot zero is Ok."""
+    if carrier == "Option":
+        if slot == 1:
+            return "missing_some"
+        return "unexpected_some"
+    if slot == 0:
+        return "missing_ok"
+    return "missing_err"
