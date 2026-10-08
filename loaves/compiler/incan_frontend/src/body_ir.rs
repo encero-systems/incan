@@ -749,11 +749,20 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .unwrap_or(HirSourceSpan::new(0, 0))
     }
 
-    /// Resolve the expression type recorded by the typechecker for `span`, or [`IncanType::Unknown`] when v0 has no
-    /// resolved type available (an explicit unknown rather than a guessed default).
+    /// Retain the checker's concrete executable constructor/call type when an open caller context masks it; otherwise
+    /// use the contextual expression type. Missing facts remain [`IncanType::Unknown`], never inferred from operands.
     fn resolve_ty(&self, span: ast::Span) -> IncanType {
         self.type_info
-            .expr_type(span)
+            .calls
+            .inferred_constructor_types
+            .get(&(span.start, span.end))
+            .or_else(|| {
+                self.type_info
+                    .calls
+                    .inferred_call_result_types
+                    .get(&(span.start, span.end))
+            })
+            .or_else(|| self.type_info.expr_type(span))
             .map(|ty| self.checked_type(ty))
             .unwrap_or(IncanType::Unknown)
     }

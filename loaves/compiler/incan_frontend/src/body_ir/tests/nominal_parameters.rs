@@ -1,6 +1,56 @@
 //! Declaration-bound model placeholders and checked method frames for native specialization.
 
-use super::{IncanType, bir, body_named, build};
+use super::{IncanPrimitiveType, IncanType, bir, body_named, build, named_targets};
+
+/// Inferred owner arguments on a constructor retain the concrete checked carrier inside a generic call.
+#[test]
+fn inferred_model_constructor_carriers_are_closed() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        r#"model Boxed[T]:
+    pub value: T
+
+def get_value[T](boxed: Boxed[T]) -> T:
+    return boxed.value
+
+def main() -> None:
+    println(get_value(Boxed(value=41)))
+    println(get_value(Boxed(value="forty-one")))
+"#,
+        &["m", "inferred_model_carriers"],
+    )?;
+    let main = body_named(&module, "main")?;
+    let int = IncanType::Primitive(IncanPrimitiveType::Int);
+    let text = IncanType::Primitive(IncanPrimitiveType::Str);
+    let carriers = main
+        .locals
+        .iter()
+        .filter(|local| local.ty != IncanType::Primitive(IncanPrimitiveType::Unit))
+        .map(|local| local.ty.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        carriers,
+        [
+            IncanType::Generic {
+                base: "Boxed".into(),
+                args: vec![int.clone()]
+            },
+            int.clone(),
+            IncanType::Generic {
+                base: "Boxed".into(),
+                args: vec![text.clone()]
+            },
+            text.clone(),
+        ]
+    );
+    let targets = named_targets(&module, "main");
+    let instantiations = targets
+        .iter()
+        .filter(|target| target.name == "get_value")
+        .map(|target| target.type_args.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(instantiations, [vec![int], vec![text]]);
+    Ok(())
+}
 
 /// Model binders remain ordered placeholders in layouts, receiver methods, and deferred default frames.
 #[test]

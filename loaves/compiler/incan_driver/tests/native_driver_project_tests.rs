@@ -1046,6 +1046,35 @@ def main() -> None:
     )
 }
 
+/// Prove inferred constructor carriers close generic function and method arguments without written type arguments.
+#[test]
+fn type_parameter_inferred_model_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("type-parameter-inferred-model")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"model Boxed[T]:
+    pub value: T
+
+def get_value[T](boxed: Boxed[T]) -> T:
+    return boxed.value
+
+class Reader:
+    def read[T](self, boxed: Boxed[T]) -> T:
+        return boxed.value
+
+def main() -> None:
+    reader = Reader()
+    println(get_value(Boxed(value=41)))
+    println(get_value(Boxed(value="forty-one")))
+    println(reader.read(Boxed(value=42)))
+    println(reader.read(Boxed(value="forty-two")))
+"#,
+    )
+}
+
 /// Prove carriers retained only inside closed function instances, including forwarded calls, against legacy.
 #[test]
 fn type_parameter_carrier_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
