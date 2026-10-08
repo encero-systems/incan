@@ -25,6 +25,8 @@ fn scalar_plan_exports_are_public_and_representable() -> Result<(), Box<dyn std:
     let requested: BTreeSet<_> = [
         "SourceSpan",
         "PlanType",
+        "TupleElement",
+        "tuple_element_type",
         "Parameter",
         "Local",
         "Projection",
@@ -46,6 +48,9 @@ fn scalar_plan_exports_are_public_and_representable() -> Result<(), Box<dyn std:
         "BasicBlock",
         "Function",
         "Plan",
+        "ModelDeclaration",
+        "EnumDeclaration",
+        "EnumVariant",
         "ExternalFunction",
         "place",
         "integer",

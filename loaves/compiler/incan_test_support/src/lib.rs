@@ -22,14 +22,25 @@ use std::time::Instant;
 
 /// Locate the checkout from the test package, including after it moves into a Loaves ring.
 ///
-/// The checkout has a lockfile and the Loaves directory; no caller working directory or mutable environment override
-/// participates in source discovery. A missing checkout is a test setup error rather than a relative-path fallback.
+/// The native harness supplies an explicit source root because receipt-bound dependencies have no checkout ancestor.
+/// Cargo-built tests discover the checkout from their package. Both routes require a lockfile and the Loaves directory;
+/// an invalid explicit anchor is a setup error and cannot fall back to another checkout or the working directory.
 pub fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+    let selected = std::env::var_os("INCAN_INTERNAL_TEST_SOURCE_ROOT").map(PathBuf::from);
+    checkout_root(Path::new(env!("CARGO_MANIFEST_DIR")), selected.as_deref())
+        .unwrap_or_else(|| panic!("integration test package has no authorized Incan checkout"))
+}
+
+/// Resolve a native harness anchor exactly, or discover the Cargo package's ancestor checkout when no anchor exists.
+fn checkout_root(package: &Path, selected: Option<&Path>) -> Option<PathBuf> {
+    let is_checkout = |candidate: &Path| candidate.join("Cargo.lock").is_file() && candidate.join("loaves").is_dir();
+    if let Some(root) = selected {
+        return is_checkout(root).then(|| root.to_path_buf());
+    }
+    package
         .ancestors()
-        .find(|candidate| candidate.join("Cargo.lock").is_file() && candidate.join("loaves").is_dir())
+        .find(|candidate| is_checkout(candidate))
         .map(Path::to_path_buf)
-        .unwrap_or_else(|| panic!("integration test package has no ancestor Incan checkout"))
 }
 
 /// The fixtures several rings' roots share: Incan programs, invalid inputs, boundary-parity and Oven bake projects.
@@ -237,6 +248,17 @@ pub fn configure_explicit_oven_bake_command(command: &mut Command) -> std::io::R
     Ok(())
 }
 
+/// Return the checkout-owned directory, kept across suite runs, that the suite grants this explicit-bake root.
+///
+/// A root that bakes the same fixture graph on every run bakes into this directory so Oven reuses the previous run's
+/// state, the way Cargo reuses a target directory. `None` outside the suite or without the grant: callers then bake
+/// into a fresh temporary directory.
+pub fn explicit_bake_workspace() -> Option<PathBuf> {
+    std::env::var_os("INCAN_INTERNAL_OVEN_EXPLICIT_BAKE_WORKSPACE")
+        .filter(|value| !value.is_empty())
+        .map(|value| anchor_harness_path(PathBuf::from(value)))
+}
+
 /// Return the generated Cargo target selected by the outer test harness.
 ///
 /// `make` and CI preheat one task-local target before starting nextest. Subprocess helpers must preserve that
@@ -307,10 +329,30 @@ fn anchor_harness_path(selected: PathBuf) -> PathBuf {
 
 #[cfg(test)]
 mod fixture_bake_tests {
-    use super::{configure_explicit_oven_bake_command, oven_fixture_home};
+    use super::{checkout_root, configure_explicit_oven_bake_command, oven_fixture_home};
     use std::collections::BTreeMap;
     use std::ffi::OsStr;
     use std::process::Command;
+
+    /// A sealed dependency path needs the selected native checkout; invalid anchors cannot select an ancestor instead.
+    #[test]
+    fn native_checkout_anchor_is_exact() -> std::io::Result<()> {
+        let root = tempfile::tempdir()?;
+        std::fs::write(root.path().join("Cargo.lock"), "")?;
+        std::fs::create_dir(root.path().join("loaves"))?;
+        let sealed = std::path::Path::new("/oven/sealed-source");
+        assert_eq!(
+            checkout_root(sealed, Some(root.path())),
+            Some(root.path().to_path_buf())
+        );
+        let invalid = root.path().join("missing");
+        assert_eq!(checkout_root(root.path(), Some(&invalid)), None);
+        assert_eq!(
+            checkout_root(&root.path().join("loaves/package"), None),
+            Some(root.path().to_path_buf())
+        );
+        Ok(())
+    }
 
     /// Fixture publication cannot retain a separately injected Cargo executable or change its consumer authority.
     #[test]

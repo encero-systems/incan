@@ -24,7 +24,10 @@ mod environment;
 mod local;
 mod native;
 
-pub use local::{compile_local_sdk_facet, compile_local_sdk_facet_for_target};
+pub use local::{
+    LocalFacetSelection, compile_local_sdk_facet, compile_local_sdk_facet_for_target, compile_local_sdk_facets,
+    local_sdk_facet_source_digest,
+};
 
 struct CompileContext<'a> {
     rustc: &'a Path,
@@ -703,13 +706,7 @@ fn compile_unit(
         .ok_or("invalid output name")?
         .to_string();
     let domain = format!("sdk-source-unit-{}", unit.binding.domain);
-    let mut selected = store.select_payloads_matching_for_execution(|manifest| {
-        manifest.kind == OvenArtifactKind::Engine
-            && manifest.domain == domain
-            && manifest.receipt_identity == receipt.identity
-    })?;
-    if let Some(owner) = selected.pop() {
-        let _verified = store.select(&owner.manifest.identity)?;
+    if let Some(owner) = select_native_unit(store, &receipt, &domain)? {
         return Ok((owner.artifact_root.join(&relative), true, owner));
     }
     let request = OvenTrustedDirectRustcTargetRequest {
@@ -733,6 +730,38 @@ fn compile_unit(
     };
     let owner = publish_unit(unit, store, receipt, domain, result.output, &relative)?;
     Ok((owner.artifact_root.join(relative), result.reused, owner))
+}
+
+/// Reuse an exact native unit locally or import its verified receipt-bound bytes from configured mirrors.
+///
+/// A mirror supplies cache bytes only: source, features, toolchain, environment, native facts and dependency outputs
+/// have already selected the receipt. An incompatible entry never replaces compilation, and the selected payload
+/// remains leased through every consumer of the enclosing closure.
+fn select_native_unit(
+    store: &OvenStore,
+    receipt: &oven_store::OvenReceipt,
+    domain: &str,
+) -> Result<Option<OvenStoreExecutionPayload>, Error> {
+    let matches = |manifest: &oven_store::store::OvenArtifactManifest| {
+        manifest.kind == OvenArtifactKind::Engine
+            && manifest.domain == domain
+            && manifest.receipt_identity == receipt.identity
+    };
+    let mut selected = store.select_payloads_matching_for_execution(matches)?;
+    if selected.is_empty() {
+        oven_store::store_mirror::import_matching_from_mirrors(
+            store,
+            &oven_store::store_mirror::configured_mirrors(|name| std::env::var_os(name)),
+            Some(receipt),
+            matches,
+        )?;
+        selected = store.select_payloads_matching_for_execution(matches)?;
+    }
+    let owner = selected.pop();
+    if let Some(owner) = &owner {
+        let _verified = store.select(&owner.manifest.identity)?;
+    }
+    Ok(owner)
 }
 
 /// Bind a unit's archive and exact fact record to the selected compilation policy.

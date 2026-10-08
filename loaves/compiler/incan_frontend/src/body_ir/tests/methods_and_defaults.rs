@@ -1020,3 +1020,167 @@ fn a_self_typed_parameter_in_a_types_own_method_reads_as_that_type() -> Result<(
     assert_eq!(other.ty, IncanType::Named("P".to_string()), "{rendered}");
     Ok(())
 }
+
+/// Canonical collection mutation records exclusive receiver facts while read-only members remain shared.
+#[test]
+fn collection_mutating_methods_retain_mutable_receiver_facts() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def update(mut values: list[int], mut unique: Set[int], mut mapping: Dict[str, int]) -> None:\n  values.append(3)\n  values.swap(0, 0)\n  count = values.count(3)\n  unique.add(3)\n  present = unique.contains(3)\n  mapping.insert(\"key\", 3)\n  keys = mapping.keys()\n  found = mapping.contains_key(\"key\")\n",
+        &["m", "collection_receivers"],
+    )?;
+    let body = body_named(&module, "update")?;
+    let mut facts = Vec::new();
+    for statement in &body.block.stmts {
+        if let bir::StatementKind::Call {
+            callee: bir::Callee::Method(target),
+            args,
+            ..
+        } = &statement.kind
+        {
+            let receiver = args
+                .first()
+                .and_then(bir::ArgumentElement::as_one)
+                .ok_or("collection method lacks a receiver")?;
+            let bir::Operand::Place(read) = receiver else {
+                return Err("collection receiver must be a place".into());
+            };
+            facts.push((target.name.as_str(), read.fact));
+        }
+    }
+    assert_eq!(
+        facts,
+        vec![
+            ("append", bir::OwnershipFact::MutBorrow),
+            ("swap", bir::OwnershipFact::MutBorrow),
+            ("count", bir::OwnershipFact::Borrow),
+            ("add", bir::OwnershipFact::MutBorrow),
+            ("contains", bir::OwnershipFact::Borrow),
+            ("insert", bir::OwnershipFact::MutBorrow),
+            ("keys", bir::OwnershipFact::Borrow),
+            ("contains_key", bir::OwnershipFact::Borrow)
+        ]
+    );
+    Ok(())
+}
+
+/// Returning shared or mutable collection parameters clones caller storage rather than moving or dropping it.
+#[test]
+fn collection_parameter_last_reads_clone_without_dropping_caller_storage() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def shared(values: list[int]) -> list[int]:\n  return values\n\ndef mutable(mut values: list[int]) -> list[int]:\n  return values\n\ndef shared_set(values: Set[int]) -> Set[int]:\n  return values\n\ndef mutable_set(mut values: Set[int]) -> Set[int]:\n  return values\n\ndef shared_dict(values: Dict[str, int]) -> Dict[str, int]:\n  return values\n\ndef mutable_dict(mut values: Dict[str, int]) -> Dict[str, int]:\n  return values\n",
+        &["m", "collection_parameter_reads"],
+    )?;
+    for name in [
+        "shared",
+        "mutable",
+        "shared_set",
+        "mutable_set",
+        "shared_dict",
+        "mutable_dict",
+    ] {
+        let body = body_named(&module, name)?;
+        let local = body.params.first().ok_or("missing collection parameter")?.local;
+        let mut returns = 0;
+        for statement in &body.block.stmts {
+            match &statement.kind {
+                bir::StatementKind::Return {
+                    value: Some(bir::Operand::Place(read)),
+                } => {
+                    assert_eq!(read.place.local_id(), Some(local));
+                    assert_eq!(read.fact, bir::OwnershipFact::Clone);
+                    assert!(!read.last_use);
+                    returns += 1;
+                }
+                bir::StatementKind::Drop { local: dropped } => assert_ne!(*dropped, local),
+                _ => {}
+            }
+        }
+        assert_eq!(returns, 1);
+    }
+    Ok(())
+}
+
+/// Concrete adopters retain canonical trait slots and distinguish required implementations from defaults.
+#[test]
+fn concrete_trait_implementation_facts_preserve_default_and_required_targets() -> Result<(), Box<dyn std::error::Error>>
+{
+    let source = r#"trait Reading:
+  def get(self) -> int: ...
+  def bump(mut self, amount: int) -> None: ...
+  def advance(mut self) -> None:
+    self.bump(1)
+  def doubled(self) -> int:
+    return self.get() + self.get()
+
+class Counter with Reading:
+  value: int
+  def get(self) -> int:
+    return self.value
+  def bump(mut self, amount: int) -> None:
+    self.value += amount
+
+def main() -> None:
+  mut counter = Counter(value=7)
+  counter.advance()
+  println(counter.get())
+"#;
+    let module = build(source, &["m", "concrete_traits"])?;
+    assert_eq!(module.trait_declarations.len(), 1);
+    assert_eq!(module.trait_implementations.len(), 4);
+    for implementation in &module.trait_implementations {
+        assert!(module.is_well_formed_trait_implementation(implementation));
+        assert_eq!(implementation.owner.declaration_name, "Counter");
+        assert_eq!(
+            implementation.method == implementation.implementation,
+            matches!(implementation.method.declaration_name.as_str(), "doubled" | "advance")
+        );
+        let mut tampered = implementation.clone();
+        tampered.owner.declaration_span.start += 1;
+        assert!(!module.is_well_formed_trait_implementation(&tampered));
+    }
+    for body in &module.bodies {
+        assert!(module.body_has_canonical_direct_call_id(body));
+    }
+    let doubled = body_named(&module, "doubled")?;
+    let required = module
+        .trait_implementations
+        .iter()
+        .find(|implementation| implementation.method.declaration_name == "get")
+        .ok_or("the required trait slot must be retained")?;
+    let mut calls = 0;
+    for statement in &doubled.block.stmts {
+        if let bir::StatementKind::Call {
+            callee: bir::Callee::Method(target),
+            ..
+        } = &statement.kind
+        {
+            assert_eq!(target.canonical.as_ref(), Some(&required.method));
+            calls += 1;
+        }
+    }
+    assert_eq!(calls, 2, "both calls in the default must retain the checked trait slot");
+    let advance = body_named(&module, "advance")?;
+    assert!(matches!(
+        advance.locals[0].origin,
+        bir::LocalOrigin::Receiver { mutable: true }
+    ));
+    let bump = module
+        .trait_implementations
+        .iter()
+        .find(|implementation| implementation.method.declaration_name == "bump")
+        .ok_or("the mutable required trait slot must be retained")?;
+    let target = advance
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .ok_or("the mutable default must retain its method call")?;
+    assert_eq!(target.canonical.as_ref(), Some(&bump.method));
+    Ok(())
+}

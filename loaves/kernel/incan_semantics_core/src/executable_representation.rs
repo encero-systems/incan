@@ -792,7 +792,12 @@ mod tests {
     /// Synthetic module context used only for codec and public-closure invariants.
     fn module(bodies: Vec<Body>) -> BodyIrModule {
         BodyIrModule {
+            trait_declarations: Vec::new(),
+            trait_implementations: Vec::new(),
             module_id: CompilerNodeId::module("lib"),
+            stdlib_delegations: Vec::new(),
+            enum_declarations: Vec::new(),
+            static_declarations: Vec::new(),
             nominal_declarations: Vec::new(),
             fieldless_enum_declarations: Vec::new(),
             value_enum_declarations: Vec::new(),
@@ -1058,6 +1063,10 @@ mod tests {
             fields: vec!["private_field".into()],
             field_identities: vec![field.clone()],
             field_types: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
+            field_public: vec![false],
+            public: false,
+            has_field_defaults: false,
+            derives: vec![],
             named_type_identities: Default::default(),
             type_parameter_count: 0,
         });
@@ -1184,6 +1193,10 @@ mod tests {
             fields: vec![],
             field_identities: vec![],
             field_types: vec![],
+            field_public: vec![],
+            public: false,
+            has_field_defaults: false,
+            derives: vec![],
             named_type_identities: Default::default(),
             type_parameter_count: 0,
         });

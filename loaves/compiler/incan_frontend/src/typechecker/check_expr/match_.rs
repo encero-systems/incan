@@ -575,6 +575,8 @@ impl TypeChecker {
     /// [`borrowed_pattern_payload`] applies -- so this recorded fact is what lets a destructured binding carry its
     /// declared type rather than an unresolved one (#1245). The record is unconditional: a node checked against
     /// [`ResolvedType::Unknown`] records that honestly, and a consumer treats it as "no fact" rather than as a type.
+    /// Union constructors also record their selected target at the constructor-name span so Body IR can retain member
+    /// selection independently of spelling.
     pub(in crate::typechecker) fn check_pattern(&mut self, pattern: &Spanned<Pattern>, expected_ty: &ResolvedType) {
         self.record_expr_type(pattern.span, expected_ty.clone());
         match &pattern.node {
@@ -607,6 +609,7 @@ impl TypeChecker {
                     && let Some(member_ty) = self.union_pattern_target_type(expected_ty, ctor_name)
                 {
                     self.record_pattern_lexical_identity(ctor_name, name.span);
+                    self.record_expr_type(name.span, member_ty.clone());
                     let mut positional = None;
                     for arg in sub_patterns {
                         match arg {

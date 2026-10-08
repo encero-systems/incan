@@ -8,6 +8,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/backend/project/body_ir_projection.rs": {
+      "disposition": "keep",
+      "notes": "Compiler host closure preserves checked-in CLI registry patches and rejects compile-time manifest-root captures while preserving child-process environment controls.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/backend/project/cargo_toml.rs": {
       "dies": "every test renders the generated project's Cargo.toml (`generate_cargo_toml`, `dependency_spec_to_toml`, `path_dependency`) and asserts its text or parsed tables: [package] name/version/license, [[bin]]/[lib] targets, registry/git/path/optional/dev dependency sources, feature gates, the stdlib facet and toolchain support-crate paths. Generated projects die with #654; there is no manifest to render.",
       "disposition": "retire",
@@ -176,6 +184,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/build/native_sdk.rs": {
+      "disposition": "unaffected",
+      "notes": "Native SDK facet version/feature selection and canonical receipt catalog binding; no Cargo resolution.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/build/native_sdk_plan.rs": {
       "disposition": "unaffected",
       "notes": "Receipt-bound SDK native artifact retention, source-role member bindings and compiler mismatch refusal; no generated Cargo graph or dependency resolution.",
@@ -275,7 +291,7 @@
     },
     "loaves/compiler/incan_driver/src/build/reuse.rs": {
       "disposition": "unaffected",
-      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend.",
+      "notes": "Build orchestration over Oven; evicted inspection constituents decline explicit-bake cache reuse while damaged entries fail closed.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -3573,7 +3589,8 @@
       "owner": 1561,
       "split_required": false,
       "split_target": "",
-      "tests": {},
+      "tests": {
+      },
       "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/trait_default_nested_module_identity"
     },
     "loaves/compiler/incan_emit/src/tests/trait_parameters_and_element_bounds.rs": {
@@ -5715,6 +5732,14 @@
       "disposition": "keep",
       "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/stdlib_delegations.rs": {
+      "disposition": "keep",
+      "notes": "Canonical SDK Package forwarding proof rejects wrong owners and stale declaration spans without emitted spelling dispatch.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -8302,7 +8327,7 @@
     },
     "loaves/compiler/incan_test_support/src/lib.rs": {
       "disposition": "unaffected",
-      "notes": "Test-harness helpers; the fixture bake configuration keeps the consumer's selected authority and never injects Cargo.",
+      "notes": "Test-harness helpers; native checkout anchors are validated exactly, and fixture bakes retain consumer authority without Cargo.",
       "owner": 1698,
       "split_required": false,
       "split_target": "",
@@ -11365,6 +11390,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/toolchain/oven-cli/src/commands/oven/convert_cargo.rs": {
+      "disposition": "keep",
+      "notes": "Explicit one-time Cargo adoption preserves Loaf dependency declarations and refuses unsupported inputs before writing; it runs no Cargo process.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/toolchain/oven-cli/src/commands/oven/equivalence.rs": {
       "disposition": "unaffected",
       "notes": "Oven CLI; validates literal artifact-equivalence evidence, no compiler semantics. Reviewed at crate level.",
@@ -11401,6 +11434,14 @@
       "disposition": "unaffected",
       "notes": "Oven publisher configuration and owner-identity enforcement; no compiler semantics. Reviewed at crate level.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/oven-cli/src/commands/oven/native_compiler_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Native selected-root source containment and complete module-tree receipt coverage; no Cargo graph or generated Cargo project.",
+      "owner": 2090,
       "split_required": false,
       "split_target": "",
       "twin": ""

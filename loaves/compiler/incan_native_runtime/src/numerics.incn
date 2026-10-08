@@ -1,0 +1,361 @@
+"""Monomorphic exact-carrier boundaries using the legacy language semantics."""
+
+
+pub def format_i8(value: i8) -> str:
+    """Format the exact i8 carrier through the legacy language contract."""
+    return str(value)
+
+
+pub def int_i8(value: i8) -> int:
+    """Apply the legacy integer cast to the exact i8 carrier."""
+    return int(value)
+
+
+pub def float_i8(value: i8) -> float:
+    """Apply the legacy float cast to the exact i8 carrier."""
+    return float(value)
+
+
+pub def format_i16(value: i16) -> str:
+    """Format the exact i16 carrier through the legacy language contract."""
+    return str(value)
+
+
+pub def int_i16(value: i16) -> int:
+    """Apply the legacy integer cast to the exact i16 carrier."""
+    return int(value)
+
+
+pub def float_i16(value: i16) -> float:
+    """Apply the legacy float cast to the exact i16 carrier."""
+    return float(value)
+
+
+pub def format_i32(value: i32) -> str:
+    """Format the exact i32 carrier through the legacy language contract."""
+    return str(value)
+
+
+pub def int_i32(value: i32) -> int:
+    """Apply the legacy integer cast to the exact i32 carrier."""
+    return int(value)
+
+
+pub def float_i32(value: i32) -> float:
+    """Apply the legacy float cast to the exact i32 carrier."""
+    return float(value)
+
+
+pub def format_i128(value: i128) -> str:
+    """Format the exact i128 carrier through the legacy language contract."""
+    return str(value)
+
+
+pub def int_i128(value: i128) -> int:
+    """Apply the legacy integer cast to the exact i128 carrier."""
+    return int(value)
+
+
+pub def float_i128(value: i128) -> float:
+    """Apply the legacy float cast to the exact i128 carrier."""
+    return float(value)
+
+
+pub def format_u8(value: u8) -> str:
+    """Format the exact u8 carrier through the legacy language contract."""
+    return str(value)
+
+
+pub def int_u8(value: u8) -> int:
+    """Apply the legacy integer cast to the exact u8 carrier."""
+    return int(value)
+
+
+pub def float_u8(value: u8) -> float:
+    """Apply the legacy float cast to the exact u8 carrier."""
+    return float(value)
+
+
+pub def format_u16(value: u16) -> str:
+    """Format the exact u16 carrier through the legacy language contract."""
+    return str(value)
+
+
+pub def int_u16(value: u16) -> int:
+    """Apply the legacy integer cast to the exact u16 carrier."""
+    return int(value)
+
+
+pub def float_u16(value: u16) -> float:
+    """Apply the legacy float cast to the exact u16 carrier."""
+    return float(value)
+
+
+pub def format_u32(value: u32) -> str:
+    """Format the exact u32 carrier through the legacy language contract."""
+    return str(value)
+
+
+pub def int_u32(value: u32) -> int:
+    """Apply the legacy integer cast to the exact u32 carrier."""
+    return int(value)
+
+
+pub def float_u32(value: u32) -> float:
+    """Apply the legacy float cast to the exact u32 carrier."""
+    return float(value)
+
+
+pub def format_u64(value: u64) -> str:
+    """Format the exact u64 carrier through the legacy language contract."""
+    return str(value)
+
+
+pub def int_u64(value: u64) -> int:
+    """Apply the legacy integer cast to the exact u64 carrier."""
+    return int(value)
+
+
+pub def float_u64(value: u64) -> float:
+    """Apply the legacy float cast to the exact u64 carrier."""
+    return float(value)
+
+
+pub def format_u128(value: u128) -> str:
+    """Format the exact u128 carrier through the legacy language contract."""
+    return str(value)
+
+
+pub def int_u128(value: u128) -> int:
+    """Apply the legacy integer cast to the exact u128 carrier."""
+    return int(value)
+
+
+pub def float_u128(value: u128) -> float:
+    """Apply the legacy float cast to the exact u128 carrier."""
+    return float(value)
+
+
+pub def format_f32(value: f32) -> str:
+    """Format the exact f32 carrier through the legacy language contract."""
+    return str(value)
+
+
+pub def int_f32(value: f32) -> int:
+    """Apply the legacy integer cast to the exact f32 carrier."""
+    return int(value)
+
+
+pub def float_f32(value: f32) -> float:
+    """Apply the legacy float cast to the exact f32 carrier."""
+    return float(value)
+
+
+pub def format_f64(value: f64) -> str:
+    """Format the exact f64 carrier through the legacy language contract."""
+    return str(value)
+
+
+pub def int_f64(value: f64) -> int:
+    """Apply the legacy integer cast to the exact f64 carrier."""
+    return int(value)
+
+
+pub def float_f64(value: f64) -> float:
+    """Apply the legacy float cast to the exact f64 carrier."""
+    return float(value)
+
+
+pub def negate_i8(value: i8) -> i8:
+    """Negate with the legacy carrier-specific overflow behavior."""
+    return -value
+
+
+pub def negate_i16(value: i16) -> i16:
+    """Negate with the legacy carrier-specific overflow behavior."""
+    return -value
+
+
+pub def negate_i32(value: i32) -> i32:
+    """Negate with the legacy carrier-specific overflow behavior."""
+    return -value
+
+
+pub def negate_i128(value: i128) -> i128:
+    """Negate with the legacy carrier-specific overflow behavior."""
+    return -value
+
+
+pub def parse_int(value: &str) -> int:
+    """Parse text using the legacy integer conversion and its canonical ValueError panic."""
+    return int(str(value))
+
+
+pub def parse_float(value: &str) -> float:
+    """Parse text using the legacy float conversion and its canonical ValueError panic."""
+    return float(str(value))
+
+
+pub def py_mod_i8(left: i8, right: i8) -> i8:
+    """Preserve the legacy i8 py_mod arithmetic and errors."""
+    return left % right
+
+
+pub def py_floor_div_i8(left: i8, right: i8) -> i8:
+    """Preserve the legacy i8 py_floor_div arithmetic and errors."""
+    return left // right
+
+
+pub def py_mod_i16(left: i16, right: i16) -> i16:
+    """Preserve the legacy i16 py_mod arithmetic and errors."""
+    return left % right
+
+
+pub def py_floor_div_i16(left: i16, right: i16) -> i16:
+    """Preserve the legacy i16 py_floor_div arithmetic and errors."""
+    return left // right
+
+
+pub def py_mod_i32(left: i32, right: i32) -> i32:
+    """Preserve the legacy i32 py_mod arithmetic and errors."""
+    return left % right
+
+
+pub def py_floor_div_i32(left: i32, right: i32) -> i32:
+    """Preserve the legacy i32 py_floor_div arithmetic and errors."""
+    return left // right
+
+
+pub def py_mod_i128(left: i128, right: i128) -> i128:
+    """Preserve the legacy i128 py_mod arithmetic and errors."""
+    return left % right
+
+
+pub def py_floor_div_i128(left: i128, right: i128) -> i128:
+    """Preserve the legacy i128 py_floor_div arithmetic and errors."""
+    return left // right
+
+
+pub def py_mod_u8(left: u8, right: u8) -> u8:
+    """Preserve the legacy u8 py_mod arithmetic and errors."""
+    return left % right
+
+
+pub def py_floor_div_u8(left: u8, right: u8) -> u8:
+    """Preserve the legacy u8 py_floor_div arithmetic and errors."""
+    return left // right
+
+
+pub def py_mod_u16(left: u16, right: u16) -> u16:
+    """Preserve the legacy u16 py_mod arithmetic and errors."""
+    return left % right
+
+
+pub def py_floor_div_u16(left: u16, right: u16) -> u16:
+    """Preserve the legacy u16 py_floor_div arithmetic and errors."""
+    return left // right
+
+
+pub def py_mod_u32(left: u32, right: u32) -> u32:
+    """Preserve the legacy u32 py_mod arithmetic and errors."""
+    return left % right
+
+
+pub def py_floor_div_u32(left: u32, right: u32) -> u32:
+    """Preserve the legacy u32 py_floor_div arithmetic and errors."""
+    return left // right
+
+
+pub def py_mod_u64(left: u64, right: u64) -> u64:
+    """Preserve the legacy u64 py_mod arithmetic and errors."""
+    return left % right
+
+
+pub def py_floor_div_u64(left: u64, right: u64) -> u64:
+    """Preserve the legacy u64 py_floor_div arithmetic and errors."""
+    return left // right
+
+
+pub def py_mod_u128(left: u128, right: u128) -> u128:
+    """Preserve the legacy u128 py_mod arithmetic and errors."""
+    return left % right
+
+
+pub def py_floor_div_u128(left: u128, right: u128) -> u128:
+    """Preserve the legacy u128 py_floor_div arithmetic and errors."""
+    return left // right
+
+
+pub def py_mod_f32(left: f32, right: f32) -> f32:
+    """Preserve the legacy f32 py_mod arithmetic and errors."""
+    return left % right
+
+
+pub def py_floor_div_f32(left: f32, right: f32) -> f32:
+    """Preserve the legacy f32 py_floor_div arithmetic and errors."""
+    return left // right
+
+
+pub def py_mod_f64(left: f64, right: f64) -> f64:
+    """Preserve the legacy f64 py_mod arithmetic and errors."""
+    return left % right
+
+
+pub def py_floor_div_f64(left: f64, right: f64) -> f64:
+    """Preserve the legacy f64 py_floor_div arithmetic and errors."""
+    return left // right
+
+
+pub def format_isize(value: isize) -> str:
+    """Preserve the legacy isize format boundary."""
+    return str(value)
+
+
+pub def int_isize(value: isize) -> int:
+    """Preserve the legacy isize int boundary."""
+    return int(value)
+
+
+pub def float_isize(value: isize) -> float:
+    """Preserve the legacy isize float boundary."""
+    return float(value)
+
+
+pub def py_mod_isize(left: isize, right: isize) -> isize:
+    """Preserve the legacy isize py_mod boundary."""
+    return left % right
+
+
+pub def py_floor_div_isize(left: isize, right: isize) -> isize:
+    """Preserve the legacy isize py_floor_div boundary."""
+    return left // right
+
+
+pub def format_usize(value: usize) -> str:
+    """Preserve the legacy usize format boundary."""
+    return str(value)
+
+
+pub def int_usize(value: usize) -> int:
+    """Preserve the legacy usize int boundary."""
+    return int(value)
+
+
+pub def float_usize(value: usize) -> float:
+    """Preserve the legacy usize float boundary."""
+    return float(value)
+
+
+pub def py_mod_usize(left: usize, right: usize) -> usize:
+    """Preserve the legacy usize py_mod boundary."""
+    return left % right
+
+
+pub def py_floor_div_usize(left: usize, right: usize) -> usize:
+    """Preserve the legacy usize py_floor_div boundary."""
+    return left // right
+
+
+pub def negate_isize(value: isize) -> isize:
+    """Preserve checked negation on the target-sized signed carrier."""
+    return -value

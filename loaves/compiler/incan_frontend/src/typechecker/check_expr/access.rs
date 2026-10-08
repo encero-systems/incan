@@ -4869,9 +4869,9 @@ impl TypeChecker {
     /// Return the constant a tuple index spells: an integer literal, a negated one, which counts from the end, or
     /// either in parentheses.
     ///
-    /// Lowering reads the same spellings when it turns the index into an element position, so every index accepted
-    /// here resolves to a position there.
-    fn constant_tuple_index(index: &Spanned<Expr>) -> Option<i64> {
+    /// Body IR shares this classification so checked negative and parenthesized tuple indices survive as constants,
+    /// without folding ordinary arithmetic or collection indices at the replacement boundary.
+    pub(crate) fn constant_tuple_index(index: &Spanned<Expr>) -> Option<i64> {
         match &index.node {
             Expr::Literal(Literal::Int(literal)) => Some(literal.value),
             Expr::Unary(UnaryOp::Neg, operand) => match &operand.node {
@@ -6528,6 +6528,14 @@ impl TypeChecker {
                 && let Some(trait_name) = self.current_trait_name.clone()
                 && let Some(method_info) = self.trait_method_info_resolved(&trait_name, method, span)
             {
+                // A default's open receiver selects the trait slot, not a concrete implementation. Retain that
+                // checked declaration so downstream routes can dispatch after specializing the receiver.
+                if let Some(identity) = &method_info.identity {
+                    self.type_info
+                        .traits
+                        .self_method_identities
+                        .insert((span.start, span.end), identity.clone());
+                }
                 return self.check_generic_method_call(
                     method,
                     method_info,
@@ -6581,8 +6589,12 @@ impl TypeChecker {
             && (enum_info.variants.iter().any(|v| v == method) || enum_info.variant_aliases.contains_key(method))
         {
             let variant_identity = enum_info.variant_identities.get(method).cloned();
+            let variant_params = self.checked_enum_variant_parameters(enum_name, method);
             // Args were checked above; no strict arity enforcement here.
             let _ = &arg_types; // keep for potential future validation
+            if let Some(parameters) = variant_params {
+                self.type_info.record_call_site_callable_params_exact(span, &parameters);
+            }
             if let Some(identity) = variant_identity {
                 self.type_info.record_resolved_identity(span, identity);
             }

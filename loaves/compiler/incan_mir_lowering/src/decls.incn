@@ -1,0 +1,60 @@
+"""Runtime layouts of checked source-local declarations; erased aliases have no storage."""
+
+from rust::incan_semantics_core::body_ir import BodyIrModule, StaticDeclaration, GlobalPlace
+from pub::incan_mir_plan import EnumDeclaration, ModelDeclaration, Parameter, SourceSpan, PlanType
+from unions import native_source_type, collect_unions
+
+
+pub def static_slot(declarations: list[StaticDeclaration], value: &GlobalPlace) -> Result[int, str]:
+    """Resolve global storage only by retained canonical identity and exact checked carrier."""
+    for slot in range(len(declarations)):
+        declaration = declarations[slot]
+        if declaration.canonical == value.identity and declaration.ty == value.ty:
+            return Ok(slot)
+    return Err(f"unsupported Body IR unretained global storage `{value.identity.declaration_name}`")
+
+
+pub def static_accessors(ty: PlanType) -> Result[tuple[str, str], str]:
+    """Name the runtime read and write cells for a scalar static; owned and aggregate carriers remain refused."""
+    match ty:
+        PlanType.Int => return Ok(("incan_native_runtime::read_static_int", "incan_native_runtime::write_static_int"))
+        PlanType.Float =>
+            return Ok(("incan_native_runtime::read_static_float", "incan_native_runtime::write_static_float"))
+        PlanType.Bool =>
+            return Ok(("incan_native_runtime::read_static_bool", "incan_native_runtime::write_static_bool"))
+        _ => return Err("unsupported Body IR static carrier")
+
+
+pub def lower_model_declarations(module: &BodyIrModule, file: str) -> Result[list[ModelDeclaration], str]:
+    """Retain checked field layout and derives for admitted plain model, class, and newtype declarations."""
+    unions = collect_unions(module)
+    mut models: list[ModelDeclaration] = []
+    for declaration in module.nominal_declarations:
+        if declaration.has_field_defaults:
+            return Err(f"unsupported Body IR model defaults on {declaration.name}")
+        mut fields: list[Parameter] = []
+        for slot in range(len(declaration.fields)):
+            fields.append(
+                Parameter(
+                    name=str(declaration.fields[slot]),
+                    ty=native_source_type(
+                        module.nominal_declarations,
+                        module.enum_declarations,
+                        unions,
+                        declaration.field_types[slot],
+                        [],
+                    )?,
+                    span=SourceSpan(file=file, line=1, column=1),
+                ),
+            )
+        models.append(
+            ModelDeclaration(
+                name=str(declaration.name),
+                public=declaration.public,
+                fields=fields,
+                field_public=declaration.field_public,
+                derives=declaration.derives,
+                span=SourceSpan(file=file, line=1, column=1),
+            ),
+        )
+    return Ok(models)

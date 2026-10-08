@@ -7,9 +7,10 @@ use super::*;
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Lower a binary-operator expression. Bails out to an explicit unsupported placeholder *before* evaluating
     /// either operand when `op` has no Body IR v0 handling at all (see [`Self::binary_op_is_supported`]), so an
-    /// unsupported operator's sub-expressions are never partially lowered. Otherwise defers to
-    /// [`Self::lower_binary_from_operands`] for the actual string-helper-or-plain-binop emission, which is also
-    /// shared with [`Self::lower_compound_assignment`].
+    /// unsupported operator's sub-expressions are never partially lowered. Source boolean operators retain conditional
+    /// evaluation through [`Self::lower_boolean_short_circuit`]. Other operators defer to
+    /// [`Self::lower_binary_from_operands`] for string-helper-or-plain-binop emission, shared with
+    /// [`Self::lower_compound_assignment`].
     pub(super) fn lower_binary(
         &mut self,
         lhs: &ast::Spanned<ast::Expr>,
@@ -37,6 +38,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if !Self::binary_op_is_supported(op, &lhs_ty, &rhs_ty) {
             return self.unsupported_operand(format!("binary operator {op:?}"), scope, hir_span_value, out);
         }
+        if matches!(op, ast::BinaryOp::And | ast::BinaryOp::Or) {
+            return self.lower_boolean_short_circuit(lhs, op, rhs, scope, hir_span_value, out);
+        }
         let lhs_operand = self.lower_expr_to_operand(lhs, scope, out);
         let rhs_operand = self.lower_expr_to_operand(rhs, scope, out);
         self.lower_binary_from_operands(
@@ -50,6 +54,67 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             hir_span_value,
             out,
         )
+    }
+
+    /// Retain boolean evaluation order as control flow before flattening the right operand.
+    ///
+    /// Both successors initialize one boolean temporary. Calls, panics, and mutations in the right operand stay
+    /// inside the selected branch; downstream consumers need no source-expression reconstruction.
+    fn lower_boolean_short_circuit(
+        &mut self,
+        lhs: &ast::Spanned<ast::Expr>,
+        op: ast::BinaryOp,
+        rhs: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let cond = self.lower_expr_to_operand(lhs, scope, out);
+        let local = self.new_temp(IncanType::Primitive(IncanPrimitiveType::Bool), scope, span);
+        let branch_scope = self.new_scope(Some(scope), span);
+        let enclosing_bindings = self.bindings.clone();
+        let range_layouts_before = self.materialized_range_locals.clone();
+        let mut evaluated = Vec::new();
+        let value = self.lower_expr_to_operand(rhs, branch_scope, &mut evaluated);
+        evaluated.push(bir::Statement {
+            kind: bir::StatementKind::Assign {
+                place: bir::Place::from_local(local),
+                rvalue: bir::Rvalue::Use(value),
+            },
+            span,
+        });
+        self.insert_scope_drops(&mut evaluated, branch_scope);
+        self.bindings = enclosing_bindings;
+        self.materialized_range_locals
+            .retain(|local| range_layouts_before.contains(local));
+        let skipped = bir::Block {
+            scope,
+            stmts: vec![bir::Statement {
+                kind: bir::StatementKind::Assign {
+                    place: bir::Place::from_local(local),
+                    rvalue: bir::Rvalue::Use(bir::Operand::Constant(bir::Constant::Bool(op == ast::BinaryOp::Or))),
+                },
+                span,
+            }],
+        };
+        let evaluated = bir::Block {
+            scope: branch_scope,
+            stmts: evaluated,
+        };
+        let (then_block, else_block) = if op == ast::BinaryOp::And {
+            (evaluated, skipped)
+        } else {
+            (skipped, evaluated)
+        };
+        out.push(bir::Statement {
+            kind: bir::StatementKind::If {
+                cond,
+                then_block,
+                else_block: Some(else_block),
+            },
+            span,
+        });
+        self.temp_operand(local, &IncanType::Primitive(IncanPrimitiveType::Bool))
     }
 
     /// Lower a user-defined operator to the dunder method call the typechecker resolved for it.

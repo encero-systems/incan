@@ -1,0 +1,247 @@
+"""Anonymous unions reuse native enum layouts and legacy's normalized payload order and names."""
+
+from rust::incan_semantics_core import IncanType as RustType
+from rust::incan_semantics_core::body_ir import BodyIrModule, NominalDeclaration, EnumDeclaration as RustEnumDeclaration
+from pub::incan_mir_plan import (
+    PlanType,
+    EnumDeclaration,
+    EnumVariant,
+    SourceSpan,
+    Operand,
+    RvalueKind,
+    Local,
+    Place,
+    Projection,
+)
+from rust::incan_semantics_core::body_ir import Pattern as RustPattern, Place as RustPlace, PlaceElem as RustPlaceElem
+from enums import native_source_type as source_type, validate_payload_patterns, enum_owner
+
+
+pub def collect_unions(module: &BodyIrModule) -> list[RustType]:
+    """Retain each union shape once across checked frame and declaration types."""
+    mut unions: list[RustType] = []
+    for body in module.bodies:
+        retain_union(unions, body.return_type)
+        for local in body.locals:
+            retain_union(unions, local.ty)
+    for declaration in module.nominal_declarations:
+        for ty in declaration.field_types:
+            retain_union(unions, ty)
+    for declaration in module.enum_declarations:
+        for variant in declaration.variants:
+            for ty in variant.fields:
+                retain_union(unions, ty)
+    return unions
+
+
+def retain_union(mut unions: list[RustType], ty: &RustType) -> None:
+    """Record only ordinary union roots; other collection constructors keep their existing refusal."""
+    match ty:
+        RustType.Generic(base=base, args=_args) =>
+            if str(base) == "Union" and ty.clone() not in unions:
+                unions.append(ty.clone())
+        _ => pass
+
+
+pub def native_source_type(
+    nominals: list[NominalDeclaration],
+    enums: list[RustEnumDeclaration],
+    unions: list[RustType],
+    ty: &RustType,
+    intrinsics: list[EnumDeclaration],
+) -> Result[PlanType, str]:
+    """Resolve an anonymous union to its injected enum slot; all payloads must already be admitted."""
+    for index in range(len(unions)):
+        if unions[index] == ty.clone():
+            members = union_members(nominals, enums, ty)?
+            return Ok(PlanType.Enum(len(enums) + index, union_name(members)?))
+    return source_type(nominals, enums, ty, intrinsics)
+
+
+pub def union_members(
+    nominals: list[NominalDeclaration],
+    enums: list[RustEnumDeclaration],
+    ty: &RustType,
+) -> Result[list[PlanType], str]:
+    """Normalize by legacy Rust payload spelling, retaining only scalar and previously admitted nominal members."""
+    mut members: list[PlanType] = []
+    mut keys: list[str] = []
+    match ty:
+        RustType.Generic(base=base, args=args) =>
+            if str(base) != "Union":
+                return Err(f"unsupported Body IR union type {ty}")
+            for arg in args:
+                member = source_type(nominals, enums, arg, [])?
+                if member == PlanType.Unit:
+                    return Err("unsupported Body IR optional union")
+                mut key = ""
+                match legacy_spelling(member):
+                    Ok(spelling) =>
+                        key = spelling
+                    Err(reason) => return Err(f"unsupported Body IR union member {arg}: {reason}")
+                if key not in keys:
+                    keys.append(key)
+                    members.append(member)
+        _ => return Err(f"unsupported Body IR union type {ty}")
+    mut ordered: list[PlanType] = []
+    for key in sorted(keys):
+        for index in range(len(keys)):
+            if keys[index] == key:
+                ordered.append(members[index])
+    if len(ordered) < 2:
+        return Err("unsupported Body IR degenerate union")
+    return Ok(ordered)
+
+
+def legacy_spelling(ty: PlanType) -> Result[str, str]:
+    """Retain the legacy Rust payload keys used for normalization and generated union identity."""
+    match ty:
+        PlanType.Int => return Ok("i64")
+        PlanType.Float => return Ok("f64")
+        PlanType.Bool => return Ok("bool")
+        PlanType.String => return Ok("String")
+        PlanType.Model(_index, name) => return Ok(name)
+        PlanType.Enum(_index, name) => return Ok(name)
+        _ => return Err("unsupported Body IR union member")
+
+
+def union_name(members: list[PlanType]) -> Result[str, str]:
+    """Mirror legacy's FNV-1a name over normalized Rust payload keys, using explicit wrapping u64 arithmetic."""
+    mut keys: list[str] = []
+    for member in members:
+        keys.append(legacy_spelling(member)?)
+    mut hash: u64 = 14695981039346656037
+    prime: u64 = 1099511628211
+    for byte in "|".join(keys).encode():
+        word: u64 = int(byte).wrapping_resize()
+        hash ^= word
+        hash = hash.wrapping_mul(prime)
+    # Incan format strings currently admit only Debug; render legacy's fixed-width hex explicitly.
+    digits = "0123456789abcdef"
+    mut suffix = ""
+    for _index in range(16):
+        nibble: int = (hash % 16).wrapping_resize()
+        suffix = digits[nibble] + suffix
+        hash >>= 4
+    return Ok("__IncanUnion" + suffix)
+
+
+pub def lower_union_declarations(module: &BodyIrModule, file: str) -> Result[list[EnumDeclaration], str]:
+    """Inject ordinary union enums after source enums, using the same plan and adapter path."""
+    mut declarations: list[EnumDeclaration] = []
+    for ty in collect_unions(module):
+        members = union_members(module.nominal_declarations, module.enum_declarations, ty)?
+        mut variants: list[EnumVariant] = []
+        for index in range(len(members)):
+            variants.append(EnumVariant(name=f"V{index}", fields=[members[index]]))
+        declarations.append(
+            EnumDeclaration(
+                name=union_name(members)?,
+                public=true,
+                variants=variants,
+                derives=["Clone"],
+                span=SourceSpan(file=file, line=1, column=1),
+            ),
+        )
+    return Ok(declarations)
+
+
+pub def union_slot(
+    nominals: list[NominalDeclaration],
+    enums: list[RustEnumDeclaration],
+    unions: list[RustType],
+    owner: int,
+    member: PlanType,
+) -> Result[int, str]:
+    """Find one exact normalized member; widening and unrepresented narrowing stay refused."""
+    slot = union_test_slot(nominals, enums, unions, owner, member)?
+    if slot < 0:
+        return Err("unsupported Body IR union member conversion")
+    return Ok(slot)
+
+
+pub def union_pattern_slot(
+    nominals: list[NominalDeclaration],
+    enums: list[RustEnumDeclaration],
+    unions: list[RustType],
+    owner: int,
+    pattern: &RustPattern,
+) -> Result[int, str]:
+    """Dispatch checker-retained member patterns; subset, literal and binding fallback refinements stay refused."""
+    match pattern:
+        RustPattern.Wildcard => return Ok(-1)
+        RustPattern.UnionMember(ty=ty, fields=fields) =>
+            if len(fields) > 1:
+                return Err("unsupported Body IR union payload pattern arity")
+            validate_payload_patterns(fields)?
+            member = native_source_type(nominals, enums, unions, ty, [])?
+            return union_slot(nominals, enums, unions, owner, member)
+        _ => return Err("unsupported Body IR union pattern")
+
+
+pub def union_test_slot(
+    nominals: list[NominalDeclaration],
+    enums: list[RustEnumDeclaration],
+    unions: list[RustType],
+    owner: int,
+    member: PlanType,
+) -> Result[int, str]:
+    """A primitive target absent from the union is always false; source enum tests remain refused."""
+    index = owner - len(enums)
+    if index < 0 or index >= len(unions):
+        return Err("unsupported Body IR nonunion enum isinstance")
+    members = union_members(nominals, enums, unions[index])?
+    for slot in range(len(members)):
+        if members[slot] == member:
+            return Ok(slot)
+    return Ok(-1)
+
+
+pub def union_injection(
+    nominals: list[NominalDeclaration],
+    enums: list[RustEnumDeclaration],
+    unions: list[RustType],
+    operand: Operand,
+    source: PlanType,
+    target: PlanType,
+) -> Result[RvalueKind, str]:
+    """Reuse enum construction for one member at an assignment, argument or return boundary."""
+    match target:
+        PlanType.Enum(owner, _name) =>
+            if owner < len(enums) or source == target:
+                return Ok(RvalueKind.Use(operand))
+            slot = union_slot(nominals, enums, unions, owner, source)?
+            return Ok(RvalueKind.Enum(owner, slot, [operand]))
+        _ => return Ok(RvalueKind.Use(operand))
+
+
+pub def union_projection(
+    nominals: list[NominalDeclaration],
+    enums: list[RustEnumDeclaration],
+    unions: list[RustType],
+    locals: list[Local],
+    value: &RustPlace,
+    span: SourceSpan,
+) -> Result[Option[Place], str]:
+    """Map an explicit checker-selected union member to the existing enum downcast vocabulary."""
+    if len(value.projection) != 1:
+        return Ok(None)
+    match projected_member(value.projection[0]):
+        Some(ty) =>
+            match value.local_id():
+                Some(local) =>
+                    index = int(local.index()) + 1
+                    owner = enum_owner(locals[index].ty)?
+                    member = native_source_type(nominals, enums, unions, ty, [])?
+                    slot = union_slot(nominals, enums, unions, owner, member)?
+                    return Ok(Some(Place(local=index, projection=Projection.VariantField(slot, 0, member), span=span)))
+                None => return Err("unsupported Body IR global union narrowing")
+        None => return Ok(None)
+
+
+def projected_member(projection: &RustPlaceElem) -> Option[RustType]:
+    """Read the checker-selected payload type from one explicit union projection."""
+    # The typed boundary also retains the pattern-only Rust import (the compiler gap tracked by #459).
+    match projection:
+        RustPlaceElem.UnionMember(ty=ty) => return Some(ty.clone())
+        _ => return None

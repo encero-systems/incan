@@ -1,0 +1,103 @@
+"""List layout and iteration admission from canonical checked Body IR."""
+
+from collections import collection_reference, leaf_type
+from pub::incan_mir_plan import ListLeaf, PlanType
+from rust::incan_semantics_core::body_ir import (
+    Block as RustBlock,
+    StatementKind as RustStatementKind,
+    Operand as RustOperand,
+    IterProtocol,
+)
+
+
+pub def list_shape(ty: PlanType) -> Option[tuple[ListLeaf, int]]:
+    """Read an owned or borrowed list's primitive leaf and nesting depth."""
+    match ty:
+        PlanType.List(leaf, depth) => return Some((leaf, depth))
+        PlanType.ListRef(leaf, depth) => return Some((leaf, depth))
+        PlanType.ListMutRef(leaf, depth) => return Some((leaf, depth))
+        _ => return None
+
+
+pub def require_list_shape(ty: PlanType, refusal: str) -> Result[tuple[ListLeaf, int], str]:
+    """Read a proven list layout or return the caller's construct-specific refusal."""
+    match list_shape(ty):
+        Some(shape) => return Ok(shape)
+        None => return Err(refusal)
+
+
+pub def list_element(leaf: ListLeaf, depth: int) -> PlanType:
+    """Recover the exact immediate element representation without flattening nested lists."""
+    if depth > 1:
+        return PlanType.List(leaf, depth - 1)
+    return leaf_type(leaf)
+
+
+pub def list_iterator_locals(block: &RustBlock) -> list[int]:
+    """Read explicit builtin IterNext statements to select their native cursor storage."""
+    mut result: list[int] = []
+    for statement in block.stmts:
+        result.extend(statement_iterator_locals(statement.kind))
+    return result
+
+
+pub def statement_iterator_locals(kind: &RustStatementKind) -> list[int]:
+    """Inspect the typed canonical statement enum, including nested checked control-flow blocks."""
+    mut result: list[int] = []
+    match kind:
+        RustStatementKind.IterNext(destination=_destination, iterator=iterator, protocol=protocol) =>
+            if is_builtin_iteration(protocol):
+                match iterator:
+                    RustOperand.Place(read) =>
+                        match read.place.local_id():
+                            Some(local) => result.append(int(local.index()) + 1)
+                            None => pass
+                    _ => pass
+        RustStatementKind.Loop(body=body) => result.extend(list_iterator_locals(body))
+        RustStatementKind.If(cond=_condition, then_block=then_body, else_block=else_body) =>
+            result.extend(list_iterator_locals(then_body))
+            match else_body:
+                Some(body) => result.extend(list_iterator_locals(body))
+                None => pass
+        _ => pass
+    return result
+
+
+pub def is_list(ty: PlanType) -> bool:
+    """Recognize owned and borrowed list representations without an Option-method dependency."""
+    match list_shape(ty):
+        Some(_shape) => return true
+        None => return false
+
+
+pub def is_owned_list(ty: PlanType) -> bool:
+    """Only vectors own contents; references must never enter the drop ledger."""
+    match ty:
+        PlanType.List(_leaf, _depth) => return true
+        _ => return false
+
+
+pub def is_builtin_iteration(protocol: &IterProtocol) -> bool:
+    """Match a borrowed protocol tag without treating a pattern binding as an owned enum value."""
+    match protocol:
+        IterProtocol.Builtin => return true
+        _ => return false
+
+
+pub def list_parameter_type(ty: PlanType, mutable: bool) -> PlanType:
+    """Map supported collection parameters and iterable storage to caller-owned references."""
+    match list_shape(ty):
+        Some((leaf, depth)) =>
+            if mutable:
+                return PlanType.ListMutRef(leaf, depth)
+            return PlanType.ListRef(leaf, depth)
+        None => return collection_reference(ty, mutable)
+
+
+pub def is_mutable_list_reference(ty: PlanType) -> bool:
+    """Read a supported collection parameter's exclusive-borrow contract."""
+    match ty:
+        PlanType.SetMutRef(_leaf) => return true
+        PlanType.DictMutRef(_key, _value) => return true
+        PlanType.ListMutRef(_leaf, _depth) => return true
+        _ => return false

@@ -4,8 +4,8 @@ use crate::error::PlanError;
 use crate::plan::{BinaryOp, Constant, Operand, OperandKind, Place, PlanType, Projection, RvalueKind, UnaryOp};
 use crate::spans::Sources;
 use crate::types::native_type;
-use rustc_index::IndexVec;
 use rustc_abi::FieldIdx;
+use rustc_index::IndexVec;
 use rustc_middle::mir::{self, interpret::Scalar};
 use rustc_middle::ty::TyCtxt;
 use rustc_span::Span;
@@ -18,12 +18,32 @@ pub fn index(value: i64) -> Result<usize, PlanError> {
     })
 }
 
-/// Map a local or checked-pair projection to rustc's place representation.
+/// Map a prevalidated local, checked component, or nominal receiver projection to rustc's place representation.
 pub fn place<'tcx>(tcx: TyCtxt<'tcx>, value: &Place) -> Result<mir::Place<'tcx>, PlanError> {
     let local = mir::Local::from_usize(index(value.local)?);
     let place = mir::Place::from(local);
     Ok(match &value.projection {
         Projection::Whole => place,
+        Projection::VariantField(variant, slot, ty) => {
+            let downcast = place.project_deeper(
+                &[mir::ProjectionElem::Downcast(
+                    None,
+                    rustc_abi::VariantIdx::from_usize(index(*variant)?),
+                )],
+                tcx,
+            );
+            tcx.mk_place_field(downcast, FieldIdx::from_usize(index(*slot)?), native_type(tcx, ty)?)
+        }
+        Projection::Field(slot, ty) => {
+            tcx.mk_place_field(place, FieldIdx::from_usize(index(*slot)?), native_type(tcx, ty)?)
+        }
+        Projection::Deref(_) => tcx.mk_place_deref(place),
+        Projection::DerefField(slot, ty) => tcx.mk_place_field(
+            tcx.mk_place_deref(place),
+            FieldIdx::from_usize(index(*slot)?),
+            native_type(tcx, ty)?,
+        ),
+        Projection::NumericValue(ty) => tcx.mk_place_field(place, FieldIdx::from_u32(0), native_type(tcx, ty)?),
         Projection::Value => tcx.mk_place_field(place, FieldIdx::from_u32(0), tcx.types.i64),
         Projection::Overflow => tcx.mk_place_field(place, FieldIdx::from_u32(1), tcx.types.bool),
     })
@@ -47,6 +67,7 @@ pub fn operand<'tcx>(
 fn constant<'tcx>(tcx: TyCtxt<'tcx>, value: &Constant, span: Span) -> Result<mir::Operand<'tcx>, PlanError> {
     Ok(match value {
         Constant::Int(value) => mir::Operand::const_from_scalar(tcx, tcx.types.i64, Scalar::from_i64(*value), span),
+        Constant::Numeric(text, ty) => numeric_constant(tcx, text, ty, span)?,
         Constant::Float(value) => {
             mir::Operand::const_from_scalar(tcx, tcx.types.f64, Scalar::from_u64(value.to_bits()), span)
         }
@@ -59,17 +80,22 @@ fn constant<'tcx>(tcx: TyCtxt<'tcx>, value: &Constant, span: Span) -> Result<mir
         Constant::Text(text) => {
             let alloc_id = tcx.allocate_bytes_dedup(text.as_bytes(), mir::interpret::CTFE_ALLOC_SALT);
             let meta = u64::try_from(text.len()).map_err(|_| PlanError::Invalid {
-                function: "text".into(), reason: "string literal length exceeds the native representation".into(),
+                function: "text".into(),
+                reason: "string literal length exceeds the native representation".into(),
             })?;
             mir::Operand::Constant(Box::new(mir::ConstOperand {
-                span, user_ty: None,
-                const_: mir::Const::Val(mir::ConstValue::Slice { alloc_id, meta }, native_type(tcx, &PlanType::StrRef)?),
+                span,
+                user_ty: None,
+                const_: mir::Const::Val(
+                    mir::ConstValue::Slice { alloc_id, meta },
+                    native_type(tcx, &PlanType::StrRef)?,
+                ),
             }))
         }
     })
 }
 
-/// Map an operation name; overflow variants are selected only for int arithmetic.
+/// Map an operation name; overflow variants are selected only for integer arithmetic.
 pub fn binary(op: &BinaryOp, checked: bool) -> mir::BinOp {
     match op {
         BinaryOp::Add if checked => mir::BinOp::AddWithOverflow,
@@ -96,9 +122,30 @@ pub fn rvalue<'tcx>(
     destination_type: &PlanType,
 ) -> Result<mir::Rvalue<'tcx>, PlanError> {
     Ok(match value {
+        RvalueKind::Discriminant(value) => mir::Rvalue::Discriminant(place(tcx, value)?),
+        RvalueKind::TagToInt(value) => {
+            mir::Rvalue::Cast(mir::CastKind::IntToInt, operand(tcx, sources, value)?, tcx.types.i64)
+        }
         RvalueKind::Use(value) => mir::Rvalue::Use(operand(tcx, sources, value)?, mir::WithRetag::Yes),
+        RvalueKind::NumericCast(value, source, target) => {
+            let source_float = matches!(source, PlanType::Float | PlanType::F32 | PlanType::F64);
+            let target_float = matches!(target, PlanType::Float | PlanType::F32 | PlanType::F64);
+            let kind = match (source_float, target_float) {
+                (true, true) => mir::CastKind::FloatToFloat,
+                (true, false) => mir::CastKind::FloatToInt,
+                (false, true) => mir::CastKind::IntToFloat,
+                (false, false) => mir::CastKind::IntToInt,
+            };
+            mir::Rvalue::Cast(kind, operand(tcx, sources, value)?, native_type(tcx, target)?)
+        }
         RvalueKind::IntToFloat(value) => {
             mir::Rvalue::Cast(mir::CastKind::IntToFloat, operand(tcx, sources, value)?, tcx.types.f64)
+        }
+        RvalueKind::FloatToInt(value) => {
+            mir::Rvalue::Cast(mir::CastKind::FloatToInt, operand(tcx, sources, value)?, tcx.types.i64)
+        }
+        RvalueKind::BoolToInt(value) => {
+            mir::Rvalue::Cast(mir::CastKind::IntToInt, operand(tcx, sources, value)?, tcx.types.i64)
         }
         RvalueKind::Unary(op, value) => mir::Rvalue::UnaryOp(
             match op {
@@ -108,22 +155,123 @@ pub fn rvalue<'tcx>(
             operand(tcx, sources, value)?,
         ),
         RvalueKind::Binary(op, left, right) => mir::Rvalue::BinaryOp(
-            binary(op, matches!(destination_type, PlanType::CheckedInt)),
+            binary(
+                op,
+                matches!(destination_type, PlanType::CheckedInt | PlanType::CheckedNumeric(_)),
+            ),
             Box::new((operand(tcx, sources, left)?, operand(tcx, sources, right)?)),
         ),
+        RvalueKind::Tuple(elements) => mir::Rvalue::Aggregate(
+            Box::new(mir::AggregateKind::Tuple),
+            IndexVec::from_raw(
+                elements
+                    .iter()
+                    .map(|element| operand(tcx, sources, element))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+        ),
+
+        RvalueKind::Model(_, elements) | RvalueKind::Enum(_, _, elements) => {
+            let ty = native_type(tcx, destination_type)?;
+            let rustc_middle::ty::Adt(definition, args) = ty.kind() else {
+                return Err(PlanError::Invalid {
+                    function: "model".into(),
+                    reason: "model construction requires an ADT destination".into(),
+                });
+            };
+            let operands = elements
+                .iter()
+                .map(|value| operand(tcx, sources, value))
+                .collect::<Result<Vec<_>, _>>()?;
+            mir::Rvalue::Aggregate(
+                Box::new(mir::AggregateKind::Adt(
+                    definition.did(),
+                    rustc_abi::VariantIdx::from_usize(match value {
+                        RvalueKind::Enum(_, variant, _) => index(*variant)?,
+                        _ => 0,
+                    }),
+                    *args,
+                    None,
+                    None,
+                )),
+                IndexVec::from_raw(operands),
+            )
+        }
         RvalueKind::Array(elements) => {
             let element = match destination_type {
                 PlanType::StringArray(_) => native_type(tcx, &PlanType::String)?,
                 PlanType::StrArray(_) => native_type(tcx, &PlanType::StrRef)?,
-                _ => return Err(PlanError::Invalid { function: "array".into(), reason: "array expression requires a formatting array destination".into() }),
+                _ => {
+                    return Err(PlanError::Invalid {
+                        function: "array".into(),
+                        reason: "array expression requires a formatting array destination".into(),
+                    });
+                }
             };
-            let operands = elements.iter().map(|value| operand(tcx, sources, value)).collect::<Result<Vec<_>, _>>()?;
-            mir::Rvalue::Aggregate(Box::new(mir::AggregateKind::Array(element)), IndexVec::from_raw(operands))
+            let operands = elements
+                .iter()
+                .map(|value| operand(tcx, sources, value))
+                .collect::<Result<Vec<_>, _>>()?;
+            mir::Rvalue::Aggregate(
+                Box::new(mir::AggregateKind::Array(element)),
+                IndexVec::from_raw(operands),
+            )
         }
-        RvalueKind::Borrow(value) => mir::Rvalue::Ref(tcx.lifetimes.re_erased, mir::BorrowKind::Shared, place(tcx, value)?),
+        RvalueKind::MutBorrow(value) => mir::Rvalue::Ref(
+            tcx.lifetimes.re_erased,
+            mir::BorrowKind::Mut {
+                kind: mir::MutBorrowKind::Default,
+            },
+            place(tcx, value)?,
+        ),
+        RvalueKind::Borrow(value) => {
+            mir::Rvalue::Ref(tcx.lifetimes.re_erased, mir::BorrowKind::Shared, place(tcx, value)?)
+        }
         RvalueKind::UnsizeSlice(value) => mir::Rvalue::Cast(
-            mir::CastKind::PointerCoercion(rustc_middle::ty::adjustment::PointerCoercion::Unsize, mir::CoercionSource::Implicit),
-            operand(tcx, sources, value)?, native_type(tcx, destination_type)?,
+            mir::CastKind::PointerCoercion(
+                rustc_middle::ty::adjustment::PointerCoercion::Unsize,
+                mir::CoercionSource::Implicit,
+            ),
+            operand(tcx, sources, value)?,
+            native_type(tcx, destination_type)?,
         ),
     })
+}
+
+/// Decode exact frontend-owned numeric payloads only after the Incan admission table selects their carrier.
+fn numeric_constant<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    text: &str,
+    ty: &PlanType,
+    span: Span,
+) -> Result<mir::Operand<'tcx>, PlanError> {
+    let invalid = || PlanError::Invalid {
+        function: "numeric constant".into(),
+        reason: format!("invalid payload {text}"),
+    };
+    let native = native_type(tcx, ty)?;
+    let scalar = match ty {
+        PlanType::ISize => Scalar::from_int(
+            text.parse::<i128>().map_err(|_| invalid())?,
+            tcx.data_layout.pointer_size(),
+        ),
+        PlanType::USize => Scalar::from_uint(
+            text.parse::<u128>().map_err(|_| invalid())?,
+            tcx.data_layout.pointer_size(),
+        ),
+        PlanType::Int => Scalar::from_i64(text.parse::<i64>().map_err(|_| invalid())?),
+        PlanType::F32 => Scalar::from_u32(text.parse::<u32>().map_err(|_| invalid())?),
+        PlanType::F64 => Scalar::from_u64(text.parse::<u64>().map_err(|_| invalid())?),
+        PlanType::I8 => Scalar::from_i8(text.parse::<i8>().map_err(|_| invalid())?),
+        PlanType::I16 => Scalar::from_i16(text.parse::<i16>().map_err(|_| invalid())?),
+        PlanType::I32 => Scalar::from_i32(text.parse::<i32>().map_err(|_| invalid())?),
+        PlanType::I128 => Scalar::from_i128(text.parse::<i128>().map_err(|_| invalid())?),
+        PlanType::U8 => Scalar::from_u8(text.parse::<u8>().map_err(|_| invalid())?),
+        PlanType::U16 => Scalar::from_u16(text.parse::<u16>().map_err(|_| invalid())?),
+        PlanType::U32 => Scalar::from_u32(text.parse::<u32>().map_err(|_| invalid())?),
+        PlanType::U64 => Scalar::from_u64(text.parse::<u64>().map_err(|_| invalid())?),
+        PlanType::U128 => Scalar::from_u128(text.parse::<u128>().map_err(|_| invalid())?),
+        _ => return Err(invalid()),
+    };
+    Ok(mir::Operand::const_from_scalar(tcx, native, scalar, span))
 }

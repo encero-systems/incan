@@ -58,9 +58,20 @@ use crate::{AbiV0RuntimeRequirement, CanonicalSymbolId, CompilerNodeId, HirSourc
 /// One module's lowered function/method bodies and direct-execution declaration facts.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BodyIrModule {
+    /// Checked source-local nongeneric enum layouts, including canonical payload variants and selected derives.
+    #[serde(default)]
+    pub enum_declarations: Vec<EnumDeclaration>,
+    /// Checked stdlib wrappers that forward every parameter unchanged to a Rust function. Other imported
+    /// implementations are absent and must refuse.
+    #[serde(default)]
+    pub stdlib_delegations: Vec<StdlibDelegation>,
+    /// Source-local scalar statics with effect-free literal initializers; all other initializers must refuse.
+    #[serde(default)]
+    pub static_declarations: Vec<StaticDeclaration>,
     /// Identity of the owning module, matching [`crate::HirModule::id`].
     pub module_id: CompilerNodeId,
-    /// Source-local plain-model declarations whose construction layout is available to a direct runtime.
+    /// Source-local plain-model and plain-newtype declarations whose construction layout is available to a direct
+    /// runtime.
     ///
     /// This is not a general nominal symbol table. It contains only the source-local model declarations lowering
     /// has explicitly retained for direct execution, and each record carries its declaration-span identity and
@@ -83,8 +94,57 @@ pub struct BodyIrModule {
     /// zero-argument `.value()` surface. Package aliases retain these canonical contexts. Ordinary enums, payload
     /// variants, behavior-bearing enums, and generic enums remain absent and must refuse.
     pub value_enum_declarations: Vec<ValueEnumDeclaration>,
+    /// Canonical source-local trait owners; method identity validation uses their physical declaration spans.
+    #[serde(default)]
+    pub trait_declarations: Vec<CanonicalSymbolId>,
+    /// Checked concrete trait slots and the implementation body selected for each adopter.
+    #[serde(default)]
+    pub trait_implementations: Vec<TraitImplementation>,
     /// One [`Body`] per lowered function/method declaration in the module.
     pub bodies: Vec<Body>,
+}
+
+/// Canonical persistent storage with a checker-typed, effect-free initializer.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StaticDeclaration {
+    /// Exact checker-selected storage identity, independent of aliases at its uses.
+    pub canonical: CanonicalSymbolId,
+    /// Checked scalar carrier type.
+    pub ty: IncanType,
+    /// Literal initialization value; repeated reads must not reinitialize an assigned cell.
+    pub initial: Constant,
+}
+
+/// A source-owned stdlib callable's proven transparent native delegation and scalar signature.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StdlibDelegation {
+    /// Exact source declaration identity selected by checking, independent of the caller's spelling.
+    pub canonical: CanonicalSymbolId,
+    /// Checked Rust item selected by the wrapper call; consumers must validate its callable signature against native
+    /// metadata and must not recover its path from the source callable's name.
+    pub target: CanonicalSymbolId,
+    /// Declaration-order parameter types; argument binding still belongs to the call site.
+    pub parameters: Vec<IncanType>,
+    /// The declared wrapper result type, verified against native metadata before execution.
+    pub return_type: IncanType,
+}
+
+impl StdlibDelegation {
+    /// Materialize only a checker-proven Rust call target path, never a source-module identity. An unresolved
+    /// `RustItem` still requires native metadata validation before execution.
+    pub fn rust_path(&self) -> Option<String> {
+        match &self.target.origin {
+            crate::SymbolOrigin::RustCrate(path)
+                if matches!(
+                    self.target.kind,
+                    crate::SemanticSourceTargetKind::Function | crate::SemanticSourceTargetKind::RustItem
+                ) =>
+            {
+                Some(path.join("::"))
+            }
+            _ => None,
+        }
+    }
 }
 
 impl BodyIrModule {
@@ -165,13 +225,24 @@ impl BodyIrModule {
     }
 }
 
-/// The exact local declaration and canonical field layout for one direct-executable plain model.
+/// One non-generic concrete adopter's implementation of a source-local trait method.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TraitImplementation {
+    /// Concrete nominal owner, matched against the retained layout registry.
+    pub owner: CanonicalSymbolId,
+    /// Trait slot identity minted by the checker.
+    pub method: CanonicalSymbolId,
+    /// Implementing method identity, or the trait slot itself for an inherited default.
+    pub implementation: CanonicalSymbolId,
+}
+
+/// The exact local declaration and canonical field layout for one direct-executable plain model or class.
 ///
-/// The record belongs to its declaring module and deliberately excludes classes, enums, generic models, and
-/// behavior-bearing models. A consumer may load this same canonical context from a package artifact. Its field order
-/// is the checked constructor-slot order; a direct runtime must compare it with
-/// [`ConstructorTarget::canonical_field_layout`] before applying [`ConstructorTarget::binding`], rather than treating
-/// constructor argument spelling as layout evidence.
+/// The record belongs to its declaring module and excludes enums, generic nominals, and inheritance. Nominal methods
+/// and adopted trait defaults remain separate canonical bodies with receiver origins. A consumer may load
+/// this canonical context from a package artifact. Its field order is the checked constructor-slot order; a direct
+/// runtime must compare it with [`ConstructorTarget::canonical_field_layout`] before applying
+/// [`ConstructorTarget::binding`], rather than treating constructor argument spelling as layout evidence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NominalDeclaration {
     /// Exact source-local declaration identity, derived from the declaration source span.
@@ -180,9 +251,10 @@ pub struct NominalDeclaration {
     pub canonical: CanonicalSymbolId,
     /// Canonical source declaration name, checked again by consumers as a defense against malformed Body IR.
     pub name: String,
-    /// Canonical declared field names in declaration order.
+    /// Canonical declared field names in declaration order; a plain newtype retains its sole tuple slot as `0`.
     pub fields: Vec<String>,
-    /// RFC 120 identities of [`Self::fields`] in the same declaration order.
+    /// RFC 120 identities of [`Self::fields`] in the same declaration order. A newtype's sole generated tuple slot
+    /// retains its owner's identity, because that slot has no independent source declaration.
     ///
     /// The parallel layout is intentional: constructor binding and stored runtime values retain the compact field
     /// names, while a source projection must match its checked identity at the same slot before the name is used to
@@ -190,6 +262,14 @@ pub struct NominalDeclaration {
     pub field_identities: Vec<CanonicalSymbolId>,
     /// Checked field types in the same canonical order, including private layout dependencies.
     pub field_types: Vec<IncanType>,
+    /// Checker-resolved public visibility, in the same order as the fields.
+    pub field_public: Vec<bool>,
+    /// Whether the source nominal declaration is public.
+    pub public: bool,
+    /// Whether any declared field has a default; the native route refuses these declarations.
+    pub has_field_defaults: bool,
+    /// Legacy implicit nominal derives, retained by the frontend rather than inferred by consumers.
+    pub derives: Vec<String>,
     /// Checked nominal bindings needed by those field types; serialized publications retain only referenced entries.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
     /// Number of declared type parameters; this profile admits only zero.
@@ -211,6 +291,36 @@ pub struct FieldlessEnumDeclaration {
     pub name: String,
     /// Canonical zero-payload variants in source declaration order.
     pub variants: Vec<FieldlessEnumVariantDeclaration>,
+}
+
+/// Canonical layout of a normal source enum without methods, aliases, or generic substitution.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnumDeclaration {
+    /// Exact source-local declaration identity derived from the enum's span.
+    pub direct_declaration_id: CompilerNodeId,
+    /// Exact checker identity of the enum owner.
+    pub canonical: CanonicalSymbolId,
+    /// Source name, cross-checked against constructor diagnostics.
+    pub name: String,
+    /// Checked source visibility.
+    pub public: bool,
+    /// Source-ordered variants; native discriminants use these exact indices.
+    pub variants: Vec<EnumVariantDeclaration>,
+    /// Explicit and automatic derives selected by the checker.
+    pub derives: Vec<String>,
+}
+
+/// One canonical variant and its checked positional payload layout.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnumVariantDeclaration {
+    /// Exact source-local declaration identity derived from the variant's span.
+    pub direct_declaration_id: CompilerNodeId,
+    /// Checker-selected variant identity; construction and patterns dispatch by this fact.
+    pub canonical: CanonicalSymbolId,
+    /// Source variant name, used only after identity resolution.
+    pub name: String,
+    /// Checked payload types in declaration order.
+    pub fields: Vec<IncanType>,
 }
 
 /// One canonical zero-payload member of a retained fieldless normal enum.
@@ -802,6 +912,9 @@ impl Place {
                 PlaceElem::Field { name, .. } => {
                     let _ = write!(&mut out, ".{name}");
                 }
+                PlaceElem::UnionMember { ty } => {
+                    let _ = write!(&mut out, ".union[{ty}]");
+                }
                 PlaceElem::Index(operand) => {
                     let _ = write!(&mut out, "[{}]", operand.render_snapshot());
                 }
@@ -848,6 +961,12 @@ pub enum PlaceElem {
         start: Option<Box<Operand>>,
         end: Option<Box<Operand>>,
         step: Option<Box<Operand>>,
+    },
+    /// A union payload selected by the checker's flow-narrowed expression type. The backend resolves its normalized
+    /// variant slot; it must not infer narrowing from enclosing control flow.
+    UnionMember {
+        /// Exact alias-expanded member type proved at this source read.
+        ty: IncanType,
     },
 }
 
@@ -1752,16 +1871,11 @@ impl MatchArm {
 /// reading that part of the scrutinee -- consistent with #653's requirement that ownership decisions be
 /// represented as explicit facts on the model itself, not deferred to a target backend's own name resolution.
 ///
-/// v0 does not model the existing backend's union-type pattern narrowing (matching one member of a source `Union`
-/// type against a target's own narrower union subset, rewriting the pattern and synthesizing extra arms --
-/// `lower_narrowed_union_capture_arms`/`union_pattern_target` in `loaves/compiler/incan_ir/src/lower/expr/patterns.rs`)
-/// or RFC 021 field-alias resolution for named struct-pattern fields (`resolve_field_alias`, private to that backend's
-/// own lowering pass, with no Body IR v0 equivalent). Both are backend-owned refinements layered on top of the same
-/// closed vocabulary below, not part of the vocabulary itself, and out of scope for this bucket; a pattern that
-/// would need either still lowers structurally through the plain (non-narrowed) mapping. The *types* its bindings
-/// carry are not part of that gap: every [`PatternBinding`]'s local is typed from the typechecker's recorded
-/// per-pattern-node type (#1245), so a destructured payload's local carries its declared type and an ownership fact
-/// that follows from it, whichever pattern shape delivered it.
+/// [`Self::UnionMember`] retains the checker-selected target of an ordinary union constructor pattern. Native backends
+/// can select its payload variant without resolving the written constructor name. Subset targets remain explicit types;
+/// each backend must admit or refuse their reconstruction rather than silently treating them as concrete payloads. RFC
+/// 021 field-alias refinement is still separate from this vocabulary. Every [`PatternBinding`]'s local carries the
+/// checker's per-pattern-node type and its corresponding ownership fact.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Pattern {
     /// `_`: matches anything, binds nothing.
@@ -1814,6 +1928,14 @@ pub enum Pattern {
     /// local per bound name across all alternatives rather than one per alternative -- see
     /// `BodyBuilder::lower_match_pattern` in `loaves/compiler/incan_frontend/src/body_ir.rs`.
     Or(Vec<Pattern>),
+    /// A checker-selected ordinary union member constructor pattern. The retained target type, rather than the written
+    /// constructor spelling, selects the native payload variant.
+    UnionMember {
+        /// Alias-expanded member or subset type selected by pattern checking.
+        ty: IncanType,
+        /// Positional payload patterns; the native scalar-member profile admits zero or one.
+        fields: Vec<Pattern>,
+    },
 }
 
 impl Pattern {
@@ -1840,6 +1962,10 @@ impl Pattern {
                     .as_ref()
                     .map_or_else(|| "<unresolved>".to_string(), CanonicalSymbolId::render_compact);
                 format!("{name} {{ {} }} canonical={canonical}", fields.join(", "))
+            }
+            Self::UnionMember { ty, fields } => {
+                let fields: Vec<String> = fields.iter().map(Pattern::render_snapshot).collect();
+                format!("union {ty}({})", fields.join(", "))
             }
             Self::Nominal { target, fields } => {
                 let fields: Vec<String> = fields
@@ -2207,6 +2333,8 @@ impl DictEntry {
 /// Aggregate value shape built by [`Rvalue::Aggregate`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AggregateKind {
+    /// Intrinsic `Some(payload)` selected by checking, with its concrete Option type retained on the destination.
+    OptionSome,
     Tuple,
     List,
     /// `{v, ...}` set literal. Operands are the set's elements, one per entry -- the same flat shape as
@@ -2281,6 +2409,7 @@ impl AggregateKind {
     fn as_str(&self) -> String {
         match self {
             Self::Tuple => "tuple".to_string(),
+            Self::OptionSome => "option_some".to_string(),
             Self::List => "list".to_string(),
             Self::Set => "set".to_string(),
             Self::Range => "range".to_string(),
@@ -2775,6 +2904,9 @@ fn render_symbol_path(symbol: &CanonicalSymbolId) -> String {
 pub struct MethodTarget {
     /// Source-level method name.
     pub name: String,
+    /// Checked compiler-owned Option/Result receiver for intrinsic carrier methods; source methods retain no carrier.
+    #[serde(default)]
+    pub intrinsic_carrier: Option<String>,
     /// Canonical method declaration or compiler-owned member selected by typechecking.
     ///
     /// Compiler-synthesized calls without a source resolution site carry `None`; consumers must keep those on an
@@ -2797,6 +2929,7 @@ impl MethodTarget {
     pub fn synthesized(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
+            intrinsic_carrier: None,
             canonical: None,
             type_args: Vec::new(),
             binding: ArgumentBinding::UnresolvedPositional,
@@ -2848,7 +2981,7 @@ pub struct ConstructorTarget {
     /// Exact source-local nominal declaration selected for this construction, when the module retained one.
     ///
     /// An absent identity is not permission to look up [`Self::name`] in another compiler structure: imports,
-    /// aliases, classes, generic models, and any unretained nominal target must refuse at the constructor span.
+    /// aliases, generic nominals, and any unretained nominal target must refuse at the constructor span.
     pub direct_declaration_id: Option<CompilerNodeId>,
     /// Canonical declared field names retained with the exact source-local declaration selected for this call.
     ///
@@ -4331,9 +4464,14 @@ mod tests {
     fn body_ir_module_snapshot_wraps_bodies() {
         let module = BodyIrModule {
             module_id: CompilerNodeId::new(CompilerNodeKind::Module, "m"),
+            stdlib_delegations: Vec::new(),
+            enum_declarations: Vec::new(),
+            static_declarations: Vec::new(),
             nominal_declarations: Vec::new(),
             fieldless_enum_declarations: Vec::new(),
             value_enum_declarations: Vec::new(),
+            trait_declarations: Vec::new(),
+            trait_implementations: Vec::new(),
             bodies: vec![sample_body()],
         };
         let snapshot = module.render_snapshot();

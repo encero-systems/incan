@@ -1,0 +1,62 @@
+[dependencies]
+hex = { loaf = "crates-io/hex", version = "0.4.3" }
+incan_frontend = { default-features = false, loaf = "incan_frontend", path = "../incan_frontend" }
+incan_ir = { default-features = false, loaf = "incan_ir", path = "../incan_ir" }
+incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
+incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
+incan_syntax = { loaf = "incan_syntax", path = "../../kernel/incan_syntax" }
+incan_vocab = { loaf = "incan_vocab", path = "../../kernel/incan_vocab", version = "0.3.0" }
+oven_model = { loaf = "oven_model", path = "../../oven/oven_model", version = "0.6.0-dev.5" }
+prettyplease = { loaf = "crates-io/prettyplease", version = "0.2" }
+proc-macro2 = { loaf = "crates-io/proc-macro2", version = "1.0" }
+quote = { loaf = "crates-io/quote", version = "1.0" }
+rust_inspect = { default-features = false, loaf = "rust_inspect", path = "../rust_inspect" }
+serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
+serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
+sha2 = { loaf = "crates-io/sha2", version = "0.10.9" }
+syn = { features = ["full", "parsing", "printing"], loaf = "crates-io/syn", version = "2.0" }
+tempfile = { loaf = "crates-io/tempfile", optional = true, version = "3" }
+thiserror = { loaf = "crates-io/thiserror", version = "2.0" }
+tracing = { loaf = "crates-io/tracing", version = "0.1" }
+
+[project]
+description = "Rust emission from the Incan IR and backend selection"
+license = "Apache-2.0"
+name = "incan_emit"
+private = true
+version = "0.6.0-dev.6"
+
+[project.features]
+default = [
+    "rust_inspect",
+    "std_testing",
+    "std_async",
+    "std_decorators",
+]
+rust_inspect = [
+    "incan_ir/rust_inspect",
+    "incan_frontend/rust_inspect",
+    "rust_inspect/inspector",
+]
+std_async = [
+    "incan_ir/std_async",
+    "incan_frontend/std_async",
+]
+std_decorators = [
+    "incan_ir/std_decorators",
+    "incan_frontend/std_decorators",
+]
+std_testing = [
+    "incan_ir/std_testing",
+    "incan_frontend/std_testing",
+]
+test_support = [
+    "dep:tempfile",
+    "incan_frontend/test_support",
+    "rust_inspect/test_fixtures",
+]
+
+[rust]
+edition = "2024"
+name = "incan_emit"
+type = "lib"

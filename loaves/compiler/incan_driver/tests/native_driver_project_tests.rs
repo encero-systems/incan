@@ -7,9 +7,16 @@ use incan_test_support as support;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::OnceLock;
 
-/// Copy source fixtures without admitting a checkout's generated targets.
+/// Replace `destination` with a copy of the source tree, without admitting a checkout's generated targets.
+///
+/// The destination is removed first: in a kept workspace, a source file deleted from the checkout must not survive
+/// from an earlier run. Callers name source directories, never a project root whose `target/` they want to keep.
 fn copy_tree(source: &Path, destination: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    if destination.exists() {
+        fs::remove_dir_all(destination)?;
+    }
     fs::create_dir_all(destination)?;
     for entry in fs::read_dir(source)? {
         let entry = entry?;
@@ -49,7 +56,7 @@ fn bake(project: &Path, home: &Path) -> Result<(), Box<dyn std::error::Error>> {
     if started.is_some() {
         eprintln!("{}", String::from_utf8_lossy(&output.stdout));
     }
-    success(&output, "Oven bake");
+    success(&output, &format!("Oven bake {}", project.display()));
     Ok(())
 }
 
@@ -190,7 +197,13 @@ fn prepare_source_driver(root: &Path, repo: &Path) -> Result<std::path::PathBuf,
     let frontend = frontend.to_str().ok_or("frontend path is not UTF-8")?;
     let manifest = fs::read_to_string(repo.join("loaves/compiler/incan_mir_lowering/loaf.toml"))?
         .replace("../incan_mir_plan", "../library")
-        .replace("../../kernel/incan_semantics_core", core);
+        .replace("../../kernel/incan_semantics_core", core)
+        .replace(
+            "../../kernel/incan_lang",
+            oven_model::toolchain_layout::resolve_toolchain_crate_path("incan_lang")
+                .to_str()
+                .ok_or("language registry path is not UTF-8")?,
+        );
     fs::write(lowering.join("loaf.toml"), manifest)?;
     copy_tree(
         &repo.join("loaves/compiler/incan_mir_lowering/src"),
@@ -200,7 +213,13 @@ fn prepare_source_driver(root: &Path, repo: &Path) -> Result<std::path::PathBuf,
         .replace("../../compiler/incan_mir_plan", "../library")
         .replace("../../compiler/incan_mir_lowering", "../lowering")
         .replace("../../kernel/incan_semantics_core", core)
-        .replace("../../compiler/incan_frontend", frontend);
+        .replace("../../compiler/incan_frontend", frontend)
+        .replace(
+            "../../compiler/incan_driver",
+            repo.join("loaves/compiler/incan_driver")
+                .to_str()
+                .ok_or("driver path is not UTF-8")?,
+        );
     fs::write(driver.join("loaf.toml"), manifest)?;
     Ok(driver)
 }
@@ -238,20 +257,16 @@ fn oven_plan_fixture_shares_debug_native_output() -> Result<(), Box<dyn std::err
 /// Publish the compiler Loafs, then reuse one driver bake for native output, spans, and typed refusals.
 #[test]
 fn oven_driver_compiles_scalar_plan_and_refuses_invalid_inputs() -> Result<(), Box<dyn std::error::Error>> {
-    let (root, _temporary) = fixture_root()?;
-    let repo = support::repo_root();
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("scalar")?;
     let root = root.as_path();
-    let driver_source = repo.join("loaves/toolchain/incan-rustc-driver");
-    let driver = prepare_source_driver(root, &repo)?;
+    let driver_source = support::repo_root().join("loaves/toolchain/incan-rustc-driver");
     let runtime = root.join("runtime");
     copy_tree(&driver_source.join("tests/fixtures/native_output"), &runtime)?;
     let source = root.join("scalar.incn");
     fs::copy(driver_source.join("tests/fixtures/scalar.incn"), &source)?;
-    let home = support::oven_fixture_home()?;
-    bake(&root.join("library"), &home)?;
-    bake(&root.join("lowering"), &home)?;
-    bake(&driver, &home)?;
-    let formatting = prepare_formatting_runtime(root, &repo, &home)?;
+    let home = &fixture.home;
+    let formatting = &fixture.formatting;
     let runtime_caller = root.join("runtime-caller");
     fs::create_dir_all(runtime_caller.join("src"))?;
     fs::write(
@@ -262,14 +277,13 @@ fn oven_driver_compiles_scalar_plan_and_refuses_invalid_inputs() -> Result<(), B
         runtime_caller.join("src/main.rs"),
         "use native_output::caller::incan::print_int;\nfn main() { print_int(42); }\n",
     )?;
-    bake(&runtime_caller, &home)?;
-    let rustc = pinned_driver_rustc()?;
-    let sysroot = oven_rustc::rustc::rustc_sysroot(&rustc)?;
+    bake(&runtime_caller, home)?;
+    let sysroot = &fixture.sysroot;
     {
         let profile = "debug";
         let closure = runtime_plan(&runtime)?;
         let directories = &closure.artifact_plan().dependency_search_paths;
-        let binary = driver.join("target/rust").join(profile).join("incan-rustc-driver");
+        let binary = fixture.driver_binary(profile);
         let runtime_rlib = runtime
             .join("target/lib/oven")
             .join(profile)
@@ -281,7 +295,7 @@ fn oven_driver_compiles_scalar_plan_and_refuses_invalid_inputs() -> Result<(), B
                 .arg(&source)
                 .arg("scalar")
                 .arg(&output_binary)
-                .arg(&sysroot)
+                .arg(sysroot)
                 .arg(&runtime_rlib)
                 .arg(mode)
                 .args(directories)
@@ -310,27 +324,110 @@ fn oven_driver_compiles_scalar_plan_and_refuses_invalid_inputs() -> Result<(), B
                 );
             }
         }
-        check_startup_refusals(&binary, &source, root, &sysroot, &runtime_rlib)?;
-        check_source_pipeline(&binary, root, &sysroot, &formatting, profile)?;
+        check_startup_refusals(&binary, &source, root, sysroot, &runtime_rlib)?;
+        check_source_pipeline(&binary, root, &fixture.sysroot, formatting, profile)?;
     }
-    let debug = driver.join("target/rust/debug/incan-rustc-driver");
+    let debug = fixture.driver_binary("debug");
+    corpus::check_strings(&debug, root, &fixture.sysroot, formatting)?;
     for name in ["fib", "collatz", "mandelbrot"] {
-        corpus::check_benchmark(&debug, root, &sysroot, &formatting, name)?;
+        corpus::check_benchmark(&debug, root, &fixture.sysroot, formatting, name)?;
     }
     Ok(())
 }
 
-/// Keep explicitly requested diagnostic evidence outside wrapper scratch; ordinary test runs clean their fixtures.
+/// Choose where the shared fixture graph lives; each bake still validates the current copied sources.
+///
+/// In order: a replayed graph, a retained evidence directory, the suite's kept workspace (so Oven reuses the previous
+/// run's bakes), and otherwise a fresh temporary directory.
 fn fixture_root() -> Result<(PathBuf, Option<tempfile::TempDir>), Box<dyn std::error::Error>> {
+    if let Some(path) = std::env::var_os("INCAN_NATIVE_DRIVER_REPLAY") {
+        let path = PathBuf::from(path);
+        for project in ["library", "lowering", "driver"] {
+            if !path.join(project).join("loaf.toml").is_file() {
+                return Err(format!("native driver replay requires a retained {project} fixture").into());
+            }
+        }
+        eprintln!("replaying native driver fixture: {}", path.display());
+        return Ok((path, None));
+    }
     if let Some(parent) = std::env::var_os("INCAN_NATIVE_DRIVER_EVIDENCE") {
         fs::create_dir_all(&parent)?;
         let path = tempfile::tempdir_in(parent)?.keep();
         eprintln!("retained native driver fixture: {}", path.display());
         Ok((path, None))
+    } else if let Some(workspace) = support::explicit_bake_workspace() {
+        fs::create_dir_all(&workspace)?;
+        Ok((workspace, None))
     } else {
         let directory = tempfile::tempdir()?;
         Ok((directory.path().to_path_buf(), Some(directory)))
     }
+}
+
+/// The baked fixture graph every test in this root shares: the plan, lowering and driver Loaves and the formatting
+/// runtime, baked once per test process into one Oven home.
+struct DriverFixture {
+    /// Root of the graph: the copied Loaves, their home, and each test's scratch directory under `cases/`.
+    root: PathBuf,
+    /// The driver Loaf project; its binaries live under `target/rust/<profile>/`.
+    driver: PathBuf,
+    /// The Oven home every fixture bake shares.
+    home: PathBuf,
+    /// The authored Incan runtime Loaf, baked through a caller.
+    formatting: PathBuf,
+    /// The pinned driver compiler's sysroot.
+    sysroot: PathBuf,
+    /// Keeps a fresh temporary root alive for the whole process when no workspace was granted.
+    _temporary: Option<tempfile::TempDir>,
+}
+
+impl DriverFixture {
+    /// The driver binary for one profile.
+    fn driver_binary(&self, profile: &str) -> PathBuf {
+        self.driver.join("target/rust").join(profile).join("incan-rustc-driver")
+    }
+
+    /// Return an empty scratch directory owned by one test, so concurrent tests and earlier runs never collide.
+    fn scratch(&self, name: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        let path = self.root.join("cases").join(name);
+        if path.exists() {
+            fs::remove_dir_all(&path)?;
+        }
+        fs::create_dir_all(&path)?;
+        Ok(path)
+    }
+}
+
+/// The process-wide fixture; a bake failure is kept as text so every test reports it.
+static DRIVER_FIXTURE: OnceLock<Result<DriverFixture, String>> = OnceLock::new();
+
+/// Return the shared fixture, baking it on first use. Tests running in parallel wait for that single bake.
+fn driver_fixture() -> Result<&'static DriverFixture, Box<dyn std::error::Error>> {
+    DRIVER_FIXTURE
+        .get_or_init(|| bake_driver_fixture().map_err(|error| error.to_string()))
+        .as_ref()
+        .map_err(|error| error.clone().into())
+}
+
+/// Copy the current Loaf sources into the fixture root and bake the graph the driver tests compile through.
+fn bake_driver_fixture() -> Result<DriverFixture, Box<dyn std::error::Error>> {
+    let (root, temporary) = fixture_root()?;
+    let repo = support::repo_root();
+    let driver = prepare_source_driver(&root, &repo)?;
+    let home = support::oven_fixture_home()?;
+    bake(&root.join("library"), &home)?;
+    bake(&root.join("lowering"), &home)?;
+    bake(&driver, &home)?;
+    let formatting = prepare_formatting_runtime(&root, &repo, &home)?;
+    let sysroot = oven_rustc::rustc::rustc_sysroot(&pinned_driver_rustc()?)?;
+    Ok(DriverFixture {
+        root,
+        driver,
+        home,
+        formatting,
+        sysroot,
+        _temporary: temporary,
+    })
 }
 
 /// Materialize the authored Incan runtime through a real caller dependency, retaining its native closure.
@@ -338,7 +435,14 @@ fn prepare_formatting_runtime(root: &Path, repo: &Path, home: &Path) -> Result<P
     let runtime = root.join("formatting-runtime");
     let original = repo.join("loaves/compiler/incan_native_runtime");
     copy_tree(&original.join("src"), &runtime.join("src"))?;
-    fs::copy(original.join("loaf.toml"), runtime.join("loaf.toml"))?;
+    // Retain the math dependency in the caller's explicit native closure instead of discovering ambient artifacts.
+    fs::write(
+        runtime.join("loaf.toml"),
+        format!(
+            "{}\n[rust-dependencies]\nlibm = \"0.2\"\n",
+            fs::read_to_string(original.join("loaf.toml"))?
+        ),
+    )?;
     let caller = root.join("formatting-caller");
     fs::create_dir_all(caller.join("src"))?;
     fs::write(
@@ -398,9 +502,773 @@ fn check_source_pipeline(
 #[path = "native_driver_project_tests/census.rs"]
 mod census;
 
+/// Imported aliases and module-qualified scalar calls preserve canonical binding and legacy output; async vocabulary
+/// reaches lowering.
+#[test]
+fn direct_route_stdlib_imports_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("imports")?;
+    let runtime = &fixture.formatting;
+    let sysroot = &fixture.sysroot;
+    let source = root.join("imports.incn");
+    fs::write(
+        &source,
+        "from std.math import gcd as common, sqrt as root\nimport std.math\nfrom std.derives.comparison import Eq\n\ndef gcd(a: int, b: int) -> int:\n  return a + b\n\ndef main() -> None:\n  println(common(b=18, a=48))\n  println(math.lcm(4, 6))\n  println(gcd(4, 6))\n  println(root(16.0))\n  println(math.sqrt(25.0))\n",
+    )?;
+    let closure = corpus::runtime_closure(runtime)?;
+    let native = root.join("imports-native");
+    let binary = fixture.driver_binary("debug");
+    check_async_frontend_refusal(&binary, &root, sysroot, &closure)?;
+    success(
+        &corpus::source_command(&binary, &source, &native, sysroot, &closure).output()?,
+        "native imported scalar compilation",
+    );
+    let legacy_root = root.join("imports-legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy imported scalar compilation",
+    );
+    let legacy = Command::new(legacy_root.join("oven/release/imports")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&legacy, "legacy imported scalar execution");
+    success(&actual, "native imported scalar execution");
+    assert_eq!(actual.stdout, b"6\n12\n10\n4.0\n5.0\n");
+    assert_eq!(actual.stdout, legacy.stdout);
+    Ok(())
+}
+
+/// Compare concrete carrier construction, matching, propagation, defaults, and printing against legacy.
+#[test]
+fn option_result_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("option-result")?;
+    let source = root.join("option_result.incn");
+    fs::write(
+        &source,
+        r#"enum Failure:
+    Bad
+
+def optional_text() -> Option[str]:
+    return Some("text")
+
+def optional_list() -> Option[List[int]]:
+    return Some([2, 3])
+
+def show_result(value: Result[str, str]) -> None:
+    match value:
+        Ok(text) => println(text)
+        Err(error) => println(error)
+
+def unit_result() -> Result[None, str]:
+    return Ok(None)
+
+def failure_result() -> Result[int, Failure]:
+    return Err(Failure.Bad)
+
+def value(good: bool) -> Result[int, str]:
+    if good:
+        return Ok(7)
+    return Err("failure")
+
+def doubled(good: bool) -> Result[int, str]:
+    number = value(good)?
+    return Ok(number * 2)
+
+def selected(option: Option[int]) -> int:
+    match option:
+        Some(number) => return number
+        None => return -1
+
+def main() -> None:
+    show_result(Ok("parameter"))
+    println(selected(Some(5)))
+    println(selected(None))
+    match optional_text():
+        Some(text) => println(text)
+        None => println("missing")
+    match optional_list():
+        Some(values) => println(values[1])
+        None => println(0)
+    match unit_result():
+        Ok(_) => println("unit")
+        Err(error) => println(error)
+    match failure_result():
+        Ok(number) => println(number)
+        Err(_) => println("bad")
+    option: Option[int] = Some(9)
+    missing: Option[int] = None
+    println(option.unwrap_or(0))
+    println(missing.unwrap_or(4))
+    println(option)
+    for_good = doubled(true)
+    for_bad = doubled(false)
+    println(for_good.unwrap_or(0))
+    println(for_bad.unwrap_or(3))
+    match for_bad:
+        Ok(number) => println(number)
+        Err(error) => println(error)
+"#,
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let native = root.join("native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("debug"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "Option/Result native compilation",
+    );
+    let legacy = root.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy)
+            .output()?,
+        "Option/Result legacy compilation",
+    );
+    let expected = Command::new(legacy.join("oven/release/option_result")).output()?;
+    let actual = Command::new(native).output()?;
+    assert_eq!(actual.status.code(), expected.status.code());
+    assert_eq!(actual.stderr, expected.stderr);
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(
+        actual.stdout,
+        b"parameter\n5\n-1\ntext\n3\nunit\nbad\n9\n4\nSome(9)\n14\n3\nfailure\n"
+    );
+    Ok(())
+}
+
 /// Measure every behavior fixture only when explicitly requested.
 #[test]
 #[ignore = "explicit full direct-route census"]
 fn direct_route_fixture_census() -> Result<(), Box<dyn std::error::Error>> {
     census::run()
+}
+
+/// Import-activated async vocabulary must check through the CLI session before the lowering refuses async bodies.
+fn check_async_frontend_refusal(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    closure: &corpus::NativeClosure,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let source = root.join("async_frontend.incn");
+    fs::write(
+        &source,
+        "import std.async\n\nasync def value() -> int:\n    return 1\n\nasync def main() -> None:\n    result = await value()\n    println(result)\n",
+    )?;
+    success(
+        &support::repo_command().arg("check").arg(&source).output()?,
+        "legacy async checking",
+    );
+    let output = corpus::source_command(driver, &source, &root.join("async-native"), sysroot, closure).output()?;
+    assert!(!output.status.success());
+    let diagnostic = String::from_utf8(output.stderr)?;
+    assert!(diagnostic.contains("unsupported Body IR async Body"), "{diagnostic}");
+    Ok(())
+}
+
+/// Prove named construction, field mutation, argument passing, returned models, and final drops against legacy.
+#[test]
+fn plain_model_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_plain_model(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("plain-model")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+    )
+}
+
+/// Prove list indexing, mutation, shared parameters, owned returns and iteration against legacy.
+#[test]
+fn direct_route_lists_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_lists(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("lists")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+    )
+}
+
+/// Prove class construction, shared and mutable receivers, and passing classes against legacy.
+#[test]
+fn source_class_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_source_class(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("source-class")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+    )
+}
+
+/// Prove canonical scalar casts and default values byte-identical to legacy.
+#[test]
+fn numeric_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_numerics(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("numerics")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+    )
+}
+
+/// Prove concrete class and model trait methods and a static trait default against legacy.
+#[test]
+fn source_trait_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_source_trait(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("source-trait")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+    )
+}
+
+/// Compare hashed collection literals, mutation, membership, and indexed reads with legacy.
+#[test]
+fn direct_route_collections_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_collections(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("collections")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+    )?;
+    Ok(())
+}
+
+/// Prove unit and payload construction, enum passing/returning, and variant-bound match output against legacy.
+#[test]
+fn source_enum_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("source-enum")?;
+    let source = root.join("source_enum.incn");
+    fs::write(
+        &source,
+        r#"enum Signal:
+    Ready
+    Waiting
+
+enum Shape:
+    Empty
+    Circle(int)
+    Rectangle(int, int)
+    Label(str)
+
+def make_shape(size: int) -> Shape:
+    return Shape.Circle(size)
+
+def area(shape: Shape) -> int:
+    match shape:
+        Shape.Empty => return 0
+        Shape.Circle(radius) => return radius * radius
+        Shape.Rectangle(width, height) => return width * height
+        Shape.Label(_) => return -1
+
+def label(shape: Shape) -> str:
+    match shape:
+        Shape.Label(text) => return text
+        _ => return "unlabeled"
+
+def signal_value(signal: Signal) -> int:
+    match signal:
+        Signal.Ready => return 1
+        Signal.Waiting => return 2
+
+def main() -> None:
+    shape = make_shape(7)
+    println(area(shape))
+    println(area(shape))
+    println(area(Shape.Empty))
+    println(area(Shape.Rectangle(3, 5)))
+    println(signal_value(Signal.Ready))
+    println(signal_value(Signal.Waiting))
+    text = Shape.Label("payload")
+    println(label(text))
+    println(label(text))
+"#,
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let native = root.join("native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("debug"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "source enum native compilation",
+    );
+    let legacy = root.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy)
+            .output()?,
+        "source enum legacy compilation",
+    );
+    let expected = Command::new(legacy.join("oven/release/source_enum")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "source enum legacy execution");
+    success(&actual, "source enum native execution");
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(actual.stdout, b"49\n49\n0\n15\n1\n2\npayload\npayload\n");
+    Ok(())
+}
+
+/// Newtypes, erased aliases, scalar constants, and persistent scalar statics retain exactly the legacy output.
+#[test]
+fn declarations_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_declarations(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("declarations")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+    )
+}
+/// Scalar and string defaults execute at omitted calls, while supplied arguments bypass them.
+#[test]
+fn direct_route_defaults_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "defaults",
+        "def compute() -> int:\n    println(100)\n    return 7\n\ndef choose(value: int = compute()) -> int:\n    return value\n\ndef flag(value: bool = true) -> bool:\n    return value\n\ndef fraction(value: float = 2.5) -> float:\n    return value\n\ndef number(value: int = 2 + 3) -> int:\n    return value\n\ndef greeting() -> str:\n    prefix = \"hello\"\n    return prefix + \"!\"\n\ndef text(value: str = greeting()) -> str:\n    return value\n\ndef literal_text(value: str = \"literal\") -> str:\n    return value\n\ndef main() -> None:\n    println(choose(9))\n    println(choose())\n    println(flag())\n    println(fraction())\n    println(number())\n    println(number(9))\n    println(text())\n    println(text(\"supplied\"))\n    println(literal_text())\n",
+        None,
+    )?;
+    check_declaration_case(
+        "defaults_with_caller_collections",
+        "class DefaultBox:\n    value: int\n    def get(self) -> int:\n        return self.value\n\ndef compute() -> int:\n    return 7\n\ndef method_number(value: int = DefaultBox(value=5).get()) -> int:\n    return value\n\ndef number(value: int = compute() + 2) -> int:\n    return value\n\ndef main() -> None:\n    first = {1}\n    second = {2}\n    println(number())\n    println(method_number())\n    println(len(first) + len(second))\n",
+        None,
+    )
+}
+
+/// Condition assertions preserve successful output, failure payloads, and exit codes.
+#[test]
+fn direct_route_assertions_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    for (name, source, message) in [
+        (
+            "assert_pass",
+            "def message() -> str:\n    println(99)\n    return \"message\"\n\ndef main() -> None:\n    assert true, message()\n    assert 3 > 2, \"unused\"\n    println(42)\n",
+            None,
+        ),
+        (
+            "assert_fail",
+            "def main() -> None:\n    assert false\n",
+            Some("AssertionError"),
+        ),
+        (
+            "assert_message",
+            "def main() -> None:\n    assert false, \"failed check\"\n",
+            Some("AssertionError: failed check"),
+        ),
+        (
+            "assert_empty",
+            "def main() -> None:\n    assert false, \"\"\n",
+            Some("AssertionError"),
+        ),
+    ] {
+        check_declaration_case(name, source, message)?;
+    }
+    Ok(())
+}
+
+/// Compare complete output streams and exit codes, including the canonical panic payload without Rust's wrapper.
+fn check_declaration_case(
+    name: &str,
+    text: &str,
+    panic_message: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch(name)?;
+    let source = root.join(format!("{name}.incn"));
+    fs::write(&source, text)?;
+    let native = root.join("native");
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("debug"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native declaration compilation",
+    );
+    let legacy_root = root.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy declaration compilation",
+    );
+    let expected = Command::new(legacy_root.join("oven/release").join(name)).output()?;
+    let actual = Command::new(native).output()?;
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(actual.stderr, expected.stderr);
+    assert_eq!(actual.status.code(), expected.status.code());
+    if let Some(message) = panic_message {
+        let expected_error = String::from_utf8_lossy(&expected.stderr);
+        let actual_error = String::from_utf8_lossy(&actual.stderr);
+        assert_eq!(
+            expected_error.lines().find(|line| line.starts_with("AssertionError")),
+            Some(message),
+            "{expected_error}"
+        );
+        assert_eq!(
+            actual_error.lines().find(|line| line.starts_with("AssertionError")),
+            Some(message),
+            "{actual_error}"
+        );
+    } else {
+        success(&actual, "declaration execution");
+    }
+    Ok(())
+}
+
+/// Prove union injection at assignment, argument and return boundaries against legacy output.
+#[test]
+fn source_union_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("source-union")?;
+    let source = root.join("source_union.incn");
+    fs::write(
+        &source,
+        r#"def choose(flag: bool) -> int | str:
+    if flag:
+        return 42
+    return "payload"
+
+def classify(value: int | str) -> int:
+    if isinstance(value, int):
+        return 1
+    return 2
+
+def narrowed(value: int | str) -> int:
+    if isinstance(value, int):
+        return value + 1
+    return -1
+
+def captured(value: int | str) -> str:
+    match value:
+        int(_) => return "number"
+        str(text) => return text
+
+def defaulted(value: int | str, step: int = 4) -> int:
+    return classify(value) + step
+
+def main() -> None:
+    value: int | str = 7
+    println(classify(value))
+    println(classify(8))
+    println(classify("text"))
+    println(classify(choose(true)))
+    println(classify(choose(false)))
+    println(narrowed(41))
+    println(narrowed("text"))
+    println(captured(7))
+    println(captured("payload"))
+    println(defaulted(7))
+    println(defaulted("text", 8))
+"#,
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let native = root.join("native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("debug"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "source union native compilation",
+    );
+    let legacy = root.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy)
+            .output()?,
+        "source union legacy compilation",
+    );
+    let expected = Command::new(legacy.join("oven/release/source_union")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "source union legacy execution");
+    success(&actual, "source union native execution");
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(actual.stdout, b"1\n1\n2\n1\n2\n42\n-1\nnumber\npayload\n5\n10\n");
+
+    // ---- Unadmitted payload types stay a named refusal ----
+    let refused_source = root.join("unadmitted_union.incn");
+    fs::write(
+        &refused_source,
+        "def accept(value: int | list[int]) -> None:\n    pass\n\ndef main() -> None:\n    accept(7)\n",
+    )?;
+    let refused_binary = root.join("refused-union");
+    let refusal = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &refused_source,
+        &refused_binary,
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    assert!(!refusal.status.success());
+    assert!(
+        String::from_utf8_lossy(&refusal.stderr).contains("List[int]"),
+        "{}",
+        String::from_utf8_lossy(&refusal.stderr)
+    );
+    assert!(!refused_binary.exists());
+    Ok(())
+}
+
+/// Prove admitted string methods and Unicode lengths against legacy output.
+#[test]
+fn direct_route_string_methods_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_string_methods(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("string-methods")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+    )
+}
+
+/// Compare booleans with legacy, including evaluation order and retained owners.
+#[test]
+fn direct_route_booleans_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("booleans")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def probe(label: str, value: bool) -> bool:
+    println(label)
+    return value
+
+def main() -> None:
+    println(false and probe("skipped-and", true))
+    println(true or probe("skipped-or", false))
+    println(true and probe("selected-and", true))
+    println(false or probe("selected-or", true))
+    println(not false)
+"#,
+    )
+}
+
+/// Compare builtins with legacy, including evaluation order and retained owners.
+#[test]
+fn direct_route_builtins_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("builtins")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def main() -> None:
+    values = [3, -2, 1]
+    ordered = sorted(values)
+    println(ordered[0])
+    println(ordered[2])
+    println(sum(values))
+    println(abs(-12))
+    println(2 ** 10)
+    println(2.0 ** 3.0)
+    small: f32 = 1.1
+    exponent: f32 = 2.0
+    println(small ** exponent)
+    println(bool(0))
+    println(bool(-2))
+    println(bool(0.0))
+    println(bool(""))
+    println(bool("x"))
+    println(bool(values))
+    merged = values + [8, 9]
+    println(len(merged))
+    println(len(values))
+"#,
+    )
+}
+
+/// A helper re-export and a qualified call retain their canonical bodies and byte-identical legacy output.
+#[test]
+fn direct_route_modules_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("modules")?;
+    let source = root.join("src/main.incn");
+    fs::create_dir_all(root.join("src"))?;
+    fs::write(
+        &source,
+        "from facade import exported as compute\nimport helper\n\ndef calculate(a: int, b: int) -> int:\n  return a - b\n\ndef main() -> None:\n  println(compute(b=2, a=40))\n  println(helper.calculate(3, 4))\n  println(calculate(9, 2))\n",
+    )?;
+    fs::write(
+        root.join("src/helper.incn"),
+        "def hidden(a: int) -> int:\n  return a\n\npub def calculate(a: int, b: int) -> int:\n  return hidden(a) + b\n",
+    )?;
+    fs::create_dir_all(root.join("src/facade"))?;
+    fs::write(
+        root.join("src/facade/__init__.incn"),
+        "pub from helper import calculate as exported\n",
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let native = root.join("native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("debug"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native three-module compilation",
+    );
+    let legacy_root = root.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy three-module compilation",
+    );
+    let expected = Command::new(legacy_root.join("oven/release/main")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy three-module execution");
+    success(&actual, "native three-module execution");
+    assert_eq!(actual.stdout, b"42\n7\n7\n");
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(actual.stderr, expected.stderr);
+    assert_eq!(actual.status.code(), expected.status.code());
+    Ok(())
+}
+
+/// Prove tuple construction, typed signatures, constant projections, and simultaneous unpacking against legacy.
+#[test]
+fn tuple_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("tuples")?;
+    let source = root.join("tuples.incn");
+    fs::write(
+        &source,
+        r#"model Boxed:
+    value: int
+
+def swap(value: tuple[int, int]) -> tuple[int, int]:
+    return (value[1], value[0])
+
+def identity(value: tuple[int, str]) -> tuple[int, str]:
+    return value
+
+def main() -> None:
+    mut a = 3
+    mut b = 7
+    a, b = b, a
+    pair: tuple[int, int] = swap((a, b))
+    x, y = pair
+    println(x)
+    println(y)
+    println(pair)
+    text_pair = identity((9, "hello\n\"tuple\""))
+    number, text = text_pair
+    println(text_pair)
+    println(number)
+    println(text)
+    println(text_pair[-1])
+    println((true, 1.5))
+    mut boxed = Boxed(value=0)
+    boxed.value, a = pair
+    println(boxed.value)
+    println(a)
+"#,
+    )?;
+    let native = root.join("native");
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("debug"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native tuple compilation",
+    );
+    let legacy_root = root.join("legacy");
+    success(
+        &support::repo_command()
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy tuple compilation",
+    );
+    let expected = Command::new(legacy_root.join("oven/release/tuples")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy tuple execution");
+    success(&actual, "native tuple execution");
+    assert_eq!(actual.stdout, expected.stdout);
+    assert!(actual.stdout.starts_with(b"3\n7\n(3, 7)\n"));
+    for (name, source_text, kind) in [
+        (
+            "function_value",
+            "def apply(value: (int) -> int) -> int:\n    return value(1)\n\ndef main() -> None:\n    println(1)\n",
+            "Function",
+        ),
+        (
+            "singleton",
+            "def main() -> None:\n    println((42,))\n",
+            "singleton Tuple",
+        ),
+    ] {
+        let refused_source = root.join(format!("{name}.incn"));
+        fs::write(&refused_source, source_text)?;
+        let refused_output = root.join(format!("{name}-native"));
+        let refused = corpus::source_command(
+            &fixture.driver_binary("debug"),
+            &refused_source,
+            &refused_output,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?;
+        assert!(!refused.status.success());
+        assert!(
+            String::from_utf8_lossy(&refused.stderr).contains(kind),
+            "{}",
+            String::from_utf8_lossy(&refused.stderr)
+        );
+        assert!(!refused_output.exists());
+    }
+    Ok(())
 }

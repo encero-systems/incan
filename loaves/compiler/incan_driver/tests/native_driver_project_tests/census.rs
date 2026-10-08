@@ -15,6 +15,7 @@ struct Record {
     observed: String,
     detail: String,
     pending_reason: Option<String>,
+    formerly_multi_module: bool,
     elapsed_ms: u128,
 }
 
@@ -102,14 +103,47 @@ fn measure(
         };
         return Ok(("check-only".into(), detail));
     }
-    if fixture.layout != FixtureLayout::SingleFile {
-        return Ok((
-            "multi-module".into(),
-            "directory fixture; direct source entrypoint does not resolve modules".into(),
-        ));
-    }
+    let source = if fixture.layout == FixtureLayout::SingleFile {
+        fixture.path.clone()
+    } else {
+        fixtures::materialize(fixture, scratch)?;
+        let projects = std::iter::once(scratch.to_path_buf())
+            .chain(fixture.providers.iter().map(|provider| scratch.join(&provider.path)));
+        for project in projects {
+            let manifest = oven_model::manifest::ProjectManifest::load(&project.join("loaf.toml"))?;
+            if let Some((name, dependency)) = manifest.rust_dependencies().iter().min_by_key(|(name, _)| *name) {
+                let source = match dependency.source {
+                    oven_model::manifest::DependencySource::Registry => "registry",
+                    oven_model::manifest::DependencySource::Path { .. } => "native path",
+                    oven_model::manifest::DependencySource::Git { .. } => "native Git",
+                };
+                return Ok((
+                    "refused".into(),
+                    format!("unsupported source {source} dependency `{name}` on the native route"),
+                ));
+            }
+        }
+        for provider in &fixture.providers {
+            let mut bake = support::cli_project::configured_incan_command(
+                &scratch.join(&provider.path),
+                &["oven", "bake", "--project", "."],
+            );
+            support::configure_explicit_oven_bake_command(&mut bake)?;
+            let Some(output) = bounded(&mut bake, scratch, deadline)? else {
+                return Ok((
+                    "driver-error".into(),
+                    format!("local library {} preparation timeout", provider.name),
+                ));
+            };
+            if !output.status.success() {
+                return Ok(compile_failure(&output));
+            }
+        }
+        scratch.join("src/main.incn")
+    };
     let binary = scratch.join("native");
-    let mut command = corpus::source_command(driver, &fixture.path, &binary, sysroot, closure);
+    let mut command = corpus::source_command(driver, &source, &binary, sysroot, closure);
+    command.current_dir(scratch);
     let Some(output) = bounded(&mut command, scratch, deadline)? else {
         return Ok(("driver-error".into(), "compile timeout".into()));
     };
@@ -200,6 +234,16 @@ fn markdown(records: &[Record]) -> String {
     for (detail, count) in ranked {
         text.push_str(&format!("| {} | {count} |\n", detail.replace('|', "\\|")));
     }
+    text.push_str("\n## Former directory-fixture exclusions\n\n| Fixture | Class | Detail |\n| --- | --- | --- |\n");
+    for record in records.iter().filter(|record| record.formerly_multi_module) {
+        text.push_str(&format!(
+            "| {}/{} | {} | {} |\n",
+            record.area,
+            record.name,
+            record.class,
+            record.detail.replace('|', "\\|")
+        ));
+    }
     text.push_str("\n## Wrong and driver errors\n");
     for record in records
         .iter()
@@ -213,25 +257,28 @@ fn markdown(records: &[Record]) -> String {
     text
 }
 
-/// Bake once, then distribute independent fixture measurements over at most the host core count.
+/// Use the shared baked graph, then distribute independent fixture measurements over at most the host core count.
 pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let (root, _temporary) = fixture_root()?;
+    let graph = driver_fixture()?;
+    let root = graph.scratch("census")?;
     let output = std::env::var_os("INCAN_CENSUS_OUT")
         .map(PathBuf::from)
-        .unwrap_or_else(|| root.join("census"));
+        .unwrap_or_else(|| root.join("report"));
     fs::create_dir_all(&output)?;
-    let repo = support::repo_root();
-    let driver = prepare_source_driver(&root, &repo)?;
-    let home = support::oven_fixture_home()?;
-    for project in [root.join("library"), root.join("lowering"), driver.clone()] {
-        bake(&project, &home)?;
-    }
-    let runtime = prepare_formatting_runtime(&root, &repo, &home)?;
-    let closure = corpus::runtime_closure(&runtime)?;
-    let driver = driver.join("target/rust/debug/incan-rustc-driver");
-    let sysroot = oven_rustc::rustc::rustc_sysroot(&pinned_driver_rustc()?)?;
+    let closure = corpus::runtime_closure(&graph.formatting)?;
+    let driver = graph.driver_binary("debug");
+    let sysroot = &graph.sysroot;
     let all = all_fixtures()?;
-    let workers = std::thread::available_parallelism()?.get();
+    let available_workers = std::thread::available_parallelism()?.get();
+    let workers = std::env::var("INCAN_CENSUS_WORKERS")
+        .ok()
+        .map(|value| value.parse::<usize>())
+        .transpose()?
+        .unwrap_or(available_workers)
+        .min(available_workers);
+    if workers == 0 {
+        return Err("INCAN_CENSUS_WORKERS must be positive".into());
+    }
     let timeout = Duration::from_secs(
         std::env::var("INCAN_CENSUS_TIMEOUT_SECONDS")
             .ok()
@@ -252,7 +299,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
                     };
                     let start = Instant::now();
                     let scratch = tempfile::tempdir_in(&root).map_err(|error| error.to_string())?;
-                    let (observed, detail) = measure(fixture, scratch.path(), &driver, &sysroot, &closure, timeout)
+                    let (observed, detail) = measure(fixture, scratch.path(), &driver, sysroot, &closure, timeout)
                         .unwrap_or_else(|error| ("driver-error".into(), error.to_string()));
                     let class = if fixture.header.pending.is_some() {
                         "pending".into()
@@ -266,6 +313,9 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
                         observed,
                         detail,
                         pending_reason: fixture.header.pending.clone(),
+                        formerly_multi_module: fixture.layout != FixtureLayout::SingleFile
+                            && fixture.header.pending.is_none()
+                            && matches!(fixture.header.expectation, Expectation::Run { .. }),
                         elapsed_ms: start.elapsed().as_millis(),
                     });
                 }

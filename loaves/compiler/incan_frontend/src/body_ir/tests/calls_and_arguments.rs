@@ -5,6 +5,106 @@
 
 use super::*;
 
+/// Intrinsic Option construction is explicit, while an ordinary source function called Some keeps its call identity.
+#[test]
+fn option_constructor_retains_intrinsic_selection() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def option() -> Option[int]:\n    return Some(7)\n\ndef main() -> None:\n    value = option()\n    println(value.unwrap_or(0))\n    match value:\n        Some(number) => println(number)\n        None => println(0)\n",
+        &["m", "option_constructor"],
+    )?;
+    let snapshot = module.render_snapshot();
+    assert!(snapshot.contains("option_some"), "{snapshot}");
+    assert!(snapshot.contains("Some(bind"), "{snapshot}");
+    assert!(!snapshot.contains("unsupported("), "{snapshot}");
+    assert!(body_named(&module, "main")?.block.stmts.iter().any(|statement| matches!(&statement.kind, bir::StatementKind::Call { callee: bir::Callee::Method(target), .. } if target.intrinsic_carrier.as_deref() == Some("Option") && target.name == "unwrap_or")));
+    let shadowed = build(
+        "def Some(value: int) -> int:\n    return value\n\ndef main() -> None:\n    println(Some(7))\n",
+        &["m", "shadowed_constructor"],
+    )?;
+    assert!(!shadowed.render_snapshot().contains("option_some"));
+    Ok(())
+}
+
+/// A plain newtype's slot and construction share the retained owner identity; hooks stay outside this profile.
+#[test]
+fn plain_newtype_retains_checked_tuple_layout() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "type Id = newtype int\n\ndef main() -> int:\n    value = Id(7)\n    return value.0\n",
+        &["m", "newtype_layout"],
+    )?;
+    let [declaration] = module.nominal_declarations.as_slice() else {
+        return Err("expected one retained newtype".into());
+    };
+    assert_eq!(declaration.fields, ["0"]);
+    assert_eq!(
+        declaration.field_identities.as_slice(),
+        std::slice::from_ref(&declaration.canonical)
+    );
+    assert_eq!(declaration.derives, ["Debug", "Clone", "Copy"]);
+    assert!(module.is_well_formed_nominal_declaration(declaration));
+    let snapshot = module.render_snapshot();
+    assert!(snapshot.contains("constructor(Id)"), "{snapshot}");
+    assert!(!snapshot.contains("unsupported("), "{snapshot}");
+    let mut malformed = declaration.clone();
+    malformed.fields[0] = "1".to_owned();
+    assert!(!module.is_well_formed_nominal_declaration(&malformed));
+    Ok(())
+}
+
+/// Only effect-free scalar initialization reaches the persistent native storage profile.
+#[test]
+fn scalar_static_retains_canonical_initializer() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "static COUNT: int = 4\n\ndef main() -> int:\n    COUNT += 1\n    return COUNT\n",
+        &["m", "static_layout"],
+    )?;
+    let [declaration] = module.static_declarations.as_slice() else {
+        return Err("expected one retained scalar static".into());
+    };
+    assert_eq!(declaration.initial, bir::Constant::Int(4));
+    assert!(module.is_well_formed_static_declaration(declaration));
+    let mut malformed = declaration.clone();
+    malformed.initial = bir::Constant::Bool(true);
+    assert!(!module.is_well_formed_static_declaration(&malformed));
+    let effectful = build(
+        "def initial() -> int:\n    return 4\n\nstatic COUNT: int = initial()\n\ndef main() -> int:\n    return COUNT\n",
+        &["m", "effectful_static"],
+    )?;
+    assert!(effectful.static_declarations.is_empty());
+    Ok(())
+}
+
+/// Alias spellings must retain the physical target's body identity and parameter order.
+#[test]
+fn local_function_alias_retains_direct_call_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def subtract(left: int, right: int) -> int:\n    return left - right\n\nother = alias subtract\n\ndef main() -> int:\n    return other(right=2, left=9)\n",
+        &["m", "alias_target"],
+    )?;
+    let snapshot = module.render_snapshot();
+    assert!(!snapshot.contains("unsupported("), "{snapshot}");
+    let target = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "subtract")
+        .ok_or("missing alias target body")?;
+    let caller = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("missing alias caller body")?;
+    let bir::StatementKind::Call {
+        callee: bir::Callee::Function(bir::CallableTarget::Named(call)),
+        ..
+    } = &caller.block.stmts[0].kind
+    else {
+        return Err(format!("expected alias call: {snapshot}").into());
+    };
+    assert_eq!(call.direct_call_id.as_ref(), Some(&target.direct_call_id));
+    assert_eq!(call.canonical, target.canonical);
+    Ok(())
+}
+
 #[test]
 fn a_local_callable_named_ok_shadows_the_intrinsic_result_constructor() -> Result<(), Box<dyn std::error::Error>> {
     let source = "enum Failure:\n  Shadowed\n\ndef main(Ok: (int) -> Result[int, Failure]) -> Result[int, Failure]:\n  return Ok(42)\n";
@@ -150,7 +250,7 @@ fn construction_records_an_omitted_field_default_as_an_explicit_slot() -> Result
 #[test]
 fn source_local_model_construction_retains_its_declaration_identity_and_canonical_field_layout()
 -> Result<(), Box<dyn std::error::Error>> {
-    let source = "model Pair:\n  left: int\n  right: int\n\ndef main() -> int:\n  pair = Pair(right=2, left=40)\n  return pair.left + pair.right\n";
+    let source = "model Pair:\n  pub left: int\n  right: int\n\ndef main() -> int:\n  pair = Pair(right=2, left=40)\n  return pair.left + pair.right\n";
     let module = build(source, &["m", "nominal_identity"])?;
     let declaration = match module.nominal_declarations.as_slice() {
         [declaration] => declaration,
@@ -161,6 +261,11 @@ fn source_local_model_construction_retains_its_declaration_identity_and_canonica
     assert_eq!(declaration.name, "Pair");
     assert_eq!(declaration.fields, vec!["left", "right"]);
     assert_eq!(declaration.type_parameter_count, 0);
+    assert_eq!(declaration.field_public, vec![true, false]);
+    assert!(!declaration.public);
+    assert!(!declaration.has_field_defaults);
+    assert_eq!(declaration.derives, incan_lang::lang::derives::plain_model_derives());
+    assert!(module.is_well_formed_nominal_declaration(declaration));
     assert_eq!(
         declaration.canonical.kind,
         SemanticSourceTargetKind::Model,
@@ -741,6 +846,7 @@ fn a_named_argument_with_no_matching_parameter_is_refused_by_name() -> Result<()
     Ok(())
 }
 
+/// Preserve written argument order while shared list parameter reads retain caller storage.
 #[test]
 fn a_leading_spread_splices_before_its_fixed_elements() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def m(xs: list[int]) -> None:\n  out = [*xs, 1]\n  return\n";
@@ -757,12 +863,13 @@ fn a_leading_spread_splices_before_its_fixed_elements() -> Result<(), Box<dyn st
         "a list spread must lower: {snapshot}"
     );
     assert!(
-        snapshot.contains("list[*move(_0, last_use), const(1)]"),
+        snapshot.contains("list[*clone(_0), const(1)]"),
         "the spread must keep its written position and carry its own ownership fact: {snapshot}"
     );
     Ok(())
 }
 
+/// Preserve written argument order while shared list parameter reads retain caller storage.
 #[test]
 fn a_trailing_spread_splices_after_its_fixed_elements() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def m(xs: list[int]) -> None:\n  out = [1, *xs]\n  return\n";
@@ -774,7 +881,7 @@ fn a_trailing_spread_splices_after_its_fixed_elements() -> Result<(), Box<dyn st
         "a trailing spread must lower: {snapshot}"
     );
     assert!(
-        snapshot.contains("list[const(1), *move(_0, last_use)]"),
+        snapshot.contains("list[const(1), *clone(_0)]"),
         "a spread written last must stay last: {snapshot}"
     );
     Ok(())
@@ -818,6 +925,7 @@ fn a_statically_shaped_spread_binds_as_an_ordinary_fixed_arity_call() -> Result<
     Ok(())
 }
 
+/// Preserve written argument order while shared list parameter reads retain caller storage.
 #[test]
 fn a_spread_with_no_proven_shape_stays_on_the_runtime_arity_path() -> Result<(), Box<dyn std::error::Error>> {
     // The contrast case for the test above: a list *variable* has no statically visible arity, so it must keep
@@ -827,12 +935,13 @@ fn a_spread_with_no_proven_shape_stays_on_the_runtime_arity_path() -> Result<(),
     let rendered = body_named(&module, "m")?.render_snapshot();
 
     assert!(
-        rendered.contains("call fn:log unbound(*move(_0, last_use))"),
+        rendered.contains("call fn:log unbound(*clone(_0))"),
         "an unproven spread must stay a spread element on the unresolved-arity path: {rendered}"
     );
     Ok(())
 }
 
+/// Keyword spreads preserve their marker while cloning caller-owned dictionary storage.
 #[test]
 fn a_standalone_keyword_spread_call_lowers() -> Result<(), Box<dyn std::error::Error>> {
     let source =
@@ -845,12 +954,13 @@ fn a_standalone_keyword_spread_call_lowers() -> Result<(), Box<dyn std::error::E
         "a keyword spread call must lower: {snapshot}"
     );
     assert!(
-        snapshot.contains("call fn:log unbound(**move(_0, last_use))"),
+        snapshot.contains("call fn:log unbound(**clone(_0))"),
         "a keyword spread must render with its own marker and ownership fact: {snapshot}"
     );
     Ok(())
 }
 
+/// Preserve written argument order while shared list parameter reads retain caller storage.
 #[test]
 fn fixed_elements_keep_their_positions_on_both_sides_of_a_spread() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def m(xs: list[int]) -> None:\n  out = [1, *xs, 2]\n  return\n";
@@ -858,12 +968,13 @@ fn fixed_elements_keep_their_positions_on_both_sides_of_a_spread() -> Result<(),
     let snapshot = module.render_snapshot();
 
     assert!(
-        snapshot.contains("list[const(1), *move(_0, last_use), const(2)]"),
+        snapshot.contains("list[const(1), *clone(_0), const(2)]"),
         "surrounding fixed elements must keep their positions relative to the spread: {snapshot}"
     );
     Ok(())
 }
 
+/// Preserve written argument order while shared list parameter reads retain caller storage.
 #[test]
 fn multiple_spreads_each_keep_their_own_element() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def m(xs: list[int], ys: list[int]) -> None:\n  out = [*xs, *ys]\n  return\n";
@@ -878,12 +989,13 @@ fn multiple_spreads_each_keep_their_own_element() -> Result<(), Box<dyn std::err
     // only observes that the aggregate *begins* with one. Assert the whole rendering so a dropped, reordered,
     // or differently-owned second spread all fail.
     assert!(
-        snapshot.contains("list[*move(_0, last_use), *move(_1, last_use)]"),
+        snapshot.contains("list[*clone(_0), *clone(_1)]"),
         "both spreads must survive, in written order, each with its own ownership fact: {snapshot}"
     );
     Ok(())
 }
 
+/// A cloned dictionary spread keeps its written precedence before an overriding key.
 #[test]
 fn a_dict_spread_keeps_its_written_position_before_an_overriding_key() -> Result<(), Box<dyn std::error::Error>> {
     // The override rule is what makes this meaningful: entries take effect in order and a later entry wins,
@@ -897,12 +1009,13 @@ fn a_dict_spread_keeps_its_written_position_before_an_overriding_key() -> Result
         "a dict spread must lower: {snapshot}"
     );
     assert!(
-        snapshot.contains("dict[**move(_0, last_use), const(\"a\"): const(1)]"),
+        snapshot.contains("dict[**clone(_0), const(\"a\"): const(1)]"),
         "the spread must precede the overriding key and stay a distinct entry: {snapshot}"
     );
     Ok(())
 }
 
+/// A cloned dictionary spread keeps its written precedence after a literal key.
 #[test]
 fn a_dict_spread_after_a_literal_key_keeps_that_order() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def m(d: dict[str, int]) -> None:\n  out = {\"a\": 1, **d}\n  return\n";
@@ -910,12 +1023,13 @@ fn a_dict_spread_after_a_literal_key_keeps_that_order() -> Result<(), Box<dyn st
     let snapshot = module.render_snapshot();
 
     assert!(
-        snapshot.contains("dict[const(\"a\"): const(1), **move(_0, last_use)]"),
+        snapshot.contains("dict[const(\"a\"): const(1), **clone(_0)]"),
         "written entry order decides precedence, so it must survive lowering: {snapshot}"
     );
     Ok(())
 }
 
+/// Preserve written argument order while shared list parameter reads retain caller storage.
 #[test]
 fn a_positional_call_spread_lowers_without_a_declared_slot_claim() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def log(*items: int) -> None:\n  return\n\ndef m(xs: list[int]) -> None:\n  log(*xs)\n  return\n";
@@ -929,12 +1043,13 @@ fn a_positional_call_spread_lowers_without_a_declared_slot_claim() -> Result<(),
     // A spread makes the arity a runtime fact, so the call must record no declared-slot binding rather than
     // asserting an identity slot map nobody checked.
     assert!(
-        snapshot.contains("call fn:log unbound(*move(_0, last_use))"),
+        snapshot.contains("call fn:log unbound(*clone(_0))"),
         "a spread call must be unbound and carry the spliced source's ownership fact: {snapshot}"
     );
     Ok(())
 }
 
+/// Preserve written argument order while shared list and dictionary reads retain caller storage.
 #[test]
 fn a_mixed_call_keeps_every_written_argument_form() -> Result<(), Box<dyn std::error::Error>> {
     // The issue's combined form. A named argument here has no declared slot to bind to, because the spread
@@ -948,12 +1063,13 @@ fn a_mixed_call_keeps_every_written_argument_form() -> Result<(), Box<dyn std::e
         "the combined call form must lower: {snapshot}"
     );
     assert!(
-        snapshot.contains("call fn:log unbound(const(1), *move(_0, last_use), b=const(2), **move(_1, last_use))"),
+        snapshot.contains("call fn:log unbound(const(1), *clone(_0), b=const(2), **clone(_1))"),
         "positional, spread, named, and keyword-spread arguments must each keep their written form and order: {snapshot}"
     );
     Ok(())
 }
 
+/// Preserve written argument order while shared list parameter reads retain caller storage.
 #[test]
 fn a_method_call_spread_lowers_after_the_borrowed_receiver() -> Result<(), Box<dyn std::error::Error>> {
     let source = "class C:\n  def take(self, *items: int) -> None:\n    return\n\ndef m(c: C, xs: list[int]) -> None:\n  c.take(*xs)\n  return\n";
@@ -965,7 +1081,7 @@ fn a_method_call_spread_lowers_after_the_borrowed_receiver() -> Result<(), Box<d
         "a method call spread must lower: {snapshot}"
     );
     assert!(
-        snapshot.contains("call method:take unbound(borrow(_0), *move(_1, last_use))"),
+        snapshot.contains("call method:take unbound(borrow(_0), *clone(_1))"),
         "the receiver stays args[0] and is never spliced: {snapshot}"
     );
     Ok(())
@@ -1168,6 +1284,49 @@ fn a_module_qualified_stdlib_call_carries_the_selected_declaration() -> Result<(
         sqrt.canonical.is_some(),
         "the stdlib callee must keep its identity: {rendered}"
     );
+    let delegation = module
+        .stdlib_delegations
+        .iter()
+        .find(|delegation| Some(&delegation.canonical) == sqrt.canonical.as_ref())
+        .ok_or("sqrt must retain its checked transparent delegation")?;
+    assert_eq!(delegation.rust_path().as_deref(), Some("libm::sqrt"));
+    assert_eq!(
+        delegation.parameters,
+        vec![IncanType::Primitive(IncanPrimitiveType::Float)]
+    );
+    assert_eq!(delegation.return_type, IncanType::Primitive(IncanPrimitiveType::Float));
+    Ok(())
+}
+
+/// Imported aliases carry the same delegation, while a local shadow has no stdlib delegation.
+#[test]
+fn stdlib_delegations_follow_aliases_and_preserve_local_shadowing() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "from std.math import gcd as common\n\ndef gcd(a: int, b: int) -> int:\n  return a + b\n\ndef main() -> int:\n  return common(b=18, a=48) + gcd(4, 6)\n",
+        &["m", "import_alias"],
+    )?;
+    let targets = named_targets(&module, "main");
+    let imported = targets
+        .iter()
+        .find(|target| target.name == "common")
+        .ok_or("missing imported call")?;
+    let local = targets
+        .iter()
+        .find(|target| target.name == "gcd")
+        .ok_or("missing local call")?;
+    assert!(
+        module
+            .stdlib_delegations
+            .iter()
+            .any(|delegation| Some(&delegation.canonical) == imported.canonical.as_ref()
+                && delegation.rust_path().as_deref() == Some("incan_std_core::num::gcd_i64"))
+    );
+    assert!(
+        !module
+            .stdlib_delegations
+            .iter()
+            .any(|delegation| Some(&delegation.canonical) == local.canonical.as_ref())
+    );
     Ok(())
 }
 
@@ -1207,5 +1366,70 @@ fn calling_a_call_dunder_adopter_is_a_call_of_its_dunder() -> Result<(), Box<dyn
         rendered.contains("method:__call__"),
         "the call must dispatch to `__call__`: {rendered}"
     );
+    Ok(())
+}
+
+/// Class layouts and constructors retain canonical class and field identities, including receiver origins.
+#[test]
+fn source_local_class_retains_checked_layout_and_receiver_facts() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "class Counter:\n  value: int\n\n  def get(self) -> int:\n    return self.value\n\n  def bump(mut self) -> None:\n    self.value += 1\n\ndef main() -> None:\n  mut counter = Counter(value=3)\n  counter.bump()\n";
+    let module = build(source, &["m", "class_layout"])?;
+    let declaration = module.nominal_declarations.first().ok_or("missing class declaration")?;
+    assert_eq!(declaration.canonical.kind, SemanticSourceTargetKind::Class);
+    assert_eq!(declaration.fields, ["value"]);
+    assert!(module.is_well_formed_nominal_declaration(declaration));
+    for (name, mutable) in [("get", false), ("bump", true)] {
+        let body = body_named(&module, name)?;
+        assert_eq!(body.locals[0].origin, bir::LocalOrigin::Receiver { mutable });
+        assert!(module.body_has_canonical_direct_call_id(body));
+        let mut tampered_body = body.clone();
+        tampered_body.locals[0].ty = IncanType::Named("ForeignOwner".to_string());
+        assert!(!module.body_has_canonical_direct_call_id(&tampered_body));
+    }
+    let mut tampered = declaration.clone();
+    tampered.canonical.kind = SemanticSourceTargetKind::Trait;
+    assert!(!module.is_well_formed_nominal_declaration(&tampered));
+    Ok(())
+}
+
+/// Direct enum layouts retain checker payload types, derives and owner/member identity without raw annotation lookup.
+#[test]
+fn native_enum_layout_retains_payloads_and_checked_derives() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "enum Shape:\n  Empty\n  Pair(int, str)\n\ndef main() -> None:\n  value = Shape.Pair(7, \"seven\")\n",
+        &["m", "enum_layout"],
+    )?;
+    let declaration = module.enum_declarations.first().ok_or("missing enum layout")?;
+    assert!(module.is_well_formed_native_enum_declaration(declaration));
+    assert_eq!(declaration.name, "Shape");
+    assert_eq!(declaration.variants[0].name, "Empty");
+    assert!(declaration.variants[0].fields.is_empty());
+    assert_eq!(
+        declaration.variants[1].fields,
+        vec![
+            IncanType::Primitive(IncanPrimitiveType::Int),
+            IncanType::Primitive(IncanPrimitiveType::Str)
+        ]
+    );
+    assert_eq!(declaration.derives, ["Debug", "Clone", "PartialEq"]);
+    let constructor = body_named(&module, "main")?
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::EnumVariant(target), _),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .ok_or("missing enum constructor")?;
+    assert_eq!(constructor.binding, bir::ArgumentBinding::resolved_positional(2));
+    let mut malformed = declaration.clone();
+    malformed.variants[1].canonical = malformed.variants[0].canonical.clone();
+    assert!(!module.is_well_formed_native_enum_declaration(&malformed));
+    malformed = declaration.clone();
+    malformed.variants[1].name = "Foreign".to_owned();
+    assert!(!module.is_well_formed_native_enum_declaration(&malformed));
     Ok(())
 }

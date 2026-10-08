@@ -170,6 +170,15 @@ pub enum ToolsMetadataCommand {
 /// Explicit Oven Alpha lifecycle commands.
 #[derive(Subcommand, Debug)]
 pub enum OvenCommand {
+    /// Convert selected Cargo workspace library closures into authored Loaf declarations once
+    ConvertCargo {
+        /// Workspace owning Cargo.toml and Cargo.lock; read only during this explicit adoption
+        #[arg(long, default_value = ".")]
+        workspace: PathBuf,
+        /// Library project directories relative to the workspace; may be repeated
+        #[arg(long, required = true)]
+        project: Vec<PathBuf>,
+    },
     /// Compile a pinned adopted-Loaf closure without Cargo or build-script execution
     CompileClosure(CompileClosureArgs),
     /// Transfer one compiler-selected SDK between CI jobs under a bound envelope
@@ -344,6 +353,28 @@ pub enum OvenCommand {
         #[command(subcommand)]
         command: OvenLegacyCargoCommand,
     },
+    /// Run one authored compiler test root against the receipt-selected native SDK closure
+    #[command(hide = true)]
+    CompilerNativeTests {
+        /// Source checkout owning the test root and its authored Loaf dependencies
+        #[arg(long, default_value = ".")]
+        compiler_root: PathBuf,
+        /// Checkout-relative Rust libtest source with a sibling `.loaf.toml` declaration
+        #[arg(long)]
+        target: PathBuf,
+        /// Exact inventory-verified case, including explicitly selected ignored cases
+        #[arg(long = "exact")]
+        exact_names: Vec<String>,
+        /// Caller-owned output; kept outputs reuse the receipt-bound executable
+        #[arg(long)]
+        output: PathBuf,
+        /// Persistent source workspaces for explicit native fixture bakes
+        #[arg(long)]
+        explicit_bake_workspace: PathBuf,
+        /// Compiler executable matching the prepared SDK units
+        #[arg(long)]
+        rustc: PathBuf,
+    },
     /// Compile and run the stored compiler workspace native suite through a direct-rustc plan
     CompilerLibtests {
         /// Repository root containing the compiler Cargo package and src/lib.rs
@@ -380,6 +411,14 @@ pub enum OvenCommand {
         /// Explicit Cargo for compiler-suite roots that deliberately exercise the Loaf baker
         #[arg(long = "fixture-cargo", value_name = "PATH", hide = true)]
         fixture_cargo: Option<PathBuf>,
+        /// Checkout-owned directory, kept across runs, where explicit-bake roots reuse their baked fixtures
+        #[arg(
+            long = "explicit-bake-workspace",
+            value_name = "PATH",
+            requires = "fixture_cargo",
+            hide = true
+        )]
+        explicit_bake_workspace: Option<PathBuf>,
         /// Caller-owned direct-rustc libtest output path
         #[arg(long, value_name = "PATH")]
         output: Option<PathBuf>,

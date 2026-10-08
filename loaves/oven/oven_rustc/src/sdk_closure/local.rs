@@ -1,6 +1,6 @@
 //! Local SDK Rust facets compiled against the retained seed, without Cargo metadata.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use super::{
@@ -9,6 +9,100 @@ use super::{
 };
 use crate::rustc::{rustc_host_target, rustc_identity};
 use oven_store::store::{OvenStore, OvenStoreLimits};
+
+/// One already selected local compile unit; feature resolution belongs to the authored graph's resolver.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalFacetSelection {
+    /// Loaf directory, relative to the selection document's owner.
+    pub project: std::path::PathBuf,
+    /// Complete selected local features, including expanded feature aliases.
+    pub features: Vec<String>,
+    /// Compilation domain, either host or target.
+    pub domain: String,
+}
+
+/// Compile a selected local graph in dependency order, preserving successful branches and named failures.
+///
+/// The graph is explicit input. This operational boundary reads only Loaf declarations and sources, never Cargo
+/// manifests or locks, and never changes registry selections already admitted by the enclosing closure.
+pub fn compile_local_sdk_facets(
+    closure: &mut SdkCompiledClosure,
+    selections: &[LocalFacetSelection],
+    owner: &Path,
+    output: &Path,
+    rustc: &Path,
+) -> Result<(), Error> {
+    let mut pending: BTreeSet<_> = (0..selections.len()).collect();
+    let mut names = BTreeMap::new();
+    for (index, selection) in selections.iter().enumerate() {
+        let declaration: toml::Value = toml::from_str(&std::fs::read_to_string(
+            owner.join(&selection.project).join("loaf.toml"),
+        )?)?;
+        let name = declaration
+            .get("rust")
+            .and_then(|rust| rust.get("name"))
+            .and_then(toml::Value::as_str)
+            .ok_or("selected local unit has no Rust name")?;
+        if names
+            .insert((name.to_string(), selection.domain.clone()), index)
+            .is_some()
+        {
+            return Err(format!("duplicate selected local facet {name}").into());
+        }
+    }
+    while !pending.is_empty() {
+        let mut progressed = false;
+        for index in pending.clone() {
+            let selection = &selections[index];
+            let project = owner.join(&selection.project);
+            let declaration: toml::Value = toml::from_str(&std::fs::read_to_string(project.join("loaf.toml"))?)?;
+            let (_, active) = local_feature_selection(&declaration, &selection.features)?;
+            let dependencies = declaration.get("dependencies").and_then(toml::Value::as_table);
+            let waits = dependencies
+                .into_iter()
+                .flatten()
+                .filter(|(alias, _)| active.contains_key(*alias))
+                .any(|(_, dependency)| {
+                    dependency
+                        .get("loaf")
+                        .and_then(toml::Value::as_str)
+                        .is_some_and(|loaf| {
+                            names
+                                .get(&(loaf.to_string(), selection.domain.clone()))
+                                .or_else(|| names.get(&(loaf.to_string(), "host".to_string())))
+                                .is_some_and(|dependency| pending.contains(dependency))
+                        })
+                });
+            if waits {
+                continue;
+            }
+            pending.remove(&index);
+            progressed = true;
+            if let Err(error) =
+                compile_local_sdk_facet(closure, &project, &selection.features, &selection.domain, output, rustc)
+            {
+                closure
+                    .report
+                    .failed
+                    .push(format!("local facet {}: {error}", selection.project.display()));
+            }
+        }
+        if !progressed {
+            return Err("cycle in selected local Loaf facets".into());
+        }
+    }
+    Ok(())
+}
+
+/// Recompute a local facet's portable source snapshot identity for source-current consumer admission.
+pub fn local_sdk_facet_source_digest(project: &Path, output: &Path) -> Result<String, Error> {
+    std::fs::create_dir_all(output)?;
+    let snapshot = tempfile::Builder::new().prefix("sdk-local-check-").tempdir_in(output)?;
+    Ok(prepare_local_unit(project, snapshot.path(), &[], "target")?
+        .binding
+        .archive_digest)
+}
 
 /// Compile one local Loaf's Rust facet and append its exact source/alias graph to the retained SDK closure.
 ///
@@ -47,6 +141,30 @@ pub fn compile_local_sdk_facet_for_target(
     std::fs::create_dir_all(output)?;
     let snapshot = tempfile::Builder::new().prefix("sdk-local-").tempdir_in(output)?;
     let mut unit = prepare_local_unit(project, snapshot.path(), features, domain)?;
+    if let Some(selected) = closure
+        .units
+        .iter()
+        .find(|selected| selected.binding.loaf == unit.binding.loaf && selected.binding.domain == domain)
+    {
+        if selected.binding.version != unit.binding.version
+            || selected.binding.archive_digest != unit.binding.archive_digest
+            || selected.binding.features != unit.binding.features
+            || selected.owner.manifest.intent.target != target
+            || selected.owner.manifest.intent.toolchain != rustc_identity(rustc)?
+        {
+            return Err(format!(
+                "local facet {} conflicts with an already selected binding",
+                unit.binding.loaf
+            )
+            .into());
+        }
+        selected.owner.verify_admitted_payload()?;
+        closure
+            .report
+            .reused
+            .push(format!("{} {} {domain} debug", unit.binding.loaf, unit.binding.version));
+        return Ok(());
+    }
     let (source, lease) =
         super::environment::stable_sources(&unit.root, &unit.binding, &unit.about, unit.primary, None)?;
     unit.root = source;
@@ -121,7 +239,7 @@ fn prepare_local_unit(
         .and_then(toml::Value::as_str)
         .ok_or("local Loaf has no Rust crate name")?
         .to_string();
-    if facet.get("build").is_some() {
+    if facet.get("build").is_some() || facet.get("build-script").and_then(toml::Value::as_bool) == Some(true) {
         return Err("local SDK facets cannot declare a build script".into());
     }
     let source_root = facet
@@ -145,6 +263,10 @@ fn prepare_local_unit(
         snapshot_language_catalog(&project, snapshot)?;
         relative = Path::new("loaves/kernel/incan_lang").join(relative);
     }
+    if name == "incan_emit" {
+        snapshot_emitter_text(&project, snapshot)?;
+        relative = Path::new("loaves/compiler/incan_emit").join(relative);
+    }
     copy_local_sources(&source, &snapshot.join(&relative))?;
     facet.insert(
         "source".to_string(),
@@ -155,9 +277,7 @@ fn prepare_local_unit(
     );
     std::fs::write(snapshot.join(".oven-authored-loaf.toml"), declaration)?;
     std::fs::write(snapshot.join("loaf.toml"), toml::to_string(&manifest)?)?;
-    let mut features = features.to_vec();
-    features.sort();
-    features.dedup();
+    let (features, _) = local_feature_selection(&manifest, features)?;
     Ok(PreparedUnit {
         about: serde_json::Value::Null,
         primary: true,
@@ -167,7 +287,7 @@ fn prepare_local_unit(
             version,
             archive_digest: oven_store::digest_source_tree(snapshot)?,
             domain: domain.to_string(),
-            features,
+            features: features.into_iter().collect(),
             target_predicates: Vec::new(),
             edges: None,
         },
@@ -177,6 +297,22 @@ fn prepare_local_unit(
         fact: None,
         fact_out: Vec::new(),
     })
+}
+
+/// Preserve the emitter's embedded standard-library text at its authored include geometry.
+fn snapshot_emitter_text(project: &Path, snapshot: &Path) -> Result<(), Error> {
+    let loaves = project
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("emitter has no owning loaves directory")?;
+    let source = loaves.join("stdlib/zen.txt");
+    if !std::fs::symlink_metadata(&source)?.is_file() {
+        return Err("embedded emitter text is not a plain file".into());
+    }
+    let destination = snapshot.join("loaves/stdlib/zen.txt");
+    std::fs::create_dir_all(destination.parent().ok_or("embedded emitter text has no parent")?)?;
+    std::fs::copy(source, destination)?;
+    Ok(())
 }
 
 /// Retain the language registry's embedded Loaf declarations with their authored relative include geometry.
@@ -245,7 +381,14 @@ fn selected_local_edges(unit: &PreparedUnit, closure: &SdkCompiledClosure) -> Re
     let Some(dependencies) = unit.manifest.get("dependencies").and_then(toml::Value::as_table) else {
         return Ok(edges);
     };
+    let (_, activated) = local_feature_selection(&unit.manifest, &unit.binding.features)?;
     for (alias, declaration) in dependencies {
+        if declaration.get("optional").and_then(toml::Value::as_bool) == Some(true) && !activated.contains_key(alias) {
+            continue;
+        }
+        if declaration.is_array() || declaration.get("target").is_some() {
+            return Err(format!("local dependency {alias} needs resolved target predicates").into());
+        }
         let loaf = declaration
             .get("loaf")
             .and_then(toml::Value::as_str)
@@ -255,13 +398,16 @@ fn selected_local_edges(unit: &PreparedUnit, closure: &SdkCompiledClosure) -> Re
             .and_then(toml::Value::as_str)
             .map(semver::VersionReq::parse)
             .transpose()?;
-        let required = declaration
+        let mut required = declaration
             .get("features")
             .and_then(toml::Value::as_array)
             .into_iter()
             .flatten()
             .map(|value| value.as_str().ok_or("dependency feature must be a string"))
             .collect::<Result<BTreeSet<_>, _>>()?;
+        if let Some(features) = activated.get(alias) {
+            required.extend(features.iter().map(String::as_str));
+        }
         let candidates = closure
             .units
             .iter()
@@ -303,10 +449,142 @@ fn selected_local_edges(unit: &PreparedUnit, closure: &SdkCompiledClosure) -> Re
     Ok(edges)
 }
 
+/// Expanded local features paired with active dependency aliases and their forwarded feature requests.
+type LocalFeatureSelection = (BTreeSet<String>, BTreeMap<String, BTreeSet<String>>);
+
+/// Expand local aliases while retaining per-dependency feature requests.
+fn local_feature_selection(manifest: &toml::Value, requested: &[String]) -> Result<LocalFeatureSelection, Error> {
+    let definitions = manifest
+        .get("project")
+        .and_then(|project| project.get("features"))
+        .and_then(toml::Value::as_table);
+    let dependencies = manifest.get("dependencies").and_then(toml::Value::as_table);
+    let mut enabled: BTreeSet<String> = requested.iter().cloned().collect();
+    let mut activated: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    if let Some(dependencies) = dependencies {
+        for (alias, declaration) in dependencies {
+            if declaration.get("optional").and_then(toml::Value::as_bool) != Some(true) {
+                activated.insert(alias.clone(), BTreeSet::new());
+            }
+        }
+    }
+    loop {
+        let before = (enabled.clone(), activated.clone());
+        for feature in &before.0 {
+            if dependencies.is_some_and(|dependencies| dependencies.contains_key(feature)) {
+                activated.entry(feature.clone()).or_default();
+            }
+            if let Some(values) = definitions.and_then(|definitions| definitions.get(feature)) {
+                let values = values
+                    .as_array()
+                    .ok_or("local Rust facet requires compact feature declarations")?;
+                for value in values {
+                    let value = value.as_str().ok_or("feature member must be a string")?;
+                    if let Some(alias) = value.strip_prefix("dep:") {
+                        activated.entry(alias.to_string()).or_default();
+                    } else if let Some((alias, child)) = value.split_once('/') {
+                        if let Some(alias) = alias.strip_suffix('?') {
+                            if let Some(features) = activated.get_mut(alias) {
+                                features.insert(child.to_string());
+                            }
+                        } else {
+                            activated
+                                .entry(alias.to_string())
+                                .or_default()
+                                .insert(child.to_string());
+                        }
+                    } else {
+                        enabled.insert(value.to_string());
+                    }
+                }
+            }
+        }
+        if before == (enabled.clone(), activated.clone()) {
+            break;
+        }
+    }
+    Ok((enabled, activated))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{compile_local_sdk_facet, prepare_local_unit};
+    use super::{
+        LocalFacetSelection, compile_local_sdk_facet, compile_local_sdk_facets, local_feature_selection,
+        prepare_local_unit,
+    };
     use crate::sdk_closure::{SdkClosureReport, SdkCompiledClosure};
+    use std::collections::BTreeMap;
+
+    /// Strong optional activation and weak forwarding share a fixed point, while inactive optional inputs stay absent.
+    #[test]
+    fn local_features_preserve_optional_and_weak_requests() -> Result<(), Box<dyn std::error::Error>> {
+        let manifest = toml::from_str(
+            "[project.features]\ndefault=['bridge']\nbridge=['optional?/extra','dep:optional','plain/child']\n[dependencies]\noptional={loaf='crates-io/optional',optional=true}\nplain={loaf='crates-io/plain'}\nunused={loaf='crates-io/unused',optional=true}\n",
+        )?;
+        let (enabled, active) = local_feature_selection(&manifest, &["default".to_string()])?;
+        assert!(enabled.contains("bridge"));
+        assert!(
+            active
+                .get("optional")
+                .is_some_and(|features| features.contains("extra"))
+        );
+        assert!(active.get("plain").is_some_and(|features| features.contains("child")));
+        assert!(!active.contains_key("unused"));
+        let (_, inactive) = local_feature_selection(&manifest, &[])?;
+        assert!(!inactive.contains_key("optional"));
+        Ok(())
+    }
+
+    /// The native executor orders a selected local graph and refuses Cargo metadata as an execution input.
+    #[test]
+    fn local_graph_compiles_dependencies_before_consumers() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let store = tempfile::tempdir()?;
+        for name in ["consumer", "leaf"] {
+            let project = root.path().join(name);
+            std::fs::create_dir_all(project.join("src"))?;
+            std::fs::write(
+                project.join("loaf.toml"),
+                format!(
+                    "[project]\nname='{name}'\nversion='1.0.0'\n[rust]\nname='{name}'\ntype='lib'\nedition='2024'\n{}",
+                    if name == "consumer" {
+                        "[dependencies]\nleaf={loaf='leaf',path='../leaf'}\nabsent={loaf='absent',optional=true,path='../absent'}\n"
+                    } else {
+                        ""
+                    }
+                ),
+            )?;
+            std::fs::write(
+                project.join("src/lib.rs"),
+                if name == "consumer" {
+                    "pub fn value() -> u8 { leaf::value() }"
+                } else {
+                    "pub fn value() -> u8 { 42 }"
+                },
+            )?;
+            std::fs::write(project.join("Cargo.toml"), "poisoned Cargo input")?;
+        }
+        let selections: Vec<_> = ["consumer", "leaf"]
+            .into_iter()
+            .map(|name| LocalFacetSelection {
+                project: name.into(),
+                features: Vec::new(),
+                domain: "target".to_string(),
+            })
+            .collect();
+        let mut closure = SdkCompiledClosure {
+            report: SdkClosureReport::default(),
+            units: Vec::new(),
+            auxiliary_targets: BTreeMap::new(),
+        };
+        let rustc = crate::rustc::resolve_active_rustc()?;
+        compile_local_sdk_facets(&mut closure, &selections, root.path(), store.path(), &rustc)?;
+        assert!(closure.report.failed.is_empty(), "{:?}", closure.report.failed);
+        assert_eq!(closure.units.len(), 2);
+        assert_eq!(closure.units[0].binding.loaf, "leaf");
+        assert_eq!(closure.units[1].inspection["deps"][0]["name"].as_str(), Some("leaf"));
+        Ok(())
+    }
 
     /// Separate materialization and store roots must produce the same adopted identity and exact rlib bytes.
     #[test]

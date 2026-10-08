@@ -56,6 +56,10 @@ fn install_sdk_inspection_authority_from(
     let selection = incan_provider::sdk_native::select_sdk_native_artifacts(root)?;
     for dependency in dependencies {
         if !incan_provider::sdk_native::sdk_native_dependency_is_covered(&inventory, &selection, dependency)? {
+            tracing::debug!(
+                ?dependency,
+                "requested dependency is outside the sealed SDK inspection selection"
+            );
             return Ok(None);
         }
     }

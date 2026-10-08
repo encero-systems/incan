@@ -1,0 +1,59 @@
+"""Lower checked condition assertions through the legacy assertion runtime contract."""
+
+from rust::incan_semantics_core::body_ir import AssertionKind, Operand as RustOperand, Constant as RustConstant
+from pub::incan_mir_plan import PlanType, SourceSpan, TerminatorKind, Constant
+from frame import external_call, literal
+from text_plan import owned_literal
+from lowering import scalar_operand, display_operand
+from frame import Builder, read_place, temporary, drop_owned
+
+
+pub def lower_assertion(
+    mut builder: Builder,
+    kind: &AssertionKind,
+    message: &Option[RustOperand],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Branch before materializing failure text; pattern and raises assertions remain refused."""
+    mut operand = literal(Constant.Bool(false), span)
+    match kind:
+        AssertionKind.Condition(cond=condition) =>
+            operand = scalar_operand(builder, condition, span)?
+        _ => return Err("unsupported Body IR non-condition Assert")
+    # Body IR's lazy-message failure block ends in `assert false`; it has no success edge or owner merge.
+    match kind:
+        AssertionKind.Condition(cond=RustOperand.Constant(RustConstant.Bool(true))) => return Ok(None)
+        AssertionKind.Condition(cond=RustOperand.Constant(RustConstant.Bool(false))) =>
+            return lower_failure(builder, message, span)
+        _ => pass
+    failed = builder.new_block(span)
+    passed = builder.new_block(span)
+    incoming = builder.owned
+    builder.finish(TerminatorKind.SwitchBool(operand, failed, passed), span)
+    builder.current = failed
+    lower_failure(builder, message, span)?
+    builder.current = passed
+    builder.owned = incoming
+    return Ok(None)
+
+
+def lower_failure(mut builder: Builder, message: &Option[RustOperand], span: SourceSpan) -> Result[None, str]:
+    """Transfer the failure payload to the unwinding runtime and close the unreachable normal continuation."""
+    mut text = temporary(builder, PlanType.String, span)
+    match message:
+        Some(value) =>
+            text = display_operand(builder, value, span)?
+        None =>
+            text = owned_literal(builder, "", span)
+    destination = temporary(builder, PlanType.Unit, span)
+    external_call(
+        builder,
+        "incan_native_runtime::assert_failure",
+        [PlanType.String],
+        PlanType.Unit,
+        [read_place(text, true, span)],
+        destination,
+        span,
+    )
+    builder.finish(TerminatorKind.Unreachable, span)
+    return Ok(None)

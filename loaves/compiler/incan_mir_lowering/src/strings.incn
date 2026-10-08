@@ -1,0 +1,48 @@
+"""Admission table for Body IR's canonical text operations."""
+
+from rust::incan_semantics_core::body_ir import HelperOp
+from pub::incan_mir_plan import PlanType, Operand, Place, SourceSpan
+from frame import Builder, temporary, external_call
+
+
+pub def text_helper(helper: &HelperOp) -> Option[tuple[str, PlanType]]:
+    """Select text-only helpers whose parameters borrow strings and whose runtime semantics match legacy."""
+    match helper:
+        HelperOp.StrConcat => return Some(("concat_text", PlanType.String))
+        HelperOp.StrEq => return Some(("equal_text", PlanType.Bool))
+        HelperOp.StrNe => return Some(("unequal_text", PlanType.Bool))
+        HelperOp.StrLt => return Some(("less_text", PlanType.Bool))
+        HelperOp.StrLe => return Some(("less_equal_text", PlanType.Bool))
+        HelperOp.StrGt => return Some(("greater_text", PlanType.Bool))
+        HelperOp.StrGe => return Some(("greater_equal_text", PlanType.Bool))
+        HelperOp.StrLen => return Some(("length_text", PlanType.Int))
+        HelperOp.StrUpper => return Some(("upper_text", PlanType.String))
+        HelperOp.StrLower => return Some(("lower_text", PlanType.String))
+        HelperOp.StrStrip => return Some(("strip_text", PlanType.String))
+        HelperOp.StrReplace => return Some(("replace_text", PlanType.String))
+        HelperOp.StrNotContains => return Some(("not_contains_text", PlanType.Bool))
+        HelperOp.StrContains => return Some(("contains_text", PlanType.Bool))
+        _ => return None
+
+
+pub def text_helper_arity(name: str) -> int:
+    """Retain the positional runtime signatures for text-only helpers."""
+    if name in ["length_text", "upper_text", "lower_text", "strip_text"]:
+        return 1
+    if name == "replace_text":
+        return 3
+    return 2
+
+
+pub def emit_text_helper(
+    mut builder: Builder,
+    name: str,
+    result: PlanType,
+    parameters: list[PlanType],
+    operands: list[Operand],
+    span: SourceSpan,
+) -> Place:
+    """Emit one canonical borrowed-text call and retain its owned result for transfer or discard."""
+    text = temporary(builder, result, span)
+    external_call(builder, f"incan_native_runtime::{name}", parameters, result, operands, text, span)
+    return text

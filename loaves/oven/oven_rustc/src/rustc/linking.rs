@@ -40,6 +40,28 @@ pub(crate) fn proc_macro_file_name(stem: &str, host: &str) -> String {
 /// `INCAN_OVEN_LINK_SDK` selects another retained SDK without consulting xcrun or ambient SDKROOT.
 /// System TAPI files contain their reexports; iconv additionally needs the admitted charset stub.
 pub(crate) fn pinned_link(rustc: &Path, target: &str) -> Result<Option<PinnedLink>, OvenRustcError> {
+    pinned_unit_link(rustc, target, false)
+}
+
+/// Native SDK stubs and reexports required by the pinned compiler driver's declared runtime closure.
+const DRIVER_APPLE_SDK_INPUTS: &[&str] = &[
+    "usr/lib/libobjc.tbd",
+    "usr/lib/libobjc.A.tbd",
+    "usr/lib/libz.tbd",
+    "usr/lib/libc++.tbd",
+    "usr/lib/libc++.1.tbd",
+    "System/Library/Frameworks/Foundation.framework/Foundation.tbd",
+    "System/Library/Frameworks/Foundation.framework/Versions/C/Foundation.tbd",
+    "System/Library/Frameworks/CoreFoundation.framework/CoreFoundation.tbd",
+    "System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation.tbd",
+    "System/Library/Frameworks/CoreServices.framework/CoreServices.tbd",
+    "System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices.tbd",
+    "System/Library/Frameworks/CFNetwork.framework/CFNetwork.tbd",
+    "System/Library/Frameworks/CFNetwork.framework/Versions/A/CFNetwork.tbd",
+];
+
+/// Select the ordinary closure or the explicit driver's additional SDK inputs before computing its identity.
+fn pinned_unit_link(rustc: &Path, target: &str, declared_driver: bool) -> Result<Option<PinnedLink>, OvenRustcError> {
     if matches!(target, "x86_64-unknown-linux-gnu" | "aarch64-unknown-linux-gnu") {
         let host = rustc_host_target(rustc)?;
         let sysroot = super::toolchain::normalized_std_sysroot(rustc, target)?;
@@ -60,13 +82,15 @@ pub(crate) fn pinned_link(rustc: &Path, target: &str) -> Result<Option<PinnedLin
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk"));
     let mut members = BTreeMap::new();
-    for relative in [
+    let ordinary = [
         "usr/lib/libSystem.tbd",
         "usr/lib/libc.tbd",
         "usr/lib/libm.tbd",
         "usr/lib/libiconv.tbd",
         "usr/lib/libcharset.1.tbd",
-    ] {
+    ];
+    let driver_inputs = if declared_driver { DRIVER_APPLE_SDK_INPUTS } else { &[] };
+    for relative in ordinary.into_iter().chain(driver_inputs.iter().copied()) {
         let path = sdk.join(relative);
         let bytes = fs::read(&path).map_err(|source| OvenRustcError::Io { path, source })?;
         members.insert(relative, bytes);
@@ -98,15 +122,33 @@ pub(crate) fn pinned_link(rustc: &Path, target: &str) -> Result<Option<PinnedLin
         path: sdk.clone(),
         source,
     })?;
+    stage_link_members(&sdk, members)?;
+    Ok(Some(PinnedLink {
+        linker,
+        sdk,
+        linux: None,
+        identity,
+    }))
+}
+
+/// Revalidate staged bytes and atomically restore each admitted SDK member at its original relative path.
+fn stage_link_members(sdk: &Path, members: BTreeMap<&str, Vec<u8>>) -> Result<(), OvenRustcError> {
     for (relative, bytes) in members {
         let path = sdk.join(relative);
         // Recheck the staged bytes even on reuse; an ambient temp directory is not an authority.
         if fs::read(&path).ok().as_deref() != Some(bytes.as_slice()) {
-            let mut temporary =
-                tempfile::NamedTempFile::new_in(sdk.join("usr/lib")).map_err(|source| OvenRustcError::Io {
-                    path: path.clone(),
-                    source,
-                })?;
+            let parent = path.parent().ok_or_else(|| OvenRustcError::InvalidInput {
+                field: "link closure",
+                message: "SDK member has no parent directory".to_string(),
+            })?;
+            fs::create_dir_all(parent).map_err(|source| OvenRustcError::Io {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+            let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|source| OvenRustcError::Io {
+                path: path.clone(),
+                source,
+            })?;
             temporary.write_all(&bytes).map_err(|source| OvenRustcError::Io {
                 path: path.clone(),
                 source,
@@ -117,12 +159,7 @@ pub(crate) fn pinned_link(rustc: &Path, target: &str) -> Result<Option<PinnedLin
             })?;
         }
     }
-    Ok(Some(PinnedLink {
-        linker,
-        sdk,
-        linux: None,
-        identity,
-    }))
+    Ok(())
 }
 
 /// Return the content identity of the pinned native linker and admitted system inputs for receipt construction.
@@ -131,6 +168,26 @@ pub(crate) fn pinned_link(rustc: &Path, target: &str) -> Result<Option<PinnedLin
 /// rechecks it so a changed closure cannot silently satisfy a previously selected linked-unit receipt.
 pub fn pinned_link_closure_identity(rustc: &Path, target: &str) -> Result<Option<String>, OvenRustcError> {
     Ok(pinned_link(rustc, target)?.map(|link| link.identity))
+}
+
+/// Bind the authorized driver's native SDK requirements without changing ordinary units' link closure.
+pub fn pinned_driver_link_closure_identity(rustc: &Path, target: &str) -> Result<Option<String>, OvenRustcError> {
+    Ok(pinned_unit_link(rustc, target, true)?.map(|link| link.identity))
+}
+
+/// Select extra native SDK inputs only when the receipt carries the unit-scoped compiler driver grant.
+pub(super) fn pinned_receipt_link(
+    rustc: &Path,
+    receipt: &oven_store::OvenReceipt,
+) -> Result<Option<PinnedLink>, OvenRustcError> {
+    pinned_unit_link(
+        rustc,
+        &receipt.intent.target,
+        receipt
+            .sources
+            .build_unit_inputs
+            .contains_key(super::driver_grant::DRIVER_GRANT_INPUT),
+    )
 }
 
 /// Apply pinned linking to a Rustdoc consumer only after checking any selected receipt binding.
@@ -142,7 +199,7 @@ pub(super) fn apply_receipt_link(
     rustc: &Path,
     receipt: &oven_store::OvenReceipt,
 ) -> Result<(), OvenRustcError> {
-    if let Some(link) = pinned_link(rustc, &receipt.intent.target)? {
+    if let Some(link) = pinned_receipt_link(rustc, receipt)? {
         if let Some(bound) = receipt.sources.build_unit_inputs.get("link-closure")
             && bound != &link.identity
         {
@@ -460,6 +517,79 @@ fn linux_link(linker: &Path, root: &Path, target: &str) -> Result<PinnedLink, Ov
 #[cfg(test)]
 mod tests {
     use super::{fs, pinned_link, rustc_host_target};
+
+    /// A declared rustc-dev driver links and starts against its content-bound SDK while ordinary units keep their
+    /// closure.
+    #[test]
+    #[cfg(target_os = "macos")]
+    #[ignore = "explicit pinned rustc-dev native link verification"]
+    fn pinned_driver_links_with_normalized_sysroot() -> Result<(), Box<dyn std::error::Error>> {
+        use super::{pinned_driver_link_closure_identity, pinned_link_closure_identity, pinned_receipt_link};
+        use oven_store::{OvenGeneratedProjectRequest, receipt_generated_project};
+        use std::{path::PathBuf, process::Command};
+        let selected = Command::new("rustup")
+            .args(["which", "--toolchain", "1.98.0", "rustc"])
+            .output()?;
+        assert!(
+            selected.status.success(),
+            "{}",
+            String::from_utf8_lossy(&selected.stderr)
+        );
+        let rustc = PathBuf::from(String::from_utf8(selected.stdout)?.trim());
+        let target = rustc_host_target(&rustc)?;
+        let ordinary = pinned_link_closure_identity(&rustc, &target)?;
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("main.rs");
+        fs::write(
+            &source,
+            "#![feature(rustc_private)]\nextern crate rustc_abi;\nextern crate rustc_driver;\n#[link(name=\"CoreServices\", kind=\"framework\")] unsafe extern \"C\" { fn FSEventsGetCurrentEventId() -> u64; }\nfn main() { std::hint::black_box(FSEventsGetCurrentEventId as unsafe extern \"C\" fn() -> u64); }\n",
+        )?;
+        let role = oven_model::manifest::RustBinaryRole {
+            name: "driver_link_probe".into(),
+            path: "main.rs".into(),
+            unstable_features: vec!["rustc_private".into()],
+            toolchain_components: vec!["rustc-dev".into()],
+            sysroot_dependencies: vec!["rustc_driver".into()],
+        };
+        let grant = super::super::driver_grant::authorize_driver_grant(&role, &rustc)?.ok_or("missing driver grant")?;
+        let identity = pinned_driver_link_closure_identity(&rustc, &target)?.ok_or("missing driver link closure")?;
+        assert_ne!(ordinary.as_deref(), Some(identity.as_str()));
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
+                root.path(),
+                &role.name,
+                "0.1.0",
+                &target,
+                "compiler",
+                "debug",
+                Vec::new(),
+            )
+            .with_generated_source("rust-unit", &source)
+            .with_build_unit_input(super::super::driver_grant::DRIVER_GRANT_INPUT, grant)
+            .with_build_unit_input("link-closure", identity.as_str()),
+        )?;
+        let link = pinned_receipt_link(&rustc, &receipt)?.ok_or("missing receipt link closure")?;
+        assert_eq!(link.identity, identity);
+        assert_eq!(ordinary, pinned_link_closure_identity(&rustc, &target)?);
+        let sysroot = super::super::toolchain::normalized_std_sysroot(&rustc, &target)?;
+        let compiler = super::super::toolchain::normalized_rustc(&sysroot).ok_or("missing normalized compiler")?;
+        let binary = root.path().join("driver-link-probe");
+        let mut command = super::super::toolchain::rustc_probe_command(&compiler);
+        command
+            .arg("--sysroot")
+            .arg(&sysroot)
+            .arg("--crate-name")
+            .arg(&role.name)
+            .arg(&source)
+            .arg("-o")
+            .arg(&binary);
+        super::super::driver_grant::apply_driver_grant(&mut command, &receipt, &role.name)?;
+        link.apply(&mut command);
+        let output = command.output()?;
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert!(Command::new(binary).env_remove("DYLD_LIBRARY_PATH").status()?.success());
+        Ok(())
+    }
 
     /// Synthetic Ubuntu closures prove both architectures without executing Linux code on the macOS host.
     #[test]

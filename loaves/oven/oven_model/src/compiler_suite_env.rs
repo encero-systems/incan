@@ -21,6 +21,8 @@ pub const OVEN_COMPILER_SUITE_FIXTURE_CARGO_LOG_ENV: &str = "INCAN_INTERNAL_OVEN
 pub const OVEN_COMPILER_SUITE_EXPLICIT_BAKE_CARGO_ENV: &str = "INCAN_INTERNAL_OVEN_EXPLICIT_BAKE_CARGO";
 /// Offline Cargo-home authority exposed only to a test helper performing `incan oven bake`.
 pub const OVEN_COMPILER_SUITE_EXPLICIT_BAKE_HOME_ENV: &str = "INCAN_INTERNAL_OVEN_EXPLICIT_BAKE_HOME";
+/// Checkout-owned directory, kept across suite runs, where one explicit-bake root reuses its baked fixture graph.
+pub const OVEN_COMPILER_SUITE_EXPLICIT_BAKE_WORKSPACE_ENV: &str = "INCAN_INTERNAL_OVEN_EXPLICIT_BAKE_WORKSPACE";
 
 /// CLI test roots whose explicit bakes require the publisher's offline Cargo authority.
 const EXPLICIT_CLI_BAKE_ROOTS: &[&str] = &[

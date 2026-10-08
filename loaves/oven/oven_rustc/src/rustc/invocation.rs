@@ -629,7 +629,7 @@ pub(super) fn bake_direct_rustc(
         link_closure_identity: if matches!(output_kind, OvenDirectRustcOutputKind::Library) && !test_harness {
             None
         } else {
-            let identity = super::linking::pinned_link(rustc, &receipt.intent.target)?.map(|link| link.identity);
+            let identity = super::linking::pinned_receipt_link(rustc, receipt)?.map(|link| link.identity);
             if let Some(bound) = receipt.sources.build_unit_inputs.get("link-closure")
                 && identity.as_deref() != Some(bound.as_str())
             {
@@ -747,7 +747,7 @@ fn compile_direct_rustc_output(
     }
     super::driver_grant::apply_driver_grant(&mut command, receipt, crate_name)?;
     if (!matches!(output_kind, OvenDirectRustcOutputKind::Library) || test_harness)
-        && let Some(link) = super::linking::pinned_link(rustc, &receipt.intent.target)?
+        && let Some(link) = super::linking::pinned_receipt_link(rustc, receipt)?
     {
         if output_receipt.link_closure_identity.as_deref() != Some(link.identity.as_str()) {
             return Err(OvenRustcError::InvalidInput {

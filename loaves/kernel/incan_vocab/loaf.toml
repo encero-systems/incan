@@ -1,18 +1,22 @@
+[dependencies]
+serde = { features = ["derive"], loaf = "crates-io/serde", optional = true, version = "1.0" }
+serde_json = { loaf = "crates-io/serde_json", optional = true, version = "1.0" }
+
 [project]
-name = "incan_vocab"
-version = "0.6.0-dev.6"
+description = "Stable vocabulary registration contract for Incan library companion crates"
 license = "Apache-2.0"
+name = "incan_vocab"
 private = true
+version = "0.3.0"
+
+[project.features]
+default = ["serde"]
+serde = [
+    "dep:serde",
+    "dep:serde_json",
+]
 
 [rust]
+edition = "2024"
 name = "incan_vocab"
 type = "lib"
-edition = "2024"
-
-[features]
-default = ["serde"]
-serde = []
-
-[dependencies]
-serde = { loaf = "crates-io/serde", version = "1", features = ["derive"], default-features = true }
-serde_json = { loaf = "crates-io/serde_json", version = "1", features = [], default-features = true }

@@ -4,7 +4,7 @@ use super::super::super::decl::{IrStruct, IrStructKind, StructField};
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use incan_frontend::ast;
-use incan_lang::lang::derives::{self, DeriveId};
+use incan_lang::lang::derives;
 
 impl AstLowering {
     /// Lower a model declaration to struct.
@@ -72,23 +72,19 @@ impl AstLowering {
         self.extend_derives_with_adopted_serde_traits(&mut derives, &m.traits);
         Self::defer_default_derive_to_field_defaults(&mut derives, &fields);
 
-        let debug = derives::as_str(DeriveId::Debug);
-        let clone = derives::as_str(DeriveId::Clone);
-
-        // Models always get Debug and Clone by default
-        if !derives.iter().any(|d| Self::same_derive(d, debug)) {
-            derives.push(debug.to_string());
-        }
-        if !derives.iter().any(|d| Self::same_derive(d, clone)) {
-            derives.push(clone.to_string());
-        }
-        // Models always get FieldInfo for reflection.
-        if !derives.iter().any(|d| d == derives::FIELD_INFO_DERIVE_NAME) {
-            derives.push(derives::FIELD_INFO_DERIVE_NAME.to_string());
-        }
-        // Models always get IncanClass for __class_name__() and __fields__() methods.
-        if !derives.iter().any(|d| d == derives::INCAN_CLASS_DERIVE_NAME) {
-            derives.push(derives::INCAN_CLASS_DERIVE_NAME.to_string());
+        // Both native routes share the implicit plain-model derive contract.
+        for (index, derive) in derives::plain_model_derives().into_iter().enumerate() {
+            // Preserve legacy's normalized Debug/Clone comparison and exact reflection-name comparison.
+            let present = derives.iter().any(|existing| {
+                if index < 2 {
+                    Self::same_derive(existing, derive)
+                } else {
+                    existing == derive
+                }
+            });
+            if !present {
+                derives.push(derive.to_string());
+            }
         }
 
         let type_params = self.lower_type_params(&m.type_params);

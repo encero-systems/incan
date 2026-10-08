@@ -1,0 +1,29 @@
+"""Native numeric admission from retained operand representations."""
+
+from rust::incan_semantics_core::body_ir import Operand as RustOperand, Constant as RustConstant, NominalDeclaration
+from pub::incan_mir_plan import Local, PlanType, SourceSpan
+from models import model_place, place_type
+from numerics import is_float_constant
+
+
+pub def float_operand(
+    declarations: list[NominalDeclaration],
+    locals: list[Local],
+    value: &RustOperand,
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Require a retained float representation; integer true-division coercions remain outside this slice."""
+    match value:
+        RustOperand.Place(read) =>
+            place = model_place(declarations, locals, read.place, span)?
+            ty = place_type(locals, place)
+            return Ok(ty == PlanType.Float or ty == PlanType.F32 or ty == PlanType.F64)
+        RustOperand.Constant(constant) => return Ok(float_constant(constant))
+
+
+def float_constant(value: &RustConstant) -> bool:
+    """Preserve the Rust enum import through a typed boundary until legacy pattern-only imports work in dev.8."""
+    match value:
+        RustConstant.Float(_text) => return true
+        RustConstant.TypedNumeric(value) => return is_float_constant(value)
+        _ => return false

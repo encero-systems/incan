@@ -10,7 +10,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Lower any of RFC 018's three `assert` forms into one [`bir::StatementKind::Assert`], recording a
     /// [`bir::PanicReason::AssertFailure`] panic fact and an [`AbiV0RuntimeRequirement::PanicStrategy`] runtime
     /// requirement, because every form can panic. The optional failure message applies to all three and is lowered
-    /// after the form's own operands, matching source evaluation order.
+    /// after the form's own operands. Condition messages run only in the failure branch, as on the legacy route.
     ///
     /// `remaining` is the statement suffix following this assertion in its enclosing block. Only the `assert value is
     /// P` form uses it: unlike a `match` arm, a pattern assertion binds `P`'s names for the rest of that block, so the
@@ -32,6 +32,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let Some(kind) = self.lower_assert_kind(&assert_stmt.kind, remaining, scope, span, out) else {
             return;
         };
+        if let (bir::AssertionKind::Condition { cond }, Some(message)) = (&kind, &assert_stmt.message) {
+            self.lower_condition_message(cond.clone(), message, scope, span, out);
+            return;
+        }
         let message = assert_stmt
             .message
             .as_ref()
@@ -46,6 +50,53 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 kind,
                 message,
                 may_panic: true,
+            },
+            span,
+        });
+    }
+
+    /// Keep a condition assertion's message computation on its failing path, including calls and ownership facts.
+    ///
+    /// The successful path must neither evaluate the message nor initialize its temporaries. Existing Body-IR blocks
+    /// express this deferred execution, so consumers need no source-expression reconstruction or extra vocabulary.
+    fn lower_condition_message(
+        &mut self,
+        cond: bir::Operand,
+        message: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) {
+        let failure_scope = self.new_scope(Some(scope), span);
+        let mut failure = Vec::new();
+        let message = self.lower_expr_to_operand(message, failure_scope, &mut failure);
+        failure.push(bir::Statement {
+            kind: bir::StatementKind::Assert {
+                kind: bir::AssertionKind::Condition {
+                    cond: bir::Operand::Constant(bir::Constant::Bool(false)),
+                },
+                message: Some(message),
+                may_panic: true,
+            },
+            span,
+        });
+        self.insert_scope_drops(&mut failure, failure_scope);
+        self.panic_facts.push(bir::PanicFact {
+            span,
+            reason: bir::PanicReason::AssertFailure,
+        });
+        self.record_runtime_requirement(AbiV0RuntimeRequirement::PanicStrategy);
+        out.push(bir::Statement {
+            kind: bir::StatementKind::If {
+                cond,
+                then_block: bir::Block {
+                    scope,
+                    stmts: Vec::new(),
+                },
+                else_block: Some(bir::Block {
+                    scope: failure_scope,
+                    stmts: failure,
+                }),
             },
             span,
         });

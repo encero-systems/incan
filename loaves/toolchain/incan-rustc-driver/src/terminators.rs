@@ -40,7 +40,7 @@ pub fn terminator<'tcx>(
             targets: mir::SwitchTargets::new([(0, block(*false_target)?)].into_iter(), block(*true_target)?),
         },
         TerminatorKind::Call(callee, arguments, destination, target, action) => mir::TerminatorKind::Call {
-            func: mir::Operand::function_handle(tcx, callees::resolve(tcx, callee)?, [], sources.span(&callee.span)?),
+            func: call_operand(tcx, sources, callee)?,
             args: arguments
                 .iter()
                 .map(|value| {
@@ -83,4 +83,32 @@ pub fn terminator<'tcx>(
         kind,
         attributes: ThinVec::new(),
     })
+}
+
+/// Instantiate only the admitted model Clone call; ordinary callees remain monomorphic.
+fn call_operand<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    sources: &Sources<'_>,
+    callee: &crate::plan::Callee,
+) -> Result<mir::Operand<'tcx>, PlanError> {
+    let mut arguments = Vec::new();
+    if let crate::plan::CalleeKind::CloneEnum(_, name) = &callee.kind {
+        arguments.push(crate::types::enum_type(tcx, name)?.into());
+    }
+    if let crate::plan::CalleeKind::CloneModel(_, name) = &callee.kind {
+        arguments.push(crate::types::model_type(tcx, name)?.into());
+    }
+    if let crate::plan::CalleeKind::Instantiated(_, ty) = &callee.kind {
+        arguments.extend(callees::arguments(tcx, callees::resolve(tcx, callee)?, std::slice::from_ref(ty))?.iter());
+    }
+    if let crate::plan::CalleeKind::InstantiatedPair(_, key, value) = &callee.kind {
+        arguments
+            .extend(callees::arguments(tcx, callees::resolve(tcx, callee)?, &[key.clone(), value.clone()])?.iter());
+    }
+    Ok(mir::Operand::function_handle(
+        tcx,
+        callees::resolve(tcx, callee)?,
+        arguments,
+        sources.span(&callee.span)?,
+    ))
 }

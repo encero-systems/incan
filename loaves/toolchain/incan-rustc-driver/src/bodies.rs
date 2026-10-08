@@ -1,7 +1,7 @@
 //! A validated scalar plan becomes rustc MIR directly, with no THIR or generated Rust body.
 
 use crate::error::PlanError;
-use crate::plan::{Function, Statement, StatementKind};
+use crate::plan::{Function, PlanType, Statement, StatementKind};
 use crate::spans::Sources;
 use crate::{terminators, types, values};
 use rustc_hir::def_id::LocalDefId;
@@ -23,7 +23,12 @@ fn statement<'tcx>(
     let span = sources.span(location)?;
     let kind = match &value.kind {
         StatementKind::Assign(destination, value) => {
-            let ty = &function.locals[values::index(destination.local)?].ty;
+            let ty = match &destination.projection {
+                crate::plan::Projection::Field(_, ty)
+                | crate::plan::Projection::DerefField(_, ty)
+                | crate::plan::Projection::Deref(ty) => ty,
+                _ => &function.locals[values::index(destination.local)?].ty,
+            };
             mir::StatementKind::Assign(Box::new((
                 values::place(tcx, destination)?,
                 values::rvalue(tcx, sources, &value.kind, ty)?,
@@ -47,10 +52,22 @@ pub fn body<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId, function: &Function) -> Re
         .locals
         .iter()
         .map(|local| {
-            Ok(mir::LocalDecl::new(
-                types::native_type(tcx, &local.ty)?,
-                sources.span(&local.span)?,
-            ))
+            let span = sources.span(&local.span)?;
+            let mut declaration = mir::LocalDecl::new(types::native_type(tcx, &local.ty)?, span);
+            // Owned nominal slots retain runtime storage identity. Treating them as anonymous constant temps lets
+            // PromoteTemps replace a later shared borrow with the initial value despite an intervening mutable call.
+            if matches!(local.ty, PlanType::Model(..)) {
+                declaration.local_info = mir::ClearCrossCrate::Set(Box::new(mir::LocalInfo::User(
+                    mir::BindingForm::Var(mir::VarBindingForm {
+                        binding_mode: rustc_hir::BindingMode(rustc_hir::ByRef::No, rustc_ast::Mutability::Mut),
+                        opt_ty_info: None,
+                        opt_match_place: None,
+                        pat_span: span,
+                        introductions: Vec::new(),
+                    }),
+                )));
+            }
+            Ok(declaration)
         })
         .collect::<Result<Vec<_>, PlanError>>()?;
     let blocks = function

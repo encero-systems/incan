@@ -1,8 +1,9 @@
 //! Manifest-only closure projection for the compiler's Rust-backed Body IR caller contract.
 //!
-//! Cargo cannot distinguish same-version local packages at two roots in one lock. The real frontend and semantics-core
-//! source trees are retained verbatim while their compiler-owned language edges select the active byte-equivalent SDK
-//! copy. Only enumerated compiler roots qualify; build scripts and production location-dependent source are refused.
+//! Cargo cannot distinguish same-version local packages at two roots in one lock. Compiler sources and included
+//! resources retain their repository-relative layout while compiler-owned language edges select the active
+//! byte-equivalent SDK copy. Only enumerated compiler roots qualify; build scripts and compile-time manifest-location
+//! reads are refused.
 
 use std::{fs, io, path::Path};
 
@@ -13,6 +14,46 @@ use sha2::{Digest, Sha256};
 use super::generator::ProjectGenerator;
 
 impl ProjectGenerator {
+    /// Preserve the CLI's checked-in registry patches when a generated host selects compiler source roots.
+    /// Cargo only honors patches in the root manifest; dependency-local workspace patches cannot seal this closure.
+    pub(super) fn compiler_closure_patches(&self) -> io::Result<Option<toml::Table>> {
+        let mut compiler_host = false;
+        for dependency in &self.dependencies {
+            if let DependencySource::Path { path } = &dependency.source {
+                compiler_host |= compiler_projection_root(path)?;
+            }
+        }
+        if !compiler_host {
+            return Ok(None);
+        }
+        let root = development_root();
+        let workspace: toml::Value =
+            toml::from_str(&fs::read_to_string(root.join("Cargo.toml"))?).map_err(io::Error::other)?;
+        let Some(mut patches) = workspace.get("patch").and_then(toml::Value::as_table).cloned() else {
+            return Ok(None);
+        };
+        for (_, registry) in patches.iter_mut() {
+            let entries = registry
+                .as_table_mut()
+                .ok_or_else(|| io::Error::other("invalid compiler patches"))?;
+            for (_, specification) in entries.iter_mut() {
+                let table = specification
+                    .as_table_mut()
+                    .ok_or_else(|| io::Error::other("invalid compiler patch"))?;
+                let relative = table
+                    .get("path")
+                    .and_then(toml::Value::as_str)
+                    .ok_or_else(|| io::Error::other("compiler patch must be a checked-in path"))?;
+                let path = fs::canonicalize(root.join(relative))?;
+                if !path.starts_with(fs::canonicalize(root.join("loaves/third_party"))?) {
+                    return Err(io::Error::other("compiler patch is outside approved third-party roots"));
+                }
+                table.insert("path".into(), path.to_string_lossy().into_owned().into());
+            }
+        }
+        Ok(Some(patches))
+    }
+
     /// Bind compiler-owned Body IR and frontend path crates to one byte-equivalent SDK language definition.
     ///
     /// Exact source bytes are retained; only workspace inheritance and compiler-owned path edges are projected.
@@ -52,6 +93,11 @@ fn compiler_projection_root(path: &Path) -> io::Result<bool> {
         "loaves/compiler/incan_format",
         "loaves/compiler/incan_semantics_stdlib",
         "loaves/compiler/rust_inspect",
+        "loaves/compiler/incan_driver",
+        "loaves/compiler/incan_emit",
+        "loaves/compiler/incan_ir",
+        "loaves/compiler/incan_provider",
+        "loaves/compiler/incan_oven_facet",
     ]
     .iter()
     .filter_map(|relative| fs::canonicalize(development.join(relative)).ok())
@@ -86,7 +132,7 @@ fn project_compiler_library(
         .ok_or_else(|| io::Error::other("compiler manifest must be a table"))?;
     table.insert("workspace".into(), toml::Value::Table(toml::Table::new()));
     table.remove("dev-dependencies");
-    let result = materialize_projection(&manifest, sources)?;
+    let result = materialize_projection(&root, &manifest, sources)?;
     visiting.remove(&root);
     projected.insert(root, result.clone());
     Ok(result)
@@ -155,7 +201,14 @@ fn verify_language_source(original: &Path, selected: &Path) -> io::Result<()> {
 fn validate_projection_locations(sources: &[(String, Vec<u8>)]) -> io::Result<()> {
     for (name, bytes) in sources {
         let test = name.contains("/tests/") || name.starts_with("tests/") || name.ends_with("_tests.rs");
-        if !test && String::from_utf8_lossy(bytes).contains("CARGO_MANIFEST_DIR") {
+        if !test
+            && name.ends_with(".rs")
+            && reads_manifest_directory(
+                String::from_utf8_lossy(bytes)
+                    .parse()
+                    .map_err(|error| io::Error::other(format!("cannot tokenize compiler source {name}: {error}")))?,
+            )
+        {
             return Err(io::Error::other(format!(
                 "compiler source projection refuses manifest-relative source {name}"
             )));
@@ -164,10 +217,77 @@ fn validate_projection_locations(sources: &[(String, Vec<u8>)]) -> io::Result<()
     Ok(())
 }
 
-/// Publish content-addressed source bytes under a lock shared by provider and host Cargo graphs.
-fn materialize_projection(manifest: &toml::Value, sources: Vec<(String, Vec<u8>)>) -> io::Result<std::path::PathBuf> {
+/// Detect compile-time manifest-root reads while permitting subprocess environment sanitization and assignment.
+/// Only `env!` and `option_env!` capture the projected package's location; naming a child's environment key does not.
+fn reads_manifest_directory(source: proc_macro2::TokenStream) -> bool {
+    use proc_macro2::TokenTree;
+    let mut tokens = source.into_iter().peekable();
+    while let Some(token) = tokens.next() {
+        match token {
+            TokenTree::Ident(name) if name == "env" || name == "option_env" => {
+                if matches!(tokens.peek(), Some(TokenTree::Punct(punctuation)) if punctuation.as_char() == '!') {
+                    tokens.next();
+                    if let Some(TokenTree::Group(arguments)) = tokens.next() {
+                        let key: String = arguments
+                            .stream()
+                            .to_string()
+                            .chars()
+                            .filter(|character| character.is_alphanumeric() || *character == '_')
+                            .collect();
+                        if key.contains("CARGO_MANIFEST_DIR") {
+                            return true;
+                        }
+                    }
+                }
+            }
+            TokenTree::Group(group) if reads_manifest_directory(group.stream()) => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Return the directory content-addressed compiler-source projections live under.
+///
+/// Cargo identifies a path dependency by its location, so a projection keeps one path across builds or Cargo rebuilds
+/// the whole compiler closure every time: below `INCAN_HOME` (else `~/.incan`), never a per-process temporary
+/// directory. The temporary directory remains only for an environment with neither home.
+fn projection_cache_root() -> std::path::PathBuf {
+    std::env::var_os("INCAN_HOME")
+        .filter(|path| !path.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            crate::oven_store::user_home()
+                .filter(|path| !path.is_empty())
+                .map(|path| std::path::PathBuf::from(path).join(".incan"))
+        })
+        .map(|root| root.join("cache").join("body-ir-source"))
+        .unwrap_or_else(|| std::env::temp_dir().join("incan-body-ir-source"))
+}
+
+/// Publish exact compiler sources and included resources in their repository-relative layout under a shared lock.
+/// The package retains its original depth so frozen repository-relative includes resolve inside the snapshot; manifests
+/// and resource bytes contribute to the content identity.
+fn materialize_projection(
+    root: &Path,
+    manifest: &toml::Value,
+    sources: Vec<(String, Vec<u8>)>,
+) -> io::Result<std::path::PathBuf> {
+    let development = fs::canonicalize(development_root())?;
+    let relative_root = root.strip_prefix(&development).map_err(io::Error::other)?;
+    // The frozen emitter includes this repository-relative resource. Preserve its path and exact bytes alongside
+    // the source instead of rewriting the include or allowing it to escape the content-addressed snapshot.
+    let resources = if relative_root == Path::new("loaves/compiler/incan_emit") {
+        vec![(
+            "loaves/stdlib/zen.txt",
+            fs::read(development.join("loaves/stdlib/zen.txt"))?,
+        )]
+    } else {
+        Vec::new()
+    };
     let rendered = toml::to_string(&manifest).map_err(io::Error::other)?;
     let mut digest = Sha256::new();
+    digest.update(relative_root.to_string_lossy().as_bytes());
     digest.update(rendered.as_bytes());
     for (name, bytes) in &sources {
         digest.update(name.as_bytes());
@@ -175,9 +295,13 @@ fn materialize_projection(manifest: &toml::Value, sources: Vec<(String, Vec<u8>)
         digest.update(bytes.len().to_le_bytes());
         digest.update(bytes);
     }
-    let shadow = std::env::temp_dir()
-        .join("incan-body-ir-source")
-        .join(hex::encode(digest.finalize()));
+    for (name, bytes) in &resources {
+        digest.update(name.as_bytes());
+        digest.update([0]);
+        digest.update(bytes.len().to_le_bytes());
+        digest.update(bytes);
+    }
+    let shadow = projection_cache_root().join(hex::encode(digest.finalize()));
     fs::create_dir_all(&shadow)?;
     let lock = fs::OpenOptions::new()
         .create(true)
@@ -186,9 +310,17 @@ fn materialize_projection(manifest: &toml::Value, sources: Vec<(String, Vec<u8>)
         .truncate(false)
         .open(shadow.join(".projection.lock"))?;
     lock.lock()?;
-    fs::create_dir_all(shadow.join("src"))?;
+    for (name, bytes) in resources {
+        let destination = shadow.join(name);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(destination, bytes)?;
+    }
+    let package = shadow.join(relative_root);
+    fs::create_dir_all(package.join("src"))?;
     for (name, bytes) in sources {
-        let destination = shadow.join("src").join(name);
+        let destination = package.join("src").join(name);
         if let Some(parent) = destination.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -196,11 +328,11 @@ fn materialize_projection(manifest: &toml::Value, sources: Vec<(String, Vec<u8>)
             fs::write(destination, bytes)?;
         }
     }
-    let manifest_path = shadow.join("Cargo.toml");
+    let manifest_path = package.join("Cargo.toml");
     if fs::read_to_string(&manifest_path).ok().as_deref() != Some(rendered.as_str()) {
         fs::write(manifest_path, rendered)?;
     }
-    Ok(shadow)
+    Ok(package)
 }
 
 /// Resolve selected workspace fields for one manifest using the native path planner's identical projection.
@@ -233,4 +365,61 @@ fn source_records(root: &Path) -> io::Result<Vec<(String, Vec<u8>)>> {
     let mut records = Vec::new();
     collect(root, root, &mut records)?;
     Ok(records)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_projection_locations;
+
+    /// A compiler host inherits the CLI's registry patch; ordinary user projects retain their own resolution.
+    #[test]
+    fn compiler_host_preserves_the_cli_registry_patch() -> Result<(), Box<dyn std::error::Error>> {
+        use super::{DependencySource, DependencySpec, ProjectGenerator, development_root};
+        let temporary = tempfile::tempdir()?;
+        let mut generator = ProjectGenerator::new(temporary.path(), "host", true);
+        assert!(generator.compiler_closure_patches()?.is_none());
+        generator.set_dependencies(vec![DependencySpec {
+            crate_name: "incan_driver".into(),
+            version: None,
+            features: vec!["rust_inspect".into()],
+            default_features: false,
+            source: DependencySource::Path {
+                path: development_root().join("loaves/compiler/incan_driver"),
+            },
+            optional: false,
+            package: None,
+        }]);
+        let patches = generator
+            .compiler_closure_patches()?
+            .ok_or("missing compiler host patches")?;
+        let path = patches
+            .get("crates-io")
+            .and_then(|registry| registry.get("ra_ap_proc_macro_api"))
+            .and_then(|package| package.get("path"))
+            .and_then(toml::Value::as_str)
+            .ok_or("missing checked-in proc-macro API patch")?;
+        assert_eq!(
+            std::fs::canonicalize(path)?,
+            std::fs::canonicalize(development_root().join("loaves/third_party/ra_ap_proc_macro_api"))?
+        );
+        Ok(())
+    }
+
+    /// Moving a package must reject actual manifest-root captures, including concatenated environment keys.
+    #[test]
+    fn projection_refuses_manifest_root_captures() {
+        for source in [
+            "fn root() { env!(\"CARGO_MANIFEST_DIR\"); }",
+            "fn root() { option_env!(concat!(\"CARGO\", \"_MANIFEST_DIR\")); }",
+        ] {
+            assert!(validate_projection_locations(&[("lib.rs".into(), source.as_bytes().to_vec())]).is_err());
+        }
+    }
+
+    /// A child environment key is not a compile-time source-location dependency.
+    #[test]
+    fn projection_preserves_child_environment_controls() -> Result<(), Box<dyn std::error::Error>> {
+        validate_projection_locations(&[("lib.rs".into(), b"fn clean(command: &mut Command) { command.env_remove(\"CARGO_MANIFEST_DIR\"); command.env(\"CARGO_MANIFEST_DIR\", selected); }".to_vec())])?;
+        Ok(())
+    }
 }

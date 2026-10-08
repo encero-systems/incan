@@ -5,6 +5,23 @@ use super::refusals::*;
 use super::*;
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
+    /// Retain the checker's constant tuple index, including negative literals, before flattening ordinary expressions.
+    /// Non-tuple indexing keeps its existing evaluation and ownership behavior.
+    fn lower_checked_index_operand(
+        &mut self,
+        base: &ast::Spanned<ast::Expr>,
+        index: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        if tuple_type_elements(&self.resolve_ty(base.span)).is_some()
+            && let Some(value) = crate::typechecker::TypeChecker::constant_tuple_index(index)
+        {
+            return bir::Operand::Constant(bir::Constant::Int(value));
+        }
+        self.lower_expr_to_operand(index, scope, out)
+    }
+
     /// Classify source-written tuple projections from the checked base type, preserving nominal field authority.
     ///
     /// Numeric spelling alone proves nothing: only an in-bounds element of the existing checked tuple shape is
@@ -16,6 +33,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         span: ast::Span,
     ) -> bir::PlaceElem {
         let ty = self.resolve_ty(base.span);
+        if name == "0"
+            && let IncanType::Named(owner) = &ty
+            && let Some(declaration) = self.local_nominal_declarations.values().find(|declaration| {
+                declaration.name == *owner && declaration.canonical.kind == SemanticSourceTargetKind::Newtype
+            })
+        {
+            return bir::PlaceElem::field(name, Some(declaration.canonical.clone()));
+        }
         if tuple_type_elements(&ty)
             .is_some_and(|elements| name.parse::<usize>().is_ok_and(|index| index < elements.len()))
         {
@@ -62,6 +87,36 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         out,
                     );
                 };
+                // Retain the checker's evaluated scalar or text for a source-local constant. Identity must prove the
+                // module and declaration kind before the name-keyed const-evaluation table is consulted;
+                // imported globals and same-spelled locals keep their existing place representation.
+                if let Some(global) = place.global()
+                    && global.identity.kind == SemanticSourceTargetKind::Const
+                    && incan_semantics_core::canonical_module_identity(&global.identity).as_deref()
+                        == Some(self.module_identity)
+                    && let Some(value) = self.type_info.const_value(&global.identity.declaration_name)
+                {
+                    use crate::typechecker::ConstValue;
+                    let constant = match value {
+                        ConstValue::Int(number) if ty == IncanType::Primitive(IncanPrimitiveType::Int) => {
+                            bir::Constant::Int(*number)
+                        }
+                        ConstValue::Int(number) if ty == IncanType::Primitive(IncanPrimitiveType::Float) => {
+                            // Preserve the evaluated signed decimal value; the admitted float carrier parses it once.
+                            bir::Constant::Float(number.to_string())
+                        }
+                        ConstValue::Float(number) if ty == IncanType::Primitive(IncanPrimitiveType::Float) => {
+                            bir::Constant::Float(number.to_string())
+                        }
+                        ConstValue::Bool(flag) => bir::Constant::Bool(*flag),
+                        ConstValue::FrozenStr(text) => bir::Constant::Str(text.clone()),
+                        _ => {
+                            let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
+                            return bir::Operand::place(place, fact, last_use);
+                        }
+                    };
+                    return bir::Operand::Constant(constant);
+                }
                 let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
                 bir::Operand::place(place, fact, last_use)
             }
@@ -126,7 +181,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 bir::Operand::place(place, fact, last_use)
             }
             ast::Expr::Index(base, index) => {
-                let index_operand = self.lower_expr_to_operand(index, scope, out);
+                let index_operand = self.lower_checked_index_operand(base, index, scope, out);
                 let mut place = self.lower_expr_to_place(base, scope, out);
                 place.projection.push(bir::PlaceElem::Index(Box::new(index_operand)));
                 let ty = self.resolve_ty(expr.span);
@@ -235,7 +290,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 place
             }
             ast::Expr::Index(base, index) => {
-                let index_operand = self.lower_expr_to_operand(index, scope, out);
+                let index_operand = self.lower_checked_index_operand(base, index, scope, out);
                 let mut place = self.lower_expr_to_place(base, scope, out);
                 place.projection.push(bir::PlaceElem::Index(Box::new(index_operand)));
                 place

@@ -9,6 +9,36 @@ use crate::error::{CliError, CliResult};
 use incan_provider::{SdkInventory, SdkSourceCatalog};
 use oven_rustc::sdk_closure::SdkCompiledClosure;
 
+/// Bind a caller's source receipt to the prepared native SDK and select its declared direct dependency aliases.
+///
+/// This explicit compiler-tooling boundary consumes the already published SDK; it never resolves dependencies or
+/// invokes Cargo. The canonical native receipt catalog enters the returned receipt's build-unit identity, so an
+/// SDK change cannot reuse a stale plan. Every requested local or adopted binding must match the selected SDK's
+/// source, version, features and domain, and the returned plan retains its output leases through compilation.
+pub fn select_prepared_native_sdk_plan(
+    store: &oven_store::store::OvenStore,
+    source_receipt: &oven_store::OvenReceipt,
+    dependencies: &[oven_model::manifest::DependencySpec],
+) -> CliResult<(oven_store::OvenReceipt, oven_rustc::plan::OvenDirectRustcPlanSelection)> {
+    let inventory = incan_provider::inventory::discover_or_reuse_published_sdk_inventory()?
+        .ok_or_else(|| CliError::failure("compiler tooling requires a prepared native SDK"))?;
+    let catalog = std::fs::read(inventory.root.join(".sealed-native-receipts.json"))
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let receipt = bind_native_catalog(source_receipt, &catalog)?;
+    let selection = super::native_sdk_plan::select_native_sdk_plan(store, &receipt, dependencies)?
+        .ok_or_else(|| CliError::failure("prepared SDK has no native dependency plan"))?;
+    Ok((receipt, selection.plan_selection))
+}
+
+/// Canonicalize the catalog before receipt binding so JSON ordering never selects a different native closure.
+fn bind_native_catalog(source_receipt: &oven_store::OvenReceipt, bytes: &[u8]) -> CliResult<oven_store::OvenReceipt> {
+    let catalog: std::collections::BTreeMap<String, String> =
+        serde_json::from_slice(bytes).map_err(|error| CliError::failure(error.to_string()))?;
+    let bytes = serde_json::to_vec(&catalog).map_err(|error| CliError::failure(error.to_string()))?;
+    oven_store::receipt_with_build_unit_input(source_receipt, "sdk-native-closure", oven_store::digest_bytes(&bytes))
+        .map_err(|error| CliError::failure(error.to_string()))
+}
+
 /// Explicit context for one checked SDK component; the publisher owns the closure through durable publication.
 pub(crate) struct NativeSdkPublicationContext<'a> {
     /// Already checked providers, with remaining components recorded as unavailable.
@@ -19,6 +49,8 @@ pub(crate) struct NativeSdkPublicationContext<'a> {
     pub closure: &'a SdkCompiledClosure,
     /// Exact crate names already supplied by native units, excluded from public Incan package edges.
     pub native_facets: BTreeSet<String>,
+    /// Component-owned dependency requirements disambiguate versions in the full compiler closure.
+    pub dependencies: std::collections::HashMap<String, oven_model::manifest::DependencySpec>,
 }
 
 impl NativeSdkPublicationContext<'_> {
@@ -109,6 +141,11 @@ fn publish_component(
         .find(|component| component.project_root == project)
         .ok_or_else(|| CliError::failure("native publisher received an unknown SDK component"))?;
     let context = NativeSdkPublicationContext {
+        dependencies: oven_model::manifest::ProjectManifest::discover(project)
+            .map_err(|error| CliError::failure(error.to_string()))?
+            .ok_or_else(|| CliError::failure("SDK component has no manifest"))?
+            .rust_dependencies()
+            .clone(),
         inventory,
         namespace_roots: component.namespace_roots.clone(),
         closure,
@@ -284,7 +321,14 @@ fn compile_native_sdk_facade(
             .and_then(|name| name.to_str())
             .and_then(|name| name.strip_prefix("lib"))
             .ok_or_else(|| CliError::failure("native facade input has no crate name"))?;
-        if generated_sources.contains(&format!("{name}::"))
+        let matches_component = context
+            .dependencies
+            .get(name)
+            .map(|dependency| native_facade_binding_matches(dependency, unit.binding()))
+            .transpose()?
+            .unwrap_or(true);
+        if matches_component
+            && generated_sources.contains(&format!("{name}::"))
             && (unit.binding().domain == "target" || path.extension().is_some_and(|extension| extension == "dylib"))
             && externs.insert(name.to_string(), path.to_path_buf()).is_some()
         {
@@ -342,6 +386,32 @@ fn compile_native_sdk_facade(
     })
 }
 
+/// Match a facade's direct registry requirement without selecting another version from the compiler closure.
+fn native_facade_binding_matches(
+    dependency: &oven_model::manifest::DependencySpec,
+    binding: &oven_rustc::sdk_closure::SdkLockedUnit,
+) -> CliResult<bool> {
+    if !matches!(dependency.source, oven_model::manifest::DependencySource::Registry) {
+        return Ok(true);
+    }
+    let package = dependency.package.as_deref().unwrap_or(&dependency.crate_name);
+    if binding.loaf != format!("crates-io/{package}") {
+        return Ok(false);
+    }
+    let version = semver::Version::parse(&binding.version).map_err(|error| CliError::failure(error.to_string()))?;
+    let requirement = dependency
+        .version
+        .as_deref()
+        .map(semver::VersionReq::parse)
+        .transpose()
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    Ok(requirement.is_none_or(|requirement| requirement.matches(&version))
+        && dependency
+            .features
+            .iter()
+            .all(|feature| binding.features.contains(feature)))
+}
+
 /// Read only generated Rust sources to select the facade's explicit external crate names.
 fn native_facade_source_text(root: &Path) -> CliResult<String> {
     let mut text = String::new();
@@ -355,4 +425,69 @@ fn native_facade_source_text(root: &Path) -> CliResult<String> {
         }
     }
     Ok(text)
+}
+
+#[cfg(test)]
+mod tests {
+    /// A reordered SDK catalog reuses its plan identity, while changed native units invalidate that identity.
+    #[test]
+    fn native_catalog_binding_is_canonical_and_source_sensitive() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("root.rs");
+        std::fs::write(&source, "fn main() {}")?;
+        let source_receipt = oven_store::receipt_generated_project(
+            &oven_store::OvenGeneratedProjectRequest::new(
+                root.path(),
+                "fixture",
+                "0.1.0",
+                "aarch64-apple-darwin",
+                "rustc fixture",
+                "debug",
+                Vec::new(),
+            )
+            .with_generated_source("test-root", source),
+        )?;
+        let first = super::bind_native_catalog(&source_receipt, br#"{"b":"unit-b","a":"unit-a"}"#)?;
+        let reordered = super::bind_native_catalog(&source_receipt, br#"{"a":"unit-a","b":"unit-b"}"#)?;
+        let changed = super::bind_native_catalog(&source_receipt, br#"{"a":"unit-a-changed","b":"unit-b"}"#)?;
+        assert_eq!(first.identity, reordered.identity);
+        assert_ne!(first.build_unit_identity, changed.build_unit_identity);
+        first.verify_identity()?;
+        changed.verify_identity()?;
+        Ok(())
+    }
+
+    /// A compiler companion's older rustix must not compete with the SDK component's declared major version.
+    #[test]
+    fn native_facade_selects_component_dependency_version() -> Result<(), Box<dyn std::error::Error>> {
+        let mut dependency = oven_model::manifest::DependencySpec {
+            crate_name: "rustix".into(),
+            version: Some("1.1".into()),
+            features: vec!["fs".into()],
+            default_features: true,
+            source: oven_model::manifest::DependencySource::Registry,
+            optional: false,
+            package: None,
+        };
+        let mut binding = oven_rustc::sdk_closure::SdkLockedUnit {
+            loaf: "crates-io/rustix".into(),
+            version: "0.38.44".into(),
+            archive_digest: "test".into(),
+            domain: "target".into(),
+            features: vec!["fs".into()],
+            target_predicates: Vec::new(),
+            edges: None,
+        };
+        assert!(!super::native_facade_binding_matches(&dependency, &binding)?);
+        binding.version = "1.1.5".into();
+        assert!(super::native_facade_binding_matches(&dependency, &binding)?);
+        binding.features.clear();
+        assert!(!super::native_facade_binding_matches(&dependency, &binding)?);
+        dependency.source = oven_model::manifest::DependencySource::Path {
+            path: "/sdk/core".into(),
+        };
+        binding.loaf = "incan_std_core".into();
+        assert!(super::native_facade_binding_matches(&dependency, &binding)?);
+        Ok(())
+    }
 }
