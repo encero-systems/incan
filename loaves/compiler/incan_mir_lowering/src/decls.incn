@@ -25,7 +25,11 @@ pub def static_accessors(ty: PlanType) -> Result[tuple[str, str], str]:
         _ => return Err("unsupported Body IR static carrier")
 
 
-pub def lower_model_declarations(module: &BodyIrModule, file: str) -> Result[list[ModelDeclaration], str]:
+pub def lower_model_declarations(
+    module: &BodyIrModule,
+    file: str,
+    intrinsics: list[EnumDeclaration],
+) -> Result[list[ModelDeclaration], str]:
     """Retain checked field layout and derives for admitted plain model, class, and newtype declarations."""
     unions = collect_unions(module)
     mut models: list[ModelDeclaration] = []
@@ -42,7 +46,7 @@ pub def lower_model_declarations(module: &BodyIrModule, file: str) -> Result[lis
                         module.enum_declarations,
                         unions,
                         declaration.field_types[slot],
-                        [],
+                        intrinsics,
                     )?,
                     span=SourceSpan(file=file, line=1, column=1),
                 ),

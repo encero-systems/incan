@@ -12,7 +12,7 @@ from rust::incan_semantics_core::body_ir import (
     OwnershipFact,
 )
 from pub::incan_mir_plan import EnumDeclaration, EnumVariant, PlanType, SourceSpan
-from models import model_type as plain_model_type
+from models import model_type as plain_model_type, carrier_type
 
 
 pub def enum_type(declarations: list[RustEnumDeclaration], ty: &RustType) -> Option[PlanType]:
@@ -132,9 +132,9 @@ pub def native_source_type(
     intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """Resolve retained standard carriers and source enums before delegating the existing scalar/model boundary."""
-    for index in range(len(intrinsics)):
-        if intrinsics[index].source_type == str(ty):
-            return Ok(PlanType.Enum(len(declarations) + index, intrinsics[index].name))
+    match carrier_type(intrinsics, len(declarations), ty):
+        Some(carrier) => return Ok(carrier)
+        None => pass
     match enum_type(declarations, ty):
         Some(result) => return Ok(result)
         None => return plain_model_type(nominals, ty)

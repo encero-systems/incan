@@ -10,7 +10,7 @@ from rust::incan_semantics_core::body_ir import (
     Place as RustPlace,
     PlaceElem as RustPlaceElem,
 )
-from pub::incan_mir_plan import ListLeaf, PlanType, Local, Place, Projection, SourceSpan
+from pub::incan_mir_plan import EnumDeclaration, ListLeaf, PlanType, Local, Place, Projection, SourceSpan
 from numerics import numeric_type
 from tuples import tuple_type, generic_tuple_type, type_name, tuple_slot
 from pub::incan_mir_plan import tuple_element_type
@@ -60,13 +60,45 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
         _ => return Err(f"unsupported Body IR type {type_name(ty)}")
 
 
+pub def carrier_type(carriers: list[EnumDeclaration], carrier_offset: int, ty: &RustType) -> Option[PlanType]:
+    """Resolve a retained standard carrier by its checked source type; carrier owners follow the source enums."""
+    for index in range(len(carriers)):
+        if carriers[index].source_type == str(ty):
+            return Some(PlanType.Enum(carrier_offset + index, carriers[index].name))
+    return None
+
+
+def field_type(
+    declarations: list[NominalDeclaration],
+    carriers: list[EnumDeclaration],
+    carrier_offset: int,
+    ty: &RustType,
+) -> Result[PlanType, str]:
+    """Admit a retained carrier field before the scalar, collection, and model layout boundary."""
+    match carrier_type(carriers, carrier_offset, ty):
+        Some(carrier) => return Ok(carrier)
+        None => return model_type(declarations, ty)
+
+
 pub def model_place(
     declarations: list[NominalDeclaration],
     locals: list[Local],
     value: &RustPlace,
     span: SourceSpan,
 ) -> Result[Place, str]:
-    """Require the checker-selected field identity before selecting its canonical layout slot."""
+    """Resolve a checked place for callers whose field reads never need a retained standard carrier."""
+    return carrier_model_place(declarations, [], 0, locals, value, span)
+
+
+pub def carrier_model_place(
+    declarations: list[NominalDeclaration],
+    carriers: list[EnumDeclaration],
+    carrier_offset: int,
+    locals: list[Local],
+    value: &RustPlace,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Require the checker-selected field identity before selecting its slot; carrier fields use the retained carriers."""
     match value.local_id():
         Some(local) =>
             index = int(local.index()) + 1
@@ -77,7 +109,7 @@ pub def model_place(
                         return Ok(
                             Place(local=index, projection=Projection.Deref(PlanType.Model(owner_index, name)), span=span),
                         )
-                    return receiver_field(declarations, index, owner_index, value, span)
+                    return receiver_field(declarations, carriers, carrier_offset, index, owner_index, value, span)
                 None => pass
             if len(value.projection) == 0:
                 return Ok(Place(local=index, projection=Projection.Whole, span=span))
@@ -87,7 +119,7 @@ pub def model_place(
                 PlanType.Model(owner, _name) =>
                     declaration = declarations[owner]
                     slot = field_slot(value.projection[0], declaration)?
-                    ty = model_type(declarations, declaration.field_types[slot])?
+                    ty = field_type(declarations, carriers, carrier_offset, declaration.field_types[slot])?
                     return Ok(Place(local=index, projection=Projection.Field(slot, ty), span=span))
                 PlanType.Tuple(elements) =>
                     slot = tuple_slot(value.projection[0], len(elements))?
@@ -166,6 +198,8 @@ def validate_constructor_binding(binding: &ArgumentBinding, count: int, fields: 
 
 def receiver_field(
     declarations: list[NominalDeclaration],
+    carriers: list[EnumDeclaration],
+    carrier_offset: int,
     index: int,
     owner: int,
     value: &RustPlace,
@@ -176,7 +210,7 @@ def receiver_field(
         return Err("unsupported Body IR nested receiver projection")
     declaration = declarations[owner]
     slot = field_slot(value.projection[0], declaration)?
-    ty = model_type(declarations, declaration.field_types[slot])?
+    ty = field_type(declarations, carriers, carrier_offset, declaration.field_types[slot])?
     return Ok(Place(local=index, projection=Projection.DerefField(slot, ty), span=span))
 
 

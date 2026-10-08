@@ -7,7 +7,7 @@ from rust::incan_semantics_core::body_ir import (
     CallableParamDefault,
     Operand as RustOperand,
 )
-from pub::incan_mir_plan import Operand, OperandKind, Constant, PlanType, SourceSpan, Local
+from pub::incan_mir_plan import Operand, OperandKind, Constant, EnumDeclaration, PlanType, SourceSpan, Local
 from unions import native_source_type
 from frame import literal
 from lowering import BodyIrModule, call_argument_operand, lower_statement
@@ -83,7 +83,7 @@ pub def evaluate_default(
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """Isolate default-local identities from caller locals and drop temporary owners after extracting the result."""
-    _ = default_type(ty)?
+    _ = default_type(ty, builder.intrinsics, len(builder.enums))?
     match body.params[index].default:
         CallableParamDefault.Source(computation) =>
             incoming = builder.owned
@@ -125,11 +125,20 @@ pub def evaluate_default(
         _ => return Err("unsupported Body IR unavailable defaulted parameter")
 
 
-pub def default_type(ty: PlanType) -> Result[None, str]:
-    """Admit only the scalar and string default representations covered by this lane."""
+pub def default_type(ty: PlanType, carriers: list[EnumDeclaration], carrier_offset: int) -> Result[None, str]:
+    """
+    Admit the scalar, string, and retained standard-carrier default representations.
+
+    A carrier slot follows the source enums, so its index and injected name must both match a retained carrier.
+    """
     match ty:
         PlanType.Int => return Ok(None)
         PlanType.Float => return Ok(None)
         PlanType.Bool => return Ok(None)
         PlanType.String => return Ok(None)
+        PlanType.Enum(index, name) =>
+            carrier = index - carrier_offset
+            if carrier >= 0 and carrier < len(carriers) and carriers[carrier].name == name:
+                return Ok(None)
+            return Err("unsupported Body IR defaulted parameter type")
         _ => return Err("unsupported Body IR defaulted parameter type")

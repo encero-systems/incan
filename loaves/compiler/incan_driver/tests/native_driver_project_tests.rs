@@ -455,6 +455,8 @@ fn check_source_pipeline(
 
 #[path = "native_driver_project_tests/census.rs"]
 mod census;
+#[path = "native_driver_project_tests/stdlib.rs"]
+mod stdlib;
 
 /// Imported aliases and module-qualified scalar calls preserve canonical binding and legacy output; async vocabulary
 /// reaches lowering.
