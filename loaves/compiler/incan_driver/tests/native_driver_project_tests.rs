@@ -52,6 +52,12 @@ fn bake(project: &Path, home: &Path) -> Result<(), Box<dyn std::error::Error>> {
         .env("RUSTC_BOOTSTRAP", "ambient-unit")
         .output()?;
     success(&output, &format!("Oven bake {}", project.display()));
+    eprintln!(
+        "Oven bake {}\n{}\n{}",
+        project.display(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     Ok(())
 }
 
