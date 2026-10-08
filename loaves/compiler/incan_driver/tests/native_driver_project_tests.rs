@@ -2479,6 +2479,127 @@ def main() -> None:
     )
 }
 
+/// A default of a trait with type parameters runs at each adopter's checked instantiation, including one a subtrait
+/// passes on to its supertrait, with the parameter in a local, a parameter, a return type and a list.
+///
+/// A default whose operator the checker chose while its operands were still a type parameter refuses by name at a
+/// text instantiation, where the operation would need a helper the checker never selected.
+#[test]
+fn direct_route_trait_type_parameters_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "trait_type_parameters",
+        r#"
+trait Holder[T]:
+    def get(self) -> T: ...
+
+    def first(self) -> T:
+        """Return the type parameter through a typed local."""
+        value: T = self.get()
+        return value
+
+    def pair(self) -> list[T]:
+        """Collect the type parameter inside a list."""
+        return [self.get(), self.get()]
+
+
+trait Matches[T] with Holder[T]:
+    def same(self, other: T) -> bool:
+        """Compare the supertrait slot's result with an argument of the type parameter."""
+        return self.get() == other
+
+
+trait Keyed[K] with Holder[K]:
+    def key(self) -> K:
+        """Reach the supertrait default at the instantiation this subtrait passes on."""
+        return self.first()
+
+
+model Box with Matches[int]:
+    value: int
+
+    def get(self) -> int:
+        """Implement the supertrait slot at the subtrait's instantiation."""
+        return self.value
+
+
+class Name with Keyed[str]:
+    text: str
+
+    def get(self) -> str:
+        """Implement the supertrait slot at the subtrait's instantiation."""
+        return self.text
+
+
+def main() -> None:
+    """Instantiate each default for its adopter."""
+    box = Box(value=4)
+    println(box.first())
+    println(box.same(4))
+    println(box.same(5))
+    items = box.pair()
+    println(len(items))
+    println(items[0] + items[1])
+    name = Name(text="incan")
+    println(name.key())
+    names = name.pair()
+    println(names[1])
+"#,
+        b"4\ntrue\nfalse\n2\n8\nincan\nincan\n",
+    )?;
+    check_project_refusal(
+        "trait_text_comparison",
+        r#"
+trait Matches[T]:
+    def get(self) -> T: ...
+
+    def same(self, other: T) -> bool:
+        """Compare the slot's result with an argument of the type parameter."""
+        return self.get() == other
+
+
+class Name with Matches[str]:
+    text: str
+
+    def get(self) -> str:
+        """Implement the slot at the adopted instantiation."""
+        return self.text
+
+
+def main() -> None:
+    """Compare text through a default whose operator was chosen while its operands were open."""
+    println(Name(text="incan").same("incan"))
+"#,
+        "unsupported Body IR binary operator on nonscalar operands",
+    )
+}
+
+/// Compile a single-module program in the minimal project layout and require the native route to refuse it by name.
+fn check_project_refusal(name: &str, text: &str, reason: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch(name)?;
+    let main = support::cli_project::write_minimal_project(&root, name, "")?;
+    fs::write(&main, text)?;
+    let native = root.join("native");
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let mut command = corpus::source_command(
+        &fixture.driver_binary("release"),
+        &main,
+        &native,
+        &fixture.sysroot,
+        &closure,
+    );
+    command.current_dir(&root);
+    let refused = command.output()?;
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains(reason),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(!native.exists());
+    Ok(())
+}
+
 /// Compare a single-module program in the minimal project layout behavior fixtures run in, pinning its output.
 ///
 /// The fixture harness runs a single-file program as `src/main.incn` of a minimal project through `incan run`, and

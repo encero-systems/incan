@@ -68,6 +68,7 @@ enum Scalar {
     CheckedNumeric(Numeric),
     Bool,
     Unit,
+    Decimal,
     EnumTag,
     Enum(i64),
     EnumRef(i64),
@@ -114,6 +115,7 @@ enum Leaf {
     Model(i64),
     U8,
     Unit,
+    Decimal,
 }
 
 impl Leaf {
@@ -128,6 +130,7 @@ impl Leaf {
             ListLeaf::Model(index, _) => Leaf::Model(*index),
             ListLeaf::U8 => Leaf::U8,
             ListLeaf::Unit => Leaf::Unit,
+            ListLeaf::Decimal => Leaf::Decimal,
         }
     }
 }
@@ -187,6 +190,7 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::USize => Scalar::USize,
         PlanType::Bool => Scalar::Bool,
         PlanType::Unit => Scalar::Unit,
+        PlanType::Decimal => Scalar::Decimal,
         PlanType::CheckedInt => Scalar::CheckedInt,
         PlanType::String => Scalar::String,
         PlanType::StringRef => Scalar::StringRef,

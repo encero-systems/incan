@@ -1,6 +1,6 @@
 """Concrete source-trait specialization and checker-selected static dispatch."""
 
-from rust::incan_semantics_core import IncanType as RustType
+from rust::incan_semantics_core import IncanType as RustType, generic
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
     Body,
@@ -65,21 +65,43 @@ def specialize_body(body: &Body, owner: str, arguments: list[TraitTypeArgument])
         result.params[index].ty = parameter_type
     return_type: RustType = instantiate_type(result.return_type, concrete, arguments)
     result.return_type = return_type
+    # A frame whose every type parameter the adoption binds is closed; any unbound one keeps it open, so its native
+    # lowering refuses rather than scheduling it as a callable instance.
+    if binds_type_parameters(result.type_parameters, arguments):
+        result.type_parameters.clear()
     return result
+
+
+def binds_type_parameters(names: list[str], arguments: list[TraitTypeArgument]) -> bool:
+    """Report whether the adoption's checked arguments bind every type parameter the default declares."""
+    for name in names:
+        mut bound = false
+        for argument in arguments:
+            if str(argument.parameter) == name:
+                bound = true
+        if not bound:
+            return false
+    return true
 
 
 def instantiate_type(ty: &RustType, concrete: &RustType, arguments: list[TraitTypeArgument]) -> RustType:
     """
     Close `Self` and the checker-recorded trait type arguments inside one checked type.
 
-    Tuples are rebuilt around their closed elements. A generic collection keeps any type parameter it mentions, because
-    Incan cannot yet construct the imported struct variant that names it (#2093); like every other type left open, its
-    later native type translation refuses instead of guessing a layout. Rebuilt elements append through an explicit
-    interop clone, because `List.append` cannot prove `Clone` for the opaque imported type.
+    Collections and tuples are rebuilt around their closed elements; any other type that mentions a type parameter keeps
+    it, so its later native type translation refuses instead of guessing a layout. Rebuilt elements append through an
+    explicit interop clone, because `List.append` cannot prove `Clone` for the opaque imported type.
     """
     match ty:
         RustType.SelfType => return concrete.clone()
         RustType.TypeVar(name) => return type_argument(ty, str(name), arguments)
+        RustType.Generic(base=base, args=elements) =>
+            mut closed: list[RustType] = []
+            for element in elements:
+                item: RustType = instantiate_type(element, concrete, arguments)
+                closed.append(item.clone())
+            # Incan cannot construct the imported struct variant itself (#2093); the interop helper goes with dev.8.
+            return generic(str(base), closed)
         RustType.Tuple(elements) =>
             mut closed: list[RustType] = []
             for element in elements:

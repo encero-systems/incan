@@ -91,6 +91,7 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
             rustc_middle::ty::Binder::dummy(tcx.mk_fn_sig_safe_rust_abi([], tcx.types.unit)),
         ),
         PlanType::CheckedInt => Ty::new_tup(tcx, &[tcx.types.i64, tcx.types.bool]),
+        PlanType::Decimal => decimal_type(tcx)?,
         PlanType::String => string_type(tcx)?,
         PlanType::StringRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, string_type(tcx)?),
         PlanType::StrRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, tcx.types.str_),
@@ -141,6 +142,26 @@ pub fn generator_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str, leaf: &ListLeaf, dept
         tcx.adt_def(definition),
         tcx.mk_args(&[element.into()]),
     ))
+}
+
+/// Resolve the standard library's exact decimal carrier, the type the native runtime's decimal helpers construct and
+/// compare, from dependency metadata rather than manufacturing an ADT layout.
+fn decimal_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
+    let mut definition = tcx
+        .crates(())
+        .iter()
+        .find(|krate| tcx.crate_name(**krate).as_str() == "incan_std_core")
+        .map(|krate| krate.as_def_id())
+        .ok_or_else(|| PlanError::UnknownCallee("incan_std_core".into()))?;
+    for segment in ["num", "Decimal128"] {
+        definition = tcx
+            .module_children(definition)
+            .iter()
+            .find(|child| child.ident.name.as_str() == segment && child.vis.is_public())
+            .and_then(|child| child.res.opt_def_id())
+            .ok_or_else(|| PlanError::UnknownCallee("incan_std_core::num::Decimal128".into()))?;
+    }
+    Ok(Ty::new_adt(tcx, tcx.adt_def(definition), tcx.mk_args(&[])))
 }
 
 /// Resolve the real standard String definition rather than manufacturing an ADT layout.
