@@ -302,6 +302,7 @@ pub(super) fn collect_local_nominal_declarations(
                     .collect(),
                 named_type_identities: type_info.declarations.named_type_identities.clone(),
                 type_parameter_count,
+                native_path: None,
             })
         })
         .collect()
@@ -351,6 +352,7 @@ fn collect_plain_newtype(
         derives,
         named_type_identities: type_info.declarations.named_type_identities.clone(),
         type_parameter_count: 0,
+        native_path: None,
     })
 }
 /// Retain exact source-local fieldless normal-enum declaration and unit-member facts in source order.

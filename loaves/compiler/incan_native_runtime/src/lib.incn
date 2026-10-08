@@ -36,7 +36,11 @@ pub from collections import (
 pub from builtins import power_i64, power_f64, power_f32
 pub from builtins import sum_int, sum_bool, truth_text, truth_list
 pub from builtins import absolute_int, truth_int, truth_float, truth_bool, boolean_and, boolean_or
+pub from builtins import min_int, max_int, min_float, max_float, min_bool, max_bool, min_text, max_text
+pub from builtins import write_text_file, read_text_file
 from rust::incan_std_core::iter import range as runtime_range
+# Direct plans call compiled standard-library items by crate path; re-exporting one links the system component.
+pub from std.environ import EnvironError
 pub from statics import (
     read_static_int,
     write_static_int,

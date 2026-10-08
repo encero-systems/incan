@@ -1,8 +1,21 @@
 """Admission of monomorphic scalar builtins by checked identity and representation."""
 
 from rust::incan_semantics_core::body_ir import BuiltinFnId
-from pub::incan_mir_plan import PlanType, Place, SourceSpan, Operand, ExternalFunction, CalleeKind
-from frame import Builder, terminate_call, external_call, value_type
+from pub::incan_mir_plan import PlanType, Place, SourceSpan, Operand, ExternalFunction, CalleeKind, ListLeaf
+from frame import (
+    Builder,
+    terminate_call,
+    external_call,
+    value_type,
+    temporary,
+    read_place,
+    drop_owned,
+    forget_owned,
+    place_type,
+)
+from options import carrier_layout
+from pub::incan_mir_plan import Projection, RvalueKind
+from pub::incan_mir_plan import assign as plan_assign
 from collections import is_owned_collection
 from tuples import tuple_has_owners
 
@@ -21,6 +34,58 @@ pub def scalar_builtin(builtin: &BuiltinFnId, ty: PlanType) -> Option[tuple[str,
                 _ => pass
         _ => pass
     return None
+
+
+pub def extremum_entry(builtin: &BuiltinFnId, leaf: ListLeaf) -> Result[tuple[str, PlanType], str]:
+    """Select the runtime wrapper whose legacy body reaches the same copied, cloned, or float min or max helper."""
+    mut operation = "min"
+    if builtin == BuiltinFnId.Max:
+        operation = "max"
+    match leaf:
+        ListLeaf.Int => return Ok((f"{operation}_int", PlanType.Int))
+        ListLeaf.Float => return Ok((f"{operation}_float", PlanType.Float))
+        ListLeaf.Bool => return Ok((f"{operation}_bool", PlanType.Bool))
+        ListLeaf.Str => return Ok((f"{operation}_text", PlanType.String))
+        _ => return Err(f"unsupported Body IR builtin {builtin:?} element")
+
+
+pub def file_builtin_entry(builtin: &BuiltinFnId) -> tuple[str, int, PlanType]:
+    """Name the runtime wrapper, text arity, and Ok payload of the checked read_file or write_file contract."""
+    if builtin == BuiltinFnId.WriteFile:
+        return ("write_text_file", 2, PlanType.Unit)
+    return ("read_text_file", 1, PlanType.String)
+
+
+pub def emit_file_builtin(
+    mut builder: Builder,
+    name: str,
+    payload: PlanType,
+    operands: list[Operand],
+    destination: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Require the checked Result[payload, str] carrier, then move the runtime's owned result into the destination."""
+    if destination.projection != Projection.Whole:
+        return Err("unsupported Body IR projected file builtin destination")
+    ty = place_type(builder.locals, destination)
+    _owner, declaration = carrier_layout(builder, ty)?
+    success = declaration.variants[0].fields
+    failure = declaration.variants[1].fields
+    if declaration.carrier != "Result" or success != [payload] or failure != [PlanType.String]:
+        return Err("unsupported Body IR file builtin result type")
+    mut parameters: list[PlanType] = []
+    for _operand in operands:
+        parameters.append(PlanType.StringRef)
+    path = f"incan_native_runtime::{name}"
+    builder.externals.append(ExternalFunction(path=path, parameters=parameters, return_type=ty, span=span))
+    result = temporary(builder, ty, span)
+    terminate_call(builder, CalleeKind.External(path), operands, result, span)
+    builder.owned.append(result.local)
+    drop_owned(builder, destination.local, span)
+    forget_owned(builder, result.local)
+    builder.emit(plan_assign(destination, RvalueKind.Use(read_place(result, true, span)), span))
+    builder.owned.append(destination.local)
+    return Ok(None)
 
 
 pub def list_call(

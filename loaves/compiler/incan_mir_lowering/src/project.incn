@@ -1,5 +1,6 @@
 """Shared declaration context for a project whose individual owning modules have been validated."""
 
+from rust::incan_semantics_core import CanonicalSymbolId
 from rust::incan_semantics_core::body_ir import BodyIrModule
 from traits import specialize_traits
 
@@ -19,6 +20,8 @@ pub def project_context(
     context.trait_implementations.clear()
     context.static_declarations.clear()
     context.stdlib_delegations.clear()
+    context.sdk_nominal_declarations.clear()
+    context.sdk_callables.clear()
     mut checked: list[BodyIrModule] = []
     for module in modules:
         specialized = specialize_traits(module)?
@@ -60,4 +63,35 @@ pub def project_context(
         for index in range(len(module.stdlib_delegations)):
             declaration = module.stdlib_delegations[index].clone()
             context.stdlib_delegations.push(declaration.clone())
+        for index in range(len(module.sdk_callables)):
+            callable = module.sdk_callables[index].clone()
+            if not retained_callable(context, callable.canonical):
+                context.sdk_callables.push(callable.clone())
+        for index in range(len(module.sdk_nominal_declarations)):
+            declaration = module.sdk_nominal_declarations[index].clone()
+            if not retained_sdk_nominal(context, declaration.canonical):
+                context.sdk_nominal_declarations.push(declaration.clone())
+    # Provider-crate nominals follow every source layout, so source model indices stay those of the source plan.
+    for index in range(len(context.sdk_nominal_declarations)):
+        declaration = context.sdk_nominal_declarations[index].clone()
+        for retained in range(len(context.nominal_declarations)):
+            if context.nominal_declarations[retained].name == declaration.name:
+                return Err(f"unsupported Body IR ambiguous project nominal carrier {declaration.name}")
+        context.nominal_declarations.push(declaration.clone())
     return Ok((context, checked))
+
+
+def retained_callable(context: &BodyIrModule, identity: &CanonicalSymbolId) -> bool:
+    """Keep one checked SDK signature per callable identity across the modules that call it."""
+    for callable in context.sdk_callables:
+        if callable.canonical == identity.clone():
+            return true
+    return false
+
+
+def retained_sdk_nominal(context: &BodyIrModule, identity: &CanonicalSymbolId) -> bool:
+    """Keep one provider-crate layout per nominal identity across the modules that name it."""
+    for declaration in context.sdk_nominal_declarations:
+        if declaration.canonical == identity.clone():
+            return true
+    return false

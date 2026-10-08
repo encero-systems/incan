@@ -10,6 +10,17 @@ fn ident(name: &str, span: Span) -> Ident {
     Ident::new(Symbol::intern(name), span)
 }
 
+/// Name a plan nominal: a source item by its single identifier, or a provider-crate nominal by its checked
+/// `crate::module::Name` path, resolved through the explicit dependency closure.
+fn nominal_path(name: &str, span: Span) -> ast::Path {
+    let mut segments = name.split("::");
+    let mut path = ast::Path::from_ident(ident(segments.next().unwrap_or(name), span));
+    for segment in segments {
+        path.segments.push(ast::PathSegment::from_ident(ident(segment, span)));
+    }
+    path
+}
+
 /// Declare the exact owned or borrowed runtime handle, leaving other plan types to their ordinary declaration path.
 fn generator_signature_ty(kind: &PlanType, span: Span) -> Option<Box<ast::Ty>> {
     let (name, leaf, depth, mutability) = match kind {
@@ -146,7 +157,7 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
                 PlanType::Model(_, name) | PlanType::Enum(_, name) => name.as_str(),
                 _ => "bool",
             };
-            ast::TyKind::Path(None, ast::Path::from_ident(ident(name, span)))
+            ast::TyKind::Path(None, nominal_path(name, span))
         }
     };
     Box::new(ast::Ty {

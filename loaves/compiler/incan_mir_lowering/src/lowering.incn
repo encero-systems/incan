@@ -92,13 +92,15 @@ from rust::incan_semantics_core::body_ir import (
     Statement as RustStatement,
     StatementKind as RustStatementKind,
     StdlibDelegation as RustStdlibDelegation,
+    SdkCallable,
+    SdkReceiver,
     UnOp,
     PlaceElem,
     MethodTarget,
     IterProtocol,
 )
 # ---- Admission helpers owned by this Loaf ----
-from rust::incan_semantics_core import SymbolOrigin, canonical_module_identity
+from rust::incan_semantics_core import CanonicalSymbolId, SymbolOrigin, canonical_module_identity
 from classes import frame_type, function_name, body_module_identity, method_receiver
 from generators import (
     generator_shape,
@@ -115,7 +117,7 @@ from generators import (
 from project import project_context
 from traits import method_index, specialize_traits, validate_static_receiver
 from decls import lower_model_declarations, static_slot, static_accessors
-from models import model_type, model_place, constructor_index
+from models import model_type, carrier_model_place, constructor_index
 from model_values import (
     debug_model_operand,
     display_model_operand,
@@ -160,7 +162,15 @@ from numerics import (
     sized_signed_integer,
     numeric_carrier,
 )
-from builtins import scalar_builtin, list_call, emit_boolean_operator, emit_power_operator
+from builtins import (
+    scalar_builtin,
+    list_call,
+    emit_boolean_operator,
+    emit_power_operator,
+    extremum_entry,
+    file_builtin_entry,
+    emit_file_builtin,
+)
 from strings import text_helper, emit_text_helper, text_helper_arity
 from frame import (
     place_type,
@@ -311,7 +321,14 @@ def scalar_place(builder: Builder, value: &RustPlace, span: SourceSpan) -> Resul
             target.local += builder.local_offset
             return Ok(target)
         None => pass
-    mut target = model_place(builder.nominals, builder.locals[builder.local_offset:], value, span)?
+    mut target = carrier_model_place(
+        builder.nominals,
+        builder.intrinsics,
+        len(builder.enums),
+        builder.locals[builder.local_offset:],
+        value,
+        span,
+    )?
     target.local += builder.local_offset
     return Ok(target)
 
@@ -335,9 +352,9 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
     match fact:
         OwnershipFact.Copy => return Ok(Operand(kind=OperandKind.Copy(target), span=span))
         OwnershipFact.Move =>
-            if target.projection != Projection.Whole and (place_type(builder.locals, target) == PlanType.String or tuple_has_owners(
-                place_type(builder.locals, target),
-            )):
+            moved = place_type(builder.locals, target)
+            owner = moved == PlanType.String or tuple_has_owners(moved) or is_enum_type(moved)
+            if target.projection != Projection.Whole and owner:
                 return Err("unsupported Body IR partial model move")
             return Ok(Operand(kind=OperandKind.Move(target), span=span))
         OwnershipFact.Clone =>
@@ -507,6 +524,13 @@ def scalar_rvalue(
 # =====================================================================================================================
 # The frame builder and ownership
 # =====================================================================================================================
+
+
+def is_enum_type(ty: PlanType) -> bool:
+    """Identify source enums, unions, and standard carriers, whose field moves would leave a partially moved owner."""
+    match ty:
+        PlanType.Enum(_index, _name) => return true
+        _ => return false
 
 
 def is_nominal_type(ty: PlanType) -> bool:
@@ -1074,6 +1098,9 @@ def lower_method_call(
             if identity.origin == SymbolOrigin.Builtin:
                 return lower_list_method(builder, target, arguments, destination, span)
         None => return Err("unsupported Body IR Method without canonical identity")
+    match sdk_callable(module, target.canonical):
+        Some(callable) => return lower_sdk_method(builder, callable, target, arguments, destination, span)
+        None => pass
     if len(arguments) == 0:
         return Err("invalid Body IR Method missing receiver")
     if is_json_serialize_method(target):
@@ -1117,6 +1144,10 @@ def lower_named_target(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Call a builtin, a retained project function, or a proven stdlib forwarder selected by canonical identity."""
+    match sdk_callable(module, target.canonical):
+        Some(callable) =>
+            return lower_sdk_call(builder, callable, target.type_args, target.binding, arguments, destination, span)
+        None => pass
     if len(target.type_args) != 0:
         return Err("unsupported Body IR generic NamedCallableTarget")
     match target.builtin:
@@ -1277,6 +1308,175 @@ def lower_delegated_call(
         Some(path) =>
             external_call(builder, path, parameters, result, operands, output, span)
             return Ok(None)
+
+
+def sdk_callable(module: &BodyIrModule, identity: &Option[CanonicalSymbolId]) -> Option[SdkCallable]:
+    """Select the checked provider-crate signature recorded for exactly this callable identity."""
+    match identity:
+        Some(canonical) =>
+            for callable in module.sdk_callables:
+                if callable.canonical == canonical.clone():
+                    return Some(callable.clone())
+        None => pass
+    return None
+
+
+def lower_sdk_call(
+    mut builder: Builder,
+    callable: SdkCallable,
+    type_args: &list[RustType],
+    binding: &RustArgumentBinding,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Call a provider-crate function or static method by its checked native path and signature."""
+    if callable.receiver.is_some():
+        return Err("invalid Body IR standard-library method called without a receiver")
+    parameters = sdk_parameter_types(builder, callable, type_args)?
+    operands = ordered_slot_operands(builder, binding, arguments, parameters, span)?
+    return emit_sdk_call(builder, callable, type_args, parameters, operands, destination, span)
+
+
+def lower_sdk_method(
+    mut builder: Builder,
+    callable: SdkCallable,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Borrow a provider-crate receiver as its checked receiver mode requires, then call the compiled method."""
+    mut mutable = false
+    match callable.receiver:
+        Some(SdkReceiver.Shared) => pass
+        Some(SdkReceiver.Mutable) =>
+            mutable = true
+        None => return Err("unsupported Body IR standard-library static method on a receiver")
+    if len(arguments) == 0:
+        return Err("invalid Body IR Method missing receiver")
+    receiver = argument_place(builder, arguments, 0, span)?
+    match place_type(builder.locals, receiver):
+        PlanType.Model(owner, name) =>
+            mut reference_type = PlanType.ModelRef(owner, name)
+            mut borrow = RvalueKind.Borrow(receiver)
+            if mutable:
+                reference_type = PlanType.ModelMutRef(owner, name)
+                borrow = RvalueKind.MutBorrow(receiver)
+            reference = temporary(builder, reference_type, span)
+            builder.emit(plan_assign(reference, borrow, span))
+            parameters = sdk_parameter_types(builder, callable, target.type_args)?
+            ordinary = ordered_slot_operands(builder, target.binding, arguments, parameters, span, 1)?
+            mut operands = [read_place(reference, mutable, span)]
+            mut signature = [reference_type]
+            for index in range(len(parameters)):
+                operands.append(ordinary[index])
+                signature.append(parameters[index])
+            return emit_sdk_call(builder, callable, target.type_args, signature, operands, destination, span)
+        _ => return Err("unsupported Body IR standard-library method receiver")
+
+
+def sdk_parameter_types(
+    builder: Builder,
+    callable: &SdkCallable,
+    type_args: &list[RustType],
+) -> Result[list[PlanType], str]:
+    """Resolve declared parameters; a parameter that is exactly a type parameter takes the call's checked argument."""
+    if len(type_args) != len(callable.type_parameters):
+        return Err("unsupported Body IR standard-library call type arguments")
+    mut resolved: list[PlanType] = []
+    for ty in callable.parameters:
+        parameter = instantiated_parameter(callable, type_args, ty)
+        resolved.append(sdk_type(builder, parameter)?)
+    return Ok(resolved)
+
+
+def instantiated_parameter(callable: &SdkCallable, type_args: &list[RustType], ty: &RustType) -> RustType:
+    """Substitute a parameter written as one declared type variable; nested uses stay unresolved and refuse."""
+    match ty:
+        RustType.TypeVar(name) =>
+            for index in range(len(callable.type_parameters)):
+                if str(callable.type_parameters[index]) == str(name):
+                    return type_args[index].clone()
+        _ => pass
+    return ty.clone()
+
+
+def emit_sdk_call(
+    mut builder: Builder,
+    callable: SdkCallable,
+    type_args: &list[RustType],
+    parameters: list[PlanType],
+    operands: list[Operand],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Instantiate the call's checked type argument and move an owned result into its whole destination local."""
+    if len(type_args) != len(callable.type_parameters) or len(type_args) > 1:
+        return Err("unsupported Body IR standard-library call type arguments")
+    output, result = sdk_call_destination(builder, callable, len(type_args) != 0, destination, span)?
+    path = str(callable.native_path)
+    mut kind = CalleeKind.External(path)
+    mut instantiation: list[PlanType] = []
+    if len(type_args) == 1:
+        argument = native_source_type(builder.nominals, builder.enums, builder.unions, type_args[0], builder.intrinsics)?
+        instantiation = [argument]
+        kind = CalleeKind.Instantiated(path, argument)
+    external = ExternalFunction(
+        path=path,
+        type_arguments=instantiation,
+        parameters=parameters,
+        return_type=result,
+        span=span,
+    )
+    builder.externals.append(external)
+    if result != PlanType.String and not is_nominal_type(result) and not is_owned_collection(result):
+        terminate_call(builder, kind, operands, output, span)
+        return Ok(None)
+    value = temporary(builder, result, span)
+    terminate_call(builder, kind, operands, value, span)
+    builder.owned.append(value.local)
+    drop_owned(builder, output.local, span)
+    forget_owned(builder, value.local)
+    builder.emit(plan_assign(output, RvalueKind.Use(read_place(value, true, span)), span))
+    builder.owned.append(output.local)
+    return Ok(None)
+
+
+def sdk_call_destination(
+    mut builder: Builder,
+    callable: SdkCallable,
+    generic: bool,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[tuple[Place, PlanType], str]:
+    """
+    Select a whole destination local and its result type.
+
+    A generic declaration's result mentions its type parameters, so its checked destination is the instantiation;
+    a nongeneric declaration's result must equal its destination exactly.
+    """
+    match destination:
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+            if output.projection != Projection.Whole:
+                return Err("unsupported Body IR projected standard-library call destination")
+            result = place_type(builder.locals, output)
+            if not generic:
+                declared = sdk_type(builder, callable.return_type)?
+                if declared != result:
+                    return Err("invalid Body IR standard-library call destination type")
+            return Ok((output, result))
+        None =>
+            if generic:
+                return Err("unsupported Body IR discarded generic standard-library call")
+            result = sdk_type(builder, callable.return_type)?
+            return Ok((temporary(builder, result, span), result))
+
+
+def sdk_type(builder: Builder, ty: &RustType) -> Result[PlanType, str]:
+    """Resolve one checked provider-crate signature type against the plan's retained layouts."""
+    return native_source_type(builder.nominals, builder.enums, builder.unions, ty, builder.intrinsics)
 
 
 def ordered_arguments(
@@ -1497,12 +1697,36 @@ def lower_builtin(
         RustBuiltin.Print => return lower_print(builder, arguments, destination, span)
         RustBuiltin.Sum => return lower_sequence_builtin(builder, builtin, arguments, destination, span)
         RustBuiltin.Sorted => return lower_sequence_builtin(builder, builtin, arguments, destination, span)
+        RustBuiltin.Min => return lower_sequence_builtin(builder, builtin, arguments, destination, span)
+        RustBuiltin.Max => return lower_sequence_builtin(builder, builtin, arguments, destination, span)
+        RustBuiltin.ReadFile => return lower_file_builtin(builder, builtin, arguments, destination, span)
+        RustBuiltin.WriteFile => return lower_file_builtin(builder, builtin, arguments, destination, span)
         RustBuiltin.Len => return lower_list_builtin(builder, arguments, destination, span)
         RustBuiltin.Float => return lower_scalar_conversion(builder, arguments, destination, false, span)
         RustBuiltin.Int => return lower_scalar_conversion(builder, arguments, destination, true, span)
         RustBuiltin.Str => return lower_str_builtin(builder, arguments, destination, span)
         RustBuiltin.JsonStringify => return lower_model_json_builtin(builder, arguments, destination, span)
         _ => return Err(f"unsupported Body IR builtin {builtin:?}")
+
+
+def lower_file_builtin(
+    mut builder: Builder,
+    builtin: &RustBuiltin,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Borrow the text operands of read_file or write_file; legacy's wrong-arity error results stay refused."""
+    name, arity, payload = file_builtin_entry(builtin)
+    if len(arguments) != arity:
+        return Err(f"unsupported Body IR builtin {builtin:?} arity")
+    mut operands: list[Operand] = []
+    for index in range(arity):
+        operands.append(text_argument(builder, arguments, index, span)?)
+    match destination:
+        Some(place) =>
+            return emit_file_builtin(builder, name, payload, operands, scalar_place(builder, place, span)?, span)
+        None => return Err(f"unsupported Body IR discarded builtin {builtin:?} result")
 
 
 def lower_model_json_builtin(
@@ -1547,6 +1771,10 @@ def serialize_scalar_json(
             place = scalar_place(builder, read.place, span)?
             if place_type(builder.locals, place) == PlanType.String:
                 return serialize_json_text(builder, value, result, span)
+            match place_type(builder.locals, place):
+                PlanType.List(leaf, depth) => return serialize_json_list(builder, place, leaf, depth, result, span)
+                PlanType.ListRef(leaf, depth) => return serialize_json_list(builder, place, leaf, depth, result, span)
+                _ => pass
     operand = value_operand(builder, value, span)?
     ty = operand_type(builder, operand)?
     mut name = ""
@@ -1559,6 +1787,39 @@ def serialize_scalar_json(
             name = "serialize_bool"
         _ => return Err(f"unsupported Body IR JSON serialization type {ty:?}")
     external_call(builder, f"incan_native_runtime::{name}", [ty], PlanType.String, [operand], result, span)
+    return Ok(None)
+
+
+def serialize_json_list(
+    mut builder: Builder,
+    place: Place,
+    leaf: ListLeaf,
+    depth: int,
+    result: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Borrow a scalar-leaf list into the generic serde boundary that legacy's json_stringify reaches."""
+    match leaf:
+        ListLeaf.Int => pass
+        ListLeaf.Float => pass
+        ListLeaf.Bool => pass
+        ListLeaf.Str => pass
+        _ => return Err("unsupported Body IR JSON serialization list element")
+    ty = PlanType.List(leaf, depth)
+    reference = list_borrow(builder, place, false, span)?
+    path = "incan_native_runtime::serialize_model"
+    builder.externals.append(
+        ExternalFunction(
+            path=path,
+            type_arguments=[ty],
+            parameters=[PlanType.ListRef(leaf, depth)],
+            return_type=PlanType.String,
+            span=span,
+        ),
+    )
+    drop_owned(builder, result.local, span)
+    terminate_call(builder, CalleeKind.Instantiated(path, ty), [reference], result, span)
+    builder.owned.append(result.local)
     return Ok(None)
 
 
@@ -1747,6 +2008,8 @@ def clone_nominal_operand(mut builder: Builder, value: Place, span: SourceSpan) 
     """Materialize the checker's clone fact through a source nominal's real derived Clone implementation."""
     match place_type(builder.locals, value):
         PlanType.Model(index, name) =>
+            if builder.nominals[index].native_path.is_some() and "Clone" not in builder.nominals[index].derives:
+                return Err("unsupported Body IR clone of a standard-library nominal without Clone")
             reference = temporary(builder, PlanType.ModelRef(index, name), span)
             builder.emit(plan_assign(reference, RvalueKind.Borrow(value), span))
             result = temporary(builder, PlanType.Model(index, name), span)
@@ -2221,7 +2484,7 @@ pub def lower_program(
         return Err("unsupported Body IR project without selected main entrypoint")
     unions = collect_unions(context)
     intrinsics = intrinsic_declarations(context, files[entry])?
-    models = lower_model_declarations(context, files[entry])?
+    models = lower_model_declarations(context, files[entry], intrinsics)?
     mut enums = lower_enum_declarations(context, files[entry])?
     for declaration in intrinsics:
         enums.append(declaration)
@@ -2264,7 +2527,7 @@ def lower_concrete_module(module: &BodyIrModule, source: str, file: str) -> Resu
     """Lower ordinary bodies and closed trait defaults after validating the original identities."""
     unions = collect_unions(module)
     intrinsics = intrinsic_declarations(module, file)?
-    models = lower_model_declarations(module, file)?
+    models = lower_model_declarations(module, file, intrinsics)?
     mut enums = lower_enum_declarations(module, file)?
     for declaration in intrinsics:
         enums.append(declaration)
@@ -3434,6 +3697,9 @@ def bind_payload_fields(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Bind checked payload locals through the shared downcast and ownership path."""
+    # A downcast projects the whole enum local, so a carrier read through a model field must be copied out first.
+    if source.projection != Projection.Whole:
+        return Err("unsupported Body IR projected enum payload binding")
     for slot in range(len(fields)):
         match fields[slot]:
             RustPattern.Var(binding) =>
@@ -3612,6 +3878,9 @@ def bind_enum_fields(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Bind checked enum payload slots through the same downcast and ownership path for source enums and unions."""
+    # A downcast projects the whole enum local, so a carrier read through a model field must be copied out first.
+    if source.projection != Projection.Whole:
+        return Err("unsupported Body IR projected enum payload binding")
     for slot in range(len(fields)):
         match fields[slot]:
             RustPattern.Var(binding) =>
@@ -3634,7 +3903,7 @@ def lower_sequence_builtin(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Admit homogeneous list sorting and the legacy integer sum domain."""
+    """Admit homogeneous list sorting, scalar min and max, and the legacy integer sum domain."""
     if len(arguments) != 1:
         return Err("unsupported Body IR sequence builtin arity")
     receiver = argument_place(builder, arguments, 0, span)?
@@ -3649,6 +3918,26 @@ def lower_sequence_builtin(
                     return Err("unsupported Body IR builtin Sorted tuple containing float")
             _ => pass
     reference = borrowed_list_argument(builder, arguments, 0, false, span)?
+    if builtin == RustBuiltin.Min or builtin == RustBuiltin.Max:
+        name, result = extremum_entry(builtin, leaf)?
+        # Legacy's checker admits min and max only over owned lists, so the runtime wrapper consumes a copy.
+        copied = temporary(builder, PlanType.List(leaf, depth), span)
+        list_call(
+            builder,
+            "clone_list",
+            list_element(leaf, depth),
+            [PlanType.ListRef(leaf, depth)],
+            PlanType.List(leaf, depth),
+            [reference],
+            copied,
+            span,
+        )
+        output = call_destination(builder, destination, result, span)?
+        drop_owned(builder, output.local, span)
+        parameters = [PlanType.List(leaf, depth)]
+        operands = [read_place(copied, true, span)]
+        external_call(builder, f"incan_native_runtime::{name}", parameters, result, operands, output, span)
+        return Ok(None)
     if builtin == RustBuiltin.Sum:
         mut name = "sum_int"
         if leaf == ListLeaf.Bool:

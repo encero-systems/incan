@@ -154,8 +154,13 @@ fn array_type<'tcx>(tcx: TyCtxt<'tcx>, element: Ty<'tcx>, count: i64) -> Result<
     Ok(Ty::new_array(tcx, element, count))
 }
 
-/// Resolve a previously injected source model; no external nominal can enter by spelling alone.
+/// Resolve a previously injected source model, or a provider-crate nominal by its checked crate path.
+///
+/// A path name never falls back to a local item: it must walk public metadata to a nongeneric struct.
 pub fn model_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Result<Ty<'tcx>, PlanError> {
+    if name.contains("::") {
+        return provider_nominal_type(tcx, name);
+    }
     let definition = tcx
         .hir_crate_items(())
         .free_items()
@@ -169,6 +174,66 @@ pub fn model_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Result<Ty<'tcx>, PlanE
             reason: "model declaration is missing".into(),
         })?;
     Ok(tcx.type_of(definition).instantiate_identity().skip_normalization())
+}
+
+/// Walk a provider crate's public module children to the exact nongeneric struct a native-path nominal names.
+fn provider_nominal_type<'tcx>(tcx: TyCtxt<'tcx>, path: &str) -> Result<Ty<'tcx>, PlanError> {
+    let missing = || PlanError::Invalid {
+        function: path.into(),
+        reason: "standard-library nominal is missing from the native dependency closure".into(),
+    };
+    let mut segments = path.split("::");
+    let root = segments.next().ok_or_else(missing)?;
+    let mut definition = tcx
+        .crates(())
+        .iter()
+        .find(|krate| tcx.crate_name(**krate).as_str() == root)
+        .map(|krate| krate.as_def_id())
+        .ok_or_else(missing)?;
+    for segment in segments {
+        if tcx.def_kind(definition) != rustc_hir::def::DefKind::Mod {
+            return Err(missing());
+        }
+        definition = tcx
+            .module_children(definition)
+            .iter()
+            .find(|child| child.ident.name.as_str() == segment && child.vis.is_public())
+            .and_then(|child| child.res.opt_def_id())
+            .ok_or_else(missing)?;
+    }
+    if tcx.def_kind(definition) != rustc_hir::def::DefKind::Struct || tcx.generics_of(definition).count() != 0 {
+        return Err(missing());
+    }
+    Ok(tcx.type_of(definition).instantiate_identity().skip_normalization())
+}
+
+/// Prove a provider-crate nominal's readable plan slots against its metadata: the same field count and, for every
+/// readable slot, the same name, public visibility and native type, so a field projection reads exactly that field.
+pub fn verify_provider_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration) -> Result<(), PlanError> {
+    let invalid = |reason: &str| PlanError::Invalid {
+        function: model.name.clone(),
+        reason: reason.into(),
+    };
+    let ty = provider_nominal_type(tcx, &model.native_path)?;
+    let rustc_middle::ty::Adt(adt, arguments) = ty.kind() else {
+        return Err(invalid("standard-library nominal is not a struct"));
+    };
+    let variant = adt.non_enum_variant();
+    if variant.fields.len() != model.fields.len() {
+        return Err(invalid("standard-library field layout differs from metadata"));
+    }
+    for ((field, public), declared) in model.fields.iter().zip(&model.field_public).zip(variant.fields.iter()) {
+        if !*public {
+            continue;
+        }
+        if declared.name.as_str() != field.name
+            || !declared.vis.is_public()
+            || declared.ty(tcx, arguments) != native_type(tcx, &field.ty)?
+        {
+            return Err(invalid("standard-library field differs from metadata"));
+        }
+    }
+    Ok(())
 }
 
 /// Select the primitive leaf and wrap it in the standard Vec ADT once per retained list dimension.

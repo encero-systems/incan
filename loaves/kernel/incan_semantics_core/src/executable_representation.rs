@@ -962,6 +962,8 @@ mod tests {
             trait_implementations: Vec::new(),
             module_id: CompilerNodeId::module("lib"),
             stdlib_delegations: Vec::new(),
+            sdk_nominal_declarations: Vec::new(),
+            sdk_callables: Vec::new(),
             enum_declarations: Vec::new(),
             static_declarations: Vec::new(),
             nominal_declarations: Vec::new(),
@@ -1377,6 +1379,7 @@ mod tests {
             derives: vec![],
             named_type_identities: Default::default(),
             type_parameter_count: 0,
+            native_path: None,
         });
         let public = BTreeSet::from([identity("exported", 1), type_id.clone()]);
         let bytes = publish(&module, &public)?;
@@ -1508,6 +1511,7 @@ mod tests {
             derives: vec![],
             named_type_identities: Default::default(),
             type_parameter_count: 0,
+            native_path: None,
         });
         let public = BTreeSet::from([identity("exported", 1), published_type.clone()]);
         let bytes = publish(&input, &public)?;

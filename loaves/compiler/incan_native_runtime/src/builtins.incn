@@ -81,3 +81,53 @@ pub def power_f64(left: float, right: float) -> float:
 pub def power_f32(left: f32, right: f32) -> f32:
     """Retain single-precision exponentiation through legacy exact-width emission."""
     return left ** right
+
+
+pub def min_int(values: list[int]) -> int:
+    """Use legacy's copied minimum and its empty-sequence ValueError."""
+    return min(values)
+
+
+pub def max_int(values: list[int]) -> int:
+    """Use legacy's copied maximum and its empty-sequence ValueError."""
+    return max(values)
+
+
+pub def min_float(values: list[float]) -> float:
+    """Use legacy's float minimum, including its NaN-skipping reduction."""
+    return min(values)
+
+
+pub def max_float(values: list[float]) -> float:
+    """Use legacy's float maximum, including its NaN-skipping reduction."""
+    return max(values)
+
+
+pub def min_bool(values: list[bool]) -> bool:
+    """Use legacy's copied minimum over booleans."""
+    return min(values)
+
+
+pub def max_bool(values: list[bool]) -> bool:
+    """Use legacy's copied maximum over booleans."""
+    return max(values)
+
+
+pub def min_text(values: list[str]) -> str:
+    """Clone the least string exactly as legacy's cloned minimum does."""
+    return min(values)
+
+
+pub def max_text(values: list[str]) -> str:
+    """Clone the greatest string exactly as legacy's cloned maximum does."""
+    return max(values)
+
+
+pub def write_text_file(path: &str, content: &str) -> Result[None, str]:
+    """Write through the legacy builtin, whose error is the host message as text."""
+    return write_file(path, content)
+
+
+pub def read_text_file(path: &str) -> Result[str, str]:
+    """Read through the legacy builtin, whose error is the host message as text."""
+    return read_file(path)

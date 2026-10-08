@@ -131,8 +131,14 @@ pub def intrinsic_pattern(declaration: EnumDeclaration, pattern: &RustPattern) -
 
 
 pub def intrinsic_declarations(module: &BodyIrModule, file: str) -> Result[list[EnumDeclaration], str]:
-    """Collect concrete checked carriers in stable body/local order, admitting only existing payload types."""
+    """Collect concrete checked carriers in stable field, body, and local order, admitting only existing payload types."""
     mut declarations: list[EnumDeclaration] = lower_union_declarations(module, file)?
+    for nominal in module.nominal_declarations:
+        # Provider-crate nominals stay opaque, so their private storage types need no carrier.
+        if nominal.native_path.is_some():
+            continue
+        for ty in nominal.field_types:
+            retain_carrier(module, declarations, ty, file)?
     for body in module.bodies:
         retain_carrier(module, declarations, body.return_type, file)?
         for local in body.locals:
