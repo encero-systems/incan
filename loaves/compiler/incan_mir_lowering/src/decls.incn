@@ -43,6 +43,7 @@ def static_list_accessors(leaf: ListLeaf) -> Result[tuple[str, str], str]:
             name = "bool"
         ListLeaf.Str =>
             name = "text"
+        _ => return Err("unsupported Body IR static list element")
     return Ok((f"incan_native_runtime::read_static_{name}_list", f"incan_native_runtime::write_static_{name}_list"))
 
 
