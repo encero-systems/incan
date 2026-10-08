@@ -46,10 +46,24 @@ fn static_literal_initializer(value: &ast::Expr, ty: &IncanType) -> Option<bir::
             let [element] = args.as_slice() else {
                 return None;
             };
+            if !matches!(
+                element,
+                IncanType::Primitive(
+                    IncanPrimitiveType::Int
+                        | IncanPrimitiveType::Float
+                        | IncanPrimitiveType::Bool
+                        | IncanPrimitiveType::Str
+                )
+            ) {
+                return None;
+            }
             let values = entries
                 .iter()
                 .map(|entry| {
-                    let bir::StaticInitializer::Literal(value) = static_literal_initializer(&entry.node, element)?
+                    let ast::ListEntry::Element(item) = entry else {
+                        return None;
+                    };
+                    let bir::StaticInitializer::Literal(value) = static_literal_initializer(&item.node, element)?
                     else {
                         return None;
                     };

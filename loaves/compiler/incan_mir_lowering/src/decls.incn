@@ -35,10 +35,14 @@ def static_list_accessors(leaf: ListLeaf) -> Result[tuple[str, str], str]:
     """Choose typed runtime list cells without erasing their checked element representation."""
     mut name = ""
     match leaf:
-        ListLeaf.Int => name = "int"
-        ListLeaf.Float => name = "float"
-        ListLeaf.Bool => name = "bool"
-        ListLeaf.Str => name = "text"
+        ListLeaf.Int =>
+            name = "int"
+        ListLeaf.Float =>
+            name = "float"
+        ListLeaf.Bool =>
+            name = "bool"
+        ListLeaf.Str =>
+            name = "text"
     return Ok((f"incan_native_runtime::read_static_{name}_list", f"incan_native_runtime::write_static_{name}_list"))
 
 
