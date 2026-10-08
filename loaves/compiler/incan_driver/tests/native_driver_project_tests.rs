@@ -2703,3 +2703,44 @@ def main() -> None:
         None,
     )
 }
+
+/// Canonical nested field paths preserve reads, writes, receiver borrowing, and constructor evaluation order.
+#[test]
+fn nested_model_fields_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "nested_model_fields",
+        r#"model Leaf:
+    text: str
+    count: int
+
+model Middle:
+    leaf: Leaf
+
+model Holder:
+    middle: Middle
+
+    def text(self) -> str:
+        return self.middle.leaf.text
+
+    def rename(mut self, text: str) -> None:
+        self.middle.leaf.text = text
+        self.middle.leaf.count += 1
+
+def effect(label: str) -> str:
+    println(label)
+    return label
+
+def main() -> None:
+    mut value = Holder(middle=Middle(leaf=Leaf(count=3, text=effect("first"))))
+    println(value.middle.leaf.text)
+    println(value.text())
+    value.middle.leaf.text = effect("second")
+    println(value.middle.leaf.text)
+    value.rename("third")
+    println(value.middle.leaf.text)
+    println(value.middle.leaf.count)
+    println(value.text())
+"#,
+        None,
+    )
+}

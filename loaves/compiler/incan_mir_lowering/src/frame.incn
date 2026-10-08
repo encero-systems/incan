@@ -216,6 +216,8 @@ pub def place_type(locals: list[Local], value: Place) -> PlanType:
         Projection.VariantField(_variant, _slot, ty) => return ty
         Projection.Field(_slot, ty) => return ty
         Projection.DerefField(_slot, ty) => return ty
+        Projection.Fields(fields) => return fields[-1].ty
+        Projection.DerefFields(fields) => return fields[-1].ty
         Projection.NumericValue(ty) => return ty
         Projection.Value => return PlanType.Int
         Projection.Overflow => return PlanType.Bool

@@ -10,7 +10,7 @@ from rust::incan_semantics_core::body_ir import (
     Place as RustPlace,
     PlaceElem as RustPlaceElem,
 )
-from pub::incan_mir_plan import ListLeaf, PlanType, Local, Place, Projection, SourceSpan
+from pub::incan_mir_plan import ListLeaf, PlanType, Local, Place, Projection, SourceSpan, FieldProjection
 from numerics import numeric_type
 from tuples import tuple_type, generic_tuple_type, type_name, tuple_slot
 from pub::incan_mir_plan import tuple_element_type
@@ -76,40 +76,50 @@ pub def model_place(
     value: &RustPlace,
     span: SourceSpan,
 ) -> Result[Place, str]:
-    """Require the checker-selected field identity before selecting its canonical layout slot."""
+    """Require every checker-selected field identity before projecting its retained canonical layout."""
     match value.local_id():
+        None => return Err("unsupported Body IR global place")
         Some(local) =>
             index = int(local.index()) + 1
             match receiver_owner(locals[index].ty):
-                Some(owner) =>
-                    owner_index, name = owner
+                Some((owner, name)) =>
                     if len(value.projection) == 0:
                         return Ok(
-                            Place(local=index, projection=Projection.Deref(PlanType.Model(owner_index, name)), span=span),
+                            Place(local=index, projection=Projection.Deref(PlanType.Model(owner, name)), span=span),
                         )
-                    return receiver_field(declarations, index, owner_index, value, span)
+                    return receiver_field(declarations, index, owner, value, span)
                 None => pass
             if len(value.projection) == 0:
                 return Ok(Place(local=index, projection=Projection.Whole, span=span))
-            if len(value.projection) != 1:
-                return Err("unsupported Body IR nested model projection")
-            match locals[index].ty:
-                PlanType.Model(owner, _name) =>
-                    declaration = declarations[owner]
-                    slot = field_slot(value.projection[0], declaration)?
-                    ty = model_type(declarations, declaration.field_types[slot])?
-                    return Ok(Place(local=index, projection=Projection.Field(slot, ty), span=span))
-                PlanType.Tuple(elements) =>
-                    slot = tuple_slot(value.projection[0], len(elements))?
-                    return Ok(
-                        Place(
-                            local=index,
-                            projection=Projection.Field(slot, tuple_element_type(elements[slot])),
-                            span=span,
-                        ),
-                    )
-                _ => return Err("unsupported Body IR nonmodel place projection")
-        None => return Err("unsupported Body IR global place")
+            fields = field_path(declarations, locals[index].ty, value)?
+            if len(fields) == 1:
+                slot = fields[0].slot
+                ty = fields[0].ty
+                return Ok(Place(local=index, projection=Projection.Field(slot, ty), span=span))
+            return Ok(Place(local=index, projection=Projection.Fields(fields), span=span))
+
+
+def field_path(
+    declarations: list[NominalDeclaration],
+    root: PlanType,
+    value: &RustPlace,
+) -> Result[list[FieldProjection], str]:
+    """Resolve each field against its actual nominal or tuple owner; indices and slices keep their refusal."""
+    mut ty = root
+    mut fields: list[FieldProjection] = []
+    for projection in value.projection:
+        mut slot = 0
+        match ty:
+            PlanType.Model(owner, _name) =>
+                declaration = declarations[owner]
+                slot = field_slot(projection, declaration)?
+                ty = model_type(declarations, declaration.field_types[slot])?
+            PlanType.Tuple(elements) =>
+                slot = tuple_slot(projection, len(elements))?
+                ty = tuple_element_type(elements[slot])
+            _ => return Err("unsupported Body IR model index or slice projection")
+        fields.append(FieldProjection(slot=slot, ty=ty))
+    return Ok(fields)
 
 
 pub def field_slot(value: &RustPlaceElem, declaration: &NominalDeclaration) -> Result[int, str]:
@@ -187,13 +197,13 @@ def receiver_field(
     value: &RustPlace,
     span: SourceSpan,
 ) -> Result[Place, str]:
-    """Project one canonical field through a borrowed receiver, refusing nested projections."""
-    if len(value.projection) != 1:
-        return Err("unsupported Body IR nested receiver projection")
-    declaration = declarations[owner]
-    slot = field_slot(value.projection[0], declaration)?
-    ty = model_type(declarations, declaration.field_types[slot])?
-    return Ok(Place(local=index, projection=Projection.DerefField(slot, ty), span=span))
+    """Project a checked field path through a shared or mutable nominal receiver."""
+    fields = field_path(declarations, PlanType.Model(owner, declarations[owner].name), value)?
+    if len(fields) == 1:
+        slot = fields[0].slot
+        ty = fields[0].ty
+        return Ok(Place(local=index, projection=Projection.DerefField(slot, ty), span=span))
+    return Ok(Place(local=index, projection=Projection.DerefFields(fields), span=span))
 
 
 def receiver_owner(ty: PlanType) -> Option[tuple[int, str]]:

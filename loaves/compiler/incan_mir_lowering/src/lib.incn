@@ -17,6 +17,7 @@ pub from pub::incan_mir_plan import (
     Callee,
     CalleeKind,
     ExternalFunction,
+    FieldProjection,
     Constant,
     Function,
     ListLeaf,
