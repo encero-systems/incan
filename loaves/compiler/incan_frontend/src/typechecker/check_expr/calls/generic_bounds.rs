@@ -213,6 +213,15 @@ impl TypeChecker {
         }
         if explicit_arity_ok {
             self.record_call_site_monomorph_if_complete(call_span, &info.type_params, &type_bindings);
+            if explicit_type_args.is_empty() {
+                self.retain_constructor_call_instantiation(
+                    call_span,
+                    &info.type_params,
+                    &arguments,
+                    &type_bindings,
+                    &info.return_type,
+                );
+            }
         }
 
         substitute_resolved_type(&info.return_type, &type_bindings)
@@ -698,6 +707,40 @@ impl TypeChecker {
             .insert((call_span.start, call_span.end), out);
     }
 
+    /// Retain concrete inferred call arguments from checked constructor facts without changing legacy contextual types.
+    fn retain_constructor_call_instantiation(
+        &mut self,
+        call_span: Span,
+        type_params: &[String],
+        arguments: &[(&Spanned<Expr>, &ResolvedType)],
+        bindings: &std::collections::HashMap<String, ResolvedType>,
+        return_type: &ResolvedType,
+    ) {
+        let mut concrete = bindings.clone();
+        concrete.retain(|_, ty| first_open_type_param(ty, type_params).is_none());
+        let mut has_constructor_fact = false;
+        for (expr, parameter) in arguments {
+            if let Some(actual) = self
+                .type_info
+                .calls
+                .inferred_constructor_types
+                .get(&(expr.span.start, expr.span.end))
+                .cloned()
+            {
+                has_constructor_fact = true;
+                self.infer_type_param_bindings(parameter, &actual, &mut concrete);
+            }
+        }
+        if !has_constructor_fact || type_params.iter().any(|parameter| !concrete.contains_key(parameter)) {
+            return;
+        }
+        self.record_call_site_monomorph_if_complete(call_span, type_params, &concrete);
+        self.type_info.calls.inferred_call_result_types.insert(
+            (call_span.start, call_span.end),
+            substitute_resolved_type(return_type, &concrete),
+        );
+    }
+
     /// Seed owner type-parameter bindings from the concrete receiver type.
     fn receiver_type_param_bindings(
         &self,
@@ -913,6 +956,15 @@ impl TypeChecker {
         }
         if self.errors.len() == errors_before_call {
             self.record_call_site_monomorph_if_complete(call_site_span, &method_info.type_params, &type_bindings);
+            if explicit_type_args.is_empty() {
+                self.retain_constructor_call_instantiation(
+                    call_site_span,
+                    &method_info.type_params,
+                    &arguments,
+                    &type_bindings,
+                    &return_type,
+                );
+            }
         }
 
         substitute_resolved_type(&return_type, &type_bindings)

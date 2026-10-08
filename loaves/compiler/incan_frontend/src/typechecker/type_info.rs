@@ -1403,6 +1403,14 @@ pub enum PartialProjectionTargetKind {
 /// Call-site semantic decisions selected by the typechecker.
 #[derive(Debug, Default, Clone)]
 pub struct CallArtifacts {
+    /// Concrete owner types inferred from checked nominal constructor fields before an open caller context masks them.
+    ///
+    /// Body IR retains these executable carriers while legacy checking preserves its contextual expression type.
+    pub inferred_constructor_types: HashMap<(usize, usize), ResolvedType>,
+    /// Executable result types closed by a checked constructor argument at an inferred generic call.
+    ///
+    /// These accompany the retained call instantiation; legacy contextual expression types remain unchanged.
+    pub inferred_call_result_types: HashMap<(usize, usize), ResolvedType>,
     /// The callee's caller-visible `mut` parameter names for each call that resolved to such a callee, keyed by the
     /// full call span, so lowering passes those arguments the way the declaration takes them (#1773).
     pub caller_visible_mut_arguments: HashMap<(usize, usize), Vec<String>>,
@@ -1688,6 +1696,8 @@ pub enum ResolvedMethodDispatch {
 /// `__iter__` and `__next__` hooks at its iterable's span, leaves the facts of the call written there as they were.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct CallSiteFacts {
+    inferred_constructor_type: Option<ResolvedType>,
+    inferred_call_result_type: Option<ResolvedType>,
     method_call: Option<ResolvedMethodCall>,
     identity: Option<CanonicalSymbolId>,
     callable_params: Option<Vec<CallableParam>>,
@@ -2893,6 +2903,8 @@ impl TypeCheckInfo {
     pub(crate) fn take_call_site_facts(&mut self, span: Span) -> CallSiteFacts {
         let key = (span.start, span.end);
         CallSiteFacts {
+            inferred_constructor_type: self.calls.inferred_constructor_types.remove(&key),
+            inferred_call_result_type: self.calls.inferred_call_result_types.remove(&key),
             method_call: self.calls.resolved_method_calls.remove(&key),
             identity: self.references.resolved_identities.remove(&key),
             callable_params: self.calls.call_site_callable_params.remove(&key),
@@ -2915,6 +2927,16 @@ impl TypeCheckInfo {
             }
         }
         let key = (span.start, span.end);
+        put(
+            &mut self.calls.inferred_constructor_types,
+            key,
+            facts.inferred_constructor_type,
+        );
+        put(
+            &mut self.calls.inferred_call_result_types,
+            key,
+            facts.inferred_call_result_type,
+        );
         put(&mut self.calls.resolved_method_calls, key, facts.method_call);
         put(&mut self.references.resolved_identities, key, facts.identity);
         put(&mut self.calls.call_site_callable_params, key, facts.callable_params);
