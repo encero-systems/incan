@@ -68,6 +68,7 @@ pub enum PlanType:
     List stores its primitive leaf element and a positive nesting
     depth; ListRef and ListMutRef borrow that same Vec representation.
     ModelRef and ModelMutRef retain shared and mutable nominal receiver references.
+    TaskJoinError retains the canonical async SDK ADT and its private layout; it is owned and cannot be copied. TaskJoinErrorRef borrows it for canonical Clone operations.
     Set and Dict retain the legacy HashSet and HashMap leaf arguments; their
     reference variants preserve caller-owned storage. Float keys are not admitted.
     """
@@ -96,6 +97,9 @@ pub enum PlanType:
     CheckedInt
     Tuple(list[TupleElement])
     String
+    # The canonical SDK error ADT, never a source model with the same spelling.
+    TaskJoinError
+    TaskJoinErrorRef
     StringRef
     StrRef
     StringArray(int)

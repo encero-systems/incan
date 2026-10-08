@@ -1,6 +1,6 @@
 """Shared declaration context for a project whose individual owning modules have been validated."""
 
-from rust::incan_semantics_core::body_ir import BodyIrModule
+from rust::incan_semantics_core::body_ir import BodyIrModule, SdkAsyncPrimitive
 from traits import specialize_traits
 
 
@@ -19,6 +19,7 @@ pub def project_context(
     context.trait_implementations.clear()
     context.static_declarations.clear()
     context.stdlib_delegations.clear()
+    context.sdk_async_primitives.clear()
     mut checked: list[BodyIrModule] = []
     for module in modules:
         if len(module.value_enum_declarations) != 0:
@@ -59,4 +60,16 @@ pub def project_context(
         for index in range(len(module.stdlib_delegations)):
             declaration = module.stdlib_delegations[index].clone()
             context.stdlib_delegations.push(declaration.clone())
+        for index in range(len(module.sdk_async_primitives)):
+            primitive = module.sdk_async_primitives[index].clone()
+            if not retains_primitive(context, primitive):
+                context.sdk_async_primitives.push(primitive.clone())
     return Ok((context, checked))
+
+
+def retains_primitive(context: &BodyIrModule, primitive: &SdkAsyncPrimitive) -> bool:
+    """Deduplicate cross-module imports by the full checked identity rather than their source aliases."""
+    for retained in context.sdk_async_primitives:
+        if retained.canonical == primitive.canonical:
+            return true
+    return false

@@ -5,6 +5,26 @@
 
 use super::*;
 
+/// Direct and aliased SDK imports retain the same registry-owned Result payload identity.
+#[test]
+fn task_error_result_retains_sdk_identity() -> Result<(), Box<dyn std::error::Error>> {
+    for import in ["TaskJoinError", "TaskJoinError as JoinedError"] {
+        let name = if import.contains(" as ") {
+            "JoinedError"
+        } else {
+            "TaskJoinError"
+        };
+        let source =
+            format!("from std.async.task import {import}\n\ndef answer() -> Result[int, {name}]:\n    return Ok(41)\n");
+        let module = build(&source, &["m", "task_error_result"])?;
+        let snapshot = module.render_snapshot();
+        assert!(snapshot.contains("result_ok"), "{snapshot}");
+        assert!(snapshot.contains("builtin:builtin::TaskJoinError"), "{snapshot}");
+        assert!(!snapshot.contains("unsupported("), "{snapshot}");
+    }
+    Ok(())
+}
+
 /// Intrinsic Option construction is explicit, while an ordinary source function called Some keeps its call identity.
 #[test]
 fn option_constructor_retains_intrinsic_selection() -> Result<(), Box<dyn std::error::Error>> {

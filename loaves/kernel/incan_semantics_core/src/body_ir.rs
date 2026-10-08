@@ -65,6 +65,10 @@ pub struct BodyIrModule {
     /// implementations are absent and must refuse.
     #[serde(default)]
     pub stdlib_delegations: Vec<StdlibDelegation>,
+    /// Catalog-owned SDK async operations whose evaluated arguments are captured until the future is polled.
+    /// These call the real SDK implementation; they are not transparent synchronous forwarding facts.
+    #[serde(default)]
+    pub sdk_async_primitives: Vec<SdkAsyncPrimitive>,
     /// Source-local scalar statics with effect-free literal initializers; all other initializers must refuse.
     #[serde(default)]
     pub static_declarations: Vec<StaticDeclaration>,
@@ -127,6 +131,28 @@ pub struct StdlibDelegation {
     pub parameters: Vec<IncanType>,
     /// The declared wrapper result type, verified against native metadata before execution.
     pub return_type: IncanType,
+}
+
+/// A checked SDK async callable with an exact catalog identity and a supported capture signature.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SdkAsyncPrimitive {
+    /// Complete selected declaration identity, including SDK owner and declaration span; aliases retain this target.
+    pub canonical: CanonicalSymbolId,
+    /// SDK operation whose body must run only when its owned future is polled.
+    pub kind: SdkAsyncPrimitiveKind,
+    /// Checked declaration-order capture types. Every admitted operation returns the unit value.
+    pub parameters: Vec<IncanType>,
+}
+
+/// Scalar-capture SDK futures supported independently of source future scheduling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SdkAsyncPrimitiveKind {
+    /// Sleep using the SDK's floating-point seconds conversion and timer future.
+    SleepSeconds,
+    /// Sleep using the SDK's integer milliseconds conversion and timer future.
+    SleepMillis,
+    /// Yield through the SDK's actual scheduler operation.
+    YieldNow,
 }
 
 impl StdlibDelegation {
@@ -1511,6 +1537,9 @@ pub struct ResultVariant {
 
 impl ResultVariant {
     /// Require exactly one declaration identity for every named payload-type leaf before execution.
+    ///
+    /// Registry-owned TaskJoinError uses its canonical builtin identity; other builtin payloads remain outside this
+    /// execution profile. Source models and enums retain their accepted module or package declaration identities.
     pub fn has_complete_canonical_types(&self) -> bool {
         /// Collect named leaves using the same structural child positions retained in the type facts.
         fn paths(ty: &IncanType, path: &mut Vec<usize>, out: &mut std::collections::BTreeSet<Vec<usize>>) {
@@ -1534,6 +1563,13 @@ impl ResultVariant {
         required.len() == self.canonical_types.len()
             && required.iter().all(|path| {
                 self.canonical_types.get(path).is_some_and(|identity| {
+                    if *identity
+                        == CanonicalSymbolId::surface_type(
+                            incan_lang::lang::surface::types::SurfaceTypeId::TaskJoinError,
+                        )
+                    {
+                        return true;
+                    }
                     identity.scope_discriminant.is_none()
                         && matches!(
                             identity.kind,
@@ -3672,6 +3708,28 @@ impl PanicReason {
 
 #[cfg(test)]
 mod tests {
+    /// SDK error payloads require the exact registry identity, including namespace, kind, and declaration span.
+    #[test]
+    fn result_task_error_requires_canonical_sdk_identity() {
+        let canonical =
+            crate::CanonicalSymbolId::surface_type(incan_lang::lang::surface::types::SurfaceTypeId::TaskJoinError);
+        let mut variant = super::ResultVariant {
+            kind: super::ResultVariantKind::Ok,
+            payload: super::Operand::Constant(super::Constant::Int(41)),
+            ok_type: crate::IncanType::Primitive(crate::IncanPrimitiveType::Int),
+            error_type: crate::IncanType::Named("TaskJoinError".into()),
+            canonical_types: std::collections::BTreeMap::from([(vec![1], canonical.clone())]),
+        };
+        assert!(variant.has_complete_canonical_types());
+        let mut forged = canonical.clone();
+        forged.declaration_span = crate::HirSourceSpan::new(1, 2);
+        variant.canonical_types.insert(vec![1], forged);
+        assert!(!variant.has_complete_canonical_types());
+        variant.canonical_types.insert(vec![1], canonical);
+        variant.error_type = crate::IncanType::Named("JoinedError".into());
+        assert!(variant.has_complete_canonical_types());
+    }
+
     /// Named leaves keep structural identity paths while aliases remain diagnostic spelling.
     #[test]
     fn result_type_identity_paths_are_complete_and_reject_extra_or_missing_leaves() {
@@ -4465,6 +4523,7 @@ mod tests {
         let module = BodyIrModule {
             module_id: CompilerNodeId::new(CompilerNodeKind::Module, "m"),
             stdlib_delegations: Vec::new(),
+            sdk_async_primitives: Vec::new(),
             enum_declarations: Vec::new(),
             static_declarations: Vec::new(),
             nominal_declarations: Vec::new(),

@@ -4,6 +4,39 @@
 
 use super::*;
 
+/// SDK operations retain their exact identities through publication; a local shadow is not an SDK future.
+#[test]
+fn retains_catalog_owned_sdk_async_primitives() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "import std.async\nfrom std.async.time import sleep as pause, sleep_ms\nfrom std.async.task import yield_now\n\ndef sleep(seconds: float) -> int:\n    return 7\n\nasync def main() -> None:\n    await pause(0.01)\n    await sleep_ms(-1)\n    await yield_now()\n    println(sleep(1.0))\n";
+    let module = build(source, &["m", "sdk_async"])?;
+    assert_eq!(module.sdk_async_primitives.len(), 3);
+    let targets = named_targets(&module, "main");
+    for primitive in &module.sdk_async_primitives {
+        assert!(
+            targets
+                .iter()
+                .any(|target| target.canonical.as_ref() == Some(&primitive.canonical))
+        );
+    }
+    let local = targets
+        .iter()
+        .find(|target| target.name == "sleep")
+        .ok_or("missing source shadow")?;
+    assert!(
+        !module
+            .sdk_async_primitives
+            .iter()
+            .any(|primitive| Some(&primitive.canonical) == local.canonical.as_ref())
+    );
+    let encoded = incan_semantics_core::executable_representation::encode_module(&module)?;
+    assert_eq!(
+        incan_semantics_core::executable_representation::decode_module(&encoded)?,
+        module,
+        "SDK facts must survive the published representation alongside the checked bodies"
+    );
+    Ok(())
+}
+
 const ASYNC_PRELUDE: &str =
     "import std.async\n\nasync def fast() -> int:\n  return 1\n\nasync def slow() -> int:\n  return 2\n\n";
 

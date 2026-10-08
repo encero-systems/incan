@@ -401,6 +401,16 @@ impl TypeChecker {
                     // Constructor checking has already excluded source shadowing; retain that selected builtin binding
                     // for Body IR.
                     self.record_direct_callee_identity(name, callee.span);
+                } else if matches!(
+                    self.active_surface_function_import(name),
+                    Some(
+                        incan_lang::lang::surface::functions::SurfaceFnId::SleepMs
+                            | incan_lang::lang::surface::functions::SurfaceFnId::YieldNow
+                    )
+                ) {
+                    // These SDK calls take the registry checking path, but Body IR still needs their selected
+                    // import target, including aliases and provider ownership, rather than a builtin spelling.
+                    self.record_direct_callee_identity(name, callee.span);
                 }
                 return result;
             }

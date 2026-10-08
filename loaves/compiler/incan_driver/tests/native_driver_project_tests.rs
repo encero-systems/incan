@@ -620,16 +620,33 @@ fn check_async_frontend_refusal(
     let source = root.join("async_frontend.incn");
     fs::write(
         &source,
-        "import std.async\nfrom std.async.time import sleep_ms\n\nasync def main() -> None:\n    await sleep_ms(1)\n",
+        "import std.async\nfrom std.async.time import sleep\n\nasync def delayed() -> int:\n    await sleep(60.0)\n    return 1\n\nasync def ready() -> int:\n    return 2\n\nasync def main() -> None:\n    result = race for value:\n        await delayed() => value\n        await ready() => value\n    println(result)\n",
     )?;
+    let legacy = root.join("legacy-race");
     success(
-        &support::repo_command().arg("check").arg(&source).output()?,
-        "legacy async checking",
+        &support::repo_command()
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy)
+            .output()?,
+        "legacy suspending race compilation",
     );
+    let expected = census::bounded(
+        &mut Command::new(legacy.join("oven/release/async_frontend")),
+        root,
+        std::time::Instant::now() + std::time::Duration::from_secs(5),
+    )?
+    .ok_or("legacy suspending race execution timed out")?;
+    success(&expected, "legacy suspending race execution");
+    assert_eq!(expected.stdout, b"2\n");
     let output = corpus::source_command(driver, &source, &root.join("async-native"), sysroot, closure).output()?;
     assert!(!output.status.success());
     let diagnostic = String::from_utf8(output.stderr)?;
-    assert!(diagnostic.contains("unsupported Body IR"), "{diagnostic}");
+    assert!(
+        diagnostic.contains("unsupported Body IR SDK suspending race"),
+        "{diagnostic}"
+    );
+    assert!(!root.join("async-native").exists());
     Ok(())
 }
 
@@ -845,11 +862,22 @@ fn direct_route_assertions_match_legacy() -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
-/// Compare complete output streams and exit codes, including the canonical panic payload without Rust's wrapper.
+/// Establish legacy execution first, then compare complete native output streams and exit codes, including canonical
+/// panic payloads.
 fn check_declaration_case(
     name: &str,
     text: &str,
     panic_message: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case_with_deadline(name, text, panic_message, None)
+}
+
+/// Compare execution with an optional bound so a wrongly evaluated discarded timer fails instead of hanging.
+fn check_declaration_case_with_deadline(
+    name: &str,
+    text: &str,
+    panic_message: Option<&str>,
+    deadline: Option<std::time::Duration>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     let root = fixture.scratch(name)?;
@@ -857,6 +885,22 @@ fn check_declaration_case(
     fs::write(&source, text)?;
     let native = root.join("native");
     let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let legacy_root = root.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy declaration compilation",
+    );
+    let legacy = legacy_root.join("oven/release").join(name);
+    let expected = match deadline {
+        Some(duration) => census::bounded(&mut Command::new(legacy), &root, std::time::Instant::now() + duration)?
+            .ok_or("legacy declaration execution timed out")?,
+        None => Command::new(legacy).output()?,
+    };
     success(
         &corpus::source_command(
             &fixture.driver_binary("release"),
@@ -868,18 +912,11 @@ fn check_declaration_case(
         .output()?,
         "native declaration compilation",
     );
-    let legacy_root = root.join("legacy");
-    success(
-        &support::repo_command()
-            .current_dir(&root)
-            .arg("build")
-            .arg(&source)
-            .arg(&legacy_root)
-            .output()?,
-        "legacy declaration compilation",
-    );
-    let expected = Command::new(legacy_root.join("oven/release").join(name)).output()?;
-    let actual = Command::new(native).output()?;
+    let actual = match deadline {
+        Some(duration) => census::bounded(&mut Command::new(native), &root, std::time::Instant::now() + duration)?
+            .ok_or("native declaration execution timed out")?,
+        None => Command::new(native).output()?,
+    };
     assert_eq!(actual.stdout, expected.stdout);
     assert_eq!(actual.stderr, expected.stderr);
     assert_eq!(actual.status.code(), expected.status.code());
@@ -900,6 +937,60 @@ fn check_declaration_case(
         success(&actual, "declaration execution");
     }
     Ok(())
+}
+
+/// SDK futures capture now, wait only at await, preserve clamping/yield, and refuse races needing pending source polls.
+#[test]
+fn direct_route_sdk_async_primitives_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case_with_deadline(
+        "sdk_async_primitives",
+        r#"
+import std.async
+from std.async import sleep as pause
+from std.async.time import sleep_ms
+from std.async.task import yield_now
+
+def duration(seconds: float) -> float:
+    """Observe argument evaluation before future construction."""
+    println(f"capture={seconds}")
+    return seconds
+
+def sleep(seconds: float) -> int:
+    """Keep a same-spelled source function independent of the SDK alias."""
+    return 7
+
+async def unit() -> None:
+    """Share a unit-output carrier with the SDK variants."""
+    println("unit")
+
+async def answer() -> int:
+    """Capture an unused long timer without running its body, then await real SDK operations."""
+    unused = pause(duration(3600.0))
+    println("captured")
+    await pause(duration(0.01))
+    await sleep_ms(-1)
+    await yield_now()
+    await unit()
+    println(sleep(0.0))
+    return 41
+
+async def main() -> None:
+    """Observe all serial await boundaries inside the canonical executor."""
+    println("before")
+    println(await answer())
+    println("after")
+"#,
+        None,
+        Some(std::time::Duration::from_secs(5)),
+    )?;
+    let fixture = driver_fixture()?;
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    check_async_frontend_refusal(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("sdk-suspending-race")?,
+        &fixture.sysroot,
+        &closure,
+    )
 }
 
 /// Source async calls defer discarded body effects and evaluate arguments before their immediately ready awaits.
@@ -930,6 +1021,75 @@ async def main() -> None:
     println("constructed")
     println(await nested(argument()))
     println(await answer(7))
+"#,
+        None,
+    )
+}
+
+/// Spawned source futures retain task ownership and join through the canonical SDK result carrier.
+#[test]
+#[ignore = "requires native Future and JoinHandle carriers"]
+fn direct_route_spawned_tasks_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "async_join",
+        r#"
+import std.async
+from std.async.task import spawn
+
+async def answer() -> int:
+    """Return a value from a separately scheduled task."""
+    return 41
+
+async def main() -> None:
+    """Consume the task handle and inspect the canonical join result."""
+    match await spawn(answer()):
+        Ok(value) => println(value)
+        Err(error) => println(error.message())
+"#,
+        None,
+    )
+}
+
+/// Standard Result layouts retain the SDK join error even when only the successful variant is constructed.
+#[test]
+fn direct_route_task_error_carrier_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "task_error_carrier",
+        r#"
+from std.async.task import TaskJoinError
+
+def retain(error: TaskJoinError) -> TaskJoinError:
+    """Check the SDK error's owned parameter and Clone boundary without manufacturing a join failure."""
+    copy = error
+    return error
+
+def answer() -> Result[int, TaskJoinError]:
+    """Preserve the canonical error payload in an otherwise successful result."""
+    return Ok(41)
+
+def main() -> None:
+    """Inspect a successful result without manufacturing an SDK error."""
+    match answer():
+        Ok(value) => println(value)
+        Err(_) => println(0)
+"#,
+        None,
+    )?;
+    check_declaration_case(
+        "source_task_error_name",
+        r#"
+model TaskJoinError:
+    message: str
+
+def failure() -> Result[int, TaskJoinError]:
+    """Retain a source model even when its name matches the SDK error."""
+    return Err(TaskJoinError(message="source error"))
+
+def main() -> None:
+    """Read the source model's own field layout."""
+    match failure():
+        Ok(value) => println(value)
+        Err(error) => println(error.message)
 "#,
         None,
     )

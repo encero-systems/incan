@@ -4,7 +4,8 @@ use crate::error::PlanError;
 use crate::plan::{ListLeaf, PlanType, SizedNumeric, tuple_element_type};
 use rustc_middle::ty::{Ty, TyCtxt};
 
-/// Translate admitted scalar, model, and collection types to their canonical native representations.
+/// Translate admitted scalar, source nominal, SDK error, and collection types to their canonical native
+/// representations.
 ///
 /// List references preserve source parameter borrowing; checked pairs and other shared references are body-internal.
 pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, PlanError> {
@@ -73,6 +74,8 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         ),
         PlanType::CheckedInt => Ty::new_tup(tcx, &[tcx.types.i64, tcx.types.bool]),
         PlanType::String => string_type(tcx)?,
+        PlanType::TaskJoinError => task_join_error_type(tcx)?,
+        PlanType::TaskJoinErrorRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, task_join_error_type(tcx)?),
         PlanType::StringRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, string_type(tcx)?),
         PlanType::StrRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, tcx.types.str_),
         PlanType::StringArray(count) => array_type(tcx, string_type(tcx)?, *count)?,
@@ -102,6 +105,35 @@ fn string_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
         function: "String".into(),
         reason: "the native dependency closure has no String language item".into(),
     })?;
+    Ok(tcx.type_of(definition).instantiate_identity().skip_normalization())
+}
+
+/// Resolve the SDK join error through public dependency metadata without copying its private layout.
+fn task_join_error_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
+    let failure = || PlanError::Invalid {
+        function: "TaskJoinError".into(),
+        reason: "canonical async SDK task join error is missing".into(),
+    };
+    let krate = tcx
+        .crates(())
+        .iter()
+        .find(|krate| tcx.crate_name(**krate).as_str() == "incan_std_async")
+        .ok_or_else(failure)?;
+    let mut definition = krate.as_def_id();
+    for name in ["task", "TaskJoinError"] {
+        if tcx.def_kind(definition) != rustc_hir::def::DefKind::Mod {
+            return Err(failure());
+        }
+        definition = tcx
+            .module_children(definition)
+            .iter()
+            .find(|child| child.ident.name.as_str() == name && child.vis.is_public())
+            .and_then(|child| child.res.opt_def_id())
+            .ok_or_else(failure)?;
+    }
+    if tcx.def_kind(definition) != rustc_hir::def::DefKind::Struct || tcx.generics_of(definition).count() != 0 {
+        return Err(failure());
+    }
     Ok(tcx.type_of(definition).instantiate_identity().skip_normalization())
 }
 
@@ -229,8 +261,10 @@ pub fn enum_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Result<Ty<'tcx>, PlanEr
         .free_items()
         .map(|item| item.owner_id.to_def_id())
         .find(|def| {
-            matches!(tcx.def_kind(*def), rustc_hir::def::DefKind::Enum | rustc_hir::def::DefKind::TyAlias)
-                && tcx.opt_item_name(*def).is_some_and(|symbol| symbol.as_str() == name)
+            matches!(
+                tcx.def_kind(*def),
+                rustc_hir::def::DefKind::Enum | rustc_hir::def::DefKind::TyAlias
+            ) && tcx.opt_item_name(*def).is_some_and(|symbol| symbol.as_str() == name)
         })
         .ok_or_else(|| PlanError::Invalid {
             function: name.into(),

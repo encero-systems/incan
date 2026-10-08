@@ -2,6 +2,10 @@
 
 import std.async
 from rust::incan_std_async::runtime import block_on
+import std.async.time as sdk_time
+import std.async.task as sdk_task
+from rust::incan_std_async::__private::tokio::task import block_in_place
+from rust::incan_std_async::__private::tokio::runtime import Handle
 from rust::std::io import stderr, Write
 from rust::std::process import exit
 from rust::std::string import String as RustString
@@ -11,6 +15,21 @@ from panic_hook import initialize_panic_hook
 async def invoke(entry: () -> None) -> None:
     """Defer the native callback until the canonical executor polls its entry future."""
     entry()
+
+
+pub def await_sleep_seconds(seconds: float) -> None:
+    """Poll the real SDK timer on the active executor with its floating-point seconds conversion."""
+    block_in_place(() => Handle.current().block_on(sdk_time.sleep(seconds)))
+
+
+pub def await_sleep_millis(milliseconds: int) -> None:
+    """Poll the real SDK millisecond timer after its future's captured argument is consumed by await."""
+    block_in_place(() => Handle.current().block_on(sdk_time.sleep_ms(milliseconds)))
+
+
+pub def await_yield_now() -> None:
+    """Run the SDK's actual scheduler yield; concurrent source races require a separately pollable evaluator."""
+    block_in_place(() => Handle.current().block_on(sdk_task.yield_now()))
 
 
 pub def run_async_entry(entry: () -> None) -> None:

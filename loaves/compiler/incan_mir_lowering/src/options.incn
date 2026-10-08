@@ -265,6 +265,8 @@ pub def carrier_payload_value(mut builder: Builder, place: Place, span: SourceSp
     mut reference_type = PlanType.StringRef
     match ty:
         PlanType.String => pass
+        PlanType.TaskJoinError =>
+            reference_type = PlanType.TaskJoinErrorRef
         PlanType.List(leaf, depth) =>
             reference_type = PlanType.ListRef(leaf, depth)
         PlanType.Set(leaf) =>

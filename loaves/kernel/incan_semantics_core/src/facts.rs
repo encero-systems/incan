@@ -874,6 +874,21 @@ impl fmt::Display for CanonicalStableDeclarationContext {
 }
 
 impl CanonicalSymbolId {
+    /// Identify a registry-owned surface type that has no Incan source declaration.
+    ///
+    /// The accepting checker must establish the registry's module ownership before using this identity for an import
+    /// or qualified annotation. Aliases retain this canonical name rather than minting a new declaration.
+    pub fn surface_type(surface_type: incan_lang::lang::surface::types::SurfaceTypeId) -> Self {
+        Self {
+            namespace: SymbolNamespace::OrdinaryLexical,
+            origin: SymbolOrigin::Builtin,
+            declaration_name: incan_lang::lang::surface::types::as_str(surface_type).to_owned(),
+            kind: SemanticSourceTargetKind::Builtin,
+            scope_discriminant: None,
+            declaration_span: crate::HirSourceSpan::new(0, 0),
+        }
+    }
+
     /// Build the identity of a module-level declaration in a project source module.
     ///
     /// Module-level declarations are unique within their origin, so this deliberately takes no scope discriminant.

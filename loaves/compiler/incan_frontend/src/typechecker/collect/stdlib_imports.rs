@@ -1053,7 +1053,11 @@ impl TypeChecker {
             let local_name = Self::import_item_local_name(item);
             let target_identity = self
                 .dependency_member_identity(context.module, &item.name)
-                .or_else(|| self.stdlib_cache.lookup_identity(&context.module.segments, &item.name));
+                .or_else(|| self.stdlib_cache.lookup_identity(&context.module.segments, &item.name))
+                .or_else(|| {
+                    (surface_type == surface_types::SurfaceTypeId::TaskJoinError)
+                        .then(|| CanonicalSymbolId::surface_type(surface_type))
+                });
             let symbol_id = self.define_named_import_symbol(
                 context.module,
                 item,

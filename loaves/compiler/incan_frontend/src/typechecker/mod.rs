@@ -5287,14 +5287,7 @@ impl TypeChecker {
         {
             let canonical = surface_types::as_str(surface_type).to_string();
             return Some(QualifiedTypeReferenceInfo {
-                identity: CanonicalSymbolId {
-                    namespace: SymbolNamespace::OrdinaryLexical,
-                    origin: SymbolOrigin::Builtin,
-                    declaration_name: canonical.clone(),
-                    kind: SemanticSourceTargetKind::Builtin,
-                    scope_discriminant: None,
-                    declaration_span: HirSourceSpan::new(0, 0),
-                },
+                identity: CanonicalSymbolId::surface_type(surface_type),
                 module_path,
                 resolved: ResolvedType::Named(canonical),
             });

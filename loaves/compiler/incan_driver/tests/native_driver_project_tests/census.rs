@@ -20,7 +20,7 @@ struct Record {
 }
 
 /// Run a child with file-backed streams so pipe capacity cannot defeat the deadline.
-fn bounded(
+pub(super) fn bounded(
     command: &mut Command,
     scratch: &Path,
     deadline: Instant,

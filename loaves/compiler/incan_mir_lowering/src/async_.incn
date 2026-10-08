@@ -1,7 +1,7 @@
-"""Deferred source futures whose entire admitted call graph completes in its first poll."""
+"""Deferred source calls and SDK operations with serial await evaluation and ready-only races."""
 
-from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind
-from rust::incan_semantics_core::body_ir import BodyIrModule, Body
+from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive, SemanticSourceTargetKind
+from rust::incan_semantics_core::body_ir import BodyIrModule, Body, SdkAsyncPrimitive
 from pub::incan_mir_plan import (
     PlanType,
     EnumDeclaration,
@@ -27,6 +27,7 @@ from pub::incan_mir_plan import assign as plan_assign, place as plan_place, bloc
 from classes import function_name, frame_type
 from frame import Builder, temporary, read_place, literal, forget_moved_arguments, forget_owned, terminate_call
 from models import place_type
+from sdk_async import capture_types as sdk_capture_types, await_primitive
 
 
 def outputs(module: &BodyIrModule) -> list[RustType]:
@@ -35,7 +36,14 @@ def outputs(module: &BodyIrModule) -> list[RustType]:
     for body in module.bodies:
         if body.is_async and str(body.name) != "main" and body.return_type.clone() not in retained:
             retained.append(body.return_type.clone())
+    if len(module.sdk_async_primitives) != 0 and unit_output() not in retained:
+        retained.append(unit_output())
     return retained
+
+
+def unit_output() -> RustType:
+    """Use the checker's unit output for every admitted SDK operation."""
+    return RustType.Primitive(Primitive.Unit)
 
 
 def carriers(module: &BodyIrModule, output: &RustType) -> list[int]:
@@ -53,7 +61,7 @@ pub def future_type(
     ty: &RustType,
     intrinsics: list[EnumDeclaration],
 ) -> Result[Option[PlanType], str]:
-    """Map frontend-owned Awaitable carriers to deferred captures; external futures stay refused."""
+    """Map checked Awaitable outputs to deferred source or catalog-owned SDK captures."""
     match ty:
         RustType.Generic(base=base, args=args) =>
             if str(base) != "Awaitable":
@@ -115,6 +123,11 @@ pub def future_declarations(
             variants.append(
                 EnumVariant(name=f"F{body_index}", fields=capture_types(module, module.bodies[body_index], intrinsics)?),
             )
+        if outputs(module)[index] == unit_output():
+            for primitive in range(len(module.sdk_async_primitives)):
+                variants.append(
+                    EnumVariant(name=f"S{primitive}", fields=sdk_capture_types(module.sdk_async_primitives[primitive])?),
+                )
         declarations.append(
             EnumDeclaration(
                 name=f"__incan_ready_future_{index}",
@@ -125,6 +138,41 @@ pub def future_declarations(
             ),
         )
     return Ok(declarations)
+
+
+pub def sdk_future_type(module: &BodyIrModule, intrinsics: list[EnumDeclaration]) -> Result[PlanType, str]:
+    """Select the shared unit-output carrier without treating every external future as an SDK operation."""
+    for index in range(len(outputs(module))):
+        if outputs(module)[index] == unit_output():
+            owner = len(module.enum_declarations) + len(intrinsics) + index
+            return Ok(PlanType.Enum(owner, f"__incan_ready_future_{index}"))
+    return Err("unsupported Body IR unretained SDK async output")
+
+
+pub def construct_sdk_future(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    primitive: &SdkAsyncPrimitive,
+    arguments: list[Operand],
+    destination: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Capture scalar arguments at the call site; constructing or dropping a future does not run its SDK body."""
+    fields = sdk_capture_types(primitive)?
+    if len(fields) != len(arguments):
+        return Err("invalid Body IR SDK async argument count")
+    for index in range(len(module.sdk_async_primitives)):
+        if module.sdk_async_primitives[index].canonical != primitive.canonical:
+            continue
+        match sdk_future_type(module, builder.intrinsics)?:
+            PlanType.Enum(owner, _name) =>
+                variant = len(carriers(module, unit_output())) + index
+                forget_moved_arguments(builder, arguments)
+                builder.emit(plan_assign(destination, RvalueKind.Enum(owner, variant, arguments), span))
+                builder.owned.append(destination.local)
+                return Ok(None)
+            _ => return Err("invalid Body IR SDK async carrier")
+    return Err("unsupported Body IR unretained SDK async identity")
 
 
 pub def construct_future(
@@ -160,7 +208,7 @@ pub def await_future(
     destination: Place,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Dispatch a first-poll-ready future by its native discriminant, consuming its retained captures."""
+    """Dispatch an owned future by its discriminant, consuming captures before serial source or SDK evaluation."""
     match place_type(builder.locals, future):
         PlanType.Enum(owner, _name) =>
             index = owner - len(module.enum_declarations) - len(builder.intrinsics)
@@ -174,25 +222,7 @@ pub def await_future(
             forget_owned(builder, future.local)
             after = builder.new_block(span)
             for variant in range(len(bodies)):
-                selected = builder.new_block(span)
-                next_variant = builder.new_block(span)
-                condition = temporary(builder, PlanType.Bool, span)
-                builder.emit(
-                    plan_assign(
-                        condition,
-                        RvalueKind.Binary(
-                            BinaryOp.Equal,
-                            read_place(number, false, span),
-                            literal(Constant.Int(variant), span),
-                        ),
-                        span,
-                    ),
-                )
-                builder.finish(
-                    TerminatorKind.SwitchBool(read_place(condition, false, span), next_variant, selected),
-                    span,
-                )
-                builder.current = selected
+                next_variant = select_future_variant(builder, number, variant, span)
                 body = module.bodies[bodies[variant]]
                 mut arguments: list[Operand] = []
                 fields = capture_types(module, body, builder.intrinsics)?
@@ -211,6 +241,13 @@ pub def await_future(
                 terminate_call(builder, CalleeKind.Planned(evaluator_name(module, body)), arguments, destination, span)
                 builder.finish(TerminatorKind.Goto(after), span)
                 builder.current = next_variant
+            if outputs(module)[index] == unit_output():
+                for primitive in range(len(module.sdk_async_primitives)):
+                    variant = len(bodies) + primitive
+                    next_variant = select_future_variant(builder, number, variant, span)
+                    await_primitive(builder, module.sdk_async_primitives[primitive], future, variant, destination, span)?
+                    builder.finish(TerminatorKind.Goto(after), span)
+                    builder.current = next_variant
             builder.finish(TerminatorKind.Unreachable, span)
             builder.current = after
             match place_type(builder.locals, destination):
@@ -223,6 +260,23 @@ pub def await_future(
                 _ => pass
             return Ok(None)
         _ => return Err("unsupported Body IR Await without future carrier")
+
+
+def select_future_variant(mut builder: Builder, tag: Place, variant: int, span: SourceSpan) -> int:
+    """Enter one discriminant-selected branch and return its unmatched continuation block."""
+    selected = builder.new_block(span)
+    next_variant = builder.new_block(span)
+    condition = temporary(builder, PlanType.Bool, span)
+    builder.emit(
+        plan_assign(
+            condition,
+            RvalueKind.Binary(BinaryOp.Equal, read_place(tag, false, span), literal(Constant.Int(variant), span)),
+            span,
+        ),
+    )
+    builder.finish(TerminatorKind.SwitchBool(read_place(condition, false, span), next_variant, selected), span)
+    builder.current = selected
+    return next_variant
 
 
 pub def async_entry(body: Function) -> tuple[Function, ExternalFunction]:

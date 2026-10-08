@@ -318,6 +318,7 @@ fn build_body_ir_module_v0_with_provider_operations(
         trait_implementations: collect::collect_local_trait_implementations(program, type_info),
         enum_declarations: collect_local_enum_declarations(program, &module_identity, type_info),
         stdlib_delegations: stdlib_delegations::collect(type_info),
+        sdk_async_primitives: sdk_async::collect(type_info),
         static_declarations: collect::collect_scalar_statics(program, type_info),
         module_id,
         nominal_declarations,
@@ -1110,6 +1111,7 @@ mod async_;
 mod literals;
 
 mod calls;
+mod sdk_async;
 mod stdlib_delegations;
 
 mod operators;

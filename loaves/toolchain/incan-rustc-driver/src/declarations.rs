@@ -10,9 +10,11 @@ fn ident(name: &str, span: Span) -> Ident {
     Ident::new(Symbol::intern(name), span)
 }
 
-/// Construct an admitted scalar, model, or list AST type without generating or parsing Rust source.
+/// Construct an admitted scalar, nominal, SDK error, or collection AST type without generating or parsing Rust source.
 fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
     let kind = match kind {
+        PlanType::TaskJoinErrorRef => task_join_error_ast_type(true, span),
+        PlanType::TaskJoinError => task_join_error_ast_type(false, span),
         PlanType::Tuple(elements) => ast::TyKind::Tup(
             elements
                 .iter()
@@ -136,6 +138,24 @@ fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
         span,
         tokens: None,
     })
+}
+
+/// Preserve the canonical SDK path in owned values and shared borrows without declaring a substitute model.
+fn task_join_error_ast_type(borrowed: bool, span: Span) -> ast::TyKind {
+    if borrowed {
+        return ast::TyKind::Ref(
+            None,
+            ast::MutTy {
+                ty: ty(&PlanType::TaskJoinError, span),
+                mutbl: ast::Mutability::Not,
+            },
+        );
+    }
+    let mut path = ast::Path::from_ident(ident("incan_std_async", span));
+    for name in ["task", "TaskJoinError"] {
+        path.segments.push(ast::PathSegment::from_ident(ident(name, span)));
+    }
+    ast::TyKind::Path(None, path)
 }
 
 /// A diverging placeholder satisfies every admitted signature; `mir_built` replaces its body.
@@ -344,11 +364,19 @@ fn type_tokens(ty: &ast::Ty) -> Vec<ast::tokenstream::AttrTokenTree> {
     use ast::token::{Delimiter, Token, TokenKind};
     use ast::tokenstream::{AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, Spacing};
     match &ty.kind {
-        ast::TyKind::Path(None, path) => path
-            .segments
-            .iter()
-            .map(|segment| name_token(segment.ident.name.as_str(), ty.span))
-            .collect(),
+        ast::TyKind::Path(None, path) => {
+            let mut tokens = Vec::new();
+            for (index, segment) in path.segments.iter().enumerate() {
+                if index != 0 {
+                    tokens.push(AttrTokenTree::Token(
+                        Token::new(TokenKind::PathSep, ty.span),
+                        Spacing::Alone,
+                    ));
+                }
+                tokens.push(name_token(segment.ident.name.as_str(), ty.span));
+            }
+            tokens
+        }
         ast::TyKind::Tup(elements) => {
             let mut tokens = Vec::new();
             for element in elements {
@@ -553,21 +581,35 @@ pub fn enum_declaration(value: &crate::plan::EnumDeclaration, span: Span) -> Box
 fn carrier_alias(value: &crate::plan::EnumDeclaration, span: Span) -> Box<ast::Item> {
     let fields: Vec<_> = value.variants.iter().flat_map(|variant| &variant.fields).collect();
     let mut path = ast::Path::from_ident(ident("std", span));
-    path.segments.push(ast::PathSegment::from_ident(ident(if value.carrier == "Option" { "option" } else { "result" }, span)));
+    path.segments.push(ast::PathSegment::from_ident(ident(
+        if value.carrier == "Option" { "option" } else { "result" },
+        span,
+    )));
     let mut carrier = ast::PathSegment::from_ident(ident(&value.carrier, span));
     carrier.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
         span,
-        args: fields.iter().map(|field| ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(field, span)))).collect(),
+        args: fields
+            .iter()
+            .map(|field| ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(field, span))))
+            .collect(),
     })));
     path.segments.push(carrier);
-    item(ast::ItemKind::TyAlias(Box::new(ast::TyAlias {
-        defaultness: ast::Defaultness::Implicit,
-        ident: ident(&value.name, span),
-        generics: ast::Generics::default(),
-        after_where_clause: ast::WhereClause::default(),
-        bounds: Vec::new(),
-        ty: Some(Box::new(ast::Ty { id: ast::DUMMY_NODE_ID, kind: ast::TyKind::Path(None, path), span, tokens: None })),
-    })), span)
+    item(
+        ast::ItemKind::TyAlias(Box::new(ast::TyAlias {
+            defaultness: ast::Defaultness::Implicit,
+            ident: ident(&value.name, span),
+            generics: ast::Generics::default(),
+            after_where_clause: ast::WhereClause::default(),
+            bounds: Vec::new(),
+            ty: Some(Box::new(ast::Ty {
+                id: ast::DUMMY_NODE_ID,
+                kind: ast::TyKind::Path(None, path),
+                span,
+                tokens: None,
+            })),
+        })),
+        span,
+    )
 }
 
 /// Preserve enum tokens for derives from the exact planned layout without parsing generated Rust source.

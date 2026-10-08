@@ -12,17 +12,20 @@ from rust::incan_semantics_core::body_ir import (
 )
 from pub::incan_mir_plan import ListLeaf, PlanType, Local, Place, Projection, SourceSpan
 from numerics import numeric_type
+from rust::incan_lang::lang::surface::types import SurfaceTypeId, from_str as surface_type
 from tuples import tuple_type, generic_tuple_type, type_name, tuple_slot
 from pub::incan_mir_plan import tuple_element_type
 
 
 pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Result[PlanType, str]:
-    """Translate checked scalar and collection types, resolving source-local nominals only against retained declarations."""
+    """Translate checked scalars and collections; retained source nominals precede canonical SDK surface carriers."""
     match ty:
         RustType.Named(name) =>
             for index in range(len(declarations)):
                 if declarations[index].name == str(name):
                     return Ok(PlanType.Model(index, str(name)))
+            if surface_type(str(name)) == Some(SurfaceTypeId.TaskJoinError):
+                return Ok(PlanType.TaskJoinError)
             return Err(f"unsupported Body IR nominal type {name}")
         RustType.Primitive(primitive) =>
             match primitive:

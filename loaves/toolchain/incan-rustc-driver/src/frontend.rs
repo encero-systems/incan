@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::plan::{Plan, PlanType};
 use incan_driver::{modules::collect_modules_detailed_with_session, session::CompilationSession};
 use incan_mir_lowering::caller::incan::lower_program;
 use incan_semantics_core::body_ir::BodyIrModule;
@@ -230,6 +231,9 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 
     // ---- Explicit native dependencies ----
     let dependencies = dependencies(&arguments[4..])?;
+    if requires_async_sdk(&plan) && !dependencies.externs.iter().any(|(name, _)| name == "incan_std_async") {
+        return Err("unsupported Body IR native dependency `incan_std_async` for TaskJoinError carrier".into());
+    }
     for external in &plan.externals {
         let root = external
             .path
@@ -253,4 +257,24 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         &dependencies.directories,
     )?;
     Ok(())
+}
+
+/// Require the canonical SDK dependency for error carriers, including payload-only uses in standard Result aliases.
+fn requires_async_sdk(plan: &Plan) -> bool {
+    let sdk_error = |ty: &PlanType| matches!(ty, PlanType::TaskJoinError | PlanType::TaskJoinErrorRef);
+    plan.functions
+        .iter()
+        .flat_map(|function| &function.locals)
+        .any(|local| sdk_error(&local.ty))
+        || plan
+            .models
+            .iter()
+            .flat_map(|model| &model.fields)
+            .any(|field| sdk_error(&field.ty))
+        || plan
+            .enums
+            .iter()
+            .flat_map(|declaration| &declaration.variants)
+            .flat_map(|variant| &variant.fields)
+            .any(sdk_error)
 }

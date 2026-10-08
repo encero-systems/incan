@@ -1,0 +1,47 @@
+"""Scalar captures and real SDK polling for catalog-owned async operations."""
+
+from rust::incan_semantics_core::body_ir import SdkAsyncPrimitive, SdkAsyncPrimitiveKind
+from pub::incan_mir_plan import PlanType, Place, Projection, Operand, SourceSpan
+from frame import Builder, read_place, external_call
+from models import model_type
+
+
+pub def capture_types(primitive: &SdkAsyncPrimitive) -> Result[list[PlanType], str]:
+    """Validate the producer's scalar signature against the operation's supported capture layout."""
+    mut retained: list[PlanType] = []
+    for parameter in primitive.parameters:
+        retained.append(model_type([], parameter)?)
+    mut expected: list[PlanType] = []
+    match primitive.kind:
+        SdkAsyncPrimitiveKind.SleepSeconds => expected.append(PlanType.Float)
+        SdkAsyncPrimitiveKind.SleepMillis => expected.append(PlanType.Int)
+        SdkAsyncPrimitiveKind.YieldNow => pass
+    if retained != expected:
+        return Err("invalid Body IR SDK async capture signature")
+    return Ok(retained)
+
+
+pub def await_primitive(
+    mut builder: Builder,
+    primitive: &SdkAsyncPrimitive,
+    future: Place,
+    variant: int,
+    destination: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Consume captured arguments only at await, invoking an Incan helper that polls the actual SDK future."""
+    fields = capture_types(primitive)?
+    mut arguments: list[Operand] = []
+    for slot in range(len(fields)):
+        argument = Place(local=future.local, projection=Projection.VariantField(variant, slot, fields[slot]), span=span)
+        arguments.append(read_place(argument, true, span))
+    mut path = ""
+    match primitive.kind:
+        SdkAsyncPrimitiveKind.SleepSeconds =>
+            path = "incan_native_runtime::await_sleep_seconds"
+        SdkAsyncPrimitiveKind.SleepMillis =>
+            path = "incan_native_runtime::await_sleep_millis"
+        SdkAsyncPrimitiveKind.YieldNow =>
+            path = "incan_native_runtime::await_yield_now"
+    external_call(builder, path, fields, PlanType.Unit, arguments, destination, span)
+    return Ok(None)

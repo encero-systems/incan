@@ -186,6 +186,7 @@ pub fn resolve_executable_requirements(
             trait_implementations: Vec::new(),
             module_id: CompilerNodeId::module(owner),
             stdlib_delegations: Vec::new(),
+            sdk_async_primitives: Vec::new(),
             enum_declarations: Vec::new(),
             static_declarations: Vec::new(),
             nominal_declarations: Vec::new(),

@@ -173,10 +173,11 @@ from collections import (
     insert_collection,
     extend_collection,
 )
-# =====================================================================================================================
-# Boundary types and validation
-# =====================================================================================================================
-from rust::incan_semantics_core::body_ir import DictEntry, PlaceOperand as RustPlaceOperand
+from rust::incan_semantics_core::body_ir import (
+    DictEntry,
+    PlaceOperand as RustPlaceOperand,
+    SdkAsyncPrimitive as RustSdkAsyncPrimitive,
+)
 from lists import (
     list_shape,
     require_list_shape,
@@ -190,6 +191,8 @@ from lists import (
 )
 from assertions import lower_assertion
 from async_ import future_type, future_declarations, construct_future, await_future, async_entry, evaluator_name
+from async_ import sdk_future_type, construct_sdk_future
+from sdk_async import capture_types as sdk_capture_types
 from defaults import default_arguments, default_type
 # =====================================================================================================================
 # Boundary types and validation
@@ -435,8 +438,9 @@ def scalar_rvalue(mut builder: Builder, value: &RustRvalue, span: SourceSpan) ->
 
 
 def is_nominal_type(ty: PlanType) -> bool:
-    """Identify model and enum owners alongside owned strings when transferring call results."""
+    """Identify source nominal and SDK error owners alongside owned strings when transferring call results."""
     match ty:
+        PlanType.TaskJoinError => return true
         PlanType.Enum(_index, _name) => return true
         PlanType.Model(_index, _name) => return true
         PlanType.Tuple(_elements) => return tuple_has_owners(ty)
@@ -498,12 +502,9 @@ pub def lower_statement(module: &BodyIrModule, mut builder: Builder, statement: 
         RustStatementKind.Drop(local=local) =>
             index = int(local.index()) + 1 + builder.local_offset
             drop_owned(builder, index, span)
-            # Parameters stay in caller-provided storage for the whole invocation, even after their value drops.
             if index > builder.parameter_count:
                 builder.emit(Statement(kind=StatementKind.StorageDead(index), span=span))
-        RustStatementKind.Expr(value=value) =>
-            # An expression statement only needs its operand to be valid; its value is discarded.
-            return lower_discarded_operand(builder, value, span)
+        RustStatementKind.Expr(value=value) => return lower_discarded_operand(builder, value, span)
         RustStatementKind.Call(destination=_destination, callee=_callee, args=_args, may_panic=_may_panic) =>
             return lower_call(module, builder, statement, span)
         RustStatementKind.Await(destination=destination, awaited=awaited) =>
@@ -550,6 +551,8 @@ def lower_ready_race(
     Every arm is lowered, including statically losing arms, so unsupported futures or callback statements still refuse.
     The frontend already constructed every awaitable in source order before this statement.
     """
+    if len(module.sdk_async_primitives) != 0:
+        return Err("unsupported Body IR SDK suspending race")
     target = ready_race_destination(builder, destination, span)?
     ty = place_type(builder.locals, target)
     if not numeric_carrier(ty) and ty != PlanType.Bool and ty != PlanType.Unit:
@@ -574,7 +577,6 @@ def lower_ready_race(
         await_future(module, builder, futures[index], binding, span)?
         lower_ready_race_callback(module, builder, arm.body)?
         lower_local_assignment(builder, target, RustRvalue.Use(arm.result), span)?
-        # Legacy drops losing futures after the winning callback has produced the shared result.
         for future in futures:
             drop_owned(builder, future.local, span)
         verify_branch_owners(true, builder.owned, retained)?
@@ -754,8 +756,6 @@ def lower_local_assignment(
                 return Ok(None)
         _ => pass
     track_rvalue_moves(builder, operation)
-    # Legacy release builds use native wrapping arithmetic for sized integers.
-    # Only the existing default-int boundary requests an explicit overflow pair.
     if ty == PlanType.Int:
         operation = negation_as_subtraction(operation, span)
         if is_checked_int_operation(operation):
@@ -836,8 +836,6 @@ def lower_if(
     then_index = builder.new_block(span)
     else_index = builder.new_block(span)
     after = builder.new_block(span)
-    # `SwitchBool` takes its false target first, then its true target.
-    # Legacy E0499: materialize before borrowing the builder receiver again, until dev.8.
     condition_value = value_operand(builder, condition, span)?
     builder.finish(TerminatorKind.SwitchBool(condition_value, else_index, then_index), span)
 
@@ -920,7 +918,6 @@ def lower_method_call(
     match target.intrinsic_carrier:
         Some(_carrier) => return lower_carrier_method(builder, target, arguments, destination, span)
         None => pass
-    # Builtin list members and source methods both retain identities; their origin selects the admission path.
     match target.canonical:
         Some(identity) =>
             if identity.origin == SymbolOrigin.Builtin:
@@ -963,7 +960,7 @@ def lower_named_target(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Call a builtin, a retained project function, or a proven stdlib forwarder selected by canonical identity."""
+    """Call a builtin, retained project function, SDK async primitive, or proven stdlib forwarder by canonical identity."""
     if len(target.type_args) != 0:
         return Err("unsupported Body IR generic NamedCallableTarget")
     match target.builtin:
@@ -972,9 +969,8 @@ def lower_named_target(
     match target.canonical:
         None => return Err("unsupported Body IR builtin or unproven NamedCallableTarget")
         Some(_identity) =>
-            # Without a retained project body, only a frontend-proven stdlib forwarder may reach a native Rust call.
             match program_body_index(module, target):
-                None => return lower_stdlib_delegation(module, builder, target, arguments, destination, span)
+                None => return lower_imported_target(module, builder, target, arguments, destination, span)
                 Some(index) =>
                     body = module.bodies[index]
                     _ = validate_static_receiver(module, target)?
@@ -1005,8 +1001,6 @@ def lower_local_call(
     """Call a canonical retained body; local span identities must agree when present."""
     match target.direct_call_id:
         None =>
-            # Imported calls have no source-local span id; the complete canonical target selected their body.
-            # Keep the stronger local contract when the declaration belongs to the caller's module.
             match body.canonical:
                 Some(identity) =>
                     if canonical_module_identity(identity) == Some(builder.module_identity):
@@ -1064,7 +1058,7 @@ def emit_local_call(
     return Ok(None)
 
 
-def lower_stdlib_delegation(
+def lower_imported_target(
     module: &BodyIrModule,
     mut builder: Builder,
     target: &RustNamedCallableTarget,
@@ -1073,15 +1067,23 @@ def lower_stdlib_delegation(
     span: SourceSpan,
 ) -> Result[None, str]:
     """
-    Call the Rust function an imported stdlib function forwards to.
+    Capture a catalog-owned SDK async operation or call a proven synchronous stdlib forwarder.
 
     The frontend records a delegation only for a forwarder it proved transparent: its only statement returns one Rust
     call with every parameter passed through in order. Calling that Rust function directly is therefore the call the
     legacy route makes, selected by the checker's canonical identity and native path, never by a spelling.
+    SDK async operations instead capture their arguments and run their actual SDK body only at await.
     """
     match target.direct_call_id:
         Some(_identity) => return Err("Body IR imported delegation has a local call identity")
         None => pass
+    for primitive in module.sdk_async_primitives:
+        match target.canonical:
+            None => return Err("unsupported Body IR unproven SDK async call target")
+            Some(identity) =>
+                if identity != primitive.canonical:
+                    continue
+        return lower_sdk_primitive_call(module, builder, primitive, target, arguments, destination, span)
     for delegation in module.stdlib_delegations:
         match target.canonical:
             None => return Err("unsupported Body IR unproven stdlib call target")
@@ -1090,6 +1092,23 @@ def lower_stdlib_delegation(
                     continue
         return lower_delegated_call(builder, delegation, target, arguments, destination, span)
     return Err("unsupported Body IR imported or unresolved canonical call target")
+
+
+def lower_sdk_primitive_call(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    primitive: &RustSdkAsyncPrimitive,
+    target: &RustNamedCallableTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Bind checked SDK arguments in declaration order and capture them without executing the async body."""
+    parameters = sdk_capture_types(primitive)?
+    operands = ordered_slot_operands(builder, target.binding, arguments, parameters, span, 0)?
+    ty = sdk_future_type(module, builder.intrinsics)?
+    output = call_destination(builder, destination, ty, span)?
+    return construct_sdk_future(module, builder, primitive, operands, output, span)
 
 
 def lower_delegated_call(
@@ -1343,7 +1362,6 @@ def lower_print(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Print space-separated arguments and initialize the checked Unit result when the call is an expression."""
-    # `parts` holds the literal text around each value: "" before the first, " " between values, "" after the last.
     mut parts = [""]
     mut values: list[Place] = []
     for argument in arguments:
@@ -1355,7 +1373,6 @@ def lower_print(
     text = temporary(builder, PlanType.String, span)
     format_parts(builder, text, parts, values, span)
     mut output = temporary(builder, PlanType.Unit, span)
-    # Expression arms read this call's retained result; an unrelated Unit temporary leaves that read uninitialized.
     match destination:
         Some(place) =>
             output = scalar_place(builder, place, span)?
@@ -1498,8 +1515,9 @@ def coerce_numeric_operand(
 
 
 def clone_nominal_operand(mut builder: Builder, value: Place, span: SourceSpan) -> Result[Operand, str]:
-    """Materialize the checker's clone fact through a source nominal's real derived Clone implementation."""
+    """Materialize the checker's clone fact through the retained source or canonical SDK Clone implementation."""
     match place_type(builder.locals, value):
+        PlanType.TaskJoinError => return carrier_payload_value(builder, value, span)
         PlanType.Model(index, name) =>
             reference = temporary(builder, PlanType.ModelRef(index, name), span)
             builder.emit(plan_assign(reference, RvalueKind.Borrow(value), span))
@@ -1691,10 +1709,8 @@ def display_tuple_place(mut builder: Builder, value: &RustPlace, span: SourceSpa
 
 pub def display_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
     """Produce an owned `String` holding a value's display text, honoring the value's ownership fact."""
-    # Indexed collection reads come first: their places are not model places, so the carrier check below cannot map them.
     match value:
         RustOperand.Place(read) =>
-            # Retained globals are scalar-only and have no frame-local slot for carrier inspection.
             match read.place.global():
                 Some(_global) =>
                     operand = value_operand(builder, value, span)?
@@ -1726,7 +1742,6 @@ pub def display_operand(mut builder: Builder, value: &RustOperand, span: SourceS
                         return Ok(result)
                 _ => pass
         _ => pass
-    # A cloned or borrowed string is copied into a new owned string; the original stays where it is.
     match value:
         RustOperand.Place(read) =>
             match read.fact:
@@ -2075,7 +2090,6 @@ def lower_function(
         unions=unions,
     )
     _ = builder.new_block(span)
-    # Direct MIR bypasses legacy's generated entrypoint, so request its canonical panic initialization explicitly.
     if str(body.name) == "main":
         initialized = temporary(builder, PlanType.Unit, span)
         external_call(builder, "incan_native_runtime::initialize_panic_hook", [], PlanType.Unit, [], initialized, span)
@@ -2570,7 +2584,6 @@ def indexed_assignment(
     """Write one checked list element through the legacy mutable indexing helper."""
     if len(destination.projection) == 0:
         return Err("unsupported Body IR list assignment without index")
-    # Materialize the replacement before borrowing storage that its value might itself read.
     argument = assignment_value(builder, value, span)?
     mut receiver = list_base_place(builder, destination, span)?
     for slot in range(len(destination.projection) - 1):
@@ -2689,7 +2702,6 @@ def list_next(
         if target.local not in builder.borrowed_items:
             builder.borrowed_items.append(target.local)
     iterable_call(builder, ty, "nth", [PlanType.Int], element, [item_reference, position], target, span)?
-    # The cursor cannot overflow: a successful poll is bounded by the native collection length.
     pair = temporary(builder, PlanType.CheckedInt, span)
     one = Operand(kind=OperandKind.Literal(Constant.Int(1)), span=span)
     builder.emit(plan_assign(pair, RvalueKind.Binary(BinaryOp.Add, position, one), span))
@@ -2910,7 +2922,6 @@ def collection_method(
     if member == "Set.add" or member == "Dict.insert":
         if len(arguments) != len(types) + 1:
             return Err(f"unsupported Body IR collection method arity {member}")
-        # Use the shared argument check before creating the short mutable runtime borrow.
         require_mutable_receiver(arguments)?
         mut operands: list[Operand] = []
         for slot in range(len(types)):
@@ -3012,7 +3023,6 @@ def lower_enum_match(
             value = boundary_operand(builder, arm.result, place_type(builder.locals, target), span)?
             track_rvalue_moves(builder, RvalueKind.Use(value))
             builder.emit(plan_assign(target, RvalueKind.Use(value), span))
-            # Pattern-bound owners are branch locals; release them before restoring the incoming owner snapshot.
             mut branch_owners = builder.owned
             for local in branch_owners:
                 if local not in owners:
@@ -3092,7 +3102,6 @@ def enum_payload_read(
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """Preserve projected copy/borrow facts while materializing the source binding's owned value."""
-    # Legacy matches a cloned enum by value, so a moved payload binding is materialized like a cloned one.
     match fact:
         OwnershipFact.Copy => return Ok(read_place(place, false, span))
         OwnershipFact.Clone => pass
@@ -3101,8 +3110,6 @@ def enum_payload_read(
         _ => return Err("unsupported Body IR enum payload binding ownership")
     if is_list(place_type(builder.locals, place)):
         return carrier_payload_value(builder, place, span)
-    # Legacy matches a cloned enum by value. Cloning just the selected payload preserves that owned-binding contract
-    # while the canonical match scrutinee stays borrowed; unselected payloads remain owned by their original enum.
     if place_type(builder.locals, place) == PlanType.String:
         cloned = clone_text(builder, place, span)?
         return Ok(read_place(cloned, true, span))
@@ -3113,11 +3120,9 @@ def enum_operand(builder: Builder, value: &RustOperand, span: SourceSpan) -> Res
     """Keep unsupported derived enum comparisons a named refusal rather than submitting invalid scalar MIR."""
     match value:
         RustOperand.Place(read) =>
-            # Retained static cells are scalar-only; the ordinary read validates their canonical storage identity.
             match read.place.global():
                 Some(_global) => return Ok(false)
                 None => pass
-            # List and dictionary projections have scalar leaf types and are materialized by their own readers.
             base = list_base_place(builder, read.place, span)?
             if is_list(builder.locals[base.local].ty) or is_collection(builder.locals[base.local].ty):
                 return Ok(false)
@@ -3445,7 +3450,6 @@ def lower_power_operator(
     """Bind exponentiation only when both operands retain the legacy scalar carrier."""
     mut operands = [scalar_operator_operand(builder, left, span)?, scalar_operator_operand(builder, right, span)?]
     target = place_type(builder.locals, destination)
-    # Expected float context is a retained checker fact: legacy coerces both power operands to that carrier.
     if target in [PlanType.Float, PlanType.F32, PlanType.F64]:
         for index in range(2):
             source = operand_type(builder, operands[index])?
@@ -3670,6 +3674,36 @@ def typed_carrier_operand(
     match operand:
         RustOperand.Constant(RustConstant.None) => return none_operand(builder, ty, span)
         _ => return value_operand(builder, operand, span)
+# =====================================================================================================================
+# Boundary types and validation
+# =====================================================================================================================
+            # Parameters stay in caller-provided storage for the whole invocation, even after their value drops.
+            # An expression statement only needs its operand to be valid; its value is discarded.
+        # Legacy drops losing futures after the winning callback has produced the shared result.
+    # Legacy release builds use native wrapping arithmetic for sized integers.
+    # Only the existing default-int boundary requests an explicit overflow pair.
+    # `SwitchBool` takes its false target first, then its true target.
+    # Legacy E0499: materialize before borrowing the builder receiver again, until dev.8.
+    # Builtin list members and source methods both retain identities; their origin selects the admission path.
+            # Imported calls require frontend proof of an SDK async primitive or transparent stdlib forwarder.
+            # Imported calls have no source-local span id; the complete canonical target selected their body.
+            # Keep the stronger local contract when the declaration belongs to the caller's module.
+    # `parts` holds the literal text around each value: "" before the first, " " between values, "" after the last.
+    # Expression arms read this call's retained result; an unrelated Unit temporary leaves that read uninitialized.
+    # Indexed collection reads come first: their places are not model places, so the carrier check below cannot map them.
+            # Retained globals are scalar-only and have no frame-local slot for carrier inspection.
+    # A cloned or borrowed string is copied into a new owned string; the original stays where it is.
+    # Direct MIR bypasses legacy's generated entrypoint, so request its canonical panic initialization explicitly.
+    # Materialize the replacement before borrowing storage that its value might itself read.
+    # The cursor cannot overflow: a successful poll is bounded by the native collection length.
+        # Use the shared argument check before creating the short mutable runtime borrow.
+            # Pattern-bound owners are branch locals; release them before restoring the incoming owner snapshot.
+    # Legacy matches a cloned enum by value, so a moved payload binding is materialized like a cloned one.
+    # Legacy matches a cloned enum by value. Cloning just the selected payload preserves that owned-binding contract
+    # while the canonical match scrutinee stays borrowed; unselected payloads remain owned by their original enum.
+            # Retained static cells are scalar-only; the ordinary read validates their canonical storage identity.
+            # List and dictionary projections have scalar leaf types and are materialized by their own readers.
+    # Expected float context is a retained checker fact: legacy coerces both power operands to that carrier.
 # =====================================================================================================================
 # Lists: borrowing and runtime calls
 # =====================================================================================================================

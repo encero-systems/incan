@@ -49,6 +49,8 @@ fn numeric(kind: &SizedNumeric) -> Numeric {
 /// A local comparison vocabulary; the public types remain the Incan Loaf's own types.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Scalar {
+    TaskJoinError,
+    TaskJoinErrorRef,
     UnitFunction,
     Int,
     Float,
@@ -120,6 +122,8 @@ impl Leaf {
 /// Compare source-authored types without requiring a Rust derive on Incan types.
 fn scalar(ty: &PlanType) -> Scalar {
     match ty {
+        PlanType::TaskJoinError => Scalar::TaskJoinError,
+        PlanType::TaskJoinErrorRef => Scalar::TaskJoinErrorRef,
         PlanType::UnitFunction => Scalar::UnitFunction,
         PlanType::EnumTag => Scalar::EnumTag,
         PlanType::Enum(index, _) => Scalar::Enum(*index),
@@ -482,7 +486,7 @@ fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, 
 /// Reject implicit copies of any recursively owned value, including tuple string fields.
 fn owns_values(ty: &Scalar) -> bool {
     match ty {
-        Scalar::String | Scalar::StringArray(_) | Scalar::Model(_) => true,
+        Scalar::String | Scalar::StringArray(_) | Scalar::Model(_) | Scalar::TaskJoinError => true,
         Scalar::Tuple(elements) => elements.iter().any(owns_values),
         _ => false,
     }
@@ -688,6 +692,7 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             )),
         },
         RvalueKind::Borrow(value) => match place(plan, function, value)? {
+            Scalar::TaskJoinError => Ok(Scalar::TaskJoinErrorRef),
             Scalar::Enum(index) => Ok(Scalar::EnumRef(index)),
             Scalar::Model(index) => Ok(Scalar::ModelRef(index)),
             Scalar::List(leaf, depth) => Ok(Scalar::ListRef(leaf, depth)),
@@ -723,6 +728,7 @@ fn source_signature_type(ty: Scalar) -> bool {
         || matches!(
             ty,
             Scalar::Int
+                | Scalar::TaskJoinError
                 | Scalar::UnitFunction
                 | Scalar::Float
                 | Scalar::Bool
@@ -747,7 +753,13 @@ fn external_signature_type(ty: Scalar) -> bool {
     source_signature_type(ty.clone())
         || matches!(
             ty,
-            Scalar::StringRef | Scalar::StrRef | Scalar::StringSlice | Scalar::StrSlice | Scalar::EnumRef(_) | Scalar::ModelRef(_)
+            Scalar::StringRef
+                | Scalar::StrRef
+                | Scalar::StringSlice
+                | Scalar::StrSlice
+                | Scalar::EnumRef(_)
+                | Scalar::ModelRef(_)
+                | Scalar::TaskJoinErrorRef
         )
 }
 
@@ -1106,10 +1118,20 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
         if !declaration.carrier.is_empty() {
             let variants = &declaration.variants;
             let valid = match declaration.carrier.as_str() {
-                "Option" => variants.len() == 2 && variants[0].name == "None" && variants[0].fields.is_empty()
-                    && variants[1].name == "Some" && variants[1].fields.len() == 1,
-                "Result" => variants.len() == 2 && variants[0].name == "Ok" && variants[0].fields.len() == 1
-                    && variants[1].name == "Err" && variants[1].fields.len() == 1,
+                "Option" => {
+                    variants.len() == 2
+                        && variants[0].name == "None"
+                        && variants[0].fields.is_empty()
+                        && variants[1].name == "Some"
+                        && variants[1].fields.len() == 1
+                }
+                "Result" => {
+                    variants.len() == 2
+                        && variants[0].name == "Ok"
+                        && variants[0].fields.len() == 1
+                        && variants[1].name == "Err"
+                        && variants[1].fields.len() == 1
+                }
                 _ => false,
             };
             if !valid || declaration.source_type.is_empty() || !declaration.name.starts_with("__IncanCarrier") {
