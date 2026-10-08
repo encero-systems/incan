@@ -552,6 +552,16 @@ fn direct_route_comprehension_writes_match_legacy() -> Result<(), Box<dyn std::e
     )
 }
 
+/// Short-circuit branches release borrowed text literals without changing incoming owners or legacy behavior.
+#[test]
+fn direct_route_borrowed_text_branches_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    assert_native_legacy_bytes(
+        "borrowed_text_branches",
+        "def compare(a: str, b: str) -> bool:\n    return not (a == \"x\" and b == \"y\")\n\ndef main() -> None:\n    println(compare(\"x\", \"y\"))\n    println(compare(\"p\", \"y\"))\n    println(compare(\"x\", \"q\"))\n    text = \"retained\"\n    println(bool(text) and bool(\"value\") and not bool(\"\"))\n    println(false and bool(\"skipped\"))\n    println(text)\n",
+        b"false\ntrue\ntrue\ntrue\nfalse\nretained\n",
+    )
+}
+
 /// Imported aliases and module-qualified scalar calls preserve canonical binding and legacy output; async vocabulary
 /// reaches lowering.
 #[test]

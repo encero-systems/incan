@@ -55,6 +55,7 @@ from pub::incan_mir_plan import (
 )
 from pub::incan_mir_plan import assign as plan_assign, place as plan_place
 from bytes_plan import bytes_literal
+from text_ownership import drop_borrowed_text_temporaries
 from decimal_plan import decimal_literal, decimal_comparison, is_decimal_literal
 from frozen_plan import frozen_literal
 # ---- The checked Body IR, read through Rust interop ----
@@ -2848,6 +2849,7 @@ def lower_text_helper(
     arity = text_helper_arity(name)
     if len(arguments) != arity:
         return Err("invalid Body IR string helper arity")
+    incoming = builder.owned
     mut parameters: list[PlanType] = []
     mut operands: list[Operand] = []
     for argument in arguments:
@@ -2856,6 +2858,8 @@ def lower_text_helper(
             Some(value) => operands.append(borrow_text_operand(builder, value, span)?)
             None => return Err("unsupported Body IR spread string helper argument")
     text = emit_text_helper(builder, name, result, parameters, operands, span)
+    # Literal arguments belong to this call, including when its source branch is skipped elsewhere.
+    drop_borrowed_text_temporaries(builder, incoming, text.local, span)
     match destination:
         Some(place) =>
             output = scalar_place(builder, place, span)?
@@ -4846,6 +4850,7 @@ def lower_truth_builtin(
     if ty in [PlanType.String, PlanType.StringRef]:
         match arguments[0].as_one():
             Some(value) =>
+                incoming = builder.owned
                 reference = borrow_text_operand(builder, value, span)?
                 external_call(
                     builder,
@@ -4856,6 +4861,7 @@ def lower_truth_builtin(
                     output,
                     span,
                 )
+                drop_borrowed_text_temporaries(builder, incoming, output.local, span)
                 return Ok(None)
             None => return Err("unsupported Body IR Bool spread")
     if is_collection(ty):
