@@ -749,6 +749,8 @@ fn cached_rust_caller_paths(
 ///
 /// A standalone checker has no Rust dependency metadata and cannot validate a Body IR field access. Preparing the
 /// provider retains its admitted inspection authority and exports from the same checking pass used for emission.
+/// Checking emits in scratch and restores receipt pointers; it must not rewrite an admitted provider's physical
+/// artifact or change the caller's source authority between its pre-bake observation and publication.
 fn checked_library_exports(
     source: &Path,
     package_features: &FeatureSelection,
@@ -758,24 +760,39 @@ fn checked_library_exports(
         .and_then(Path::parent)
         .and_then(Path::to_str)
         .ok_or_else(|| CliError::failure("caller library root is not UTF-8"))?;
-    let prepared = prepare_library_project(
-        Some(root),
-        None,
-        CargoPolicy::default(),
-        package_features,
-        None,
-        Vec::new(),
-        false,
-        false,
-        None,
-        true,
-        false,
-        OvenProjectPlanMode::ExplicitBake,
-        None,
+    let scratch = tempfile::Builder::new()
+        .prefix("incan-caller-check-")
+        .tempdir()
+        .map_err(|error| CliError::failure(format!("cannot create caller checking scratch: {error}")))?;
+    let output = scratch
+        .path()
+        .to_str()
+        .ok_or_else(|| CliError::failure("caller checking output is not UTF-8"))?;
+    let publication = library_publication::LibraryPublication::begin_receipt_update(
+        Path::new(root),
+        library_publication_receipts(Path::new(root))?,
     )?;
-    let mut exports = prepared.checked_exports;
-    resolve_caller_imported_shapes(Path::new(root), &mut exports, package_features)?;
-    Ok(exports)
+    let result = (|| {
+        let prepared = prepare_library_project(
+            Some(root),
+            Some(output),
+            CargoPolicy::default(),
+            package_features,
+            None,
+            Vec::new(),
+            false,
+            false,
+            None,
+            true,
+            false,
+            OvenProjectPlanMode::ExplicitBake,
+            None,
+        )?;
+        let mut exports = prepared.checked_exports;
+        resolve_caller_imported_shapes(Path::new(root), &mut exports, package_features)?;
+        Ok(exports)
+    })();
+    publication.finish_inspection(result)
 }
 
 /// Retain the original checked public shape behind a same-name packaged import.
@@ -1042,7 +1059,10 @@ fn compose_rust_unit_dependencies(
     Ok(())
 }
 
-/// Prepare the selected sibling library and its usage-derived caller projection for both native profiles.
+/// Prepare a usage-derived caller projection without modifying its admitted sibling provider.
+///
+/// Generated caller facets belong to the Rust caller's output tree. Provider receipt pointers and canonical lock
+/// bytes are restored after preparation; the returned plan owns its checked receipt and retained artifact evidence.
 fn prepare_rust_caller_library(
     context: &ProjectRustBakeContext<'_>,
     unit: &ProjectRustCallerUnit<'_>,
@@ -1070,9 +1090,23 @@ fn prepare_rust_caller_library(
             dependency.path.display()
         ))
     })?;
-    prepare_library_project_with_caller_facet(
+    let output = context
+        .manifest
+        .project_root()
+        .join("target/rust/caller-libraries")
+        .join(validated_project_output_relative_path(unit_name, "Rust unit")?)
+        .join(validated_project_output_relative_path(library, "caller library")?)
+        .join(profile);
+    let output = output
+        .to_str()
+        .ok_or_else(|| CliError::failure("caller library output is not UTF-8"))?;
+    let publication = library_publication::LibraryPublication::begin_receipt_update(
+        &dependency.path,
+        library_publication_receipts(&dependency.path)?,
+    )?;
+    let result = prepare_library_project_with_caller_facet(
         Some(dependency_path),
-        None,
+        Some(output),
         CargoPolicy::default(),
         context.package_features,
         None,
@@ -1085,8 +1119,8 @@ fn prepare_rust_caller_library(
         OvenProjectPlanMode::ExplicitBake,
         None,
         Some(&caller),
-    )
-    .map_err(|error| {
+    );
+    publication.finish_inspection(result).map_err(|error| {
         CliError::failure(format!(
             "failed to prepare caller library `{library}` for `{unit_name}`: {error}"
         ))
@@ -1337,7 +1371,28 @@ pub fn bake_oven_project_targets(
             .as_ref()
             .is_some_and(|project| !project.scripts.is_empty());
     if !rust_units.is_empty() && !has_incan_target {
-        return bake_project_rust_units(&manifest, &rust_units, package_features, requested_target);
+        let store = open_default_oven_store()?;
+        let key = crate::build::rust_bake_reuse::rust_bake_reuse_key(&manifest, package_features, requested_target)?;
+        if let Some(key) = &key
+            && let Some(report) =
+                crate::build::rust_bake_reuse::try_reuse_rust_bake(&project_root, &rust_units, &store, key)?
+        {
+            return Ok(report);
+        }
+        if std::env::var_os("INCAN_TEST_REQUIRE_COMPLETED_BAKE_REUSE").is_some() {
+            return Err(CliError::failure(
+                "completed Rust caller reuse missed before frontend preparation",
+            ));
+        }
+        let report = bake_project_rust_units(&manifest, &rust_units, package_features, requested_target)?;
+        if let Some(key) = &key
+            && crate::build::rust_bake_reuse::rust_bake_reuse_key(&manifest, package_features, requested_target)?
+                .as_ref()
+                .is_some_and(|current| current == key)
+        {
+            crate::build::rust_bake_reuse::publish_rust_bake(&store, key, &report)?;
+        }
+        return Ok(report);
     }
     let targets = discover_oven_bake_project_targets(&project_root)?;
     let dependency_surface_entrypoint = oven_bake_dependency_surface_entrypoint(&targets)
@@ -1359,6 +1414,11 @@ pub fn bake_oven_project_targets(
         )?
     {
         return Ok(reused);
+    }
+    if std::env::var_os("INCAN_TEST_REQUIRE_COMPLETED_BAKE_REUSE").is_some() {
+        return Err(CliError::failure(
+            "completed project reuse missed before frontend preparation",
+        ));
     }
     let mut source_authority_digest = None;
     let mut published_project_lock = None;
@@ -1791,13 +1851,100 @@ mod tests {
     use super::*;
     use std::fs;
 
-    use crate::build::source_authority::project_bake_receipt_path;
+    use crate::build::source_authority::{digest_baked_project_source_authority, project_bake_receipt_path};
     use crate::build::{
         OvenBakeProjectTarget, oven_bake_executable_output_dir, oven_bake_project_target_identity,
         oven_executable_entrypoint_evidence_key,
     };
 
     use oven_rustc::rustc::OvenRustcError;
+
+    /// Export inspection keeps an admitted provider's physical bytes and canonical pointers intact.
+    #[test]
+    fn checked_exports_preserve_published_provider() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        fs::create_dir_all(project.path().join("src"))?;
+        fs::write(
+            project.path().join("loaf.toml"),
+            "[project]\nname = \"exports_probe\"\nversion = \"0.1.0\"\n",
+        )?;
+        fs::write(
+            project.path().join("src/lib.incn"),
+            "pub def answer() -> int:\n    return 42\n",
+        )?;
+        let artifact = project.path().join("target/lib");
+        fs::create_dir_all(artifact.join("src"))?;
+        fs::write(
+            artifact.join("Cargo.toml"),
+            "[package]\nname = \"published_probe\"\nversion = \"0.1.0\"\n",
+        )?;
+        fs::write(artifact.join("src/lib.rs"), "pub fn admitted() {}\n")?;
+        let expected = incan_frontend::library_manifest::digest_provider_artifact(&artifact)?;
+        let authority = digest_baked_project_source_authority(project.path())?;
+        let receipts = library_publication_receipts(project.path())?;
+        let before = receipts.iter().map(|path| fs::read(path).ok()).collect::<Vec<_>>();
+        for _ in 0..2 {
+            let exports = checked_library_exports(&project.path().join("src/lib.incn"), &FeatureSelection::default())?;
+            assert!(exports.iter().any(|export| export.name == "answer"));
+            assert_eq!(
+                expected,
+                incan_frontend::library_manifest::digest_provider_artifact(&artifact)?
+            );
+            assert_eq!(authority, digest_baked_project_source_authority(project.path())?);
+            assert_eq!(
+                before,
+                receipts.iter().map(|path| fs::read(path).ok()).collect::<Vec<_>>()
+            );
+        }
+        Ok(())
+    }
+
+    /// Checking a caller's provider must also preserve its already prepared transitive dependency projection.
+    #[test]
+    #[ignore = "requires a prepared native SDK and standard-library family"]
+    fn checked_exports_preserve_transitive_provider() -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = tempfile::tempdir()?;
+        let child = workspace.path().join("child");
+        let parent = workspace.path().join("parent");
+        fs::create_dir_all(child.join("src"))?;
+        fs::create_dir_all(parent.join("src"))?;
+        fs::write(
+            child.join("loaf.toml"),
+            "[project]\nname = \"child\"\nversion = \"0.1.0\"\n",
+        )?;
+        fs::write(
+            child.join("src/lib.incn"),
+            "pub def answer() -> int:\n    \"\"\"Return the child's answer.\"\"\"\n    return 42\n",
+        )?;
+        fs::write(
+            parent.join("loaf.toml"),
+            "[project]\nname = \"parent\"\nversion = \"0.1.0\"\n[dependencies]\nchild = { loaf = \"child\", path = \"../child\" }\n",
+        )?;
+        fs::write(
+            parent.join("src/lib.incn"),
+            "from pub::child import answer\n\npub def outer_answer() -> int:\n    \"\"\"Return the dependency's answer.\"\"\"\n    return answer()\n",
+        )?;
+        bake_oven_project_targets(&child, &FeatureSelection::default(), None)?;
+        let artifact = child.join("target/lib");
+        let expected = incan_frontend::library_manifest::digest_provider_artifact(&artifact)?;
+        let authority = digest_baked_project_source_authority(&parent)?;
+        let receipts = library_publication_receipts(&child)?;
+        let pointers = receipts.iter().map(|path| fs::read(path).ok()).collect::<Vec<_>>();
+        for _ in 0..2 {
+            let exports = checked_library_exports(&parent.join("src/lib.incn"), &FeatureSelection::default())?;
+            assert!(exports.iter().any(|export| export.name == "outer_answer"));
+            assert_eq!(
+                expected,
+                incan_frontend::library_manifest::digest_provider_artifact(&artifact)?
+            );
+            assert_eq!(authority, digest_baked_project_source_authority(&parent)?);
+            assert_eq!(
+                pointers,
+                receipts.iter().map(|path| fs::read(path).ok()).collect::<Vec<_>>()
+            );
+        }
+        Ok(())
+    }
 
     /// Cohort replacement updates both the extern binding and its reuse evidence, preserving unrelated inputs.
     #[test]

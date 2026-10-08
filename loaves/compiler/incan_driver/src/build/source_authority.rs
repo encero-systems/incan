@@ -24,6 +24,12 @@ use oven_model::manifest::{DependencySource, GitReference, LOAF_MANIFEST_FILENAM
 use oven_model::oven_interop::locked_oven_interop_targets;
 use oven_store::{digest_bytes, digest_project_source_tree};
 
+/// Bind exact compiler bytes independently of release compatibility and source authority.
+pub(super) fn current_compiler_identity_digest() -> CliResult<String> {
+    let executable = std::env::current_exe().map_err(|error| CliError::failure(error.to_string()))?;
+    super::file_freshness::digest_file(&executable).map_err(|error| CliError::failure(error.to_string()))
+}
+
 impl ProjectSourceAuthorityDigester {
     /// Digest the exact build-input graph for one project without observing generated or unrelated files.
     pub fn digest(&mut self, project_root: &Path) -> CliResult<String> {
@@ -65,31 +71,35 @@ impl ProjectSourceAuthorityDigester {
     /// Digest one local Rust package together with only the Cargo-workspace facts that it actually inherits.
     pub fn digest_rust_path_crate_authority(
         package_root: &Path,
-        rust_source_closure_digests: &mut BTreeMap<PathBuf, String>,
+        memo: &mut BTreeMap<PathBuf, String>,
     ) -> CliResult<String> {
-        let source_tree =
-            digest_cargo_path_source_tree_with_cache(package_root, rust_source_closure_digests).map_err(|error| {
+        super::rust_source_freshness::digest(package_root, memo, |rust_source_closure_digests| {
+            let source_tree = digest_cargo_path_source_tree_with_cache(package_root, rust_source_closure_digests)
+                .map_err(|error| {
+                    CliError::failure(format!(
+                        "Oven Alpha cannot digest Rust path dependency source authority at {}: {error}",
+                        package_root.display()
+                    ))
+                })?;
+            let mut records = BTreeMap::from([("package-source-tree", source_tree)]);
+            if let Some(workspace_authority) =
+                digest_local_cargo_workspace_authority(package_root).map_err(|error| {
+                    CliError::failure(format!(
+                        "Oven Alpha cannot resolve Rust path dependency workspace authority at {}: {error}",
+                        package_root.display()
+                    ))
+                })?
+            {
+                records.insert("inherited-cargo-workspace", workspace_authority);
+            }
+            let payload = serde_json::to_vec(&records).map_err(|error| {
                 CliError::failure(format!(
-                    "Oven Alpha cannot digest Rust path dependency source authority at {}: {error}",
+                    "failed to serialize Rust path dependency source authority at {}: {error}",
                     package_root.display()
                 ))
             })?;
-        let mut records = BTreeMap::from([("package-source-tree", source_tree)]);
-        if let Some(workspace_authority) = digest_local_cargo_workspace_authority(package_root).map_err(|error| {
-            CliError::failure(format!(
-                "Oven Alpha cannot resolve Rust path dependency workspace authority at {}: {error}",
-                package_root.display()
-            ))
-        })? {
-            records.insert("inherited-cargo-workspace", workspace_authority);
-        }
-        let payload = serde_json::to_vec(&records).map_err(|error| {
-            CliError::failure(format!(
-                "failed to serialize Rust path dependency source authority at {}: {error}",
-                package_root.display()
-            ))
-        })?;
-        Ok(digest_bytes(&payload))
+            Ok(digest_bytes(&payload))
+        })
     }
 
     /// Digest one reachable Incan node and its named dependency edges.
@@ -398,12 +408,12 @@ fn digest_baked_project_build_tree(project_root: &Path, manifest: &ProjectManife
                 path.display()
             )));
         }
-        let digest = digest_bytes(&fs::read(path).map_err(|error| {
+        let digest = super::file_freshness::digest_file(path).map_err(|error| {
             CliError::failure(format!(
                 "Oven Alpha cannot hash project build authority at {}: {error}",
                 path.display()
             ))
-        })?);
+        })?;
         if records.insert(record_key.clone(), digest).is_some() {
             return Err(CliError::failure(format!(
                 "Oven Alpha project build authority contains duplicate path `{record_key}`"
@@ -746,6 +756,104 @@ mod tests {
     use oven_store::store::{OvenArtifactKind, OvenArtifactPublishRequest, OvenStore};
     use oven_store::{OvenGeneratedProjectRequest, digest_bytes, receipt_generated_project, write_receipt};
 
+    /// A changed or absent compiler identity misses before inspection; an exact identity proceeds to authority
+    /// validation even when source-equivalent outputs from older compiler generations coexist in the store.
+    #[test]
+    fn upfront_project_reuse_requires_the_exact_compiler_identity() -> Result<(), Box<dyn std::error::Error>> {
+        let expected = current_compiler_identity_digest()?;
+        for identity in [None, Some(digest_bytes(b"another compiler")), Some(expected.clone())] {
+            let project = tempfile::tempdir()?;
+            fs::create_dir(project.path().join("src"))?;
+            fs::write(project.path().join("loaf.toml"), "[project]\nname = \"fixture\"\n")?;
+            fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
+            let store_root = tempfile::tempdir()?;
+            let store = OvenStore::new(
+                store_root.path(),
+                oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+            );
+            let entrypoint = project.path().join("src/main.incn");
+            for profile in crate::build::plan_authority::explicit_bake_profiles() {
+                let (receipt, mut payload, files) =
+                    fixture_project_output_publication(project.path(), profile, "compiler_identity")?;
+                payload.compiler_identity_digest = identity.clone();
+                write_receipt(
+                    &receipt,
+                    project_bake_receipt_path(project.path(), OvenBakeProjectTarget::Executable, &entrypoint, profile)?,
+                )?;
+                let published = publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+                let locator =
+                    project_bake_receipt_path(project.path(), OvenBakeProjectTarget::Executable, &entrypoint, profile)?
+                        .with_extension("output.json");
+                fs::write(&locator, serde_json::to_vec(&published.identity)?)?;
+                if identity.as_deref() == Some(&expected) {
+                    for generation in 0..8 {
+                        let mut older_payload = payload.clone();
+                        older_payload.compiler_identity_digest =
+                            Some(digest_bytes(format!("older compiler {generation}").as_bytes()));
+                        let older = publish_project_output_loaf(&store, &receipt, &older_payload, &files)?;
+                        fs::write(&locator, serde_json::to_vec(&older.identity)?)?;
+                    }
+                }
+            }
+            let targets = vec![(OvenBakeProjectTarget::Executable, entrypoint)];
+            let result = try_reuse_baked_project(
+                project.path(),
+                &targets,
+                &store,
+                &FeatureSelection::default(),
+                None,
+                &mut OvenProjectBakeAuthorityContext::default(),
+            );
+            if identity.as_deref() == Some(&expected) {
+                assert!(
+                    result.is_err(),
+                    "exact compiler must reach the deliberately missing inspection authority"
+                );
+            } else {
+                assert!(
+                    result?.is_none(),
+                    "another compiler or an older unbound output must replan"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Measure actual compiler Loaf source-authority scans independently of SDK preparation and output selection.
+    #[test]
+    #[ignore = "diagnostic timing over the checked-out compiler source graph"]
+    fn fixture_source_authority_reports_cold_and_warm_probe_times() -> Result<(), Box<dyn std::error::Error>> {
+        let repo = incan_test_support::repo_root();
+        let projects = [
+            repo.join("loaves/compiler/incan_mir_plan"),
+            repo.join("loaves/compiler/incan_mir_lowering"),
+            repo.join("loaves/toolchain/incan-rustc-driver"),
+            repo.join("loaves/compiler/incan_native_runtime"),
+        ];
+        let started = std::time::Instant::now();
+        let identities = projects
+            .iter()
+            .map(|project| digest_baked_project_source_authority(project))
+            .collect::<CliResult<Vec<_>>>()?;
+        let cold = started.elapsed();
+        let started = std::time::Instant::now();
+        for (project, expected) in projects.iter().zip(&identities) {
+            let probe = std::time::Instant::now();
+            assert_eq!(*expected, digest_baked_project_source_authority(project)?);
+            eprintln!(
+                "source authority {}: {:.3} ms",
+                project.file_name().ok_or("project has no name")?.to_string_lossy(),
+                probe.elapsed().as_secs_f64() * 1000.0
+            );
+        }
+        eprintln!(
+            "fixture source authority only: four projects, cold {:.3} ms, warm {:.3} ms",
+            cold.as_secs_f64() * 1000.0,
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+        Ok(())
+    }
+
     #[test]
     fn caller_owned_provider_authority_prefers_the_explicit_library_receipt() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -929,12 +1037,46 @@ mod tests {
             digest_baked_project_source_authority(project.path())?
         );
         let direct_source_changed = digest_baked_project_source_authority(project.path())?;
+        let leaf_modified = fs::metadata(rust_leaf.join("src/lib.rs"))?.modified()?;
         fs::write(rust_leaf.join("src/lib.rs"), "pub fn leaf() -> i64 { 2 }\n")?;
+        fs::File::options()
+            .write(true)
+            .open(rust_leaf.join("src/lib.rs"))?
+            .set_times(fs::FileTimes::new().set_modified(leaf_modified))?;
         assert_ne!(
             direct_source_changed,
             digest_baked_project_source_authority(project.path())?,
             "a transitive sibling Cargo path dependency must remain part of the project source authority"
         );
+        Ok(())
+    }
+
+    /// An explicit sibling workspace contributes inherited values even when it is outside the package's ancestors.
+    #[test]
+    fn rust_source_freshness_tracks_an_explicit_sibling_workspace() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let package = root.path().join("package");
+        let workspace = root.path().join("workspace");
+        fs::create_dir_all(package.join("src"))?;
+        fs::create_dir_all(&workspace)?;
+        fs::write(
+            package.join("Cargo.toml"),
+            "[package]\nname = \"helper\"\nversion.workspace = true\nworkspace = \"../workspace\"\nedition = \"2024\"\n",
+        )?;
+        fs::write(package.join("src/lib.rs"), "pub fn value() -> i64 { 1 }\n")?;
+        fs::write(
+            workspace.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"../package\"]\n[workspace.package]\nversion = \"0.1.0\"\n",
+        )?;
+        let digest =
+            || ProjectSourceAuthorityDigester::digest_rust_path_crate_authority(&package, &mut BTreeMap::new());
+        let initial = digest()?;
+        assert_eq!(initial, digest()?);
+        fs::write(
+            workspace.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"../package\"]\n[workspace.package]\nversion = \"0.2.0\"\n",
+        )?;
+        assert_ne!(initial, digest()?);
         Ok(())
     }
 

@@ -958,6 +958,7 @@ pub fn project_output_payload_for_bake(
         project_identity: baked_project_owner_identity(request.project_root)?,
         source_authority_digest: request.source_authority_digest.to_string(),
         lock_dependencies_fingerprint: request.lock_dependencies_fingerprint,
+        compiler_identity_digest: Some(super::source_authority::current_compiler_identity_digest()?),
         compiler_version: INCAN_VERSION.to_string(),
         entrypoint_relative_path,
         build_unit_identity: request.receipt.build_unit_identity.clone(),

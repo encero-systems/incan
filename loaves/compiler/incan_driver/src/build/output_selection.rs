@@ -800,6 +800,7 @@ mod tests {
             project_identity: baked_project_owner_identity(project.path())?,
             source_authority_digest: digest_baked_project_source_authority(project.path())?,
             lock_dependencies_fingerprint: baked_project_lock_dependencies_fingerprint(project.path())?,
+            compiler_identity_digest: None,
             compiler_version: INCAN_VERSION.to_string(),
             entrypoint_relative_path: "src/main.incn".to_string(),
             build_unit_identity: receipt.build_unit_identity.clone(),
