@@ -250,19 +250,28 @@ pub(super) fn collect_local_nominal_declarations(
             if let ast::Declaration::Newtype(newtype) = &declaration.node {
                 return collect_plain_newtype(declaration.span, newtype, module_identity, type_info);
             }
-            let (name, fields, visibility, type_parameter_count, class_layout) = match &declaration.node {
+            let (name, fields, visibility, type_parameters, class_layout) = match &declaration.node {
                 ast::Declaration::Model(model) if is_direct_replacement_checked_model(model, type_info) => (
                     &model.name,
                     &model.fields,
                     model.visibility,
-                    model.type_params.len(),
+                    model
+                        .type_params
+                        .iter()
+                        .map(|parameter| parameter.name.clone())
+                        .collect::<Vec<_>>(),
                     None,
                 ),
                 ast::Declaration::Class(class) if is_direct_replacement_class(class) => (
                     &class.name,
                     &class.fields,
                     class.visibility,
-                    class.type_params.len(),
+                    type_info
+                        .declarations
+                        .class_layouts
+                        .get(&class.name)?
+                        .type_params
+                        .clone(),
                     Some(type_info.declarations.class_layouts.get(&class.name)?),
                 ),
                 _ => return None,
@@ -340,10 +349,11 @@ pub(super) fn collect_local_nominal_declarations(
                                 .unwrap_or(IncanType::Unknown)
                         }
                     })
+                    .map(|ty| parameter_types::retain_parameter_type(ty, &type_parameters))
                     .collect(),
                 named_type_identities: type_info.declarations.named_type_identities.clone(),
-                type_parameters: class_layout.map_or_else(Vec::new, |layout| layout.type_params.clone()),
-                type_parameter_count,
+                type_parameter_count: type_parameters.len(),
+                type_parameters,
             })
         })
         .collect()

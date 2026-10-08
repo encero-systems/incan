@@ -333,7 +333,7 @@ pub struct NominalDeclaration {
     pub derives: Vec<String>,
     /// Checked nominal bindings needed by those field types; serialized publications retain only referenced entries.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
-    /// Ordered checker-retained declaration parameters used to close class layouts at checked uses.
+    /// Ordered checker-retained declaration parameters used to close nominal layouts at checked uses.
     #[serde(default)]
     pub type_parameters: Vec<String>,
     /// Number of declared type parameters, agreeing with [`Self::type_parameters`].
@@ -588,6 +588,14 @@ impl ExternDelegation {
 }
 
 impl Body {
+    /// Store this already-checked body in the recursive representation used by deferred nominal field defaults.
+    ///
+    /// This allocation preserves every retained fact unchanged and keeps Rust recursive-storage plumbing out of
+    /// the Incan lowering. Consumers must still validate and specialize the body before storing it.
+    pub fn into_box(self) -> Box<Self> {
+        Box::new(self)
+    }
+
     /// Return the locals in this body whose type is not [`crate::types::AbiV0Ownership::CopyOrTrivial`] and are
     /// therefore drop-relevant if a panic unwinds through this body.
     ///

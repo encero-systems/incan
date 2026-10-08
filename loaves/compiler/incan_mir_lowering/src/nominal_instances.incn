@@ -1,4 +1,4 @@
-"""Concrete class layouts selected from checked Body IR types, retaining source declaration identities."""
+"""Concrete nominal layouts selected from checked Body IR types, retaining source declaration identities."""
 
 from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind
 from rust::incan_semantics_core::body_ir import BodyIrModule, Body, NominalDeclaration, LocalOrigin
@@ -6,16 +6,16 @@ from symbols import type_component
 from type_parameters import substitute
 
 
-model ClassInstance:
-    """A source class and one closed argument list occurring in checked frame or field types."""
+model NominalInstance:
+    """A source nominal and one closed argument list occurring in checked frame or field types."""
 
     declaration: NominalDeclaration
     arguments: list[RustType]
     ancestors: list[str]
 
 
-pub def class_symbol(base: str, arguments: list[RustType]) -> str:
-    """Encode a concrete class carrier independently of diagnostic aliases and field spellings."""
+pub def nominal_symbol(base: str, arguments: list[RustType]) -> str:
+    """Encode a concrete nominal carrier independently of diagnostic aliases and field spellings."""
     mut name = base + "__incan_instance"
     for argument in arguments:
         name += type_component(argument)
@@ -24,11 +24,11 @@ pub def class_symbol(base: str, arguments: list[RustType]) -> str:
 
 pub def specialize_nominals(module: &BodyIrModule) -> Result[BodyIrModule, str]:
     """Build a derived lowering context; validate the original module before calling this boundary."""
-    mut instances: list[ClassInstance] = []
+    mut instances: list[NominalInstance] = []
     for body in module.bodies:
         for local in body.locals:
-            _ = collect_class_type(module, local.ty, instances, [])?
-        _ = collect_class_type(module, body.return_type, instances, [])?
+            _ = collect_nominal_type(module, local.ty, instances, [])?
+        _ = collect_nominal_type(module, body.return_type, instances, [])?
     mut result = module.clone()
     result.nominal_declarations.clear()
     for declaration in module.nominal_declarations:
@@ -41,10 +41,10 @@ pub def specialize_nominals(module: &BodyIrModule) -> Result[BodyIrModule, str]:
         declaration = close_layout(instance)?
         for retained_index in range(len(result.nominal_declarations)):
             if result.nominal_declarations[retained_index].name == declaration.name:
-                return Err(f"unsupported Body IR class instance symbol collision {declaration.name}")
+                return Err(f"unsupported Body IR nominal instance symbol collision {declaration.name}")
         lineage = instance.ancestors + [instance.declaration.canonical.render_compact()]
         for field in declaration.field_types:
-            _ = collect_class_type(module, field, instances, lineage)?
+            _ = collect_nominal_type(module, field, instances, lineage)?
         result.nominal_declarations.push(declaration.clone())
     result.bodies.clear()
     for body in module.bodies:
@@ -58,59 +58,59 @@ pub def specialize_nominals(module: &BodyIrModule) -> Result[BodyIrModule, str]:
     return Ok(result)
 
 
-def collect_class_type(
+def collect_nominal_type(
     module: &BodyIrModule,
     ty: &RustType,
-    mut instances: list[ClassInstance],
+    mut instances: list[NominalInstance],
     ancestors: list[str],
 ) -> Result[None, str]:
     """Collect only closed checked types; open placeholders are templates, never arguments inferred from values."""
     match ty:
         RustType.Generic(base=base, args=arguments) =>
             # Legacy interop reads borrow the foreign variant vector; the collector retains an owned instance argument list.
-            return collect_generic_class_type(module, str(base), arguments.clone(), instances, ancestors)
+            return collect_generic_nominal_type(module, str(base), arguments.clone(), instances, ancestors)
         RustType.Tuple(elements) =>
             for element in elements:
-                _ = collect_class_type(module, element, instances, ancestors)?
+                _ = collect_nominal_type(module, element, instances, ancestors)?
         _ => pass
     return Ok(None)
 
 
-def collect_generic_class_type(
+def collect_generic_nominal_type(
     module: &BodyIrModule,
     base: str,
     arguments: list[RustType],
-    mut instances: list[ClassInstance],
+    mut instances: list[NominalInstance],
     ancestors: list[str],
 ) -> Result[None, str]:
-    """Resolve a closed generic carrier against the retained class registry, without inferring type arguments."""
+    """Resolve a closed generic carrier against the retained nominal registry, without inferring type arguments."""
     for argument in arguments:
-        _ = collect_class_type(module, argument, instances, ancestors)?
+        _ = collect_nominal_type(module, argument, instances, ancestors)?
     if not closed_arguments(arguments):
         return Ok(None)
     for declaration in module.nominal_declarations:
-        if declaration.canonical.kind != SemanticSourceTargetKind.Class or declaration.name != base:
+        if not admitted_owner(declaration) or declaration.name != base:
             continue
         if len(declaration.type_parameters) != len(arguments):
-            return Err(f"unsupported Body IR class type argument arity on {base}")
-        # Recursive class carrier dependencies remain outside this concrete-layout admission profile.
+            return Err(f"unsupported Body IR nominal type argument arity on {base}")
+        # Recursive nominal carrier dependencies remain outside this concrete-layout admission profile.
         if declaration.canonical.render_compact() in ancestors:
-            return Err(f"unsupported Body IR recursive class field instantiation on {base}")
-        return retain_class_instance(declaration, arguments, instances, ancestors)
+            return Err(f"unsupported Body IR recursive nominal field instantiation on {base}")
+        return retain_nominal_instance(declaration, arguments, instances, ancestors)
     return Ok(None)
 
 
-def retain_class_instance(
+def retain_nominal_instance(
     declaration: &NominalDeclaration,
     arguments: list[RustType],
-    mut instances: list[ClassInstance],
+    mut instances: list[NominalInstance],
     ancestors: list[str],
 ) -> Result[None, str]:
-    """Deduplicate by canonical owner and checked arguments before scheduling a concrete class layout."""
+    """Deduplicate by canonical owner and checked arguments before scheduling a concrete nominal layout."""
     for retained in instances:
         if retained.declaration.canonical == declaration.canonical and retained.arguments == arguments:
             return Ok(None)
-    instances.append(ClassInstance(declaration=declaration.clone(), arguments=arguments, ancestors=ancestors))
+    instances.append(NominalInstance(declaration=declaration.clone(), arguments=arguments, ancestors=ancestors))
     return Ok(None)
 
 
@@ -132,26 +132,31 @@ def closed_arguments(arguments: list[RustType]) -> bool:
     return true
 
 
-def close_layout(instance: ClassInstance) -> Result[NominalDeclaration, str]:
+def close_layout(instance: NominalInstance) -> Result[NominalDeclaration, str]:
     """Substitute a plan carrier's field types while preserving the original canonical owner and field identities."""
     mut result = instance.declaration.clone()
-    result.name = class_symbol(str(instance.declaration.name), instance.arguments)
+    result.name = nominal_symbol(str(instance.declaration.name), instance.arguments)
     result.field_types.clear()
     for ty in instance.declaration.field_types:
         concrete: RustType = substitute(ty, instance.declaration.type_parameters, instance.arguments)?
         result.field_types.push(concrete.clone())
+    match instance.declaration.field_default_body:
+        Some(body) =>
+            closed: Body = close_owner_body(body, instance)?
+            result.field_default_body = Some(closed.into_box())
+        None => pass
     return Ok(result)
 
 
 def owner_template(module: &BodyIrModule, body: &Body) -> Option[int]:
-    """Locate an open class receiver already retained by the checker, without resolving a method spelling."""
+    """Locate an open nominal receiver already retained by the checker, without resolving a method spelling."""
     if len(body.locals) == 0 or not is_receiver(body.locals[0].origin):
         return None
     match body.locals[0].ty:
         RustType.Generic(base=base, args=_arguments) =>
             for index in range(len(module.nominal_declarations)):
                 declaration = module.nominal_declarations[index]
-                if declaration.canonical.kind == SemanticSourceTargetKind.Class and len(declaration.type_parameters) != 0 and declaration.name == str(
+                if admitted_owner(declaration) and len(declaration.type_parameters) != 0 and declaration.name == str(
                     base,
                 ):
                     return Some(index)
@@ -166,7 +171,12 @@ def is_receiver(origin: &LocalOrigin) -> bool:
         _ => return false
 
 
-def close_owner_body(body: &Body, instance: ClassInstance) -> Result[Body, str]:
+def admitted_owner(declaration: &NominalDeclaration) -> bool:
+    """Restrict concrete layouts to the source declaration kinds whose canonical field facts are retained."""
+    return declaration.canonical.kind == SemanticSourceTargetKind.Class or declaration.canonical.kind == SemanticSourceTargetKind.Model
+
+
+def close_owner_body(body: &Body, instance: NominalInstance) -> Result[Body, str]:
     """Close receiver and field-dependent frame types while leaving the method's own parameters open for scheduling."""
     mut names = instance.declaration.type_parameters.clone()
     mut arguments: list[RustType] = []
@@ -174,7 +184,7 @@ def close_owner_body(body: &Body, instance: ClassInstance) -> Result[Body, str]:
         arguments.append(argument.clone())
     for name in body.type_parameters:
         if name in names:
-            return Err(f"unsupported Body IR shadowed class and method type parameter {name}")
+            return Err(f"unsupported Body IR shadowed nominal and method type parameter {name}")
         names.append(str(name))
         placeholder: RustType = RustType.TypeVar(str(name))
         arguments.append(placeholder.clone())

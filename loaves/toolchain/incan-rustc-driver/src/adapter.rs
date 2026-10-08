@@ -168,15 +168,7 @@ impl rustc_driver::Callbacks for Callbacks {
                 Ok(span) => span,
                 Err(error) => compiler.sess.dcx().fatal(error.to_string()),
             };
-            let mut item = declarations::model(model, span);
-            for derive in model.derives.iter().filter(|derive| derive.as_str() != "Display") {
-                item.attrs.push(declarations::derive_attribute(
-                    &compiler.sess.psess.attr_id_generator,
-                    derive,
-                    span,
-                ));
-            }
-            krate.items.push(item);
+            krate.items.extend(declarations::model_items(model, &compiler.sess.psess.attr_id_generator, span));
         }
         for function in &self.plan.functions {
             let span = match sources.span(&function.span) {
