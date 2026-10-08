@@ -177,7 +177,12 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
                 PlanType::Model(_, name) | PlanType::Enum(_, name) => name.as_str(),
                 _ => "bool",
             };
-            ast::TyKind::Path(None, ast::Path::from_ident(ident(name, span)))
+            let mut path = ast::Path::from_ident(ident(name, span));
+            if matches!(other, PlanType::Model(..) | PlanType::Enum(..)) {
+                path = ast::Path::from_ident(ident("crate", span));
+                path.segments.push(ast::PathSegment::from_ident(ident(name, span)));
+            }
+            ast::TyKind::Path(None, path)
         }
     };
     Box::new(ast::Ty {
@@ -369,7 +374,72 @@ pub fn external_crate(name: &str, span: Span) -> Box<ast::Item> {
     item(ast::ItemKind::ExternCrate(None, ident(name, span)), span)
 }
 
-/// Inject the exact checked nominal layout, preserving visibility and field order; the sole `0` field is a tuple slot.
+/// Name the private namespace containing one source-named concrete layout; preflight checks its root collision.
+pub(crate) fn model_module_name(model: &crate::plan::ModelDeclaration) -> String {
+    format!("__incan_layout_{}", model.name)
+}
+
+/// Keep a concrete struct's source name for derives, exposing its unique physical symbol through a type alias.
+/// Ordinary layouts stay at the crate root. Specialized layouts require no executable adapter body: Rust's derives
+/// operate on a source-named struct in a private namespace, and MIR uses the alias's identical underlying ADT.
+pub(crate) fn model_items(
+    model: &crate::plan::ModelDeclaration,
+    generator: &ast::attr::AttrIdGenerator,
+    span: Span,
+) -> Vec<Box<ast::Item>> {
+    let mut declaration = self::model(model, span);
+    for derive in model.derives.iter().filter(|derive| derive.as_str() != "Display") {
+        declaration.attrs.push(derive_attribute(generator, derive, span));
+    }
+    if !specialized_model(model) {
+        return vec![declaration];
+    }
+    let namespace = model_module_name(model);
+    let module = item(
+        ast::ItemKind::Mod(
+            ast::Safety::Default,
+            ident(&namespace, span),
+            ast::ModKind::Loaded(
+                thin_vec![declaration],
+                ast::Inline::Yes,
+                ast::ModSpans { inner_span: span, inject_use_span: span },
+            ),
+        ),
+        span,
+    );
+    let mut path = ast::Path::from_ident(ident(&namespace, span));
+    path.segments.push(ast::PathSegment::from_ident(ident(&model.source_name, span)));
+    let mut alias = item(
+        ast::ItemKind::TyAlias(Box::new(ast::TyAlias {
+            defaultness: ast::Defaultness::Implicit,
+            ident: ident(&model.name, span),
+            generics: ast::Generics::default(),
+            after_where_clause: ast::WhereClause::default(),
+            bounds: Vec::new(),
+            ty: Some(Box::new(ast::Ty {
+                id: ast::DUMMY_NODE_ID,
+                kind: ast::TyKind::Path(None, path),
+                span,
+                tokens: None,
+            })),
+        })),
+        span,
+    );
+    alias.vis = visibility(model.public, span);
+    vec![module, alias]
+}
+
+/// Distinguish specialized layouts from legacy plan records whose source name defaults to their physical name.
+fn specialized_model(model: &crate::plan::ModelDeclaration) -> bool {
+    !model.source_name.is_empty() && model.source_name != model.name
+}
+
+/// Choose the validated source identifier only when a distinct concrete layout alias is retained.
+fn model_source_name(model: &crate::plan::ModelDeclaration) -> &str {
+    if specialized_model(model) { &model.source_name } else { &model.name }
+}
+
+/// Inject the checked layout and field order; a specialized struct is public inside its private namespace.
 pub fn model(model: &crate::plan::ModelDeclaration, span: Span) -> Box<ast::Item> {
     let tuple = model.fields.len() == 1 && model.fields[0].name == "0";
     let fields = model
@@ -395,7 +465,7 @@ pub fn model(model: &crate::plan::ModelDeclaration, span: Span) -> Box<ast::Item
         .collect();
     let mut declaration = item(
         ast::ItemKind::Struct(
-            ident(&model.name, span),
+            ident(model_source_name(model), span),
             ast::Generics::default(),
             if tuple {
                 ast::VariantData::Tuple(fields, ast::DUMMY_NODE_ID)
@@ -408,7 +478,7 @@ pub fn model(model: &crate::plan::ModelDeclaration, span: Span) -> Box<ast::Item
         ),
         span,
     );
-    declaration.vis = visibility(model.public, span);
+    declaration.vis = visibility(model.public || specialized_model(model), span);
     declaration.tokens = Some(model_tokens(model, span));
     declaration
 }
@@ -437,11 +507,11 @@ fn model_tokens(model: &crate::plan::ModelDeclaration, span: Span) -> ast::token
         ));
     }
     let mut tokens = Vec::new();
-    if model.public {
+    if model.public || specialized_model(model) {
         tokens.push(keyword_token("pub", span));
     }
     tokens.push(keyword_token("struct", span));
-    tokens.push(name_token(&model.name, span));
+    tokens.push(name_token(model_source_name(model), span));
     tokens.push(AttrTokenTree::Delimited(
         DelimSpan::from_single(span),
         DelimSpacing::new(Spacing::Alone, Spacing::Alone),

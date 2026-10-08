@@ -76,6 +76,7 @@ pub def lower_model_declarations(module: &BodyIrModule, file: str) -> Result[lis
                 fields=fields,
                 field_public=declaration.field_public,
                 derives=declaration.derives,
+                source_name=str(declaration.canonical.declaration_name),
                 span=SourceSpan(file=file, line=1, column=1),
             ),
         )

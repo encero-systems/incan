@@ -210,14 +210,14 @@ fn validate_declarations(
 fn model_refusal_feature(model: &incan_frontend::ast::ModelDecl) -> String {
 
     // ---- Structural declaration features ----
-    if !model.type_params.is_empty() {
-        return "type parameters".to_owned();
+    let generic_model = !model.type_params.is_empty();
+    let generic_adoption = model.traits.iter().any(|adoption| !adoption.node.type_args.is_empty());
+    let aliases = !model.method_aliases.is_empty();
+    if [generic_model, generic_adoption, aliases].iter().filter(|present| **present).count() > 1 {
+        return "type parameters, generic trait adoption and method aliases combined".to_owned();
     }
 
     // ---- Member binding features ----
-    if !model.method_aliases.is_empty() {
-        return "method aliases".to_owned();
-    }
     if !model.method_partials.is_empty() {
         return "method partials".to_owned();
     }
@@ -226,8 +226,8 @@ fn model_refusal_feature(model: &incan_frontend::ast::ModelDecl) -> String {
     }
 
     // ---- Method facts ----
-    if model.methods.iter().any(|method| !method.node.type_params.is_empty() || !method.node.decorators.is_empty()) {
-        return "generic or decorated methods".to_owned();
+    if model.methods.iter().any(|method| !method.node.decorators.is_empty()) {
+        return "decorated methods".to_owned();
     }
 
     // ---- Decorator expansion ----
