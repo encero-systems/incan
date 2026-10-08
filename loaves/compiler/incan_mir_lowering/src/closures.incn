@@ -172,6 +172,7 @@ pub def closure_constructor(
         1,
         Unwind.Continue,
     )
+    # The `Statement` import keeps these empty blocks' element type in scope (the compiler gap tracked by #2010).
     return Function(
         name=name,
         parameters=parameters,
