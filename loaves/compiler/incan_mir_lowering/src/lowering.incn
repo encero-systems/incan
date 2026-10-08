@@ -56,6 +56,7 @@ from pub::incan_mir_plan import (
 from pub::incan_mir_plan import assign as plan_assign, place as plan_place
 from bytes_plan import bytes_literal
 from decimal_plan import decimal_literal, decimal_comparison, is_decimal_literal
+from frozen_plan import frozen_literal
 # ---- The checked Body IR, read through Rust interop ----
 from rust::incan_semantics_core import IncanType as RustType, HirSourceSpan as RustSpan
 from rust::incan_semantics_core::body_ir import (
@@ -353,6 +354,8 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
                 return Err("unsupported Body IR partial model move")
             return Ok(Operand(kind=OperandKind.Move(target), span=span))
         OwnershipFact.Clone =>
+            if place_type(builder.locals, target) == PlanType.FrozenStr:
+                return Ok(read_place(target, false, span))
             # A checked clone of an open parameter becomes Rust's copy-valued Clone on concrete scalar instances.
             ty = place_type(builder.locals, target)
             if numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit:
@@ -364,6 +367,8 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
                 return Ok(read_place(cloned, true, span))
             return clone_nominal_operand(builder, target, span)
         OwnershipFact.Borrow =>
+            if place_type(builder.locals, target) == PlanType.FrozenStr:
+                return Ok(read_place(target, false, span))
             if is_tuple_type(place_type(builder.locals, target)):
                 return clone_tuple_operand(builder, target, span)
             match target.projection:
@@ -863,6 +868,13 @@ def lower_local_assignment(
         return list_assignment(builder, target, value, span)
     if place_type(builder.locals, target) == PlanType.String:
         return lower_string_assignment(builder, target, value, span)
+    if place_type(builder.locals, target) == PlanType.FrozenStr:
+        match value:
+            RustRvalue.Use(operand) =>
+                converted = frozen_operand(builder, operand, span)?
+                builder.emit(plan_assign(target, RvalueKind.Use(converted), span))
+                return Ok(None)
+            _ => return Err("unsupported Body IR nonliteral FrozenStr assignment")
     match value:
         RustRvalue.ResultVariant(variant) => return lower_result_construction(builder, target, variant, span)
         RustRvalue.Aggregate(RustAggregateKind.OptionSome, elements) =>
@@ -2008,6 +2020,8 @@ def checked_aggregate(
                         if ty == PlanType.String:
                             text = display_operand(builder, value, span)?
                             operands.append(read_place(text, true, span))
+                        elif ty == PlanType.FrozenStr:
+                            operands.append(frozen_operand(builder, value, span)?)
                         else:
                             operands.append(scalar_operand(builder, value, span)?)
                     None => return Err("unsupported Body IR spread enum payload")
@@ -2056,17 +2070,18 @@ def model_field_operands(
     for slot in range(len(elements)):
         match elements[slot].as_one():
             Some(value) =>
-                if native_source_type(
+                field_type = native_source_type(
                     builder.nominals,
                     builder.enums,
                     builder.unions,
                     declaration.field_types[slot],
                     builder.intrinsics,
-                )? == PlanType.String:
+                )?
+                if field_type == PlanType.String:
                     text = display_operand(builder, value, span)?
                     operands.append(read_place(text, true, span))
                 else:
-                    operands.append(value_operand(builder, value, span)?)
+                    operands.append(typed_carrier_operand(builder, value, field_type, span)?)
             None => return Err("unsupported Body IR spread model field")
     return Ok(operands)
 
@@ -2230,6 +2245,8 @@ def display_plan_operand(mut builder: Builder, operand: Operand, span: SourceSpa
     match ty:
         PlanType.Decimal =>
             name = "format_decimal"
+        PlanType.FrozenStr =>
+            name = "format_frozen"
         PlanType.Int =>
             name = "format_int"
         PlanType.Float =>
@@ -2264,9 +2281,9 @@ def display_string_operand(mut builder: Builder, operand: Operand, span: SourceS
 
 
 def clone_display_place(mut builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
-    """Clone borrowed text for display; the copyable Decimal128 carrier retains its exact coefficient and scale."""
+    """Clone borrowed owned text for display; copyable decimal and frozen carriers keep their exact values."""
     place = scalar_place(builder, value, span)?
-    if place_type(builder.locals, place) == PlanType.Decimal:
+    if place_type(builder.locals, place) in [PlanType.Decimal, PlanType.FrozenStr]:
         return display_plan_operand(builder, read_place(place, false, span), span)
     if place_type(builder.locals, place) != PlanType.String:
         return Err("unsupported Body IR nonscalar display borrow")
@@ -2336,6 +2353,13 @@ def borrow_text_operand(mut builder: Builder, value: &RustOperand, span: SourceS
                         _ => return Err("unsupported Body IR non-string static text operand")
                 None => pass
             place = scalar_place(builder, read.place, span)?
+            if place_type(builder.locals, place) == PlanType.FrozenStr:
+                if read.fact == OwnershipFact.MutBorrow or read.fact == OwnershipFact.Unknown:
+                    return Err("unsupported Body IR unproven FrozenStr text borrow")
+                owner = display_plan_operand(builder, read_place(place, false, span), span)?
+                reference = temporary(builder, PlanType.StringRef, span)
+                builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))
+                return Ok(read_place(reference, false, span))
             if place_type(builder.locals, place) != PlanType.String:
                 return Err("unsupported Body IR non-string text operand")
             match read.fact:
@@ -2817,6 +2841,8 @@ def frame_parameters(
             return Err("unsupported Body IR mutable model parameter")
         if ty == PlanType.String and parameter.mutable:
             return Err("unsupported Body IR mutable String parameter")
+        if ty == PlanType.FrozenStr and parameter.mutable:
+            return Err("unsupported Body IR mutable FrozenStr parameter: mutable scalar parameter representation")
         if int(parameter.local.index()) != len(parameters):
             return Err("Body IR parameter order disagrees with scalar frame")
         match parameter.default:
@@ -3027,7 +3053,7 @@ def list_assignment(
             for item in elements:
                 match item.as_one():
                     Some(value) =>
-                        argument = value_operand(builder, value, span)?
+                        argument = typed_carrier_operand(builder, value, element, span)?
                         if operand_type(builder, argument)? != element:
                             return Err("unsupported Body IR list element coercion")
                         reference = list_borrow(builder, output, true, span)?
@@ -3267,7 +3293,7 @@ def lower_list_builtin(
     if len(arguments) != 1:
         return Err("unsupported Body IR len arity")
     ty = argument_type(builder, arguments, 0, span)?
-    if ty in [PlanType.String, PlanType.StringRef]:
+    if ty in [PlanType.String, PlanType.StringRef, PlanType.FrozenStr]:
         return lower_text_helper(builder, "length_text", PlanType.Int, arguments, destination, span)
     receiver = argument_place(builder, arguments, 0, span)?
     if is_collection(builder.locals[receiver.local].ty):
@@ -3522,10 +3548,11 @@ def collection_assignment(
             if kind != RustAggregateKind.Set:
                 return Err("unsupported Body IR non-set collection Aggregate")
             output = begin_collection(builder, destination, span)?
+            types = collection_arguments(builder.locals[output.local].ty)
             for element in elements:
                 match element.as_one():
                     Some(value) =>
-                        argument = value_operand(builder, value, span)?
+                        argument = typed_carrier_operand(builder, value, types[0], span)?
                         insert_collection(builder, output, [argument], span)?
                     None =>
                         match element:
@@ -3537,11 +3564,12 @@ def collection_assignment(
             return Ok(None)
         RustRvalue.Dict(entries) =>
             output = begin_collection(builder, destination, span)?
+            types = collection_arguments(builder.locals[output.local].ty)
             for entry in entries:
                 match entry:
                     DictEntry.Pair(key, value) =>
-                        key_operand = value_operand(builder, key, span)?
-                        item_operand = value_operand(builder, value, span)?
+                        key_operand = typed_carrier_operand(builder, key, types[0], span)?
+                        item_operand = typed_carrier_operand(builder, value, types[1], span)?
                         insert_collection(builder, output, [key_operand, item_operand], span)?
                     DictEntry.Spread(spread) =>
                         source = value_operand(builder, spread.source, span)?
@@ -4013,6 +4041,8 @@ def boundary_operand(
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """Materialize union construction before passing or returning an owned value."""
+    if target == PlanType.FrozenStr:
+        return frozen_operand(builder, value, span)
     operand = typed_carrier_operand(builder, value, target, span)?
     operation = union_injection(
         builder.nominals,
@@ -4501,9 +4531,22 @@ def typed_carrier_operand(
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """Materialize a None operand only where the checked call or return fixes a concrete Option carrier."""
+    if ty == PlanType.FrozenStr:
+        return frozen_operand(builder, operand, span)
     match operand:
         RustOperand.Constant(RustConstant.None) => return none_operand(builder, ty, span)
         _ => return value_operand(builder, operand, span)
+
+
+def frozen_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+    """Keep only checked static literals or existing frozen values; dynamic text remains named-refused."""
+    match value:
+        RustOperand.Constant(constant) => return frozen_literal(builder, constant, span)
+        RustOperand.Place(_read) =>
+            operand = value_operand(builder, value, span)?
+            if operand_type(builder, operand)? != PlanType.FrozenStr:
+                return Err("unsupported Body IR dynamic text to FrozenStr conversion")
+            return Ok(operand)
 # =====================================================================================================================
 # Lists: borrowing and runtime calls
 # =====================================================================================================================
