@@ -3284,6 +3284,8 @@ def collection_method(
         for slot in range(len(types)):
             operands.append(argument_value(builder, arguments, slot + 1, span)?)
         return insert_collection(builder, receiver, operands, span)
+    if member == "Dict.get" and len(arguments) == 2:
+        return optional_dictionary_get(builder, receiver, arguments, destination, span)
     operation, parameters, result = dictionary_method_signature(ty, member, len(arguments))?
     mut operands: list[Operand] = []
     for slot in range(len(parameters)):
@@ -3295,6 +3297,44 @@ def collection_method(
     mut all_operands = [reference]
     all_operands.extend(operands)
     return collection_call(builder, ty, operation, all_parameters, result, all_operands, output, span)
+
+
+def optional_dictionary_get(
+    mut builder: Builder,
+    receiver: Place,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Copy a present value into the checked Option destination, replacing that destination's earlier value."""
+    mut output = plan_place(0, span)
+    match destination:
+        Some(place) =>
+            output = list_root_place(builder, place, span)?
+        None => return Err("unsupported Body IR discarded optional dictionary get")
+    ty = builder.locals[receiver.local].ty
+    types = collection_arguments(ty)
+    result = builder.locals[output.local].ty
+    _owner, declaration = carrier_layout(builder, result)?
+    if declaration.carrier != "Option" or declaration.variants[1].fields != [types[1]]:
+        return Err("unsupported Body IR optional dictionary get carrier")
+    key = argument_value(builder, arguments, 1, span)?
+    reference = borrow_collection(builder, receiver, false, span)?
+    found = temporary(builder, result, span)
+    collection_call(
+        builder,
+        ty,
+        "optional",
+        [collection_reference(ty, false), types[0]],
+        result,
+        [reference, key],
+        found,
+        span,
+    )?
+    drop_owned(builder, output.local, span)
+    builder.emit(plan_assign(output, RvalueKind.Use(read_place(found, true, span)), span))
+    builder.owned.append(output.local)
+    return Ok(None)
 
 
 def iterable_call(

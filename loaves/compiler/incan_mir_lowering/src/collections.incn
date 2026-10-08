@@ -217,7 +217,7 @@ pub def dictionary_method_signature(
         PlanType.Dict(key, value) =>
             if member == "Dict.get":
                 if arity != 3:
-                    return Err("unsupported Body IR optional dictionary get")
+                    return Err(f"unsupported Body IR dictionary method arity {member}")
                 return Ok(("default", collection_arguments(ty), leaf_type(value)))
             if arity != 1:
                 return Err(f"unsupported Body IR dictionary method arity {member}")

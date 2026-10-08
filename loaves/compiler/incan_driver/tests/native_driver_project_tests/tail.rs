@@ -89,3 +89,36 @@ def main() -> None:
 "#,
     )
 }
+
+/// A one-argument dictionary `get` copies a present value into its Option or reports absence, as legacy does.
+#[test]
+fn optional_dictionary_get_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_case(
+        "optional_dictionary_get",
+        r#"
+def lookup(counts: dict[str, int], word: str) -> str:
+    match counts.get(word):
+        Some(count) => return f"{word}={count}"
+        None => return f"{word} missing"
+
+def first_name(names: Dict[int, str], id: int) -> str:
+    return names.get(id).unwrap_or("nobody")
+
+def main() -> None:
+    counts: dict[str, int] = {"the": 2, "cat": 1}
+    println(lookup(counts, "the"))
+    println(lookup(counts, "dog"))
+    mut hits: Dict[str, int] = {}
+    hits["a"] = 1
+    println(hits.get("a").unwrap_or(0))
+    println(hits.get("b").unwrap_or(0))
+    names: Dict[int, str] = {1: "ada"}
+    println(first_name(names, 1))
+    println(first_name(names, 2))
+    mut found = names.get(1)
+    println(found.unwrap_or("none"))
+    found = names.get(3)
+    println(found.unwrap_or("none"))
+"#,
+    )
+}
