@@ -397,3 +397,74 @@ def main() -> None:
 "#,
     )
 }
+
+/// A model's list field is cloned out, borrowed by `len`, list methods and shared parameters, and mutated through
+/// `mut self`, as legacy reads and borrows the field in place.
+#[test]
+fn model_list_fields_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_case(
+        "model_list_fields",
+        r#"
+model Record:
+    tags: list[str]
+
+    def record_tags(self) -> list[str]:
+        return self.tags
+
+
+model Decoded:
+    value: list[str]
+
+    def record(self) -> Record:
+        return Record(tags=self.value)
+
+
+class Stack:
+    pub items: list[int]
+
+    def push(mut self, item: int) -> None:
+        self.items.append(item)
+
+    def pop(mut self) -> int:
+        if len(self.items) > 0:
+            return self.items.pop()
+        return -1
+
+    def size(self) -> int:
+        return len(self.items)
+
+
+def show(values: list[str]) -> None:
+    mut text = ""
+    for value in values:
+        text = text + f"{value},"
+    println(text)
+
+
+def main() -> None:
+    kept = Decoded(value=["a", "b"])
+    first = Record(tags=kept.value)
+    println(len(kept.value))
+    show(kept.value)
+    once = kept.record()
+    show(once.tags)
+    show(once.record_tags())
+    show(first.tags)
+    last = Decoded(value=["x"])
+    second = Record(tags=last.value)
+    show(second.tags)
+    mut stack = Stack(items=[])
+    stack.push(10)
+    stack.push(20)
+    stack.push(30)
+    println(stack.size())
+    println(stack.pop())
+    println(stack.pop())
+    println(stack.pop())
+    println(stack.pop())
+    mut local = Stack(items=[1])
+    local.items.append(2)
+    println(len(local.items))
+"#,
+    )
+}
