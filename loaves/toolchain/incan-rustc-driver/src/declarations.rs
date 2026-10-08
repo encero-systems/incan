@@ -24,6 +24,11 @@ fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
             path.segments.push(ast::PathSegment::from_ident(ident("DecimalCarrier", span)));
             ast::TyKind::Path(None, path)
         }
+        PlanType::FrozenStr => {
+            let mut path = ast::Path::from_ident(ident("incan_native_runtime", span));
+            path.segments.push(ast::PathSegment::from_ident(ident("FrozenCarrier", span)));
+            ast::TyKind::Path(None, path)
+        }
         PlanType::List(leaf, depth) => {
             let mut element = ty(
                 &list_leaf_type((*leaf).clone()),
@@ -334,11 +339,19 @@ fn type_tokens(ty: &ast::Ty) -> Vec<ast::tokenstream::AttrTokenTree> {
     use ast::token::{Delimiter, Token, TokenKind};
     use ast::tokenstream::{AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, Spacing};
     match &ty.kind {
-        ast::TyKind::Path(None, path) => path
-            .segments
-            .iter()
-            .map(|segment| name_token(segment.ident.name.as_str(), ty.span))
-            .collect(),
+        ast::TyKind::Path(None, path) => {
+            let mut tokens = Vec::new();
+            for (index, segment) in path.segments.iter().enumerate() {
+                if index != 0 {
+                    tokens.push(AttrTokenTree::Token(
+                        Token::new(TokenKind::PathSep, ty.span),
+                        Spacing::Alone,
+                    ));
+                }
+                tokens.push(name_token(segment.ident.name.as_str(), ty.span));
+            }
+            tokens
+        }
         ast::TyKind::Tup(elements) => {
             let mut tokens = Vec::new();
             for element in elements {

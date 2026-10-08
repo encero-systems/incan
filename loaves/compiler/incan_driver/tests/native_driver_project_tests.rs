@@ -959,6 +959,81 @@ def main() -> None:
     Ok(())
 }
 
+/// Compare frozen static text, UTF-8 length, copied calls, string conversion, fields, and collection leaves.
+#[test]
+fn direct_route_frozen_strings_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("frozen-strings")?;
+    let source = root.join("frozen_strings.incn");
+    fs::write(
+        &source,
+        r#"
+model Holder:
+    label: FrozenStr
+
+def keep(value: FrozenStr) -> FrozenStr:
+    """Keep the static carrier across copied calls."""
+    return value
+
+def policy() -> FrozenStr:
+    """Return a frozen Unicode literal."""
+    return "é😀"
+
+def label(text: str) -> str:
+    """Accept owned text at an explicit string boundary."""
+    return f"[{text}]"
+
+def main() -> None:
+    """Observe frozen carriers without replacing their storage with owned strings."""
+    println(policy())
+    println(len(policy()))
+    println(keep("strict"))
+    held = Holder(label="held")
+    println(held.label)
+    println(label(held.label))
+    values: list[FrozenStr] = ["left", "right"]
+    copied = values
+    println(copied[0])
+    println(copied[1])
+    words: dict[str, FrozenStr] = {"k": "value"}
+    println(words["k"])
+"#,
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let native = root.join("frozen-strings-native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native frozen strings compilation",
+    );
+    let legacy_root = root.join("frozen-strings-legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy frozen strings compilation",
+    );
+    let expected = Command::new(legacy_root.join("oven/release/frozen_strings")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy frozen strings execution");
+    success(&actual, "native frozen strings execution");
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(
+        actual.stdout,
+        "é😀\n2\nstrict\nheld\n[held]\nleft\nright\nvalue\n".as_bytes()
+    );
+    Ok(())
+}
+
 /// Prove class construction, shared and mutable receivers, and passing classes against legacy.
 #[test]
 fn source_class_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

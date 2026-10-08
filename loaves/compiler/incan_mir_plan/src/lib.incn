@@ -40,6 +40,7 @@ pub enum ListLeaf:
     U8
     Unit
     Decimal
+    FrozenStr
 
 
 @derive(Clone, PartialEq)
@@ -73,6 +74,7 @@ pub enum PlanType:
     List stores its scalar or flat tuple leaf element and a positive nesting depth; ListRef and ListMutRef borrow that same Vec representation.
     ModelRef and ModelMutRef retain shared and mutable nominal receiver references.
     Decimal retains the legacy Decimal128 carrier; precision is checked upstream and the value keeps its written scale.
+    FrozenStr retains the copyable frozen wrapper over static text; it owns no allocation and is distinct from String.
     Set and Dict retain the legacy HashSet and HashMap leaf arguments; their reference variants preserve caller-owned storage. Float and model keys are refused; flat tuple keys exclude floating-point fields.
     """
 
@@ -100,6 +102,7 @@ pub enum PlanType:
     String
     StringRef
     Decimal
+    FrozenStr
     StrRef
     StringArray(int)
     StrArray(int)
@@ -136,6 +139,7 @@ pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
         ListLeaf.U8 => return PlanType.U8
         ListLeaf.Unit => return PlanType.Unit
         ListLeaf.Decimal => return PlanType.Decimal
+        ListLeaf.FrozenStr => return PlanType.FrozenStr
 
 
 pub def tuple_element_type(element: TupleElement) -> PlanType:
@@ -257,12 +261,14 @@ pub enum RvalueKind:
     NumericCast retains both checked source and destination carriers. FloatToInt preserves Rust truncation and saturation; BoolToInt produces zero or one.
 
     Tuple preserves the ordered operand layout of its destination type.
+    FrozenText wraps a static Text literal in the dependency-owned FrozenStr carrier; a dynamic text operand is refused.
     Array moves or copies its listed operands into a fixed array. Borrow creates
     a shared reference to a checked place; MutBorrow creates a mutable list or nominal receiver reference. UnsizeSlice converts an array reference
     to the corresponding shared slice without changing ownership of its owner.
     """
 
     Use(Operand)
+    FrozenText(Operand)
     Binary(BinaryOp, Operand, Operand)
     Unary(UnaryOp, Operand)
     NumericCast(Operand, PlanType, PlanType)

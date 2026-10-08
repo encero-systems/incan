@@ -3,6 +3,8 @@
 pub from decimals import decimal_from_parts, format_decimal, equal_decimal, unequal_decimal
 pub from decimals import less_decimal, less_equal_decimal, greater_decimal, greater_equal_decimal
 pub from rust::incan_std_core::num import Decimal128 as DecimalCarrier
+pub from frozen_text import format_frozen
+pub from rust::incan_std_core::frozen import FrozenStr as FrozenCarrier
 pub from carriers import format_carrier, clone_carrier_payload
 pub from collections import empty_set, insert_set, length_set, contains_set, clone_set
 pub from collections import extend_list_set, extend_set, extend_dict

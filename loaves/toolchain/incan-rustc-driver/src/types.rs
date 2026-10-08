@@ -70,6 +70,7 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::CheckedInt => Ty::new_tup(tcx, &[tcx.types.i64, tcx.types.bool]),
         PlanType::String => string_type(tcx)?,
         PlanType::Decimal => decimal_type(tcx)?,
+        PlanType::FrozenStr => frozen_type(tcx)?,
         PlanType::StringRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, string_type(tcx)?),
         PlanType::StrRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, tcx.types.str_),
         PlanType::StringArray(count) => array_type(tcx, string_type(tcx)?, *count)?,
@@ -106,6 +107,21 @@ fn string_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
 fn decimal_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
     let definition = crate::callees::external(tcx, "incan_native_runtime::decimal_from_parts")?;
     Ok(tcx.fn_sig(definition).instantiate_identity().skip_binder().output())
+}
+
+/// Recover the dependency-owned FrozenStr identity from its canonical observation wrapper.
+fn frozen_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
+    let definition = crate::callees::external(tcx, "incan_native_runtime::format_frozen")?;
+    tcx.fn_sig(definition)
+        .instantiate_identity()
+        .skip_binder()
+        .inputs()
+        .first()
+        .copied()
+        .ok_or_else(|| PlanError::Invalid {
+            function: "FrozenStr".into(),
+            reason: "the frozen observation wrapper has no carrier argument".into(),
+        })
 }
 
 /// Translate a checked exact array length without a signed or truncating conversion.
