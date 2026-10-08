@@ -229,5 +229,7 @@ pub(super) fn lower_source_partial(
         panic_facts: builder.panic_facts,
         is_async: false,
         extern_delegation: None,
+        // No checked callable facts are recorded for a synthesized partial; callable signatures refuse by name.
+        callable_representation: None,
     }
 }
