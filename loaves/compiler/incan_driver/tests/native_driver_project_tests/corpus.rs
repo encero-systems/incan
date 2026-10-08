@@ -163,6 +163,12 @@ pub(super) fn check_builtin_source(
     success(&expected, "legacy builtin execution");
     success(&actual, "native builtin execution");
     assert_eq!(actual.stdout, expected.stdout, "builtin output must be byte-identical");
+    assert_eq!(actual.stderr, expected.stderr, "builtin errors must be byte-identical");
+    assert_eq!(
+        actual.status.code(),
+        expected.status.code(),
+        "builtin exit codes must match"
+    );
     Ok(())
 }
 

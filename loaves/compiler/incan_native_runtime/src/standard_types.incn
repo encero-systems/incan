@@ -1,0 +1,19 @@
+"""Signature witnesses for dependency-owned standard-library layouts."""
+
+from std.io import IoError, _BytesIO
+from std.compression import CompressionError
+
+
+pub def io_error_type(value: IoError) -> IoError:
+    """Retain the canonical I/O error identity without constructing a consumer-owned layout."""
+    return value
+
+
+pub def bytes_io_type(value: _BytesIO) -> _BytesIO:
+    """Retain the provider's shared byte-stream state and exact nominal identity."""
+    return value
+
+
+pub def compression_error_type(value: CompressionError) -> CompressionError:
+    """Retain the compression provider's error identity and embedded codec value."""
+    return value

@@ -16,10 +16,11 @@ from tuples import tuple_type, generic_tuple_type, type_name, tuple_slot
 from pub::incan_mir_plan import tuple_element_type
 from generators import generator_type
 from nominal_instances import class_symbol
+from standard_types import is_standard_type
 
 
 pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Result[PlanType, str]:
-    """Translate checked scalar and collection types, resolving source-local nominals only against retained declarations."""
+    """Translate checked layouts, resolving source nominals against declarations and admitted stdlib types against runtime witnesses."""
     match generator_type(ty):
         Some(result) => return result
         None => pass
@@ -28,6 +29,8 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
             for index in range(len(declarations)):
                 if declarations[index].name == str(name):
                     return Ok(PlanType.Model(index, str(name)))
+            if is_standard_type(str(name)):
+                return Ok(PlanType.Standard(str(name)))
             return Err(f"unsupported Body IR nominal type {name}")
         RustType.Primitive(primitive) =>
             match primitive:

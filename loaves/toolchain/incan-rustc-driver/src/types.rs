@@ -93,6 +93,8 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::CheckedInt => Ty::new_tup(tcx, &[tcx.types.i64, tcx.types.bool]),
         PlanType::String => string_type(tcx)?,
         PlanType::Decimal => decimal_type(tcx)?,
+        PlanType::Standard(name) => standard_type(tcx, name)?,
+        PlanType::StandardRef(name) => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, standard_type(tcx, name)?),
         PlanType::StringRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, string_type(tcx)?),
         PlanType::StrRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, tcx.types.str_),
         PlanType::StringArray(count) => array_type(tcx, string_type(tcx)?, *count)?,
@@ -156,6 +158,18 @@ fn string_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
 /// Recover Decimal128 from the canonical runtime constructor's return type, preserving its dependency identity.
 fn decimal_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
     let definition = crate::callees::external(tcx, "incan_native_runtime::decimal_from_parts")?;
+    Ok(tcx.fn_sig(definition).instantiate_identity().skip_binder().output())
+}
+
+/// Recover an admitted standard-library type from its runtime witness, preserving the selected dependency identity.
+fn standard_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Result<Ty<'tcx>, PlanError> {
+    let witness = match name {
+        "IoError" => "incan_native_runtime::io_error_type",
+        "_BytesIO" => "incan_native_runtime::bytes_io_type",
+        "CompressionError" => "incan_native_runtime::compression_error_type",
+        _ => return Err(PlanError::UnknownCallee(format!("standard type {name}"))),
+    };
+    let definition = crate::callees::external(tcx, witness)?;
     Ok(tcx.fn_sig(definition).instantiate_identity().skip_binder().output())
 }
 

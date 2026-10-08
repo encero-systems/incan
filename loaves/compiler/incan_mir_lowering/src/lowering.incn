@@ -141,6 +141,7 @@ from unions import (
 from tuples import is_tuple_type, tuple_has_owners, tuple_aggregate, clone_tuple_operand, display_tuple
 from text_plan import format_parts, clone_text, owned_literal
 from options import (
+    borrowed_runtime_value,
     intrinsic_declarations,
     retain_body_carriers,
     intrinsic_pattern,
@@ -221,6 +222,7 @@ from assertions import lower_assertion
 from async_ import future_type, future_declarations, construct_future, await_future, async_entry, evaluator_name
 from defaults import default_arguments, default_type, model_default_arguments
 from type_parameters import Instance, instantiate, substitute
+from standard_types import validate_standard_bindings
 # =====================================================================================================================
 # Boundary types and validation
 # =====================================================================================================================
@@ -236,6 +238,7 @@ pub type BodyStatementKind = rusttype RustStatementKind:
 
 pub def validate_module(module: &BodyIrModule) -> Result[int, str]:
     """Validate every retained declaration and body before consuming its facts."""
+    validate_standard_bindings(module)?
     for declaration in module.static_declarations:
         if not module.is_well_formed_static_declaration(declaration):
             return Err("invalid Body IR static declaration")
@@ -559,6 +562,7 @@ def is_nominal_type(ty: PlanType) -> bool:
     match ty:
         PlanType.Enum(_index, _name) => return true
         PlanType.Model(_index, _name) => return true
+        PlanType.Standard(_name) => return true
         PlanType.ZipIterator(_left, _right) => return true
         PlanType.Generator(_leaf, _depth) => return true
         PlanType.Tuple(_elements) => return tuple_has_owners(ty)
@@ -1942,8 +1946,19 @@ def coerce_numeric_operand(
 
 
 def clone_nominal_operand(mut builder: Builder, value: Place, span: SourceSpan) -> Result[Operand, str]:
-    """Materialize the checker's clone fact through a source nominal's real derived Clone implementation."""
+    """Materialize the checker's clone fact through the nominal's native Clone implementation, preserving its owner."""
     match place_type(builder.locals, value):
+        PlanType.Standard(name) =>
+            result = borrowed_runtime_value(
+                builder,
+                "clone_carrier_payload",
+                value,
+                PlanType.Standard(name),
+                PlanType.StandardRef(name),
+                PlanType.Standard(name),
+                span,
+            )
+            return Ok(read_place(result, true, span))
         PlanType.Model(index, name) =>
             reference = temporary(builder, PlanType.ModelRef(index, name), span)
             builder.emit(plan_assign(reference, RvalueKind.Borrow(value), span))

@@ -70,6 +70,7 @@ pub enum PlanType:
 
     Sized numeric variants preserve their exact Rust carriers. CheckedNumeric stores its named sized carrier; its value projection retains the carrier type. Tuple elements retain their ordered types and own any string elements. Array lengths are exact nonnegative counts. CheckedInt and arrays are body temporaries; shared slice variants already include their reference.
     StringRef borrows an owned String, while StrRef is a string literal's shared str view.
+    Standard retains a dependency-owned stdlib type through an admitted runtime signature witness; StandardRef borrows that same identity.
     List stores its scalar or flat tuple leaf element and a positive nesting depth; ListRef and ListMutRef borrow that same Vec representation.
     ModelRef and ModelMutRef retain shared and mutable nominal receiver references.
     Set and Dict retain the legacy HashSet and HashMap leaf arguments; their reference variants preserve caller-owned storage. Float keys and tuple leaves are not admitted in hashed collections.
@@ -105,6 +106,9 @@ pub enum PlanType:
     String
     StringRef
     Decimal
+    # A dependency-owned standard-library type resolved through the runtime signature.
+    Standard(str)
+    StandardRef(str)
     StrRef
     StringArray(int)
     StrArray(int)

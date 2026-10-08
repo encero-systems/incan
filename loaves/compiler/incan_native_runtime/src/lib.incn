@@ -3,6 +3,9 @@
 pub from decimals import decimal_from_parts, format_decimal, equal_decimal, unequal_decimal
 pub from decimals import less_decimal, less_equal_decimal, greater_decimal, greater_equal_decimal
 pub from rust::incan_std_core::num import Decimal128
+from std.io import IoError as ProviderIoError, _BytesIO as ProviderBytesIO
+from std.compression import CompressionError as ProviderCompressionError
+pub from standard_types import io_error_type, bytes_io_type, compression_error_type
 pub from carriers import format_carrier, clone_carrier_payload
 pub from async_ import run_async_entry
 pub from generators import poll_generator
@@ -163,6 +166,18 @@ pub def format_float(value: float) -> str:
 pub def format_bool(value: bool) -> str:
     """Format a boolean with the language's existing scalar conversion."""
     return str(value)
+
+
+# Expose the selected provider's I/O error identity for native function headers.
+pub type IoError = ProviderIoError
+
+
+# Retain the provider-owned byte stream rather than a consumer-owned cursor layout.
+pub type _BytesIO = ProviderBytesIO
+
+
+# Expose the selected compression provider's error identity for native function headers.
+pub type CompressionError = ProviderCompressionError
 
 
 pub def println_text(value: str) -> None:

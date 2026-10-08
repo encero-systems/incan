@@ -141,14 +141,18 @@ pub def native_source_type(
 
 
 pub def lower_enum_declarations(module: &RustBodyIrModule, file: str) -> Result[list[EnumDeclaration], str]:
-    """Copy checked source-order variants and derives into the native declaration plan."""
+    """Copy checked source-order variants and derives; dependency-owned payloads require retained binding proofs."""
     mut declarations: list[EnumDeclaration] = []
     for declaration in module.enum_declarations:
         mut variants: list[EnumVariant] = []
         for variant in declaration.variants:
             mut fields: list[PlanType] = []
             for ty in variant.fields:
-                fields.append(native_source_type(module.nominal_declarations, module.enum_declarations, ty, [])?)
+                field = native_source_type(module.nominal_declarations, module.enum_declarations, ty, [])?
+                match field:
+                    PlanType.Standard(name) =>
+                        return Err(f"unsupported Body IR unproven enum standard-library payload {name}")
+                    _ => fields.append(field)
             variants.append(EnumVariant(name=str(variant.name), fields=fields))
         declarations.append(
             EnumDeclaration(

@@ -76,6 +76,8 @@ enum Scalar {
     String,
     StringRef,
     Decimal,
+    Standard(String),
+    StandardRef(String),
     StrRef,
     StringArray(i64),
     StrArray(i64),
@@ -193,6 +195,8 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::CheckedInt => Scalar::CheckedInt,
         PlanType::String => Scalar::String,
         PlanType::Decimal => Scalar::Decimal,
+        PlanType::Standard(name) => Scalar::Standard(name.clone()),
+        PlanType::StandardRef(name) => Scalar::StandardRef(name.clone()),
         PlanType::StringRef => Scalar::StringRef,
         PlanType::StrRef => Scalar::StrRef,
         PlanType::StringArray(count) => Scalar::StringArray(*count),
@@ -756,6 +760,7 @@ fn borrow_result(plan: &Plan, function: &Function, value: &Place, mutable: bool)
         Scalar::ZipIterator(left, right) => Ok(Scalar::ZipIteratorRef(left, right)),
         Scalar::GeneratorYield(leaf, depth) => Ok(Scalar::GeneratorYieldRef(leaf, depth)),
         Scalar::Enum(index) => Ok(Scalar::EnumRef(index)),
+        Scalar::Standard(name) => Ok(Scalar::StandardRef(name)),
         Scalar::Model(index) => Ok(Scalar::ModelRef(index)),
         Scalar::List(leaf, depth) => Ok(Scalar::ListRef(leaf, depth)),
         Scalar::Set(leaf) => Ok(Scalar::SetRef(leaf)),
@@ -792,6 +797,7 @@ fn source_signature_type(ty: Scalar) -> bool {
                 | Scalar::Unit
                 | Scalar::String
                 | Scalar::Decimal
+                | Scalar::Standard(_)
                 | Scalar::Model(_)
                 | Scalar::Enum(_)
                 | Scalar::List(_, _)
@@ -812,6 +818,7 @@ fn external_signature_type(ty: Scalar) -> bool {
         || matches!(
             ty,
             Scalar::ZipIteratorRef(_, _)
+                | Scalar::StandardRef(_)
                 | Scalar::StringRef
                 | Scalar::StrRef
                 | Scalar::StringSlice
@@ -1161,6 +1168,11 @@ fn model(plan: &Plan, index: i64) -> Option<&crate::plan::ModelDeclaration> {
 
 /// Require flat scalar/text tuple layouts and consistent nominal declaration identities.
 fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
+    if let PlanType::Standard(name) | PlanType::StandardRef(name) = ty {
+        if !matches!(name.as_str(), "IoError" | "_BytesIO" | "CompressionError") {
+            return Err(PlanError::Invalid { function: name.clone(), reason: "standard type has no admitted runtime witness".into() });
+        }
+    }
     if matches!(ty, PlanType::Tuple(_)) && !source_signature_type(scalar(ty)) {
         return Err(PlanError::Invalid {
             function: "tuple".into(),

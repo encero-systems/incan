@@ -1,0 +1,93 @@
+"""Canonical binding proofs for dependency-owned standard-library type witnesses."""
+
+from rust::std::collections import BTreeMap
+from rust::incan_semantics_core import IncanType as RustType, CanonicalSymbolId, SymbolOrigin, SemanticSourceTargetKind
+from rust::incan_semantics_core::body_ir import BodyIrModule
+
+
+pub def is_standard_type(name: str) -> bool:
+    """Identify the closed set of standard-library types with admitted runtime witnesses."""
+    return name == "IoError" or name == "_BytesIO" or name == "CompressionError"
+
+
+pub def validate_standard_bindings(module: &BodyIrModule) -> Result[None, str]:
+    """Validate used witness names against the checker's retained bindings before name-based layout admission."""
+    for body in module.bodies:
+        validate_type(module, body.named_type_identities, body.return_type)?
+        for local in body.locals:
+            validate_type(module, body.named_type_identities, local.ty)?
+    for declaration in module.nominal_declarations:
+        for ty in declaration.field_types:
+            validate_type(module, declaration.named_type_identities, ty)?
+    for declaration in module.type_alias_declarations:
+        validate_type(module, declaration.named_type_identities, declaration.ty)?
+    return Ok(None)
+
+
+def validate_type(
+    module: &BodyIrModule,
+    identities: &BTreeMap[str, CanonicalSymbolId],
+    ty: &RustType,
+) -> Result[None, str]:
+    """Follow checked type positions, requiring a source declaration or exact provider binding for witness names."""
+    match ty:
+        RustType.Named(name) => return validate_named_type(module, identities, str(name))
+        RustType.Generic(base=_base, args=arguments) =>
+            for argument in arguments:
+                validate_type(module, identities, argument)?
+        RustType.Tuple(elements) =>
+            for element in elements:
+                validate_type(module, identities, element)?
+        RustType.Ref(inner) => return validate_type(module, identities, inner.as_ref())
+        RustType.RefMut(inner) => return validate_type(module, identities, inner.as_ref())
+        _ => pass
+    return Ok(None)
+
+
+def validate_named_type(
+    module: &BodyIrModule,
+    identities: &BTreeMap[str, CanonicalSymbolId],
+    name: str,
+) -> Result[None, str]:
+    """Require the used name's exact source layout or provider identity; an alias key alone authorizes neither."""
+    if not is_standard_type(name):
+        return Ok(None)
+    for binding, identity in identities.iter():
+        if str(binding) != name:
+            continue
+        if source_binding(module, name, identity) or provider_binding(name, identity):
+            return Ok(None)
+        return Err(f"unsupported Body IR foreign standard-library nominal name {name}: {identity.render_compact()}")
+    return Err(f"unsupported Body IR unproven standard-library nominal type {name}")
+
+
+def source_binding(module: &BodyIrModule, name: str, identity: &CanonicalSymbolId) -> bool:
+    """Preserve a same-name source nominal or enum only when its retained layout has the exact checked identity."""
+    for declaration in module.nominal_declarations:
+        if declaration.name == name and declaration.canonical == identity.clone():
+            return true
+    for declaration in module.enum_declarations:
+        if declaration.name == name and declaration.canonical == identity.clone():
+            return true
+    return false
+
+
+def provider_binding(name: str, identity: &CanonicalSymbolId) -> bool:
+    """Accept only the declaration kind and declaring module of the selected stdlib provider's witness type."""
+    if identity.declaration_name != name:
+        return false
+    mut expected_kind = SemanticSourceTargetKind.Model
+    mut library = "incan_stdlib_system"
+    mut path = ["io"]
+    if name == "_BytesIO":
+        expected_kind = SemanticSourceTargetKind.Class
+    if name == "CompressionError":
+        library = "incan_stdlib_compression"
+        path = ["compression", "_core"]
+    if identity.kind != expected_kind:
+        return false
+    match identity.origin:
+        SymbolOrigin.Module(module) => return module.clone() == ["std"] + path
+        SymbolOrigin.Package(library=owner, module_path=module) =>
+            return str(owner) == library and module.clone() == path
+        _ => return false

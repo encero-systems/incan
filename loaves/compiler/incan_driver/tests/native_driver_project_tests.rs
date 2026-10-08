@@ -648,6 +648,147 @@ fn plain_model_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>>
     )
 }
 
+/// Prove a dependency-owned I/O error can cross source function signatures without recreating its layout.
+#[test]
+fn stdlib_io_error_signature_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("stdlib-io-error")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"from std.io import IoError
+
+def retain(error: IoError) -> IoError:
+    return error
+
+def main() -> None:
+    println("io error signature")
+"#,
+    )
+}
+
+/// Prove provider-owned byte streams cross source signatures with their original shared-state representation.
+#[test]
+fn stdlib_bytes_io_signature_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("stdlib-bytes-io")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"from std.io import _BytesIO
+
+def retain(stream: _BytesIO) -> _BytesIO:
+    return stream
+
+def main() -> None:
+    println("byte stream signature")
+"#,
+    )
+}
+
+/// Prove the selected compression provider's error can cross source signatures without recreating its layout.
+#[test]
+fn stdlib_compression_error_signature_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("stdlib-compression-error")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"from std.compression import CompressionError
+
+def retain(error: CompressionError) -> CompressionError:
+    return error
+
+def main() -> None:
+    println("compression error signature")
+"#,
+    )
+}
+
+/// Prove stdlib witnesses require checked provider bindings while a same-name source model keeps its own layout.
+#[test]
+fn stdlib_nominal_identity_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("stdlib-nominal-identity")?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &root.join("standard"),
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"from std.io import IoError, _BytesIO
+from std.compression import CompressionError
+
+def retain_io(error: IoError) -> IoError:
+    return error
+
+def retain_stream(stream: _BytesIO) -> _BytesIO:
+    return stream
+
+def retain_compression(error: CompressionError) -> CompressionError:
+    return error
+
+def main() -> None:
+    println("checked provider signatures")
+"#,
+    )?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &root.join("local"),
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"model IoError:
+    code: int
+
+def retain(error: IoError) -> IoError:
+    return error
+
+def main() -> None:
+    error = retain(IoError(code=7))
+    println(error.code)
+"#,
+    )?;
+    let foreign = root.join("foreign.incn");
+    fs::write(
+        &foreign,
+        "from rust::std::io import ErrorKind as IoError\n\ndef retain(error: IoError) -> IoError:\n    return error\n\ndef main() -> None:\n    println(7)\n",
+    )?;
+    let legacy = root.join("foreign-legacy");
+    let build = support::repo_command()
+        .current_dir(&root)
+        .arg("build")
+        .arg(&foreign)
+        .arg(&legacy)
+        .output()?;
+    success(&build, "foreign alias legacy compilation");
+    let expected = Command::new(legacy.join("oven/release/foreign")).output()?;
+    success(&expected, "foreign alias legacy execution");
+    assert_eq!(expected.stdout, b"7\n");
+    assert!(expected.stderr.is_empty());
+    let output = root.join("foreign");
+    let refused = corpus::source_command(
+        &fixture.driver_binary("release"),
+        &foreign,
+        &output,
+        &fixture.sysroot,
+        &corpus::runtime_closure(&fixture.formatting, "release")?,
+    )
+    .output()?;
+    assert!(
+        !refused.status.success(),
+        "a foreign Rust type must not acquire the stdlib witness layout"
+    );
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("unsupported Body IR"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(!output.exists());
+    Ok(())
+}
+
 /// Prove two checked instantiations of a function with type parameters against legacy output.
 #[test]
 fn type_parameter_function_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
