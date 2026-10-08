@@ -26,6 +26,58 @@ pub(super) fn lower_owner_method_bodies(
         .collect()
 }
 
+/// Retain a trait default's own type parameters as type variables wherever its checked types name them.
+///
+/// The checker resolves an annotation inside the trait while the parameter is in scope as a placeholder, and that
+/// placeholder resolves to a nominal of the same name; the trait's collected signatures spell the same parameter as a
+/// type variable. Inside the trait the parameter shadows any nominal of that name, so one type-variable spelling is
+/// exact, and a consumer instantiating the default for an adopter substitutes it from the adoption's checked arguments.
+/// Only locals, parameters, and the return type are normalized; any other position keeps the checker's spelling and
+/// stays unsupported for such a consumer.
+pub(super) fn retain_trait_type_parameters(body: &mut bir::Body, type_params: &[ast::TypeParam]) {
+    if type_params.is_empty() {
+        return;
+    }
+    let names = type_params
+        .iter()
+        .map(|parameter| parameter.name.as_str())
+        .collect::<Vec<_>>();
+    for local in &mut body.locals {
+        local.ty = trait_type_variable(&local.ty, &names);
+    }
+    for param in &mut body.params {
+        param.ty = trait_type_variable(&param.ty, &names);
+    }
+    body.return_type = trait_type_variable(&body.return_type, &names);
+}
+
+/// Respell a nominal naming one of the trait's type parameters as that type variable, at any depth.
+fn trait_type_variable(ty: &IncanType, names: &[&str]) -> IncanType {
+    let respell = |inner: &IncanType| trait_type_variable(inner, names);
+    match ty {
+        IncanType::Named(name) if names.contains(&name.as_str()) => IncanType::TypeVar(name.clone()),
+        IncanType::Generic { base, args } => IncanType::Generic {
+            base: base.clone(),
+            args: args.iter().map(respell).collect(),
+        },
+        IncanType::Tuple(items) => IncanType::Tuple(items.iter().map(respell).collect()),
+        IncanType::Function { params, return_type } => IncanType::Function {
+            params: params
+                .iter()
+                .map(|param| IncanCallableParam {
+                    ty: respell(&param.ty),
+                    ..param.clone()
+                })
+                .collect(),
+            return_type: Box::new(respell(return_type)),
+        },
+        IncanType::TypeToken(inner) => IncanType::TypeToken(Box::new(respell(inner))),
+        IncanType::Ref(inner) => IncanType::Ref(Box::new(respell(inner))),
+        IncanType::RefMut(inner) => IncanType::RefMut(Box::new(respell(inner))),
+        _ => ty.clone(),
+    }
+}
+
 /// The delegation an `@rust.extern` declaration named `name` records, or `None` for an ordinary declaration (#2023).
 ///
 /// The item is the declaration's own name in the file's `rust.module(...)` module, for functions and static methods

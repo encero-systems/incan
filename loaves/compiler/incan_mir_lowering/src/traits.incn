@@ -8,6 +8,8 @@ from rust::incan_semantics_core::body_ir import (
     NamedCallableTarget,
     ArgumentElement,
     Operand as RustOperand,
+    TraitImplementation,
+    TraitTypeArgument,
 )
 from pub::incan_mir_plan import Local, SourceSpan, PlanType
 from classes import receiver_mode
@@ -22,28 +24,82 @@ pub def specialize_traits(module: &BodyIrModule) -> Result[BodyIrModule, str]:
         if len(body.locals) == 0 or body.locals[0].ty != RustType.SelfType:
             result.bodies.push(body.clone())
             continue
+        # One default can fill several slots of one adopter (its own and the supertrait slots it refines); the
+        # adopter still receives a single instantiation of it.
+        mut instantiated: list[TraitImplementation] = []
         for implementation in module.trait_implementations:
-            if body.canonical == Some(implementation.implementation):
-                result.bodies.push(specialize_body(body, str(implementation.owner.declaration_name)))
+            if body.canonical != Some(implementation.implementation):
+                continue
+            if not first_instantiation(instantiated, implementation)?:
+                continue
+            instantiated.append(implementation.clone())
+            result.bodies.push(
+                specialize_body(body, str(implementation.owner.declaration_name), implementation.type_arguments),
+            )
     return Ok(result)
 
 
-def specialize_body(body: &Body, owner: str) -> Body:
-    """Instantiate a trait default for one implementing owner: same statements and identities, Self closed."""
+def first_instantiation(retained: list[TraitImplementation], candidate: &TraitImplementation) -> Result[bool, str]:
+    """Report whether this adopter has no instantiation of the default yet; a conflicting second one refuses."""
+    for implementation in retained:
+        if implementation.owner != candidate.owner:
+            continue
+        if implementation.type_arguments != candidate.type_arguments:
+            return Err("unsupported Body IR trait default at several instantiations for one adopter")
+        return Ok(false)
+    return Ok(true)
+
+
+def specialize_body(body: &Body, owner: str, arguments: list[TraitTypeArgument]) -> Body:
+    """Instantiate a trait default for one adopter: same statements and identities, Self and type parameters closed."""
     # Bind the concrete type to a typed local before storing it into fields: the legacy route that compiles this
     # Loaf loses the callee identity of a call written directly on the right of a foreign field store (dev.8 drops
     # this indirection).
     concrete: RustType = concrete_self_type(owner)
     mut result = body.clone()
     for index in range(len(result.locals)):
-        if result.locals[index].ty == RustType.SelfType:
-            result.locals[index].ty = concrete.clone()
+        local_type: RustType = instantiate_type(result.locals[index].ty, concrete, arguments)
+        result.locals[index].ty = local_type
     for index in range(len(result.params)):
-        if result.params[index].ty == RustType.SelfType:
-            result.params[index].ty = concrete.clone()
-    if result.return_type == RustType.SelfType:
-        result.return_type = concrete.clone()
+        parameter_type: RustType = instantiate_type(result.params[index].ty, concrete, arguments)
+        result.params[index].ty = parameter_type
+    return_type: RustType = instantiate_type(result.return_type, concrete, arguments)
+    result.return_type = return_type
     return result
+
+
+def instantiate_type(ty: &RustType, concrete: &RustType, arguments: list[TraitTypeArgument]) -> RustType:
+    """
+    Close `Self` and the checker-recorded trait type arguments inside one checked type.
+
+    Tuples are rebuilt around their closed elements. A generic collection keeps any type parameter it mentions, because
+    Incan cannot yet construct the imported struct variant that names it (#2093); like every other type left open, its
+    later native type translation refuses instead of guessing a layout. Rebuilt elements append through an explicit
+    interop clone, because `List.append` cannot prove `Clone` for the opaque imported type.
+    """
+    match ty:
+        RustType.SelfType => return concrete.clone()
+        RustType.TypeVar(name) => return type_argument(ty, str(name), arguments)
+        RustType.Tuple(elements) =>
+            mut closed: list[RustType] = []
+            for element in elements:
+                item: RustType = instantiate_type(element, concrete, arguments)
+                closed.append(item.clone())
+            return tuple_type_of(closed)
+        _ => return ty.clone()
+
+
+def type_argument(ty: &RustType, name: str, arguments: list[TraitTypeArgument]) -> RustType:
+    """Select the recorded argument for one trait type parameter, keeping a parameter no adoption bound."""
+    for argument in arguments:
+        if str(argument.parameter) == name:
+            return argument.argument.clone()
+    return ty.clone()
+
+
+def tuple_type_of(elements: list[RustType]) -> RustType:
+    """Rebuild one tuple type at an explicit typed return boundary for the legacy route that compiles this Loaf."""
+    return RustType.Tuple(elements)
 
 
 def concrete_self_type(owner: str) -> RustType:
