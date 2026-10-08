@@ -252,14 +252,32 @@ impl BodyIrModule {
 }
 
 /// One non-generic concrete adopter's implementation of a source-local trait method.
+///
+/// The adopter's traits include every source-local supertrait its adoptions reach, so a supertrait slot is retained
+/// with the body that fills it for this adopter.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TraitImplementation {
     /// Concrete nominal owner, matched against the retained layout registry.
     pub owner: CanonicalSymbolId,
     /// Trait slot identity minted by the checker.
     pub method: CanonicalSymbolId,
-    /// Implementing method identity, or the trait slot itself for an inherited default.
+    /// Implementing method identity: the adopter's own method, the slot's default, or the default a directly adopted
+    /// subtrait declares for the slot.
     pub implementation: CanonicalSymbolId,
+    /// Checked type arguments of the trait whose default `implementation` is, one per type parameter of that trait.
+    ///
+    /// Empty for the adopter's own method and for a default of a trait without type parameters.
+    #[serde(default)]
+    pub type_arguments: Vec<TraitTypeArgument>,
+}
+
+/// One trait type parameter bound to the type argument the checker recorded for an adoption.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TraitTypeArgument {
+    /// The type parameter as the trait declares it.
+    pub parameter: String,
+    /// The checked type the adoption binds it to.
+    pub argument: IncanType,
 }
 
 /// The exact local declaration and canonical field layout for one direct-executable plain model or class.
