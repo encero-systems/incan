@@ -186,7 +186,7 @@
     },
     "loaves/compiler/incan_driver/src/build/native_sdk.rs": {
       "disposition": "unaffected",
-      "notes": "Native SDK facade dependency selection follows the component's declared version and features; no Cargo resolution.",
+      "notes": "Native SDK facet version/feature selection and canonical receipt catalog binding; no Cargo resolution.",
       "owner": 1698,
       "split_required": false,
       "split_target": "",
@@ -291,7 +291,7 @@
     },
     "loaves/compiler/incan_driver/src/build/reuse.rs": {
       "disposition": "unaffected",
-      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend.",
+      "notes": "Build orchestration over Oven; evicted inspection constituents decline explicit-bake cache reuse while damaged entries fail closed.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -3597,7 +3597,8 @@
       "owner": 1561,
       "split_required": false,
       "split_target": "",
-      "tests": {},
+      "tests": {
+      },
       "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/trait_default_nested_module_identity"
     },
     "loaves/compiler/incan_emit/src/tests/trait_parameters_and_element_bounds.rs": {
@@ -8350,7 +8351,7 @@
     },
     "loaves/compiler/incan_test_support/src/lib.rs": {
       "disposition": "unaffected",
-      "notes": "Test-harness helpers; the fixture bake configuration keeps the consumer's selected authority and never injects Cargo.",
+      "notes": "Test-harness helpers; native checkout anchors are validated exactly, and fixture bakes retain consumer authority without Cargo.",
       "owner": 1698,
       "split_required": false,
       "split_target": "",
@@ -11457,6 +11458,14 @@
       "disposition": "unaffected",
       "notes": "Oven publisher configuration and owner-identity enforcement; no compiler semantics. Reviewed at crate level.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/oven-cli/src/commands/oven/native_compiler_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Native selected-root source containment and complete module-tree receipt coverage; no Cargo graph or generated Cargo project.",
+      "owner": 2090,
       "split_required": false,
       "split_target": "",
       "twin": ""

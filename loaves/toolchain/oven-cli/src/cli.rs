@@ -353,6 +353,28 @@ pub enum OvenCommand {
         #[command(subcommand)]
         command: OvenLegacyCargoCommand,
     },
+    /// Run one authored compiler test root against the receipt-selected native SDK closure
+    #[command(hide = true)]
+    CompilerNativeTests {
+        /// Source checkout owning the test root and its authored Loaf dependencies
+        #[arg(long, default_value = ".")]
+        compiler_root: PathBuf,
+        /// Checkout-relative Rust libtest source with a sibling `.loaf.toml` declaration
+        #[arg(long)]
+        target: PathBuf,
+        /// Exact inventory-verified case, including explicitly selected ignored cases
+        #[arg(long = "exact")]
+        exact_names: Vec<String>,
+        /// Caller-owned output; kept outputs reuse the receipt-bound executable
+        #[arg(long)]
+        output: PathBuf,
+        /// Persistent source workspaces for explicit native fixture bakes
+        #[arg(long)]
+        explicit_bake_workspace: PathBuf,
+        /// Compiler executable matching the prepared SDK units
+        #[arg(long)]
+        rustc: PathBuf,
+    },
     /// Compile and run the stored compiler workspace native suite through a direct-rustc plan
     CompilerLibtests {
         /// Repository root containing the compiler Cargo package and src/lib.rs

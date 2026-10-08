@@ -9,6 +9,36 @@ use crate::error::{CliError, CliResult};
 use incan_provider::{SdkInventory, SdkSourceCatalog};
 use oven_rustc::sdk_closure::SdkCompiledClosure;
 
+/// Bind a caller's source receipt to the prepared native SDK and select its declared direct dependency aliases.
+///
+/// This explicit compiler-tooling boundary consumes the already published SDK; it never resolves dependencies or
+/// invokes Cargo. The canonical native receipt catalog enters the returned receipt's build-unit identity, so an
+/// SDK change cannot reuse a stale plan. Every requested local or adopted binding must match the selected SDK's
+/// source, version, features and domain, and the returned plan retains its output leases through compilation.
+pub fn select_prepared_native_sdk_plan(
+    store: &oven_store::store::OvenStore,
+    source_receipt: &oven_store::OvenReceipt,
+    dependencies: &[oven_model::manifest::DependencySpec],
+) -> CliResult<(oven_store::OvenReceipt, oven_rustc::plan::OvenDirectRustcPlanSelection)> {
+    let inventory = incan_provider::inventory::discover_or_reuse_published_sdk_inventory()?
+        .ok_or_else(|| CliError::failure("compiler tooling requires a prepared native SDK"))?;
+    let catalog = std::fs::read(inventory.root.join(".sealed-native-receipts.json"))
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let receipt = bind_native_catalog(source_receipt, &catalog)?;
+    let selection = super::native_sdk_plan::select_native_sdk_plan(store, &receipt, dependencies)?
+        .ok_or_else(|| CliError::failure("prepared SDK has no native dependency plan"))?;
+    Ok((receipt, selection.plan_selection))
+}
+
+/// Canonicalize the catalog before receipt binding so JSON ordering never selects a different native closure.
+fn bind_native_catalog(source_receipt: &oven_store::OvenReceipt, bytes: &[u8]) -> CliResult<oven_store::OvenReceipt> {
+    let catalog: std::collections::BTreeMap<String, String> =
+        serde_json::from_slice(bytes).map_err(|error| CliError::failure(error.to_string()))?;
+    let bytes = serde_json::to_vec(&catalog).map_err(|error| CliError::failure(error.to_string()))?;
+    oven_store::receipt_with_build_unit_input(source_receipt, "sdk-native-closure", oven_store::digest_bytes(&bytes))
+        .map_err(|error| CliError::failure(error.to_string()))
+}
+
 /// Explicit context for one checked SDK component; the publisher owns the closure through durable publication.
 pub(crate) struct NativeSdkPublicationContext<'a> {
     /// Already checked providers, with remaining components recorded as unavailable.
@@ -399,6 +429,34 @@ fn native_facade_source_text(root: &Path) -> CliResult<String> {
 
 #[cfg(test)]
 mod tests {
+    /// A reordered SDK catalog reuses its plan identity, while changed native units invalidate that identity.
+    #[test]
+    fn native_catalog_binding_is_canonical_and_source_sensitive() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("root.rs");
+        std::fs::write(&source, "fn main() {}")?;
+        let source_receipt = oven_store::receipt_generated_project(
+            &oven_store::OvenGeneratedProjectRequest::new(
+                root.path(),
+                "fixture",
+                "0.1.0",
+                "aarch64-apple-darwin",
+                "rustc fixture",
+                "debug",
+                Vec::new(),
+            )
+            .with_generated_source("test-root", source),
+        )?;
+        let first = super::bind_native_catalog(&source_receipt, br#"{"b":"unit-b","a":"unit-a"}"#)?;
+        let reordered = super::bind_native_catalog(&source_receipt, br#"{"a":"unit-a","b":"unit-b"}"#)?;
+        let changed = super::bind_native_catalog(&source_receipt, br#"{"a":"unit-a-changed","b":"unit-b"}"#)?;
+        assert_eq!(first.identity, reordered.identity);
+        assert_ne!(first.build_unit_identity, changed.build_unit_identity);
+        first.verify_identity()?;
+        changed.verify_identity()?;
+        Ok(())
+    }
+
     /// A compiler companion's older rustix must not compete with the SDK component's declared major version.
     #[test]
     fn native_facade_selects_component_dependency_version() -> Result<(), Box<dyn std::error::Error>> {
