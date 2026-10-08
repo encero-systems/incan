@@ -215,6 +215,7 @@ from lists import (
 from assertions import lower_assertion
 from async_ import future_type, future_declarations, construct_future, await_future, async_entry, evaluator_name
 from defaults import default_arguments, default_type, model_default_arguments
+from externs import delegated_function
 # =====================================================================================================================
 # Boundary types and validation
 # =====================================================================================================================
@@ -2363,10 +2364,25 @@ def lower_function(
     intrinsics: list[EnumDeclaration],
 ) -> Result[tuple[Function, list[ExternalFunction]], str]:
     """Build one function's native frame from its checked locals, parameters and body."""
-    match body.extern_delegation:
-        Some(_delegation) => return Err("unsupported Body IR ExternDelegation")
-        None => pass
     span = location(body.span, source, file)
+    match body.extern_delegation:
+        Some(delegation) =>
+            if body.is_async or body.is_generator():
+                return Err("unsupported Body IR async or generator ExternDelegation")
+            return delegated_function(
+                evaluator_name(module, body),
+                delegation.rust_path(),
+                frame_parameters(module, body, source, file, intrinsics)?,
+                native_source_type(
+                    module.nominal_declarations,
+                    module.enum_declarations,
+                    unions,
+                    body.return_type,
+                    intrinsics,
+                )?,
+                span,
+            )
+        None => pass
     declared_type = native_source_type(
         module.nominal_declarations,
         module.enum_declarations,

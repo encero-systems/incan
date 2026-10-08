@@ -82,6 +82,50 @@ pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
     Ok(current)
 }
 
+/// Bind a generic external function's type parameters from the plan's declared signature, as rustc's inference does
+/// for legacy's forwarding call. Every type parameter must be one whole parameter or the return type.
+pub fn inferred_arguments(
+    tcx: TyCtxt<'_>,
+    def: DefId,
+    external: &crate::plan::ExternalFunction,
+) -> Result<Vec<crate::plan::PlanType>, PlanError> {
+    let invalid = |reason: &str| PlanError::Invalid {
+        function: external.path.clone(),
+        reason: reason.into(),
+    };
+    let signature = tcx
+        .fn_sig(def)
+        .instantiate_identity()
+        .skip_normalization()
+        .skip_binder();
+    if signature.inputs().len() != external.parameters.len() {
+        return Err(invalid("external parameter count differs from metadata"));
+    }
+    let mut bound: Vec<Option<crate::plan::PlanType>> = vec![None; tcx.generics_of(def).count()];
+    let declared = external.parameters.iter().chain(std::iter::once(&external.return_type));
+    let actual = signature
+        .inputs()
+        .iter()
+        .copied()
+        .chain(std::iter::once(signature.output()));
+    for (ty, planned) in actual.zip(declared) {
+        if let rustc_middle::ty::Param(parameter) = ty.kind() {
+            let slot = usize::try_from(parameter.index)
+                .ok()
+                .and_then(|index| bound.get_mut(index))
+                .ok_or_else(|| invalid("external generic parameter is outside its declaration"))?;
+            if slot.as_ref().is_some_and(|previous| previous != planned) {
+                return Err(invalid("external generic parameter binds two plan types"));
+            }
+            *slot = Some(planned.clone());
+        }
+    }
+    bound
+        .into_iter()
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| invalid("external generic parameter is not a whole parameter or return type"))
+}
+
 /// Instantiate explicit plan arguments after checking their count against the resolved metadata declaration.
 pub fn arguments<'tcx>(
     tcx: TyCtxt<'tcx>,

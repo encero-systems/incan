@@ -191,3 +191,31 @@ def main() -> None:
     }
     Ok(())
 }
+
+/// An `@rust.extern` declaration forwards to its bound generic Rust item, with the instantiation legacy infers.
+#[test]
+fn extern_delegation_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let actual = compare_with_legacy(
+        "extern_delegation",
+        r#"
+rust.module("incan_std_testing")
+
+@rust.extern
+def fail_t(msg: str) -> None:
+    ...
+
+def assert_true(value: bool) -> None:
+    if not value:
+        fail_t("assertion failed: expected true")
+
+def main() -> None:
+    assert_true(true)
+    println("before")
+    assert_true(false)
+    println("after")
+"#,
+    )?;
+    assert_eq!(actual.stdout, b"before\n");
+    assert!(!actual.status.success());
+    Ok(())
+}
