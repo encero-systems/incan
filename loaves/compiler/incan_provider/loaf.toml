@@ -1,0 +1,46 @@
+[dependencies]
+hex = { loaf = "crates-io/hex", version = "0.4.3" }
+incan_frontend = { default-features = false, loaf = "incan_frontend", path = "../incan_frontend" }
+incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
+incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
+incan_vocab = { loaf = "incan_vocab", path = "../../kernel/incan_vocab", version = "0.3.0" }
+oven_cargo_compat = { loaf = "oven_cargo_compat", path = "../../oven/oven_cargo_compat", version = "0.6.0-dev.5" }
+oven_model = { loaf = "oven_model", path = "../../oven/oven_model", version = "0.6.0-dev.5" }
+oven_rustc = { loaf = "oven_rustc", path = "../../oven/oven_rustc", version = "0.6.0-dev.5" }
+oven_store = { loaf = "oven_store", path = "../../oven/oven_store", version = "0.6.0-dev.5" }
+rust_inspect = { default-features = false, loaf = "rust_inspect", path = "../rust_inspect" }
+semver = { loaf = "crates-io/semver", version = "1" }
+serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
+serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
+sha2 = { loaf = "crates-io/sha2", version = "0.10.9" }
+thiserror = { loaf = "crates-io/thiserror", version = "2.0" }
+toml = { loaf = "crates-io/toml", version = "0.9" }
+wasmtime = { default-features = false, features = ["cranelift", "runtime", "std"], loaf = "crates-io/wasmtime", version = "36.0.17" }
+
+[project]
+description = "Incan's SDK providers as the compiler loads them: inventory, requirements, the SDK store and builder, vocab extraction"
+license = "Apache-2.0"
+name = "incan_provider"
+private = true
+version = "0.6.0-dev.6"
+
+[project.features]
+default = [
+    "rust_inspect",
+    "std_testing",
+    "std_async",
+    "std_decorators",
+]
+rust_inspect = [
+    "incan_frontend/rust_inspect",
+    "rust_inspect/inspector",
+]
+std_async = ["incan_frontend/std_async"]
+std_decorators = ["incan_frontend/std_decorators"]
+std_testing = ["incan_frontend/std_testing"]
+test_support = []
+
+[rust]
+edition = "2024"
+name = "incan_provider"
+type = "lib"

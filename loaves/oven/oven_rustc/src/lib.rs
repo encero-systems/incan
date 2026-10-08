@@ -10,3 +10,4 @@ pub mod native_contract;
 pub mod native_test;
 pub mod plan;
 pub mod rustc;
+pub mod sdk_closure;

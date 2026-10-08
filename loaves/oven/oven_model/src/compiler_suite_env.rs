@@ -125,17 +125,8 @@ impl OvenCompilerSuiteTargetCapabilities {
         // design: their programs run on the sealed stdlib Loaf, and the provider bakes of the `cli_dependencies`
         // area run with no Cargo authority, so a bake that reaches for Cargo meets the scheduler's guard instead.
         let explicit_bake_cargo = target_kind == "test"
-            && match package_name {
-                "incan_driver" => {
-                    matches!(
-                        source_relative_path,
-                        "loaves/compiler/incan_driver/tests/native_driver_project_tests.rs"
-                            | "loaves/compiler/incan_driver/tests/body_ir_caller_project_tests.rs"
-                    )
-                }
-                "incan-cli" => EXPLICIT_CLI_BAKE_ROOTS.contains(&source_relative_path),
-                _ => false,
-            };
+            && package_name == "incan-cli"
+            && EXPLICIT_CLI_BAKE_ROOTS.contains(&source_relative_path);
         Self {
             generated_rust_closure,
             cargo_fixture,

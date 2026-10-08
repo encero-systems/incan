@@ -65,6 +65,9 @@ pub fn effective_project_manifest_for_exact_root(project_root: &Path) -> CliResu
 
 /// Resolve one parsed manifest against its active RFC 077 workspace, if any.
 fn effective_project_manifest(manifest: ProjectManifest) -> CliResult<ProjectManifest> {
+    for diagnostic in &manifest.deprecations {
+        eprintln!("warning: {}: {diagnostic}", manifest.path().display());
+    }
     let workspace =
         WorkspaceGraph::discover(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?;
     let Some(workspace) = workspace else {

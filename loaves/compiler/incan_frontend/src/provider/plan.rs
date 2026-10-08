@@ -1974,6 +1974,7 @@ fn artifact_project_root(artifact: &LibraryArtifactMetadata) -> &Path {
 }
 
 /// Verify that an installed provider agrees with the SDK identity and namespace grant that authorized it.
+/// Validate the inventory contract and native receipt binding before admitting an SDK provider.
 fn validate_sdk_descriptor(
     descriptor: &super::SdkProviderDescriptor,
     manifest: &LibraryManifest,
@@ -2008,6 +2009,43 @@ fn validate_sdk_descriptor(
                 crate_root.display()
             ),
         });
+    }
+    if let Some(native) =
+        crate::library_manifest::read_native_provider_artifact(crate_root, manifest).map_err(|error| {
+            ProviderPlanError::ManifestLoad {
+                provider: descriptor.name.clone(),
+                path: crate_root.join("native-provider.json"),
+                message: error.to_string(),
+            }
+        })?
+    {
+        let root = crate_root
+            .parent()
+            .and_then(Path::parent)
+            .ok_or_else(|| ProviderPlanError::InventoryMismatch {
+                provider: descriptor.name.clone(),
+                message: "native SDK component has no owning inventory root".to_string(),
+            })?;
+        let receipts: BTreeMap<String, String> = serde_json::from_slice(
+            &std::fs::read(root.join(".sealed-native-receipts.json")).map_err(|error| {
+                ProviderPlanError::ManifestLoad {
+                    provider: descriptor.name.clone(),
+                    path: root.to_path_buf(),
+                    message: error.to_string(),
+                }
+            })?,
+        )
+        .map_err(|error| ProviderPlanError::ManifestLoad {
+            provider: descriptor.name.clone(),
+            path: root.to_path_buf(),
+            message: error.to_string(),
+        })?;
+        if native.receipts != receipts {
+            return Err(ProviderPlanError::InventoryMismatch {
+                provider: descriptor.name.clone(),
+                message: "native provider receipts differ from its SDK publication".to_string(),
+            });
+        }
     }
     let expected_claims = active_provider_claims(manifest, &manifest.contract_metadata.provider.active_features)
         .into_iter()

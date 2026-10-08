@@ -489,7 +489,11 @@ fn has_direct_replacement_model_shape(model: &ast::ModelDecl) -> bool {
     let aliases = !model.method_aliases.is_empty();
     // Generic models, method aliases and generic trait adoptions each have parity evidence alone; any two together
     // stay refused until that combination does.
-    [generic_model, generic_adoption, aliases].iter().filter(|present| **present).count() <= 1
+    [generic_model, generic_adoption, aliases]
+        .iter()
+        .filter(|present| **present)
+        .count()
+        <= 1
         && model.method_partials.is_empty()
         && model.properties.is_empty()
         && model.methods.iter().all(|method| method.node.decorators.is_empty())

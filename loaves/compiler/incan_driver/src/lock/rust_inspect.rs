@@ -27,15 +27,12 @@ use crate::oven_store::open_default_oven_store;
 use crate::rust_inspect_workspace::collect_rust_inspect_derive_probe_paths;
 use crate::rust_inspect_workspace::collect_rust_inspect_query_paths;
 use crate::rust_inspect_workspace::ensure_rust_inspect_workspace_with_cargo_package_name;
-use crate::rust_inspect_workspace::mark_oven_cargo_bootstrap_rust_inspection;
 use crate::rust_inspect_workspace::mark_oven_direct_rust_inspection;
 use crate::rust_inspect_workspace::prewarm_rust_inspect_workspace;
 use incan_provider::dependency_resolver::resolve_reachable_dependencies;
 use incan_provider::requirements::{collect_project_requirements, merge_project_requirement_dependencies};
 use oven_cargo_compat::OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV;
-use oven_rustc::loaf::resolve_compiler_owned_loaf_for_registry_dependencies;
 use oven_rustc::loaf::resolve_toolchain_loaf_for_registry_sources;
-use oven_rustc::rustc::OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH;
 use oven_rustc::rustc::resolve_active_rustc;
 use oven_rustc::rustc::rustc_host_target;
 use oven_rustc::rustc::rustc_identity;
@@ -71,22 +68,38 @@ pub fn prepare_rust_inspect_workspace(
         return Ok(None);
     }
 
-    let rust_inspect_manifest_dir = ensure_rust_inspect_workspace_with_cargo_package_name(
-        project_root,
-        project_name,
-        cargo_package_name,
-        rust_edition,
-        resolved,
-        project_requirements,
-        lock_payload,
-        cargo_lock_projection_root,
-        clear_cargo_lock,
-        cargo_target_dir,
-        &cargo_policy_flags,
-        rust_derive_probe_paths,
-    )?;
+    let rust_inspect_manifest_dir = if direct_oven_inspection {
+        let empty_inputs = std::collections::BTreeMap::new();
+        let inputs = oven_source_authority
+            .as_ref()
+            .map(|authority| authority.build_unit_inputs)
+            .unwrap_or(&empty_inputs);
+        crate::rust_inspect_workspace::ensure_direct_rust_inspect_workspace(
+            project_root,
+            project_name,
+            rust_edition.as_deref(),
+            rust_derive_probe_paths,
+            inputs,
+        )?
+    } else {
+        ensure_rust_inspect_workspace_with_cargo_package_name(
+            project_root,
+            project_name,
+            cargo_package_name,
+            rust_edition,
+            resolved,
+            project_requirements,
+            lock_payload,
+            cargo_lock_projection_root,
+            clear_cargo_lock,
+            cargo_target_dir,
+            &cargo_policy_flags,
+            rust_derive_probe_paths,
+        )?
+    };
     let mut source_loaf = None;
     let mut project_source_authorities = None;
+    let mut sdk_native = Vec::new();
     if direct_oven_inspection {
         if std::env::var_os(oven_rustc::loaf::OVEN_LOAF_ENV).is_some_and(|value| value == "1") {
             let source = std::env::var_os(OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV)
@@ -95,118 +108,21 @@ pub fn prepare_rust_inspect_workspace(
                 .ok_or_else(|| {
                     CliError::failure("explicit Loaf baker did not supply its locked Rust inspection source authority")
                 })?;
-            let destination = rust_inspect_manifest_dir.join(::rust_inspect::OVEN_DIRECT_INSPECTION_AUTHORITY_FILE);
-            fs::copy(&source, &destination).map_err(|error| {
-                CliError::failure(format!(
-                    "failed to install explicit baker Rust inspection authority from {}: {error}",
-                    source.display()
-                ))
-            })?;
+            install_explicit_baker_inspection_authority(&source, &rust_inspect_manifest_dir)?;
         } else if let Some(authority_request) = oven_source_authority {
-            let mut receipt_request = OvenGeneratedProjectRequest::new(
+            let prepared = prepare_oven_inspection_authority(
+                &rust_inspect_manifest_dir,
                 project_root,
                 project_name,
-                authority_request.project_version,
-                authority_request.target,
-                authority_request.toolchain,
-                authority_request.profile,
-                authority_request.features.to_vec(),
-            )
-            .with_generated_source("generated-root", rust_inspect_manifest_dir.join("src/main.rs"));
-            for (name, value) in authority_request.build_unit_inputs {
-                receipt_request = receipt_request.with_build_unit_input(name, value);
-            }
-            let receipt = receipt_generated_project(&receipt_request).map_err(|error| {
-                CliError::failure(format!("failed to receipt Oven Rust inspection source: {error}"))
-            })?;
-            let command_authority_available = prepared_project_source_authorities.is_some();
-            let command_authority_installed = if let Some(prepared) = prepared_project_source_authorities.as_ref() {
-                let installed = prepared
-                    .install_for_dependencies(&rust_inspect_manifest_dir, authority_request.registry_dependencies)?;
-                if installed {
-                    project_source_authorities = Some(Arc::clone(prepared));
-                }
-                installed
-            } else {
-                false
-            };
-            if normal_inspection_requires_installed_project_authority(
-                project_root,
+                authority_request,
+                prepared_project_source_authorities,
                 explicit_oven_bake,
-                command_authority_available,
-                command_authority_installed,
-            ) {
-                let detail = if command_authority_available {
-                    "the source-current project inspection authority could not authorize this inspection batch"
-                } else {
-                    "no source-current project inspection authority is available"
-                };
-                return Err(CliError::failure(format!(
-                    "Oven Alpha {detail}; rerun `incan oven bake --project .`"
-                )));
-            }
-            if command_authority_installed {
-                // The command-local context owns every output, entry, and base-Loaf lease through this workspace.
-            } else if explicit_oven_bake {
-                if let Some(selected) =
-                    resolve_toolchain_loaf_for_registry_sources(&receipt, authority_request.registry_dependencies)
-                        .map_err(|error| CliError::failure(error.to_string()))?
-                {
-                    install_oven_inspection_source_authority(
-                        &rust_inspect_manifest_dir,
-                        &selected.artifacts.registry_sources,
-                        &selected.artifact_root,
-                        None,
-                        None,
-                    )?;
-                    install_required_oven_registry_lock(
-                        !selected.artifacts.registry_sources.is_empty(),
-                        &selected.artifact_root,
-                        &rust_inspect_manifest_dir.join("Cargo.lock"),
-                    )?;
-                    source_loaf = Some(selected);
-                } else {
-                    let release_loaf = resolve_compiler_owned_loaf_for_registry_dependencies(&receipt, &[])
-                        .map_err(|error| CliError::failure(error.to_string()))?;
-                    let release_registry_lock = release_loaf
-                        .as_ref()
-                        .map(|loaf| loaf.artifact_root.join(OVEN_RUSTC_REGISTRY_LOCK_RELATIVE_PATH));
-                    acquire_explicit_project_inspection_sources(
-                        &rust_inspect_manifest_dir,
-                        authority_request.features,
-                        authority_request.registry_dependencies,
-                        release_registry_lock.as_deref(),
-                    )?;
-                    source_loaf = release_loaf;
-                }
-            } else if let Some(selected) =
-                resolve_toolchain_loaf_for_registry_sources(&receipt, authority_request.registry_dependencies)
-                    .map_err(|error| CliError::failure(error.to_string()))?
-            {
-                install_oven_inspection_source_authority(
-                    &rust_inspect_manifest_dir,
-                    &selected.artifacts.registry_sources,
-                    &selected.artifact_root,
-                    None,
-                    None,
-                )?;
-                install_required_oven_registry_lock(
-                    !selected.artifacts.registry_sources.is_empty(),
-                    &selected.artifact_root,
-                    &rust_inspect_manifest_dir.join("Cargo.lock"),
-                )?;
-                source_loaf = Some(selected);
-            } else {
-                return Err(CliError::failure(
-                    "Oven Alpha has no receipt-compatible Loaf containing the requested Rust inspection sources",
-                ));
-            }
+            )?;
+            source_loaf = prepared._source_loaf;
+            project_source_authorities = prepared._project_source_authorities;
+            sdk_native = prepared._sdk_native;
         }
-        if explicit_oven_bake {
-            mark_oven_cargo_bootstrap_rust_inspection(&rust_inspect_manifest_dir)?;
-        } else {
-            mark_oven_direct_rust_inspection(&rust_inspect_manifest_dir)?;
-        }
+        mark_oven_direct_rust_inspection(&rust_inspect_manifest_dir)?;
     }
     prewarm_rust_inspect_workspace(
         &rust_inspect_manifest_dir,
@@ -218,7 +134,141 @@ pub fn prepare_rust_inspect_workspace(
         manifest_dir: rust_inspect_manifest_dir,
         _source_loaf: source_loaf,
         _project_source_authorities: project_source_authorities,
+        _sdk_native: sdk_native,
     }))
+}
+
+/// Install the explicit baker's sealed inspection authority and, when the baker sealed one, its frozen Loaf graph.
+///
+/// The fixture workspace is Loaf-only, so an authority that names registry sources is inspectable only together with
+/// the frozen graph the baker sealed beside it; without that graph inspection refuses rather than rediscovering.
+fn install_explicit_baker_inspection_authority(source: &Path, manifest_dir: &Path) -> CliResult<()> {
+    let destination = manifest_dir.join(::rust_inspect::OVEN_DIRECT_INSPECTION_AUTHORITY_FILE);
+    fs::copy(source, &destination).map_err(|error| {
+        CliError::failure(format!(
+            "failed to install explicit baker Rust inspection authority from {}: {error}",
+            source.display()
+        ))
+    })?;
+    let Some(graph) = source
+        .parent()
+        .map(|root| root.join(::rust_inspect::OVEN_DIRECT_LOAF_PROJECT_FILE))
+        .filter(|graph| graph.is_file())
+    else {
+        return Ok(());
+    };
+    fs::copy(&graph, manifest_dir.join(::rust_inspect::OVEN_DIRECT_LOAF_PROJECT_FILE)).map_err(|error| {
+        CliError::failure(format!(
+            "failed to install explicit baker frozen Loaf graph from {}: {error}",
+            graph.display()
+        ))
+    })?;
+    Ok(())
+}
+
+/// Select sysroot or sealed Loaf inspection sources while retaining every authority lease.
+///
+/// Ordinary project consumers require current baked authority. Explicit bakes may install sysroot-only authority,
+/// but unresolved third-party dependencies fail by name instead of acquiring a Cargo metadata closure.
+fn prepare_oven_inspection_authority(
+    manifest_dir: &Path,
+    project_root: &Path,
+    project_name: &str,
+    authority_request: OvenRustInspectSourceAuthorityRequest<'_>,
+    prepared_project_source_authorities: Option<Arc<crate::lock::PreparedOvenProjectRegistrySourceAuthorities>>,
+    explicit_oven_bake: bool,
+) -> CliResult<PreparedRustInspectWorkspace> {
+    if let Some(sdk_native) = crate::sdk_closure::install_published_sdk_inspection_authority(
+        manifest_dir,
+        authority_request.registry_dependencies,
+    )? {
+        return Ok(PreparedRustInspectWorkspace {
+            manifest_dir: manifest_dir.to_path_buf(),
+            _source_loaf: None,
+            _project_source_authorities: None,
+            _sdk_native: sdk_native,
+        });
+    }
+    let mut source_loaf = None;
+    let mut project_source_authorities = None;
+    let mut receipt_request = OvenGeneratedProjectRequest::new(
+        project_root,
+        project_name,
+        authority_request.project_version,
+        authority_request.target,
+        authority_request.toolchain,
+        authority_request.profile,
+        authority_request.features.to_vec(),
+    )
+    .with_generated_source("generated-root", manifest_dir.join("src/main.rs"));
+    for (name, value) in authority_request.build_unit_inputs {
+        receipt_request = receipt_request.with_build_unit_input(name, value);
+    }
+    let receipt = receipt_generated_project(&receipt_request)
+        .map_err(|error| CliError::failure(format!("failed to receipt Oven Rust inspection source: {error}")))?;
+    let command_authority_available = prepared_project_source_authorities.is_some();
+    let command_authority_installed = if let Some(prepared) = prepared_project_source_authorities.as_ref() {
+        let installed = prepared.install_for_dependencies(manifest_dir, authority_request.registry_dependencies)?;
+        if installed {
+            project_source_authorities = Some(Arc::clone(prepared));
+        }
+        installed
+    } else {
+        false
+    };
+    if normal_inspection_requires_installed_project_authority(
+        project_root,
+        explicit_oven_bake,
+        command_authority_available,
+        command_authority_installed,
+    ) {
+        let detail = if command_authority_available {
+            "the source-current project inspection authority could not authorize this inspection batch"
+        } else {
+            "no source-current project inspection authority is available"
+        };
+        return Err(CliError::failure(format!(
+            "Oven Alpha {detail}; rerun `incan oven bake --project .`"
+        )));
+    }
+    if !command_authority_installed {
+        if authority_request.registry_dependencies.is_empty() {
+            acquire_explicit_project_inspection_sources(manifest_dir, project_root, &[])?;
+        } else if let Some(selected) =
+            resolve_toolchain_loaf_for_registry_sources(&receipt, authority_request.registry_dependencies)
+                .map_err(|error| CliError::failure(error.to_string()))?
+        {
+            install_oven_inspection_source_authority(
+                manifest_dir,
+                &selected.artifacts.registry_sources,
+                &selected.artifact_root,
+                None,
+                None,
+            )?;
+            install_required_oven_registry_lock(
+                !selected.artifacts.registry_sources.is_empty(),
+                &selected.artifact_root,
+                &manifest_dir.join("Cargo.lock"),
+            )?;
+            source_loaf = Some(selected);
+        } else if explicit_oven_bake {
+            acquire_explicit_project_inspection_sources(
+                manifest_dir,
+                project_root,
+                authority_request.registry_dependencies,
+            )?;
+        } else {
+            return Err(CliError::failure(
+                "Oven Alpha has no receipt-compatible Loaf containing the requested Rust inspection sources",
+            ));
+        }
+    }
+    Ok(PreparedRustInspectWorkspace {
+        manifest_dir: manifest_dir.to_path_buf(),
+        _source_loaf: source_loaf,
+        _project_source_authorities: project_source_authorities,
+        _sdk_native: Vec::new(),
+    })
 }
 
 /// Return whether a normal direct-inspection consumer must refuse generic release-source selection.

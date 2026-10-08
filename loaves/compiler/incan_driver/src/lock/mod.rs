@@ -274,6 +274,8 @@ pub struct PreparedRustInspectWorkspace {
     manifest_dir: PathBuf,
     _source_loaf: Option<OvenToolchainLoaf>,
     _project_source_authorities: Option<Arc<PreparedOvenProjectRegistrySourceAuthorities>>,
+    /// Native SDK leases protect the frozen graph's immutable source roots throughout inspection.
+    _sdk_native: Vec<oven_store::store::OvenStoreExecutionPayload>,
 }
 
 /// Command-local source authority shared by every parallel native-test unit.
@@ -294,6 +296,16 @@ pub struct PreparedOvenProjectRegistrySourceAuthorities {
 
 #[cfg(feature = "rust_inspect")]
 impl PreparedRustInspectWorkspace {
+    /// Borrow a transaction-owned frozen graph; its enclosing publisher retains all native leases.
+    pub(crate) fn from_retained_sdk_graph(manifest_dir: PathBuf) -> Self {
+        Self {
+            manifest_dir,
+            _source_loaf: None,
+            _project_source_authorities: None,
+            _sdk_native: Vec::new(),
+        }
+    }
+
     /// Return the compiler-authored manifest directory while this workspace retains its source Loaf.
     pub fn manifest_dir(&self) -> &Path {
         &self.manifest_dir

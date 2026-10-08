@@ -13,8 +13,6 @@ use crate::lock::PreparedOvenProjectRegistrySourceAuthorities;
 use crate::lock::rust_inspect::registry_source_is_owned_by_catalog;
 use incan_provider::dependency_resolver::ResolvedDependencies;
 use oven_cargo_compat::OvenLegacyCargoInspectionPackage;
-use oven_cargo_compat::cargo_process::resolved_cargo_executable;
-use oven_cargo_compat::explicit_project_bake_inspection_sources;
 use oven_model::manifest::DependencySpec;
 use oven_rustc::loaf::resolve_compiler_owned_loaf_by_identity;
 use oven_rustc::plan::composition::{compose_direct_packaged_provider_plan, compose_packaged_provider_plan};
@@ -378,7 +376,18 @@ fn prepare_project_test_dependency_plan(
 }
 
 impl PreparedOvenProjectRegistrySourceAuthorities {
+    /// Return the exact dependency constituent whose native SDK catalog authorizes separately owned SDK inputs.
+    fn native_sdk_dependency_receipt(&self) -> Option<&oven_store::OvenReceipt> {
+        let envelope = self.authority.payload.test_dependency_envelope.as_ref()?;
+        match self.authority.payload.constituents.get(envelope.constituent_index)? {
+            OvenProjectInspectionConstituent::ReleaseLoaf { receipt, .. }
+            | OvenProjectInspectionConstituent::Stored { receipt, .. } => Some(receipt),
+        }
+    }
+
     /// Return the exact role-bearing dependency envelope after validating this generated batch's complete surface.
+    /// SDK registry inputs require the constituent's exact native catalog before their separately owned roots are
+    /// excluded.
     pub fn test_dependency_plan(
         &self,
         dependencies: &[DependencySpec],
@@ -390,6 +399,10 @@ impl PreparedOvenProjectRegistrySourceAuthorities {
             dependencies: dependencies.to_vec(),
             dev_dependencies: Vec::new(),
         })?;
+        let promoted = crate::build::native_sdk_plan::project_dependencies_without_sdk_registry_inputs(
+            &promoted,
+            self.native_sdk_dependency_receipt(),
+        )?;
         if !project_inspection_authority_supports_dependencies(&self.authority.payload, &promoted) {
             return Err(project_inspection_selection_mismatch("this test dependency subset"));
         }
@@ -434,6 +447,11 @@ impl PreparedOvenProjectRegistrySourceAuthorities {
         manifest_dir: &Path,
         dependencies: &[DependencySpec],
     ) -> CliResult<bool> {
+        let project_dependencies = crate::build::native_sdk_plan::project_dependencies_without_sdk_registry_inputs(
+            dependencies,
+            self.native_sdk_dependency_receipt(),
+        )?;
+        let dependencies = project_dependencies.as_slice();
         let registry_dependency_count = dependencies
             .iter()
             .filter(|dependency| matches!(dependency.source, oven_model::manifest::DependencySource::Registry))
@@ -494,51 +512,36 @@ pub fn inspection_packages_for_dependencies(
     Ok(packages)
 }
 
-/// Acquire source authority only while the user explicitly publishes a project Loaf.
+/// Install sysroot-only inspection authority or refuse dependencies that lack a resolved Loaf.
 ///
-/// This is deliberately a metadata-only, locked/offline Cargo invocation. Its copied, digested source trees drive
-/// the immediate direct inspection pass; the following project publisher seals the same checked package closure into
-/// the receipt-bound plan. Normal build, run, and test never reach this helper.
+/// Existing sealed source selections are installed before this fallback. It must never discover a registry
+/// closure through Cargo: dependency adoption and resolution belong to Oven's Loaf resolver.
 pub fn acquire_explicit_project_inspection_sources(
     manifest_dir: &Path,
-    features: &[String],
+    project_root: &Path,
     dependencies: &[DependencySpec],
-    release_registry_lock: Option<&Path>,
 ) -> CliResult<()> {
-    let authority_root = manifest_dir.join("oven-inspection-authority");
-    fs::create_dir_all(&authority_root).map_err(|error| {
-        CliError::failure(format!(
-            "failed to create explicit Oven inspection-source authority at {}: {error}",
-            authority_root.display()
-        ))
-    })?;
-    let packages = inspection_packages_for_dependencies(dependencies)?;
-    let cargo = resolved_cargo_executable()
-        .map_err(|error| CliError::failure(format!("cannot resolve Cargo for explicit Oven bake: {error}")))?;
-    let sources = explicit_project_bake_inspection_sources(
-        &cargo,
-        &manifest_dir.join("Cargo.toml"),
-        features,
-        &packages,
-        &authority_root,
-        release_registry_lock,
-    )
-    .map_err(|error| CliError::failure(error.to_string()))?;
-    let sources = sources
-        .into_iter()
-        .map(|source| ::rust_inspect::OvenInspectionRegistrySource {
-            package: source.package,
-            version: source.version,
-            registry: source.registry,
-            checksum: source.checksum,
-            features: source.features,
-            source_root: source.source_root,
-            source_digest: source.source_digest,
-        })
-        .collect();
-    ::rust_inspect::write_sealed_oven_inspection_source_authority(manifest_dir, sources)
+    let manifest = oven_model::manifest::ProjectManifest::discover(project_root)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let declared = manifest.as_ref().and_then(|manifest| {
+        manifest
+            .rust_dependencies()
+            .iter()
+            .chain(manifest.rust_dev_dependencies())
+            .min_by_key(|(name, _)| *name)
+    });
+    let dependency_name = declared
+        .map(|(name, _)| name.as_str())
+        .or_else(|| dependencies.first().map(|dependency| dependency.crate_name.as_str()));
+    if let Some(dependency_name) = dependency_name {
+        return Err(CliError::failure(format!(
+            "Rust dependency `{}` needs a Loaf resolution; bake requires a sealed Oven inspection source authority",
+            dependency_name
+        )));
+    }
+    ::rust_inspect::write_sealed_oven_inspection_source_authority(manifest_dir, Vec::new())
         .map(|_| ())
-        .map_err(|error| CliError::failure(format!("failed to install explicit Oven inspection authority: {error}")))
+        .map_err(|error| CliError::failure(format!("failed to install sysroot inspection authority: {error}")))
 }
 
 /// Install a sealed registry lock as writable caller-owned inspection state.
@@ -600,6 +603,34 @@ pub fn install_required_oven_registry_lock(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Sysroot authority needs no registry discovery; unresolved Rust dependencies are named explicitly.
+    #[test]
+    fn explicit_inspection_installs_sysroot_or_refuses_unresolved_dependency() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let workspace = tempfile::tempdir()?;
+        acquire_explicit_project_inspection_sources(workspace.path(), workspace.path(), &[])?;
+        let authority = ::rust_inspect::oven_inspection_registry_source_roots(workspace.path())?;
+        assert!(authority.is_empty());
+        let dependency = DependencySpec {
+            crate_name: "semver".to_string(),
+            version: Some("1".to_string()),
+            features: Vec::new(),
+            default_features: true,
+            source: oven_model::manifest::DependencySource::Registry,
+            optional: false,
+            package: None,
+        };
+        let error = acquire_explicit_project_inspection_sources(workspace.path(), workspace.path(), &[dependency])
+            .err()
+            .ok_or("unresolved dependency was accepted")?;
+        assert!(
+            error
+                .message
+                .contains("Rust dependency `semver` needs a Loaf resolution")
+        );
+        Ok(())
+    }
 
     /// Build one made-up sealed source record for ownership-routing tests.
     fn registry_source_package(

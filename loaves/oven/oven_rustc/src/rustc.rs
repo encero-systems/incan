@@ -9,6 +9,8 @@ mod compiled_unit;
 mod diagnostics;
 pub mod driver_grant;
 mod inspection;
+pub(crate) mod linking;
+pub use linking::{pinned_driver_link_closure_identity, pinned_link_closure_identity};
 mod manifest_cohort;
 mod manifest_materialize;
 mod manifest_source_roles;
@@ -134,10 +136,10 @@ pub use invocation::direct_rustc_source_extern_names;
 use invocation::*;
 pub use invocation::{
     bake_direct_rustc_run, bake_direct_rustc_test, bake_trusted_direct_rustc_dylib, bake_trusted_direct_rustc_library,
-    bake_trusted_direct_rustc_library_with_artifact_role, bake_trusted_direct_rustc_proc_macro,
-    bake_trusted_direct_rustc_proc_macro_with_artifact_role, bake_trusted_direct_rustc_run,
-    bake_trusted_direct_rustc_run_with_artifact_role, bake_trusted_direct_rustc_test, run_trusted_rustdoc_test,
-    trusted_artifact_plan_for_source_evidence,
+    bake_trusted_direct_rustc_library_in_store, bake_trusted_direct_rustc_library_with_artifact_role,
+    bake_trusted_direct_rustc_proc_macro, bake_trusted_direct_rustc_proc_macro_with_artifact_role,
+    bake_trusted_direct_rustc_run, bake_trusted_direct_rustc_run_with_artifact_role, bake_trusted_direct_rustc_test,
+    run_trusted_rustdoc_test, trusted_artifact_plan_for_source_evidence,
 };
 use manifest_validation::*;
 #[cfg(test)]
@@ -445,6 +447,8 @@ fn default_direct_rustc_output_kind() -> String {
 struct OvenDirectRustcOutputReceipt {
     schema_version: u32,
     receipt_identity: String,
+    #[serde(default)]
+    link_closure_identity: Option<String>,
     artifact_manifest_digest: String,
     source_digest: String,
     crate_name: String,

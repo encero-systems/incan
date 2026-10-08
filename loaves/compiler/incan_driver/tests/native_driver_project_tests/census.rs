@@ -287,11 +287,20 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
         .map(PathBuf::from)
         .unwrap_or_else(|| root.join("report"));
     fs::create_dir_all(&output)?;
-    let closure = corpus::runtime_closure(&graph.formatting, "release")?;
-    let driver = graph.driver_binary("release");
+    let closure = corpus::runtime_closure(&graph.formatting)?;
+    let driver = graph.driver_binary("debug");
     let sysroot = &graph.sysroot;
     let all = selected_fixtures()?;
-    let workers = std::thread::available_parallelism()?.get();
+    let available_workers = std::thread::available_parallelism()?.get();
+    let workers = std::env::var("INCAN_CENSUS_WORKERS")
+        .ok()
+        .map(|value| value.parse::<usize>())
+        .transpose()?
+        .unwrap_or(available_workers)
+        .min(available_workers);
+    if workers == 0 {
+        return Err("INCAN_CENSUS_WORKERS must be positive".into());
+    }
     let timeout = Duration::from_secs(
         std::env::var("INCAN_CENSUS_TIMEOUT_SECONDS")
             .ok()

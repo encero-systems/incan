@@ -1,0 +1,150 @@
+"""Canonical RFC 119 target selectors evaluated solely against caller-owned complete cfg facts."""
+
+
+pub enum Selector:
+    """Exact triples never consult cfg records; predicates require a complete snapshot at the caller boundary."""
+
+    Triple(str)
+    Cfg(list[str])
+
+
+model Evaluation:
+    """The cursor keeps recursive parsing bounded by the supplied token stream."""
+
+    next: int
+    value: bool
+
+
+def identifier(value: str) -> bool:
+    """Rust cfg identifiers use ASCII letters or underscores followed by letters, underscores or digits."""
+    if value == "" or value[0] not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_":
+        return false
+    for character in value:
+        if character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789":
+            return false
+    return true
+
+
+def tokenize(source: str) -> Result[list[str], str]:
+    """Preserve quoted values while refusing escapes and whitespace outside the canonical grammar."""
+    mut tokens: list[str] = []
+    mut cursor = 0
+    while cursor < len(source):
+        character = source[cursor]
+        if character == " ":
+            cursor += 1
+            continue
+        if character in "(),=":
+            tokens.append(character)
+            cursor += 1
+            continue
+        if character == "\"":
+            start = cursor
+            cursor += 1
+            while cursor < len(source) and source[cursor] != "\"":
+                if source[cursor] in "\\\n\r\t":
+                    return Err("unsupported escape or control character in cfg value")
+                cursor += 1
+            if cursor == len(source):
+                return Err("unterminated quoted cfg value")
+            cursor += 1
+            tokens.append(source[start:cursor])
+            continue
+        start = cursor
+        while cursor < len(source) and source[cursor] in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789":
+            cursor += 1
+        if cursor == start:
+            return Err(f"invalid cfg token: {character}")
+        tokens.append(source[start:cursor])
+    return Ok(tokens)
+
+
+def canonical(tokens: list[str]) -> str:
+    """Reconstruct exactly the spacing the RFC permits, including comma-space and space-equals-space."""
+    mut source = ""
+    for token in tokens:
+        if token == ",":
+            source += ", "
+        elif token == "=":
+            source += " = "
+        else:
+            source += token
+    return source
+
+
+def expression(
+    tokens: list[str],
+    start: int,
+    flags: list[str],
+    values: Dict[str, list[str]],
+) -> Result[Evaluation, str]:
+    """Parse every branch, even when its truth value cannot change an all/any result."""
+    if start >= len(tokens) or not identifier(tokens[start]):
+        return Err("expected cfg identifier")
+    name = tokens[start]
+    mut cursor = start + 1
+    if cursor < len(tokens) and tokens[cursor] == "(":
+        if name not in ["all", "any", "not"]:
+            return Err(f"unsupported cfg function: {name}")
+        cursor += 1
+        mut count = 0
+        mut result = name == "all"
+        if cursor >= len(tokens):
+            return Err(f"unclosed cfg construct: {name}")
+        while tokens[cursor] != ")":
+            child = expression(tokens, cursor, flags, values)?
+            cursor = child.next
+            count += 1
+            if name == "all":
+                result = result and child.value
+            elif name == "any":
+                result = result or child.value
+            else:
+                result = not child.value
+            if cursor >= len(tokens):
+                return Err(f"unclosed cfg construct: {name}")
+            if tokens[cursor] == ")":
+                break
+            if tokens[cursor] != ",":
+                return Err(f"expected comma in cfg construct: {name}")
+            cursor += 1
+            if cursor >= len(tokens) or tokens[cursor] == ")":
+                return Err(f"trailing comma in cfg construct: {name}")
+        if name == "not" and count != 1:
+            return Err("cfg not requires exactly one argument")
+        return Ok(Evaluation(next=cursor + 1, value=result))
+    if cursor < len(tokens) and tokens[cursor] == "=":
+        cursor += 1
+        if cursor >= len(tokens) or not tokens[cursor].startswith("\""):
+            return Err(f"expected quoted cfg value for {name}")
+        value = tokens[cursor][1:-1]
+        return Ok(Evaluation(next=cursor + 1, value=name in values and value in values[name]))
+    return Ok(Evaluation(next=cursor, value=name in flags))
+
+
+pub def parse_selector(source: str) -> Result[Selector, str]:
+    """Require canonical cfg syntax or a nonempty exact triple; malformed selectors name their construct."""
+    if not source.startswith("cfg("):
+        if source == "":
+            return Err("empty target triple")
+        for character in source:
+            if character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.":
+                return Err("malformed target triple")
+        return Ok(Selector.Triple(source))
+    tokens = tokenize(source)?
+    if canonical(tokens) != source:
+        return Err("noncanonical cfg whitespace")
+    if len(tokens) < 4 or tokens[0] != "cfg" or tokens[1] != "(" or tokens[-1] != ")":
+        return Err("unclosed cfg selector")
+    parsed = expression(tokens, 2, [], {})?
+    if parsed.next != len(tokens) - 1:
+        return Err("cfg requires exactly one predicate")
+    return Ok(Selector.Cfg(tokens))
+
+
+pub def evaluate_cfg(tokens: list[str], flags: list[str], values: Dict[str, list[str]]) -> Result[bool, str]:
+    """Evaluate a parsed predicate without synthesizing host facts or short-circuiting malformed branches."""
+    parsed = expression(tokens, 2, flags, values)?
+    if parsed.next != len(tokens) - 1:
+        return Err("cfg requires exactly one predicate")
+    return Ok(parsed.value)

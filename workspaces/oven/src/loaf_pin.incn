@@ -1,0 +1,6 @@
+"""Immutable registry revision selected for the resolver's conformance corpus."""
+
+
+pub def pinned_revision() -> str:
+    """Return the default incan.pub audit revision; explicit resolution pins remain caller-owned inputs."""
+    return "6ec35e0d7e2d202496e2f7a108bb5111b6a9ff87"

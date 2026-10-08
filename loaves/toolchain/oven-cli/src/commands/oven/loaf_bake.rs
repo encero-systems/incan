@@ -165,6 +165,58 @@ struct PublisherConfig {
     link_owners: Vec<PathBuf>,
 }
 
+/// The compiler-suite foundation fixture's committed resolution, relative to the compiler root.
+const FOUNDATION_LOCK: &str = "loaves/oven/oven_rustc/src/fixtures/compiler_suite_foundation.lock.json";
+
+/// Index commit whose adoption facts the foundation lock was resolved against; every closure read uses it.
+const FOUNDATION_INDEX_COMMIT: &str = "5935281efb19929ea901553930f52832a4a6a5ee";
+
+/// Compile the foundation fixture's committed lock without Cargo and seal its inspection authority with its graph.
+///
+/// The archives and the index come from the same explicit incan.pub inputs as SDK preparation. Units are compiled
+/// debug only into a store below the Loaf output root, so an unchanged lock reuses every unit on the next bake. The
+/// returned closure owns the execution leases the sealed authority names and must outlive every fixture inspection.
+#[cfg(feature = "rust_inspect")]
+fn seal_native_foundation_inspection(
+    compiler_root: &Path,
+    output: &Path,
+    rustc: &Path,
+    authority_root: &Path,
+) -> CliResult<(PathBuf, oven_rustc::sdk_closure::SdkCompiledClosure)> {
+    let required = |name: &str| {
+        env::var_os(name)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .ok_or_else(|| CliError::failure(format!("the compiler-suite foundation bake requires {name}")))
+    };
+    let blobs = required("INCAN_SDK_NATIVE_BLOBS")?;
+    let index = required("INCAN_SDK_NATIVE_INDEX")?;
+    let target = oven_rustc::rustc::rustc_host_target(rustc).map_err(|error| CliError::failure(error.to_string()))?;
+    let closure = oven_rustc::sdk_closure::prepare_closure(&oven_rustc::sdk_closure::ClosureCompileRequest {
+        // Every locked unit is a dependency of the fixture, which is the only primary package.
+        primary: &[],
+        lock: &compiler_root.join(FOUNDATION_LOCK),
+        blobs: &blobs,
+        output: &output.join("foundation-native"),
+        rustc,
+        index: &index,
+        index_commit: FOUNDATION_INDEX_COMMIT,
+        target: &target,
+        profile: "debug",
+    })
+    .map_err(|error| CliError::failure(format!("compiler-suite foundation closure failed: {error}")))?;
+    let report = closure.report();
+    if !report.refused.is_empty() || !report.failed.is_empty() {
+        return Err(CliError::failure(format!(
+            "compiler-suite foundation closure is incomplete: refused {:?}, failed {:?}",
+            report.refused, report.failed
+        )));
+    }
+    fs::create_dir_all(authority_root).map_err(|error| CliError::failure(error.to_string()))?;
+    let authority = incan_driver::sdk_closure::seal_sdk_closure_inspection_sources(&closure, authority_root)?;
+    Ok((authority, closure))
+}
+
 /// Finalize one publisher-only native product as an asset-side receipt and selected-unit link input.
 ///
 /// This is deliberately part of the explicit Loaf publisher rather than any normal build path. The returned graph
@@ -1242,8 +1294,23 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         ),
     }
     .map_err(oven_error)?;
+    // The compiler suite's foundation fixture inspects a Loaf-only workspace, which accepts an authority only with the
+    // frozen graph of a natively compiled closure. Its committed lock is compiled here, debug only, and the closure
+    // stays alive until every fixture has inspected against it.
     #[cfg(feature = "rust_inspect")]
-    let baker_inspection_authority = {
+    let native_foundation = match envelope {
+        OvenLoafEnvelope::CompilerSuite => Some(seal_native_foundation_inspection(
+            &options.compiler_root,
+            &options.output,
+            &bake_rustc,
+            &authority_dir.join("native"),
+        )?),
+        OvenLoafEnvelope::Release => None,
+    };
+    #[cfg(feature = "rust_inspect")]
+    let baker_inspection_authority = if let Some((authority, _)) = native_foundation.as_ref() {
+        authority.clone()
+    } else {
         let sources = envelope_inspection_sources
             .iter()
             .map(|source| OvenInspectionRegistrySource {

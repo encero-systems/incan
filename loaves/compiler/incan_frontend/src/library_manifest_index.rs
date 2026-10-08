@@ -690,12 +690,38 @@ fn resolve_manifest_path(crate_root: &Path, dependency_key: &str) -> Result<Path
     Ok(candidates.remove(0))
 }
 
+/// Validate a generated or receipt-described native provider without mixing its metadata authority.
 fn validate_artifact_contract(
     dependency_key: &str,
     manifest: &LibraryManifest,
     manifest_path: &Path,
     crate_root: &Path,
 ) -> Result<LibraryArtifactMetadata, LibraryManifestLoadFailure> {
+    if crate::library_manifest::read_native_provider_artifact(crate_root, manifest)
+        .map_err(|error| LibraryManifestLoadFailure {
+            path: crate_root.join("native-provider.json"),
+            kind: LibraryManifestFailureKind::ArtifactInvalid,
+            message: error.to_string(),
+        })?
+        .is_some()
+    {
+        let expected = format!("{}.incnlib", manifest.name);
+        if manifest_path.file_name().and_then(|name| name.to_str()) != Some(expected.as_str())
+            || !crate_root.join(LIBRARY_CRATE_LIB_RS).is_file()
+        {
+            return Err(LibraryManifestLoadFailure {
+                path: manifest_path.to_path_buf(),
+                kind: LibraryManifestFailureKind::ArtifactMismatch,
+                message: "native provider has mismatched manifest name or missing facade source".to_string(),
+            });
+        }
+        return Ok(LibraryArtifactMetadata::from_manifest_path(
+            dependency_key,
+            manifest.name.clone(),
+            manifest_path.to_path_buf(),
+            crate_root.to_path_buf(),
+        ));
+    }
     let cargo_toml_path = crate_root.join("Cargo.toml");
     if !cargo_toml_path.is_file() {
         return Err(LibraryManifestLoadFailure {

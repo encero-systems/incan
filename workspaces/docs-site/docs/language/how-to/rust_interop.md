@@ -40,6 +40,21 @@ Using `rust::std` types means working with their Rust behavior; for common file 
 > **Note:** `rust::core::...` and `rust::alloc::...` are reserved for future `no_std`/target work and are not yet
 > supported. The compiler will tell you to use `rust::std::...` instead.
 
+### Check a project that uses only Rust's standard library
+
+For a project with no declared Rust dependencies, use `rust::std::` imports without adding a crate dependency. Install the selected Rust toolchain's `rust-src` component, then bake the project once:
+
+```bash
+incan oven bake --project .
+incan check src/main.incn
+incan run src/main.incn
+incan test
+```
+
+The bake derives inspection metadata from that toolchain's sysroot without running Cargo. Comment-only edits preserve the baked source authority, so you can check and run again without rebaking. Changes to executable tokens, literals, or indentation still change source authority.
+
+If the project declares Rust dependencies, the bake needs an existing sealed Loaf source resolution. An unresolved dependency is reported by name, for example "Rust dependency `semver` needs a Loaf resolution"; the bake does not ask Cargo to resolve it.
+
 ### Paths and names that match Incan keywords
 
 Rust modules and items sometimes use names that are reserved in Incan (`type`, `async`, and others). In `rust::` paths and in `from rust::... import ...` item lists, those spellings are still accepted. When you import a keyword-named symbol, bind it with `as` so you have a normal identifier in Incan source:

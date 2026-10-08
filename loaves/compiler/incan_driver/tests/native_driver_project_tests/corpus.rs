@@ -112,7 +112,7 @@ pub(super) fn check_declarations(
     )?;
     let native = project.join("native");
     success(
-        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime, "release")?)?,
+        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime)?)?,
         "declarations native compilation",
     );
     let legacy = project.join("legacy");
@@ -144,7 +144,7 @@ pub(super) fn check_declarations(
         &unsupported,
         &project.join("effectful"),
         sysroot,
-        &runtime_closure(runtime, "release")?,
+        &runtime_closure(runtime)?,
     )?;
     assert!(!refused.status.success());
     assert!(
@@ -171,7 +171,7 @@ pub(super) fn check_strings(
     )?;
     let native = project.join("native");
     success(
-        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime, "release")?)?,
+        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime)?)?,
         "native strings compilation",
     );
     let legacy_output = project.join("legacy");
@@ -239,7 +239,7 @@ pub(super) fn check_builtin_source(
     fs::write(&source, program)?;
     let native = project.join("native");
     success(
-        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime, "release")?)?,
+        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime)?)?,
         "native builtin compilation",
     );
     let legacy_output = project.join("legacy");
@@ -264,30 +264,24 @@ pub(super) fn check_builtin_source(
 pub(super) struct NativeClosure {
     externs: Vec<(String, PathBuf)>,
     directories: Vec<PathBuf>,
+    _plan: oven_rustc::plan::OvenDirectRustcPlanSelection,
 }
 
 /// Select exactly one published profile, without discovering similarly named ambient rlibs.
-pub(super) fn runtime_closure(runtime: &Path, profile: &str) -> Result<NativeClosure, Box<dyn std::error::Error>> {
-    let receipt = oven_store::default_receipt_path(runtime);
-    let receipt = if profile == "debug" {
-        receipt.with_file_name("library-debug-receipt.json")
-    } else {
-        receipt
-    };
-    let receipt: oven_store::OvenReceipt = serde_json::from_slice(&fs::read(receipt)?)?;
-    let closure = oven_rustc::loaf::resolve_compiler_owned_loaf_for_registry_dependencies(&receipt, &[])?
-        .ok_or("formatting runtime has no retained native closure")?;
-    let mut externs = closure.artifact_plan.externs;
+pub(super) fn runtime_closure(runtime: &Path) -> Result<NativeClosure, Box<dyn std::error::Error>> {
+    let closure = runtime_plan(runtime)?;
+    let mut externs = closure.artifact_plan().externs.clone();
     externs.push((
         "incan_native_runtime".into(),
         runtime
             .join("target/lib/oven")
-            .join(profile)
+            .join("debug")
             .join("libincan_native_runtime.rlib"),
     ));
     Ok(NativeClosure {
         externs,
-        directories: closure.artifact_plan.dependency_search_paths,
+        directories: closure.artifact_plan().dependency_search_paths.clone(),
+        _plan: closure,
     })
 }
 
@@ -332,7 +326,7 @@ pub(super) fn source_command(
     command
 }
 
-/// Preserve the benchmark source bytes and compare direct-native output with its normal backend output.
+/// Preserve benchmark source bytes and compare direct-native output with the normal backend's debug execution.
 pub(super) fn check_benchmark(
     driver: &Path,
     root: &Path,
@@ -340,7 +334,7 @@ pub(super) fn check_benchmark(
     runtime: &Path,
     name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let closure = runtime_closure(runtime, "release")?;
+    let closure = runtime_closure(runtime)?;
     let original = support::repo_root()
         .join("workspaces/benchmarks/compute")
         .join(name)
@@ -355,16 +349,14 @@ pub(super) fn check_benchmark(
         &compile_source(driver, &source, &native, sysroot, &closure)?,
         "native benchmark compilation",
     );
-    let legacy_output = project.join("legacy");
-    let build = support::repo_command()
+    let expected = support::repo_command()
         .current_dir(&project)
-        .arg("build")
+        .env("INCAN_HOME", support::oven_fixture_home()?)
+        .env("INCAN_OVEN_BAKE_PROFILES", "debug")
+        .env("INCAN_NO_BANNER", "1")
+        .arg("run")
         .arg(&source)
-        .arg(&legacy_output)
         .output()?;
-    success(&build, "legacy benchmark compilation");
-    let legacy = legacy_output.join("oven/release").join(name);
-    let expected = Command::new(legacy).output()?;
     let actual = Command::new(native).output()?;
     success(&expected, "legacy benchmark execution");
     success(&actual, "native benchmark execution");
@@ -383,7 +375,7 @@ pub(super) fn check_plain_model(
     sysroot: &Path,
     runtime: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let closure = runtime_closure(runtime, "release")?;
+    let closure = runtime_closure(runtime)?;
     let project = root.join("plain-model");
     fs::create_dir_all(&project)?;
     let source = project.join("plain_model.incn");
@@ -490,7 +482,7 @@ def main() -> None:
     )?;
     let native = project.join("native");
     success(
-        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime, "release")?)?,
+        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime)?)?,
         "native lists compilation",
     );
     let legacy_output = project.join("legacy");
@@ -522,7 +514,7 @@ pub(super) fn check_source_class(
     sysroot: &Path,
     runtime: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let closure = runtime_closure(runtime, "release")?;
+    let closure = runtime_closure(runtime)?;
     let project = root.join("source-class");
     fs::create_dir_all(&project)?;
     let source = project.join("source_class.incn");
@@ -603,7 +595,7 @@ pub(super) fn check_numerics(
     sysroot: &Path,
     runtime: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let closure = runtime_closure(runtime, "release")?;
+    let closure = runtime_closure(runtime)?;
     let project = root.join("numerics");
     fs::create_dir_all(&project)?;
     let source = project.join("numerics.incn");
@@ -736,7 +728,7 @@ pub(super) fn check_source_trait(
     sysroot: &Path,
     runtime: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let closure = runtime_closure(runtime, "release")?;
+    let closure = runtime_closure(runtime)?;
     let project = root.join("source-trait");
     fs::create_dir_all(&project)?;
     let source = project.join("source_trait.incn");
@@ -899,7 +891,7 @@ def main() -> None:
     )?;
     let native = project.join("native");
     success(
-        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime, "release")?)?,
+        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime)?)?,
         "native collections compilation",
     );
     let legacy_output = project.join("legacy");

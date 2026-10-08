@@ -53,18 +53,29 @@ pub fn select_receipt_direct_rustc_execution_plan(
     })?;
     // The entry is content-addressed and leased, so its closure proof lives beside the store under its identity
     // (#1546): the first process walks every file, the rest read one small record.
-    let artifact_plan = artifacts.materialize_proven_store(
-        &artifact_root,
-        &receipt.intent,
-        plan_identity,
-        &OvenClosureProof::path(store.root(), plan_identity),
-    )?;
+    let (artifact_plan, shared_owners, shared_paths) =
+        if let Some(shared) = super::shared::materialize(&payload, &artifacts, &artifact_root, &receipt.intent)? {
+            shared
+        } else {
+            (
+                artifacts.materialize_proven_store(
+                    &artifact_root,
+                    &receipt.intent,
+                    plan_identity,
+                    &OvenClosureProof::path(store.root(), plan_identity),
+                )?,
+                Vec::new(),
+                std::collections::BTreeMap::new(),
+            )
+        };
     Ok(Some(OvenStoredDirectRustcExecutionPlan {
         identity: plan_identity.clone(),
         artifacts,
         artifact_root,
         artifact_plan,
         _lease: lease,
+        _shared_owners: shared_owners,
+        shared_paths,
     }))
 }
 
@@ -104,18 +115,29 @@ pub fn select_exact_receipt_direct_rustc_execution_plan(
             "selected caller-owned provider direct-Rustc plan has an invalid payload: {error}"
         ))
     })?;
-    let artifact_plan = artifacts.materialize_proven_store(
-        &artifact_root,
-        &receipt.intent,
-        plan_identity,
-        &OvenClosureProof::path(store.root(), plan_identity),
-    )?;
+    let (artifact_plan, shared_owners, shared_paths) =
+        if let Some(shared) = super::shared::materialize(&payload, &artifacts, &artifact_root, &receipt.intent)? {
+            shared
+        } else {
+            (
+                artifacts.materialize_proven_store(
+                    &artifact_root,
+                    &receipt.intent,
+                    plan_identity,
+                    &OvenClosureProof::path(store.root(), plan_identity),
+                )?,
+                Vec::new(),
+                std::collections::BTreeMap::new(),
+            )
+        };
     Ok(Some(OvenStoredDirectRustcExecutionPlan {
         identity: stored_manifest.identity,
         artifacts,
         artifact_root,
         artifact_plan,
         _lease: lease,
+        _shared_owners: shared_owners,
+        shared_paths,
     }))
 }
 
@@ -158,13 +180,24 @@ pub fn select_packaged_direct_rustc_execution_plan(
             manifest.identity
         ))
     })?;
-    let artifact_plan = artifacts.materialize_trusted_store(&artifact_root, &receipt.intent)?;
+    let (artifact_plan, shared_owners, shared_paths) =
+        if let Some(shared) = super::shared::materialize(&payload, &artifacts, &artifact_root, &receipt.intent)? {
+            shared
+        } else {
+            (
+                artifacts.materialize_trusted_store(&artifact_root, &receipt.intent)?,
+                Vec::new(),
+                std::collections::BTreeMap::new(),
+            )
+        };
     Ok(Some(OvenStoredDirectRustcExecutionPlan {
         identity: manifest.identity,
         artifacts,
         artifact_root,
         artifact_plan,
         _lease: lease,
+        _shared_owners: shared_owners,
+        shared_paths,
     }))
 }
 
@@ -394,7 +427,17 @@ pub fn project_test_dependency_plan_from_constituent(
                     manifest.identity
                 ))
             })?;
-            let artifact_plan = artifacts.materialize_trusted_store(&artifact_root, &receipt.intent)?;
+            let (artifact_plan, shared_owners, shared_paths) = if let Some(shared) =
+                super::shared::materialize(&payload, &artifacts, &artifact_root, &receipt.intent)?
+            {
+                shared
+            } else {
+                (
+                    artifacts.materialize_trusted_store(&artifact_root, &receipt.intent)?,
+                    Vec::new(),
+                    std::collections::BTreeMap::new(),
+                )
+            };
             Ok(OvenDirectRustcPlanSelection::Stored(Box::new(
                 OvenStoredDirectRustcExecutionPlan {
                     identity: manifest.identity,
@@ -402,6 +445,8 @@ pub fn project_test_dependency_plan_from_constituent(
                     artifact_root,
                     artifact_plan,
                     _lease: lease,
+                    _shared_owners: shared_owners,
+                    shared_paths,
                 },
             )))
         }

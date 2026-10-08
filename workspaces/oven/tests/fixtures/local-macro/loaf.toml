@@ -1,0 +1,11 @@
+[project]
+name = "fixture_macro"
+version = "0.1.0"
+
+[rust]
+name = "fixture_macro"
+type = "proc-macro"
+edition = "2024"
+
+[dependencies]
+leaf = { loaf = "test/leaf", version = "^1", features = ["extra"] }

@@ -47,6 +47,9 @@ pub fn oven_build_unit_inputs_with_provider_identities(
 }
 
 /// Finish build-unit identity projection from provider records checked by either supported identity path.
+///
+/// A published native SDK adds its canonical portable receipt catalog, so a plan cannot reuse different admitted
+/// native bytes merely because the generated root happens to request the same public provider surface.
 fn oven_build_unit_inputs_with_provider_records(
     requirements: &ProjectRequirements,
     resolved: &ResolvedDependencies,
@@ -56,13 +59,25 @@ fn oven_build_unit_inputs_with_provider_records(
     dependencies.extend(resolved.dev_dependencies.clone());
     let dependency_digest = digest_dependency_specs(&dependencies, incan_oven_facet::provider_hooks().as_ref())
         .map_err(|error| CliError::failure(error.to_string()))?;
-    runtime_build_unit_inputs(
+    let mut inputs = runtime_build_unit_inputs(
         &incan_oven_facet::compiler_identity(),
         provider_records,
         &requirements.stdlib_facets,
         dependency_digest,
     )
-    .map_err(CliError::failure)
+    .map_err(CliError::failure)?;
+    if let Some(inventory) = incan_provider::inventory::discover_or_reuse_published_sdk_inventory()? {
+        let catalog = inventory.root.join(".sealed-native-receipts.json");
+        if catalog.is_file() {
+            let bytes = std::fs::read(catalog).map_err(|error| CliError::failure(error.to_string()))?;
+            let receipts: BTreeMap<String, String> =
+                serde_json::from_slice(&bytes).map_err(|error| CliError::failure(error.to_string()))?;
+            let bytes = serde_json::to_vec(&receipts).map_err(|error| CliError::failure(error.to_string()))?;
+            inputs.insert("sdk-native-closure".to_string(), oven_store::digest_bytes(&bytes));
+            inputs.insert("sdk-native-consumer-plan".to_string(), "v1".to_string());
+        }
+    }
+    Ok(inputs)
 }
 
 /// Encode only the compiler-owned SDK capabilities a generated native crate can exercise.

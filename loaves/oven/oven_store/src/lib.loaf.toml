@@ -1,0 +1,16 @@
+# Native unit-test dependency contract, selected from the compiler graph without Cargo.
+[project]
+name = "oven-store-native-tests"
+version = "0.6.0-dev.5"
+private = true
+
+[dependencies]
+ar_archive_writer = { loaf = "crates-io/ar_archive_writer", version = "=0.5.3" }
+hex = { loaf = "crates-io/hex", version = "0.4.3" }
+oven_model = { loaf = "oven_model", path = "../../oven_model" }
+serde = { loaf = "crates-io/serde", version = "1.0", features = ["derive"] }
+serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
+sha2 = { loaf = "crates-io/sha2", version = "0.10.9" }
+thiserror = { loaf = "crates-io/thiserror", version = "2.0" }
+toml = { loaf = "crates-io/toml", version = "0.9" }
+tempfile = { loaf = "crates-io/tempfile", version = "3" }

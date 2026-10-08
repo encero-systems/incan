@@ -5,6 +5,7 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
 use std::process::Command;
 use std::sync::Arc;
 use std::{env, fs};
@@ -12,12 +13,11 @@ use std::{env, fs};
 use incan_lang::lang::stdlib;
 
 use crate::error::{ProviderError, ProviderResult};
-use crate::inventory::SDK_INVENTORY_OVERRIDE_ENV;
+#[cfg(test)]
 use crate::requirements::INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV;
 use crate::sdk_store::{
     INTERNAL_SDK_DISTRIBUTION_PROFILE_ENV, INTERNAL_SDK_PROVIDER_PATH_FILE_ENV, INTERNAL_SDK_PROVIDER_STORE_ENV,
-    acquire_sdk_provider_store_lock, configure_sdk_provider_workspace_lock, default_sdk_provider_store,
-    sdk_provider_builder_executable, sdk_provider_store_identity, sdk_provider_workspace_lock,
+    acquire_sdk_provider_store_lock, default_sdk_provider_store, sdk_provider_builder_executable,
     staged_sdk_provider_root, sync_sdk_provider_store, sync_sdk_provider_tree,
 };
 use crate::{
@@ -25,50 +25,271 @@ use crate::{
     SdkInventory, SdkProviderDescriptor, SdkSourceCatalog,
 };
 use incan_frontend::library_manifest::{LibraryManifest, ProviderModuleClaim, digest_provider_artifact};
-use oven_model::manifest::{INTERNAL_MANIFEST_OVERRIDE_ENV, INTERNAL_PROJECT_ROOT_OVERRIDE_ENV, ProjectManifest};
+use oven_model::manifest::ProjectManifest;
+#[cfg(test)]
+use oven_model::manifest::{INTERNAL_MANIFEST_OVERRIDE_ENV, INTERNAL_PROJECT_ROOT_OVERRIDE_ENV};
+#[cfg(test)]
 use oven_model::toolchain_layout::GENERATED_CARGO_TARGET_DIR_ENV;
 /// Optional external directory for SDK publication timing evidence.
+#[cfg(test)]
 const INTERNAL_SDK_BUILD_REPORT_DIR_ENV: &str = "INCAN_INTERNAL_SDK_BUILD_REPORT_DIR";
 
-/// Build and atomically publish every SDK component provider from the source catalog.
-pub fn prepare_sdk_provider_inventory() -> ProviderResult<Arc<SdkInventory>> {
-    prepare_sdk_provider_inventory_in_store(None, None)
-}
-
-/// Build SDK providers into a publisher-owned store rather than the normal SDK cache.
+/// Prepare native units and atomically publish checked component metadata supplied by the compiler driver.
 ///
-/// This is for the explicitly named Oven `legacy_cargo` transition only. The caller is responsible for copying the
-/// resulting immutable inventory into its receipt-bound artifact before the private publisher root is reclaimed.
-pub fn prepare_sdk_provider_inventory_in_store(
+/// The callback runs in dependency order with the retained native closure, a complete inspection authority, and the
+/// inventory of already checked components. It must write the component's `.incnlib` and executable surfaces into
+/// its supplied output root. Nothing here launches a component compiler subprocess or reads Cargo metadata.
+pub fn prepare_sdk_provider_inventory_with_native_publisher(
     publisher_store_root: Option<&Path>,
     source_root_override: Option<&Path>,
+    inputs: &crate::sdk_native::SdkNativeInputs,
+    publish: impl FnMut(&Path, &Path, &SdkInventory, &oven_rustc::sdk_closure::SdkCompiledClosure) -> ProviderResult<()>,
 ) -> ProviderResult<Arc<SdkInventory>> {
     let publication = SdkProviderPublication::resolve(publisher_store_root, source_root_override)?;
-    prepare_sdk_provider_inventory_from_sources(
-        &publication.stdlib_root,
-        &publication.executable,
-        &publication.store_root,
-        &publication.distribution_profile,
-        source_root_override,
-    )
+    prepare_native_sdk_provider_inventory(publication, inputs, publish)
 }
 
-/// Return the SDK inventory the source checkout's providers are already published under, without building or
-/// locking anything.
+/// Retain all native selections across the checked publication transaction and its final durable rename.
+fn prepare_native_sdk_provider_inventory(
+    publication: SdkProviderPublication,
+    inputs: &crate::sdk_native::SdkNativeInputs,
+    mut publish: impl FnMut(&Path, &Path, &SdkInventory, &oven_rustc::sdk_closure::SdkCompiledClosure) -> ProviderResult<()>,
+) -> ProviderResult<Arc<SdkInventory>> {
+    let catalog = SdkSourceCatalog::read_from_path(&publication.stdlib_root.join(SDK_SOURCE_CATALOG_FILE))
+        .map_err(|error| ProviderError::failure(error.to_string()))?;
+    catalog
+        .validate_compiler_version(incan_lang::version::INCAN_VERSION)
+        .map_err(|error| ProviderError::failure(error.to_string()))?;
+    let _lock = acquire_sdk_provider_store_lock(&publication.store_root)?;
+    let closure = crate::sdk_native::prepare_sdk_native_closure(&publication.stdlib_root, &catalog, inputs)?;
+    let receipts = crate::sdk_native::sdk_native_receipts(&closure)?;
+    let identity = crate::sdk_store::sdk_provider_sealed_store_identity_with_graph(
+        &publication.stdlib_root,
+        &publication.executable,
+        &publication.distribution_profile,
+        &receipts,
+        inputs.compiler_graph.as_deref(),
+    )?;
+    if let Some(inventory) = load_published_sdk_inventory(&publication.store_root, &identity)? {
+        validate_native_sdk_entry(&inventory.root, &receipts)?;
+        publish_native_receipt_hint(&publication.store_root, &receipts)?;
+        record_sdk_provider_root(&inventory.root)?;
+        return Ok(inventory);
+    }
+    let artifact_root = publication.store_root.join(&identity);
+    if artifact_root.exists() {
+        return Err(ProviderError::failure(
+            "sealed SDK identity already exists without a complete inventory",
+        ));
+    }
+    let staging = staged_sdk_provider_root(&publication.store_root, &identity)?;
+    let result = (|| {
+        build_sdk_components_into_staging(
+            &catalog,
+            &staging,
+            &closure,
+            &inputs.output.join("store"),
+            &publication.distribution_profile,
+            &mut publish,
+        )?;
+        let current_identity = crate::sdk_store::sdk_provider_sealed_store_identity_with_graph(
+            &publication.stdlib_root,
+            &publication.executable,
+            &publication.distribution_profile,
+            &receipts,
+            inputs.compiler_graph.as_deref(),
+        )?;
+        if current_identity != identity {
+            return Err(ProviderError::failure(
+                "SDK sources changed while checked components were being published",
+            ));
+        }
+        sync_sdk_provider_tree(&staging)?;
+        fs::rename(&staging, &artifact_root).map_err(|error| ProviderError::failure(error.to_string()))?;
+        sync_sdk_provider_store(&publication.store_root)?;
+        publish_native_receipt_hint(&publication.store_root, &receipts)?;
+        let published = load_published_sdk_inventory(&publication.store_root, &identity)?
+            .ok_or_else(|| ProviderError::failure("sealed SDK publication lost its inventory"))?;
+        record_sdk_provider_root(&artifact_root)?;
+        Ok(published)
+    })();
+    if result.is_err() && staging.exists() {
+        let _ = fs::remove_dir_all(&staging);
+    }
+    result
+}
+
+/// Publish checked component surfaces in dependency order against the retained native closure and frozen graph.
+fn build_sdk_components_into_staging(
+    catalog: &SdkSourceCatalog,
+    staging: &Path,
+    closure: &oven_rustc::sdk_closure::SdkCompiledClosure,
+    native_store: &Path,
+    profile: &str,
+    publish: &mut impl FnMut(
+        &Path,
+        &Path,
+        &SdkInventory,
+        &oven_rustc::sdk_closure::SdkCompiledClosure,
+    ) -> ProviderResult<()>,
+) -> ProviderResult<()> {
+    fs::create_dir_all(staging).map_err(|error| ProviderError::failure(error.to_string()))?;
+    crate::sdk_native::write_sdk_native_authority(closure, staging)?;
+    crate::sdk_native::write_sdk_native_artifact_catalog(closure, native_store, staging)?;
+    let mut inventory = source_catalog_inventory(catalog, staging);
+    let mut unavailable = std::collections::BTreeMap::new();
+    for component in catalog.publication_order() {
+        let output = staging.join("components").join(&component.id);
+        if let Err(error) = publish(&component.project_root, &output, &inventory, closure) {
+            if component.mandatory {
+                return Err(error);
+            }
+            unavailable.insert(component.id.clone(), error.to_string());
+            if output.exists() {
+                fs::remove_dir_all(&output).map_err(|error| ProviderError::failure(error.to_string()))?;
+            }
+            continue;
+        }
+        record_native_component_provider(&mut inventory, component, &output)?;
+    }
+    fs::write(
+        staging.join("unavailable-components.json"),
+        serde_json::to_vec_pretty(&unavailable).map_err(|error| ProviderError::failure(error.to_string()))?,
+    )
+    .map_err(|error| ProviderError::failure(error.to_string()))?;
+    restrict_staged_sdk_profile(catalog, profile, staging, &mut inventory)?;
+    inventory
+        .write_to_path(&staging.join(SDK_INVENTORY_FILE))
+        .map_err(|error| ProviderError::failure(error.to_string()))
+}
+
+/// Atomically replace the discovery hint after its complete immutable SDK generation has been published.
 ///
-/// `incan check` publishes the checkout's component providers on demand ([`prepare_sdk_provider_inventory`]), while
-/// the Oven commands (`run`, `build`, `oven bake`, test collection) must never launch that builder on a miss. Before
-/// #1774 they therefore saw no inventory at all in a source checkout, parsed without the syntax the standard library's
-/// vocabulary providers add (`binding` from `std.interop`), and refused a file `incan check` had just accepted. This
-/// lookup lets them reuse exactly the inventory the check path published: same stdlib root, builder, store and
-/// identity, and nothing when that identity has not been published. Inside a provider build, or outside a source
-/// checkout, there is nothing to reuse.
+/// The store publication lock serializes this sibling write. A cache acquisition repairs a hint lost after the
+/// generation rename, so an interrupted hint write cannot strand an otherwise complete SDK.
+fn publish_native_receipt_hint(
+    store: &Path,
+    receipts: &std::collections::BTreeMap<String, String>,
+) -> ProviderResult<()> {
+    let pending = store.join(".sealed-native-receipts.pending");
+    fs::write(
+        &pending,
+        serde_json::to_vec_pretty(receipts).map_err(|error| ProviderError::failure(error.to_string()))?,
+    )
+    .map_err(|error| ProviderError::failure(error.to_string()))?;
+    fs::File::open(&pending)
+        .and_then(|file| file.sync_all())
+        .map_err(|error| ProviderError::failure(error.to_string()))?;
+    fs::rename(pending, store.join(".sealed-native-receipts.json"))
+        .map_err(|error| ProviderError::failure(error.to_string()))?;
+    sync_sdk_provider_store(store)
+}
+
+/// Refuse incomplete or mismatched native generations rather than interpreting an inventory alone as authority.
+fn validate_native_sdk_entry(root: &Path, receipts: &std::collections::BTreeMap<String, String>) -> ProviderResult<()> {
+    let retained: std::collections::BTreeMap<String, String> = serde_json::from_slice(
+        &fs::read(root.join(".sealed-native-receipts.json"))
+            .map_err(|error| ProviderError::failure(error.to_string()))?,
+    )
+    .map_err(|error| ProviderError::failure(error.to_string()))?;
+    if &retained != receipts
+        || !root.join(".sealed-native-units.json").is_file()
+        || !root.join(rust_inspect::OVEN_DIRECT_LOAF_PROJECT_FILE).is_file()
+        || !root.join(rust_inspect::OVEN_DIRECT_INSPECTION_AUTHORITY_FILE).is_file()
+    {
+        return Err(ProviderError::failure(
+            "published SDK generation has mismatched or missing native authority",
+        ));
+    }
+    Ok(())
+}
+
+/// Validate checked namespace grants and bind a component's complete artifact into the staged SDK inventory.
+fn record_native_component_provider(
+    inventory: &mut SdkInventory,
+    component: &crate::SdkSourceComponent,
+    output: &Path,
+) -> ProviderResult<()> {
+    validate_native_component_payload(output)?;
+    let manifest = ProjectManifest::discover(&component.project_root)
+        .map_err(|error| ProviderError::failure(error.to_string()))?
+        .ok_or_else(|| ProviderError::failure("SDK component has no Loaf declaration"))?;
+    let name = manifest
+        .project
+        .as_ref()
+        .and_then(|project| project.name.as_deref())
+        .ok_or_else(|| ProviderError::failure("SDK component has no project name"))?;
+    let manifest_path = output.join(format!("{name}.incnlib"));
+    let checked =
+        LibraryManifest::read_from_path(&manifest_path).map_err(|error| ProviderError::failure(error.to_string()))?;
+    if checked.name != name
+        || manifest.project.as_ref().and_then(|project| project.version.as_deref()) != Some(checked.version.as_str())
+    {
+        return Err(ProviderError::failure(
+            "checked SDK provider identity does not match its component declaration",
+        ));
+    }
+    let namespace_claims = sdk_component_namespace_claims(
+        &component.id,
+        &component.namespace_roots,
+        &checked.contract_metadata.provider.namespace_claims,
+    )?;
+    let digest = digest_provider_artifact(output).map_err(|error| ProviderError::failure(error.to_string()))?;
+    let selected = inventory
+        .components
+        .get_mut(&component.id)
+        .ok_or_else(|| ProviderError::failure("SDK publication lost its component"))?;
+    selected.available = true;
+    selected.providers = vec![SdkProviderDescriptor {
+        name: checked.name,
+        version: checked.version,
+        digest,
+        namespace_claims,
+        manifest_path: Some(manifest_path),
+        crate_root: Some(output.to_path_buf()),
+    }];
+    Ok(())
+}
+
+/// Reject Cargo metadata, build scripts, links, and special files before any component artifact bytes are read.
+fn validate_native_component_payload(root: &Path) -> ProviderResult<()> {
+    let mut directories = vec![root.to_path_buf()];
+    while let Some(directory) = directories.pop() {
+        for entry in fs::read_dir(&directory).map_err(|error| ProviderError::failure(error.to_string()))? {
+            let entry = entry.map_err(|error| ProviderError::failure(error.to_string()))?;
+            if matches!(
+                entry.file_name().to_str(),
+                Some("Cargo.toml" | "Cargo.toml.orig" | "Cargo.lock" | "build.rs")
+            ) {
+                return Err(ProviderError::failure(
+                    "native SDK publication cannot admit Cargo metadata or build scripts",
+                ));
+            }
+            let kind = entry
+                .file_type()
+                .map_err(|error| ProviderError::failure(error.to_string()))?;
+            if kind.is_dir() {
+                directories.push(entry.path());
+            } else if !kind.is_file() {
+                return Err(ProviderError::failure(
+                    "native SDK publication cannot admit links or special files",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Return the receipt-sealed SDK inventory published for this source checkout, without building or locking.
 ///
-/// Reuse never makes a command fail that ran before it existed: a checkout whose publication inputs cannot be
-/// resolved, or whose identity cannot be computed (a standard-library or compiler source that does not parse
-/// mid-edit makes the compiler effect digest fail), is reported as having no published inventory, which is what these
-/// commands saw before. Only a published inventory that exists and fails to load is an error, as it is for
-/// `incan check`.
+/// Oven consumers never launch the compatibility component publisher on a miss. Their source inventory must bind
+/// the same stdlib source bytes, compiler, profile, and retained native receipts as the sealed publication.
+/// Compatibility inventories produced with Cargo metadata do not satisfy this source-discovery contract.
+///
+/// Source reuse requires the sealed publisher's native-receipt catalog. Without it there is no SDK inventory to
+/// reuse; consumers must not probe legacy Cargo-based identities to find one. Installed and explicitly selected
+/// inventories are discovered before this helper. A corrupt sealed catalog is reported rather than replaced by
+/// development workspace resolution.
 pub fn find_published_sdk_provider_inventory() -> ProviderResult<Option<Arc<SdkInventory>>> {
     if env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() {
         return Ok(None);
@@ -81,10 +302,25 @@ pub fn find_published_sdk_provider_inventory() -> ProviderResult<Option<Arc<SdkI
     let Ok(publication) = SdkProviderPublication::resolve(None, None) else {
         return Ok(None);
     };
-    let Ok(identity) = publication.store_identity() else {
+    let receipts_path = publication.store_root.join(".sealed-native-receipts.json");
+    if !receipts_path.is_file() {
         return Ok(None);
-    };
-    load_published_sdk_inventory(&publication.store_root, &identity)
+    }
+    let receipts = fs::read(&receipts_path)
+        .map_err(|error| ProviderError::failure(format!("failed to read sealed SDK native receipts: {error}")))?;
+    let receipts = serde_json::from_slice::<std::collections::BTreeMap<String, String>>(&receipts)
+        .map_err(|error| ProviderError::failure(format!("invalid sealed SDK native receipts: {error}")))?;
+    let identity = crate::sdk_store::sdk_provider_sealed_store_identity(
+        &publication.stdlib_root,
+        &publication.executable,
+        &publication.distribution_profile,
+        &receipts,
+    )?;
+    let inventory = load_published_sdk_inventory(&publication.store_root, &identity)?;
+    if let Some(inventory) = inventory.as_ref() {
+        validate_native_sdk_entry(&inventory.root, &receipts)?;
+    }
+    Ok(inventory)
 }
 
 /// Every input that decides where, and under which identity, the SDK component providers are published.
@@ -94,7 +330,7 @@ pub fn find_published_sdk_provider_inventory() -> ProviderResult<Option<Arc<SdkI
 struct SdkProviderPublication {
     /// Canonical standard-library source root holding the component catalog.
     stdlib_root: PathBuf,
-    /// The `incan` executable that builds each component.
+    /// Compiler executable whose bytes partition the sealed publication identity.
     executable: PathBuf,
     /// Store whose identity directories hold published inventories.
     store_root: PathBuf,
@@ -152,30 +388,11 @@ impl SdkProviderPublication {
             distribution_profile,
         })
     }
-
-    /// Compute the store identity these inputs publish under.
-    fn store_identity(&self) -> ProviderResult<String> {
-        published_sdk_store_identity(&self.stdlib_root, &self.executable, &self.distribution_profile)
-    }
-}
-
-/// Compute the store identity the SDK providers built from these sources are published under.
-///
-/// This is the identity [`prepare_sdk_provider_inventory_from_sources`] publishes under. Computing it may write the
-/// compiler effect-digest memo beside the store (`sdk_store::sdk_provider_effect_digest`), which is a cache, not a
-/// publication.
-fn published_sdk_store_identity(
-    stdlib_root: &Path,
-    executable: &Path,
-    distribution_profile: &str,
-) -> ProviderResult<String> {
-    let workspace_lock = sdk_provider_workspace_lock(stdlib_root);
-    sdk_provider_store_identity(stdlib_root, executable, workspace_lock.as_deref(), distribution_profile)
 }
 
 /// Load the inventory published under `identity` in `store_root`, or `None` when that identity has no entry.
 ///
-/// Unlike [`prepare_sdk_provider_inventory_from_sources`] this takes no store lock and never builds or publishes:
+/// Unlike [`prepare_native_sdk_provider_inventory`] this takes no store lock and never builds or publishes:
 /// publication renames a complete identity directory into place, so an inventory file that exists is whole.
 fn load_published_sdk_inventory(store_root: &Path, identity: &str) -> ProviderResult<Option<Arc<SdkInventory>>> {
     let inventory_path = store_root.join(identity).join(SDK_INVENTORY_FILE);
@@ -193,94 +410,8 @@ fn load_published_sdk_inventory(store_root: &Path, identity: &str) -> ProviderRe
     Ok(Some(Arc::new(inventory)))
 }
 
-/// Publish or reuse an SDK inventory from explicit source, builder and store inputs.
-///
-/// Keeping environment discovery outside this transaction lets callers test real publication and cache hits against
-/// isolated stores without changing process-wide overrides.
-fn prepare_sdk_provider_inventory_from_sources(
-    stdlib_root: &Path,
-    executable: &Path,
-    store_root: &Path,
-    distribution_profile: &str,
-    source_root_override: Option<&Path>,
-) -> ProviderResult<Arc<SdkInventory>> {
-    let catalog = SdkSourceCatalog::read_from_path(&stdlib_root.join(SDK_SOURCE_CATALOG_FILE))
-        .map_err(|error| ProviderError::failure(error.to_string()))?;
-    catalog
-        .validate_compiler_version(incan_lang::version::INCAN_VERSION)
-        .map_err(|error| ProviderError::failure(error.to_string()))?;
-    let workspace_lock = sdk_provider_workspace_lock(stdlib_root);
-    let identity =
-        sdk_provider_store_identity(stdlib_root, executable, workspace_lock.as_deref(), distribution_profile)?;
-    let _lock = acquire_sdk_provider_store_lock(store_root)?;
-    let mut build_reports = env::var_os(INTERNAL_SDK_BUILD_REPORT_DIR_ENV)
-        .filter(|path| !path.is_empty())
-        .map(|path| SdkBuildReports::new(Path::new(&path), store_root, &identity))
-        .transpose()?;
-    let artifact_root = store_root.join(&identity);
-    let inventory_path = artifact_root.join(SDK_INVENTORY_FILE);
-    if inventory_path.is_file() {
-        let inventory =
-            SdkInventory::read_from_path(&inventory_path).map_err(|error| ProviderError::failure(error.to_string()))?;
-        inventory
-            .validate_compiler_compatibility(
-                incan_lang::version::INCAN_VERSION,
-                incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION,
-            )
-            .map_err(|error| ProviderError::failure(error.to_string()))?;
-        record_sdk_provider_root(&artifact_root)?;
-        if let Some(reports) = &mut build_reports {
-            reports.finish("cache_hit");
-        }
-        return Ok(Arc::new(inventory));
-    }
-    if artifact_root.exists() {
-        return Err(ProviderError::failure(format!(
-            "compiled SDK component artifact at {} is incomplete; refusing to overwrite an already published identity",
-            artifact_root.display()
-        )));
-    }
-
-    let staging_root = staged_sdk_provider_root(store_root, &identity)?;
-    let staged_inventory = match build_sdk_components_into_staging(
-        &catalog,
-        executable,
-        workspace_lock.as_deref(),
-        &staging_root,
-        distribution_profile,
-        source_root_override.map(|source_root| (source_root, stdlib_root)),
-        build_reports.as_ref(),
-    ) {
-        Ok(inventory) => inventory,
-        Err(error) => {
-            let _ = fs::remove_dir_all(&staging_root);
-            return Err(error);
-        }
-    };
-    sync_sdk_provider_tree(&staging_root)?;
-    fs::rename(&staging_root, &artifact_root).map_err(|error| {
-        ProviderError::failure(format!(
-            "failed to publish compiled SDK components from {} to {}: {error}",
-            staging_root.display(),
-            artifact_root.display()
-        ))
-    })?;
-    sync_sdk_provider_store(store_root)?;
-    let published_inventory_path = artifact_root.join(SDK_INVENTORY_FILE);
-    let published = SdkInventory::read_from_path(&published_inventory_path).map_err(|error| {
-        ProviderError::failure(format!(
-            "failed to load published SDK component inventory for {}: {error}",
-            staged_inventory.identity()
-        ))
-    })?;
-    record_sdk_provider_root(&artifact_root)?;
-    if let Some(reports) = &mut build_reports {
-        reports.finish("published");
-    }
-    Ok(Arc::new(published))
-}
-
 /// Optional operational evidence kept outside the immutable provider store.
+#[cfg(test)]
 struct SdkBuildReports {
     directory: PathBuf,
     identity: String,
@@ -288,6 +419,7 @@ struct SdkBuildReports {
     completed: bool,
 }
 
+#[cfg(test)]
 impl SdkBuildReports {
     /// Require an existing external directory before creating a unique publication report session.
     fn new(directory: &Path, store: &Path, identity: &str) -> ProviderResult<Self> {
@@ -387,6 +519,7 @@ impl SdkBuildReports {
     }
 }
 
+#[cfg(test)]
 impl Drop for SdkBuildReports {
     fn drop(&mut self) {
         if !self.completed {
@@ -408,162 +541,8 @@ fn record_sdk_provider_root(artifact_root: &Path) -> ProviderResult<()> {
     })
 }
 
-/// Build source components in dependency order while exposing only already-published providers to each producer.
-fn build_sdk_components_into_staging(
-    catalog: &SdkSourceCatalog,
-    executable: &Path,
-    workspace_lock: Option<&Path>,
-    staging_root: &Path,
-    distribution_profile: &str,
-    toolchain_source: Option<(&Path, &Path)>,
-    build_reports: Option<&SdkBuildReports>,
-) -> ProviderResult<SdkInventory> {
-    fs::create_dir_all(staging_root).map_err(|error| {
-        ProviderError::failure(format!(
-            "failed to create SDK component staging directory {}: {error}",
-            staging_root.display()
-        ))
-    })?;
-    if let Some(workspace_lock) = workspace_lock {
-        fs::copy(workspace_lock, staging_root.join("Cargo.lock")).map_err(|error| {
-            ProviderError::failure(format!(
-                "failed to publish shared SDK provider lock from {}: {error}",
-                workspace_lock.display()
-            ))
-        })?;
-    }
-    let mut inventory = source_catalog_inventory(catalog, staging_root);
-    let inventory_path = staging_root.join(SDK_INVENTORY_FILE);
-    let cargo_target_dir = staging_root.join(".cargo-target");
-    let caller_cargo_target = env::var_os(GENERATED_CARGO_TARGET_DIR_ENV).filter(|path| !path.is_empty());
-    let mut built_any = false;
-
-    for component in catalog.publication_order() {
-        let output_root = staging_root.join("components").join(&component.id);
-        let manifest = ProjectManifest::discover(&component.project_root)
-            .map_err(|error| ProviderError::failure(error.to_string()))?
-            .ok_or_else(|| {
-                ProviderError::failure(format!(
-                    "SDK component `{}` has no loaf.toml at {}",
-                    component.id,
-                    component.project_root.display()
-                ))
-            })?;
-        let provider_name = manifest
-            .project
-            .as_ref()
-            .and_then(|project| project.name.clone())
-            .ok_or_else(|| ProviderError::failure(format!("SDK component `{}` has no project name", component.id)))?;
-        eprintln!(
-            "Preparing SDK component `{}` with `incan build --lib` in {}",
-            component.id,
-            component.project_root.display()
-        );
-        let mut command = Command::new(executable);
-        command
-            .current_dir(&component.project_root)
-            .args(["build", "--lib", "."])
-            .arg(&output_root)
-            .arg("--all-features");
-        configure_sdk_provider_build_environment(
-            &mut command,
-            &component.id,
-            &cargo_target_dir,
-            caller_cargo_target.as_deref(),
-            toolchain_source,
-        );
-        if built_any {
-            inventory
-                .write_to_path(&inventory_path)
-                .map_err(|error| ProviderError::failure(error.to_string()))?;
-            command.env(SDK_INVENTORY_OVERRIDE_ENV, &inventory_path);
-        } else {
-            command.env_remove(SDK_INVENTORY_OVERRIDE_ENV);
-        }
-        configure_sdk_provider_workspace_lock(&mut command, workspace_lock);
-        if let Some(reports) = build_reports {
-            reports.configure(&mut command, &component.id);
-        }
-        let component_started = std::time::Instant::now();
-        let output = command.output().map_err(|error| {
-            ProviderError::failure(format!(
-                "failed to run SDK component build for `{}` at {}: {error}",
-                component.id,
-                component.project_root.display()
-            ))
-        })?;
-        if let Some(reports) = build_reports {
-            reports.component(&component.id, component_started.elapsed(), &output);
-        }
-        if !output.status.success() {
-            return Err(nested_sdk_component_build_error(
-                component.id.as_str(),
-                &component.project_root,
-                &output,
-            ));
-        }
-        let manifest_path = output_root.join(format!("{provider_name}.incnlib"));
-        let provider_manifest = LibraryManifest::read_from_path(&manifest_path).map_err(|error| {
-            ProviderError::failure(format!(
-                "failed to read SDK component `{}` manifest {}: {error}",
-                component.id,
-                manifest_path.display()
-            ))
-        })?;
-        let component_lock = output_root.join("Cargo.lock");
-        if component_lock.is_file() {
-            fs::remove_file(&component_lock).map_err(|error| {
-                ProviderError::failure(format!(
-                    "failed to remove duplicated SDK component lock {}: {error}",
-                    component_lock.display()
-                ))
-            })?;
-        }
-        let namespace_claims = sdk_component_namespace_claims(
-            &component.id,
-            &component.namespace_roots,
-            &provider_manifest.contract_metadata.provider.namespace_claims,
-        )?;
-        let digest = digest_provider_artifact(&output_root).map_err(|error| {
-            ProviderError::failure(format!(
-                "failed to hash SDK component `{}` artifact {}: {error}",
-                component.id,
-                output_root.display()
-            ))
-        })?;
-        let inventory_component = inventory.components.get_mut(&component.id).ok_or_else(|| {
-            ProviderError::failure(format!(
-                "SDK source catalog lost component `{}` while publishing",
-                component.id
-            ))
-        })?;
-        inventory_component.available = true;
-        inventory_component.providers = vec![SdkProviderDescriptor {
-            name: provider_manifest.name,
-            version: provider_manifest.version,
-            digest,
-            namespace_claims,
-            manifest_path: Some(manifest_path),
-            crate_root: Some(output_root),
-        }];
-        built_any = true;
-    }
-    if cargo_target_dir.exists() {
-        fs::remove_dir_all(&cargo_target_dir).map_err(|error| {
-            ProviderError::failure(format!(
-                "failed to remove transient SDK provider Cargo target {}: {error}",
-                cargo_target_dir.display()
-            ))
-        })?;
-    }
-    restrict_staged_sdk_profile(catalog, distribution_profile, staging_root, &mut inventory)?;
-    inventory
-        .write_to_path(&inventory_path)
-        .map_err(|error| ProviderError::failure(error.to_string()))?;
-    Ok(inventory)
-}
-
 /// Preserve a caller-owned Cargo target while keeping the ordinary provider-publication fallback transaction-local.
+#[cfg(test)]
 fn configure_sdk_provider_build_environment(
     command: &mut Command,
     component_id: &str,
@@ -693,6 +672,7 @@ fn source_catalog_inventory(catalog: &SdkSourceCatalog, root: &Path) -> SdkInven
 }
 
 /// Preserve nested compiler stdout and stderr when one component publication fails.
+#[cfg(test)]
 fn nested_sdk_component_build_error(
     component: &str,
     project_root: &Path,
@@ -720,103 +700,130 @@ fn nested_sdk_component_build_error(
 mod tests {
     use super::*;
 
-    /// A policy-only catalog edit must publish a new inventory, while repeated unchanged requests hit the existing
-    /// entry.
-    #[test]
-    fn sdk_publication_cache_tracks_catalog_policy() -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
-        let checkout = temp.path().join("checkout");
-        let stdlib = checkout.join("loaves/stdlib");
-        let emitter = checkout.join("loaves/compiler/incan_emit");
-        fs::create_dir_all(emitter.join("src"))?;
-        fs::create_dir_all(&stdlib)?;
-        fs::write(checkout.join("Cargo.toml"), "[workspace]\nmembers = []\n")?;
-        fs::write(emitter.join("Cargo.toml"), "[package]\nname = \"incan_emit\"\n")?;
-        let catalog_path = stdlib.join(SDK_SOURCE_CATALOG_FILE);
-        let catalog = format!(
-            "[sdk]\nid = \"incan\"\nversion = \"{}\"\ncompiler-requirement = \"={}\"\n[profiles]\ndefault = []\nfull = []\n[components]\n",
-            incan_lang::version::INCAN_VERSION,
-            incan_lang::version::INCAN_VERSION,
-        );
-        fs::write(&catalog_path, &catalog)?;
-        let store = temp.path().join("store");
-        // No components are compiled: the fixture exercises the real transaction, serialization and cache-hit branch
-        // without substituting a fake publication implementation.
-        let builder = temp.path().join("unused-builder");
-        let first = prepare_sdk_provider_inventory_from_sources(&stdlib, &builder, &store, "full", Some(&checkout))?;
-        let cached = prepare_sdk_provider_inventory_from_sources(&stdlib, &builder, &store, "full", Some(&checkout))?;
-        assert_eq!(first.root, cached.root);
-        assert!(!cached.profiles.contains_key("inspection"));
-
-        fs::write(
-            &catalog_path,
-            catalog.replace("[components]", "inspection = []\n[components]"),
-        )?;
-        let changed = prepare_sdk_provider_inventory_from_sources(&stdlib, &builder, &store, "full", Some(&checkout))?;
-        assert_ne!(first.root, changed.root);
-        assert!(changed.profiles.contains_key("inspection"));
-        let cached_changed =
-            prepare_sdk_provider_inventory_from_sources(&stdlib, &builder, &store, "full", Some(&checkout))?;
-        assert_eq!(changed.root, cached_changed.root);
-        assert!(cached_changed.profiles.contains_key("inspection"));
-        let old = SdkInventory::read_from_path(&first.root.join(SDK_INVENTORY_FILE))?;
-        assert!(
-            !old.profiles.contains_key("inspection"),
-            "publication must leave the old immutable entry untouched"
-        );
+    /// A changed native output descriptor cannot retarget the publication's admitted receipt binding.
+    fn assert_native_catalog_refuses_mutation(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        let path = root.join(".sealed-native-units.json");
+        let original = fs::read(&path)?;
+        let mut changed: serde_json::Value = serde_json::from_slice(&original)?;
+        changed["units"][0]["digest"] = serde_json::Value::String(format!("sha256:{}", "0".repeat(64)));
+        fs::write(&path, serde_json::to_vec(&changed)?)?;
+        assert!(crate::sdk_native::retain_sdk_native_artifacts(root).is_err());
+        fs::write(path, original)?;
         Ok(())
     }
 
-    /// The reuse-only lookup finds exactly the inventory publication wrote, under the identity publication computes,
-    /// and on a miss neither builds nor publishes one (#1774). Only dot-prefixed cache files, such as the effect-digest
-    /// memo, may appear in the store on a miss.
+    /// Native publication reuses receipts, ignores poisoned Cargo inputs, and leaves failed generations unpublished.
     #[test]
-    fn published_inventory_lookup_reuses_the_published_entry_and_never_creates_one()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn native_sdk_transaction_reuses_and_rolls_back() -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
         let checkout = temp.path().join("checkout");
         let stdlib = checkout.join("loaves/stdlib");
-        let emitter = checkout.join("loaves/compiler/incan_emit");
-        fs::create_dir_all(emitter.join("src"))?;
         fs::create_dir_all(&stdlib)?;
-        fs::write(checkout.join("Cargo.toml"), "[workspace]\nmembers = []\n")?;
-        fs::write(emitter.join("Cargo.toml"), "[package]\nname = \"incan_emit\"\n")?;
+        fs::write(
+            stdlib.join("sdk-lock.json"),
+            r#"{"schema":"incan.oven.loaf-resolution/1","units":[]}"#,
+        )?;
         fs::write(
             stdlib.join(SDK_SOURCE_CATALOG_FILE),
             format!(
-                "[sdk]\nid = \"incan\"\nversion = \"{}\"\ncompiler-requirement = \"={}\"\n[profiles]\ndefault = []\nfull = []\n[components]\n",
+                "[sdk]\nid='incan'\nversion='{}'\ncompiler-requirement='={}'\n[profiles]\ndefault=['fixture']\nfull=['fixture']\n[components.fixture]\nproject='fixture'\nnamespace-roots=['fixture']\nmandatory=true\n",
                 incan_lang::version::INCAN_VERSION,
                 incan_lang::version::INCAN_VERSION,
             ),
         )?;
+        for (relative, name, kind) in [
+            ("loaves/kernel/incan_lang", "fixture_lang", "lib"),
+            ("loaves/kernel/incan_vocab", "fixture_vocab", "lib"),
+            ("loaves/stdlib/derive/incan_derive", "fixture_derive", "proc-macro"),
+            (
+                "loaves/stdlib/derive/incan_web_macros",
+                "fixture_web_macros",
+                "proc-macro",
+            ),
+        ] {
+            let root = checkout.join(relative);
+            fs::create_dir_all(root.join("src"))?;
+            fs::write(
+                root.join("loaf.toml"),
+                format!(
+                    "[project]\nname='{name}'\nversion='1.0.0'\n[rust]\nname='{name}'\ntype='{kind}'\nedition='2024'\n",
+                ),
+            )?;
+            fs::write(
+                root.join("src/lib.rs"),
+                if kind == "proc-macro" {
+                    "extern crate proc_macro; #[proc_macro] pub fn identity(input: proc_macro::TokenStream) -> proc_macro::TokenStream { input }"
+                } else {
+                    "pub fn value() -> u8 { 1 }"
+                },
+            )?;
+            fs::write(root.join("Cargo.toml"), "poisoned metadata")?;
+            fs::write(root.join("Cargo.lock"), "poisoned lock")?;
+            fs::write(root.join("build.rs"), "compile_error!(\"must remain inert\");")?;
+        }
+        let component = stdlib.join("fixture");
+        fs::create_dir_all(&component)?;
+        fs::write(
+            component.join("loaf.toml"),
+            "[project]\nname='fixture'\nversion='1.0.0'\n",
+        )?;
+        let executable = temp.path().join("compiler");
+        fs::write(&executable, "compiler identity")?;
         let store = temp.path().join("store");
-        let builder = temp.path().join("unused-builder");
-
-        let identity = published_sdk_store_identity(&stdlib, &builder, "full")?;
-        let before = load_published_sdk_inventory(&store, &identity)?;
-        assert!(before.is_none(), "nothing is published yet");
-        let published_entries = |store: &Path| -> Result<Vec<String>, std::io::Error> {
-            if !store.exists() {
-                return Ok(Vec::new());
-            }
-            fs::read_dir(store)?
-                .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().into_owned()))
-                .filter(|name| !name.as_ref().is_ok_and(|name| name.starts_with('.')))
-                .collect()
+        let inputs = crate::sdk_native::SdkNativeInputs {
+            compiler_graph: None,
+            blobs: temp.path().to_path_buf(),
+            index: temp.path().to_path_buf(),
+            output: store.join(".native"),
+            rustc: oven_rustc::rustc::resolve_active_rustc()?,
         };
+        let publication = || SdkProviderPublication {
+            stdlib_root: stdlib.clone(),
+            executable: executable.clone(),
+            store_root: store.clone(),
+            distribution_profile: "full".to_string(),
+        };
+        let first = prepare_native_sdk_provider_inventory(publication(), &inputs, |_, output, _, closure| {
+            assert_eq!(closure.units().len(), 4);
+            fs::create_dir_all(output).map_err(|error| ProviderError::failure(error.to_string()))?;
+            LibraryManifest::new("fixture", "1.0.0")
+                .write_to_path(&output.join("fixture.incnlib"))
+                .map_err(|error| ProviderError::failure(error.to_string()))
+        })?;
+        assert!(first.root.join(".sealed-native-receipts.json").is_file());
+        assert!(first.root.join(rust_inspect::OVEN_DIRECT_LOAF_PROJECT_FILE).is_file());
+        assert_eq!(crate::sdk_native::retain_sdk_native_artifacts(&first.root)?.len(), 4);
+        assert_native_catalog_refuses_mutation(&first.root)?;
+        let second = prepare_native_sdk_provider_inventory(publication(), &inputs, |_, _, _, _| {
+            Err(ProviderError::failure(
+                "a cache hit must not call the checked publisher",
+            ))
+        })?;
+        assert_eq!(first.root, second.root);
+        let previous_hint = fs::read(store.join(".sealed-native-receipts.json"))?;
+        fs::remove_file(store.join(".sealed-native-receipts.json"))?;
+        prepare_native_sdk_provider_inventory(publication(), &inputs, |_, _, _, _| {
+            Err(ProviderError::failure(
+                "repairing a hint must reuse the immutable SDK generation",
+            ))
+        })?;
+        assert_eq!(previous_hint, fs::read(store.join(".sealed-native-receipts.json"))?);
+        fs::write(
+            component.join("loaf.toml"),
+            "[project]\nname='fixture'\nversion='1.0.1'\n",
+        )?;
+        let failure = prepare_native_sdk_provider_inventory(publication(), &inputs, |_, _, _, _| {
+            Err(ProviderError::failure("checked publication refused"))
+        })
+        .err()
+        .ok_or("publication should fail")?;
+        assert!(failure.to_string().contains("checked publication refused"));
+        assert_eq!(previous_hint, fs::read(store.join(".sealed-native-receipts.json"))?);
+        assert!(first.root.join(SDK_INVENTORY_FILE).is_file());
         assert!(
-            published_entries(&store)?.is_empty(),
-            "a miss must neither build nor publish an identity"
-        );
-
-        let published =
-            prepare_sdk_provider_inventory_from_sources(&stdlib, &builder, &store, "full", Some(&checkout))?;
-        let reused = load_published_sdk_inventory(&store, &identity)?.ok_or("the published inventory must be found")?;
-        assert_eq!(reused.root, published.root, "reuse finds the entry publication wrote");
-        let other_profile = published_sdk_store_identity(&stdlib, &builder, "default")?;
-        assert!(
-            load_published_sdk_inventory(&store, &other_profile)?.is_none(),
-            "another distribution profile is another identity"
+            !fs::read_dir(&store)?
+                .filter_map(Result::ok)
+                .any(|entry| entry.file_name().to_string_lossy().contains("staging"))
         );
         Ok(())
     }

@@ -36,10 +36,10 @@ use oven_rustc::loaf::{
     resolve_compiler_owned_loaf_by_identity, resolve_compiler_owned_loaf_for_registry_dependencies,
 };
 use oven_rustc::rustc::{
-    OvenLoadedProjectInspectionAuthority, OvenProjectInspectionConstituent, load_project_inspection_authority,
-    resolve_active_rustc, rustc_host_target, rustc_identity,
+    OvenLoadedProjectInspectionAuthority, OvenProjectInspectionConstituent, OvenRustcError,
+    load_project_inspection_authority, resolve_active_rustc, rustc_host_target, rustc_identity,
 };
-use oven_store::store::{OvenArtifactKind, OvenStore};
+use oven_store::store::{OvenArtifactKind, OvenStore, OvenStoreError};
 
 /// Emit cumulative warm-reuse timing only when the caller requests diagnostic output.
 fn trace_reuse_timing(started: std::time::Instant, phase: &str) {
@@ -259,6 +259,16 @@ fn release_loaf_constituents_available(constituents: &[OvenProjectInspectionCons
     Ok(true)
 }
 
+/// Treat a missing whole store entry as a cache miss while preserving missing files and all integrity failures.
+///
+/// Inspection authorities outlive inactive constituents under bounded-store pruning. An explicit bake may republish
+/// an evicted constituent; it must not use that recovery path for damaged contents of an entry that still exists.
+fn inspection_constituent_was_evicted(store: &OvenStore, error: &OvenRustcError) -> bool {
+    matches!(error, OvenRustcError::Store(OvenStoreError::Io { path, source })
+        if source.kind() == std::io::ErrorKind::NotFound
+            && path.parent() == Some(store.root().join("entries").as_path()))
+}
+
 /// One requested target/profile and its verified local publication receipt.
 type ExpectedReuseOutput = (OvenBakeProjectTarget, PathBuf, String, PathBuf, oven_store::OvenReceipt);
 
@@ -274,6 +284,7 @@ type SelectedReuseOutput = (
 struct CurrentReuseAuthority<'a> {
     source_digest: &'a str,
     compiler_digest: &'a str,
+    dependency_digest: &'a str,
     lock_fingerprint: &'a Option<String>,
     target: &'a str,
     toolchain: &'a str,
@@ -371,6 +382,7 @@ fn select_current_project_output(
             && output.payload.source_authority_digest == authority.source_digest
             && output.profile == profile
             && output.payload.compiler_identity_digest.as_deref() == Some(authority.compiler_digest)
+            && output.payload.dependency_authority_digest.as_deref() == Some(authority.dependency_digest)
             && output.payload.lock_dependencies_fingerprint == *authority.lock_fingerprint
     });
     let output = match located {
@@ -387,6 +399,7 @@ fn select_current_project_output(
         .into_iter()
         .find(|output| {
             output.payload.compiler_identity_digest.as_deref() == Some(authority.compiler_digest)
+                && output.payload.dependency_authority_digest.as_deref() == Some(authority.dependency_digest)
                 && output.payload.lock_dependencies_fingerprint == *authority.lock_fingerprint
         }),
     };
@@ -557,11 +570,13 @@ pub fn try_reuse_baked_project(
     trace_reuse_timing(started, "store headers");
     let source_authority_digest = authority_context.cache_probe_source_authority(project_root)?;
     let compiler_identity_digest = super::source_authority::current_compiler_identity_digest()?;
+    let dependency_authority_digest = super::source_authority::digest_project_development_dependencies(project_root)?;
     trace_reuse_timing(started, "source and compiler authority");
     let mut selected_outputs = Vec::new();
     let current = CurrentReuseAuthority {
         source_digest: &source_authority_digest,
         compiler_digest: &compiler_identity_digest,
+        dependency_digest: &dependency_authority_digest,
         lock_fingerprint: &lock_dependencies_fingerprint,
         target: &target,
         toolchain: &toolchain,
@@ -584,14 +599,17 @@ pub fn try_reuse_baked_project(
     {
         return Ok(None);
     }
-    let authority = load_project_inspection_authority(
+    let authority = match load_project_inspection_authority(
         store,
         &authority_ref,
         &baked_project_owner_identity(project_root)?,
         &source_authority_digest,
         INCAN_VERSION,
-    )
-    .map_err(|error| CliError::failure(error.to_string()))?;
+    ) {
+        Ok(authority) => authority,
+        Err(error) if inspection_constituent_was_evicted(store, &error) => return Ok(None),
+        Err(error) => return Err(CliError::failure(error.to_string())),
+    };
     // A cache candidate whose release Loaf the active toolchain no longer ships is a miss, not a fault: the
     // installed family changed underneath a still-valid local receipt (#1444), and an explicit bake exists to
     // refresh exactly that. Corrupt or mismatched authority still fails below, where the candidate is validated.
@@ -863,6 +881,40 @@ mod tests {
         assert!(located_project_output(&store, &receipt_path, &receipt)?.is_none());
         remember_project_output(&receipt_path, &format!("sha256:{}", "0".repeat(64)));
         assert!(located_project_output(&store, &receipt_path, &receipt)?.is_none());
+        Ok(())
+    }
+
+    /// Policy-evicted constituents decline reuse; a missing file inside an admitted entry still fails closed.
+    #[test]
+    fn evicted_inspection_constituent_declines_cache_reuse() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            directory.path(),
+            oven_store::store::OvenStoreLimits::new(1024, 1024, 1024),
+        );
+        let identity = format!("sha256:{}", "0".repeat(64));
+        let error = store
+            .select_payloads_for_execution(std::slice::from_ref(&identity))
+            .err()
+            .ok_or("missing constituent unexpectedly selected")?;
+        assert!(inspection_constituent_was_evicted(
+            &store,
+            &OvenRustcError::Store(error)
+        ));
+        let damaged = OvenRustcError::Store(OvenStoreError::Io {
+            path: directory
+                .path()
+                .join("entries")
+                .join("sha256-missing")
+                .join("manifest.json"),
+            source: std::io::Error::from(std::io::ErrorKind::NotFound),
+        });
+        assert!(!inspection_constituent_was_evicted(&store, &damaged));
+        let denied = OvenRustcError::Store(OvenStoreError::Io {
+            path: directory.path().join("entries").join("sha256-missing"),
+            source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        });
+        assert!(!inspection_constituent_was_evicted(&store, &denied));
         Ok(())
     }
 
