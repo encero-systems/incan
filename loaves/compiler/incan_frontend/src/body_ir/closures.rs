@@ -6,6 +6,35 @@ use super::reads::*;
 use super::*;
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
+    /// Mark only a resolver-proven named function read, preserving its checked target rather than identifying it by
+    /// the shape of an arbitrary source closure. The forwarding body remains available to older Body IR consumers.
+    pub(super) fn retain_function_item(&self, statements: &mut [bir::Statement]) {
+        let Some(bir::Statement {
+            kind:
+                bir::StatementKind::Assign {
+                    rvalue: bir::Rvalue::Closure { body, .. },
+                    ..
+                },
+            ..
+        }) = statements.last_mut()
+        else {
+            return;
+        };
+        if let [
+            bir::Statement {
+                kind:
+                    bir::StatementKind::Call {
+                        callee: bir::Callee::Function(bir::CallableTarget::Named(_target)),
+                        ..
+                    },
+                ..
+            },
+        ] = body.stmts.as_slice()
+        {
+            body.function_item = true;
+        }
+    }
+
     /// Lower a closure literal `(params) => expr` into a [`bir::Rvalue::Closure`].
     ///
     /// Body IR must represent captures explicitly rather than deferring to a consuming backend's own closure syntax
@@ -115,6 +144,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.materialized_range_locals = saved_materialized_range_locals;
 
         let closure_body = bir::ClosureBody {
+            function_item: false,
             capture_locals,
             stmts: body_stmts,
             result,
@@ -352,6 +382,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         );
 
         let closure_body = bir::ClosureBody {
+            function_item: false,
             capture_locals,
             stmts: body_stmts,
             result,
