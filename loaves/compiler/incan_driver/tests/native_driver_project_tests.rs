@@ -2151,6 +2151,29 @@ fn direct_route_package_enum_surfaces_match_legacy() -> Result<(), Box<dyn std::
         b"enter intro\nleave\nenter\nleave\nentering\nleaving\nintro at gate 1\ngone\nnorth at gate 4\nenter 1,2\nleave done\nstart\nstart\nstart 4\n2\n3\n")
 }
 
+/// Checked variant identities survive aliased enum patterns across nested package reexports.
+#[test]
+fn direct_route_package_submodule_reexports_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("package-submodule-reexports")?;
+    let area = support::fixtures_dir().join("behavior/cli_dependencies");
+    let behavior = support::behavior_fixtures::discover(&area)?
+        .into_iter()
+        .find(|case| case.name == "dependency_submodule_reexports")
+        .ok_or("package submodule reexports fixture is missing")?;
+    support::behavior_fixtures::materialize(&behavior, &root)?;
+    for provider in &behavior.providers {
+        let mut publish = support::cli_project::configured_incan_command(
+            &root.join(&provider.path),
+            &["oven", "bake", "--project", "."],
+        );
+        support::configure_explicit_oven_bake_command(&mut publish)?;
+        success(&publish.output()?, "submodule reexports package publication");
+    }
+    assert_package_routes_match(fixture, &root, "dependency_submodule_reexports",
+        b"hi root\nhi middle\nhi inner\nhi outer\nhi renamed\nhi relabel\nhi relay\nwarm 3 root text\ncool 3 middle text\n")
+}
+
 /// Published newtypes retain explicit comparison derives and checker-selected ownership clones.
 #[test]
 fn direct_route_package_derived_newtype_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

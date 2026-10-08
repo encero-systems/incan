@@ -488,10 +488,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         fields: named_fields,
                     }
                 } else {
+                    let canonical = self.type_info.resolved_identity(name.span).cloned();
+                    let variant = canonical
+                        .as_ref()
+                        .filter(|identity| identity.kind == incan_semantics_core::SemanticSourceTargetKind::Variant)
+                        .map_or_else(|| name.node.clone(), |identity| identity.declaration_name.clone());
                     bir::Pattern::Enum {
-                        canonical: self.type_info.resolved_identity(name.span).cloned(),
+                        canonical,
                         name: String::new(),
-                        variant: name.node.clone(),
+                        variant,
                         fields: positional_fields,
                     }
                 }
