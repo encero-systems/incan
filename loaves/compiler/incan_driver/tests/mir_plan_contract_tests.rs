@@ -32,6 +32,7 @@ fn scalar_plan_exports_are_public_and_representable() -> Result<(), Box<dyn std:
         "Parameter",
         "Local",
         "Projection",
+        "FieldProjection",
         "Place",
         "Constant",
         "OperandKind",
