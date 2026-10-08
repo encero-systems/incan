@@ -55,6 +55,20 @@ fn bake(project: &Path, home: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Start the pinned driver without the caller's dynamic-loader search paths.
+///
+/// The driver must load the `rustc_driver` its runpath names, and its startup check refuses any other copy. On Linux an
+/// inherited `LD_LIBRARY_PATH` is searched before that runpath, and the compiler-suite runner exports one naming the
+/// toolchain's `lib` directory to every libtest child, so an inheriting launch loads rustup's second, byte-identical
+/// copy of the library from the rustc component and the check refuses it (#1755, #1785).
+fn driver_command(driver: &Path) -> Command {
+    let mut command = Command::new(driver);
+    for name in ["LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH"] {
+        command.env_remove(name);
+    }
+    command
+}
+
 /// Assert native success with both output streams available on failure.
 fn success(output: &Output, operation: &str) {
     assert!(
@@ -74,7 +88,7 @@ fn check_startup_refusals(
     runtime_rlib: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // ---- Ambient permission and detached sysroot ----
-    let ambient = Command::new(binary)
+    let ambient = driver_command(binary)
         .env("RUSTC_BOOTSTRAP", "1")
         .arg(source)
         .arg("scalar")
@@ -85,7 +99,7 @@ fn check_startup_refusals(
     assert!(!ambient.status.success());
     assert!(String::from_utf8_lossy(&ambient.stderr).contains("Bootstrap"));
     assert!(!root.join("ambient-output").exists());
-    let mismatch = Command::new(binary)
+    let mismatch = driver_command(binary)
         .env_remove("RUSTC_BOOTSTRAP")
         .arg(source)
         .arg("scalar")
@@ -236,7 +250,7 @@ fn oven_driver_compiles_scalar_plan_and_refuses_invalid_inputs() -> Result<(), B
             .join("libnative_output.rlib");
         for mode in ["normal", "overflow", "dangling"] {
             let output_binary = root.join(format!("scalar-{profile}-{mode}"));
-            let compile = Command::new(&binary)
+            let compile = driver_command(&binary)
                 .env_remove("RUSTC_BOOTSTRAP")
                 .arg(&source)
                 .arg("scalar")
@@ -430,7 +444,7 @@ fn check_source_pipeline(
         .join("target/lib/oven")
         .join(profile)
         .join("libincan_native_runtime.rlib");
-    let mut command = Command::new(driver);
+    let mut command = driver_command(driver);
     command
         .env_remove("RUSTC_BOOTSTRAP")
         .args(["--source"])
@@ -669,10 +683,61 @@ fn direct_route_function_values_and_closures_match_legacy() -> Result<(), Box<dy
     Ok(())
 }
 
+/// A closure expression over a sized carrier keeps that carrier's native arithmetic through its lifted function,
+/// pointer reification, and indirect calls: `100000 * 100000` wraps in `i32` exactly as legacy's release build does,
+/// where an `i64` slip would print `10000000000`.
+#[test]
+fn direct_route_sized_numeric_closures_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("sized-closures")?;
+    let source = root.join("sized_closures.incn");
+    fs::write(
+        &source,
+        concat!(
+            "def main() -> None:\n",
+            "    square: (i32) -> i32 = (value) => value * value\n",
+            "    println(square(100000))\n",
+            "    cube: (i32) -> i32 = (value) => value * value * value\n",
+            "    println(cube(2000))\n",
+            "    println(cube(-7))\n",
+        ),
+    )?;
+    let legacy_root = root.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy sized-numeric closure compilation",
+    );
+    let legacy = Command::new(legacy_root.join("oven/release/sized_closures")).output()?;
+    success(&legacy, "legacy sized-numeric closure execution");
+    assert_eq!(legacy.stdout, b"1410065408\n-589934592\n-343\n");
+    let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
+    let native = root.join("native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("release"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native sized-numeric closure compilation",
+    );
+    let actual = Command::new(native).output()?;
+    success(&actual, "native sized-numeric closure execution");
+    assert_eq!(actual.stdout, legacy.stdout);
+    Ok(())
+}
+
 /// Prove stored items, aliases, explicit pointer coercions, returned pointers, and indirect invocation separately
 /// before the same focused test exercises closure-holding contracts.
 fn check_function_item_values(fixture: &DriverFixture, root: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let source = root.join("function-items.incn");
+    let source = root.join("function_items.incn");
     fs::write(
         &source,
         concat!(
@@ -686,7 +751,7 @@ fn check_function_item_values(fixture: &DriverFixture, root: &Path) -> Result<()
             "    stored_echo = echo\n    println(stored_echo(\"hello\"))\n",
         ),
     )?;
-    let legacy_root = root.join("function-items-legacy");
+    let legacy_root = root.join("function_items_legacy");
     success(
         &support::repo_command()
             .current_dir(root)
@@ -696,11 +761,11 @@ fn check_function_item_values(fixture: &DriverFixture, root: &Path) -> Result<()
             .output()?,
         "legacy function-item compilation",
     );
-    let legacy = Command::new(legacy_root.join("oven/release/function-items")).output()?;
+    let legacy = Command::new(legacy_root.join("oven/release/function_items")).output()?;
     success(&legacy, "legacy function-item execution");
     assert_eq!(legacy.stdout, b"8\n10\n12\nhello\n");
     let closure = corpus::runtime_closure(&fixture.formatting, "release")?;
-    let native = root.join("function-items-native");
+    let native = root.join("function_items_native");
     success(
         &corpus::source_command(
             &fixture.driver_binary("release"),

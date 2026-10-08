@@ -104,6 +104,8 @@ enum Scalar {
     GeneratorYieldRef(Leaf, i64),
     FunctionPointer(Vec<Scalar>),
     FunctionItem(String, Vec<Scalar>),
+    Closure(Vec<Scalar>),
+    ClosureRef(Vec<Scalar>),
 }
 
 /// Comparison mirror of scalar and tuple leaves; the public plan remains Incan-authored.
@@ -204,6 +206,8 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::StringSlice => Scalar::StringSlice,
         PlanType::StrSlice => Scalar::StrSlice,
         PlanType::FunctionPointer(signature) => Scalar::FunctionPointer(signature.iter().map(scalar).collect()),
+        PlanType::Closure(signature) => Scalar::Closure(signature.iter().map(scalar).collect()),
+        PlanType::ClosureRef(signature) => Scalar::ClosureRef(signature.iter().map(scalar).collect()),
         PlanType::FunctionItem(name, signature) => {
             Scalar::FunctionItem(name.clone(), signature.iter().map(scalar).collect())
         }
@@ -272,6 +276,7 @@ pub fn validate(plan: &Plan) -> Result<(), PlanError> {
         ));
     }
     for function in &plan.functions {
+        validate_closure_constructor(function)?;
         validate_function(plan, function)?;
     }
     Ok(())
@@ -528,7 +533,7 @@ fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, 
 /// Reject implicit copies of any recursively owned value, including tuple string fields.
 fn owns_values(ty: &Scalar) -> bool {
     match ty {
-        Scalar::String | Scalar::StringArray(_) | Scalar::Model(_) => true,
+        Scalar::String | Scalar::StringArray(_) | Scalar::Model(_) | Scalar::Closure(_) => true,
         Scalar::Tuple(elements) => elements.iter().any(owns_values),
         _ => false,
     }
@@ -633,6 +638,15 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             parameters.push(result);
             Ok(Scalar::FunctionItem(name.clone(), parameters))
         }
+        RvalueKind::ClosureObject(value) => match place(plan, function, value)? {
+            Scalar::Closure(signature) if matches!(value.projection, Projection::Whole) => {
+                Ok(Scalar::ClosureRef(signature))
+            }
+            _ => Err(invalid(
+                function,
+                "callable-object borrow requires a whole owned closure",
+            )),
+        },
         RvalueKind::ReifyFunction(value) => {
             let Scalar::FunctionItem(_, signature) = operand(plan, function, value)? else {
                 return Err(invalid(function, "function-pointer coercion requires a function item"));
@@ -788,6 +802,9 @@ fn source_signature_type(ty: &Scalar) -> bool {
     if let Scalar::FunctionPointer(signature) = ty {
         return !signature.is_empty() && signature.iter().all(source_signature_type);
     }
+    if let Scalar::Closure(signature) | Scalar::ClosureRef(signature) = ty {
+        return callable_object_signature(signature);
+    }
     if let Scalar::Tuple(elements) = ty {
         return elements.iter().all(|element| {
             matches!(
@@ -839,6 +856,60 @@ fn external_signature_type(ty: &Scalar) -> bool {
                 | Scalar::ModelRef(_)
                 | Scalar::GeneratorYieldRef(_, _)
         )
+}
+
+/// A callable object's call packs its inputs into one flat tuple, so inputs and the result are scalars or owned text.
+fn callable_object_signature(signature: &[Scalar]) -> bool {
+    !signature.is_empty()
+        && signature.iter().all(|ty| {
+            matches!(
+                ty,
+                Scalar::Int | Scalar::Float | Scalar::Bool | Scalar::Unit | Scalar::String
+            )
+        })
+}
+
+/// Pin a closure constructor to the one shape its native body implements: rustc builds that body from the injected
+/// boxing expression, so any other statement or edge in the plan would silently not execute.
+fn validate_closure_constructor(function: &Function) -> Result<(), PlanError> {
+    let Some((_, count)) = crate::closures::constructor(function) else {
+        return Ok(());
+    };
+    let refused = || {
+        invalid(
+            function,
+            "closure constructor must box its captures in exactly one call",
+        )
+    };
+    let [first, second] = function.blocks.as_slice() else {
+        return Err(refused());
+    };
+    if !first.statements.is_empty()
+        || !second.statements.is_empty()
+        || first.cleanup
+        || second.cleanup
+        || !matches!(second.terminator.kind, TerminatorKind::Return)
+        || !matches!(function.return_type, PlanType::Closure(_))
+        || usize::try_from(count).ok() != Some(function.parameters.len())
+    {
+        return Err(refused());
+    }
+    let TerminatorKind::Call(_, arguments, destination, 1, Unwind::Continue) = &first.terminator.kind else {
+        return Err(refused());
+    };
+    let forwarded = arguments.iter().enumerate().all(|(index, argument)| {
+        matches!(&argument.kind, OperandKind::Copy(place)
+            if matches!(place.projection, Projection::Whole)
+                && usize::try_from(place.local).ok() == Some(index + 1))
+    });
+    if !forwarded
+        || arguments.len() != function.parameters.len()
+        || destination.local != 0
+        || !matches!(destination.projection, Projection::Whole)
+    {
+        return Err(refused());
+    }
+    Ok(())
 }
 
 /// Reject unsupported hashed leaves and invalid dimensions before constructing native types, including unused locals.
@@ -1004,6 +1075,45 @@ fn signature(plan: &Plan, function: &Function, callee: &Callee) -> Result<(Vec<S
             vec![Scalar::Generator(Leaf::of(leaf), *depth)],
             Scalar::List(Leaf::of(leaf), depth + 1),
         )),
+        CalleeKind::CallClosure(signature) => {
+            let signature: Vec<_> = signature.iter().map(scalar).collect();
+            if !callable_object_signature(&signature) {
+                return Err(invalid(
+                    function,
+                    "callable-object call requires flat inputs and a result",
+                ));
+            }
+            let (result, inputs) = signature
+                .split_last()
+                .ok_or_else(|| invalid(function, "callable-object call has no result type"))?;
+            Ok((
+                vec![Scalar::ClosureRef(signature.clone()), Scalar::Tuple(inputs.to_vec())],
+                result.clone(),
+            ))
+        }
+        CalleeKind::ClosureBody(name, count) => {
+            let lifted = plan
+                .functions
+                .iter()
+                .find(|lifted| &lifted.name == name)
+                .ok_or_else(|| PlanError::UnknownCallee(name.clone()))?;
+            let count = usize::try_from(*count)
+                .ok()
+                .filter(|count| *count <= lifted.parameters.len())
+                .ok_or_else(|| invalid(function, "closure capture count exceeds the lifted parameters"))?;
+            let mut object: Vec<_> = lifted.parameters[count..]
+                .iter()
+                .map(|parameter| scalar(&parameter.ty))
+                .collect();
+            object.push(scalar(&lifted.return_type));
+            Ok((
+                lifted.parameters[..count]
+                    .iter()
+                    .map(|parameter| scalar(&parameter.ty))
+                    .collect(),
+                Scalar::Closure(object),
+            ))
+        }
         CalleeKind::Value(value) => {
             let mut signature = match operand(plan, function, value)? {
                 Scalar::FunctionPointer(signature) | Scalar::FunctionItem(_, signature) => signature,
@@ -1234,6 +1344,14 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
             ));
         }
     }
+    if let PlanType::Closure(signature) | PlanType::ClosureRef(signature) = ty
+        && !callable_object_signature(&signature.iter().map(scalar).collect::<Vec<_>>())
+    {
+        return Err(PlanError::Invalid {
+            function: "callable object".into(),
+            reason: "callable-object signature requires flat inputs and a final return type".into(),
+        });
+    }
     if let PlanType::FunctionPointer(signature) = ty {
         if signature.is_empty() || !signature.iter().all(|ty| source_signature_type(&scalar(ty))) {
             return Err(PlanError::Invalid {
@@ -1285,7 +1403,10 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
             if (!tuple && !identifier(&field.name))
                 || !fields.insert(&field.name)
                 || !source_signature_type(&scalar(&field.ty))
-                || matches!(field.ty, PlanType::FunctionPointer(_))
+                || matches!(
+                    field.ty,
+                    PlanType::FunctionPointer(_) | PlanType::Closure(_) | PlanType::ClosureRef(_)
+                )
             {
                 return Err(PlanError::Invalid {
                     function: declaration.name.clone(),

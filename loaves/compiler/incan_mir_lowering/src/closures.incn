@@ -1,11 +1,6 @@
 """Callable signature admission from checked frontend representation facts."""
 
-from rust::incan_semantics_core import (
-    IncanType as RustType,
-    IncanPrimitiveType as Primitive,
-    IncanCallableParam,
-    IncanCallableParamKind,
-)
+from rust::incan_semantics_core import IncanType as RustType, IncanCallableParam, IncanCallableParamKind
 from rust::incan_semantics_core::body_ir import (
     Body as RustBody,
     BodyIrModule as RustModule,
@@ -16,7 +11,23 @@ from rust::incan_semantics_core::body_ir import (
     CallableTarget as RustCallableTarget,
     NamedCallableTarget as RustNamedTarget,
 )
-from pub::incan_mir_plan import PlanType, Operand, RvalueKind
+from pub::incan_mir_plan import (
+    PlanType,
+    Operand,
+    RvalueKind,
+    TupleElement,
+    Callee,
+    CalleeKind,
+    Function,
+    Local,
+    Parameter,
+    SourceSpan,
+    Statement,
+    TerminatorKind,
+    Unwind,
+    OperandKind,
+)
+from pub::incan_mir_plan import block as plan_block, place as plan_place
 from types import primitive_type
 from classes import function_name
 
@@ -35,11 +46,7 @@ pub def function_pointer_type(parameters: &list[IncanCallableParam], result: &Ru
 def callable_component(ty: &RustType) -> Result[PlanType, str]:
     """Admit scalar and recursively callable signature components; name every other retained type."""
     match ty:
-        RustType.Primitive(primitive) =>
-            match primitive:
-                # Sized carriers stay refused until a closure parity test proves their native arithmetic matches legacy.
-                Primitive.Numeric(_kind) => return Err(f"unsupported Body IR sized numeric callable signature type {ty}")
-                _ => return primitive_type(primitive)
+        RustType.Primitive(primitive) => return primitive_type(primitive)
         RustType.Function(params=parameters, return_type=result) => return function_pointer_type(parameters, result)
         _ => return Err(f"unsupported Body IR callable signature type {ty}")
 
@@ -61,15 +68,9 @@ pub def function_pointer_storage(body: &RustBody) -> list[int]:
 
 
 pub def validate_callable_representation(body: &RustBody) -> Result[None, str]:
-    """Do not substitute a function pointer for the checker's closure-holding parameter or return contract."""
+    """Refuse callable signatures whose closure-holding contract the checker did not record."""
     match body.callable_representation:
-        Some(representation) =>
-            if representation.closure_holding_return:
-                return Err(f"unsupported Body IR closure-holding return in {body.name}")
-            if len(representation.closure_holding_parameters) != 0:
-                return Err(f"unsupported Body IR closure-holding parameter in {body.name}")
-            return Ok(None)
-
+        Some(_representation) => return Ok(None)
         None =>
             match body.return_type:
                 RustType.Function(params=_parameters, return_type=_result) =>
@@ -83,6 +84,104 @@ pub def validate_callable_representation(body: &RustBody) -> Result[None, str]:
             return Ok(None)
 
 
+pub def parameter_representation(body: &RustBody, local: int, ty: PlanType) -> Result[PlanType, str]:
+    """A closure-holding parameter receives a shared callable object, never a function pointer."""
+    match ty:
+        PlanType.FunctionPointer(signature) =>
+            match body.callable_representation:
+                Some(representation) =>
+                    for held in representation.closure_holding_parameters:
+                        if int(held.index()) == local:
+                            _ = closure_arguments(signature)?
+                            return Ok(PlanType.ClosureRef(signature))
+                None => pass
+        _ => pass
+    return Ok(ty)
+
+
+pub def return_representation(body: &RustBody, ty: PlanType) -> Result[PlanType, str]:
+    """A function whose one returned closure captures returns that closure's owned callable object."""
+    match ty:
+        PlanType.FunctionPointer(signature) =>
+            match body.callable_representation:
+                Some(representation) =>
+                    if representation.closure_holding_return:
+                        _ = closure_arguments(signature)?
+                        return Ok(PlanType.Closure(signature))
+                None => pass
+        _ => pass
+    return Ok(ty)
+
+
+pub def closure_arguments(signature: list[PlanType]) -> Result[list[TupleElement], str]:
+    """A callable object's call packs its inputs into one tuple, so each input must be a flat tuple element."""
+    if len(signature) == 0:
+        return Err("invalid Body IR callable signature without return type")
+    mut elements: list[TupleElement] = []
+    for index in range(len(signature) - 1):
+        match signature[index]:
+            PlanType.Int => elements.append(TupleElement.Int)
+            PlanType.Float => elements.append(TupleElement.Float)
+            PlanType.Bool => elements.append(TupleElement.Bool)
+            PlanType.Unit => elements.append(TupleElement.Unit)
+            PlanType.String => elements.append(TupleElement.String)
+            _ => return Err("unsupported Body IR closure input outside scalars and owned text")
+    match signature[-1]:
+        PlanType.Int => pass
+        PlanType.Float => pass
+        PlanType.Bool => pass
+        PlanType.Unit => pass
+        PlanType.String => pass
+        _ => return Err("unsupported Body IR closure result outside scalars and owned text")
+    return Ok(elements)
+
+
+pub def closure_capture_type(ty: PlanType) -> bool:
+    """The first closure slice captures only Copy scalars, so a by-value snapshot needs no clone or move policy."""
+    match ty:
+        PlanType.Int => return true
+        PlanType.Float => return true
+        PlanType.Bool => return true
+        _ => return false
+
+
+pub def closure_constructor(
+    name: str,
+    lifted: str,
+    captures: list[PlanType],
+    signature: list[PlanType],
+    span: SourceSpan,
+) -> Function:
+    """
+    Declare the constructor whose native body boxes one environment holding the captures in order.
+
+    Its plan body is only the validated contract the driver checks: one `ClosureBody` call returning the boxed object.
+    The driver supplies the native closure, whose body forwards the captures and then its own inputs to `lifted`.
+    """
+    mut locals = [Local(ty=PlanType.Closure(signature), span=span)]
+    mut parameters: list[Parameter] = []
+    mut operands: list[Operand] = []
+    for index in range(len(captures)):
+        locals.append(Local(ty=captures[index], span=span))
+        parameters.append(Parameter(name=f"__incan_capture_{index}", ty=captures[index], span=span))
+        operands.append(Operand(kind=OperandKind.Copy(plan_place(index + 1, span)), span=span))
+    call = TerminatorKind.Call(
+        Callee(kind=CalleeKind.ClosureBody(lifted, len(captures)), span=span),
+        operands,
+        plan_place(0, span),
+        1,
+        Unwind.Continue,
+    )
+    return Function(
+        name=name,
+        parameters=parameters,
+        return_type=PlanType.Closure(signature),
+        locals=locals,
+        blocks=[plan_block([], call, span), plan_block([], TerminatorKind.Return, span)],
+        span=span,
+    )
+
+
 pub def callable_copy_type(ty: PlanType) -> bool:
     """Function items and function pointers have no environment owner and are native Copy values."""
     match ty:
@@ -92,10 +191,12 @@ pub def callable_copy_type(ty: PlanType) -> bool:
 
 
 pub def callable_signature(ty: PlanType) -> Result[list[PlanType], str]:
-    """Read a retained function signature without treating a closure environment as a pointer."""
+    """Read a retained function or callable-object signature; inputs come first and the result is last."""
     match ty:
         PlanType.FunctionPointer(signature) => return Ok(signature)
         PlanType.FunctionItem(_name, signature) => return Ok(signature)
+        PlanType.Closure(signature) => return Ok(signature)
+        PlanType.ClosureRef(signature) => return Ok(signature)
         _ => return Err("unsupported Body IR local callable representation")
 
 

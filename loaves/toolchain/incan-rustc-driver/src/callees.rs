@@ -14,6 +14,10 @@ pub fn resolve(tcx: TyCtxt<'_>, callee: &Callee) -> Result<DefId, PlanError> {
         CalleeKind::Value(_) => Err(PlanError::UnknownCallee(
             "local callable has no declaration callee".into(),
         )),
+        CalleeKind::CallClosure(_) => fn_call(tcx),
+        CalleeKind::ClosureBody(..) => Err(PlanError::UnknownCallee(
+            "closure constructors keep rustc's own body".into(),
+        )),
         CalleeKind::Instantiated(path, _) | CalleeKind::InstantiatedPair(path, _, _) => external(tcx, path),
         CalleeKind::SpawnGenerator(_, leaf, depth) => generator_method(tcx, "Generator", "spawn", leaf, *depth),
         CalleeKind::YieldGenerator(leaf, depth) => generator_method(tcx, "GeneratorYield", "yield_value", leaf, *depth),
@@ -51,6 +55,19 @@ fn generator_method(
         .copied()
         .find(|def| tcx.item_name(*def).as_str() == member)
         .ok_or_else(|| PlanError::UnknownCallee(format!("{owner}::{member}")))
+}
+
+/// Select `Fn::call` from the language item, the one method a borrowed callable object is invoked through.
+pub fn fn_call(tcx: TyCtxt<'_>) -> Result<DefId, PlanError> {
+    let fn_trait = tcx
+        .lang_items()
+        .fn_trait()
+        .ok_or_else(|| PlanError::UnknownCallee("Fn".into()))?;
+    tcx.associated_item_def_ids(fn_trait)
+        .iter()
+        .copied()
+        .find(|def| tcx.item_name(*def).as_str() == "call")
+        .ok_or_else(|| PlanError::UnknownCallee("Fn::call".into()))
 }
 
 /// Resolve only a source-local function item admitted by the plan's canonical frontend identity.
