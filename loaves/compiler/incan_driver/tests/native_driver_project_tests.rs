@@ -1016,6 +1016,12 @@ fn list_statics_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>
     check_declaration_case("list_statics", corpus::LIST_STATICS_SOURCE, None)
 }
 
+/// Primitive and tuple patterns preserve literal tests, source arm order, and owned binding snapshots.
+#[test]
+fn structural_matches_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case("structural_matches", corpus::STRUCTURAL_MATCHES_SOURCE, None)
+}
+
 /// Newtypes, erased aliases, scalar constants, and persistent scalar statics retain exactly the legacy output.
 #[test]
 fn declarations_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

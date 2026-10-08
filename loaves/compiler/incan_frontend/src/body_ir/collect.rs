@@ -27,19 +27,17 @@ pub(super) fn collect_scalar_statics(program: &ast::Program, type_info: &TypeChe
 /// Preserve literal values only in their exact checked primitive or list element carrier.
 fn static_literal_initializer(value: &ast::Expr, ty: &IncanType) -> Option<bir::StaticInitializer> {
     match (value, ty) {
-        (ast::Expr::Literal(literal), IncanType::Primitive(primitive))
-            if matches!(
-                primitive,
+        (
+            ast::Expr::Literal(literal),
+            IncanType::Primitive(
                 IncanPrimitiveType::Int
-                    | IncanPrimitiveType::Float
-                    | IncanPrimitiveType::Bool
-                    | IncanPrimitiveType::Str
-            ) =>
-        {
-            Some(bir::StaticInitializer::Literal(primitives::lower_checked_literal(
-                literal, ty,
-            )))
-        }
+                | IncanPrimitiveType::Float
+                | IncanPrimitiveType::Bool
+                | IncanPrimitiveType::Str,
+            ),
+        ) => Some(bir::StaticInitializer::Literal(primitives::lower_checked_literal(
+            literal, ty,
+        ))),
         (ast::Expr::List(entries), IncanType::Generic { base, args })
             if collections::from_str(base) == Some(CollectionTypeId::List) =>
         {
