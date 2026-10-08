@@ -283,6 +283,26 @@ def main() -> None:
     Ok(())
 }
 
+/// A read-only text constant read by value owns a copy of its literal, as legacy's owned constant read does.
+#[test]
+fn text_constants_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_case(
+        "text_constants",
+        r#"
+const LABEL: str = "orders"
+const COUNT: int = 3
+
+def make_widget(name: str) -> str:
+    return f"widget:{name}"
+
+def main() -> None:
+    println(LABEL)
+    println(make_widget(LABEL))
+    println(f"{LABEL}-{COUNT}")
+"#,
+    )
+}
+
 /// Fields of a model element read out of a list copy scalars and clone owned values, as legacy's element reads do.
 #[test]
 fn list_element_fields_match_legacy() -> Result<(), Box<dyn std::error::Error>> {

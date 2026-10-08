@@ -3659,7 +3659,7 @@ def read_static(
         return Err("unsupported Body IR static projection")
     match fact:
         OwnershipFact.Copy => pass
-        _ => return Err("unsupported Body IR static ownership")
+        _ => return read_text_constant(builder, global, span)
     slot = static_slot(builder.statics, global)?
     ty = model_type(builder.nominals, global.ty)?
     read_cell, _write_cell = static_accessors(ty)?
@@ -3667,6 +3667,16 @@ def read_static(
     target = temporary(builder, ty, span)
     external_call(builder, read_cell, [PlanType.Int, ty], ty, [literal(Constant.Int(slot), span), initial], target, span)
     return Ok(read_place(target, false, span))
+
+
+def read_text_constant(mut builder: Builder, global: &RustGlobalPlace, span: SourceSpan) -> Result[Operand, str]:
+    """Own a copy of a read-only text constant's literal, as legacy's owned read of the constant does."""
+    if global.write_policy != RustGlobalWritePolicy.ReadOnly:
+        return Err("unsupported Body IR static ownership")
+    slot = static_slot(builder.statics, global)?
+    match builder.statics[slot].initial:
+        RustConstant.Str(text) => return Ok(read_place(owned_literal(builder, str(text), span), true, span))
+        _ => return Err("unsupported Body IR static ownership")
 
 
 def write_static(
