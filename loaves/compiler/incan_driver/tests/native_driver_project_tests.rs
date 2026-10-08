@@ -542,6 +542,16 @@ fn direct_route_settled_result_sides_match_legacy() -> Result<(), Box<dyn std::e
     )
 }
 
+/// Compiler-generated collection writes in filtered comprehensions preserve canonical dispatch and legacy bytes.
+#[test]
+fn direct_route_comprehension_writes_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    assert_native_legacy_bytes(
+        "comprehension_writes",
+        "def main() -> None:\n    xs = [1, 2, 3, 4]\n    values = [x * x for x in xs if x > 2]\n    indexed = {x: x * x for x in xs if x % 2 == 0}\n    println(values[0])\n    println(values[1])\n    println(indexed[2])\n    println(indexed[4])\n    println(len(xs))\n",
+        b"9\n16\n4\n16\n4\n",
+    )
+}
+
 /// Imported aliases and module-qualified scalar calls preserve canonical binding and legacy output; async vocabulary
 /// reaches lowering.
 #[test]

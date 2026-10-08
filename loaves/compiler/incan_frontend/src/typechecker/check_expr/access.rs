@@ -46,7 +46,7 @@ use incan_lang::lang::types::numerics::{self as numerics, IntegerHelperFamily, I
 use incan_lang::lang::{conventions, stdlib};
 use incan_lang::lang::{enum_helpers, surface::option_methods};
 use incan_semantics_core::body_ir::HelperOp;
-use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace};
 use quote::ToTokens;
 use syn::{GenericArgument, PathArguments, ReturnType, Type as SynType, TypeParamBound};
 
@@ -1956,14 +1956,7 @@ impl TypeChecker {
     /// and member are selected from typed compiler registries before this is called; source spelling alone is never
     /// treated as semantic evidence.
     fn compiler_builtin_member_identity(owner: &str, member: &str) -> CanonicalSymbolId {
-        CanonicalSymbolId {
-            namespace: SymbolNamespace::Member,
-            origin: SymbolOrigin::Builtin,
-            declaration_name: format!("{owner}.{member}"),
-            kind: SemanticSourceTargetKind::Method,
-            scope_discriminant: None,
-            declaration_span: HirSourceSpan::new(0, 0),
-        }
+        crate::symbols::canonical_builtin_member_identity(owner, member)
     }
 
     /// Build a compiler-synthesized member identity from the canonical identity of its owning declaration.
