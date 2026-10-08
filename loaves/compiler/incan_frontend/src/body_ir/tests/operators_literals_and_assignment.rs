@@ -1055,3 +1055,40 @@ fn text_constants_retain_checked_values_without_shadowing_local_places() -> Resu
     assert!(local.contains("_0"), "{local}");
     Ok(())
 }
+
+/// Frozen constants and checked literals keep their storage identity while ordinary text parameters stay places.
+#[test]
+fn frozen_text_operands_retain_the_checked_storage_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "const NAME: str = \"policy\"\nconst FROZEN: FrozenStr = \"frozen\"\n\ndef static_text() -> FrozenStr | str | int:\n    return NAME\n\ndef frozen_text() -> FrozenStr | str | int:\n    return FROZEN\n\ndef literal() -> FrozenStr:\n    return \"literal\"\n\ndef owned(value: str) -> FrozenStr | str | int:\n    return value\n",
+        &["m", "frozen_storage"],
+    )?;
+    for (name, expected) in [
+        ("static_text", "policy"),
+        ("frozen_text", "frozen"),
+        ("literal", "literal"),
+    ] {
+        let body = body_named(&module, name)?;
+        assert!(
+            body.block.stmts.iter().any(|statement| matches!(
+                &statement.kind,
+                bir::StatementKind::Return { value: Some(bir::Operand::Constant(bir::Constant::FrozenStr(text))) }
+                    if text == expected
+            )),
+            "{}",
+            body.render_snapshot()
+        );
+    }
+    let owned = body_named(&module, "owned")?;
+    assert!(
+        owned.block.stmts.iter().any(|statement| matches!(
+            &statement.kind,
+            bir::StatementKind::Return {
+                value: Some(bir::Operand::Place(_))
+            }
+        )),
+        "{}",
+        owned.render_snapshot()
+    );
+    Ok(())
+}

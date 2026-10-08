@@ -2683,6 +2683,94 @@ fn assert_package_routes_match(
     Ok(())
 }
 
+/// Frozen and owned union members retain their identities while isinstance recognizes both as source str.
+#[test]
+fn direct_route_frozen_union_strings_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("frozen-union-strings")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"const NAME: str = "policy"
+const FROZEN: FrozenStr = "frozen"
+const EMPTY: str = ""
+
+type Label = FrozenStr | str | int
+
+def classify(value: Label) -> str:
+    """Match every string storage without widening the integer arm."""
+    if isinstance(value, str):
+        return "text"
+    if isinstance(value, int):
+        return "int"
+    return "other"
+
+def choose(which: int) -> Label:
+    """Construct each retained union member at its checked boundary."""
+    if which == 0:
+        return FROZEN
+    if which == 1:
+        owned: str = "owned"
+        return owned
+    return 7
+
+def frozen_text(value: FrozenStr | int) -> bool:
+    """Accept an evaluated static str constant in the frozen member."""
+    return isinstance(value, str)
+
+def owned_text(value: str | int) -> bool:
+    """Convert a frozen value at an owned-string union boundary."""
+    return isinstance(value, str)
+
+def frozen_target(value: Label) -> bool:
+    """Retain legacy's symmetric string identity for a frozen target."""
+    return isinstance(value, FrozenStr)
+
+def present(value: Option[FrozenStr]) -> str:
+    """Observe a frozen payload through the existing standard Option carrier."""
+    match value:
+        Some(text) => return str(text)
+        None => return "missing"
+
+def frozen_place(value: FrozenStr) -> None:
+    """Observe actual frozen place parsing and empty-text truthiness separately from static constants."""
+    println(bool(value))
+
+def parsed_place(value: FrozenStr) -> None:
+    """Parse borrowed frozen places using the legacy conversion helpers."""
+    println(int(value))
+    println(float(value))
+
+def main() -> None:
+    """Compare copied constants, both string union tags, and nonstring counterexamples."""
+    println(isinstance(FROZEN, str))
+    println(bool(NAME))
+    println(bool(EMPTY))
+    frozen_place(EMPTY)
+    parsed_place("12")
+    println(classify(NAME))
+    println(classify("literal"))
+    println(classify(choose(0)))
+    println(classify(choose(1)))
+    println(classify(choose(2)))
+    println(frozen_text(NAME))
+    println(frozen_text(7))
+    println(owned_text(FROZEN))
+    println(owned_text(7))
+    println(frozen_target(choose(0)))
+    println(frozen_target(choose(1)))
+    println(frozen_target(choose(2)))
+    println(present(Some(NAME)))
+    println(present(None))
+    values: list[str] = [FROZEN]
+    words: dict[str, str] = {"k": FROZEN}
+    println(values[0])
+    println(words["k"])
+"#,
+    )
+}
+
 /// Prove tuple construction, typed signatures, constant projections, and simultaneous unpacking against legacy.
 #[test]
 fn tuple_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
