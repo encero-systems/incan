@@ -2805,13 +2805,18 @@ impl AstLowering {
             .as_ref()
             .and_then(|info| info.resolved_collection_constructor(call_span))
         {
-            let args_ir = self.lower_call_args(args)?.into_iter().map(|arg| arg.expr).collect();
             let result_ty = self
                 .type_info
                 .as_ref()
                 .and_then(|info| info.expr_type(call_span))
                 .map(|ty| self.lower_resolved_type(ty))
                 .unwrap_or(IrType::Unknown);
+
+            // ---- Checked empty dictionary: use the existing aggregate emitter rather than a constructor builtin ----
+            if constructor == CollectionTypeId::Dict && args.is_empty() {
+                return Ok((IrExprKind::Dict(Vec::new()), result_ty));
+            }
+            let args_ir = self.lower_call_args(args)?.into_iter().map(|arg| arg.expr).collect();
             return Ok((
                 IrExprKind::BuiltinCall {
                     func: BuiltinFn::CollectionConstructor(constructor),

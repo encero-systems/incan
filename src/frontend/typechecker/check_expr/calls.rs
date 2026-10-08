@@ -303,7 +303,7 @@ impl TypeChecker {
                 return ResolvedType::Unknown;
             }
 
-            if let Some(result) = self.check_builtin_call(name, args, span) {
+            if let Some(result) = self.check_builtin_call(name, args, span, expected_return_ty) {
                 if !type_args.is_empty() {
                     self.errors
                         .push(errors::explicit_call_site_type_args_not_supported(span));

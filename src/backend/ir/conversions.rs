@@ -952,6 +952,12 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
                     Conversion::ToString
                 }
                 _ if borrowed_expr_needs_owned_materialization(expr, target_ty) => Conversion::Clone,
+                // A Read marks a source binding that remains live after this owned assignment. Preserve it with the
+                // centralized assignment clone policy; a final Move still transfers ownership directly.
+                (IrExprKind::Var { access, .. }, _) if !expr.ty.is_copy() => match access {
+                    VarAccess::Move => Conversion::None,
+                    _ => Conversion::Clone,
+                },
                 (IrExprKind::Field { .. }, _)
                     if matches!(expr.ty, IrType::String) && field_read_needs_owned_materialization(expr) =>
                 {

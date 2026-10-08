@@ -1,11 +1,52 @@
 //! Unit coverage for the parts of the comparison that do not need a staged Oven capability.
 //!
-//! Everything here is about the *rules*: how a result is framed and recovered, how failures are classified, when
+//! Everything here is about the *rules*: how a typed result report is recovered without consuming program streams,
+//! how failures are classified, when
 //! two observations may be compared at all, and what survives a comparison that could not run. The end-to-end
 //! proof that two real executions agree lives in `tests/shadow_comparison_tests.rs`, because only a real Oven
 //! build can supply it.
 
 use super::*;
+
+/// An internal shadow observation must never relay its private program output into the host process streams.
+#[test]
+fn replacement_shadow_observation_does_not_leak_program_output() -> Result<(), Box<dyn std::error::Error>> {
+    const PROBE_ENV: &str = "INCAN_TEST_SHADOW_OUTPUT_CHILD";
+    const OUTPUT: &str = "private-shadow-output-1249";
+    if std::env::var_os(PROBE_ENV).is_some() {
+        let source = format!("def observed() -> int:\n    println(\"{OUTPUT}\")\n    return 42\n");
+        let profile = ShadowComparisonProfile::new(source, "observed", Vec::new());
+        // Pin actual execution as well as isolation: an earlier profile refusal must not produce a false pass.
+        let prepared = PreparedShadowProfile::new(&profile, "debug")?;
+        let observed = observe_replacement_route(&profile, &prepared)?;
+        let execution = observed.execution.ok_or("expected actual direct execution")?;
+        assert_eq!(execution.value, ReplacementValue::Int(42));
+        assert_eq!(execution.output.stdout(), format!("{OUTPUT}\n").as_bytes());
+        return Ok(());
+    }
+    let child = std::process::Command::new(std::env::current_exe()?)
+        .args([
+            "--exact",
+            "backend::shadow::tests::replacement_shadow_observation_does_not_leak_program_output",
+            "--nocapture",
+        ])
+        .env(PROBE_ENV, "1")
+        .output()?;
+    assert!(child.status.success(), "{}", String::from_utf8_lossy(&child.stderr));
+    assert!(
+        !child
+            .stdout
+            .windows(OUTPUT.len())
+            .any(|window| window == OUTPUT.as_bytes())
+    );
+    assert!(
+        !child
+            .stderr
+            .windows(OUTPUT.len())
+            .any(|window| window == OUTPUT.as_bytes())
+    );
+    Ok(())
+}
 
 fn profile() -> ShadowComparisonProfile {
     ShadowComparisonProfile::new(
@@ -13,6 +54,107 @@ fn profile() -> ShadowComparisonProfile {
         "add",
         vec![ReplacementValue::Int(40), ReplacementValue::Int(2)],
     )
+}
+
+/// A source-session provider closure cannot borrow an unrelated adopted native plan.
+#[test]
+fn mismatched_native_build_inputs_are_unavailable_before_materialization() -> Result<(), Box<dyn std::error::Error>> {
+    let workspace = tempfile::tempdir()?;
+    let generated_source = workspace.path().join("adopted-main.rs");
+    std::fs::write(&generated_source, "fn main() {}\n")?;
+    let adopted_receipt = crate::oven::receipt_generated_project(
+        &crate::oven::OvenGeneratedProjectRequest::new(
+            workspace.path(),
+            "shadow-context-fixture",
+            "0.1.0",
+            "fixture-target",
+            "fixture-toolchain",
+            "debug",
+            Vec::new(),
+        )
+        .with_generated_source("generated-root", &generated_source)
+        .with_build_unit_input("provider-plan", "sha256:adopted-context"),
+    )?;
+    let adopted_receipt_path = workspace.path().join("adopted-receipt.json");
+    std::fs::write(&adopted_receipt_path, serde_json::to_vec(&adopted_receipt)?)?;
+    let capability = legacy_oven::LegacyOvenCapability::adopt_baked_project(
+        workspace.path().join("store"),
+        workspace.path().join("rustc"),
+        &adopted_receipt_path,
+    )?;
+    let context_profile = profile();
+    let materialization = ShadowLegacyMaterialization::from_provider_plan(
+        std::sync::Arc::new(crate::provider::ProviderPlan::default()),
+        std::collections::BTreeMap::from([("provider-plan".to_string(), "sha256:source-session-context".to_string())]),
+        context_profile.source_identity(),
+    );
+
+    let comparison = compare_source_observable(&context_profile, &materialization, &capability, workspace.path());
+    let reason = comparison
+        .unavailable_reason()
+        .ok_or("mismatched native inputs must not produce a comparison outcome")?;
+    assert!(
+        reason.contains("does not match the adopted Oven build-unit inputs"),
+        "{reason}"
+    );
+    assert!(comparison.replacement.is_none());
+    assert!(comparison.legacy.is_none());
+    assert!(comparison.legacy_authority.is_none());
+    assert!(comparison.legacy_process.is_none());
+    Ok(())
+}
+
+/// A session prepared for source A cannot authorize a same-closure comparison over source B.
+#[test]
+fn mismatched_profile_source_is_unavailable_before_materialization() -> Result<(), Box<dyn std::error::Error>> {
+    let workspace = tempfile::tempdir()?;
+    let generated_source = workspace.path().join("adopted-main.rs");
+    std::fs::write(&generated_source, "fn main() {}\n")?;
+    let adopted_receipt = crate::oven::receipt_generated_project(
+        &crate::oven::OvenGeneratedProjectRequest::new(
+            workspace.path(),
+            "shadow-source-fixture",
+            "0.1.0",
+            "fixture-target",
+            "fixture-toolchain",
+            "debug",
+            Vec::new(),
+        )
+        .with_generated_source("generated-root", &generated_source)
+        .with_build_unit_input("provider-plan", "sha256:shared-context"),
+    )?;
+    let adopted_receipt_path = workspace.path().join("adopted-receipt.json");
+    std::fs::write(&adopted_receipt_path, serde_json::to_vec(&adopted_receipt)?)?;
+    let capability = legacy_oven::LegacyOvenCapability::adopt_baked_project(
+        workspace.path().join("store"),
+        workspace.path().join("rustc"),
+        &adopted_receipt_path,
+    )?;
+    let source_a = profile();
+    let source_b = ShadowComparisonProfile::new(
+        "def add(x: int, y: int) -> int:\n    return x - y\n",
+        "add",
+        vec![ReplacementValue::Int(40), ReplacementValue::Int(2)],
+    );
+    let materialization = ShadowLegacyMaterialization::from_provider_plan(
+        std::sync::Arc::new(crate::provider::ProviderPlan::default()),
+        std::collections::BTreeMap::from([("provider-plan".to_string(), "sha256:shared-context".to_string())]),
+        source_a.source_identity(),
+    );
+
+    let comparison = compare_source_observable(&source_b, &materialization, &capability, workspace.path());
+    let reason = comparison
+        .unavailable_reason()
+        .ok_or("a profile that differs from its prepared source must not compare")?;
+    assert!(
+        reason.contains("profile source does not match the source session"),
+        "{reason}"
+    );
+    assert!(comparison.replacement.is_none());
+    assert!(comparison.legacy.is_none());
+    assert!(comparison.legacy_authority.is_none());
+    assert!(comparison.legacy_process.is_none());
+    Ok(())
 }
 
 fn authority() -> LegacyExecutionAuthority {
@@ -31,18 +173,37 @@ fn observation(profile_identity: &str, observable: SourceObservable, detail: &st
         profile_identity: profile_identity.to_string(),
         output_identity: digest_output(&["test", detail]),
         observable,
+        stdout: Vec::new(),
+        stderr: Vec::new(),
         detail: detail.to_string(),
     }
 }
 
-fn completed(result: &str) -> SourceObservable {
+fn completed(kind: FunctionResultKind, value: &str) -> SourceObservable {
     SourceObservable::Completed {
-        result: result.to_string(),
+        result: TypedFunctionResult {
+            kind,
+            value: value.to_string(),
+        },
     }
 }
 
-fn framed(payload: &str) -> Vec<u8> {
-    format!("{RESULT_BEGIN_MARKER}\n{payload}\n{RESULT_END_MARKER}\n").into_bytes()
+fn report(kind: FunctionResultKind, payload: &str) -> Vec<u8> {
+    format!("{}{payload}", result_report_header(kind)).into_bytes()
+}
+
+fn process(
+    exit_code: Option<i32>,
+    stdout: &[u8],
+    stderr: &[u8],
+    result_report: Option<Vec<u8>>,
+) -> LegacyProcessEvidence {
+    LegacyProcessEvidence {
+        exit_code,
+        stdout: stdout.to_vec(),
+        stderr: stderr.to_vec(),
+        result_report,
+    }
 }
 
 // ============================================================================
@@ -50,66 +211,138 @@ fn framed(payload: &str) -> Vec<u8> {
 // ============================================================================
 
 #[test]
-fn a_framed_result_round_trips_exactly() -> Result<(), ShadowUnavailable> {
-    assert_eq!(decode_framed_result(&framed("42"))?, "42");
-    assert_eq!(decode_framed_result(&framed(""))?, "");
-    assert_eq!(decode_framed_result(&framed("  padded  "))?, "  padded  ");
+fn a_typed_result_report_round_trips_exactly() -> Result<(), ShadowUnavailable> {
+    assert_eq!(
+        decode_result_report(&report(FunctionResultKind::Int, "42"), FunctionResultKind::Int)?,
+        TypedFunctionResult {
+            kind: FunctionResultKind::Int,
+            value: "42".to_string(),
+        }
+    );
+    assert_eq!(
+        decode_result_report(&report(FunctionResultKind::Unit, ""), FunctionResultKind::Unit)?,
+        TypedFunctionResult {
+            kind: FunctionResultKind::Unit,
+            value: "None".to_string(),
+        }
+    );
     Ok(())
+}
+
+#[test]
+fn the_result_report_protocol_uses_literal_ascii_colon_delimiters() {
+    assert_eq!(
+        result_report_header(FunctionResultKind::Int).as_bytes(),
+        b"incan-shadow-result-v1:int:"
+    );
+    assert_eq!(
+        report(FunctionResultKind::Str, "\nleading\ntrailing\n"),
+        b"incan-shadow-result-v1:str:\nleading\ntrailing\n"
+    );
 }
 
 #[test]
 fn trailing_newlines_in_a_result_survive_transport() -> Result<(), ShadowUnavailable> {
-    // The whole point of framing: `"x"`, `"x\n"`, and `"\n"` must stay three distinct observations. Trimming the
-    // process output would collapse them and report a real divergence as a match.
-    assert_eq!(decode_framed_result(&framed("x"))?, "x");
-    assert_eq!(decode_framed_result(&framed("x\n"))?, "x\n");
-    assert_eq!(decode_framed_result(&framed("\n"))?, "\n");
+    // The report payload never shares stdout, so `"x"`, `"x\n"`, and `"\n"` stay distinct regardless of program
+    // output bytes.
+    let one = decode_result_report(&report(FunctionResultKind::Str, "x"), FunctionResultKind::Str)?;
+    let newline = decode_result_report(&report(FunctionResultKind::Str, "x\n"), FunctionResultKind::Str)?;
+    let only_newline = decode_result_report(&report(FunctionResultKind::Str, "\n"), FunctionResultKind::Str)?;
+    assert_eq!(one.value, "x");
+    assert_eq!(newline.value, "x\n");
+    assert_eq!(only_newline.value, "\n");
     assert_ne!(
-        completed(&decode_framed_result(&framed("x"))?),
-        completed(&decode_framed_result(&framed("x\n"))?)
+        completed(FunctionResultKind::Str, &one.value),
+        completed(FunctionResultKind::Str, &newline.value)
     );
     Ok(())
 }
 
 #[test]
-fn a_result_containing_the_end_marker_is_still_recovered_exactly() -> Result<(), ShadowUnavailable> {
-    // The frame is positional, so a payload that happens to contain the marker text cannot truncate the result.
-    let payload = format!("before\n{RESULT_END_MARKER}\nafter");
-    assert_eq!(decode_framed_result(&framed(&payload))?, payload);
+fn a_result_containing_header_text_is_still_recovered_exactly() -> Result<(), ShadowUnavailable> {
+    let payload = format!("before\n{RESULT_REPORT_VERSION}\nafter");
+    assert_eq!(
+        decode_result_report(&report(FunctionResultKind::Str, &payload), FunctionResultKind::Str)?.value,
+        payload
+    );
     Ok(())
 }
 
 #[test]
-fn unframed_output_is_unavailable_rather_than_guessed() {
-    assert!(decode_framed_result(b"42\n").is_err());
-    assert!(decode_framed_result(b"").is_err());
-    assert!(decode_framed_result(format!("{RESULT_BEGIN_MARKER}\n42\n").as_bytes()).is_err());
-    let mut leading_noise = b"unexpected\n".to_vec();
-    leading_noise.extend_from_slice(&framed("42"));
-    assert!(decode_framed_result(&leading_noise).is_err());
+fn a_malformed_or_wrongly_typed_report_is_unavailable_rather_than_guessed() {
+    assert!(decode_result_report(b"42\n", FunctionResultKind::Int).is_err());
+    assert!(decode_result_report(b"", FunctionResultKind::Int).is_err());
+    assert!(decode_result_report(&report(FunctionResultKind::Bool, "true"), FunctionResultKind::Int).is_err());
+    assert!(decode_result_report(&report(FunctionResultKind::Bool, "yes"), FunctionResultKind::Bool).is_err());
+    assert!(
+        decode_result_report(
+            &report(FunctionResultKind::Unit, "unexpected"),
+            FunctionResultKind::Unit
+        )
+        .is_err()
+    );
 }
 
 #[test]
-fn a_non_utf8_result_is_unavailable_rather_than_lossily_converted() {
-    let mut output = format!("{RESULT_BEGIN_MARKER}\n").into_bytes();
-    output.push(0xFF);
-    output.extend_from_slice(format!("\n{RESULT_END_MARKER}\n").as_bytes());
-    assert!(decode_framed_result(&output).is_err());
+fn a_non_utf8_string_report_is_unavailable_rather_than_lossily_converted() {
+    let mut payload = result_report_header(FunctionResultKind::Str).into_bytes();
+    payload.push(0xFF);
+    assert!(decode_result_report(&payload, FunctionResultKind::Str).is_err());
 }
 
 #[test]
-fn the_generated_entrypoint_frames_the_observed_call() -> Result<(), ShadowUnavailable> {
-    let program = profile().legacy_program_source()?;
+fn the_generated_entrypoint_writes_a_typed_result_without_touching_program_streams() -> Result<(), ShadowUnavailable> {
+    let profile = profile();
+    let prepared = PreparedShadowProfile::new(&profile, "debug")?;
+    let program = profile.legacy_program_source(
+        prepared.result_kind,
+        Path::new("/worker-owned/result"),
+        &prepared.wrapper_identifiers,
+    )?;
     assert!(program.contains("def add(x: int, y: int) -> int:"), "{program}");
     assert!(
-        program.contains(&format!("println(\"{RESULT_BEGIN_MARKER}\")")),
+        program.contains(
+            "from rust::std::fs import rename as __incan_shadow_fs_rename_v1, write as __incan_shadow_fs_write_v1"
+        ),
         "{program}"
     );
-    assert!(program.contains("println(add(40, 2))"), "{program}");
     assert!(
-        program.contains(&format!("println(\"{RESULT_END_MARKER}\")")),
+        program.contains("from rust::std::path import Path as __incan_shadow_rust_path_v1"),
         "{program}"
     );
+    assert!(
+        program.contains("from rust::std::process import exit as __incan_shadow_process_exit_v1"),
+        "{program}"
+    );
+    assert!(
+        program.contains(
+            "def main() -> None:\n    \"\"\"Publish this harness call's typed result without sharing program streams.\"\"\""
+        ),
+        "{program}"
+    );
+    assert!(
+        program.contains("__incan_shadow_result_value_v1 = add(40, 2)"),
+        "{program}"
+    );
+    assert!(
+        program.contains(
+            "match __incan_shadow_fs_write_v1(__incan_shadow_rust_path_v1.new(\"/worker-owned/result.next\"),"
+        ),
+        "{program}"
+    );
+    assert!(
+        program.contains("Err(_) => __incan_shadow_process_exit_v1(86)"),
+        "{program}"
+    );
+    assert!(
+        program.contains("match __incan_shadow_fs_rename_v1(__incan_shadow_rust_path_v1.new(\"/worker-owned/result.next\"), __incan_shadow_rust_path_v1.new(\"/worker-owned/result\"))"),
+        "{program}"
+    );
+    assert!(
+        program.contains("Err(_) => __incan_shadow_process_exit_v1(87)"),
+        "{program}"
+    );
+    assert!(!program.contains("println("), "{program}");
     Ok(())
 }
 
@@ -120,24 +353,138 @@ fn the_generated_entrypoint_frames_the_observed_call() -> Result<(), ShadowUnava
 #[test]
 fn agreeing_observations_record_the_profile_and_the_compared_value() {
     let state = classify_observations(
-        &observation("sha256:profile", completed("42"), "legacy"),
-        &observation("sha256:profile", completed("42"), "replacement"),
+        &observation("sha256:profile", completed(FunctionResultKind::Int, "42"), "legacy"),
+        &observation(
+            "sha256:profile",
+            completed(FunctionResultKind::Int, "42"),
+            "replacement",
+        ),
     );
     assert_eq!(
         state,
         ShadowComparisonState::Matched {
             profile_kind: SHADOW_COMPARISON_PROFILE_ID.to_string(),
             profile_identity: "sha256:profile".to_string(),
-            observable: "completed(\"42\")".to_string(),
+            observable: observation("sha256:profile", completed(FunctionResultKind::Int, "42"), "legacy").describe(),
         }
     );
+}
+
+/// Equal returned values do not hide differences in either stream, its order, or non-UTF-8 bytes.
+#[test]
+fn raw_stream_differences_diverge_even_when_results_match() {
+    for (legacy_stdout, legacy_stderr, replacement_stdout, replacement_stderr) in [
+        (&b"first\nsecond\n"[..], &b""[..], &b"second\nfirst\n"[..], &b""[..]),
+        (&b"x\n"[..], &b""[..], &b"x"[..], &b""[..]),
+        (&b"x"[..], &b""[..], &b""[..], &b"x"[..]),
+        (&b""[..], &b"warning\n"[..], &b""[..], &b""[..]),
+        (&b""[..], &b"\xff"[..], &b""[..], &b"\xfe"[..]),
+    ] {
+        let mut legacy = observation("sha256:profile", completed(FunctionResultKind::Int, "42"), "legacy");
+        let mut replacement = observation(
+            "sha256:profile",
+            completed(FunctionResultKind::Int, "42"),
+            "replacement",
+        );
+        legacy.stdout = legacy_stdout.to_vec();
+        legacy.stderr = legacy_stderr.to_vec();
+        replacement.stdout = replacement_stdout.to_vec();
+        replacement.stderr = replacement_stderr.to_vec();
+        assert!(matches!(
+            classify_observations(&legacy, &replacement),
+            ShadowComparisonState::Diverged { .. }
+        ));
+    }
+}
+
+/// A shared failure class does not erase output written before that failure.
+#[test]
+fn failed_observations_compare_both_streams() {
+    let outcome = SourceObservable::Failed {
+        failure: RuntimeFailureClass::Assertion,
+    };
+    let mut legacy = observation("sha256:profile", outcome.clone(), "legacy failure");
+    let mut replacement = observation("sha256:profile", outcome, "direct failure");
+    legacy.stdout = b"before failure\n".to_vec();
+    replacement.stdout = legacy.stdout.clone();
+    legacy.stderr = b"\xffdiagnostic\n".to_vec();
+    replacement.stderr = legacy.stderr.clone();
+    assert!(matches!(
+        classify_observations(&legacy, &replacement),
+        ShadowComparisonState::Matched { .. }
+    ));
+    replacement.stdout.clear();
+    assert!(matches!(
+        classify_observations(&legacy, &replacement),
+        ShadowComparisonState::Diverged { .. }
+    ));
+}
+
+/// An unclassifiable direct failure retains accepted output without manufacturing a successful receipt.
+#[test]
+fn partial_direct_output_survives_unclassifiable_failure() -> Result<(), Box<dyn std::error::Error>> {
+    let profile = ShadowComparisonProfile::new(
+        "def observed() -> int:\n    println(\"before invalid index\")\n    values = [1]\n    return values[5]\n",
+        "observed",
+        Vec::new(),
+    );
+    let prepared = PreparedShadowProfile::new(&profile, "debug")?;
+    let observed = observe_replacement_route(&profile, &prepared)?;
+    assert!(observed.observation.is_none());
+    assert!(observed.execution.is_none());
+    assert_eq!(observed.output.stdout(), b"before invalid index\n");
+    let comparison = assemble_comparison(
+        &profile,
+        prepared.profile_identity,
+        Ok(observed),
+        Err(ShadowUnavailable::new("legacy unstaged")),
+    );
+    assert!(!comparison.matched());
+    assert!(comparison.replacement.is_none());
+    let output = comparison
+        .replacement_output
+        .as_ref()
+        .ok_or("partial direct output must survive")?;
+    assert_eq!(output.stdout(), b"before invalid index\n");
+    assert!(output.stderr().is_empty());
+    let reason = comparison
+        .unavailable_reason()
+        .ok_or("unclassified failure must remain unavailable")?;
+    assert!(reason.contains("cannot classify"), "{reason}");
+    assert!(!reason.contains("neither route executed"), "{reason}");
+    Ok(())
+}
+
+/// Failed-execution evidence must bind the bytes that preceded the same failure, not just its message.
+#[test]
+fn failure_output_identity_changes_with_prior_output() -> Result<(), Box<dyn std::error::Error>> {
+    let mut identities = Vec::new();
+    for text in ["first", "second"] {
+        let source = format!("def observed() -> int:\n    println(\"{text}\")\n    assert false\n    return 0\n");
+        let profile = ShadowComparisonProfile::new(source, "observed", Vec::new());
+        let prepared = PreparedShadowProfile::new(&profile, "debug")?;
+        let observed = observe_replacement_route(&profile, &prepared)?;
+        let observation = observed.observation.ok_or("assertion should be classified")?;
+        assert_eq!(observation.stdout, format!("{text}\n").as_bytes());
+        identities.push(observation.output_identity);
+    }
+    assert_ne!(identities[0], identities[1]);
+    Ok(())
 }
 
 #[test]
 fn differing_results_diverge_and_name_both_sides() {
     let state = classify_observations(
-        &observation("sha256:profile", completed("42"), "legacy detail"),
-        &observation("sha256:profile", completed("43"), "replacement detail"),
+        &observation(
+            "sha256:profile",
+            completed(FunctionResultKind::Int, "42"),
+            "legacy detail",
+        ),
+        &observation(
+            "sha256:profile",
+            completed(FunctionResultKind::Int, "43"),
+            "replacement detail",
+        ),
     );
     let ShadowComparisonState::Diverged {
         profile_kind,
@@ -149,29 +496,37 @@ fn differing_results_diverge_and_name_both_sides() {
     };
     assert_eq!(profile_kind, SHADOW_COMPARISON_PROFILE_ID);
     assert_eq!(profile_identity, "sha256:profile");
-    assert!(detail.contains("completed(\"42\")"), "{detail}");
-    assert!(detail.contains("completed(\"43\")"), "{detail}");
+    assert!(detail.contains("completed(Int, \"42\")"), "{detail}");
+    assert!(detail.contains("completed(Int, \"43\")"), "{detail}");
 }
 
 #[test]
 fn a_whitespace_only_difference_diverges_and_stays_visible_in_the_detail() {
     let state = classify_observations(
-        &observation("sha256:profile", completed("x"), "legacy"),
-        &observation("sha256:profile", completed("x\n"), "replacement"),
+        &observation("sha256:profile", completed(FunctionResultKind::Str, "x"), "legacy"),
+        &observation(
+            "sha256:profile",
+            completed(FunctionResultKind::Str, "x\n"),
+            "replacement",
+        ),
     );
     let ShadowComparisonState::Diverged { detail, .. } = state else {
         panic!("`x` and `x\\n` are different results and must diverge");
     };
-    assert!(detail.contains(r#"completed("x")"#), "{detail}");
-    assert!(detail.contains(r#"completed("x\n")"#), "{detail}");
+    assert!(detail.contains(r#"completed(Str, "x")"#), "{detail}");
+    assert!(detail.contains(r#"completed(Str, "x\n")"#), "{detail}");
 }
 
 #[test]
 fn observations_of_different_profiles_are_never_compared() {
     // Pairing two unrelated profile instances would manufacture a verdict about a comparison nobody ran.
     let state = classify_observations(
-        &observation("sha256:profile-a", completed("42"), "legacy"),
-        &observation("sha256:profile-b", completed("43"), "replacement"),
+        &observation("sha256:profile-a", completed(FunctionResultKind::Int, "42"), "legacy"),
+        &observation(
+            "sha256:profile-b",
+            completed(FunctionResultKind::Int, "43"),
+            "replacement",
+        ),
     );
     let ShadowComparisonState::Unavailable { reason } = state else {
         panic!("cross-profile observations must not produce a comparison verdict");
@@ -189,7 +544,7 @@ fn a_completed_result_never_matches_a_runtime_failure() {
             },
             "legacy",
         ),
-        &observation("sha256:profile", completed("0"), "replacement"),
+        &observation("sha256:profile", completed(FunctionResultKind::Int, "0"), "replacement"),
     );
     assert!(matches!(state, ShadowComparisonState::Diverged { .. }));
 }
@@ -238,6 +593,55 @@ fn an_overflow_is_not_classified_as_a_division_by_zero() -> Result<(), ShadowUna
     Ok(())
 }
 
+/// Keep canonical conversion identity ahead of unrelated words in the rejected input.
+#[test]
+fn canonical_conversion_failures_precede_incidental_diagnostic_words() -> Result<(), ShadowUnavailable> {
+    for input in [
+        "AssertionError overflow division by zero",
+        "assertion",
+        "overflow",
+        "division by zero",
+        "",
+        "é\n' to float",
+    ] {
+        for (payload, expected_label) in [
+            (
+                incan_core::errors::IncanError::cannot_convert_to_int(input).to_string(),
+                "conversion-int",
+            ),
+            (
+                incan_core::errors::IncanError::cannot_convert_to_float(input).to_string(),
+                "conversion-float",
+            ),
+        ] {
+            assert_eq!(classify_replacement_failure(&payload)?.label(), expected_label);
+            assert_eq!(
+                classify_legacy_failure(&format!("{payload}\n"))?.label(),
+                expected_label
+            );
+        }
+    }
+    Ok(())
+}
+
+/// A similar-looking message is not canonical conversion evidence without its complete framing.
+#[test]
+fn canonical_conversion_classification_requires_the_complete_payload() {
+    for detail in [
+        "cannot convert 'abc' to int",
+        "ValueError: cannot convert 'abc' to integer",
+        "ValueError: cannot convert 'abc' to float trailing",
+        "ValueError: cannot convert 'abc to int",
+        "valueerror: cannot convert 'abc' to int",
+        "prefix ValueError: cannot convert 'abc' to int",
+        "ValueError: cannot convert 'abc' to int\ntrailing",
+        "ValueError: cannot convert 'abc' to int\n\n",
+    ] {
+        assert!(classify_replacement_failure(detail).is_err(), "{detail:?}");
+        assert!(classify_legacy_failure(detail).is_err(), "{detail:?}");
+    }
+}
+
 #[test]
 fn an_unclassifiable_failure_stays_unavailable_on_both_routes() {
     assert!(classify_legacy_failure("Segmentation fault").is_err());
@@ -251,9 +655,13 @@ fn a_failing_legacy_exit_is_never_read_as_a_result() {
         SHADOW_COMPARISON_PROFILE_ID,
         "sha256:profile",
         &authority(),
-        Some(101),
-        &framed("42"),
-        "",
+        &process(
+            Some(101),
+            b"program stdout",
+            b"",
+            Some(report(FunctionResultKind::Int, "42")),
+        ),
+        FunctionResultKind::Int,
     );
     assert!(
         observed.is_err(),
@@ -267,9 +675,13 @@ fn the_legacy_output_identity_covers_its_oven_authority() -> Result<(), ShadowUn
         SHADOW_COMPARISON_PROFILE_ID,
         "sha256:profile",
         &authority(),
-        Some(0),
-        &framed("42"),
-        "",
+        &process(
+            Some(0),
+            b"program stdout",
+            b"program stderr",
+            Some(report(FunctionResultKind::Int, "42")),
+        ),
+        FunctionResultKind::Int,
     )?;
     let mut other_plan = authority();
     other_plan.direct_rustc_plan_identity = "sha256:different-plan".to_string();
@@ -277,9 +689,13 @@ fn the_legacy_output_identity_covers_its_oven_authority() -> Result<(), ShadowUn
         SHADOW_COMPARISON_PROFILE_ID,
         "sha256:profile",
         &other_plan,
-        Some(0),
-        &framed("42"),
-        "",
+        &process(
+            Some(0),
+            b"program stdout",
+            b"program stderr",
+            Some(report(FunctionResultKind::Int, "42")),
+        ),
+        FunctionResultKind::Int,
     )?;
     assert_eq!(baseline.observable, under_other_plan.observable);
     assert_ne!(
@@ -296,9 +712,11 @@ fn the_legacy_output_identity_covers_its_oven_authority() -> Result<(), ShadowUn
 #[test]
 fn an_executed_replacement_route_survives_an_unavailable_legacy_route() -> Result<(), Box<dyn std::error::Error>> {
     let profile = profile();
-    let replacement = observe_replacement_route(&profile)?;
+    let prepared = PreparedShadowProfile::new(&profile, "debug")?;
+    let replacement = observe_replacement_route(&profile, &prepared)?;
     let comparison = assemble_comparison(
         &profile,
+        prepared.profile_identity,
         Ok(replacement),
         Err(ShadowUnavailable::new("no Oven plan is staged")),
     );
@@ -320,7 +738,7 @@ fn an_executed_replacement_route_survives_an_unavailable_legacy_route() -> Resul
     assert_eq!(replacement_receipt.shadow_comparison, comparison.state);
     assert_eq!(
         replacement_evidence.observation.observable,
-        completed("42"),
+        completed(FunctionResultKind::Int, "42"),
         "the retained observation must be the one that was really executed"
     );
     let execution = comparison
@@ -338,7 +756,7 @@ fn an_executed_route_without_a_receipt_reports_that_rather_than_vanishing() {
     // the explicit failure it is.
     let evidence = RouteEvidence {
         receipt: None,
-        observation: observation("sha256:profile", completed("42"), "legacy"),
+        observation: observation("sha256:profile", completed(FunctionResultKind::Int, "42"), "legacy"),
     };
     let Err(reason) = evidence.receipt() else {
         panic!("an evidence entry with no receipt must not report one");
@@ -346,7 +764,7 @@ fn an_executed_route_without_a_receipt_reports_that_rather_than_vanishing() {
     assert!(reason.contains("could not be finalized"), "{reason}");
     assert_eq!(
         evidence.observation.observable,
-        completed("42"),
+        completed(FunctionResultKind::Int, "42"),
         "the observation must survive a missing receipt"
     );
 }
@@ -355,6 +773,7 @@ fn an_executed_route_without_a_receipt_reports_that_rather_than_vanishing() {
 fn a_comparison_with_no_executed_route_keeps_no_receipts() {
     let comparison = assemble_comparison(
         &profile(),
+        profile().profile_identity(),
         Err(ShadowUnavailable::new("replacement refused")),
         Err(ShadowUnavailable::new("legacy unstaged")),
     );
@@ -366,6 +785,7 @@ fn a_comparison_with_no_executed_route_keeps_no_receipts() {
     assert!(comparison.legacy.is_none());
     assert!(comparison.replacement.is_none());
     assert!(comparison.legacy_authority.is_none());
+    assert!(comparison.legacy_process.is_none());
 }
 
 // ============================================================================
@@ -375,7 +795,7 @@ fn a_comparison_with_no_executed_route_keeps_no_receipts() {
 #[test]
 fn observing_a_program_entrypoint_is_outside_the_profile() {
     let profile = ShadowComparisonProfile::new("def main() -> int:\n    return 42\n", "main", vec![]);
-    let Err(unavailable) = profile.legacy_program_source() else {
+    let Err(unavailable) = PreparedShadowProfile::new(&profile, "debug") else {
         panic!("a `main` observation must be refused");
     };
     assert_eq!(unavailable.reason, PROGRAM_ENTRYPOINT_UNAVAILABLE_REASON);
@@ -389,22 +809,14 @@ fn an_inactive_feature_gated_function_is_unavailable_to_both_comparison_routes()
         vec![],
     );
 
-    let Err(replacement) = observe_replacement_route(&profile) else {
-        panic!("the replacement route must not execute a function projected out by an inactive feature");
+    let Err(replacement) = PreparedShadowProfile::new(&profile, "debug") else {
+        panic!("neither route must prepare a function projected out by an inactive feature");
     };
     assert!(
-        replacement.reason.contains("no free function named `gated`"),
-        "{replacement:?}"
-    );
-
-    let Err(legacy) = profile.legacy_program_source() else {
-        panic!("the legacy route must not synthesize an entrypoint for a projected-out function");
-    };
-    assert!(
-        legacy
+        replacement
             .reason
             .contains("absent from the manifest-free feature projection"),
-        "{legacy:?}"
+        "{replacement:?}"
     );
 }
 
@@ -415,7 +827,10 @@ fn a_non_scalar_argument_is_refused_rather_than_guessed() {
         "echo",
         vec![ReplacementValue::Tuple(vec![ReplacementValue::Int(1)])],
     );
-    let Err(unavailable) = profile.legacy_program_source() else {
+    let identifiers = GeneratedWrapperIdentifiers::for_version(1);
+    let Err(unavailable) =
+        profile.legacy_program_source(FunctionResultKind::Int, Path::new("/worker-owned/result"), &identifiers)
+    else {
         panic!("a tuple argument has no source literal and must be refused");
     };
     assert!(unavailable.reason.contains("source literals"), "{}", unavailable.reason);
@@ -428,8 +843,16 @@ fn string_arguments_are_escaped_into_incan_literals() -> Result<(), ShadowUnavai
         "greet",
         vec![ReplacementValue::Str("A\"da\\".to_string())],
     );
-    let program = profile.legacy_program_source()?;
-    assert!(program.contains(r#"println(greet("A\"da\\"))"#), "{program}");
+    let prepared = PreparedShadowProfile::new(&profile, "debug")?;
+    let program = profile.legacy_program_source(
+        prepared.result_kind,
+        Path::new("/worker-owned/result"),
+        &prepared.wrapper_identifiers,
+    )?;
+    assert!(
+        program.contains(r#"__incan_shadow_result_value_v1 = greet("A\"da\\")"#),
+        "{program}"
+    );
     Ok(())
 }
 
@@ -444,4 +867,204 @@ fn arguments_are_part_of_the_profile_identity() {
         second.source_identity(),
         "the same module must keep one source identity across argument lists"
     );
+}
+
+#[test]
+fn source_bindings_do_not_shadow_generated_result_transport_imports() -> Result<(), ShadowUnavailable> {
+    let profile = ShadowComparisonProfile::new(
+        "const IoError: int = 1\n\
+         const RustPath: int = 2\n\n\
+         def write() -> int:\n    return 42\n\n\
+         def rename() -> int:\n    return 7\n",
+        "write",
+        vec![],
+    );
+    let prepared = PreparedShadowProfile::new(&profile, "debug")?;
+    let program = profile.legacy_program_source(
+        prepared.result_kind,
+        Path::new("/worker-owned/result"),
+        &prepared.wrapper_identifiers,
+    )?;
+
+    assert!(program.contains("def write() -> int:"), "{program}");
+    assert!(program.contains("def rename() -> int:"), "{program}");
+    assert!(program.contains("const IoError: int = 1"), "{program}");
+    assert!(program.contains("const RustPath: int = 2"), "{program}");
+    emit_legacy_rust(&program)?;
+    Ok(())
+}
+
+#[test]
+fn a_successful_legacy_process_without_a_result_report_is_transport_unavailable()
+-> Result<(), Box<dyn std::error::Error>> {
+    let observed = observe_legacy_process(
+        SHADOW_COMPARISON_PROFILE_ID,
+        "sha256:profile",
+        &authority(),
+        &process(Some(0), b"program stdout", b"program stderr", None),
+        FunctionResultKind::Int,
+    );
+    let Err(unavailable) = observed else {
+        return Err("a missing source-authored report must not become a completed program observation".into());
+    };
+    assert!(
+        unavailable.reason.contains("source-authored result report"),
+        "{unavailable:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn private_transport_exit_statuses_are_unavailable_before_stderr_is_classified()
+-> Result<(), Box<dyn std::error::Error>> {
+    for (exit_code, step) in [
+        (RESULT_TRANSPORT_WRITE_EXIT_STATUS, "write"),
+        (RESULT_TRANSPORT_RENAME_EXIT_STATUS, "rename"),
+    ] {
+        let observed = observe_legacy_process(
+            SHADOW_COMPARISON_PROFILE_ID,
+            "sha256:profile",
+            &authority(),
+            &process(Some(exit_code), b"program stdout", b"assertion failed", None),
+            FunctionResultKind::Int,
+        );
+        let Err(unavailable) = observed else {
+            return Err(
+                format!("private transport status {exit_code} must not become a source failure observation").into(),
+            );
+        };
+        assert!(unavailable.reason.contains(step), "{unavailable:?}");
+        assert!(unavailable.reason.contains("result transport"), "{unavailable:?}");
+    }
+    Ok(())
+}
+
+#[cfg(feature = "cli")]
+#[test]
+fn forced_source_transport_failures_keep_program_streams_and_stay_unavailable() -> Result<(), Box<dyn std::error::Error>>
+{
+    let capability = match legacy_oven::LegacyOvenCapability::from_environment() {
+        Ok(capability) => capability,
+        Err(unavailable) if std::env::var_os("INCAN_SHADOW_REQUIRE_LEGACY_ROUTE").is_none() => {
+            eprintln!("skipping source transport-failure evidence: {}", unavailable.reason);
+            return Ok(());
+        }
+        Err(unavailable) => return Err(unavailable.into()),
+    };
+    let profile = ShadowComparisonProfile::new(
+        "def announce() -> int:\n    println(\"program stdout before transport\")\n    return 42\n",
+        "announce",
+        vec![],
+    );
+    let prepared = PreparedShadowProfile::new(&profile, &capability.intent().profile)?;
+
+    for (failure, exit_code, step) in [
+        (
+            legacy_oven::ForcedResultTransportFailure::Write,
+            RESULT_TRANSPORT_WRITE_EXIT_STATUS,
+            "write",
+        ),
+        (
+            legacy_oven::ForcedResultTransportFailure::Rename,
+            RESULT_TRANSPORT_RENAME_EXIT_STATUS,
+            "rename",
+        ),
+    ] {
+        let workspace = tempfile::tempdir()?;
+        let source_path = workspace.path().join("transport-failure-shadow-profile.incn");
+        std::fs::write(&source_path, profile.source())?;
+        let materialization = crate::cli::commands::prepare_shadow_legacy_materialization(
+            &source_path,
+            &crate::provider::FeatureSelection::default(),
+            None,
+        )?;
+        let legacy = legacy_oven::observe_legacy_route_with_forced_transport_failure(
+            &profile,
+            &prepared,
+            &materialization,
+            &capability,
+            workspace.path(),
+            failure,
+        )?;
+
+        assert!(legacy.observation.is_none(), "{:?}", legacy.process);
+        assert_eq!(legacy.process.exit_code, Some(exit_code), "{:?}", legacy.process);
+        assert_eq!(
+            legacy.process.stdout, b"program stdout before transport\n",
+            "{:?}",
+            legacy.process
+        );
+        assert!(legacy.process.stderr.is_empty(), "{:?}", legacy.process);
+        assert!(legacy.process.result_report.is_none(), "{:?}", legacy.process);
+        let reason = legacy
+            .unavailable_reason
+            .as_deref()
+            .ok_or("a forced source transport failure must be unavailable")?;
+        assert!(reason.contains(step), "{reason}");
+        assert!(reason.contains("result transport"), "{reason}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_source_entrypoint_is_unavailable_even_when_another_function_is_selected() -> Result<(), Box<dyn std::error::Error>>
+{
+    let profile = ShadowComparisonProfile::new(
+        "def helper() -> int:\n    return 42\n\n\
+         def main() -> int:\n    return 7\n",
+        "helper",
+        vec![],
+    );
+
+    let Err(unavailable) = PreparedShadowProfile::new(&profile, "debug") else {
+        return Err("a source `main` must be refused before either route executes".into());
+    };
+    assert_eq!(unavailable.reason, PROGRAM_ENTRYPOINT_UNAVAILABLE_REASON);
+    Ok(())
+}
+
+#[test]
+fn a_source_process_import_is_unavailable_before_private_transport_statuses_can_be_imitated()
+-> Result<(), Box<dyn std::error::Error>> {
+    for source in [
+        "from rust::std::process import exit\n\n\
+         def helper() -> int:\n    return 42\n",
+        "import rust::std::process\n\n\
+         def helper() -> int:\n    return 42\n",
+        "from rust::std import process\n\n\
+         def helper() -> int:\n    return 42\n",
+    ] {
+        let profile = ShadowComparisonProfile::new(source, "helper", vec![]);
+        let Err(unavailable) = PreparedShadowProfile::new(&profile, "debug") else {
+            return Err("source process imports must not impersonate private result-transport statuses".into());
+        };
+        assert!(unavailable.reason.contains("rust::std::process"), "{unavailable:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_source_binding_that_matches_an_older_generated_temporary_selects_a_fresh_stem() -> Result<(), ShadowUnavailable> {
+    let profile = ShadowComparisonProfile::new(
+        "def __incan_shadow_result_value_v1() -> int:\n    return 42\n",
+        "__incan_shadow_result_value_v1",
+        vec![],
+    );
+
+    let prepared = PreparedShadowProfile::new(&profile, "debug")?;
+    assert_eq!(
+        prepared.wrapper_identifiers.result_value,
+        "__incan_shadow_result_value_v2"
+    );
+    let program = profile.legacy_program_source(
+        prepared.result_kind,
+        Path::new("/worker-owned/result"),
+        &prepared.wrapper_identifiers,
+    )?;
+    assert!(
+        program.contains("__incan_shadow_result_value_v2 = __incan_shadow_result_value_v1()"),
+        "{program}"
+    );
+    emit_legacy_rust(&program)?;
+    Ok(())
 }

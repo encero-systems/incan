@@ -684,6 +684,8 @@ impl<'a> IrEmitter<'a> {
                 #(#rust_attrs)*
                 #vis #async_kw fn #name #generics (#(#params),*) -> #ret_ty {
                     #static_init_stmt
+                    #panic_hook_stmt
+                    #zen_stmt
                     #(#body_stmts)*
                 }
             })

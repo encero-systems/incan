@@ -44,7 +44,7 @@ The `v0.5.0` source is a frozen migration baseline, not the beginning of a versi
 | `language.control-flow` | Checked | Unknown | Represented | Executable | registered replacement-body-v0-004, replacement-body-v0-005, replacement-body-v0-006 | NonGreenShadowUnavailable | - | Preserved | - |
 | `language.control-flow-complete` | Checked | Unknown | Partial | BlockedByRequirements | planned parity-987-plan-language.control-flow-complete | NonGreenShadowUnavailable | - | Planned | #1154 |
 | `language.match-and-patterns` | Checked | Unknown | Partial | BlockedByRequirements | planned parity-987-plan-language.match-and-patterns | NonGreenShadowUnavailable | - | Planned | #1154 |
-| `language.numeric-and-scalar` | Checked | Unknown | Represented | Executable | registered replacement-body-v0-001, replacement-body-v0-002, replacement-body-v0-003, replacement-body-v0-005 | NonGreenShadowUnavailable | replacement-body-v0-001: ComparedMatch | Preserved | - |
+| `language.numeric-and-scalar` | Checked | Unknown | Represented | Executable | registered replacement-body-v0-001, replacement-body-v0-002, replacement-body-v0-003, replacement-body-v0-005, replacement-body-v0-022, replacement-body-v0-025, replacement-body-v0-027 | NonGreenShadowUnavailable | replacement-body-v0-001: ComparedMatch, replacement-body-v0-022: ComparedMatch, replacement-body-v0-025: ComparedMatch, replacement-body-v0-027: ComparedMatch | Preserved | - |
 | `language.numeric-complete` | Checked | Unknown | Partial | BlockedByRequirements | planned parity-987-plan-language.numeric-complete | NonGreenShadowUnavailable | - | Planned | #1154 |
 | `language.strings-and-format` | Checked | Unknown | Partial | BlockedByRequirements | planned parity-987-plan-language.strings-and-format | NonGreenShadowUnavailable | - | Planned | #1101 |
 | `module.identity-and-aliases` | Checked | Unknown | Partial | BlockedByRequirements | planned parity-987-plan-module.identity-and-aliases | NonGreenShadowUnavailable | - | Planned | #1042 |
@@ -147,7 +147,7 @@ The `v0.5.0` source is a frozen migration baseline, not the beginning of a versi
 | `providers.runtime-services` | stdlib/provider plan and replacement runtime | `runtime.std-data-services`, `runtime.std-hosted-services`, `runtime.std-observability` | stdlib/provider and authority tests |
 | `receipts.comparison` | backend selection, #1146, and #987 | `async.tasks`, `diagnostics.stable`, `runtime.std-hosted-services`, `testing-and-tooling` | backend selection and parity corpus tests |
 | `runtime.aggregate-store` | Body IR aggregates/places and replacement runtime | `language.aggregates-and-projections`, `language.control-flow-complete`, `language.numeric-complete`, `runtime.std-data-services` | aggregate and assignment Body-IR tests |
-| `runtime.scalar-values` | Body IR operands/rvalues and replacement evaluator | `language.numeric-and-scalar`, `language.numeric-complete`, `language.strings-and-format` | replacement-body-v0 scalar corpus |
+| `runtime.scalar-values` | Body IR operands/rvalues and replacement evaluator | `language.numeric-and-scalar`, `language.numeric-complete`, `language.strings-and-format` | replacement-body-v0 scalar corpus, including replacement-body-v0-025 |
 | `surface.decorator-dispatch` | semantic registry and surface semantics packs | `decorators.dsl-surfaces` | surface semantics and vocab tests |
 | `suspension.continuations` | Body IR generator model and replacement runtime | `generator.expressions`, `generator.functions` | generator laziness and resume probes |
 | `testing.tooling-control-plane` | CLI, Oven, and test-runner boundaries | `testing-and-tooling` | CLI and Oven integration tests |
@@ -156,7 +156,7 @@ The `v0.5.0` source is a frozen migration baseline, not the beginning of a versi
 
 ## Remaining-work issue map
 
-Every planned feature below has a currently open mechanism owner. #1146 is completed comparison infrastructure: it supplies reusable provenance, never ownership of missing comparison evidence. Scheduled evidence belongs to its feature/runtime owner; direct profiles without one carry explicit unscheduled evidence debt. `replacement-body-v0-001` has one paired match, while all incomplete features and uncovered cases remain non-green.
+Every planned feature below has a currently open mechanism owner. #1146 is completed comparison infrastructure: it supplies reusable provenance, never ownership of missing comparison evidence. Scheduled evidence belongs to its feature/runtime owner; direct profiles without one carry explicit unscheduled evidence debt. Stable corpus rows `replacement-body-v0-001` and `replacement-body-v0-020` through `replacement-body-v0-028` have case-scoped paired matches, while all incomplete features and uncovered cases remain non-green.
 
 - #555: `decorators.dsl-surfaces`
 - #655: `diagnostics.stable`
@@ -352,7 +352,7 @@ Tuple, list, dict, set, slice, projection, mutation, equality, and ordering reta
 - Body IR: Planned `src/frontend/body_ir.rs::fn lower_aggregate`; owner #1154
 - Replacement executor: Planned `src/backend/replacement/mod.rs::fn evaluate_aggregate`; owner #1154
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #1154: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
-- Blocker/migration: Depends on #1101 for complete aggregate/place vocabulary; #1154 owns direct value storage and mutation.
+- Blocker/migration: Source-local scalar-key set/dict membership and entry count plus nonempty integer-list sorting execute directly. Standalone replacement-body-v0-020, replacement-body-v0-026 and replacement-body-v0-028 prove their exact streams and typed results across independent routes. These bounded proofs do not establish the full aggregate or ordering contract; #1154 owns remaining direct value storage, projection and mutation behavior.
 
 ### `language.control-flow`
 
@@ -397,17 +397,20 @@ Match, destructuring, alternation, guards, and exhaustiveness preserve branch se
 
 ### `language.numeric-and-scalar`
 
-Bounded scalar arithmetic, comparisons, boolean operators, and strings execute directly from Body IR.
+Bounded scalar arithmetic, comparisons, boolean operators, strings, and int/bool/str/None JSON stringification execute directly from Body IR.
 
 - `probe:language.numeric-and-scalar:bounded-direct-profile` — positive AcceptedBehavior at Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem`; negative IntentionalRefusal at Observed `src/frontend/typechecker/check_expr/ops.rs::fn check_binary`
-  - Positive contract: Bounded scalar arithmetic, comparisons, boolean operators, and strings execute directly from Body IR.
+  - Positive contract: Bounded scalar arithmetic, comparisons, boolean operators, strings, and int/bool/str/None JSON stringification execute directly from Body IR.
   - Negative contract: Inputs outside the bounded direct profile refuse visibly with their source span.
 - Source/AST: Observed `src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::NumericTypeSystem`
 - Typechecker: Observed `src/frontend/typechecker/check_expr/ops.rs::fn check_binary`
 - Body IR: Observed `src/frontend/body_ir.rs::fn lower_binary`
 - Replacement executor: Observed `src/backend/replacement/mod.rs::fn evaluate_binary`
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; unscheduled evidence debt: The bounded direct profile has no scheduled owner for its remaining aggregate and corpus-case comparison evidence.
-- Completed #1146 case `replacement-body-v0-001` (ComparedMatch) comparison: paired Observed `tests/parity_corpus_tests.rs::legacy_receipt_identity`; Observed `tests/parity_corpus_tests.rs::replacement_receipt_identity`; Observed `tests/parity_corpus_tests.rs::fn the_compared_row_carries_two_route_receipts_and_its_oven_authority`
+- Case `replacement-body-v0-001` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `tests/parity_corpus_tests.rs::legacy_receipt_identity`; Observed `tests/parity_corpus_tests.rs::replacement_receipt_identity`; Observed `tests/parity_corpus_tests.rs::fn the_compared_row_carries_two_route_receipts_and_its_oven_authority`
+- Case `replacement-body-v0-022` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `tests/parity_corpus_tests.rs::fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output`
+- Case `replacement-body-v0-025` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `tests/parity_corpus_tests.rs::fn the_scalar_json_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_scalar_json_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_scalar_json_row_carries_two_route_receipts_and_exact_output`
+- Case `replacement-body-v0-027` (ComparedMatch) using completed comparison infrastructure #1146: paired Observed `tests/parity_corpus_tests.rs::fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output`; Observed `tests/parity_corpus_tests.rs::fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output`
 
 ### `language.numeric-complete`
 
@@ -435,7 +438,7 @@ String operators and formatting preserve interpolation order, conversions, and r
 - Body IR: Planned `src/frontend/body_ir.rs::fn lower_binary`; owner #1101
 - Replacement executor: Planned `src/backend/replacement/mod.rs::fn evaluate_binary`; owner #1101
 - Aggregate comparison: unavailable; completed comparison infrastructure #1146 at Observed `tests/support/parity_corpus.rs::NonGreenShadowUnavailable`; outstanding evidence owner #1101: The feature/runtime owner must add receipt-bound comparison evidence after its direct profile is materialized.
-- Blocker/migration: String concatenation is boundedly executable; f-strings and general formatting remain explicit refusals.
+- Blocker/migration: String concatenation, bounded scalar interpolation, selected canonical string helpers and Unicode-scalar string length execute directly. The separate replacement-body-v0-021 and replacement-body-v0-024 corpus cases prove those bounded profiles, not this full formatting contract; broad feature parity remains non-green.
 
 ### `module.identity-and-aliases`
 

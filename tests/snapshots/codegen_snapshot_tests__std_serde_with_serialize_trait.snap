@@ -66,10 +66,13 @@ impl incan_stdlib::reflection::HasFieldValueReflection for Payload {
 }
 impl Serialize for Payload {
     fn to_json(&self) -> String {
-        return incan_stdlib::json::__private::stringify_or_raise(
-            &self,
-            std::any::type_name_of_val(&self),
-        );
+        return {
+            let __incan_json_value = &(self);
+            incan_stdlib::json::__private::stringify_or_raise(
+                __incan_json_value,
+                std::any::type_name_of_val(__incan_json_value),
+            )
+        };
     }
 }
 fn main() {

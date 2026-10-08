@@ -2,9 +2,8 @@
 //!
 //! Every fixture here goes through the real pipeline — source, typecheck, Body-IR lowering with a
 //! fixture-controlled provider catalog — so what the executor consumes is an actually-lowered
-//! [`ProviderOperationPlan`], not a hand-assembled one. The one exception is the fail-closed activation test, which
-//! deliberately mutates an already-lowered plan into a state lowering refuses to produce, because the point of that
-//! test is that the runtime does not trust its input.
+//! [`ProviderOperationPlan`], not a hand-assembled one. The defensive activation, binding and spread tests deliberately
+//! mutate already-lowered facts to prove the runtime rejects malformed input without changing the diagnostic's owner.
 //!
 //! The fixture host keys on the operation's [`CanonicalSymbolId`] and on nothing else. That is not a stylistic
 //! choice: a host that matched a provider module name, a call-site spelling, or an emitted Rust name would be the
@@ -12,6 +11,8 @@
 //! being evidence.
 
 use std::cell::RefCell;
+
+mod host_preflight_tests;
 
 use incan_semantics_core::body_ir::{self as bir, ProviderActivationState, ProviderOperationPlan};
 use incan_semantics_core::receipts::{AttributeSensitivity, ReceiptStatus, ReplayClassification};
@@ -22,8 +23,9 @@ use incan_semantics_core::{
 
 use super::*;
 use crate::backend::replacement::{
-    ReplacementExecution, ReplacementExecutionError, ReplacementValue, execute_free_function,
-    execute_free_function_with_providers, prepare_free_function_execution_with_providers,
+    ProgramIo, ReplacementExecution, ReplacementExecutionError, ReplacementValue, execute_free_function,
+    execute_free_function_with_providers, execute_prevalidated_free_function_with_io,
+    prepare_free_function_execution_with_providers,
 };
 use crate::frontend::body_ir::build_body_ir_module_v0_with_provider_plan;
 use crate::frontend::body_ir::tests::provider_plan_from_checked_source;
@@ -58,6 +60,25 @@ def charge(account: str, amount: int) -> int:
 
 def settle(account: str, amount: int) -> int:
   return charge(account, amount)
+"#;
+
+/// One checked provider invocation retained inside a stored closure.
+///
+/// The outer output makes a late missing-host refusal source-observable. The regression below must make preparation
+/// refuse before that `println` can execute; unexpected admission is exercised with capture writers to expose
+/// any output before the late refusal.
+const STORED_CLOSURE_PROVIDER_FIXTURE_SOURCE: &str = r#"
+capability ledger_charge:
+  description = "Charge one approved ledger account"
+
+@provider_operation(ledger_charge)
+def charge(account: str, amount: int) -> int:
+  return amount
+
+def settle(account: str, amount: int) -> int:
+  println("before provider host")
+  invoke: (str, int) -> int = (captured_account, captured_amount) => charge(captured_account, captured_amount)
+  return invoke(account, amount)
 "#;
 
 /// What the fixture ledger does when an authorized charge reaches it.
@@ -245,6 +266,47 @@ impl LoweredFixture {
         }
     }
 
+    /// The one admitted provider plan retained in `settle`'s stored closure body.
+    fn stored_closure_plan(&self) -> Result<&ProviderOperationPlan, String> {
+        let settle = self
+            .module
+            .bodies
+            .iter()
+            .find(|body| body.name == "settle")
+            .ok_or("fixture must retain a `settle` body")?;
+        let mut closures = settle.block.stmts.iter().filter_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Closure { body, .. },
+                ..
+            } => Some(body.as_ref()),
+            _ => None,
+        });
+        let closure = closures
+            .next()
+            .ok_or("fixture must lower the provider call into one stored closure")?;
+        if closures.next().is_some() {
+            return Err("fixture must lower exactly one stored closure".to_string());
+        }
+        let plans: Vec<&ProviderOperationPlan> = closure
+            .stmts
+            .iter()
+            .filter_map(|statement| match &statement.kind {
+                bir::StatementKind::Call {
+                    callee: bir::Callee::ProviderOperation(plan),
+                    ..
+                } => Some(plan.as_ref()),
+                _ => None,
+            })
+            .collect();
+        match plans.as_slice() {
+            [plan] => Ok(plan),
+            other => Err(format!(
+                "expected exactly one provider plan in the stored closure, got {}",
+                other.len()
+            )),
+        }
+    }
+
     /// Replace the lowered plan's provider activation, producing a plan lowering would have refused.
     ///
     /// Used only to prove the runtime is fail-closed rather than trusting the gate upstream of it.
@@ -268,7 +330,15 @@ impl LoweredFixture {
 /// The call site is told nothing. Admission travels entirely through the operation's canonical identity, which is
 /// why the same fixture proves both that an admitted call reaches the executor and that an unadmitted one does not.
 fn lower_fixture(activation: ProviderActivationState) -> Result<LoweredFixture, Box<dyn std::error::Error>> {
-    let tokens = lexer::lex(LEDGER_FIXTURE_SOURCE).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    lower_fixture_source(LEDGER_FIXTURE_SOURCE, activation)
+}
+
+/// Lower one provider fixture source through the checked provider-plan projection.
+fn lower_fixture_source(
+    source: &str,
+    activation: ProviderActivationState,
+) -> Result<LoweredFixture, Box<dyn std::error::Error>> {
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
     let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
     let module_path: Vec<String> = MODULE_PATH.iter().map(|segment| (*segment).to_string()).collect();
     let mut checker = TypeChecker::new();
@@ -292,6 +362,96 @@ fn lower_fixture(activation: ProviderActivationState) -> Result<LoweredFixture, 
 fn runtime(mode: AuthorityMode, grants: &[&str], host: Rc<LedgerHost>) -> Rc<ProviderRuntime> {
     let authority = StaticAuthority::new(mode, grants.iter().map(|grant| (*grant).to_string()));
     ProviderRuntime::new(Rc::new(authority), host)
+}
+
+/// An unhosted operation inside a stored closure must fail at preparation, before preceding output can execute.
+///
+/// Unexpected admission executes with capture writers so a failure reports the source-observable prefix as well
+/// as the late refusal. A correct preflight never enters that branch.
+#[test]
+fn unhosted_provider_operation_in_stored_closure_refuses_during_preparation() -> TestResult {
+    let fixture = lower_fixture_source(STORED_CLOSURE_PROVIDER_FIXTURE_SOURCE, ProviderActivationState::Active)?;
+    let plan = fixture.stored_closure_plan()?;
+    if plan.operation != fixture.operation {
+        return Err("stored closure provider call must retain the fixture's canonical operation identity".into());
+    }
+    let expected_span = plan.call_span;
+    let args = [ReplacementValue::Str("acct-1".to_string()), ReplacementValue::Int(250)];
+
+    match prepare_free_function_execution_with_providers(&fixture.module, "settle", &args, None) {
+        Err(error) => {
+            let ReplacementExecutionError::Unsupported { description, .. } = &error else {
+                return Err(format!(
+                    "an unhosted stored-closure provider call must refuse during preparation, got {error:?}"
+                )
+                .into());
+            };
+            if !description.contains("provider operation `charge`")
+                || !description.contains("no provider host in this run")
+            {
+                return Err(format!(
+                    "preparation must name the canonical unhosted provider operation, got {description:?}"
+                )
+                .into());
+            }
+            if error.primary_span() != Some(expected_span) {
+                return Err(format!(
+                    "preparation must refuse at the nested provider call span {expected_span:?}, got {:?}",
+                    error.primary_span()
+                )
+                .into());
+            }
+            if error.operation_receipt().is_some() {
+                return Err("a pre-execution provider-host refusal must not name an operation receipt".into());
+            }
+            Ok(())
+        }
+        Ok(prepared) => {
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+            let mut io = ProgramIo::new(&mut stdout, &mut stderr);
+            let error = execute_prevalidated_free_function_with_io(prepared, &mut io)
+                .err()
+                .ok_or("unexpectedly prepared stored-closure provider call must not complete")?;
+            let ReplacementExecutionError::Unsupported { description, .. } = &error else {
+                return Err(format!(
+                    "late stored-closure provider failure must be an unsupported refusal, got {error:?}"
+                )
+                .into());
+            };
+            if !description.contains("provider operation `charge`")
+                || !description.contains("without a provider runtime")
+            {
+                return Err(format!(
+                    "late stored-closure provider failure must identify the missing runtime, got {description:?}"
+                )
+                .into());
+            }
+            if error.primary_span() != Some(expected_span) {
+                return Err(format!(
+                    "late provider refusal must retain nested call span {expected_span:?}, got {:?}",
+                    error.primary_span()
+                )
+                .into());
+            }
+            if error.operation_receipt().is_some() {
+                return Err("a missing-provider runtime refusal must not name an operation receipt".into());
+            }
+            if io.output().stdout() != b"before provider host\n" || !io.output().stderr().is_empty() {
+                return Err(format!(
+                    "unexpected preparation success must retain only the prior println output; stdout={:?}, stderr={:?}",
+                    io.output().stdout(),
+                    io.output().stderr()
+                )
+                .into());
+            }
+            Err(format!(
+                "provider-host preflight admitted a stored closure; execution then refused late at {expected_span:?} after stdout={:?}",
+                io.output().stdout()
+            )
+            .into())
+        }
+    }
 }
 
 /// Execute `settle("acct-1", 250)` against `providers`.

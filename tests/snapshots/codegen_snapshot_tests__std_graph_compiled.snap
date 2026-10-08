@@ -472,7 +472,8 @@ impl<T: Clone> DiGraph<T> {
         let mut stored = incan_stdlib::collections::list_get(&self.nodes, (index) as i64)
             .clone();
         stored.active = false;
-        *incan_stdlib::collections::list_get_mut(&mut self.nodes, (index) as i64) = stored;
+        *incan_stdlib::collections::list_get_mut(&mut self.nodes, (index) as i64) = stored
+            .clone();
         for edge_index in 0_i64..(::std::convert::identity(self.edges.len() as i64)
             as i64)
         {
@@ -487,7 +488,7 @@ impl<T: Clone> DiGraph<T> {
                     *incan_stdlib::collections::list_get_mut(
                         &mut self.edges,
                         (edge_index) as i64,
-                    ) = edge;
+                    ) = edge.clone();
                 }
             }
         }
@@ -546,7 +547,7 @@ impl<T: Clone> DiGraph<T> {
                 *incan_stdlib::collections::list_get_mut(
                     &mut self.edges,
                     (index) as i64,
-                ) = edge;
+                ) = edge.clone();
                 return Ok::<(), GraphError>(());
             }
         }
@@ -1143,7 +1144,7 @@ impl<T: Clone> MultiDiGraph<T> {
         *incan_stdlib::collections::list_get_mut(
             &mut self.graph.edges,
             (index) as i64,
-        ) = stored;
+        ) = stored.clone();
         return Ok::<(), GraphError>(());
     }
     /// Return whether `edge` belongs to this multigraph.

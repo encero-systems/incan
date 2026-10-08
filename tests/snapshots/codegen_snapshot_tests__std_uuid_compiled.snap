@@ -698,7 +698,7 @@ impl _UuidText {
             value = incan_stdlib::strings::str_slice(
                 &value,
                 Some((9) as i64),
-                Some((::std::convert::identity(value.len() as i64)) as i64),
+                Some((incan_stdlib::strings::str_len(&(value))) as i64),
                 None,
             );
         }
@@ -707,7 +707,7 @@ impl _UuidText {
         {
             if !incan_stdlib::strings::str_starts_with(&value, &"{")
                 || !incan_stdlib::strings::str_ends_with(&value, &"}")
-                || ::std::convert::identity(value.len() as i64) < 2
+                || incan_stdlib::strings::str_len(&(value)) < 2
             {
                 return Err::<
                     String,
@@ -717,11 +717,11 @@ impl _UuidText {
             value = incan_stdlib::strings::str_slice(
                 &value,
                 Some((1) as i64),
-                Some((::std::convert::identity(value.len() as i64) - 1) as i64),
+                Some((incan_stdlib::strings::str_len(&(value)) - 1) as i64),
                 None,
             );
         }
-        if ::std::convert::identity(value.len() as i64) == 36 {
+        if incan_stdlib::strings::str_len(&(value)) == 36 {
             if incan_stdlib::strings::str_slice(
                 &value,
                 Some((8) as i64),
@@ -761,11 +761,11 @@ impl _UuidText {
                 UuidError,
             >(incan_stdlib::strings::str_replace(&value, &"-", &""));
         }
-        if ::std::convert::identity(value.len() as i64) != 32 {
+        if incan_stdlib::strings::str_len(&(value)) != 32 {
             return Err::<
                 String,
                 UuidError,
-            >(_invalid_length(::std::convert::identity(value.len() as i64)));
+            >(_invalid_length(incan_stdlib::strings::str_len(&(value))));
         }
         return Ok::<String, UuidError>(value);
     }

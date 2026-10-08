@@ -11,7 +11,7 @@ fn lengths(names: Vec<String>) -> std::collections::HashMap<String, i64> {
     return names
         .iter()
         .cloned()
-        .map(|name| (name.clone(), ::std::convert::identity(name.len() as i64)))
+        .map(|name| (name.clone(), incan_stdlib::strings::str_len(&(name))))
         .collect::<std::collections::HashMap<_, _>>();
 }
 fn main() {

@@ -7,13 +7,13 @@
 //! recursive tuple/list values, fully supplied source-local plain-model values, and exact source-local RFC 032
 //! value-enum members followed by their generated scalar `.value()` extraction. It admits one numeric tuple or
 //! canonical plain-model field projection and one integer list projection or assignment;
-//! builtin iteration remains limited to `list[tuple[scalar, scalar]]`. The selected entrypoint must produce a scalar
-//! observable, although an admitted sibling may return a structural intermediate to its direct caller. The executor
-//! also consumes the retained callable vocabulary directly: captured local closures, partial presets,
-//! source-evaluable defaults, identity-selected local or same-module named calls, generator expressions and
-//! generator functions, and their bounded lazy `map`/`filter` adapters. Packages, Rust interop, unsupported
-//! callable/default forms, general destructuring, and other projections remain visible refusals. Its enclosing
-//! declaration snapshot retains a deferred generator's shape, but the frame executes and adds execution-frame
+//! builtin iteration admits structural lists, canonical global list enumeration, and list-pair Zip. The selected
+//! entrypoint must produce a scalar observable, although an admitted sibling may return a structural intermediate to
+//! its direct caller. The executor also consumes the retained callable vocabulary directly: captured local closures,
+//! partial presets, source-evaluable defaults, identity-selected local or same-module named calls, generator
+//! expressions and generator functions, and their bounded lazy `map`/`filter` adapters. Packages, Rust interop,
+//! unsupported callable/default forms, general destructuring, and other projections remain visible refusals. Its
+//! enclosing declaration snapshot retains a deferred generator's shape, but the frame executes and adds execution-frame
 //! evidence only when collection polls it; no path falls back to generated Rust.
 //!
 //! One checked provider-service operation also executes directly, from the already-lowered
@@ -22,7 +22,13 @@
 //! this module supplies it with evaluated operands and refuses an unresolved, inactive, or unauthorized operation
 //! at the original source span.
 
+pub mod hashed;
+mod list_iteration;
+pub mod program_io;
 pub mod provider;
+mod provider_preflight;
+
+pub use program_io::{ProgramIo, ProgramIoError, ProgramOutput};
 
 use std::{
     cell::RefCell,
@@ -32,6 +38,7 @@ use std::{
 
 use incan_core::lang::builtins::{self, BuiltinFnId};
 use incan_core::{
+    errors::IncanError,
     lang::surface::constructors::{ConstructorId, as_str as constructor_name},
     lang::types::collections::{self, CollectionTypeId},
     python_floor_div_i64, python_mod_i64,
@@ -39,12 +46,12 @@ use incan_core::{
 use incan_semantics_core::body_ir::{
     AggregateKind, ArgumentBinding, ArgumentElement, AssertionKind, BinOp, Body, BodyIrModule, CallableParam,
     CallableParamDefault, CallableTarget, Callee, ClosureBody, Constant, ConstructorTarget, DefaultComputation,
-    FieldlessEnumDeclaration, FieldlessEnumVariantDeclaration, FieldlessEnumVariantTarget, FormatPart, FormatStyle,
-    GeneratorBody, HelperOp, IterProtocol, LocalCallableTarget, LocalId, LocalOrigin, MatchArm, NamedCallableTarget,
-    NominalDeclaration, NominalPatternTarget, Operand, OwnershipFact, Pattern, PatternBinding, Place, PlaceElem,
-    ProviderActivationState, ProviderOperationPlan, ResultVariant, ResultVariantKind, Rvalue, ScopeId, Statement,
-    StatementKind, TryErrorRouting, UnOp, ValueEnumBacking, ValueEnumDeclaration, ValueEnumVariantDeclaration,
-    ValueEnumVariantTarget,
+    DictEntry, FieldlessEnumDeclaration, FieldlessEnumVariantDeclaration, FieldlessEnumVariantTarget, FormatPart,
+    FormatStyle, GeneratorBody, HelperOp, IterProtocol, LocalCallableTarget, LocalId, LocalOrigin, MatchArm,
+    NamedCallableTarget, NominalDeclaration, NominalPatternTarget, Operand, OwnershipFact, Pattern, PatternBinding,
+    Place, PlaceElem, ProviderActivationState, ProviderOperationPlan, ResultVariant, ResultVariantKind, Rvalue,
+    ScopeId, Statement, StatementKind, TryErrorRouting, UnOp, ValueEnumBacking, ValueEnumDeclaration,
+    ValueEnumVariantDeclaration, ValueEnumVariantTarget,
 };
 use incan_semantics_core::{
     AbiV0RuntimeRequirement, CompilerNodeId, CompilerNodeKind, HirSourceSpan, IncanPrimitiveType, IncanType,
@@ -52,6 +59,7 @@ use incan_semantics_core::{
 };
 
 use crate::backend::selection::digest_output;
+use hashed::{ReplacementDict, ReplacementSet};
 use provider::{ProviderExecutionRecord, ProviderInputValue, ProviderRuntime, canonical_provider_execution_summary};
 
 /// Bounded instruction count for one replacement execution.
@@ -70,8 +78,10 @@ pub enum ReplacementValue {
     Bool(bool),
     /// An owned Incan `str` value.
     Str(String),
-    /// An Incan floating-point literal, retained so unsupported float operations refuse honestly.
-    Float(String),
+    /// An ordinary Incan binary float, normalized to the `f64` carrier the Rust-emission path uses.
+    ///
+    /// Checked f32/f64/sized numeric values remain outside this carrier and are refused before execution.
+    Float(f64),
     /// An Incan `None`/unit value.
     Unit,
     /// A normalized runtime range iterator for the selected `range` source-spelling control-flow case.
@@ -81,8 +91,14 @@ pub enum ReplacementValue {
         elements: Vec<ReplacementValue>,
         next: usize,
     },
+    /// A canonical global Zip over two checked structural lists, with private left-to-right polling state.
+    Zip(Box<ReplacementZip>),
     /// A source-local structural tuple whose elements remain direct replacement values.
     Tuple(Vec<ReplacementValue>),
+    /// An immutable hashed set; operand reads share its table rather than copying it before every probe.
+    Set(Rc<ReplacementSet>),
+    /// An immutable hashed dict; values are retained, while membership consults only scalar keys.
+    Dict(Rc<ReplacementDict>),
     /// A source-local plain-model instance whose declaration identity and canonical field layout were verified.
     ///
     /// This is neither a generic object nor a name-based map. Construction resolves `direct_declaration_id` against
@@ -145,13 +161,22 @@ pub enum ReplacementValue {
     Adapter(Box<ReplacementAdapter>),
     /// Values materialized by an admitted lazy generator consumer such as `.collect()`.
     ///
-    /// This is deliberately distinct from [`Self::List`]: the latter remains the existing scalar-pair collection
-    /// profile, while this variant makes the narrow generator consumer explicit and lets its scalar results be
-    /// indexed without admitting general list execution.
+    /// This is deliberately distinct from [`Self::List`]: the latter carries checked structural elements, while
+    /// this variant preserves the generator consumer's separate admission and indexing contract.
     CollectedGenerator {
         elements: Vec<ReplacementValue>,
         next: usize,
     },
+}
+
+/// Private list cursors for one compiler-selected Zip invocation.
+///
+/// Construction evaluates both source operands once in written order. Polling then advances the left list before
+/// the right and returns no pair as soon as either is exhausted; this carrier grants no general iterator admission.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReplacementZip {
+    left: ReplacementValue,
+    right: ReplacementValue,
 }
 
 /// A stored closure or partial-callable environment.
@@ -337,7 +362,7 @@ impl ReplacementValue {
             Self::Int(value) => value.to_string(),
             Self::Bool(value) => value.to_string(),
             Self::Str(value) => value.clone(),
-            Self::Float(value) => value.clone(),
+            Self::Float(value) => value.to_string(),
             Self::Unit => constructor_name(ConstructorId::None).to_string(),
             Self::Range { next, end, step } => format!("range({next}, {end}, {step})"),
             Self::List { elements, .. } => format!(
@@ -356,6 +381,8 @@ impl ReplacementValue {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
+            Self::Set(values) => values.observable_text(),
+            Self::Dict(values) => values.observable_text(),
             Self::Nominal {
                 direct_declaration_id,
                 fields,
@@ -380,6 +407,7 @@ impl ReplacementValue {
             Self::Generator(_) => "<generator>".to_string(),
             Self::Task(_) => "<task>".to_string(),
             Self::Adapter(_) => "<generator-adapter>".to_string(),
+            Self::Zip(_) => "<zip-iterator>".to_string(),
             Self::CollectedGenerator { elements, .. } => format!(
                 "[{}]",
                 elements
@@ -451,11 +479,68 @@ struct TaskLifecycleEvent {
     span: HirSourceSpan,
 }
 
+/// Overflow behavior for compiler-selected integer `abs` and builtin `sum` only.
+///
+/// This does not govern ordinary unary/binary arithmetic or introduce a language-level arithmetic mode. It prevents
+/// these two builtins from inheriting the compiler host's build settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BuiltinAbsSumOverflowBehavior {
+    /// Report overflow as an original-call-span runtime failure without panicking the compiler.
+    Checked,
+    /// Mirror the existing native release behavior using explicit wrapping operations.
+    ReleaseWrapping,
+}
+
+impl BuiltinAbsSumOverflowBehavior {
+    /// Stable readable label for execution evidence and reports.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Checked => "checked",
+            Self::ReleaseWrapping => "release_wrapping",
+        }
+    }
+
+    /// Versioned identity component binding only the two admitted builtin operations.
+    const fn identity_component(self) -> &'static str {
+        match self {
+            Self::Checked => "builtin-abs-sum-overflow-v1;checked",
+            Self::ReleaseWrapping => "builtin-abs-sum-overflow-v1;release-wrapping",
+        }
+    }
+}
+
+/// Caller-selected execution behavior, separate from the compiler's checked semantic facts.
+///
+/// Production callers derive this from their command contract or verified execution authority. Library convenience
+/// wrappers use the documented unreceipted-debug default, never the compiler host's build profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReplacementExecutionOptions {
+    /// Overflow behavior for compiler-owned `abs` and builtin `sum`, not general integer arithmetic.
+    pub builtin_abs_sum_overflow: BuiltinAbsSumOverflowBehavior,
+}
+
+impl ReplacementExecutionOptions {
+    /// Deterministic checked Abs/Sum behavior for callers without an adopted native build profile.
+    ///
+    /// This default does not claim an Oven receipt or a native comparison; it only prevents host-profile-dependent
+    /// builtin execution.
+    #[must_use]
+    pub const fn unreceipted_debug() -> Self {
+        Self {
+            builtin_abs_sum_overflow: BuiltinAbsSumOverflowBehavior::Checked,
+        }
+    }
+}
+
 /// Successful replacement execution evidence for one free function.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReplacementExecution {
     /// The function's source-level return value.
     pub value: ReplacementValue,
+    /// The bounded Abs/Sum behavior committed by this execution's output identity.
+    pub builtin_abs_sum_overflow: BuiltinAbsSumOverflowBehavior,
     /// Deterministic Body-IR snapshot retained as proof of the consumed input.
     pub body_snapshot: String,
     /// Every ownership decision observed during execution, in execution order.
@@ -464,16 +549,16 @@ pub struct ReplacementExecution {
     pub runtime_requirements: Vec<AbiV0RuntimeRequirement>,
     /// Every direct task-frame transition observed during this successful execution, in source execution order.
     task_lifecycle: Vec<TaskLifecycleEvent>,
-    /// Lines the program emitted through `print`/`println`, in emission order.
-    emitted_output: Vec<String>,
+    /// Accepted program-stream bytes and completed print calls, independent of receipt publication.
+    pub output: ProgramOutput,
     /// Every provider operation this execution ran, each referencing its own RFC 104 operation receipt.
     ///
     /// Empty for a run that executed no provider operation. A run that was *refused* by a governed denial or a
     /// provider failure never produces a [`ReplacementExecution`] at all, so its receipts are read from the
     /// [`provider::ProviderRuntime`] the caller supplied rather than from here.
     provider_executions: Vec<ProviderExecutionRecord>,
-    /// Content identity of the actual Body-IR snapshot, ownership facts, requirements, provider executions,
-    /// observed result, and emitted program output.
+    /// Content identity of the actual Body-IR snapshot, ownership facts, requirements, provider executions, observed
+    /// result, emitted program output, and bounded Abs/Sum behavior.
     pub output_identity: String,
 }
 
@@ -486,6 +571,8 @@ pub struct ValidatedFreeFunctionExecution<'module, 'args> {
     module: &'module BodyIrModule,
     name: String,
     args: &'args [ReplacementValue],
+    /// Execution behavior chosen before validation, retained across every nested frame.
+    options: ReplacementExecutionOptions,
     /// The provider runtime this execution's admitted provider operations were validated against.
     ///
     /// Retained on the capability rather than passed again at execution time so the runtime that answered
@@ -508,11 +595,11 @@ impl ReplacementExecution {
 
     /// The lines this execution emitted through `print`/`println`, in emission order.
     ///
-    /// Empty for a program that printed nothing. A caller running the program is expected to write these; a caller
-    /// comparing two backends is expected to compare them, because a program's output is part of what it did.
+    /// These lines have already been delivered to the supplied program writer; callers must not replay them.
+    /// They remain a compatibility projection for reports. Compare exact bytes in [`Self::output`] for stream parity.
     #[must_use]
     pub fn emitted_output(&self) -> &[String] {
-        &self.emitted_output
+        &self.output.printed_lines
     }
 
     /// Return the stable direct-task lifecycle evidence bound into this execution's output identity and CLI report.
@@ -579,6 +666,19 @@ pub enum ReplacementExecutionError {
         /// End byte offset duplicated for typed error formatting.
         span_end: usize,
     },
+    /// A program-stream write or flush failed after any earlier accepted bytes were already delivered.
+    #[error("replacement backend {error} at original Incan source span {span_start}..{span_end}")]
+    ProgramIo {
+        /// Typed host failure; partial output stays in the caller-owned [`ProgramIo`].
+        #[source]
+        error: ProgramIoError,
+        /// Original print or stream-operation span carried by Body IR.
+        span: HirSourceSpan,
+        /// Start byte offset duplicated for typed diagnostic formatting.
+        span_start: usize,
+        /// End byte offset duplicated for typed diagnostic formatting.
+        span_end: usize,
+    },
     /// An RFC 104 authority decision refused an admitted provider operation, so it never ran.
     ///
     /// Deliberately distinct from [`Self::RuntimeFailure`]: nothing executed, and the remedy is a grant rather than
@@ -638,7 +738,7 @@ impl ReplacementExecutionError {
         match self {
             Self::MissingFunction { .. } | Self::ArgumentCount { .. } => "INCAN-R988-ENTRYPOINT",
             Self::Unsupported { .. } => "INCAN-R988-UNSUPPORTED",
-            Self::RuntimeFailure { .. } => "INCAN-R988-RUNTIME",
+            Self::RuntimeFailure { .. } | Self::ProgramIo { .. } => "INCAN-R988-RUNTIME",
             Self::ProviderAuthorityDenied { .. } => "INCAN-R1156-DENIED",
             Self::ProviderOperationFailed { .. } => "INCAN-R1156-PROVIDER",
         }
@@ -649,6 +749,7 @@ impl ReplacementExecutionError {
         match self {
             Self::Unsupported { span, .. }
             | Self::RuntimeFailure { span, .. }
+            | Self::ProgramIo { span, .. }
             | Self::ProviderAuthorityDenied { span, .. }
             | Self::ProviderOperationFailed { span, .. } => Some(*span),
             Self::MissingFunction { .. } | Self::ArgumentCount { .. } => None,
@@ -673,7 +774,8 @@ impl ReplacementExecutionError {
             Self::MissingFunction { .. }
             | Self::ArgumentCount { .. }
             | Self::Unsupported { .. }
-            | Self::RuntimeFailure { .. } => None,
+            | Self::RuntimeFailure { .. }
+            | Self::ProgramIo { .. } => None,
         }
     }
 }
@@ -682,12 +784,24 @@ impl ReplacementExecutionError {
 ///
 /// This side-effect-free boundary lets callers route availability through #986 selection and receipt logic before
 /// committing to execution. Only [`execute_prevalidated_free_function`] can consume the returned capability.
+/// This convenience wrapper uses [`ReplacementExecutionOptions::unreceipted_debug`]; production callers with a selected
+/// build profile use [`prepare_free_function_execution_with_options`].
 pub fn prepare_free_function_execution<'module, 'args>(
     module: &'module BodyIrModule,
     name: &str,
     args: &'args [ReplacementValue],
 ) -> Result<ValidatedFreeFunctionExecution<'module, 'args>, ReplacementExecutionError> {
-    prepare_free_function_execution_with_providers(module, name, args, None)
+    prepare_free_function_execution_with_options(module, name, args, ReplacementExecutionOptions::unreceipted_debug())
+}
+
+/// Prepare direct execution with explicit caller-owned behavior, without introducing a second semantic analysis.
+pub fn prepare_free_function_execution_with_options<'module, 'args>(
+    module: &'module BodyIrModule,
+    name: &str,
+    args: &'args [ReplacementValue],
+    options: ReplacementExecutionOptions,
+) -> Result<ValidatedFreeFunctionExecution<'module, 'args>, ReplacementExecutionError> {
+    prepare_free_function_execution_with_providers_and_options(module, name, args, None, options)
 }
 
 /// Validate and prepare one Body-IR free function that may invoke admitted provider operations.
@@ -696,11 +810,33 @@ pub fn prepare_free_function_execution<'module, 'args>(
 /// every admitted provider call refuses at its own source span during this pre-execution gate rather than part-way
 /// through the body. That is what keeps [`prepare_free_function_execution`]'s existing contract — refuse before
 /// executing, and emit no receipt for a refusal — true for the provider vocabulary too.
+/// Abs/Sum use [`ReplacementExecutionOptions::unreceipted_debug`]; callers with an explicit execution profile use
+/// [`prepare_free_function_execution_with_providers_and_options`].
 pub fn prepare_free_function_execution_with_providers<'module, 'args>(
     module: &'module BodyIrModule,
     name: &str,
     args: &'args [ReplacementValue],
     providers: Option<&Rc<ProviderRuntime>>,
+) -> Result<ValidatedFreeFunctionExecution<'module, 'args>, ReplacementExecutionError> {
+    prepare_free_function_execution_with_providers_and_options(
+        module,
+        name,
+        args,
+        providers,
+        ReplacementExecutionOptions::unreceipted_debug(),
+    )
+}
+
+/// Validate provider admission and caller-selected execution behavior together before program output or effects.
+///
+/// The returned capability retains both inputs: a caller cannot validate against one provider runtime or Abs/Sum
+/// behavior and substitute another at execution time.
+pub fn prepare_free_function_execution_with_providers_and_options<'module, 'args>(
+    module: &'module BodyIrModule,
+    name: &str,
+    args: &'args [ReplacementValue],
+    providers: Option<&Rc<ProviderRuntime>>,
+    options: ReplacementExecutionOptions,
 ) -> Result<ValidatedFreeFunctionExecution<'module, 'args>, ReplacementExecutionError> {
     let body = named_free_function(module, name)?;
     if body.is_generator() {
@@ -714,25 +850,28 @@ pub fn prepare_free_function_execution_with_providers<'module, 'args>(
         });
     }
     validate_scalar_arguments(args, body.span)?;
-    validate_direct_body_profile(body, providers.map(Rc::as_ref))?;
+    validate_selected_float_parameter_arguments(&body.params, args)?;
+    // Preserve the selected body's numeric refusal before querying provider availability.
+    validate_nonordinary_numeric_locals(body)?;
+    provider_preflight::validate(module, body, providers.map(Rc::as_ref))?;
+    validate_direct_body_profile(body)?;
     Ok(ValidatedFreeFunctionExecution {
         module,
         name: name.to_string(),
         args,
+        options,
         providers: providers.cloned(),
     })
 }
 
-/// Validate every direct-execution invariant of one body before it is executed or stored as a lazy frame.
+/// Validate the structural direct-execution invariants of one body before it is executed or stored as a lazy frame.
 ///
 /// The selected entrypoint and every same-module named callee use this one gate. Applying it only at the entrypoint
 /// would let an otherwise admitted call dispatch an unvalidated sibling body and publish a receipt for a profile the
-/// runtime promises to refuse.
-fn validate_direct_body_profile(
-    body: &Body,
-    providers: Option<&ProviderRuntime>,
-) -> Result<(), ReplacementExecutionError> {
-    validate_provider_operation_hosts(&body.block.stmts, providers)?;
+/// runtime promises to refuse. Provider-host availability is checked separately across the reachable computation
+/// once during preparation; runtime invocation still rechecks the host and authority.
+fn validate_direct_body_profile(body: &Body) -> Result<(), ReplacementExecutionError> {
+    validate_nonordinary_numeric_locals(body)?;
     // An `async def` produces an awaitable even when its body has no explicit `await`. Executing its statements as
     // an ordinary scalar body would erase task construction, suspension, wake, cancellation, and receipt semantics
     // that belong to #1155. The stored declaration fact is therefore a direct profile boundary, not something this
@@ -742,7 +881,8 @@ fn validate_direct_body_profile(
     }
     validate_binding_identity(body)?;
     let range_iterator_locals = range_iterator_locals(&body.block);
-    validate_collection_local_types(body, &body.block.stmts, &range_iterator_locals)?;
+    let zip_iterator_locals = list_iteration::validate_body(body)?;
+    validate_collection_local_types(body, &body.block.stmts, &range_iterator_locals, &zip_iterator_locals)?;
     validate_nested_structural_aggregate_types(body)?;
     let tuple_iteration_locals = builtin_iteration_destinations(&body.block);
     let scalar_tuple_collection_locals = scalar_tuple_collection_elements(&body.block);
@@ -758,62 +898,71 @@ fn validate_direct_body_profile(
     }
 }
 
-/// Refuse every admitted provider operation this body invokes that no host in this run executes.
+/// Resolve one named call by its retained same-module identity for both preflight and runtime dispatch.
 ///
-/// This is a separate pass rather than another clause of the structural profile validator because it asks a
-/// different question. The structural gate asks whether the *plan* is executable at all — an active provider, a
-/// capability-kinded authority, one input per argument — and needs nothing but the plan to answer. This asks
-/// whether *this run* has a host for the operation, which only the supplied runtime knows. Splitting them keeps the
-/// structural refusal identical whether or not a runtime was supplied, and keeps both refusals before execution, so
-/// an unresolved operation never leaves a partially executed body or an execution receipt behind.
-fn validate_provider_operation_hosts(
-    statements: &[Statement],
-    providers: Option<&ProviderRuntime>,
-) -> Result<(), ReplacementExecutionError> {
-    for statement in statements {
-        match &statement.kind {
-            StatementKind::Call {
-                callee: Callee::ProviderOperation(plan),
-                ..
-            } => {
-                let resolved = providers.is_some_and(|runtime| runtime.resolves(&plan.operation));
-                if !resolved {
-                    return Err(unsupported(
-                        format!(
-                            "provider operation `{}` that no provider host in this run executes",
-                            plan.operation.declaration_name
-                        ),
-                        plan.call_span,
-                    ));
-                }
-            }
-            StatementKind::If {
-                then_block, else_block, ..
-            } => {
-                validate_provider_operation_hosts(&then_block.stmts, providers)?;
-                if let Some(else_block) = else_block {
-                    validate_provider_operation_hosts(&else_block.stmts, providers)?;
-                }
-            }
-            StatementKind::Loop { body } => validate_provider_operation_hosts(&body.stmts, providers)?,
-            StatementKind::Race { arms, .. } => {
-                for arm in arms {
-                    validate_provider_operation_hosts(&arm.body.stmts, providers)?;
-                }
-            }
-            StatementKind::Assign {
-                rvalue: Rvalue::Match { arms, .. },
-                ..
-            } => {
-                for arm in arms {
-                    validate_provider_operation_hosts(&arm.guard_stmts, providers)?;
-                    validate_provider_operation_hosts(&arm.body_stmts, providers)?;
-                }
-            }
-            _ => {}
-        }
+/// The source name is only a consistency check after unique, module-scoped identity selection. Neither caller may
+/// fall back to a name lookup, an imported target or a malformed body identity.
+fn named_callable_body<'module>(
+    module: &'module BodyIrModule,
+    target: &NamedCallableTarget,
+    span: HirSourceSpan,
+) -> Result<&'module Body, ReplacementExecutionError> {
+    let direct_call_id = target.direct_call_id.as_ref().ok_or_else(|| {
+        unsupported(
+            format!(
+                "named callable `{}` without a same-module declaration identity",
+                target.name
+            ),
+            span,
+        )
+    })?;
+    if !is_module_span_declaration_id(module, direct_call_id) {
+        return Err(unsupported(
+            "named callable declaration identity is not scoped to this Body-IR module",
+            span,
+        ));
     }
-    Ok(())
+    let mut matching_bodies = module
+        .bodies
+        .iter()
+        .filter(|body| body.direct_call_id == *direct_call_id);
+    let body = matching_bodies.next().ok_or_else(|| {
+        unsupported(
+            format!(
+                "named callable `{}` targets a declaration outside this Body-IR module",
+                target.name
+            ),
+            span,
+        )
+    })?;
+    if matching_bodies.next().is_some() {
+        return Err(unsupported(
+            format!(
+                "named callable `{}` declaration identity selects multiple Body-IR bodies",
+                target.name
+            ),
+            span,
+        ));
+    }
+    if !has_canonical_direct_call_id(module, body) {
+        return Err(unsupported(
+            format!(
+                "named callable `{}` body does not retain its canonical declaration identity",
+                target.name
+            ),
+            span,
+        ));
+    }
+    if body.name != target.name {
+        return Err(unsupported(
+            format!(
+                "named callable `{}` disagrees with its same-module declaration identity",
+                target.name
+            ),
+            span,
+        ));
+    }
+    Ok(body)
 }
 
 /// Validate the deliberately source-local async subset without treating a task frame as a synchronous body.
@@ -827,7 +976,8 @@ fn validate_direct_async_body_profile(body: &Body) -> Result<(), ReplacementExec
     }
     validate_async_binding_identity(body)?;
     let range_iterator_locals = range_iterator_locals(&body.block);
-    validate_collection_local_types(body, &body.block.stmts, &range_iterator_locals)?;
+    let zip_iterator_locals = list_iteration::validate_body(body)?;
+    validate_collection_local_types(body, &body.block.stmts, &range_iterator_locals, &zip_iterator_locals)?;
     validate_nested_structural_aggregate_types(body)?;
     let tuple_iteration_locals = builtin_iteration_destinations(&body.block);
     let scalar_tuple_collection_locals = scalar_tuple_collection_elements(&body.block);
@@ -909,6 +1059,7 @@ fn scope_descends_from_race_arm(
 ///
 /// The caller must already have parsed and typechecked the source before constructing `module`; this boundary only
 /// consumes Body IR and refuses unsupported operations rather than rerunning frontend or generated-Rust semantics.
+/// Abs/Sum use the deterministic unreceipted-debug default; explicit options are available through preparation.
 pub fn execute_free_function(
     module: &BodyIrModule,
     name: &str,
@@ -918,11 +1069,28 @@ pub fn execute_free_function(
     execute_prevalidated_free_function(execution)
 }
 
+/// Execute checked Body IR using caller-supplied program writers and retain observations on failure as well as success.
+///
+/// Profile validation runs before any program write. The caller owns `io` after return, including accepted prefixes
+/// when a runtime error, broken pipe, or flush failure prevented a successful execution result.
+/// Abs/Sum use the deterministic unreceipted-debug default, independent of this compiler binary's build settings.
+pub fn execute_free_function_with_io(
+    module: &BodyIrModule,
+    name: &str,
+    args: &[ReplacementValue],
+    io: &mut ProgramIo<'_>,
+) -> Result<ReplacementExecution, ReplacementExecutionError> {
+    let execution = prepare_free_function_execution(module, name, args)?;
+    execute_prevalidated_free_function_with_io(execution, io)
+}
+
 /// Execute one named free function that may invoke admitted provider operations against `providers`.
 ///
 /// The runtime is the caller's, and stays the caller's: a governed denial and a provider failure both stop this
 /// execution with an error, and their RFC 104 receipts are read from `providers` afterwards. Returning receipts
 /// only on success would make the two outcomes RFC 104 most wants recorded the two it could not report.
+/// Abs/Sum use the deterministic unreceipted-debug default; explicit behavior is available through provider-aware
+/// preparation.
 pub fn execute_free_function_with_providers(
     module: &BodyIrModule,
     name: &str,
@@ -940,9 +1108,30 @@ pub fn execute_free_function_with_providers(
 pub fn execute_prevalidated_free_function(
     execution: ValidatedFreeFunctionExecution<'_, '_>,
 ) -> Result<ReplacementExecution, ReplacementExecutionError> {
-    let body = named_free_function(execution.module, &execution.name)?;
+    let mut stdout = std::io::stdout().lock();
+    let mut stderr = std::io::stderr().lock();
+    let mut io = ProgramIo::new(&mut stdout, &mut stderr);
+    execute_prevalidated_free_function_with_io(execution, &mut io)
+}
 
-    let mut executor = BodyExecutor::new(execution.module, body, execution.args, execution.providers.clone())?;
+/// Execute a validated capability with ordinary program delivery and independently caller-owned observation.
+///
+/// Nested frames reborrow the same writers. Printing writes and flushes during execution, never after a receipt
+/// succeeds; a failed execution still leaves accepted bytes available through `io.output()`.
+pub fn execute_prevalidated_free_function_with_io(
+    execution: ValidatedFreeFunctionExecution<'_, '_>,
+    io: &mut ProgramIo<'_>,
+) -> Result<ReplacementExecution, ReplacementExecutionError> {
+    let body = named_free_function(execution.module, &execution.name)?;
+    let checkpoint = io.checkpoint();
+    let mut executor = BodyExecutor::new(
+        execution.module,
+        body,
+        execution.args,
+        execution.providers.clone(),
+        execution.options,
+        io,
+    )?;
     let value = if body.is_async {
         let task = executor.construct_task(body.clone(), executor.locals.clone(), body.span)?;
         executor.drive_task(&task, body.span)?
@@ -970,7 +1159,13 @@ pub fn execute_prevalidated_free_function(
         .map(|runtime| runtime.provider_executions())
         .unwrap_or_default();
     let provider_summary = canonical_provider_execution_summary(&provider_executions);
-    let emitted_output_summary = canonical_emitted_output_summary(&executor.emitted_output);
+    let output = executor.io.output_since(checkpoint);
+    let emitted_output_summary = canonical_emitted_output_summary(&output.printed_lines);
+    let stream_summary = format!(
+        "program-streams-v1;stdout={};stderr={}",
+        hex::encode(output.stdout()),
+        hex::encode(output.stderr())
+    );
     let output_identity = digest_output(&[
         body_snapshot.as_str(),
         value.observable_text().as_str(),
@@ -979,14 +1174,17 @@ pub fn execute_prevalidated_free_function(
         task_summary.as_str(),
         provider_summary.as_str(),
         emitted_output_summary.as_str(),
+        stream_summary.as_str(),
+        execution.options.builtin_abs_sum_overflow.identity_component(),
     ]);
     Ok(ReplacementExecution {
         value,
+        builtin_abs_sum_overflow: execution.options.builtin_abs_sum_overflow,
         body_snapshot,
         ownership_reads: executor.ownership_reads,
         runtime_requirements: executor.runtime_requirements,
         task_lifecycle: executor.task_lifecycle,
-        emitted_output: executor.emitted_output,
+        output,
         provider_executions,
         output_identity,
     })
@@ -1017,6 +1215,30 @@ fn validate_scalar_arguments(args: &[ReplacementValue], span: HirSourceSpan) -> 
     Ok(())
 }
 
+/// Keep a direct API caller from supplying an untyped carrier to a checked ordinary-float parameter.
+///
+/// The selected replacement entrypoint accepts only direct profile carriers, not a source typechecker context. A
+/// supplied `Int` or `Str` therefore cannot stand in for a checked `float` parameter merely because the executor
+/// can materialize that carrier. This is deliberately an entrypoint-only boundary: source-resolved sibling calls
+/// keep their own checked call contract and must not be rejected by a whole-body parameter scan.
+fn validate_selected_float_parameter_arguments(
+    params: &[CallableParam],
+    args: &[ReplacementValue],
+) -> Result<(), ReplacementExecutionError> {
+    for (parameter, _) in params.iter().zip(args) {
+        if matches!(&parameter.ty, IncanType::Primitive(IncanPrimitiveType::Float)) {
+            return Err(unsupported(
+                format!(
+                    "direct argument supplied to checked float parameter `{}` outside the scalar replacement profile",
+                    parameter.name
+                ),
+                parameter.span,
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Refuse repeated user-binding spellings until Body IR carries an explicit binding-equivalence fact.
 ///
 /// A local id is sufficient to address an already-selected value, but it is not enough to prove that every later
@@ -1036,6 +1258,26 @@ fn validate_binding_identity(body: &Body) -> Result<(), ReplacementExecutionErro
                 format!(
                     "repeated user binding `{name}` (lexical shadowing or reassignment); Body IR does not yet carry binding-equivalence facts for direct execution"
                 ),
+                local.span,
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Keep compiler-distinguished numeric locals outside the ordinary `int`/`float` carrier.
+///
+/// Body IR retains `f32`, `f64`, aliases such as `real`, and sized integers as
+/// [`IncanPrimitiveType::Numeric`] rather than collapsing them into the language's ordinary `int` or `float`.
+/// The replacement value model has no carrier that can preserve those distinctions. Refusing at the declaration's
+/// retained source span prevents a nested closure, generator, print, f-string, or scalar-conversion call from
+/// observing an accidentally widened value. The predicate consumes the checked enum fact directly; the rendered
+/// type appears only in the diagnostic.
+fn validate_nonordinary_numeric_locals(body: &Body) -> Result<(), ReplacementExecutionError> {
+    for local in &body.locals {
+        if matches!(local.ty, IncanType::Primitive(IncanPrimitiveType::Numeric(_))) {
+            return Err(unsupported(
+                format!("checked nonordinary numeric local has Body-IR type `{}`", local.ty),
                 local.span,
             ));
         }
@@ -1085,15 +1327,26 @@ fn validate_closure_profile(
 /// Validate structural aggregate destinations and retain the narrower builtin-iteration type boundary.
 ///
 /// Runtime operands alone cannot classify an empty aggregate. This pass therefore consumes the compiler-owned local
-/// declaration type before execution: tuple and list aggregates may be recursively structural values, while the
-/// existing builtin collection iteration profile remains restricted to scalar tuple pairs.
+/// declaration type before execution: tuple and list aggregates and their loop items may be recursively structural
+/// values. Range and canonical Zip iterators have their own checked item contracts.
 fn validate_collection_local_types(
     body: &Body,
     statements: &[Statement],
     range_iterator_locals: &BTreeSet<LocalId>,
+    zip_iterator_locals: &BTreeSet<LocalId>,
 ) -> Result<(), ReplacementExecutionError> {
     for statement in statements {
         match &statement.kind {
+            StatementKind::Assign {
+                place,
+                rvalue: Rvalue::Aggregate(AggregateKind::Set, _),
+            } => validate_hashed_aggregate_local_type(body, place, statement.span, CollectionTypeId::Set)?,
+            StatementKind::Assign {
+                place,
+                rvalue: Rvalue::Dict(_),
+            } => {
+                validate_hashed_aggregate_local_type(body, place, statement.span, CollectionTypeId::Dict)?;
+            }
             StatementKind::Assign {
                 place,
                 rvalue: Rvalue::Aggregate(AggregateKind::Tuple, _),
@@ -1115,7 +1368,7 @@ fn validate_collection_local_types(
                 let iterator_local = bare_local(&iterator.place, statement.span)?;
                 if range_iterator_locals.contains(&iterator_local) {
                     validate_range_iteration_local_types(body, destination, iterator_local, statement.span)?;
-                } else {
+                } else if !zip_iterator_locals.contains(&iterator_local) {
                     validate_structural_iteration_local_type(
                         body,
                         bare_local(destination, statement.span)?,
@@ -1133,21 +1386,31 @@ fn validate_collection_local_types(
             StatementKind::If {
                 then_block, else_block, ..
             } => {
-                validate_collection_local_types(body, &then_block.stmts, range_iterator_locals)?;
+                validate_collection_local_types(body, &then_block.stmts, range_iterator_locals, zip_iterator_locals)?;
                 if let Some(else_block) = else_block {
-                    validate_collection_local_types(body, &else_block.stmts, range_iterator_locals)?;
+                    validate_collection_local_types(
+                        body,
+                        &else_block.stmts,
+                        range_iterator_locals,
+                        zip_iterator_locals,
+                    )?;
                 }
             }
             StatementKind::Loop { body: loop_body } => {
-                validate_collection_local_types(body, &loop_body.stmts, range_iterator_locals)?;
+                validate_collection_local_types(body, &loop_body.stmts, range_iterator_locals, zip_iterator_locals)?;
             }
             StatementKind::Assign {
                 rvalue: Rvalue::Match { arms, .. },
                 ..
             } => {
                 for arm in arms {
-                    validate_collection_local_types(body, &arm.guard_stmts, range_iterator_locals)?;
-                    validate_collection_local_types(body, &arm.body_stmts, range_iterator_locals)?;
+                    validate_collection_local_types(
+                        body,
+                        &arm.guard_stmts,
+                        range_iterator_locals,
+                        zip_iterator_locals,
+                    )?;
+                    validate_collection_local_types(body, &arm.body_stmts, range_iterator_locals, zip_iterator_locals)?;
                 }
             }
             _ => {}
@@ -1238,13 +1501,23 @@ fn validate_nested_aggregate_types_in_rvalue(body: &Body, rvalue: &Rvalue) -> Re
 ///
 /// Generator frames use a deliberately different `IterNext` type contract from ordinary bodies. Deferred aggregate
 /// checks therefore share the same compiler-owned local type rule without accidentally applying the enclosing
-/// body's scalar-pair collection-iteration restriction to generator-local iterator values.
+/// body's structural-list iteration rule to generator-local iterator values.
 fn validate_structural_aggregate_types_in_statements(
     body: &Body,
     statements: &[Statement],
 ) -> Result<(), ReplacementExecutionError> {
     for statement in statements {
         match &statement.kind {
+            StatementKind::Assign {
+                place,
+                rvalue: Rvalue::Aggregate(AggregateKind::Set, _),
+            } => validate_hashed_aggregate_local_type(body, place, statement.span, CollectionTypeId::Set)?,
+            StatementKind::Assign {
+                place,
+                rvalue: Rvalue::Dict(_),
+            } => {
+                validate_hashed_aggregate_local_type(body, place, statement.span, CollectionTypeId::Dict)?;
+            }
             StatementKind::Assign {
                 place,
                 rvalue: Rvalue::Aggregate(AggregateKind::Tuple | AggregateKind::List, _),
@@ -1292,6 +1565,35 @@ fn validate_structural_aggregate_local_type(
         Ok(())
     } else {
         Err(unsupported(format!("{role} has unsupported Body-IR type `{ty}`"), span))
+    }
+}
+
+/// Validate the retained key type even when an empty hashed aggregate provides no runtime element to inspect.
+fn validate_hashed_aggregate_local_type(
+    body: &Body,
+    place: &Place,
+    span: HirSourceSpan,
+    collection: CollectionTypeId,
+) -> Result<(), ReplacementExecutionError> {
+    let ty = declared_local_type(body, bare_local(place, span)?, span)?;
+    let valid = match ty {
+        IncanType::Generic { base, args } if collections::from_str(base) == Some(collection) => {
+            match (collection, args.as_slice()) {
+                (CollectionTypeId::Set, [element]) | (CollectionTypeId::Dict, [element, _]) => {
+                    is_collection_scalar_type(element)
+                }
+                _ => false,
+            }
+        }
+        _ => false,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(unsupported(
+            format!("hashed aggregate has unsupported key type in `{ty}`"),
+            span,
+        ))
     }
 }
 
@@ -1448,11 +1750,32 @@ fn format_interpolation(
         (ReplacementValue::Bool(value), _) => Ok(value.to_string()),
         (ReplacementValue::Str(text), FormatStyle::Display) => Ok(text.clone()),
         (ReplacementValue::Str(text), FormatStyle::Debug) => Ok(format!("{text:?}")),
+        (ReplacementValue::Float(value), FormatStyle::Display) => Ok(value.to_string()),
         (other, _) => Err(unsupported(
             format!("f-string interpolation of {}", value_kind(other)),
             span,
         )),
     }
+}
+
+/// Serialize one admitted scalar with the same `serde_json` implementation as generated native code.
+///
+/// The direct profile intentionally stops at `int`, `bool`, `str`, and `None`/unit. Structural values may be
+/// serializable on the native route, but admitting them here requires separate type, ordering, and failure-parity
+/// evidence; they remain an original-call-span refusal instead of acquiring a second serializer policy.
+fn stringify_json_scalar(
+    value: ReplacementValue,
+    span: HirSourceSpan,
+) -> Result<ReplacementValue, ReplacementExecutionError> {
+    let serialized = match value {
+        ReplacementValue::Int(value) => serde_json::to_string(&value),
+        ReplacementValue::Bool(value) => serde_json::to_string(&value),
+        ReplacementValue::Str(value) => serde_json::to_string(&value),
+        ReplacementValue::Unit => serde_json::to_string(&()),
+        other => return Err(unsupported(format!("`json_stringify` of {}", value_kind(&other)), span)),
+    }
+    .map_err(|error| runtime_failure(format!("`json_stringify` serialization failed: {error}"), span))?;
+    Ok(ReplacementValue::Str(serialized))
 }
 
 /// The integer elements of a list-shaped value, with booleans counted as 1/0.
@@ -1546,7 +1869,7 @@ fn is_explicit_range_builtin(target: &NamedCallableTarget) -> bool {
 /// The compiler-owned builtin this target names, if it names one and source did not take the spelling.
 ///
 /// A same-module declaration carries a [`NamedCallableTarget::direct_call_id`] and dispatches to itself, so a
-/// module defining its own `print` or `len` keeps meaning its own. One accessor rather than a predicate per
+/// module defining its own `range` or `len` keeps meaning its own. One accessor rather than a predicate per
 /// builtin, so admission and execution read the same answer instead of drifting apart as the set grows.
 fn explicit_builtin(target: &NamedCallableTarget) -> Option<BuiltinFnId> {
     target.direct_call_id.is_none().then_some(target.builtin).flatten()
@@ -1556,14 +1879,22 @@ fn explicit_builtin(target: &NamedCallableTarget) -> Option<BuiltinFnId> {
 ///
 /// Deliberately a subset. A builtin belongs here only when this runtime's answer provably matches the one the
 /// Rust-emission backend generates for the same call; anything else refuses by name rather than producing a second
-/// opinion. `len` over a `str` is the instructive exclusion — see [`BodyExecutor::execute_builtin`].
+/// opinion. String `len` is admitted because both routes share the canonical Unicode-scalar helper.
 const EXECUTABLE_BUILTINS: &[BuiltinFnId] = &[
     BuiltinFnId::Print,
+    BuiltinFnId::Bool,
+    BuiltinFnId::Str,
+    BuiltinFnId::Int,
+    BuiltinFnId::Float,
     BuiltinFnId::Len,
     BuiltinFnId::Abs,
     BuiltinFnId::Sum,
     BuiltinFnId::Min,
     BuiltinFnId::Max,
+    BuiltinFnId::Sorted,
+    BuiltinFnId::Enumerate,
+    BuiltinFnId::Zip,
+    BuiltinFnId::JsonStringify,
 ];
 
 /// Collect the local identities written by builtin collection polling across one normalized body.
@@ -1867,8 +2198,30 @@ fn validate_call_profile(
         ));
     };
     let supported = match callee {
+        Callee::Helper(HelperOp::StrUpper | HelperOp::StrLower | HelperOp::StrStrip | HelperOp::StrLen) => {
+            args.len() == 1
+        }
+        Callee::Helper(HelperOp::StrReplace) => args.len() == 3,
         Callee::Helper(
-            HelperOp::StrConcat | HelperOp::ListConcat | HelperOp::ListContains | HelperOp::ListNotContains,
+            HelperOp::StrJoin
+            | HelperOp::StrContains
+            | HelperOp::StrEq
+            | HelperOp::StrNe
+            | HelperOp::StrLt
+            | HelperOp::StrLe
+            | HelperOp::StrGt
+            | HelperOp::StrGe,
+        ) => args.len() == 2,
+        Callee::Helper(HelperOp::StrSplit) => matches!(args.len(), 1 | 2),
+        Callee::Helper(
+            HelperOp::StrConcat
+            | HelperOp::ListConcat
+            | HelperOp::ListContains
+            | HelperOp::ListNotContains
+            | HelperOp::SetContains
+            | HelperOp::SetNotContains
+            | HelperOp::DictContainsKey
+            | HelperOp::DictNotContainsKey,
         ) => true,
         // Named calls remain direct module dispatches. Their target/binding facts are Body-IR values, not a source
         // lookup reconstructed by this executor.
@@ -1903,7 +2256,7 @@ fn validate_call_profile(
         }
         // An admitted provider operation is executable when its plan is: an active provider, an authority that
         // really names a capability, and one described input per evaluated argument. Whether *this run* has a host
-        // for it is a different question, answered by `validate_provider_operation_hosts` before execution starts.
+        // for it is a different question, answered by `provider_preflight` before execution starts.
         Callee::ProviderOperation(plan) => {
             if let Some(description) = unexecutable_provider_plan(plan, args.len()) {
                 return Err(unsupported(description, span));
@@ -1995,7 +2348,16 @@ fn validate_rvalue_profile(
             validate_operand_profile(left, span, tuple_iteration_locals)?;
             validate_operand_profile(right, span, tuple_iteration_locals)
         }
-        Rvalue::Dict(_) => Err(unsupported("dict aggregate", span)),
+        Rvalue::Dict(entries) => {
+            for entry in entries {
+                let DictEntry::Pair(key, value) = entry else {
+                    return Err(unsupported("dict aggregate with a spread entry", span));
+                };
+                validate_operand_profile(key, span, tuple_iteration_locals)?;
+                validate_operand_profile(value, span, tuple_iteration_locals)?;
+            }
+            Ok(())
+        }
         Rvalue::Aggregate(kind, operands) => validate_aggregate_profile(
             kind,
             operands,
@@ -2234,10 +2596,11 @@ fn validate_generator_statements_profile(
     Ok(())
 }
 
-/// Validate source-local tuple/list aggregates plus the constrained plain-model constructor vocabulary.
+/// Validate source-local tuple/list/set aggregates plus the constrained plain-model constructor vocabulary.
 ///
-/// Dict and set semantics remain unavailable. Constructor admission is limited further by retained declaration
-/// identity, complete checked bindings, and structural field values before the executor materializes a model value.
+/// Set elements must satisfy the hashed scalar-key profile during materialization. Constructor admission requires
+/// declaration identity, complete checked bindings, and structural field values before the executor materializes a
+/// model value.
 fn validate_aggregate_profile(
     kind: &AggregateKind,
     operands: &[ArgumentElement],
@@ -2256,7 +2619,7 @@ fn validate_aggregate_profile(
     };
     let operands = operands.as_slice();
     match kind {
-        AggregateKind::Tuple | AggregateKind::List => {
+        AggregateKind::Tuple | AggregateKind::List | AggregateKind::Set => {
             for operand in operands {
                 validate_operand_profile(operand, span, tuple_iteration_locals)?;
             }
@@ -2369,8 +2732,9 @@ fn validate_write_place(
 }
 
 /// Mutable interpreter state for one Body-IR execution.
-struct BodyExecutor {
+struct BodyExecutor<'run, 'writer> {
     module: BodyIrModule,
+    options: ReplacementExecutionOptions,
     locals: BTreeMap<LocalId, ReplacementValue>,
     ownership_reads: Vec<OwnershipRead>,
     runtime_requirements: Vec<AbiV0RuntimeRequirement>,
@@ -2381,13 +2745,8 @@ struct BodyExecutor {
     next_task_id: usize,
     /// Direct task transitions observed in execution order and bound into the output identity.
     task_lifecycle: Vec<TaskLifecycleEvent>,
-    /// Lines the executed program emitted, in emission order.
-    ///
-    /// Recorded rather than written. Writing straight to the host's stdout would make the program's output an
-    /// effect nothing could observe, compare, or test — and the shadow comparison reads a *returned value*, so a
-    /// divergence in what two backends printed would not show up in any verdict. Holding the output as a value
-    /// keeps it comparable; whether it reaches a terminal is the caller's decision, not this executor's.
-    emitted_output: Vec<String>,
+    /// Caller-owned streams reborrowed by nested frames; delivery and observation outlive a failed frame.
+    io: &'run mut ProgramIo<'writer>,
     /// The task whose Body IR this executor is currently polling, if any.
     active_task: Option<usize>,
     /// The authority source, provider host, and receipt log admitted provider operations run against.
@@ -2402,16 +2761,19 @@ struct BodyExecutor {
     pending_flow: Option<Flow>,
 }
 
-impl BodyExecutor {
+impl<'run, 'writer> BodyExecutor<'run, 'writer> {
     /// Bind the already-typechecked call arguments to their Body-IR parameter locals.
     fn new(
         module: &BodyIrModule,
         body: &Body,
         args: &[ReplacementValue],
         providers: Option<Rc<ProviderRuntime>>,
+        options: ReplacementExecutionOptions,
+        io: &'run mut ProgramIo<'writer>,
     ) -> Result<Self, ReplacementExecutionError> {
         let mut executor = Self {
             module: module.clone(),
+            options,
             locals: BTreeMap::new(),
             ownership_reads: Vec::new(),
             runtime_requirements: Vec::new(),
@@ -2419,7 +2781,7 @@ impl BodyExecutor {
             steps: 0,
             next_task_id: 0,
             task_lifecycle: Vec::new(),
-            emitted_output: Vec::new(),
+            io,
             active_task: None,
             providers,
             pending_flow: None,
@@ -2430,9 +2792,16 @@ impl BodyExecutor {
     }
 
     /// Build an isolated executor for a nested callable, default computation, or suspended generator frame.
-    fn with_locals(module: &BodyIrModule, locals: BTreeMap<LocalId, ReplacementValue>, steps: usize) -> Self {
+    fn with_locals(
+        module: &BodyIrModule,
+        locals: BTreeMap<LocalId, ReplacementValue>,
+        steps: usize,
+        options: ReplacementExecutionOptions,
+        io: &'run mut ProgramIo<'writer>,
+    ) -> Self {
         Self {
             module: module.clone(),
+            options,
             locals,
             ownership_reads: Vec::new(),
             runtime_requirements: Vec::new(),
@@ -2440,23 +2809,11 @@ impl BodyExecutor {
             steps,
             next_task_id: 0,
             task_lifecycle: Vec::new(),
-            emitted_output: Vec::new(),
+            io,
             active_task: None,
             providers: None,
             pending_flow: None,
         }
-    }
-
-    /// Build one isolated child frame while preserving execution-wide task identity allocation.
-    ///
-    /// The provider runtime is shared with the child rather than withheld, so a provider operation invoked inside a
-    /// nested callable is decided, receipted, and sequenced by the same run that would have decided it at the top
-    /// level. Withholding it would have turned a nested invocation into a silent refusal.
-    fn child_with_locals(&self, locals: BTreeMap<LocalId, ReplacementValue>, steps: usize) -> Self {
-        let mut child = Self::with_locals(&self.module, locals, steps);
-        child.next_task_id = self.next_task_id;
-        child.providers = self.providers.clone();
-        child
     }
 
     /// Record a directly consumed declaration body as evidence and preserve its runtime requirements in first-seen
@@ -2488,19 +2845,40 @@ impl BodyExecutor {
         self.body_snapshots.join("\n-- direct execution frame --\n")
     }
 
-    /// Merge an isolated nested frame's runtime evidence into its caller after that frame actually executed.
-    fn merge_child(&mut self, child: Self) {
-        self.ownership_reads.extend(child.ownership_reads);
-        for requirement in child.runtime_requirements {
+    /// Execute an isolated frame while reborrowing the caller's streams, then merge its execution evidence.
+    ///
+    /// The closure cannot outlive the reborrow. This keeps one mutable stream owner without shared interior
+    /// mutability, and preserves accepted output even if the child exits with an error before returning a value.
+    fn execute_child<T>(
+        &mut self,
+        locals: BTreeMap<LocalId, ReplacementValue>,
+        steps: usize,
+        execute: impl FnOnce(&mut BodyExecutor<'_, 'writer>) -> Result<T, ReplacementExecutionError>,
+    ) -> Result<T, ReplacementExecutionError> {
+        let mut child = BodyExecutor::with_locals(&self.module, locals, steps, self.options, self.io);
+        child.next_task_id = self.next_task_id;
+        child.providers = self.providers.clone();
+        let result = execute(&mut child);
+        let BodyExecutor {
+            ownership_reads,
+            runtime_requirements,
+            body_snapshots,
+            steps,
+            next_task_id,
+            task_lifecycle,
+            ..
+        } = child;
+        self.ownership_reads.extend(ownership_reads);
+        for requirement in runtime_requirements {
             if !self.runtime_requirements.contains(&requirement) {
                 self.runtime_requirements.push(requirement);
             }
         }
-        self.body_snapshots.extend(child.body_snapshots);
-        self.steps = child.steps;
-        self.next_task_id = self.next_task_id.max(child.next_task_id);
-        self.task_lifecycle.extend(child.task_lifecycle);
-        self.emitted_output.extend(child.emitted_output);
+        self.body_snapshots.extend(body_snapshots);
+        self.steps = steps;
+        self.next_task_id = self.next_task_id.max(next_task_id);
+        self.task_lifecycle.extend(task_lifecycle);
+        result
     }
 
     /// Construct one unpolled task directly from an identity-selected async Body-IR body.
@@ -2558,15 +2936,15 @@ impl BodyExecutor {
             (task.id, task.body.clone(), task.locals.clone())
         };
         self.record_task_event(id, "polled", span);
-        let mut child = self.child_with_locals(locals, self.steps);
-        child.active_task = Some(id);
-        child.record_body(&body);
-        let result = child.execute_block(&body.block).and_then(|flow| match flow {
-            Flow::Return(Some(value)) => Ok(value),
-            Flow::Return(None) | Flow::Next => Ok(ReplacementValue::Unit),
-            Flow::Break | Flow::Continue => Err(unsupported("loop control outside a direct task loop", body.span)),
+        let result = self.execute_child(locals, self.steps, |child| {
+            child.active_task = Some(id);
+            child.record_body(&body);
+            child.execute_block(&body.block).and_then(|flow| match flow {
+                Flow::Return(Some(value)) => Ok(value),
+                Flow::Return(None) | Flow::Next => Ok(ReplacementValue::Unit),
+                Flow::Break | Flow::Continue => Err(unsupported("loop control outside a direct task loop", body.span)),
+            })
         });
-        self.merge_child(child);
         let value = match result {
             Ok(value) => value,
             Err(error) => {
@@ -2762,20 +3140,20 @@ impl BodyExecutor {
         &mut self,
         computation: &DefaultComputation,
     ) -> Result<ReplacementValue, ReplacementExecutionError> {
-        let mut default_executor = self.child_with_locals(BTreeMap::new(), self.steps);
-        for statement in &computation.stmts {
-            match default_executor.execute_statement(statement)? {
-                Flow::Next => {}
-                Flow::Return(_) | Flow::Break | Flow::Continue => {
-                    return Err(unsupported(
-                        "control flow in a callable default computation",
-                        statement.span,
-                    ));
+        let result = self.execute_child(BTreeMap::new(), self.steps, |default_executor| {
+            for statement in &computation.stmts {
+                match default_executor.execute_statement(statement)? {
+                    Flow::Next => {}
+                    Flow::Return(_) | Flow::Break | Flow::Continue => {
+                        return Err(unsupported(
+                            "control flow in a callable default computation",
+                            statement.span,
+                        ));
+                    }
                 }
             }
-        }
-        let result = default_executor.evaluate_operand(&computation.result, computation.span)?;
-        self.merge_child(default_executor);
+            default_executor.evaluate_operand(&computation.result, computation.span)
+        })?;
         self.record_frame_evidence(format!(
             "executed source default frame span={}..{} statements={}",
             computation.span.start,
@@ -2921,6 +3299,22 @@ impl BodyExecutor {
         let destination = destination.ok_or_else(|| unsupported("discarded string-concatenation result", span))?;
         let local = bare_local(destination, span)?;
         let value = match callee {
+            Callee::Helper(
+                helper @ (HelperOp::StrUpper
+                | HelperOp::StrLower
+                | HelperOp::StrStrip
+                | HelperOp::StrLen
+                | HelperOp::StrReplace
+                | HelperOp::StrJoin
+                | HelperOp::StrSplit
+                | HelperOp::StrContains
+                | HelperOp::StrEq
+                | HelperOp::StrNe
+                | HelperOp::StrLt
+                | HelperOp::StrLe
+                | HelperOp::StrGt
+                | HelperOp::StrGe),
+            ) => self.execute_string_helper(*helper, args, span)?,
             Callee::Helper(HelperOp::StrConcat) => {
                 let [left, right] = args else {
                     return Err(unsupported("string-concatenation call arity", span));
@@ -2955,6 +3349,34 @@ impl BodyExecutor {
                 }
                 let found = elements.contains(&needle);
                 ReplacementValue::Bool(matches!(helper, HelperOp::ListContains) == found)
+            }
+            Callee::Helper(helper @ (HelperOp::SetContains | HelperOp::SetNotContains)) => {
+                let [haystack, needle] = args else {
+                    return Err(unsupported("set-membership call arity", span));
+                };
+                let haystack = self.evaluate_operand(haystack, span)?;
+                let needle = self.evaluate_operand(needle, span)?;
+                let ReplacementValue::Set(values) = haystack else {
+                    return Err(unsupported("set membership using a non-set carrier", span));
+                };
+                let found = values.contains(needle).map_err(|error| {
+                    unsupported(format!("set membership with a non-scalar {} needle", error.kind), span)
+                })?;
+                ReplacementValue::Bool(matches!(helper, HelperOp::SetContains) == found)
+            }
+            Callee::Helper(helper @ (HelperOp::DictContainsKey | HelperOp::DictNotContainsKey)) => {
+                let [haystack, needle] = args else {
+                    return Err(unsupported("dict-membership call arity", span));
+                };
+                let haystack = self.evaluate_operand(haystack, span)?;
+                let needle = self.evaluate_operand(needle, span)?;
+                let ReplacementValue::Dict(values) = haystack else {
+                    return Err(unsupported("dict membership using a non-dict carrier", span));
+                };
+                let found = values.contains_key(needle).map_err(|error| {
+                    unsupported(format!("dict membership with a non-scalar {} needle", error.kind), span)
+                })?;
+                ReplacementValue::Bool(matches!(helper, HelperOp::DictContainsKey) == found)
             }
             Callee::Function(CallableTarget::Named(target)) if is_explicit_range_builtin(target) => {
                 self.evaluate_range(args, span)?
@@ -3164,20 +3586,20 @@ impl BodyExecutor {
         span: HirSourceSpan,
         frame_kind: &str,
     ) -> Result<ReplacementValue, ReplacementExecutionError> {
-        let mut child = self.child_with_locals(locals, self.steps);
-        for statement in &callable.body.stmts {
-            match child.execute_statement(statement)? {
-                Flow::Next => {}
-                Flow::Return(_) | Flow::Break | Flow::Continue => {
-                    return Err(unsupported(
-                        "control flow in a callable expression body",
-                        statement.span,
-                    ));
+        let result = self.execute_child(locals, self.steps, |child| {
+            for statement in &callable.body.stmts {
+                match child.execute_statement(statement)? {
+                    Flow::Next => {}
+                    Flow::Return(_) | Flow::Break | Flow::Continue => {
+                        return Err(unsupported(
+                            "control flow in a callable expression body",
+                            statement.span,
+                        ));
+                    }
                 }
             }
-        }
-        let result = child.evaluate_operand(&callable.body.result, span)?;
-        self.merge_child(child);
+            child.evaluate_operand(&callable.body.result, span)
+        })?;
         self.record_frame_evidence(format!(
             "executed {frame_kind} frame call_span={}..{} params={} captures={} statements={}",
             span.start,
@@ -3196,64 +3618,8 @@ impl BodyExecutor {
         args: &[&Operand],
         span: HirSourceSpan,
     ) -> Result<ReplacementValue, ReplacementExecutionError> {
-        let direct_call_id = target.direct_call_id.as_ref().ok_or_else(|| {
-            unsupported(
-                format!(
-                    "named callable `{}` without a same-module declaration identity",
-                    target.name
-                ),
-                span,
-            )
-        })?;
-        if !is_module_span_declaration_id(&self.module, direct_call_id) {
-            return Err(unsupported(
-                "named callable declaration identity is not scoped to this Body-IR module",
-                span,
-            ));
-        }
-        let mut matching_bodies = self
-            .module
-            .bodies
-            .iter()
-            .filter(|body| body.direct_call_id == *direct_call_id);
-        let body = matching_bodies.next().ok_or_else(|| {
-            unsupported(
-                format!(
-                    "named callable `{}` targets a declaration outside this Body-IR module",
-                    target.name
-                ),
-                span,
-            )
-        })?;
-        if matching_bodies.next().is_some() {
-            return Err(unsupported(
-                format!(
-                    "named callable `{}` declaration identity selects multiple Body-IR bodies",
-                    target.name
-                ),
-                span,
-            ));
-        }
-        if !has_canonical_direct_call_id(&self.module, body) {
-            return Err(unsupported(
-                format!(
-                    "named callable `{}` body does not retain its canonical declaration identity",
-                    target.name
-                ),
-                span,
-            ));
-        }
-        let body = body.clone();
-        if body.name != target.name {
-            return Err(unsupported(
-                format!(
-                    "named callable `{}` disagrees with its same-module declaration identity",
-                    target.name
-                ),
-                span,
-            ));
-        }
-        validate_direct_body_profile(&body, self.providers.as_deref())?;
+        let body = named_callable_body(&self.module, target, span)?.clone();
+        validate_direct_body_profile(&body)?;
         if body.is_async && !target.type_args.is_empty() {
             return Err(unsupported("generic async callable target", span));
         }
@@ -3274,18 +3640,16 @@ impl BodyExecutor {
                 )),
             })));
         }
-        let mut child = self.child_with_locals(locals, self.steps);
-        child.record_body(&body);
-        let flow = child.execute_block(&body.block)?;
-        let value = match flow {
-            Flow::Return(Some(value)) => value,
-            Flow::Return(None) | Flow::Next => ReplacementValue::Unit,
-            Flow::Break | Flow::Continue => {
-                return Err(unsupported("loop control outside a nested callable loop", body.span));
+        self.execute_child(locals, self.steps, |child| {
+            child.record_body(&body);
+            match child.execute_block(&body.block)? {
+                Flow::Return(Some(value)) => Ok(value),
+                Flow::Return(None) | Flow::Next => Ok(ReplacementValue::Unit),
+                Flow::Break | Flow::Continue => {
+                    Err(unsupported("loop control outside a nested callable loop", body.span))
+                }
             }
-        };
-        self.merge_child(child);
-        Ok(value)
+        })
     }
 
     /// Capture one admitted map or filter adapter without polling its source or callback.
@@ -3345,7 +3709,7 @@ impl BodyExecutor {
         Ok(ReplacementValue::Range { next, end, step })
     }
 
-    /// Poll one admitted range or scalar-tuple-list iterator and express exhaustion as the Body-IR loop break it
+    /// Poll one admitted range, structural list or canonical Zip and express exhaustion as the Body-IR loop break it
     /// represents.
     fn execute_builtin_next(
         &mut self,
@@ -3405,15 +3769,13 @@ impl BodyExecutor {
         }
     }
 
-    /// Execute one compiler-owned builtin whose answer provably matches the Rust-emission backend's.
+    /// Execute an admitted compiler-owned builtin from its retained target identity.
     ///
-    /// Each arm mirrors what `emit_builtin_call` generates rather than what the name suggests in Python, because a
-    /// second opinion is worse than a refusal: the two backends are meant to agree, and the shadow comparison would
-    /// have no way to notice if they quietly did not.
+    /// Each arm consumes the checked operand profile; the separate shadow route measures agreement with native
+    /// execution rather than deriving an answer from this evaluator.
     ///
-    /// `len` over a `str` is the exclusion worth naming. The Rust backend emits `.len()`, which on a `String` counts
-    /// **bytes**; Python's `len` counts characters. They agree only for ASCII, so this refuses rather than picking a
-    /// side — the underlying disagreement is a language-semantics question, not something an executor should settle.
+    /// String `len` follows the canonical Unicode-scalar helper shared with generated Rust. Collection length keeps
+    /// counting materialized elements, so the executor does not infer a string policy from a source name.
     fn execute_builtin(
         &mut self,
         builtin: BuiltinFnId,
@@ -3423,6 +3785,9 @@ impl BodyExecutor {
         if matches!(builtin, BuiltinFnId::Print) {
             return self.execute_print(args, span);
         }
+        if matches!(builtin, BuiltinFnId::Enumerate | BuiltinFnId::Zip) {
+            return self.execute_list_iteration_builtin(builtin, args, span);
+        }
 
         let [argument] = args else {
             return Err(unsupported(format!("`{}` call arity", builtins::as_str(builtin)), span));
@@ -3430,26 +3795,77 @@ impl BodyExecutor {
         let value = self.evaluate_operand(argument, span)?;
 
         match builtin {
-            // `.len() as i64` on a `Vec` counts elements, which both backends agree on. A `str` does not agree,
-            // and a value with no length at all is not a `len` this profile can answer.
+            // Canonical `bool` follows the native emitter only for values this replacement profile represents with
+            // the same checked carrier. Float, bytes, frozen collections, and higher-level wrappers remain visible
+            // refusals rather than acquiring truthiness from a lossy runtime guess.
+            BuiltinFnId::Bool => match value {
+                ReplacementValue::Bool(value) => Ok(ReplacementValue::Bool(value)),
+                ReplacementValue::Int(value) => Ok(ReplacementValue::Bool(value != 0)),
+                ReplacementValue::Str(value) => Ok(ReplacementValue::Bool(!value.is_empty())),
+                ReplacementValue::List { elements, .. } => Ok(ReplacementValue::Bool(!elements.is_empty())),
+                ReplacementValue::Set(values) => Ok(ReplacementValue::Bool(!values.is_empty())),
+                ReplacementValue::Dict(values) => Ok(ReplacementValue::Bool(!values.is_empty())),
+                other => Err(unsupported(format!("`bool` of {}", value_kind(&other)), span)),
+            },
+            // Collection length counts elements. String length follows the canonical Unicode-scalar contract, and a
+            // value with no length at all remains outside the profile.
             BuiltinFnId::Len => match value {
                 ReplacementValue::List { elements, .. }
                 | ReplacementValue::CollectedGenerator { elements, .. }
                 | ReplacementValue::Tuple(elements) => Ok(ReplacementValue::Int(elements.len() as i64)),
-                ReplacementValue::Str(_) => Err(unsupported(
-                    "`len` of a string, whose byte-versus-character meaning the two backends do not agree on",
-                    span,
-                )),
+                ReplacementValue::Set(values) => Ok(ReplacementValue::Int(values.len() as i64)),
+                ReplacementValue::Dict(values) => Ok(ReplacementValue::Int(values.len() as i64)),
+                ReplacementValue::Str(value) => Ok(ReplacementValue::Int(incan_core::strings::str_len(&value))),
                 other => Err(unsupported(format!("`len` of {}", value_kind(&other)), span)),
             },
             BuiltinFnId::Abs => match value {
-                ReplacementValue::Int(value) => Ok(ReplacementValue::Int(value.abs())),
+                ReplacementValue::Int(value) => {
+                    let absolute = match self.options.builtin_abs_sum_overflow {
+                        BuiltinAbsSumOverflowBehavior::Checked => value
+                            .checked_abs()
+                            .ok_or_else(|| runtime_failure("integer overflow in builtin `abs`".to_string(), span))?,
+                        BuiltinAbsSumOverflowBehavior::ReleaseWrapping => value.wrapping_abs(),
+                    };
+                    Ok(ReplacementValue::Int(absolute))
+                }
                 other => Err(unsupported(format!("`abs` of {}", value_kind(&other)), span)),
+            },
+            // These pairs mirror the existing Rust emitter's narrowly evidenced scalar conversions. The checked
+            // Body-IR type gate rejects f32/f64/sized numeric locals before this value dispatch can flatten them
+            // into the ordinary `int`/`float` carriers.
+            BuiltinFnId::Str => match value {
+                ReplacementValue::Int(value) => Ok(ReplacementValue::Str(value.to_string())),
+                ReplacementValue::Bool(value) => Ok(ReplacementValue::Str(value.to_string())),
+                ReplacementValue::Str(value) => Ok(ReplacementValue::Str(value)),
+                ReplacementValue::Float(value) => Ok(ReplacementValue::Str(value.to_string())),
+                other => Err(unsupported(format!("`str` of {}", value_kind(&other)), span)),
+            },
+            BuiltinFnId::Int => match value {
+                ReplacementValue::Int(value) => Ok(ReplacementValue::Int(value)),
+                ReplacementValue::Bool(value) => Ok(ReplacementValue::Int(i64::from(value))),
+                ReplacementValue::Str(value) => parse_int_conversion(&value, span),
+                ReplacementValue::Float(value) => Ok(ReplacementValue::Int(value as i64)),
+                other => Err(unsupported(format!("`int` of {}", value_kind(&other)), span)),
+            },
+            BuiltinFnId::Float => match value {
+                ReplacementValue::Int(value) => Ok(ReplacementValue::Float(value as f64)),
+                ReplacementValue::Str(value) => parse_float_conversion(&value, span),
+                ReplacementValue::Float(value) => Ok(ReplacementValue::Float(value)),
+                other => Err(unsupported(format!("`float` of {}", value_kind(&other)), span)),
             },
             // `iter().sum::<i64>()`, with bools counted as 1/0 exactly as the emitted Rust does.
             BuiltinFnId::Sum => {
                 let elements = integer_elements(&value, "sum", span)?;
-                Ok(ReplacementValue::Int(elements.iter().sum()))
+                let sum = match self.options.builtin_abs_sum_overflow {
+                    BuiltinAbsSumOverflowBehavior::Checked => elements
+                        .iter()
+                        .try_fold(0_i64, |total, value| total.checked_add(*value))
+                        .ok_or_else(|| runtime_failure("integer overflow in builtin `sum`".to_string(), span))?,
+                    BuiltinAbsSumOverflowBehavior::ReleaseWrapping => {
+                        elements.iter().fold(0_i64, |total, value| total.wrapping_add(*value))
+                    }
+                };
+                Ok(ReplacementValue::Int(sum))
             }
             BuiltinFnId::Min => {
                 let elements = integer_elements(&value, "min", span)?;
@@ -3469,19 +3885,92 @@ impl BodyExecutor {
                     .map(ReplacementValue::Int)
                     .ok_or_else(|| unsupported("`max` of an empty collection", span))
             }
+            // This first sorting profile has no checked element-type fact at runtime for an empty list, so it
+            // admits only a nonempty list whose represented elements prove the integer carrier. Sorting consumes
+            // the evaluated clone and returns a fresh cursor, leaving the source local unchanged.
+            BuiltinFnId::Sorted => match value {
+                ReplacementValue::List { elements, .. } if elements.is_empty() => Err(unsupported(
+                    "`sorted` of an empty list outside the integer-only profile",
+                    span,
+                )),
+                ReplacementValue::List { elements, .. } => {
+                    let mut values = elements
+                        .into_iter()
+                        .map(|element| match element {
+                            ReplacementValue::Int(value) => Ok(value),
+                            other => Err(unsupported(
+                                format!(
+                                    "`sorted` list element {} outside the integer-only profile",
+                                    value_kind(&other)
+                                ),
+                                span,
+                            )),
+                        })
+                        .collect::<Result<Vec<_>, ReplacementExecutionError>>()?;
+                    values.sort();
+                    Ok(ReplacementValue::List {
+                        elements: values.into_iter().map(ReplacementValue::Int).collect(),
+                        next: 0,
+                    })
+                }
+                other => Err(unsupported(format!("`sorted` of {}", value_kind(&other)), span)),
+            },
+            BuiltinFnId::JsonStringify => stringify_json_scalar(value, span),
             other => Err(unsupported(format!("builtin `{}`", builtins::as_str(other)), span)),
         }
     }
 
-    /// Execute a `print`/`println` call by recording its line rather than writing it.
+    /// Construct canonical global enumeration or Zip after the owning Body's checked-type preflight.
+    ///
+    /// Enumeration has a checked list result and therefore materializes its zero-based pairs. Zip retains two
+    /// list cursors for polling; evaluating its operands here preserves written argument order without inventing
+    /// general user-iterator dispatch. Both start fresh traversals rather than inheriting another local's cursor.
+    fn execute_list_iteration_builtin(
+        &mut self,
+        builtin: BuiltinFnId,
+        args: &[&Operand],
+        span: HirSourceSpan,
+    ) -> Result<ReplacementValue, ReplacementExecutionError> {
+        match (builtin, args) {
+            (BuiltinFnId::Enumerate, [source]) => {
+                let values = self.evaluate_list_elements(source, span)?;
+                let elements = values
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, value)| {
+                        let index = i64::try_from(index)
+                            .map_err(|_| unsupported("enumerate index outside the Incan int range", span))?;
+                        Ok(ReplacementValue::Tuple(vec![ReplacementValue::Int(index), value]))
+                    })
+                    .collect::<Result<Vec<_>, ReplacementExecutionError>>()?;
+                Ok(ReplacementValue::List { elements, next: 0 })
+            }
+            (BuiltinFnId::Zip, [left, right]) => {
+                let left = self.evaluate_list_elements(left, span)?;
+                let right = self.evaluate_list_elements(right, span)?;
+                Ok(ReplacementValue::Zip(Box::new(ReplacementZip {
+                    left: ReplacementValue::List {
+                        elements: left,
+                        next: 0,
+                    },
+                    right: ReplacementValue::List {
+                        elements: right,
+                        next: 0,
+                    },
+                })))
+            }
+            _ => Err(unsupported("enumerate/Zip call arity", span)),
+        }
+    }
+
+    /// Deliver a `print`/`println` line through the caller's stdout writer and flush before continuing.
     ///
     /// Every argument renders, space-separated, matching Python's `print` and the Rust-emission backend's
     /// `emit_print_call`. That agreement is recent: both backends previously emitted only the first argument and
     /// discarded the rest, so `println("count", 3)` printed `count` with nothing reporting the loss.
     ///
-    /// The line is appended to [`BodyExecutor::emitted_output`] rather than printed. That keeps the effect a value
-    /// this runtime can hand back, compare, and test; a direct write would leave the program's output invisible to
-    /// every one of those.
+    /// Accepted bytes are observed independently of delivery. A later runtime or receipt failure cannot hide the
+    /// line, and a partial write or flush failure is reported at this original call span.
     fn execute_print(
         &mut self,
         args: &[&Operand],
@@ -3493,7 +3982,14 @@ impl BodyExecutor {
             parts.push(format_interpolation(&value, FormatStyle::Display, span)?);
         }
         let rendered = parts.join(" ");
-        self.emitted_output.push(rendered);
+        self.io
+            .print_line(rendered)
+            .map_err(|error| ReplacementExecutionError::ProgramIo {
+                error,
+                span,
+                span_start: span.start,
+                span_end: span.end,
+            })?;
         Ok(ReplacementValue::Unit)
     }
 
@@ -3502,8 +3998,8 @@ impl BodyExecutor {
     /// Body IR represents an f-string as its own structured node rather than a desugared concatenation, so this
     /// walks the parts directly. Only the scalar kinds whose rendering provably matches the Rust-emission backend
     /// are interpolated; anything else refuses by name rather than inventing a spelling the two backends would
-    /// disagree on. `float` is deliberately among the refusals: this runtime retains the source literal while the
-    /// other backend formats an `f64`, so `1.0` would render differently on each side.
+    /// disagree on. Ordinary Float Display uses the same normalized `f64` rendering as the Rust-emission backend;
+    /// Float Debug remains a refusal until that distinct formatting contract has direct parity evidence.
     fn evaluate_format(
         &mut self,
         parts: &[FormatPart],
@@ -3533,7 +4029,7 @@ impl BodyExecutor {
             Rvalue::UnaryOp(operator, operand) => self.evaluate_unary(*operator, operand, span),
             Rvalue::BinaryOp(operator, left, right) => self.evaluate_binary(*operator, left, right, span),
             Rvalue::Format(parts) => self.evaluate_format(parts, span),
-            Rvalue::Dict(_) => Err(unsupported("dict aggregate", span)),
+            Rvalue::Dict(entries) => self.evaluate_dict(entries, span),
             Rvalue::Aggregate(kind, operands) => self.evaluate_aggregate(kind, operands, span),
             Rvalue::FieldlessEnumVariant(target) => self.evaluate_fieldless_enum_variant(target, span),
             Rvalue::ValueEnumVariant(target) => self.evaluate_value_enum_variant(target, span),
@@ -3550,6 +4046,26 @@ impl BodyExecutor {
             } => self.construct_generator(source, captured_operands, body, span),
             Rvalue::Match { scrutinee, arms } => self.evaluate_match(scrutinee, arms, span),
         }
+    }
+
+    /// Materialize a dict in written key-then-value order, preserving the later-entry-wins construction rule.
+    fn evaluate_dict(
+        &mut self,
+        entries: &[DictEntry],
+        span: HirSourceSpan,
+    ) -> Result<ReplacementValue, ReplacementExecutionError> {
+        let mut values = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let DictEntry::Pair(key, value) = entry else {
+                return Err(unsupported("dict aggregate with a spread entry", span));
+            };
+            let key = self.evaluate_operand(key, span)?;
+            let value = self.evaluate_operand(value, span)?;
+            values.push((key, value));
+        }
+        let dict = ReplacementDict::from_entries(values)
+            .map_err(|error| unsupported(format!("dict aggregate with a non-scalar {} key", error.kind), span))?;
+        Ok(ReplacementValue::Dict(Rc::new(dict)))
     }
 
     /// Capture a closure or partial environment exactly once at its construction point.
@@ -3726,18 +4242,18 @@ impl BodyExecutor {
         let frame_evidence = generator.frame_evidence.take();
         let locals = std::mem::take(&mut generator.frame.locals);
         let resume_steps = generator.frame.resume_step_budget(self.steps);
-        let mut deferred = self.child_with_locals(locals, resume_steps);
-        if let Some(body) = &named_body {
-            deferred.record_body(body);
-        }
-        if let Some(evidence) = frame_evidence {
-            deferred.record_frame_evidence(evidence);
-        }
-        let value = deferred.resume_generator_frame(&mut generator.frame, span)?;
-        generator.frame.locals = std::mem::take(&mut deferred.locals);
-        generator.frame.steps = deferred.steps;
-        self.merge_child(deferred);
-        Ok(value)
+        self.execute_child(locals, resume_steps, |deferred| {
+            if let Some(body) = &named_body {
+                deferred.record_body(body);
+            }
+            if let Some(evidence) = frame_evidence {
+                deferred.record_frame_evidence(evidence);
+            }
+            let result = deferred.resume_generator_frame(&mut generator.frame, span);
+            generator.frame.locals = std::mem::take(&mut deferred.locals);
+            generator.frame.steps = deferred.steps;
+            result
+        })
     }
 
     /// Poll an iterator value once. This single surface is shared by normalized `for` lowering and lazy adapters.
@@ -3765,6 +4281,15 @@ impl BodyExecutor {
             ReplacementValue::List { .. } | ReplacementValue::CollectedGenerator { .. } => Ok(None),
             ReplacementValue::Generator(generator) => self.resume_generator(generator, span),
             ReplacementValue::Adapter(adapter) => self.poll_adapter(adapter, span),
+            ReplacementValue::Zip(zip) => {
+                let Some(left) = self.poll_iterator(&mut zip.left, span)? else {
+                    return Ok(None);
+                };
+                let Some(right) = self.poll_iterator(&mut zip.right, span)? else {
+                    return Ok(None);
+                };
+                Ok(Some(ReplacementValue::Tuple(vec![left, right])))
+            }
             value => Err(unsupported(format!("iteration over {}", value_kind(value)), span)),
         }
     }
@@ -3942,6 +4467,12 @@ impl BodyExecutor {
                 })
             }
             AggregateKind::List => Err(unsupported("list aggregate with a non-structural element", span)),
+            AggregateKind::Set => {
+                let set = ReplacementSet::from_elements(values).map_err(|error| {
+                    unsupported(format!("set aggregate with a non-scalar {} element", error.kind), span)
+                })?;
+                Ok(ReplacementValue::Set(Rc::new(set)))
+            }
             _ => Err(unsupported(format!("{} aggregate", aggregate_label(kind)), span)),
         }
     }
@@ -4902,7 +5433,100 @@ impl BodyExecutor {
         }
     }
 
-    /// Read one constant or local place while applying its recorded ownership decision.
+    /// Execute one compiler-selected string helper through the existing shared string semantics.
+    ///
+    /// Operands are receiver-first and evaluated in their retained order. Split creates a fresh structural list;
+    /// its absent separator and empty separator deliberately retain the semantic core's distinct behavior.
+    fn execute_string_helper(
+        &mut self,
+        helper: HelperOp,
+        args: &[&Operand],
+        span: HirSourceSpan,
+    ) -> Result<ReplacementValue, ReplacementExecutionError> {
+        let value = match (helper, args) {
+            (
+                comparison @ (HelperOp::StrEq
+                | HelperOp::StrNe
+                | HelperOp::StrLt
+                | HelperOp::StrLe
+                | HelperOp::StrGt
+                | HelperOp::StrGe),
+                [left, right],
+            ) => {
+                let left = self.evaluate_operand(left, span)?.into_string(span)?;
+                let right = self.evaluate_operand(right, span)?.into_string(span)?;
+                let ordering = incan_core::strings::str_cmp(&left, &right);
+                let matches = match comparison {
+                    HelperOp::StrEq => ordering.is_eq(),
+                    HelperOp::StrNe => ordering.is_ne(),
+                    HelperOp::StrLt => ordering.is_lt(),
+                    HelperOp::StrLe => ordering.is_le(),
+                    HelperOp::StrGt => ordering.is_gt(),
+                    HelperOp::StrGe => ordering.is_ge(),
+                    _ => return Err(unsupported("non-comparison string helper", span)),
+                };
+                ReplacementValue::Bool(matches)
+            }
+            (HelperOp::StrUpper, [receiver]) => {
+                let receiver = self.evaluate_operand(receiver, span)?.into_string(span)?;
+                ReplacementValue::Str(incan_core::strings::str_upper(&receiver))
+            }
+            (HelperOp::StrLower, [receiver]) => {
+                let receiver = self.evaluate_operand(receiver, span)?.into_string(span)?;
+                ReplacementValue::Str(incan_core::strings::str_lower(&receiver))
+            }
+            (HelperOp::StrStrip, [receiver]) => {
+                let receiver = self.evaluate_operand(receiver, span)?.into_string(span)?;
+                ReplacementValue::Str(incan_core::strings::str_strip(&receiver))
+            }
+            (HelperOp::StrLen, [receiver]) => {
+                let receiver = self.evaluate_operand(receiver, span)?.into_string(span)?;
+                ReplacementValue::Int(incan_core::strings::str_len(&receiver))
+            }
+            (HelperOp::StrReplace, [receiver, from, to]) => {
+                let receiver = self.evaluate_operand(receiver, span)?.into_string(span)?;
+                let from = self.evaluate_operand(from, span)?.into_string(span)?;
+                let to = self.evaluate_operand(to, span)?.into_string(span)?;
+                ReplacementValue::Str(incan_core::strings::str_replace(&receiver, &from, &to))
+            }
+            (HelperOp::StrJoin, [separator, items]) => {
+                let separator = self.evaluate_operand(separator, span)?.into_string(span)?;
+                let items = self.evaluate_list_elements(items, span)?;
+                let items = items
+                    .into_iter()
+                    .map(|item| item.into_string(span))
+                    .collect::<Result<Vec<_>, _>>()?;
+                ReplacementValue::Str(incan_core::strings::str_join(&separator, &items))
+            }
+            (HelperOp::StrSplit, [receiver, rest @ ..]) if rest.len() <= 1 => {
+                let receiver = self.evaluate_operand(receiver, span)?.into_string(span)?;
+                let separator = rest
+                    .first()
+                    .map(|separator| self.evaluate_operand(separator, span)?.into_string(span))
+                    .transpose()?;
+                ReplacementValue::List {
+                    elements: incan_core::strings::str_split(&receiver, separator.as_deref())
+                        .into_iter()
+                        .map(ReplacementValue::Str)
+                        .collect(),
+                    next: 0,
+                }
+            }
+            (HelperOp::StrContains, [haystack, needle]) => {
+                let haystack = self.evaluate_operand(haystack, span)?.into_string(span)?;
+                let needle = self.evaluate_operand(needle, span)?.into_string(span)?;
+                ReplacementValue::Bool(incan_core::strings::str_contains(&haystack, &needle))
+            }
+            _ => {
+                return Err(unsupported(
+                    format!("string helper {} call arity", helper.as_str()),
+                    span,
+                ));
+            }
+        };
+        Ok(value)
+    }
+
     /// Evaluate an operand that must be a list, returning its elements.
     ///
     /// Accepts a collected generator alongside a list because both carry the same materialized element vector, and
@@ -4920,6 +5544,7 @@ impl BodyExecutor {
         }
     }
 
+    /// Read one constant or local place while applying its recorded ownership decision.
     fn evaluate_operand(
         &mut self,
         operand: &Operand,
@@ -5129,7 +5754,7 @@ impl ReplacementValue {
     const fn is_copy_shaped(&self) -> bool {
         matches!(
             self,
-            Self::Int(_) | Self::Bool(_) | Self::Unit | Self::FieldlessEnum { .. } | Self::Task(_)
+            Self::Int(_) | Self::Bool(_) | Self::Float(_) | Self::Unit | Self::FieldlessEnum { .. } | Self::Task(_)
         )
     }
 
@@ -5437,24 +6062,7 @@ fn callee_label(callee: &Callee) -> String {
 
 /// Render a compiler-owned helper name without depending on generated-Rust spellings.
 const fn helper_label(helper: HelperOp) -> &'static str {
-    match helper {
-        HelperOp::StrConcat => "str_concat",
-        HelperOp::StrEq => "str_eq",
-        HelperOp::StrNe => "str_ne",
-        HelperOp::StrLt => "str_lt",
-        HelperOp::StrLe => "str_le",
-        HelperOp::StrGt => "str_gt",
-        HelperOp::StrGe => "str_ge",
-        HelperOp::StrContains => "str_contains",
-        HelperOp::StrNotContains => "str_not_contains",
-        HelperOp::ListConcat => "list_concat",
-        HelperOp::ListContains => "list_contains",
-        HelperOp::ListNotContains => "list_not_contains",
-        HelperOp::SetContains => "set_contains",
-        HelperOp::SetNotContains => "set_not_contains",
-        HelperOp::DictContainsKey => "dict_contains_key",
-        HelperOp::DictNotContainsKey => "dict_not_contains_key",
-    }
+    helper.as_str()
 }
 
 /// Render an aggregate kind as a compact source-level diagnostic label.
@@ -5519,7 +6127,7 @@ pub(crate) fn replacement_compatibility_direct_execution_contribution()
             ),
             preserved_feature_at_boundary(
                 "language.numeric-and-scalar",
-                "Bounded scalar arithmetic, comparisons, boolean operators, and strings execute directly from Body IR.",
+                "Bounded scalar arithmetic, comparisons, boolean operators, strings, and int/bool/str/None JSON stringification execute directly from Body IR.",
                 "src/frontend/typechecker/check_expr/ops.rs",
                 "fn check_binary",
                 "fn lower_binary",
@@ -5537,9 +6145,9 @@ pub(crate) fn replacement_compatibility_direct_execution_contribution()
             ),
             implementation_requirement(
                 "runtime.scalar-values",
-                "Scalars, strings, operators, and conversions preserve checked type and failure behavior.",
+                "Scalars, strings, operators, conversions, and scalar JSON stringification preserve checked type, exact bytes, and failure behavior.",
                 "Body IR operands/rvalues and replacement evaluator",
-                "replacement-body-v0 scalar corpus",
+                "replacement-body-v0 scalar corpus, including replacement-body-v0-025",
                 "Scalar representation is an internal evaluator mechanism.",
             ),
             implementation_requirement(
@@ -5608,6 +6216,8 @@ const fn value_kind(value: &ReplacementValue) -> &'static str {
         ReplacementValue::Range { .. } => "range",
         ReplacementValue::List { .. } => "list",
         ReplacementValue::Tuple(_) => "tuple",
+        ReplacementValue::Set(_) => "set",
+        ReplacementValue::Dict(_) => "dict",
         ReplacementValue::Nominal { .. } => "nominal",
         ReplacementValue::FieldlessEnum { .. } => "fieldless enum",
         ReplacementValue::ValueEnum { .. } => "value enum",
@@ -5616,6 +6226,7 @@ const fn value_kind(value: &ReplacementValue) -> &'static str {
         ReplacementValue::Generator(_) => "generator",
         ReplacementValue::Task(_) => "direct task",
         ReplacementValue::Adapter(_) => "generator adapter",
+        ReplacementValue::Zip(_) => "Zip iterator",
         ReplacementValue::CollectedGenerator { .. } => "collected generator list",
     }
 }
@@ -5631,9 +6242,43 @@ fn constant_value(constant: &Constant, span: HirSourceSpan) -> Result<Replacemen
         Constant::Bool(value) => Ok(ReplacementValue::Bool(*value)),
         Constant::Str(value) => Ok(ReplacementValue::Str(value.clone())),
         Constant::Unit | Constant::None => Ok(ReplacementValue::Unit),
-        Constant::Float(value) => Ok(ReplacementValue::Float(value.clone())),
+        Constant::Float(value) => binary_float_literal_value(value, span),
         Constant::Bytes(_) => Err(unsupported("byte-string literal", span)),
     }
+}
+
+/// Materialize an ordinary binary-float Body-IR literal with the same value normalization as Rust emission.
+///
+/// Body IR deliberately retains the lexical representation for diagnostics and snapshots. The lexer has already
+/// accepted that spelling as a binary float, but direct execution needs the value rather than its source text so
+/// `str(1_000.50)` and `str(1.0)` use ordinary `f64` Display. Decimal literals share this Body-IR constant variant
+/// but carry a `d` suffix; they remain outside the direct carrier rather than being silently parsed as binary
+/// floats.
+fn binary_float_literal_value(repr: &str, span: HirSourceSpan) -> Result<ReplacementValue, ReplacementExecutionError> {
+    if repr.ends_with('d') {
+        return Err(unsupported("decimal literal", span));
+    }
+    let normalized = repr.replace('_', "");
+    normalized
+        .parse::<f64>()
+        .map(ReplacementValue::Float)
+        .map_err(|_| unsupported("binary float literal outside the direct f64 carrier", span))
+}
+
+/// Execute the legacy `int_from_str` parse policy without exposing its panic-based API to direct execution.
+fn parse_int_conversion(value: &str, span: HirSourceSpan) -> Result<ReplacementValue, ReplacementExecutionError> {
+    value
+        .parse::<i64>()
+        .map(ReplacementValue::Int)
+        .map_err(|_| runtime_failure(IncanError::cannot_convert_to_int(value).to_string(), span))
+}
+
+/// Execute the legacy `float_from_str` parse policy without changing runtime input spelling.
+fn parse_float_conversion(value: &str, span: HirSourceSpan) -> Result<ReplacementValue, ReplacementExecutionError> {
+    value
+        .parse::<f64>()
+        .map(ReplacementValue::Float)
+        .map_err(|_| runtime_failure(IncanError::cannot_convert_to_float(value).to_string(), span))
 }
 
 /// Convert only scalar/unit Body-IR constants to a direct pattern comparison value.
@@ -5661,8 +6306,9 @@ mod tests {
 
     use super::{
         Body, BodyExecutor, BodyIrModule, Constant, GeneratorFrame, HirSourceSpan, LocalId, MAX_EXECUTION_STEPS,
-        Operand, OwnershipFact, Place, ReplacementExecutionError, ReplacementGenerator, ReplacementTask,
-        ReplacementTaskState, ReplacementValue, ScopeId, Statement, StatementKind,
+        Operand, OwnershipFact, Place, ProgramIo, ReplacementExecutionError, ReplacementExecutionOptions,
+        ReplacementGenerator, ReplacementTask, ReplacementTaskState, ReplacementValue, ScopeId, Statement,
+        StatementKind,
     };
 
     /// A resumed generator must retain the steps its parent spent before the first poll.
@@ -5676,7 +6322,16 @@ mod tests {
             value_enum_declarations: Vec::new(),
             bodies: Vec::new(),
         };
-        let mut executor = BodyExecutor::with_locals(&module, BTreeMap::new(), MAX_EXECUTION_STEPS);
+        let mut stdout = std::io::sink();
+        let mut stderr = std::io::sink();
+        let mut io = ProgramIo::new(&mut stdout, &mut stderr);
+        let mut executor = BodyExecutor::with_locals(
+            &module,
+            BTreeMap::new(),
+            MAX_EXECUTION_STEPS,
+            ReplacementExecutionOptions::unreceipted_debug(),
+            &mut io,
+        );
         let mut generator = ReplacementGenerator {
             frame: GeneratorFrame::new(
                 BTreeMap::new(),
@@ -5757,7 +6412,16 @@ mod tests {
         locals.insert(winner_local, ReplacementValue::Task(winner.clone()));
         locals.insert(loser_local, ReplacementValue::Task(loser.clone()));
         locals.insert(later_loser_local, ReplacementValue::Task(later_loser.clone()));
-        let mut executor = BodyExecutor::with_locals(&module, locals, 0);
+        let mut stdout = std::io::sink();
+        let mut stderr = std::io::sink();
+        let mut io = ProgramIo::new(&mut stdout, &mut stderr);
+        let mut executor = BodyExecutor::with_locals(
+            &module,
+            locals,
+            0,
+            ReplacementExecutionOptions::unreceipted_debug(),
+            &mut io,
+        );
         let arms = [
             RaceArm {
                 awaitable: Operand::place(Place::from_local(winner_local), OwnershipFact::Borrow, false),

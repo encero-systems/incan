@@ -13143,6 +13143,45 @@ def foo() -> int:
 }
 
 #[test]
+fn builtin_json_stringify_requires_exactly_one_operand_at_the_call_span() {
+    for (source, call, expected) in [
+        (
+            "def main() -> str:\n  return json_stringify()\n",
+            "json_stringify()",
+            "json_stringify() expects 1 argument(s), got 0",
+        ),
+        (
+            "def main() -> str:\n  return std.builtins.json_stringify(1, 2)\n",
+            "std.builtins.json_stringify(1, 2)",
+            "json_stringify() expects 1 argument(s), got 2",
+        ),
+    ] {
+        let errors = check_str_err(source, "json_stringify arity mismatch should fail");
+        let error = errors
+            .iter()
+            .find(|error| error.message == expected)
+            .unwrap_or_else(|| panic!("expected {expected:?}, got {errors:?}"));
+        assert_eq!(
+            &source[error.span.start..error.span.end],
+            call,
+            "the arity diagnostic must own the complete source call"
+        );
+    }
+}
+
+#[test]
+fn local_function_named_json_stringify_remains_an_ordinary_lexical_binding() {
+    let source = r#"
+def json_stringify(value: int) -> int:
+  return value + 1
+
+def main() -> int:
+  return json_stringify(41)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
 fn test_local_function_named_sum_shadows_builtin_sum() {
     let source = r#"
 def sum(value: str) -> str:

@@ -32,7 +32,7 @@ fn test_function_calls() {
     let _sum: i64 = add(5, 3);
     let _greeting1: String = greet_with_title("Smith".to_string(), "Mr.".to_string());
     let _greeting2: String = greet_with_title("Jones".to_string(), "Dr.".to_string());
-    let _length: i64 = ::std::convert::identity("hello".len() as i64);
+    let _length: i64 = incan_stdlib::strings::str_len(&("hello"));
     let string_list: Vec<String> = vec![
         "a".to_string(), "b".to_string(), "c".to_string()
     ];

@@ -123,11 +123,30 @@ fn registry_covers_the_baseline_without_claiming_parity() -> Result<(), Box<dyn 
         .find(|feature| feature.id == "language.numeric-and-scalar")
         .ok_or("missing scalar direct-profile feature")?;
     assert!(!scalar.evidence.is_parity_green());
-    assert_eq!(scalar.evidence.surfaces.scoped_comparisons.len(), 1);
-    let compared_case = &scalar.evidence.surfaces.scoped_comparisons[0];
-    assert_eq!(compared_case.case_id, "replacement-body-v0-001");
-    assert!(matches!(compared_case.state, IndependentComparisonState::ComparedMatch));
-    assert!(matches!(&compared_case.evidence, ComparisonEvidence::Paired { .. }));
+    assert!(matches!(
+        scalar.evidence.independent_comparison,
+        IndependentComparisonState::NonGreenShadowUnavailable
+    ));
+    let compared_case_ids = scalar
+        .evidence
+        .surfaces
+        .scoped_comparisons
+        .iter()
+        .map(|comparison| comparison.case_id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        compared_case_ids,
+        vec![
+            "replacement-body-v0-001",
+            "replacement-body-v0-022",
+            "replacement-body-v0-025",
+            "replacement-body-v0-027",
+        ]
+    );
+    assert!(scalar.evidence.surfaces.scoped_comparisons.iter().all(|comparison| {
+        matches!(comparison.state, IndependentComparisonState::ComparedMatch)
+            && matches!(&comparison.evidence, ComparisonEvidence::Paired { .. })
+    }));
     assert!(
         registry
             .features
@@ -135,6 +154,58 @@ fn registry_covers_the_baseline_without_claiming_parity() -> Result<(), Box<dyn 
             .filter(|feature| feature.id != scalar.id)
             .all(|feature| { feature.evidence.surfaces.scoped_comparisons.is_empty() })
     );
+    Ok(())
+}
+
+/// A selected-helper corpus match must not invent a frozen capability relation or promote broad formatting parity.
+#[test]
+fn selected_string_helper_evidence_does_not_invent_a_frozen_capability() -> Result<(), Box<dyn std::error::Error>> {
+    let registry = replacement_compatibility_registry();
+    assert!(
+        registry
+            .feature_links
+            .iter()
+            .all(|link| link.feature_id != "language.string-helpers"),
+        "the frozen public baseline has no string-helper capability; do not invent a numeric or formatter crosswalk"
+    );
+    let broad = registry
+        .features
+        .iter()
+        .find(|feature| feature.id == "language.strings-and-format")
+        .ok_or("missing wider string feature")?;
+    assert!(!broad.evidence.is_parity_green());
+    assert!(broad.evidence.surfaces.scoped_comparisons.is_empty());
+    assert!(
+        broad.migration_or_blocker.as_deref().is_some_and(|note| {
+            note.contains("replacement-body-v0-021") && note.contains("replacement-body-v0-024")
+        })
+    );
+    Ok(())
+}
+
+/// Bounded membership, entry-count, and integer-sort evidence must not claim the frozen collection capability.
+#[test]
+fn hashed_bounded_evidence_does_not_invent_a_frozen_capability() -> Result<(), Box<dyn std::error::Error>> {
+    let registry = replacement_compatibility_registry();
+    assert!(
+        registry
+            .feature_links
+            .iter()
+            .all(|link| link.feature_id != "language.hashed-membership"),
+        "the frozen StdCollections capability describes imported specialized containers, not plain set/dict membership"
+    );
+    let aggregates = registry
+        .features
+        .iter()
+        .find(|feature| feature.id == "language.aggregates-and-projections")
+        .ok_or("missing broad aggregate feature")?;
+    assert!(!aggregates.evidence.is_parity_green());
+    assert!(aggregates.evidence.surfaces.scoped_comparisons.is_empty());
+    assert!(aggregates.migration_or_blocker.as_deref().is_some_and(|note| {
+        note.contains("replacement-body-v0-020")
+            && note.contains("replacement-body-v0-026")
+            && note.contains("replacement-body-v0-028")
+    }));
     Ok(())
 }
 
@@ -154,12 +225,28 @@ fn joined_projection_is_deterministic_and_exposes_the_callable_boundary() -> Res
     assert!(projection.contains("#1152"));
     assert!(projection.contains("HistoricalDiscrepancyUnresolved; owner #1153"));
     assert!(projection.contains("replacement-body-v0-001: ComparedMatch"));
+    assert!(projection.contains("replacement-body-v0-025: ComparedMatch"));
+    assert!(projection.contains("replacement-body-v0-027: ComparedMatch"));
+    assert!(projection.contains("replacement-body-v0-020` through `replacement-body-v0-028"));
     assert!(projection.contains("legacy_receipt_identity"));
     assert!(projection.contains("replacement_receipt_identity"));
     assert!(projection.contains("completed comparison infrastructure #1146"));
     assert!(projection.contains("outstanding evidence owner #1152"));
     assert!(projection.contains("unscheduled evidence debt"));
     assert!(!projection.contains("unavailable via #1146"));
+    assert!(
+        projection
+            .contains("Case `replacement-body-v0-022` (ComparedMatch) using completed comparison infrastructure #1146")
+    );
+    assert!(
+        projection
+            .contains("Case `replacement-body-v0-025` (ComparedMatch) using completed comparison infrastructure #1146")
+    );
+    assert!(
+        projection
+            .contains("Case `replacement-body-v0-027` (ComparedMatch) using completed comparison infrastructure #1146")
+    );
+    assert!(!projection.contains("Completed #1146 case"));
 
     let machine: serde_json::Value = serde_json::from_str(&render_machine_readable_inventory(&baseline, &registry)?)?;
     assert!(machine.is_object());

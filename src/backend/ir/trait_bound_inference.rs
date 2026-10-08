@@ -37,10 +37,10 @@ use super::expr::{
     MethodCallArgPolicy, VarRefKind,
 };
 use super::ownership::{
-    RegularMethodArgumentContext, ValueUseSite, regular_method_argument_use_site, value_use_requires_clone_bound,
-    value_use_site_target_ty,
+    RegularMethodArgumentContext, ValueUseSite, list_index_assignment_element_type, regular_method_argument_use_site,
+    value_use_requires_clone_bound, value_use_site_target_ty,
 };
-use super::stmt::{IrStmt, IrStmtKind};
+use super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::types::{IrType, SetConstructorIteration};
 
 /// Run trait bound inference on an entire IR program.
@@ -693,7 +693,58 @@ fn collect_backend_clone_bounds_in_stmt(
                 clone_params,
             );
         }
-        IrStmtKind::Let { value, .. } | IrStmtKind::Assign { value, .. } | IrStmtKind::CompoundAssign { value, .. } => {
+        IrStmtKind::Let {
+            ty,
+            type_annotation,
+            value,
+            ..
+        } => {
+            // Keep this target choice aligned with let emission, where a source annotation overrides the inferred
+            // local type for the Assignment use-site plan.
+            let target_ty = type_annotation.as_ref().unwrap_or(ty);
+            collect_backend_clone_bounds_for_value_use(
+                value,
+                ValueUseSite::Assignment {
+                    target_ty: Some(target_ty),
+                },
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
+            collect_backend_clone_bounds_in_expr(
+                value,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
+        }
+        IrStmtKind::Assign {
+            target: AssignTarget::Index { object, .. },
+            value,
+        } => {
+            if let Some(target_ty) = list_index_assignment_element_type(&object.ty) {
+                collect_backend_clone_bounds_for_value_use(
+                    value,
+                    ValueUseSite::Assignment {
+                        target_ty: Some(target_ty),
+                    },
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
+            }
+            collect_backend_clone_bounds_in_expr(
+                value,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
+        }
+        IrStmtKind::Assign { value, .. } | IrStmtKind::CompoundAssign { value, .. } => {
             collect_backend_clone_bounds_in_expr(
                 value,
                 type_param_names,
@@ -1681,6 +1732,19 @@ fn tuple_item_use_site<'a>(site: ValueUseSite<'a>, target_ty: Option<&'a IrType>
     }
 }
 
+/// Clone-bound dependencies for one backend-materialized expression.
+///
+/// The inferred parameters are deliberately separate from the callable's accumulated bounds: seeing the same
+/// parameter twice still proves a concrete dependency, whereas an opaque type with no visible parameter requires the
+/// established conservative fallback.
+#[derive(Default)]
+struct CloneExpressionDependencies {
+    /// Type parameters explicitly required by the cloned representation.
+    explicit_params: HashSet<String>,
+    /// Whether the cloned representation can require bounds that its IR shape does not expose.
+    has_opaque_dependency: bool,
+}
+
 /// Record generic type parameters that need `Clone` because `expr` is cloned by backend ownership planning.
 ///
 /// `self` is special: cloning `self` can imply all or a subset of the impl's type parameters, depending on the derived
@@ -1707,16 +1771,98 @@ fn add_backend_clone_bounds_for_cloned_expr(
         }
     }
 
-    let before = clone_params.len();
+    let mut dependencies = CloneExpressionDependencies::default();
     if let Some(inner_ty) = borrowed_method_inner_ty(expr) {
-        collect_generic_type_param_names(inner_ty, type_param_names, clone_params);
+        collect_clone_expression_dependencies(inner_ty, type_param_names, &mut dependencies);
     }
-    collect_generic_type_param_names(&expr.ty, type_param_names, clone_params);
-    if clone_params.len() == before
+    collect_clone_expression_dependencies(&expr.ty, type_param_names, &mut dependencies);
+    let has_explicit_dependency = !dependencies.explicit_params.is_empty();
+    clone_params.extend(dependencies.explicit_params);
+    if !has_explicit_dependency
+        && dependencies.has_opaque_dependency
         && matches!(&expr.kind, IrExprKind::Var { .. } | IrExprKind::Field { .. })
         && !type_param_names.is_empty()
     {
         clone_params.extend(type_param_names.iter().map(|name| (*name).to_string()));
+    }
+}
+
+/// Collect only the generic bounds required by a backend-inserted clone expression.
+///
+/// This differs from [`collect_generic_type_param_names`], which supports conservative derived-Clone owner analysis.
+/// Rust function pointers are `Clone` independently of their argument and return types, so expression-level clone
+/// inference records no dependency for `fn(T) -> U`. Opaque representations retain the prior fallback only when no
+/// explicit generic dependency is available.
+fn collect_clone_expression_dependencies(
+    ty: &IrType,
+    type_param_names: &HashSet<&str>,
+    dependencies: &mut CloneExpressionDependencies,
+) {
+    match ty {
+        IrType::Generic(name) => {
+            if type_param_names.contains(name.as_str()) {
+                dependencies.explicit_params.insert(name.clone());
+            }
+        }
+        IrType::List(inner)
+        | IrType::Set(inner)
+        | IrType::Option(inner)
+        | IrType::Ref(inner)
+        | IrType::RefMut(inner)
+        | IrType::TypeToken(inner) => {
+            collect_clone_expression_dependencies(inner, type_param_names, dependencies);
+        }
+        IrType::Dict(key, value) | IrType::Result(key, value) => {
+            collect_clone_expression_dependencies(key, type_param_names, dependencies);
+            collect_clone_expression_dependencies(value, type_param_names, dependencies);
+        }
+        IrType::Tuple(items) => {
+            for item in items {
+                collect_clone_expression_dependencies(item, type_param_names, dependencies);
+            }
+        }
+        IrType::NamedGeneric(_, items) => {
+            dependencies.has_opaque_dependency = true;
+            for item in items {
+                collect_clone_expression_dependencies(item, type_param_names, dependencies);
+            }
+        }
+        IrType::ExternalUnion { union, .. } => {
+            dependencies.has_opaque_dependency = true;
+            collect_clone_expression_dependencies(union, type_param_names, dependencies);
+        }
+        IrType::ImplTrait(bound) => {
+            dependencies.has_opaque_dependency = true;
+            for arg in &bound.type_args {
+                collect_clone_expression_dependencies(arg, type_param_names, dependencies);
+            }
+            for (_, ty) in &bound.assoc_types {
+                collect_clone_expression_dependencies(ty, type_param_names, dependencies);
+            }
+        }
+        // Rust `fn` pointers implement Clone independently of their parameter and return types.
+        IrType::Function { .. } => {}
+        IrType::Struct(_)
+        | IrType::Enum(_)
+        | IrType::Trait(_)
+        | IrType::RustDisplay(_)
+        | IrType::SelfType
+        | IrType::Unknown => {
+            dependencies.has_opaque_dependency = true;
+        }
+        IrType::Unit
+        | IrType::Bool
+        | IrType::Int
+        | IrType::Float
+        | IrType::Numeric(_)
+        | IrType::Decimal { .. }
+        | IrType::String
+        | IrType::Bytes
+        | IrType::StaticStr
+        | IrType::StaticBytes
+        | IrType::FrozenStr
+        | IrType::FrozenBytes
+        | IrType::StrRef => {}
     }
 }
 
@@ -3117,6 +3263,68 @@ mod tests {
     use crate::backend::ir::decl::{FunctionParam, IrDecl, IrDeclKind, IrImpl, Visibility};
     use crate::backend::ir::expr::{FormatStyle, IrCallArgKind, Literal, MethodCallArgPolicy, VarAccess};
     use crate::backend::ir::{FunctionRegistry, FunctionSignature, Mutability, TypedExpr};
+
+    /// Cloning a concrete value or function pointer does not clone its surrounding generic parameters.
+    #[test]
+    fn clone_dependencies_exclude_callable_signatures_and_concrete_values() {
+        let parameters = HashSet::from(["T", "U"]);
+        let callable = IrType::Function {
+            params: vec![IrType::Generic("T".to_string())],
+            ret: Box::new(IrType::Generic("U".to_string())),
+        };
+        for ty in [IrType::String, callable.clone(), IrType::List(Box::new(callable))] {
+            let expr = TypedExpr::new(
+                IrExprKind::Var {
+                    name: "value".to_string(),
+                    access: VarAccess::Read,
+                    ref_kind: VarRefKind::Value,
+                },
+                ty.clone(),
+            );
+            let mut bounds = HashSet::new();
+            add_backend_clone_bounds_for_cloned_expr(&expr, &parameters, None, &mut bounds);
+            assert!(
+                bounds.is_empty(),
+                "cloning {ty:?} introduced unrelated bounds: {bounds:?}"
+            );
+        }
+    }
+
+    /// Finding a dependency already in the set is not evidence that the cloned type was erased.
+    #[test]
+    fn repeated_clone_dependency_does_not_add_unrelated_parameters() {
+        let parameters = HashSet::from(["T", "U"]);
+        let expr = TypedExpr::new(
+            IrExprKind::Var {
+                name: "value".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Generic("T".to_string()),
+        );
+        let mut bounds = HashSet::from(["T".to_string()]);
+        add_backend_clone_bounds_for_cloned_expr(&expr, &parameters, None, &mut bounds);
+        assert_eq!(bounds, HashSet::from(["T".to_string()]));
+    }
+
+    /// Unknown and opaque nominal clone dependencies must retain the conservative enclosing-bound fallback.
+    #[test]
+    fn erased_clone_dependencies_retain_conservative_bounds() {
+        let parameters = HashSet::from(["T", "U"]);
+        for ty in [IrType::Unknown, IrType::Struct("Erased".to_string())] {
+            let expr = TypedExpr::new(
+                IrExprKind::Var {
+                    name: "value".to_string(),
+                    access: VarAccess::Read,
+                    ref_kind: VarRefKind::Value,
+                },
+                ty,
+            );
+            let mut bounds = HashSet::new();
+            add_backend_clone_bounds_for_cloned_expr(&expr, &parameters, None, &mut bounds);
+            assert_eq!(bounds, HashSet::from(["T".to_string(), "U".to_string()]));
+        }
+    }
 
     fn function(name: &str, type_params: Vec<IrTypeParam>) -> IrFunction {
         IrFunction {

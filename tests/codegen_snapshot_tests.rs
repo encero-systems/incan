@@ -1703,6 +1703,64 @@ fn test_issue1116_builtin_len_shadowing_codegen() {
 }
 
 #[test]
+fn builtin_json_stringify_evaluates_its_operand_once() {
+    for call in [
+        "json_stringify(next_value())",
+        "std.builtins.json_stringify(next_value())",
+    ] {
+        let source = format!(
+            r#"
+def next_value() -> str:
+  println("evaluated")
+  return "line\né"
+
+def main() -> str:
+  return {call}
+"#
+        );
+        let rust_code = generate_rust(&source);
+        let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+        assert!(
+            compact.contains("let__incan_json_value=&(next_value());"),
+            "the emitted {call} must bind its operand before serialization; generated:\n{rust_code}"
+        );
+        assert_eq!(
+            compact.matches("next_value()").count(),
+            2,
+            "the declaration and one {call} operand evaluation must be the only occurrences; generated:\n{rust_code}"
+        );
+    }
+}
+
+#[test]
+fn builtin_json_stringify_gives_untyped_none_a_concrete_rust_type() {
+    let source = r#"
+def main() -> str:
+  return json_stringify(None)
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("let__incan_json_value=&(None::<()>);"),
+        "an untyped Incan None must have a concrete serializable Rust type; generated:\n{rust_code}"
+    );
+}
+
+#[test]
+fn builtin_json_stringify_preserves_the_incan_int_width() {
+    let source = r#"
+def main() -> str:
+  return json_stringify(9223372036854775807)
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("let__incan_json_value:&i64=&(9223372036854775807);"),
+        "an Incan int operand must retain its i64 width at the JSON boundary; generated:\n{rust_code}"
+    );
+}
+
+#[test]
 fn test_issue950_builtin_zip_only_codegen() {
     let source = load_test_file("issue950_builtin_zip_only");
     let rust_code = generate_rust(&source);
@@ -2326,7 +2384,7 @@ fn test_issue383_dict_comp_reuses_noncopy_key_codegen() {
     let source = load_test_file("issue383_dict_comp_reuses_noncopy_key");
     let rust_code = generate_rust(&source);
     assert!(
-        rust_code.contains(".map(|name| (name.clone(), ::std::convert::identity(name.len() as i64)))"),
+        rust_code.contains(".map(|name| (name.clone(), incan_stdlib::strings::str_len(&(name))))"),
         "expected dict comprehension to clone the non-Copy key before reading it again in the value expression; generated:\n{rust_code}"
     );
     insta::assert_snapshot!("issue383_dict_comp_reuses_noncopy_key", rust_code);

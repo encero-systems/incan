@@ -3295,13 +3295,13 @@
       },
       {
         "id": "language.numeric-and-scalar",
-        "contract": "Bounded scalar arithmetic, comparisons, boolean operators, and strings execute directly from Body IR.",
+        "contract": "Bounded scalar arithmetic, comparisons, boolean operators, strings, and int/bool/str/None JSON stringification execute directly from Body IR.",
         "probes": [
           {
             "id": "probe:language.numeric-and-scalar:bounded-direct-profile",
             "positive": {
               "outcome": "AcceptedBehavior",
-              "contract": "Bounded scalar arithmetic, comparisons, boolean operators, and strings execute directly from Body IR.",
+              "contract": "Bounded scalar arithmetic, comparisons, boolean operators, strings, and int/bool/str/None JSON stringification execute directly from Body IR.",
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",
@@ -3370,7 +3370,10 @@
                   "replacement-body-v0-001",
                   "replacement-body-v0-002",
                   "replacement-body-v0-003",
-                  "replacement-body-v0-005"
+                  "replacement-body-v0-005",
+                  "replacement-body-v0-022",
+                  "replacement-body-v0-025",
+                  "replacement-body-v0-027"
                 ],
                 "anchor": {
                   "surface": "ParityCorpus",
@@ -3431,6 +3434,102 @@
                       "selector": "fn the_compared_row_carries_two_route_receipts_and_its_oven_authority",
                       "owner_issue": null,
                       "note": "#1146 records the matched two-route source observable for replacement-body-v0-001."
+                    }
+                  }
+                }
+              },
+              {
+                "case_id": "replacement-body-v0-022",
+                "state": "ComparedMatch",
+                "evidence": {
+                  "Paired": {
+                    "legacy_receipt": {
+                      "surface": "IndependentComparison",
+                      "status": "Observed",
+                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "selector": "fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output",
+                      "owner_issue": null,
+                      "note": "#1249 verifies the legacy Oven route receipt for replacement-body-v0-022."
+                    },
+                    "replacement_receipt": {
+                      "surface": "IndependentComparison",
+                      "status": "Observed",
+                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "selector": "fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output",
+                      "owner_issue": null,
+                      "note": "#1249 verifies the direct replacement route receipt for replacement-body-v0-022."
+                    },
+                    "comparison_record": {
+                      "surface": "IndependentComparison",
+                      "status": "Observed",
+                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "selector": "fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output",
+                      "owner_issue": null,
+                      "note": "#1249 records the matched typed result and exact streams for replacement-body-v0-022."
+                    }
+                  }
+                }
+              },
+              {
+                "case_id": "replacement-body-v0-025",
+                "state": "ComparedMatch",
+                "evidence": {
+                  "Paired": {
+                    "legacy_receipt": {
+                      "surface": "IndependentComparison",
+                      "status": "Observed",
+                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "selector": "fn the_scalar_json_row_carries_two_route_receipts_and_exact_output",
+                      "owner_issue": null,
+                      "note": "#1249 verifies the legacy Oven route receipt for replacement-body-v0-025."
+                    },
+                    "replacement_receipt": {
+                      "surface": "IndependentComparison",
+                      "status": "Observed",
+                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "selector": "fn the_scalar_json_row_carries_two_route_receipts_and_exact_output",
+                      "owner_issue": null,
+                      "note": "#1249 verifies the direct replacement route receipt for replacement-body-v0-025."
+                    },
+                    "comparison_record": {
+                      "surface": "IndependentComparison",
+                      "status": "Observed",
+                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "selector": "fn the_scalar_json_row_carries_two_route_receipts_and_exact_output",
+                      "owner_issue": null,
+                      "note": "#1249 records exact scalar JSON bytes and the matched two-route source observable for replacement-body-v0-025."
+                    }
+                  }
+                }
+              },
+              {
+                "case_id": "replacement-body-v0-027",
+                "state": "ComparedMatch",
+                "evidence": {
+                  "Paired": {
+                    "legacy_receipt": {
+                      "surface": "IndependentComparison",
+                      "status": "Observed",
+                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "selector": "fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output",
+                      "owner_issue": null,
+                      "note": "#1249 verifies the legacy Oven route receipt for replacement-body-v0-027."
+                    },
+                    "replacement_receipt": {
+                      "surface": "IndependentComparison",
+                      "status": "Observed",
+                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "selector": "fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output",
+                      "owner_issue": null,
+                      "note": "#1249 verifies the direct replacement route receipt for replacement-body-v0-027."
+                    },
+                    "comparison_record": {
+                      "surface": "IndependentComparison",
+                      "status": "Observed",
+                      "repository_path": "tests/parity_corpus_tests.rs",
+                      "selector": "fn the_bool_truthiness_row_carries_two_route_receipts_and_exact_output",
+                      "owner_issue": null,
+                      "note": "#1249 records bounded canonical truthiness and exact streams for replacement-body-v0-027."
                     }
                   }
                 }
@@ -4572,7 +4671,7 @@
         },
         "disposition": "Planned",
         "owner_issue": 1154,
-        "migration_or_blocker": "Depends on #1101 for complete aggregate/place vocabulary; #1154 owns direct value storage and mutation."
+        "migration_or_blocker": "Source-local scalar-key set/dict membership and entry count plus nonempty integer-list sorting execute directly. Standalone replacement-body-v0-020, replacement-body-v0-026 and replacement-body-v0-028 prove their exact streams and typed results across independent routes. These bounded proofs do not establish the full aggregate or ordering contract; #1154 owns remaining direct value storage, projection and mutation behavior."
       },
       {
         "id": "language.control-flow-complete",
@@ -5024,7 +5123,7 @@
         },
         "disposition": "Planned",
         "owner_issue": 1101,
-        "migration_or_blocker": "String concatenation is boundedly executable; f-strings and general formatting remain explicit refusals."
+        "migration_or_blocker": "String concatenation, bounded scalar interpolation, selected canonical string helpers and Unicode-scalar string length execute directly. The separate replacement-body-v0-021 and replacement-body-v0-024 corpus cases prove those bounded profiles, not this full formatting contract; broad feature parity remains non-green."
       },
       {
         "id": "module.identity-and-aliases",
@@ -6068,9 +6167,9 @@
       },
       {
         "id": "runtime.scalar-values",
-        "invariant": "Scalars, strings, operators, and conversions preserve checked type and failure behavior.",
+        "invariant": "Scalars, strings, operators, conversions, and scalar JSON stringification preserve checked type, exact bytes, and failure behavior.",
         "owner_boundary": "Body IR operands/rvalues and replacement evaluator",
-        "verification_anchor": "replacement-body-v0 scalar corpus",
+        "verification_anchor": "replacement-body-v0 scalar corpus, including replacement-body-v0-025",
         "internal_only_rationale": "Scalar representation is an internal evaluator mechanism."
       },
       {

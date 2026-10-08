@@ -10,8 +10,8 @@ incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 fn match_index(xs: Vec<String>, y: i64) -> i64 {
     let mut idx = 0;
     while idx < ::std::convert::identity(xs.len() as i64) {
-        if ::std::convert::identity(
-            incan_stdlib::collections::list_get(&xs, (idx) as i64).clone().len() as i64,
+        if incan_stdlib::strings::str_len(
+            &(incan_stdlib::collections::list_get(&xs, (idx) as i64).clone()),
         ) == y
         {
             return idx;

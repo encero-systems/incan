@@ -1036,19 +1036,19 @@ def main() -> int:
     Ok(())
 }
 
-/// Refuse an unimplemented dict aggregate at its original source span.
+/// Refuse a dict spread outside the membership profile at its original source span.
 #[test]
 fn replacement_refuses_unsupported_body_ir_with_the_original_source_span() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 def main() -> int:
-  values = {"first": 1}
+  values = {**{"first": 1}}
   return 0
 "#;
     let module = lower_typed_body_ir(source)?;
     let error = match execute_free_function(&module, "main", &[]) {
         Ok(execution) => {
             return Err(format!(
-                "dict aggregates must remain outside the source-local structural profile but executed as {:?}",
+                "dict spreads must remain outside the hashed membership profile but executed as {:?}",
                 execution.value
             )
             .into());
@@ -1061,9 +1061,9 @@ def main() -> int:
         "unsupported execution must retain an Incan source span: {error}"
     );
     let expected_start = source
-        .find("{\"first\": 1}")
+        .find("{**{\"first\": 1}}")
         .ok_or("aggregate fixture must contain its dict assignment")?;
-    let expected_end = expected_start + "{\"first\": 1}".len();
+    let expected_end = expected_start + "{**{\"first\": 1}}".len();
     let span = error
         .primary_span()
         .ok_or("aggregate refusal must retain its original source span")?;
@@ -2237,6 +2237,16 @@ fn replacement_cli_executes_typed_body_ir_and_persists_a_replacement_receipt() -
             "--backend-fallback",
             "refuse",
         ])
+        .args([
+            "--report",
+            "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("replacement-report.json")
+                .to_string_lossy()
+                .as_ref(),
+        ])
         .output()?;
     assert!(
         output.status.success(),
@@ -2244,15 +2254,13 @@ fn replacement_cli_executes_typed_body_ir_and_persists_a_replacement_receipt() -
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let stdout = String::from_utf8(output.stdout)?;
     assert!(
-        stdout.contains("replacement backend executed `main`: 42"),
-        "unexpected replacement output: {stdout}"
+        output.stdout.is_empty(),
+        "non-printing programs must leave stdout empty"
     );
-    assert!(
-        !stdout.contains("Generated Rust project"),
-        "replacement path must not enter Rust generation: {stdout}"
-    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("replacement-report.json"))?)?;
+    assert_eq!(report["replacement_execution"]["result"], "42");
     assert!(
         !temporary.path().join("target/incan").exists(),
         "direct replacement execution must not create a legacy generated-project directory"
@@ -2300,6 +2308,16 @@ fn replacement_cli_executes_typed_empty_scalar_tuple_list_with_a_replacement_rec
             "--backend-fallback",
             "refuse",
         ])
+        .args([
+            "--report",
+            "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("replacement-report.json")
+                .to_string_lossy()
+                .as_ref(),
+        ])
         .output()?;
     assert!(
         output.status.success(),
@@ -2307,11 +2325,13 @@ fn replacement_cli_executes_typed_empty_scalar_tuple_list_with_a_replacement_rec
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let stdout = String::from_utf8(output.stdout)?;
     assert!(
-        stdout.contains("replacement backend executed `main`: 42"),
-        "unexpected typed empty pair-list output: {stdout}"
+        output.stdout.is_empty(),
+        "non-printing programs must leave stdout empty"
     );
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("replacement-report.json"))?)?;
+    assert_eq!(report["replacement_execution"]["result"], "42");
     assert!(
         !temporary.path().join("target/incan").exists(),
         "direct replacement execution must not create a legacy generated-project directory"
@@ -2344,6 +2364,12 @@ fn replacement_cli_json_report_projects_canonical_execution_evidence() -> Result
             "refuse",
             "--report",
             "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("replacement-report.json")
+                .to_string_lossy()
+                .as_ref(),
         ])
         .output()?;
     assert!(
@@ -2352,7 +2378,8 @@ fn replacement_cli_json_report_projects_canonical_execution_evidence() -> Result
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("replacement-report.json"))?)?;
     assert_eq!(report["schema_version"], "incan.replacement_execution.v0");
     assert_eq!(report["status"], "success");
     assert_eq!(report["mode"], "executable");
@@ -2362,10 +2389,15 @@ fn replacement_cli_json_report_projects_canonical_execution_evidence() -> Result
         report["replacement_execution"]["emitted_output"],
         serde_json::json!(["answer follows"])
     );
+    assert_eq!(output.stdout, b"answer follows\n");
+    assert_eq!(
+        report["replacement_execution"]["stdout_bytes"],
+        serde_json::json!(output.stdout)
+    );
+    assert_eq!(report["replacement_execution"]["stderr_bytes"], serde_json::json!([]));
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("answer follows"),
-        "replacement CLI must relay source output when stdout is reserved for JSON: {}",
-        String::from_utf8_lossy(&output.stderr)
+        output.stderr.is_empty(),
+        "report metadata must not displace program output"
     );
     assert!(
         report["replacement_execution"]["output_identity"]
@@ -2439,6 +2471,12 @@ fn replacement_cli_uses_session_feature_projection_and_persists_semantic_module_
             "beta",
             "--report",
             "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("replacement-report.json")
+                .to_string_lossy()
+                .as_ref(),
         ])
         .output()?;
     assert!(
@@ -2447,7 +2485,8 @@ fn replacement_cli_uses_session_feature_projection_and_persists_semantic_module_
         String::from_utf8_lossy(&enabled.stdout),
         String::from_utf8_lossy(&enabled.stderr)
     );
-    let report: serde_json::Value = serde_json::from_slice(&enabled.stdout)?;
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("replacement-report.json"))?)?;
     let provenance = &report["semantic_module"];
     assert_eq!(report["replacement_execution"]["result"], "42");
     assert_eq!(provenance["module_id"], "module:main");
@@ -2510,6 +2549,12 @@ async def main() -> int:
             "refuse",
             "--report",
             "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("replacement-report.json")
+                .to_string_lossy()
+                .as_ref(),
         ])
         .output()?;
     assert!(
@@ -2518,7 +2563,8 @@ async def main() -> int:
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("replacement-report.json"))?)?;
     assert_eq!(report["backend"]["executed_backend"], "replacement");
     assert_eq!(report["backend"]["fallback_outcome"], "not_needed");
     assert_eq!(report["replacement_execution"]["result"], "7");
@@ -2709,7 +2755,7 @@ fn replacement_cli_refuses_unsupported_source_without_legacy_generation() -> Res
     fs::write(
         &entrypoint,
         r#"def main() -> int:
-  values = {"first": 1}
+  values = {**{"first": 1}}
   return 0
 "#,
     )?;
@@ -2742,12 +2788,12 @@ fn replacement_cli_refuses_unsupported_source_without_legacy_generation() -> Res
         "refusal must retain source authority: {combined}"
     );
     let expected_start = r#"def main() -> int:
-  values = {"first": 1}
+  values = {**{"first": 1}}
   return 0
 "#
-    .find("{\"first\": 1}")
+    .find("{**{\"first\": 1}}")
     .ok_or("aggregate fixture must contain its dict literal")?;
-    let expected_end = expected_start + "{\"first\": 1}".len();
+    let expected_end = expected_start + "{**{\"first\": 1}}".len();
     assert!(
         combined.contains(&format!(
             "primary Incan source location: {}:{expected_start}..{expected_end}",
@@ -2774,10 +2820,10 @@ fn replacement_cli_refuses_new_operator_forms_without_artifacts_or_receipts() ->
 {
     let cases = [
         (
-            "string-membership",
-            "def main() -> bool:\n  return \"a\" in \"abc\"\n",
-            "\"a\" in \"abc\"",
-            "call to runtime helper `str_contains`",
+            "string-nonmembership",
+            "def main() -> bool:\n  return \"a\" not in \"abc\"\n",
+            "\"a\" not in \"abc\"",
+            "call to runtime helper `str_not_contains`",
         ),
         (
             "power",
@@ -3222,13 +3268,25 @@ fn a_shadow_request_does_not_alter_replacement_execution() -> Result<(), Box<dyn
             "refuse",
             "--shadow",
         ])
+        .args([
+            "--report",
+            "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("replacement-report.json")
+                .to_string_lossy()
+                .as_ref(),
+        ])
         .output()?;
     assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout)?;
     assert!(
-        stdout.contains("replacement backend executed `main`: 42"),
-        "unexpected shadowed replacement output: {stdout}"
+        output.stdout.is_empty(),
+        "non-printing programs must leave stdout empty"
     );
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("replacement-report.json"))?)?;
+    assert_eq!(report["replacement_execution"]["result"], "42");
 
     let receipt: serde_json::Value = serde_json::from_str(&fs::read_to_string(
         temporary.path().join(".incan/backend/receipt.json"),
@@ -3382,6 +3440,16 @@ def main() -> int:
             "--backend-fallback",
             "refuse",
         ])
+        .args([
+            "--report",
+            "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("replacement-report.json")
+                .to_string_lossy()
+                .as_ref(),
+        ])
         .output()?;
     assert!(
         output.status.success(),
@@ -3390,9 +3458,12 @@ def main() -> int:
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        String::from_utf8_lossy(&output.stdout).contains("replacement backend executed `main`: 143"),
-        "the receipt-producing direct path must observe the callable result"
+        output.stdout.is_empty(),
+        "non-printing programs must leave stdout empty"
     );
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("replacement-report.json"))?)?;
+    assert_eq!(report["replacement_execution"]["result"], "143");
     let receipt: serde_json::Value = serde_json::from_str(&fs::read_to_string(
         temporary.path().join(".incan/backend/receipt.json"),
     )?)?;
@@ -3443,6 +3514,12 @@ def main() -> int:
             "refuse",
             "--report",
             "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("replacement-report.json")
+                .to_string_lossy()
+                .as_ref(),
         ])
         .output()?;
     assert!(
@@ -3451,7 +3528,8 @@ def main() -> int:
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("replacement-report.json"))?)?;
     assert!(
         report["replacement_execution"]["result"] == "42",
         "the direct result must be source-observable in the replacement report: {report}"
@@ -3518,6 +3596,12 @@ def main() -> int:
             "refuse",
             "--report",
             "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("replacement-report.json")
+                .to_string_lossy()
+                .as_ref(),
         ])
         .output()?;
     assert!(
@@ -3526,7 +3610,8 @@ def main() -> int:
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("replacement-report.json"))?)?;
     assert_eq!(report["replacement_execution"]["result"], "404");
     assert!(
         report["replacement_execution"]["body_snapshot"]
@@ -3593,6 +3678,12 @@ def main() -> int:
             "refuse",
             "--report",
             "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("replacement-report.json")
+                .to_string_lossy()
+                .as_ref(),
         ])
         .output()?;
     assert!(
@@ -3601,7 +3692,8 @@ def main() -> int:
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("replacement-report.json"))?)?;
     assert_eq!(report["replacement_execution"]["result"], "42");
     assert!(
         report["replacement_execution"]["body_snapshot"]
@@ -3667,6 +3759,12 @@ def classify(signal: Signal) -> int:
             "refuse",
             "--report",
             "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("replacement-report.json")
+                .to_string_lossy()
+                .as_ref(),
         ])
         .output()?;
     assert!(
@@ -3675,7 +3773,8 @@ def classify(signal: Signal) -> int:
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("replacement-report.json"))?)?;
     assert_eq!(report["replacement_execution"]["result"], "42");
     assert!(
         report["replacement_execution"]["body_snapshot"]
@@ -3744,6 +3843,12 @@ def main() -> int:
             "refuse",
             "--report",
             "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("replacement-report.json")
+                .to_string_lossy()
+                .as_ref(),
         ])
         .output()?;
     assert!(
@@ -3752,7 +3857,8 @@ def main() -> int:
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("replacement-report.json"))?)?;
     assert_eq!(report["replacement_execution"]["result"], "2");
     assert!(
         report["replacement_execution"]["body_snapshot"]
@@ -4049,31 +4155,22 @@ def main() -> int:
     Ok(())
 }
 
+/// Dict membership now reaches its retained helper through an actual hashed carrier.
 #[test]
-fn replacement_cannot_reach_dict_membership_because_it_has_no_dict_value() -> Result<(), Box<dyn std::error::Error>> {
-    // The honest boundary of the folded-in runtime work. `set_contains` and `dict_contains_key` exist in
-    // `incan_stdlib`, and Body IR emits calls to them, but this executor has no set or dict value at all -- only
-    // lists. The refusal therefore lands on the *aggregate*, before membership is ever reached, which is the
-    // accurate report: the blocker is the missing value kind, not a missing helper. Whoever adds those values
-    // inherits the membership arms alongside them.
+fn replacement_executes_dict_membership_with_a_hashed_value() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 def main() -> bool:
   d = {"a": 1}
   return "a" in d
 "#;
     let module = lower_typed_body_ir(source)?;
-    let Err(error) = execute_free_function(&module, "main", &[]) else {
-        return Err("dict membership must refuse until the executor has a dict value".into());
-    };
-
-    let reported = format!("{error:?}");
-    assert!(
-        reported.contains("dict aggregate"),
-        "the refusal must name the value kind it lacks: {reported}"
+    assert_eq!(
+        execute_free_function(&module, "main", &[])?.value,
+        ReplacementValue::Bool(true)
     );
     assert!(
         module.render_snapshot().contains("call helper:dict_contains_key("),
-        "Body IR must still represent the membership the executor cannot run: {}",
+        "Body IR must retain the exact membership helper that executes: {}",
         module.render_snapshot()
     );
     Ok(())
@@ -4225,11 +4322,172 @@ def main() -> str:
 }
 
 #[test]
+fn replacement_executes_json_stringify_for_the_admitted_scalar_domain() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def negative() -> str:
+  return json_stringify(-9223372036854775807)
+
+def truth() -> str:
+  return json_stringify(true)
+
+def escaped() -> str:
+  return json_stringify("line\né\t\\\"")
+
+def absent() -> str:
+  return json_stringify(None)
+"#;
+    let module = lower_typed_body_ir(source)?;
+
+    assert_eq!(
+        execute_free_function(&module, "negative", &[])?.value,
+        ReplacementValue::Str("-9223372036854775807".to_string())
+    );
+    assert_eq!(
+        execute_free_function(&module, "truth", &[])?.value,
+        ReplacementValue::Str("true".to_string())
+    );
+    assert_eq!(
+        execute_free_function(&module, "escaped", &[])?.value,
+        ReplacementValue::Str("\"line\\né\\t\\\\\\\"\"".to_string())
+    );
+    assert_eq!(
+        execute_free_function(&module, "absent", &[])?.value,
+        ReplacementValue::Str("null".to_string())
+    );
+    Ok(())
+}
+
+#[test]
+fn replacement_json_stringify_evaluates_its_operand_once() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def observed_operand() -> int:
+  println("direct JSON operand")
+  return 7
+
+def main() -> str:
+  return json_stringify(observed_operand())
+"#;
+    let module = lower_typed_body_ir(source)?;
+    let execution = execute_free_function(&module, "main", &[])?;
+
+    assert_eq!(execution.value, ReplacementValue::Str("7".to_string()));
+    assert_eq!(execution.emitted_output(), ["direct JSON operand"]);
+    Ok(())
+}
+
+#[test]
+fn replacement_cli_reports_scalar_json_without_legacy_artifacts() -> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempfile::tempdir()?;
+    let entrypoint = temporary.path().join("main.incn");
+    fs::write(
+        &entrypoint,
+        r#"def main() -> str:
+  maximum = json_stringify(9223372036854775807)
+  escaped = json_stringify("line\né\t\\\"")
+  absent = json_stringify(None)
+  return f"{maximum}|{escaped}|{absent}"
+"#,
+    )?;
+
+    let output = Command::new(incan_binary())
+        .args([
+            "build",
+            entrypoint.to_string_lossy().as_ref(),
+            "--backend",
+            "replacement",
+            "--backend-fallback",
+            "refuse",
+            "--report",
+            "json",
+            "--report-output",
+            temporary
+                .path()
+                .join("replacement-report.json")
+                .to_string_lossy()
+                .as_ref(),
+        ])
+        .output()?;
+    assert!(
+        output.status.success(),
+        "scalar JSON must execute through the ordinary replacement CLI path. stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("replacement-report.json"))?)?;
+    assert_eq!(
+        report["replacement_execution"]["result"],
+        r#"9223372036854775807|"line\né\t\\\""|null"#
+    );
+    assert_eq!(report["replacement_execution"]["stdout_bytes"], serde_json::json!([]));
+    assert_eq!(report["replacement_execution"]["stderr_bytes"], serde_json::json!([]));
+    let receipt: serde_json::Value = serde_json::from_str(&fs::read_to_string(
+        temporary.path().join(".incan/backend/receipt.json"),
+    )?)?;
+    assert_eq!(receipt["executed_backend"], "replacement");
+    assert_eq!(receipt["fallback_outcome"], "not_needed");
+    assert!(
+        receipt["identity"]
+            .as_str()
+            .is_some_and(|identity| identity.starts_with("sha256:"))
+    );
+    assert!(
+        !temporary.path().join("target/incan").exists(),
+        "direct scalar JSON must not create a legacy generated-project directory"
+    );
+    Ok(())
+}
+
+#[test]
+fn replacement_refuses_json_stringify_outside_the_scalar_domain_at_the_call_span()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = "def main() -> str:\n  return json_stringify([1, 2])\n";
+    let module = lower_typed_body_ir(source)?;
+    let error = execute_free_function(&module, "main", &[])
+        .err()
+        .ok_or("direct list JSON must remain outside the scalar profile")?;
+    let call = "json_stringify([1, 2])";
+    let start = source.find(call).ok_or("fixture must contain the JSON call")?;
+    let span = error
+        .primary_span()
+        .ok_or("direct JSON refusal must retain a source span")?;
+
+    assert_eq!((span.start, span.end), (start, start + call.len()));
+    assert!(
+        error.to_string().contains("`json_stringify` of list"),
+        "the refusal must name the builtin and unsupported value kind: {error}"
+    );
+    Ok(())
+}
+
+#[test]
+fn replacement_dispatches_a_lexical_json_stringify_function_by_declaration_identity()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def json_stringify(value: int) -> int:
+  return value + 1
+
+def main() -> int:
+  return json_stringify(41)
+"#;
+    let module = lower_typed_body_ir(source)?;
+    let execution = execute_free_function(&module, "main", &[])?;
+
+    assert_eq!(execution.value, ReplacementValue::Int(42));
+    assert!(
+        execution.body_snapshot.contains("body json_stringify"),
+        "the direct call must execute the retained source declaration: {}",
+        execution.body_snapshot
+    );
+    Ok(())
+}
+
+#[test]
 fn replacement_refuses_f_string_interpolation_it_cannot_render_identically() -> Result<(), Box<dyn std::error::Error>> {
-    // Interpolation is deliberately narrow. A value renders only when this runtime and the Rust-emission backend
-    // provably agree on the spelling; a list does not, and neither does `float`, where this runtime keeps the source
-    // literal while the other formats an `f64` and turns `1.0` into `1`. A divergence there would be invisible in
-    // the value itself, which is exactly what the parity corpus exists to catch, so refusing is the honest answer.
+    // Interpolation is deliberately narrow: structural list Display remains outside the shared rendering profile.
+    // Ordinary float Display now uses the same normalized f64 value as native emission; Float Debug still refuses.
     let source = r#"
 def main() -> str:
   values = [1, 2]

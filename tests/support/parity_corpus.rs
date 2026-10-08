@@ -324,11 +324,16 @@ fn execute_replacement_plan(source: &str, plan: ReplacementExecutionPlan) -> Rep
 /// re-execute and publish a receipt describing a *different* run than the one that was observed. That case
 /// reports [`ReceiptRef::SelectionError`] instead, which is non-green and names what happened.
 fn compare_replacement_plan(source: &str, plan: ReplacementExecutionPlan) -> Result<ReplacementPlanEvidence, String> {
-    let capability = crate::shadow_capability::legacy_capability().map_err(|error| error.reason)?;
     let workspace = tempfile::tempdir()
         .map_err(|error| format!("the legacy comparison route could not create a workspace: {error}"))?;
     let profile = ShadowComparisonProfile::new(source, plan.function, (plan.arguments)());
-    let comparison = compare_source_observable(&profile, &capability, workspace.path());
+    let source_path = workspace.path().join("parity-shadow-profile.incn");
+    std::fs::write(&source_path, profile.source())
+        .map_err(|error| format!("the legacy comparison could not write its source context: {error}"))?;
+    let materialization =
+        crate::shadow_capability::legacy_materialization(&source_path).map_err(|error| error.reason)?;
+    let capability = crate::shadow_capability::legacy_capability_for(&materialization).map_err(|error| error.reason)?;
+    let comparison = compare_source_observable(&profile, &materialization, &capability, workspace.path());
     let (legacy, replacement) = match (&comparison.legacy, &comparison.replacement) {
         (Some(legacy), Some(replacement)) => (legacy, replacement),
         (_, Some(replacement)) => return retained_replacement_evidence(&comparison, replacement, plan),
@@ -741,6 +746,7 @@ impl ComparisonOutcome {
 /// `evaluate` is a function pointer rather than a pre-computed result: the corpus must be executable, not just
 /// metadata, so each case proves its own claim by actually lexing/parsing/typechecking/generating against the
 /// current compiler at test-run time.
+#[derive(Clone)]
 pub(crate) struct ParityCase {
     /// Stable case identity. Once assigned, an ID must never be reused for a different case — renumbering breaks
     /// the "stable case ID" contract #987 and #655 both depend on. Delete and re-add rather than renumber.
@@ -1006,7 +1012,10 @@ pub(crate) const SCHEMA_VERSION: u32 = 5;
 /// `non_green_behavior > 0` (an unexpected regression, as opposed to a case whose disposition already expects a
 /// non-green mismatch) into a test failure.
 pub(crate) fn summarize(cases: &[ParityCase]) -> CorpusSummary {
-    let reports: Vec<CaseReport> = cases.iter().map(evaluate_case).collect();
+    // Source compilation needs the same stack provision as the CLI, not the smaller Rust test-thread default.
+    let cases = cases.to_vec();
+    let reports: Vec<CaseReport> =
+        incan::compiler_stack::run_on_compiler_stack(move || cases.iter().map(evaluate_case).collect());
     let green = reports
         .iter()
         .filter(|r| r.overall_state == OverallState::Green)

@@ -13,7 +13,9 @@ use super::super::expr::{
     BuiltinFn, IrCallArgKind, IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, MatchArm, Pattern, TypedExpr,
     VarAccess,
 };
-use super::super::ownership::{LoopIterationPlan, ValueUseSite, plan_for_loop_iteration, plan_value_use};
+use super::super::ownership::{
+    LoopIterationPlan, ValueUseSite, list_index_assignment_element_type, plan_for_loop_iteration, plan_value_use,
+};
 use super::super::scanners::{binding_use_scan, expr_uses_binding_name};
 use super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::types::IrType;
@@ -313,15 +315,6 @@ fn is_diverging_rust_error_call(expr: &TypedExpr) -> bool {
         && path[1] == stdlib::INCAN_STD_NAMESPACE
         && path[2] == stdlib::INCAN_STD_ERRORS_MODULE
         && stdlib::is_diverging_rust_error_helper_name(&path[3])
-}
-
-/// Return the element target type for assignment into a list index.
-fn list_index_assignment_element_type(object_ty: &IrType) -> Option<&IrType> {
-    match object_ty {
-        IrType::Ref(inner) | IrType::RefMut(inner) => list_index_assignment_element_type(inner),
-        IrType::List(elem_ty) => Some(elem_ty.as_ref()),
-        _ => None,
-    }
 }
 
 /// Return the local `StaticBinding` name at the root of a storage-rooted expression.
@@ -1558,6 +1551,14 @@ impl<'a> IrEmitter<'a> {
                 }
                 IrExprKind::Range { start, end, inclusive } => {
                     return self.emit_range_expr(start.as_deref(), end.as_deref(), *inclusive);
+                }
+                IrExprKind::BuiltinCall {
+                    func: BuiltinFn::Enumerate,
+                    args,
+                } => {
+                    if let Some(arg) = args.first() {
+                        return self.emit_enumerate_iter(arg);
+                    }
                 }
                 _ => {}
             }

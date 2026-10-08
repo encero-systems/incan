@@ -401,7 +401,7 @@ test-prewarm-sdk:
 # cannot distinguish from a comparison that was never implemented. This target stages the plan once, then runs the
 # two relevant suites with INCAN_SHADOW_REQUIRE_LEGACY_ROUTE=1 so an unstaged or failing comparison is a hard
 # failure rather than a reported skip. It is the only place that can prove the intended green corpus row.
-shadow-comparison-evidence:
+shadow-comparison-evidence: test-prewarm-sdk
 	@echo "\033[1mStaging Oven and proving the #1146 source-observable comparison...\033[0m"
 	@set -e; \
 		if [ "$(INCAN_TEST_COMPILER_ALREADY_BUILT)" = "1" ]; then \
@@ -417,15 +417,16 @@ shadow-comparison-evidence:
 		receipt="$$stage/shadow_probe/.incan/oven/executable-debug-receipt.json"; \
 		test -f "$$receipt" || { echo "Oven bake did not publish an executable debug receipt" >&2; exit 1; }; \
 		$(SHADOW_TEST_ENV) INCAN_SHADOW_OVEN_RECEIPT="$$receipt" \
-			cargo test --test shadow_comparison_tests --test parity_corpus_tests
+			cargo test --test shadow_comparison_tests --test parity_corpus_tests \
+				--test replacement_enumerate_zip_shadow_tests --test replacement_enumerate_zip_parity_cases
 	@echo "\033[32m✓ the #1146 comparison ran under Oven authority and its corpus row is green\033[0m"
 
 # Oven home the staged comparison publishes its direct-rustc plan into, kept out of the developer's own store.
 INCAN_SHADOW_OVEN_HOME ?= $(CURDIR)/target/incan_shadow_oven_home
 INCAN_SHADOW_STAGE_ROOT ?= $(CURDIR)/target/incan_shadow_stage
 INCAN_SHADOW_RUSTC ?= $(shell rustup which rustc)
-SHADOW_STAGE_ENV = $(TEST_ENV) INCAN_HOME="$(INCAN_SHADOW_OVEN_HOME)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1
-SHADOW_TEST_ENV = $(TEST_ENV) CARGO_NET_OFFLINE=true \
+SHADOW_STAGE_ENV = $(TEST_RUNTIME_ENV) INCAN_HOME="$(INCAN_SHADOW_OVEN_HOME)" CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1
+SHADOW_TEST_ENV = $(TEST_RUNTIME_ENV) CARGO_NET_OFFLINE=true \
 	INCAN_SHADOW_OVEN_HOME="$(INCAN_SHADOW_OVEN_HOME)" \
 	INCAN_SHADOW_RUSTC="$(INCAN_SHADOW_RUSTC)" \
 	INCAN_SHADOW_REQUIRE_LEGACY_ROUTE=1

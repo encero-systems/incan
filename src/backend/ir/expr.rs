@@ -640,7 +640,7 @@ pub enum Pattern {
 pub enum BuiltinFn {
     /// `print(x)` / `println(x)` → `println!("{}", x)`
     Print,
-    /// `len(x)` → `::std::convert::identity(x.len() as i64)`
+    /// `len(x)` → the type-selected string or collection length operation
     Len,
     /// `sum(x)` → `x.iter().sum::<i64>()`
     Sum,
@@ -660,7 +660,7 @@ pub enum BuiltinFn {
     Abs,
     /// `range(...)` → Rust range expressions
     Range,
-    /// `enumerate(x)` → `x.iter().enumerate()` with the index cast to Incan `int`.
+    /// `enumerate(x)` yields a list of pairs with Incan `int` indices; direct loop consumers can stay lazy.
     Enumerate,
     /// `zip(a, b)` → the same source-owned `Iterator[(T, U)]` model as `a.iter().zip(b.iter())`
     Zip,
@@ -754,6 +754,8 @@ pub enum StringMethodKind {
     Lower,
     /// `s.strip()` → `s.trim().to_string()`
     Strip,
+    /// `s.len()` → Unicode scalar count
+    Len,
     /// `s.split(sep)` → `s.split(sep).map(...).collect()`
     Split,
     /// `s.replace(old, new)` → `s.replace(old, new)`
@@ -892,6 +894,7 @@ impl MethodKind {
                     S::Upper => StringMethodKind::Upper,
                     S::Lower => StringMethodKind::Lower,
                     S::Strip => StringMethodKind::Strip,
+                    S::Len => StringMethodKind::Len,
                     S::Split => StringMethodKind::Split,
                     S::Replace => StringMethodKind::Replace,
                     S::Join => StringMethodKind::Join,
