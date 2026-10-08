@@ -34,6 +34,7 @@ The Cargo-free route must provide a straightforward application and compiler dev
 
 | Action                                                            | Required experience                                                                                                                                               |
 | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Create a project with `incan new hello --yes`, then run, test, and build it | After `cd hello`, `incan run`, `incan test`, and `incan build --release` each prepare their required inputs automatically; no intervening bake command is required. |
 | Run a prepared application with `incan run`                       | Use the ready dependency graph automatically and produce the application's output without a preparation step.                                                     |
 | Change one application line and run again                         | Compile only the affected units, reuse unchanged dependencies, and produce the changed output.                                                                    |
 | Add a compatible, already prepared dependency to `loaf.toml`      | Select it from the local cache and make the updated graph ready in under 100 ms.                                                                                  |
@@ -44,7 +45,7 @@ The Cargo-free route must provide a straightforward application and compiler dev
 
 ### Ordinary command surface
 
-`incan run` and `incan test` own the preparation necessary for their request. Users do not need to invoke a bake command, set internal preparation variables, select a backend, or understand SDK and artifact-store layout to use them. Necessary dependency work remains part of the toolchain's operation even when no explicit preparation command is exposed.
+`incan run`, `incan test`, and `incan build` own the preparation necessary for their request, including the first request in a newly created project. Users do not need to invoke a bake command, set internal preparation variables, select a backend, or understand SDK and artifact-store layout to use them. Necessary dependency work remains part of the toolchain's operation even when no explicit preparation command is exposed.
 
 The complete developer path is Cargo-free, including compiler bootstrap, dependency preparation, compilation, and test execution. An installed toolchain supplies stage zero as required by #1698. A Cargo guard installed only after bootstrap cannot establish this property for the whole command. The direct route retains #1337's no-generated-Rust requirement.
 
