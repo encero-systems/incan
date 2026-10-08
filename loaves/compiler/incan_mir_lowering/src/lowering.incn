@@ -296,7 +296,7 @@ def location(span: &RustSpan, source: str, file: str) -> SourceSpan:
     return SourceSpan(file=file, line=number, column=1)
 
 
-def scalar_place(builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+pub def scalar_place(builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
     """Map a local or proven model field into the native frame, which reserves local zero for return."""
     match union_projection(
         builder.nominals,
@@ -3451,7 +3451,7 @@ def lower_enum_arm_body(module: &BodyIrModule, mut builder: Builder, arm: &RustM
     return Ok(None)
 
 
-def bind_enum_payload(
+pub def bind_enum_payload(
     mut builder: Builder,
     source: Place,
     variant: int,

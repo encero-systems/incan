@@ -122,3 +122,72 @@ def main() -> None:
 "#,
     )
 }
+
+/// Carrier-pattern assertions bind payloads on success and fail through the same std.testing helpers as legacy.
+#[test]
+fn pattern_assertions_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_case(
+        "pattern_assertions",
+        r#"
+def unwrap_value(value: Option[int]) -> int:
+    assert value is Some(inner)
+    return inner
+
+def label(value: Option[str]) -> str:
+    assert value is Some(text), "needs text"
+    return text
+
+def check(result: Result[int, str]) -> int:
+    assert result is Ok(number)
+    return number
+
+def reason(result: Result[int, str]) -> str:
+    assert result is Err(error)
+    return error
+
+def main() -> None:
+    println(unwrap_value(Some(42)))
+    assert Some(43) is Some(found)
+    println(found)
+    println(label(Some("x")))
+    println(check(Ok(5)))
+    println(reason(Err("bad")))
+    empty: Option[int] = None
+    assert empty is None
+    assert Some(1) is Some(_)
+    println("done")
+"#,
+    )?;
+    for (name, source, message) in [
+        (
+            "pattern_assert_some",
+            "def main() -> None:\n    println(\"before\")\n    empty: Option[int] = None\n    assert empty is Some(value)\n    println(value)\n",
+            "AssertionError: expected Some, got None",
+        ),
+        (
+            "pattern_assert_none",
+            "def main() -> None:\n    value: Option[str] = Some(\"x\")\n    assert value is None\n",
+            "AssertionError: expected None, got Some",
+        ),
+        (
+            "pattern_assert_ok",
+            "def main() -> None:\n    value: Result[int, str] = Err(\"no\")\n    assert value is Ok(_), \"custom failure\"\n",
+            "AssertionError: custom failure",
+        ),
+        (
+            "pattern_assert_err",
+            "def main() -> None:\n    value: Result[int, str] = Ok(1)\n    assert value is Err(reason)\n    println(reason)\n",
+            "AssertionError: expected Err, got Ok",
+        ),
+        (
+            "pattern_assert_empty_message",
+            "def main() -> None:\n    empty: Option[int] = None\n    assert empty is Some(value), \"\"\n    println(value)\n",
+            "AssertionError: expected Some, got None",
+        ),
+    ] {
+        let actual = compare_with_legacy(name, source)?;
+        assert!(!actual.status.success());
+        assert!(String::from_utf8_lossy(&actual.stderr).contains(message));
+    }
+    Ok(())
+}

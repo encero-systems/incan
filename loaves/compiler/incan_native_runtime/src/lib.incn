@@ -3,6 +3,16 @@
 pub from carriers import format_carrier, clone_carrier_payload
 pub from async_ import run_async_entry
 pub from generators import poll_generator
+pub from pattern_assertions import (
+    missing_some,
+    missing_some_with,
+    unexpected_some,
+    unexpected_some_with,
+    missing_ok,
+    missing_ok_with,
+    missing_err,
+    missing_err_with,
+)
 pub from model_values import (
     debug_model,
     serialize_model,
