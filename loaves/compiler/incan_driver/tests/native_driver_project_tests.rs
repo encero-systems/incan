@@ -1639,6 +1639,53 @@ def main() -> None:
     )
 }
 
+/// Prove borrowed collection equality, contextual empty operands, and source preservation against legacy.
+#[test]
+fn direct_route_collection_equality_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("release"),
+        &fixture.scratch("collection-equality")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def is_empty(values: list[str]) -> bool:
+    """Compare a borrowed parameter with its checked empty literal."""
+    return values == []
+
+def is_not_empty(values: list[str]) -> bool:
+    """Keep contextual element types with the literal in the other operand position."""
+    return [] != values
+
+def main() -> None:
+    """Compare each admitted collection while retaining its original storage."""
+    println(is_empty([]))
+    println(is_empty(["value"]))
+    println(is_not_empty(["value"]))
+    println(is_not_empty([]))
+    mut words = ["a", "b"]
+    println(words == ["a", "b"])
+    println(words != ["a", "c"])
+    words.append("c")
+    println(len(words))
+    floats = [1.0, 2.0]
+    println(floats == [1.0, 2.0])
+    println(floats != [1.0, 3.0])
+    nested = [[1], [2]]
+    println(nested == [[1], [2]])
+    pairs = [(1, "a"), (2, "b")]
+    println(pairs == [(1, "a"), (2, "b")])
+    keys = {"a", "b"}
+    println(keys == {"b", "a"})
+    println(keys != {"a"})
+    println(len(keys))
+    values = {"x": 1.0, "y": 2.0}
+    println(values == {"y": 2.0, "x": 1.0})
+    println(values != {"x": 1.0, "y": 3.0})
+    println(len(values))
+"#,
+    )
+}
+
 /// Prove tuple construction, typed signatures, constant projections, and simultaneous unpacking against legacy.
 #[test]
 fn tuple_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

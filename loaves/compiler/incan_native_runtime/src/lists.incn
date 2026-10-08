@@ -12,6 +12,16 @@ from rust::incan_std_core::collections import (
 from std.derives.comparison import Eq, Ord
 
 
+pub def equal_list[T with Eq](left: &list[T], right: &list[T]) -> bool:
+    """Compare elements through legacy's borrowed PartialEq without introducing Clone effects."""
+    return left == right
+
+
+pub def unequal_list[T with Eq](left: &list[T], right: &list[T]) -> bool:
+    """Retain the legacy borrowed collection inequality operation."""
+    return left != right
+
+
 pub def empty_list[T]() -> list[T]:
     """Allocate an empty homogeneous list."""
     return []
