@@ -126,7 +126,12 @@ impl Leaf {
             ListLeaf::Float => Leaf::Float,
             ListLeaf::Bool => Leaf::Bool,
             ListLeaf::Str => Leaf::Str,
-            ListLeaf::Tuple(elements) => Leaf::Tuple(elements.iter().map(|element| scalar(&tuple_element_type(element.clone()))).collect()),
+            ListLeaf::Tuple(elements) => Leaf::Tuple(
+                elements
+                    .iter()
+                    .map(|element| scalar(&tuple_element_type(element.clone())))
+                    .collect(),
+            ),
             ListLeaf::Model(index, _) => Leaf::Model(*index),
             ListLeaf::U8 => Leaf::U8,
             ListLeaf::Unit => Leaf::Unit,
@@ -833,8 +838,11 @@ fn validate_array_length(function: &Function, ty: Scalar) -> Result<(), PlanErro
         | Scalar::SetMutRef(Leaf::Tuple(elements))
         | Scalar::Dict(Leaf::Tuple(elements), _)
         | Scalar::DictRef(Leaf::Tuple(elements), _)
-        | Scalar::DictMutRef(Leaf::Tuple(elements), _) if elements.contains(&Scalar::Float) =>
-            Err(invalid(function, "floating-point tuple hashed keys lack Eq and Hash")),
+        | Scalar::DictMutRef(Leaf::Tuple(elements), _)
+            if elements.contains(&Scalar::Float) =>
+        {
+            Err(invalid(function, "floating-point tuple hashed keys lack Eq and Hash"))
+        }
         Scalar::Dict(_, Leaf::Tuple(_))
         | Scalar::DictRef(_, Leaf::Tuple(_))
         | Scalar::DictMutRef(_, Leaf::Tuple(_)) => Err(invalid(function, "tuple dictionary values are not admitted")),
@@ -1178,19 +1186,32 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
     Ok(())
 }
 
+/// Validate the shape-specific derive vocabulary without accepting duplicate selections or reflection on tuples.
+fn valid_nominal_derives(derives: &[String], tuple: bool) -> bool {
+    let required: &[&str] = if tuple {
+        &["Debug", "Clone"]
+    } else {
+        &["Debug", "Clone", "FieldInfo", "IncanClass"]
+    };
+    required
+        .iter()
+        .all(|required| derives.iter().any(|derive| derive == required))
+        && derives.iter().all(|derive| match derive.as_str() {
+            "Debug" | "Clone" | "Eq" | "PartialEq" | "Hash" | "Ord" | "PartialOrd" | "Default" | "Display" => true,
+            "Copy" => tuple,
+            "FieldInfo" | "IncanClass" | "serde::Serialize" | "serde::Deserialize" => !tuple,
+            _ => false,
+        })
+        && derives.iter().collect::<BTreeSet<_>>().len() == derives.len()
+}
+
 /// Validate named model layouts and single-slot newtypes, rejecting cyclic layouts before invoking rustc.
 fn validate_models(plan: &Plan) -> Result<(), PlanError> {
     let mut names: BTreeSet<_> = plan.functions.iter().map(|function| &function.name).collect();
     for (index, declaration) in plan.models.iter().enumerate() {
         span(&declaration.span)?;
         let tuple = declaration.fields.len() == 1 && declaration.fields[0].name == "0";
-        let derives_valid = if tuple {
-            declaration.derives == ["Debug", "Clone"] || declaration.derives == ["Debug", "Clone", "Copy"]
-        } else {
-            ["Debug", "Clone", "FieldInfo", "IncanClass"].iter().all(|required| declaration.derives.iter().any(|derive| derive == required))
-                && declaration.derives.iter().all(|derive| matches!(derive.as_str(), "Debug" | "Clone" | "FieldInfo" | "IncanClass" | "Eq" | "PartialEq" | "Hash" | "Ord" | "PartialOrd" | "Default" | "Display" | "serde::Serialize" | "serde::Deserialize"))
-                && declaration.derives.iter().collect::<BTreeSet<_>>().len() == declaration.derives.len()
-        };
+        let derives_valid = valid_nominal_derives(&declaration.derives, tuple);
         if !identifier(&declaration.name)
             || !names.insert(&declaration.name)
             || declaration.fields.len() != declaration.field_public.len()

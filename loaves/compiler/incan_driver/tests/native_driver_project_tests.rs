@@ -2128,6 +2128,94 @@ fn direct_route_package_sibling_model_matches_legacy() -> Result<(), Box<dyn std
     )
 }
 
+/// Complete the unchanged package enum corpus case, including qualified model payloads and sibling modules.
+#[test]
+fn direct_route_package_enum_surfaces_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("package-enum-surfaces")?;
+    let area = support::fixtures_dir().join("behavior/cli_dependencies");
+    let behavior = support::behavior_fixtures::discover(&area)?
+        .into_iter()
+        .find(|case| case.name == "dependency_enums_sharing_variant_names")
+        .ok_or("package enum surfaces fixture is missing")?;
+    support::behavior_fixtures::materialize(&behavior, &root)?;
+    for provider in &behavior.providers {
+        let mut publish = support::cli_project::configured_incan_command(
+            &root.join(&provider.path),
+            &["oven", "bake", "--project", "."],
+        );
+        support::configure_explicit_oven_bake_command(&mut publish)?;
+        success(&publish.output()?, "enum surfaces package publication");
+    }
+    assert_package_routes_match(fixture, &root, "dependency_enums_sharing_variant_names",
+        b"enter intro\nleave\nenter\nleave\nentering\nleaving\nintro at gate 1\ngone\nnorth at gate 4\nenter 1,2\nleave done\nstart\nstart\nstart 4\n2\n3\n")
+}
+
+/// Published newtypes retain explicit comparison derives and checker-selected ownership clones.
+#[test]
+fn direct_route_package_derived_newtype_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("package-derived-newtype")?;
+    let library = root.join("deps/ids");
+    fs::create_dir_all(library.join("src"))?;
+    fs::create_dir_all(root.join("src"))?;
+    fs::write(
+        root.join("loaf.toml"),
+        "[project]\nname = 'package_derived_newtype'\nversion = '0.1.0'\n[dependencies]\nids = { path = 'deps/ids' }\n",
+    )?;
+    fs::write(
+        library.join("loaf.toml"),
+        "[project]\nname = 'ids'\nversion = '0.1.0'\n",
+    )?;
+    fs::write(
+        library.join("src/lib.incn"),
+        "@derive(Clone, Eq)\npub newtype EntryId = str\n\n@derive(Clone, Eq)\npub newtype Count = int\n\npub def text(value: EntryId) -> str:\n    return value.0\n",
+    )?;
+    fs::write(
+        root.join("src/main.incn"),
+        "from pub::ids import EntryId, Count, text\n\ndef main() -> None:\n    value = EntryId('entry')\n    println(text(value))\n    println(value == EntryId('entry'))\n    count = Count(7)\n    println(count == Count(7))\n",
+    )?;
+    let mut publish = support::cli_project::configured_incan_command(&library, &["oven", "bake", "--project", "."]);
+    support::configure_explicit_oven_bake_command(&mut publish)?;
+    success(&publish.output()?, "derived newtype package publication");
+    assert_package_routes_match(fixture, &root, "package_derived_newtype", b"entry\ntrue\ntrue\n")
+}
+
+/// Published scalar enums retain checked derives and their canonical raw values across package calls.
+#[test]
+fn direct_route_package_derived_value_enum_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("package-derived-value-enum")?;
+    let library = root.join("deps/flows");
+    fs::create_dir_all(library.join("src"))?;
+    fs::create_dir_all(root.join("src"))?;
+    fs::write(
+        root.join("loaf.toml"),
+        "[project]\nname = 'package_derived_value_enum'\nversion = '0.1.0'\n[dependencies]\nflows = { path = 'deps/flows' }\n",
+    )?;
+    fs::write(
+        library.join("loaf.toml"),
+        "[project]\nname = 'flows'\nversion = '0.1.0'\n",
+    )?;
+    fs::write(
+        library.join("src/lib.incn"),
+        "@derive(Clone, Eq)\npub enum Phase(str):\n    Enter = 'entering'\n    Leave = 'leaving'\n\npub def phase() -> Phase:\n    return Phase.Enter\n",
+    )?;
+    fs::write(
+        root.join("src/main.incn"),
+        "from pub::flows import Phase, phase\n\ndef main() -> None:\n    value = phase()\n    println(value.value())\n    println(value == Phase.Enter)\n    println(Phase.Leave.value())\n",
+    )?;
+    let mut publish = support::cli_project::configured_incan_command(&library, &["oven", "bake", "--project", "."]);
+    support::configure_explicit_oven_bake_command(&mut publish)?;
+    success(&publish.output()?, "derived value enum package publication");
+    assert_package_routes_match(
+        fixture,
+        &root,
+        "package_derived_value_enum",
+        b"entering\ntrue\nleaving\n",
+    )
+}
+
 /// Compare a published package consumer's complete native output and exit status against the legacy route.
 fn assert_package_routes_match(
     fixture: &DriverFixture,

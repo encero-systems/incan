@@ -3469,16 +3469,7 @@ impl TypeChecker {
                 }
             }
         }
-        for (derive, implied) in derives::DERIVE_IMPLICATIONS {
-            if native_derives.iter().any(|name| name == derives::as_str(*derive)) {
-                for implied in *implied {
-                    let name = derives::as_str(*implied).to_owned();
-                    if !native_derives.contains(&name) {
-                        native_derives.push(name);
-                    }
-                }
-            }
-        }
+        Self::append_implied_derives(&mut native_derives);
         for derive in derives::plain_model_derives() {
             if !native_derives.iter().any(|name| name == derive) {
                 native_derives.push(derive.to_owned());

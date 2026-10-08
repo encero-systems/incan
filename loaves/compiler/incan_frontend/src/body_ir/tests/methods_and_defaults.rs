@@ -4,6 +4,26 @@
 
 use super::*;
 
+/// Explicit builtin derives survive collection of a newtype's checked nominal carrier.
+#[test]
+fn retains_explicit_newtype_derives() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build("@derive(Clone, Eq)\npub newtype EntryId = str\n", &["ids"])?;
+    let nominal = module
+        .nominal_declarations
+        .first()
+        .ok_or("derived newtype carrier missing")?;
+    assert!(nominal.derives.iter().any(|selection| selection == "Clone"));
+    assert!(nominal.derives.iter().any(|selection| selection == "Eq"));
+    assert!(nominal.derives.iter().any(|selection| selection == "PartialEq"));
+    let numeric = build("@derive(Clone, Eq)\npub newtype Count = int\n", &["counts"])?;
+    let carrier = numeric
+        .nominal_declarations
+        .first()
+        .ok_or("numeric newtype carrier missing")?;
+    assert_eq!(carrier.derives, ["Debug", "Clone", "Copy", "Eq", "PartialEq"]);
+    Ok(())
+}
+
 #[test]
 fn lowers_an_immutable_receiver_read_through_a_field_projection() -> Result<(), Box<dyn std::error::Error>> {
     let source = "model Counter:\n  value: int\n\n  def get(self) -> int:\n    return self.value\n";
