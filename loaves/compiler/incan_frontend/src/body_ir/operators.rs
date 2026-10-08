@@ -10,7 +10,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// unsupported operator's sub-expressions are never partially lowered. Source boolean operators retain conditional
     /// evaluation through [`Self::lower_boolean_short_circuit`]. Other operators defer to
     /// [`Self::lower_binary_from_operands`] for string-helper-or-plain-binop emission, shared with
-    /// [`Self::lower_compound_assignment`].
+    /// [`Self::lower_compound_assignment`]. Builtin collection equality retains shared reads, matching legacy's
+    /// `PartialEq` receivers rather than introducing observable element clones.
     pub(super) fn lower_binary(
         &mut self,
         lhs: &ast::Spanned<ast::Expr>,
@@ -41,8 +42,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if matches!(op, ast::BinaryOp::And | ast::BinaryOp::Or) {
             return self.lower_boolean_short_circuit(lhs, op, rhs, scope, hir_span_value, out);
         }
-        let lhs_operand = self.lower_expr_to_operand(lhs, scope, out);
-        let rhs_operand = self.lower_expr_to_operand(rhs, scope, out);
+        let (lhs_operand, rhs_operand) = if collection_equality_borrows(op, &lhs_ty, &rhs_ty) {
+            (
+                self.lower_collection_equality_operand(lhs, scope, out),
+                self.lower_collection_equality_operand(rhs, scope, out),
+            )
+        } else {
+            (
+                self.lower_expr_to_operand(lhs, scope, out),
+                self.lower_expr_to_operand(rhs, scope, out),
+            )
+        };
         self.lower_binary_from_operands(
             op,
             &lhs_ty,
@@ -54,6 +64,26 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             hir_span_value,
             out,
         )
+    }
+
+    /// Materialize one comparison place and retain its shared read without marking source storage as moved.
+    ///
+    /// A bare binding's comparison still counts as a read, so a subsequent final value use can move instead of
+    /// acquiring an extra clone. Projected reads retain the existing conservative partial-move policy.
+    fn lower_collection_equality_operand(
+        &mut self,
+        expr: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let place = self.lower_expr_to_place(expr, scope, out);
+        if place.projection.is_empty()
+            && let Some(local) = place.local_id()
+            && let Some(remaining) = self.remaining_reads.get_mut(&local)
+        {
+            *remaining = remaining.saturating_sub(1);
+        }
+        bir::Operand::place(place, bir::OwnershipFact::Borrow, false)
     }
 
     /// Retain boolean evaluation order as control flow before flattening the right operand.
