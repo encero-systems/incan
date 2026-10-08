@@ -34,6 +34,7 @@ pub def primitive_leaf(ty: &RustType, hashed: bool) -> Result[ListLeaf, str]:
                 Primitive.Int => return Ok(ListLeaf.Int)
                 Primitive.Bool => return Ok(ListLeaf.Bool)
                 Primitive.Str => return Ok(ListLeaf.Str)
+                Primitive.FrozenStr => return Ok(ListLeaf.FrozenStr)
                 Primitive.Unit => return Ok(ListLeaf.Unit)
                 Primitive.Float =>
                     if not hashed:
@@ -239,7 +240,7 @@ pub def dictionary_method_signature(
         PlanType.Dict(key, value) =>
             if member == "Dict.get":
                 if arity != 3:
-                    return Err("unsupported Body IR optional dictionary get")
+                    return Err(f"unsupported Body IR dictionary method arity {member}")
                 return Ok(("default", collection_arguments(ty), leaf_type(value)))
             if arity != 1:
                 return Err(f"unsupported Body IR dictionary method arity {member}")

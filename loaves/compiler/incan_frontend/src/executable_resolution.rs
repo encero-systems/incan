@@ -207,6 +207,10 @@ pub fn resolve_executable_requirements(
             ExecutableDeclaration::Nominal(value) => module.nominal_declarations.push(value),
             ExecutableDeclaration::FieldlessEnum(value) => module.fieldless_enum_declarations.push(value),
             ExecutableDeclaration::ValueEnum(value) => module.value_enum_declarations.push(value),
+            ExecutableDeclaration::ValueEnumWithLayout(value, layout) => {
+                module.value_enum_declarations.push(value);
+                module.enum_declarations.push(layout);
+            }
             ExecutableDeclaration::Enum(value) => module.enum_declarations.push(value),
             ExecutableDeclaration::Trait(value) => module.trait_declarations.push(value),
             ExecutableDeclaration::Constant(value) => module.constant_declarations.push(value),

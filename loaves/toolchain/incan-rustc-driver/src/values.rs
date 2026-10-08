@@ -43,6 +43,17 @@ pub fn place<'tcx>(tcx: TyCtxt<'tcx>, value: &Place) -> Result<mir::Place<'tcx>,
             FieldIdx::from_usize(index(*slot)?),
             native_type(tcx, ty)?,
         ),
+        Projection::Fields(fields) | Projection::DerefFields(fields) => {
+            let mut projected = if matches!(value.projection, Projection::DerefFields(_)) {
+                tcx.mk_place_deref(place)
+            } else {
+                place
+            };
+            for field in fields {
+                projected = tcx.mk_place_field(projected, FieldIdx::from_usize(index(field.slot)?), native_type(tcx, &field.ty)?);
+            }
+            projected
+        }
         Projection::NumericValue(ty) => tcx.mk_place_field(place, FieldIdx::from_u32(0), native_type(tcx, ty)?),
         Projection::Value => tcx.mk_place_field(place, FieldIdx::from_u32(0), tcx.types.i64),
         Projection::Overflow => tcx.mk_place_field(place, FieldIdx::from_u32(1), tcx.types.bool),
@@ -95,6 +106,46 @@ fn constant<'tcx>(tcx: TyCtxt<'tcx>, value: &Constant, span: Span) -> Result<mir
     })
 }
 
+/// Construct the dependency-owned frozen wrapper only after verifying its single static string field.
+///
+/// The literal allocation is static; its operand takes the field's exact lifetime rather than a body borrow.
+fn frozen_text<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    sources: &Sources<'_>,
+    text: &Operand,
+) -> Result<mir::Rvalue<'tcx>, PlanError> {
+
+    // ---- Carrier: the dependency-owned static text layout ----
+    let ty = native_type(tcx, &PlanType::FrozenStr)?;
+    let rustc_middle::ty::Adt(definition, args) = ty.kind() else {
+        return Err(PlanError::Invalid { function: "FrozenStr".into(), reason: "frozen carrier is not an ADT".into() });
+    };
+    if !definition.is_struct() || definition.non_enum_variant().fields.len() != 1 {
+        return Err(PlanError::Invalid { function: "FrozenStr".into(), reason: "frozen carrier must have one field".into() });
+    }
+    // The concrete frozen carrier has no parameters or associated-type projections to normalize.
+    let field = definition.non_enum_variant().fields[FieldIdx::from_usize(0)].ty(tcx, *args).skip_normalization();
+    if !matches!(field.kind(), rustc_middle::ty::Ref(region, pointee, rustc_hir::Mutability::Not)
+        if region.is_static() && pointee.is_str()) {
+        return Err(PlanError::Invalid { function: "FrozenStr".into(), reason: "frozen carrier field is not static shared text".into() });
+    }
+
+    // ---- Literal: the existing allocation with the carrier field's lifetime ----
+    let mir::Operand::Constant(mut literal) = operand(tcx, sources, text)? else {
+        return Err(PlanError::Invalid { function: "FrozenStr".into(), reason: "frozen text is not a constant".into() });
+    };
+    let mir::Const::Val(value, _) = literal.const_ else {
+        return Err(PlanError::Invalid { function: "FrozenStr".into(), reason: "frozen text has no literal allocation".into() });
+    };
+    literal.const_ = mir::Const::Val(value, field);
+
+    // ---- Construction: the admitted single-field carrier ----
+    Ok(mir::Rvalue::Aggregate(
+        Box::new(mir::AggregateKind::Adt(definition.did(), rustc_abi::VariantIdx::from_usize(0), *args, None, None)),
+        IndexVec::from_raw(vec![mir::Operand::Constant(literal)]),
+    ))
+}
+
 /// Map an operation name; overflow variants are selected only for integer arithmetic.
 pub fn binary(op: &BinaryOp, checked: bool) -> mir::BinOp {
     match op {
@@ -144,6 +195,7 @@ pub fn rvalue<'tcx>(
             )
         }
         RvalueKind::Discriminant(value) => mir::Rvalue::Discriminant(place(tcx, value)?),
+        RvalueKind::FrozenText(text) => frozen_text(tcx, sources, text)?,
         RvalueKind::TagToInt(value) => {
             mir::Rvalue::Cast(mir::CastKind::IntToInt, operand(tcx, sources, value)?, tcx.types.i64)
         }
@@ -159,6 +211,28 @@ pub fn rvalue<'tcx>(
             };
             mir::Rvalue::Cast(kind, operand(tcx, sources, value)?, native_type(tcx, target)?)
         }
+        RvalueKind::FunctionItem(callee) => mir::Rvalue::Use(
+            mir::Operand::function_handle(
+                tcx,
+                crate::callees::resolve(tcx, callee)?,
+                [],
+                sources.span(&callee.span)?,
+            ),
+            mir::WithRetag::Yes,
+        ),
+        RvalueKind::ClosureObject(value) => mir::Rvalue::Ref(
+            tcx.lifetimes.re_erased,
+            mir::BorrowKind::Shared,
+            place(tcx, value)?.project_deeper(&[mir::ProjectionElem::Deref], tcx),
+        ),
+        RvalueKind::ReifyFunction(value) => mir::Rvalue::Cast(
+            mir::CastKind::PointerCoercion(
+                rustc_middle::ty::adjustment::PointerCoercion::ReifyFnPointer(rustc_hir::Safety::Safe),
+                mir::CoercionSource::Implicit,
+            ),
+            operand(tcx, sources, value)?,
+            native_type(tcx, destination_type)?,
+        ),
         RvalueKind::IntToFloat(value) => {
             mir::Rvalue::Cast(mir::CastKind::IntToFloat, operand(tcx, sources, value)?, tcx.types.f64)
         }

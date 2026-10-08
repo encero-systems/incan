@@ -66,6 +66,14 @@ pub def get_dict[K with (Eq, Hash, Display), V with Clone](values: &Dict[K, V], 
     return RuntimeClone.clone(dict_get(values, reference))
 
 
+pub def optional_dict[K with (Eq, Hash, Display), V with Clone](values: &Dict[K, V], key: K) -> Option[V]:
+    """Copy a present value or report its absence, as the legacy one-argument lookup does."""
+    reference: &K = key
+    if dict_contains_key(values, reference):
+        return Some(RuntimeClone.clone(dict_get(values, reference)))
+    return None
+
+
 pub def keys_dict[K with Clone, V](values: &Dict[K, V]) -> list[K]:
     """Copy keys in the legacy HashMap iteration order."""
     mut keys: list[K] = []

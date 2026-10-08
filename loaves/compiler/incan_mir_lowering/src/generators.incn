@@ -163,8 +163,11 @@ def swap_rvalue(value: RvalueKind, handle: int) -> RvalueKind:
         RvalueKind.Borrow(place) => return RvalueKind.Borrow(swap_place(place, handle))
         RvalueKind.MutBorrow(place) => return RvalueKind.MutBorrow(swap_place(place, handle))
         RvalueKind.UnsizeSlice(value) => return RvalueKind.UnsizeSlice(swap_operand(value, handle))
-        # A unit function value names a symbol, not a place, so nothing in it moves.
         RvalueKind.UnitFunction(name) => return RvalueKind.UnitFunction(name)
+        RvalueKind.FrozenText(value) => return RvalueKind.FrozenText(swap_operand(value, handle))
+        RvalueKind.FunctionItem(callee) => return RvalueKind.FunctionItem(swap_callee(callee, handle))
+        RvalueKind.ReifyFunction(value) => return RvalueKind.ReifyFunction(swap_operand(value, handle))
+        RvalueKind.ClosureObject(place) => return RvalueKind.ClosureObject(swap_place(place, handle))
 
 
 def swap_statement(value: StatementKind, handle: int) -> StatementKind:
@@ -179,6 +182,14 @@ def swap_statement(value: StatementKind, handle: int) -> StatementKind:
         StatementKind.StorageDead(index) => return StatementKind.StorageDead(swap_index(index, handle))
 
 
+def swap_callee(value: Callee, handle: int) -> Callee:
+    """A locally held callable is itself a frame operand, so its slot moves with every other operand."""
+    match value.kind:
+        CalleeKind.Value(operand) =>
+            return Callee(kind=CalleeKind.Value(swap_operand(operand, handle)), span=value.span)
+        _ => return value
+
+
 def swap_terminator(value: TerminatorKind, handle: int) -> TerminatorKind:
     """Keep all control-flow targets and unwind edges while permuting operand slots."""
     match value:
@@ -186,7 +197,7 @@ def swap_terminator(value: TerminatorKind, handle: int) -> TerminatorKind:
             return TerminatorKind.SwitchBool(swap_operand(condition, handle), left, right)
         TerminatorKind.Call(callee, arguments, destination, target, unwind) =>
             return TerminatorKind.Call(
-                callee,
+                swap_callee(callee, handle),
                 swap_operands(arguments, handle),
                 swap_place(destination, handle),
                 target,

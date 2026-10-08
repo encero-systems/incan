@@ -4,6 +4,26 @@
 
 use super::*;
 
+/// Explicit builtin derives survive collection of a newtype's checked nominal carrier.
+#[test]
+fn retains_explicit_newtype_derives() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build("@derive(Clone, Eq)\npub newtype EntryId = str\n", &["ids"])?;
+    let nominal = module
+        .nominal_declarations
+        .first()
+        .ok_or("derived newtype carrier missing")?;
+    assert!(nominal.derives.iter().any(|selection| selection == "Clone"));
+    assert!(nominal.derives.iter().any(|selection| selection == "Eq"));
+    assert!(nominal.derives.iter().any(|selection| selection == "PartialEq"));
+    let numeric = build("@derive(Clone, Eq)\npub newtype Count = int\n", &["counts"])?;
+    let carrier = numeric
+        .nominal_declarations
+        .first()
+        .ok_or("numeric newtype carrier missing")?;
+    assert_eq!(carrier.derives, ["Debug", "Clone", "Copy", "Eq", "PartialEq"]);
+    Ok(())
+}
+
 #[test]
 fn lowers_an_immutable_receiver_read_through_a_field_projection() -> Result<(), Box<dyn std::error::Error>> {
     let source = "model Counter:\n  value: int\n\n  def get(self) -> int:\n    return self.value\n";
@@ -414,6 +434,7 @@ fn unsupported_race_arm_in_a_default_is_found_at_its_nested_source_span() {
     );
 }
 
+/// Default validation descends into structured computations and preserves the unsupported statement's own span.
 #[test]
 fn unsupported_rvalue_bodies_in_a_default_are_found_at_their_nested_source_spans() {
     // A source default can construct a closure or generator, or evaluate a match, whose structured Body IR owns
@@ -443,6 +464,7 @@ fn unsupported_rvalue_bodies_in_a_default_are_found_at_their_nested_source_spans
                 params: Vec::new(),
                 captured_operands: Vec::new(),
                 body: Box::new(bir::ClosureBody {
+                    function_item: false,
                     capture_locals: Vec::new(),
                     stmts: vec![unsupported(closure_span, "closure body")],
                     result: result.clone(),
@@ -1229,5 +1251,107 @@ fn source_trait_slots_exclude_compiler_provided_protocols() -> Result<(), Box<dy
         ));
         assert!(module.is_well_formed_trait_implementation(implementation));
     }
+    Ok(())
+}
+
+/// Supertrait slots and defaults of a trait with type parameters retain the body that fills them per adopter.
+#[test]
+fn trait_implementation_facts_cover_supertrait_slots_and_checked_instantiations()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"trait Named:
+  def name(self) -> str: ...
+
+trait Tag with Named:
+  def loud(self) -> str:
+    return self.name() + "!"
+
+trait Root:
+  def label(self) -> str: ...
+
+trait Child with Root:
+  def label(self) -> str:
+    return "child"
+
+trait Holder[T]:
+  def get(self) -> T: ...
+  def pair(self) -> list[T]:
+    return [self.get(), self.get()]
+
+model Label with Tag:
+  text: str
+  def name(self) -> str:
+    return self.text
+
+model Item with Child:
+  value: int
+
+model Box with Holder[int]:
+  value: int
+  def get(self) -> int:
+    return self.value
+
+def main() -> None:
+  println(Label(text="x").loud())
+  println(Item(value=1).label())
+  println(len(Box(value=4).pair()))
+"#;
+    let module = build(source, &["m", "trait_hierarchies"])?;
+    for implementation in &module.trait_implementations {
+        assert!(
+            module.is_well_formed_trait_implementation(implementation),
+            "{implementation:?}"
+        );
+    }
+    let slot = |owner: &str, method: &str| {
+        module
+            .trait_implementations
+            .iter()
+            .filter(|implementation| {
+                implementation.owner.declaration_name == owner && implementation.method.declaration_name == method
+            })
+            .collect::<Vec<_>>()
+    };
+
+    // ---- A supertrait slot the adopter implements itself ----
+    let [name] = slot("Label", "name")[..] else {
+        return Err("the supertrait slot must be retained once for its adopter".into());
+    };
+    assert_ne!(name.method, name.implementation);
+    assert!(name.type_arguments.is_empty());
+
+    // ---- A supertrait slot a subtrait default fills ----
+    let filled = slot("Item", "label");
+    assert_eq!(
+        filled.len(),
+        2,
+        "both the supertrait and the subtrait slot are retained: {filled:?}"
+    );
+    let child_default = filled
+        .iter()
+        .find(|implementation| implementation.method == implementation.implementation)
+        .ok_or("the subtrait's own slot keeps its default")?;
+    assert!(
+        filled
+            .iter()
+            .all(|implementation| implementation.implementation == child_default.implementation),
+        "the supertrait slot is filled by the subtrait default: {filled:?}"
+    );
+
+    // ---- A default of a trait with type parameters carries its checked instantiation ----
+    let [pair] = slot("Box", "pair")[..] else {
+        return Err("the generic trait default must be retained for its adopter".into());
+    };
+    assert_eq!(pair.method, pair.implementation);
+    assert_eq!(
+        pair.type_arguments,
+        vec![bir::TraitTypeArgument {
+            parameter: "T".to_owned(),
+            argument: IncanType::Primitive(IncanPrimitiveType::Int),
+        }]
+    );
+    let [get] = slot("Box", "get")[..] else {
+        return Err("the required generic trait slot must be retained".into());
+    };
+    assert!(get.type_arguments.is_empty());
     Ok(())
 }

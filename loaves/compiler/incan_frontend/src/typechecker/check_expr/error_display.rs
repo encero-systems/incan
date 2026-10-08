@@ -140,7 +140,7 @@ impl TypeChecker {
     /// `calls.resolved_method_calls` (the trait dispatch), `references.resolved_identities` (the selected
     /// declaration), `calls.call_site_callable_params` and `calls.call_site_monomorph_type_args`. The display has no
     /// call of its own, so resolution runs under a key no expression can have (the operand's span with its bounds
-    /// reversed); [`ProbeFacts`] takes whatever those four maps hold under the key before the probe, takes what the
+    /// reversed); [`ProbeFacts`] takes whatever the call-fact maps hold under the key before the probe, takes what the
     /// probe wrote there afterwards, and puts the earlier entries back, so the probe leaves the facts as it found them
     /// at the cost of four map operations. Diagnostics raised while probing are discarded: the probe is not something
     /// the program wrote.
@@ -242,9 +242,13 @@ impl TypeChecker {
 
 /// The facts one method resolution records under its call span, taken out of the checker's facts by span key.
 ///
-/// These four maps are everything the resolutions `resolve_error_message_call` runs write under the call span; see
+/// These maps preserve the resolutions and executable instantiations under the call span; see
 /// that function for why the display probe takes and restores them.
 struct ProbeFacts {
+    /// Concrete constructor carrier retained before contextual expression typing.
+    inferred_constructor_type: Option<ResolvedType>,
+    /// Concrete generic-call result retained alongside its checked executable instantiation.
+    inferred_call_result_type: Option<ResolvedType>,
     /// Entry of `calls.resolved_method_calls`: the selected trait dispatch.
     method_call: Option<ResolvedMethodCall>,
     /// Entry of `references.resolved_identities`: the selected declaration.
@@ -256,10 +260,12 @@ struct ProbeFacts {
 }
 
 impl ProbeFacts {
-    /// Remove and return the entries the four maps hold under `span`.
+    /// Remove and return the call facts held under `span`, including executable type facts.
     fn take(info: &mut TypeCheckInfo, span: Span) -> Self {
         let key = (span.start, span.end);
         Self {
+            inferred_constructor_type: info.calls.inferred_constructor_types.remove(&key),
+            inferred_call_result_type: info.calls.inferred_call_result_types.remove(&key),
             method_call: info.calls.resolved_method_calls.remove(&key),
             identity: info.references.resolved_identities.remove(&key),
             callable_params: info.calls.call_site_callable_params.remove(&key),
@@ -270,6 +276,12 @@ impl ProbeFacts {
     /// Put these entries back under `span`, leaving absent ones absent.
     fn restore(self, info: &mut TypeCheckInfo, span: Span) {
         let key = (span.start, span.end);
+        if let Some(ty) = self.inferred_constructor_type {
+            info.calls.inferred_constructor_types.insert(key, ty);
+        }
+        if let Some(ty) = self.inferred_call_result_type {
+            info.calls.inferred_call_result_types.insert(key, ty);
+        }
         if let Some(method_call) = self.method_call {
             info.calls.resolved_method_calls.insert(key, method_call);
         }

@@ -4,6 +4,74 @@
 
 use super::*;
 
+/// Preserve the checker's `Fn` representation choices separately from the function-type call surface.
+#[test]
+fn callable_signatures_retain_closure_holding_parameters_and_returns() -> Result<(), Box<dyn std::error::Error>> {
+    let source = concat!(
+        "def apply(f: (int) -> int, x: int) -> int:\n  return f(x)\n",
+        "def make(offset: int) -> (int) -> int:\n  return (x) => x + offset\n",
+        "def plain(x: int) -> int:\n  return x\n",
+        "def bindings() -> int:\n  typed: (int) -> int = plain\n  inferred = plain\n  return typed(2) + inferred(3)\n",
+        "def captured(offset: int) -> int:\n  add: (int) -> int = (x) => x + offset\n  return add(1)\n",
+    );
+    let module = build(source, &["m", "callable_representations"])?;
+    let apply = body_named(&module, "apply")?;
+    let make = body_named(&module, "make")?;
+    let plain = body_named(&module, "plain")?;
+    let apply_facts = apply
+        .callable_representation
+        .as_ref()
+        .ok_or("missing apply representation")?;
+    let make_facts = make
+        .callable_representation
+        .as_ref()
+        .ok_or("missing make representation")?;
+    let plain_facts = plain
+        .callable_representation
+        .as_ref()
+        .ok_or("missing plain representation")?;
+    assert_eq!(apply_facts.closure_holding_parameters, vec![bir::LocalId(0)]);
+    assert!(!apply_facts.closure_holding_return);
+    assert!(make_facts.closure_holding_parameters.is_empty());
+    assert!(make_facts.closure_holding_return);
+    assert!(plain_facts.closure_holding_parameters.is_empty());
+    assert!(!plain_facts.closure_holding_return);
+    assert!(matches!(apply.params[0].ty, IncanType::Function { .. }));
+    assert!(matches!(make.return_type, IncanType::Function { .. }));
+    let bindings = body_named(&module, "bindings")?;
+    let binding_facts = bindings
+        .callable_representation
+        .as_ref()
+        .ok_or("missing binding representation")?;
+    let [typed] = binding_facts.function_pointer_locals.as_slice() else {
+        return Err("expected exactly one explicitly annotated function-pointer local".into());
+    };
+    assert_eq!(bindings.locals[typed.index()].name.as_deref(), Some("typed"));
+    let named_reads = bindings
+        .block
+        .stmts
+        .iter()
+        .filter(|statement| {
+            matches!(
+                &statement.kind,
+                bir::StatementKind::Assign { rvalue: bir::Rvalue::Closure { body, .. }, .. } if body.function_item
+            )
+        })
+        .count();
+    assert_eq!(named_reads, 2);
+    let captured = body_named(&module, "captured")?;
+    let facts = captured
+        .callable_representation
+        .as_ref()
+        .ok_or("missing captured binding representation")?;
+    assert!(facts.function_pointer_locals.is_empty());
+    let [local] = facts.closure_holding_locals.as_slice() else {
+        return Err("expected one closure-holding local".into());
+    };
+    assert_eq!(captured.locals[local.index()].name.as_deref(), Some("add"));
+    Ok(())
+}
+
 /// Generated collection mutations carry the same canonical identities as explicit builtin member calls.
 #[test]
 fn comprehension_writes_retain_builtin_member_identities() -> Result<(), Box<dyn std::error::Error>> {
@@ -836,6 +904,7 @@ fn yielded_expression_participates_in_last_use_tracking() -> Result<(), Box<dyn 
     Ok(())
 }
 
+/// Named function reads retain their explicit origin and canonical forwarding target rather than closure syntax.
 #[test]
 fn a_function_named_as_a_value_is_a_forwarding_closure_to_it() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def square(x: int) -> int:\n  return x * x\n\ndef apply(f: Callable[int, int], v: int) -> int:\n  return f(v)\n\ndef main() -> int:\n  return apply(square, 7)\n";
@@ -857,7 +926,8 @@ fn a_function_named_as_a_value_is_a_forwarding_closure_to_it() -> Result<(), Box
                 },
             ..
         } => {
-            captured_operands.is_empty()
+            body.function_item
+                && captured_operands.is_empty()
                 && body.stmts.iter().any(|inner| {
                     matches!(
                         &inner.kind,

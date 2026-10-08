@@ -10,8 +10,10 @@ from rust::incan_semantics_core::body_ir import (
 from pub::incan_mir_plan import Operand, OperandKind, Constant, PlanType, SourceSpan, Local
 from unions import native_source_type
 from frame import literal
-from lowering import BodyIrModule, call_argument_operand, lower_statement
+from lowering import BodyIrModule, call_argument_operand, lower_statement, list_root_place
 from frame import Builder, drop_owned
+from lists import is_list
+from collections import is_collection
 
 
 pub def model_default_arguments(
@@ -108,12 +110,14 @@ pub def evaluate_default(
             for statement in computation.stmts:
                 lower_statement(module, builder, statement)?
             result = call_argument_operand(builder, computation.result, ty, span)?
-            builder.local_offset = saved
             mut result_owner = -1
             match result.kind:
                 OperandKind.Move(place) =>
                     result_owner = place.local
                 _ => pass
+            if is_list(ty) or is_collection(ty):
+                result_owner = borrowed_default_owner(builder, computation.result, span)?
+            builder.local_offset = saved
             retained = builder.owned
             for owner in retained[::-1]:
                 if owner not in incoming and owner != result_owner:
@@ -125,8 +129,21 @@ pub def evaluate_default(
         _ => return Err("unsupported Body IR unavailable defaulted parameter")
 
 
+def borrowed_default_owner(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[int, str]:
+    """
+    Find the collection a borrowed default argument refers to.
+
+    The call borrows it, so it stays owned by the caller frame and drops when that scope ends, after the call.
+    """
+    match value:
+        RustOperand.Place(read) => return Ok(list_root_place(builder, read.place, span)?.local)
+        _ => return Err("unsupported Body IR constant collection default")
+
+
 pub def default_type(ty: PlanType) -> Result[None, str]:
-    """Admit only the scalar and string default representations covered by this lane."""
+    """Admit scalar, string and borrowed list or hashed-collection default representations."""
+    if is_list(ty) or is_collection(ty):
+        return Ok(None)
     match ty:
         PlanType.Int => return Ok(None)
         PlanType.Float => return Ok(None)

@@ -3583,6 +3583,41 @@ impl TypeChecker {
         result
     }
 
+    /// Record each source trait adoption clause's checked type arguments by the clause's span.
+    ///
+    /// An owner's collected adoptions list its `with` clauses first and in source order, followed by derive-implied
+    /// adoptions, so the clauses pair with that prefix. A clause whose paired adoption names a different trait or a
+    /// different number of arguments records nothing.
+    fn record_trait_adoption_arguments_for_lowering(&mut self, program: &Program) {
+        let mut recorded = Vec::new();
+        for declaration in &program.declarations {
+            let (name, clauses) = match &declaration.node {
+                Declaration::Model(model) => (&model.name, &model.traits),
+                Declaration::Class(class) => (&class.name, &class.traits),
+                Declaration::Newtype(newtype) => (&newtype.name, &newtype.traits),
+                Declaration::Enum(value) => (&value.name, &value.traits),
+                _ => continue,
+            };
+            let adoptions = match self.lookup_type_info(name) {
+                Some(TypeInfo::Model(info)) => &info.trait_adoptions,
+                Some(TypeInfo::Class(info)) => &info.trait_adoptions,
+                Some(TypeInfo::Newtype(info)) => &info.trait_adoptions,
+                Some(TypeInfo::Enum(info)) => &info.trait_adoptions,
+                _ => continue,
+            };
+            for (clause, adoption) in clauses.iter().zip(adoptions) {
+                if clause.node.type_args.is_empty()
+                    || adoption.name != clause.node.name
+                    || adoption.type_args.len() != clause.node.type_args.len()
+                {
+                    continue;
+                }
+                recorded.push(((clause.span.start, clause.span.end), adoption.type_args.clone()));
+            }
+        }
+        self.type_info.traits.adoption_type_args = recorded.into_iter().collect();
+    }
+
     /// Snapshot declaration metadata into [`TypeCheckInfo`] for backend lowering.
     ///
     /// This records all visible trait and method-alias symbols (local and imported), not just declarations in the
@@ -3714,10 +3749,13 @@ impl TypeChecker {
                 .and_then(|constructor| info.methods.get(constructor))
                 .and_then(|method| method.identity.clone());
             let automatic_derives = self.newtype_automatic_derive_names(&name, &info);
+            let mut explicit_derives = info.derives.clone();
+            Self::append_implied_derives(&mut explicit_derives);
             self.type_info.declarations.newtype_construction.insert(
                 name.clone(),
                 crate::typechecker::type_info::NewtypeConstructionInfo {
                     automatic_derives,
+                    explicit_derives,
                     type_params: info.type_params.clone(),
                     underlying: info.underlying.clone(),
                     checked_constructor,
@@ -7066,6 +7104,7 @@ impl TypeChecker {
             .resolve_checked_facades(self.current_module_path.as_deref());
 
         self.record_trait_metadata_for_lowering(program);
+        self.record_trait_adoption_arguments_for_lowering(program);
         self.record_model_field_visibilities_for_lowering(program);
         self.record_class_layouts_for_lowering(program);
         self.record_method_decorator_receiver_slots(program);

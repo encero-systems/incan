@@ -1,0 +1,46 @@
+"""Persistent primitive-list cells for canonical direct-route storage slots."""
+
+static INTEGER_LISTS: dict[int, list[int]] = {}
+static FLOAT_LISTS: dict[int, list[float]] = {}
+static BOOLEAN_LISTS: dict[int, list[bool]] = {}
+static TEXT_LISTS: dict[int, list[str]] = {}
+
+
+pub def read_static_int_list(slot: int, initial: list[int]) -> list[int]:
+    """Read the current integer list or its effect-free declared contents."""
+    return INTEGER_LISTS.get(slot, initial)
+
+
+pub def write_static_int_list(slot: int, value: list[int]) -> None:
+    """Persist an integer list replacement across native function frames."""
+    INTEGER_LISTS[slot] = value
+
+
+pub def read_static_float_list(slot: int, initial: list[float]) -> list[float]:
+    """Read the current floating-point list or its effect-free declared contents."""
+    return FLOAT_LISTS.get(slot, initial)
+
+
+pub def write_static_float_list(slot: int, value: list[float]) -> None:
+    """Persist a floating-point list replacement across native function frames."""
+    FLOAT_LISTS[slot] = value
+
+
+pub def read_static_bool_list(slot: int, initial: list[bool]) -> list[bool]:
+    """Read the current boolean list or its effect-free declared contents."""
+    return BOOLEAN_LISTS.get(slot, initial)
+
+
+pub def write_static_bool_list(slot: int, value: list[bool]) -> None:
+    """Persist a boolean list replacement across native function frames."""
+    BOOLEAN_LISTS[slot] = value
+
+
+pub def read_static_text_list(slot: int, initial: list[str]) -> list[str]:
+    """Read the current string list or its effect-free declared contents."""
+    return TEXT_LISTS.get(slot, initial)
+
+
+pub def write_static_text_list(slot: int, value: list[str]) -> None:
+    """Persist a string list replacement across native function frames."""
+    TEXT_LISTS[slot] = value
