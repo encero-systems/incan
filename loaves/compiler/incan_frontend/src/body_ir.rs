@@ -641,6 +641,11 @@ struct BodyBuilder<'type_info, 'source> {
     /// write; [`Self::bindings`] remains only as a lexical bookkeeping projection for lowering constructs that
     /// introduce and restore source names.
     identity_bindings: HashMap<CanonicalSymbolId, bir::LocalId>,
+    /// Canonical storage currently selected by a direct local static binding; reads retain a global place rather than
+    /// a snapshot.
+    static_aliases: HashMap<bir::LocalId, bir::GlobalPlace>,
+    /// Locals originally declared as storage bindings, which can detach to values and later select another static.
+    static_binding_locals: HashSet<bir::LocalId>,
     /// Names lowering could not resolve to a tracked local (e.g. module-level `const`/`static`), reused across
     /// repeated reads instead of allocating a fresh external local per read.
     external_locals: HashMap<String, bir::LocalId>,
@@ -694,6 +699,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             scopes: Vec::new(),
             bindings: HashMap::new(),
             identity_bindings: HashMap::new(),
+            static_aliases: HashMap::new(),
+            static_binding_locals: HashSet::new(),
             external_locals: HashMap::new(),
             remaining_reads: HashMap::new(),
             moved_out: HashSet::new(),
@@ -851,6 +858,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     fn place_for_name(&mut self, name: &str, span: ast::Span, ty: &IncanType) -> Option<bir::Place> {
         if let Some(identity) = self.type_info.resolved_identity(span).cloned() {
             if let Some(&id) = self.identity_bindings.get(&identity) {
+                if let Some(global) = self.static_aliases.get(&id) {
+                    return Some(bir::Place::from_global(global.clone()));
+                }
                 let mut place = bir::Place::from_local(id);
                 // The local keeps its storage type; a read keeps the checker's narrower member as an explicit
                 // projection.
@@ -1213,6 +1223,7 @@ mod refusals;
 mod reads;
 
 mod collect;
+mod static_aliases;
 
 mod bodies;
 mod parameter_types;

@@ -1,8 +1,19 @@
-"""Persistent scalar cells for canonical direct-route storage slots."""
+"""Persistent scalar and string cells for canonical direct-route storage slots."""
 
 static INTEGER_CELLS: dict[int, int] = {}
 static FLOAT_CELLS: dict[int, float] = {}
 static BOOLEAN_CELLS: dict[int, bool] = {}
+static TEXT_CELLS: dict[int, str] = {}
+
+
+pub def read_static_text(slot: int, initial: str) -> str:
+    """Return an owned copy while preserving the shared stored value across calls."""
+    return TEXT_CELLS.get(slot, initial)
+
+
+pub def write_static_text(slot: int, value: str) -> None:
+    """Replace the shared string cell without consuming values held by callers."""
+    TEXT_CELLS[slot] = value
 
 
 pub def read_static_int(slot: int, initial: int) -> int:
