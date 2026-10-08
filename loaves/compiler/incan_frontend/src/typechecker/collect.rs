@@ -475,19 +475,24 @@ impl TypeChecker {
                 .collect(),
             external_library: None,
         });
-        self.type_info.declarations.function_bindings.insert(
-            partial.name.clone(),
-            FunctionBindingInfo {
-                is_async,
-                identity: Some(self.symbols.module_declaration_identity(
-                    &partial.name,
-                    SemanticSourceTargetKind::Partial,
-                    span,
-                )),
-                params,
-                return_type,
-            },
-        );
+        let binding = FunctionBindingInfo {
+            is_async,
+            identity: Some(self.symbols.module_declaration_identity(
+                &partial.name,
+                SemanticSourceTargetKind::Partial,
+                span,
+            )),
+            params,
+            return_type,
+        };
+        self.type_info
+            .declarations
+            .function_bindings_by_span
+            .insert((span.start, span.end), binding.clone());
+        self.type_info
+            .declarations
+            .function_bindings
+            .insert(partial.name.clone(), binding);
     }
 
     /// Resolve the callable surface that a top-level partial declaration projects from an already-resolved symbol.

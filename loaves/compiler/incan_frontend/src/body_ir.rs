@@ -278,6 +278,9 @@ fn build_body_ir_module_v0_with_provider_operations(
         .iter()
         .flat_map(|decl| -> Vec<bir::Body> {
             match &decl.node {
+                ast::Declaration::Partial(partial) => {
+                    vec![partials::lower_source_partial(partial, decl.span, &lowering_facts)]
+                }
                 ast::Declaration::Function(function) => {
                     vec![lower_function_body(function, decl.span, &lowering_facts)]
                 }
@@ -478,9 +481,12 @@ pub fn is_direct_replacement_checked_model(model: &ast::ModelDecl, type_info: &T
 }
 
 /// Keep the structural admission boundary shared by builtin and checked serde derive selections.
+/// Same-type method aliases keep the checked target identity and use its retained method body; they add no native
+/// layout or wrapper declaration.
 fn has_direct_replacement_model_shape(model: &ast::ModelDecl) -> bool {
     model.type_params.is_empty()
-        && model.method_aliases.is_empty()
+        // Method aliases and generic trait adoptions each have parity evidence alone; together they stay refused.
+        && (model.method_aliases.is_empty() || model.traits.iter().all(|adoption| adoption.node.type_args.is_empty()))
         && model.method_partials.is_empty()
         && model.properties.is_empty()
         && model
@@ -1235,6 +1241,7 @@ mod static_aliases;
 
 mod bodies;
 mod parameter_types;
+mod partials;
 
 mod primitives;
 
