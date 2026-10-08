@@ -221,6 +221,7 @@ from lists import (
 )
 from assertions import lower_assertion
 from async_ import future_type, future_declarations, construct_future, await_future, async_entry, evaluator_name
+from method_defaults import partial_arguments
 from defaults import default_arguments, default_type, model_default_arguments
 from type_parameters import Instance, instantiate, substitute
 # =====================================================================================================================
@@ -1183,7 +1184,12 @@ def lower_method_call(
         types.append(
             native_source_type(builder.nominals, builder.enums, builder.unions, parameter.ty, builder.intrinsics)?,
         )
-    ordinary = ordered_slot_operands(builder, target.binding, arguments, types, span, 1)?
+    mut ordinary: list[Operand] = []
+    match partial_arguments(module, builder, target, arguments, body, types, span)?:
+        Some(values) =>
+            ordinary = values
+        None =>
+            ordinary = ordered_slot_operands(builder, target.binding, arguments, types, span, 1)?
     mut operands = [read_place(reference, true, span)]
     for operand in ordinary:
         operands.append(operand)

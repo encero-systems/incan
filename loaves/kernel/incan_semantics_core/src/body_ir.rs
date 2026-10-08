@@ -300,6 +300,9 @@ pub struct NominalDeclaration {
     /// a checked constructor binding. Older artifacts without this frame must refuse omitted fields.
     #[serde(default)]
     pub field_default_body: Option<Box<Body>>,
+    /// Declaration-owned method-partial presets and residual defaults, selected only with their exact target identity.
+    #[serde(default)]
+    pub method_partial_defaults: Vec<MethodPartialDefaults>,
     /// Checked builtin and implicit nominal derives, retained in legacy normalization order. A selected `Default`
     /// over source field defaults requires a custom implementation rather than a Rust derive macro; consumers that
     /// cannot implement it must refuse that combination.
@@ -311,6 +314,19 @@ pub struct NominalDeclaration {
     pub type_parameters: Vec<String>,
     /// Number of declared type parameters, agreeing with [`Self::type_parameters`].
     pub type_parameter_count: usize,
+}
+
+/// A same-type method partial's deferred defaults, without inventing another semantic method identity.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MethodPartialDefaults {
+    /// Source binding name within the retained nominal owner; the target identity must also match at use.
+    pub name: String,
+    /// The binding declaration's source span, contained by its nominal owner.
+    pub span: HirSourceSpan,
+    /// Exact canonical method declaration selected by the checker for the partial's target.
+    pub target: CanonicalSymbolId,
+    /// Target-shaped private default frame; only selected parameter computations are evaluated, never its block.
+    pub frame: Box<Body>,
 }
 
 /// One source-local fieldless normal enum retained for direct identity comparison.

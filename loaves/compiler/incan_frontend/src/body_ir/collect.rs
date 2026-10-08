@@ -273,6 +273,7 @@ pub(super) fn collect_local_nominal_declarations(
                 public: visibility == ast::Visibility::Public,
                 has_field_defaults: fields.iter().any(|field| field.node.default.is_some()),
                 field_default_body: None,
+                method_partial_defaults: Vec::new(),
                 derives: if class_layout.is_some() {
                     incan_lang::lang::derives::plain_model_derives()
                         .map(str::to_owned)
@@ -349,6 +350,7 @@ fn collect_plain_newtype(
         public: newtype.visibility == ast::Visibility::Public,
         has_field_defaults: false,
         field_default_body: None,
+        method_partial_defaults: Vec::new(),
         derives,
         named_type_identities: type_info.declarations.named_type_identities.clone(),
         type_parameters: Vec::new(),

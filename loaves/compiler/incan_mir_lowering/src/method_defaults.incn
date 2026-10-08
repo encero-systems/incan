@@ -1,0 +1,41 @@
+"""Declaration-owned model method-partial defaults, preserving the target's semantic identity."""
+
+from rust::incan_semantics_core::body_ir import BodyIrModule, MethodTarget, ArgumentElement, Body, ArgumentBinding
+from pub::incan_mir_plan import Operand, PlanType, SourceSpan
+from frame import Builder
+from defaults import default_arguments
+
+
+pub def partial_arguments(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[ArgumentElement],
+    body: &Body,
+    types: list[PlanType],
+    span: SourceSpan,
+) -> Result[Option[list[Operand]], str]:
+    """Use only a retained binding whose target and full receiver/parameter frame agree with the selected method."""
+    for owner in module.nominal_declarations:
+        for preset_binding in owner.method_partial_defaults:
+            if preset_binding.name != target.name or Some(preset_binding.target.clone()) != target.canonical:
+                continue
+            frame = preset_binding.frame
+            if frame.canonical != body.canonical or len(frame.params) != len(body.params) or len(frame.params) != len(
+                types,
+            ) + 1:
+                return Err("invalid Body IR model method-partial frame")
+            for index in range(len(frame.params)):
+                if frame.params[index].name != body.params[index].name or frame.params[index].ty != body.params[index].ty or frame.params[index].mutable != body.params[index].mutable:
+                    return Err("invalid Body IR model method-partial parameter")
+            values = default_arguments(module, builder, target.binding, arguments[1:], frame, types, span, 1)?
+            return Ok(Some(values))
+    match target.binding:
+        ArgumentBinding.Resolved(arguments=_bindings, defaulted_slots=defaults) =>
+            if len(defaults) != 0:
+                if target.name != body.name:
+                    return Err("unsupported Body IR aliased method defaults without a retained binding frame")
+                values = default_arguments(module, builder, target.binding, arguments[1:], body, types, span, 1)?
+                return Ok(Some(values))
+        _ => pass
+    return Ok(None)

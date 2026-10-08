@@ -1758,3 +1758,54 @@ fn class_parameters_and_method_instantiations_are_retained() -> Result<(), Box<d
     assert!(!module.is_well_formed_nominal_declaration(&malformed));
     Ok(())
 }
+
+/// A method partial retains a private default frame and the original method's checked canonical identity.
+#[test]
+fn model_method_partial_retains_target_and_defaults() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "model Cell:\n    alive: bool\n    set_alive = partial set_state(state=true)\n\n    def set_state(mut self, state: bool) -> None:\n        self.alive = state\n\ndef main() -> None:\n    mut cell = Cell(alive=false)\n    cell.set_alive()\n    cell.set_alive(state=false)\n",
+        &["m", "method_partial_defaults"],
+    )?;
+    let owner = module.nominal_declarations.first().ok_or("missing model declaration")?;
+    assert!(module.is_well_formed_nominal_declaration(owner));
+    let binding = owner
+        .method_partial_defaults
+        .first()
+        .ok_or("missing partial default frame")?;
+    let method = body_named(&module, "set_state")?;
+    assert_eq!(binding.name, "set_alive");
+    assert_eq!(Some(&binding.target), method.canonical.as_ref());
+    assert_eq!(binding.frame.canonical, method.canonical);
+    assert_eq!(binding.frame.params.len(), 2);
+    assert!(binding.frame.params[0].mutable);
+    assert!(matches!(
+        binding.frame.params[1].default,
+        bir::CallableParamDefault::Source(_)
+    ));
+    assert!(module.body_has_canonical_direct_call_id(method));
+    assert_eq!(module.bodies.iter().filter(|body| body.name == "set_alive").count(), 0);
+    let calls = body_named(&module, "main")?
+        .block
+        .stmts
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                ..
+            } if target.name == "set_alive" => Some(target),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(calls.len(), 2);
+    assert!(calls.iter().all(|call| call.canonical == method.canonical));
+    assert!(
+        matches!(&calls[0].binding, bir::ArgumentBinding::Resolved { defaulted_slots, .. } if defaulted_slots == &[0])
+    );
+    assert!(
+        matches!(&calls[1].binding, bir::ArgumentBinding::Resolved { defaulted_slots, .. } if defaulted_slots.is_empty())
+    );
+    let mut corrupted = owner.clone();
+    corrupted.method_partial_defaults[0].frame.canonical = None;
+    assert!(!module.is_well_formed_nominal_declaration(&corrupted));
+    Ok(())
+}

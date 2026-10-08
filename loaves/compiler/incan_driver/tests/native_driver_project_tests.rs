@@ -2785,3 +2785,47 @@ def main() -> None:
         None,
     )
 }
+
+/// Model method partials evaluate omitted presets, preserve keyword overrides, and forward mutable receivers.
+#[test]
+fn model_method_partials_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "model_method_partials",
+        r#"
+def preset() -> int:
+    println("preset")
+    return 1
+
+model Tagged:
+    name: str
+    short = partial label(prefix=preset())
+
+    def label(self, prefix: int, suffix: str = "!") -> str:
+        return f"{prefix}:{self.name}{suffix}"
+
+model Cell:
+    alive: bool
+    set_alive = partial set_state(state=true)
+    set_dead = partial set_state(state=false)
+
+    def set_state(mut self, state: bool) -> None:
+        self.alive = state
+
+def main() -> None:
+    tagged = Tagged(name="Ada")
+    println(tagged.short())
+    println(tagged.short(prefix=2, suffix="?"))
+    println(tagged.short(suffix="."))
+    println(tagged.label(prefix=3))
+    mut cell = Cell(alive=false)
+    println(cell.alive)
+    cell.set_alive()
+    println(cell.alive)
+    cell.set_dead()
+    println(cell.alive)
+    cell.set_alive(state=false)
+    println(cell.alive)
+"#,
+        None,
+    )
+}

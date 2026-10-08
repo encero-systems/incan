@@ -273,6 +273,7 @@ fn build_body_ir_module_v0_with_provider_operations(
         rust_module: program.rust_module_path.as_ref().map(|path| path.node.as_str()),
     };
     defaults::attach_model_field_defaults(program, &mut nominal_declarations, &lowering_facts);
+    method_partials::attach_model_method_partials(program, &mut nominal_declarations, &lowering_facts);
     let mut bodies = program
         .declarations
         .iter()
@@ -481,11 +482,18 @@ pub fn is_direct_replacement_checked_model(model: &ast::ModelDecl, type_info: &T
 
 /// Keep the structural admission boundary shared by builtin and checked serde derive selections.
 /// Same-type method aliases keep the checked target identity and use its retained method body; they add no native
-/// layout or wrapper declaration.
+/// layout or wrapper declaration. Method partials retain deferred preset frames, with no second semantic method
+/// identity.
 fn has_direct_replacement_model_shape(model: &ast::ModelDecl) -> bool {
     model.type_params.is_empty()
         && model.traits.iter().all(|adoption| adoption.node.type_args.is_empty())
-        && model.method_partials.is_empty()
+        && model.method_partials.iter().all(|partial| {
+            let mut targets = model
+                .methods
+                .iter()
+                .filter(|method| method.node.name == partial.node.target);
+            matches!((targets.next(), targets.next()), (Some(target), None) if target.node.receiver.is_some())
+        })
         && model.properties.is_empty()
         && model
             .methods
@@ -1219,6 +1227,7 @@ mod reads;
 mod collect;
 
 mod bodies;
+mod method_partials;
 mod parameter_types;
 mod partials;
 

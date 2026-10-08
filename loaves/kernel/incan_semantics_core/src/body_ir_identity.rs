@@ -208,7 +208,8 @@ impl BodyIrModule {
                 && declaration.field_types.len() == 1
                 && declaration.field_public == [true]
                 && declaration.type_parameter_count == 0
-                && !declaration.has_field_defaults;
+                && !declaration.has_field_defaults
+                && declaration.method_partial_defaults.is_empty();
         }
 
         matches!(
@@ -220,6 +221,34 @@ impl BodyIrModule {
             declaration.canonical.kind.clone(),
         ) == Some(declaration.direct_declaration_id.clone())
             && declaration.canonical.declaration_name == declaration.name
+            && declaration
+                .method_partial_defaults
+                .iter()
+                .map(|binding| &binding.name)
+                .collect::<BTreeSet<_>>()
+                .len()
+                == declaration.method_partial_defaults.len()
+            && declaration.method_partial_defaults.iter().all(|binding| {
+                !binding.name.is_empty()
+                    && binding.span.start >= declaration.canonical.declaration_span.start
+                    && binding.span.end <= declaration.canonical.declaration_span.end
+                    && binding.span.start < binding.span.end
+                    && binding.target.kind == SemanticSourceTargetKind::Method
+                    && declares_member(&declaration.canonical, &binding.target)
+                    && binding.frame.canonical.as_ref() == Some(&binding.target)
+                    && binding.frame.name == binding.target.declaration_name
+                    && binding.frame.span == binding.target.declaration_span
+                    && self.declaration_id_for_canonical(
+                        &binding.target,
+                        SymbolNamespace::Member,
+                        SemanticSourceTargetKind::Method,
+                    ) == Some(binding.frame.direct_call_id.clone())
+                    && binding
+                        .frame
+                        .params
+                        .first()
+                        .is_some_and(|parameter| parameter.ty == nominal_receiver_type(declaration))
+            })
             && declaration.fields.len() == declaration.field_identities.len()
             && declaration.fields.len() == declaration.field_types.len()
             && declaration.fields.len() == declaration.field_public.len()

@@ -45,8 +45,11 @@ pub def default_arguments(
     body: &Body,
     types: list[PlanType],
     span: SourceSpan,
+    parameter_offset: int = 0,
 ) -> Result[list[Operand], str]:
-    """Fill canonical slots, using a fresh declaration-local frame for each deferred default."""
+    """Fill canonical ordinary slots using fresh declaration frames; a method's receiver stays outside this binding."""
+    if parameter_offset < 0 or len(body.params) != len(types) + parameter_offset:
+        return Err("invalid Body IR default parameter frame length")
     match binding:
         ArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults) =>
             if len(bindings) != len(elements) or len(bindings) + len(defaults) != len(types):
@@ -69,7 +72,7 @@ pub def default_arguments(
                 if index < 0 or index >= len(types) or index in occupied:
                     return Err("invalid Body IR default slot map")
                 occupied.append(index)
-                operands[index] = evaluate_default(module, builder, body, index, types[index], span)?
+                operands[index] = evaluate_default(module, builder, body, index + parameter_offset, types[index], span)?
             return Ok(operands)
         _ => return Err("unsupported Body IR unresolved ArgumentBinding")
 
