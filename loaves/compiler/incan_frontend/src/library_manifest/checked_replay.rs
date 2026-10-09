@@ -17,6 +17,7 @@ use crate::symbols::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckedExportReplay {
     schema_version: u32,
+    #[serde(with = "manifest_contract")]
     projection: LibraryManifest,
 }
 
@@ -29,7 +30,7 @@ impl CheckedExportReplay {
     ) -> Result<Self, LibraryManifestError> {
         validate_replayable_shape(&export.kind)?;
         let projection = LibraryManifest::from_checked_exports(package, version, std::slice::from_ref(export));
-        projection.to_json()?;
+        projection.to_json_string()?;
         let replay = Self {
             schema_version: 1,
             projection,
@@ -43,7 +44,7 @@ impl CheckedExportReplay {
         if self.schema_version != 1 {
             return Err(invalid("unsupported checked export replay version"));
         }
-        self.projection.to_json()?;
+        self.projection.to_json_string()?;
         let manifest = &self.projection;
         let roots: Vec<_> = manifest
             .contract_metadata
@@ -628,3 +629,21 @@ fn invalid(message: &str) -> LibraryManifestError {
 
 #[cfg(test)]
 mod tests;
+
+/// Use the existing validated transport contract; the semantic model deliberately does not implement serde.
+mod manifest_contract {
+    use super::LibraryManifest;
+    use serde::{Deserialize, Serialize};
+
+    /// Validate before writing a replay projection into its immutable payload.
+    pub fn serialize<S: serde::Serializer>(value: &LibraryManifest, serializer: S) -> Result<S::Ok, S::Error> {
+        value.to_json_string().map_err(serde::ser::Error::custom)?;
+        super::super::wire::RawLibraryManifest::from_semantic(value).serialize(serializer)
+    }
+
+    /// Enter the same manifest version and semantic admission gates as an ordinary `.incnlib` consumer.
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<LibraryManifest, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        LibraryManifest::from_json_str(&value.to_string()).map_err(serde::de::Error::custom)
+    }
+}
