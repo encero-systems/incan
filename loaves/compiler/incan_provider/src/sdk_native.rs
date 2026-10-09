@@ -103,6 +103,7 @@ impl SdkNativeSelection {
     ///
     /// Sharing leases does not make mutable public records or their on-disk receipt witnesses authoritative.
     pub fn verify(&self) -> ProviderResult<()> {
+        let started = std::time::Instant::now();
         self.verify_catalog()?;
         if self.units.len() != self.owners.len() {
             return Err(ProviderError::failure("native SDK units and retained owners disagree"));
@@ -110,6 +111,11 @@ impl SdkNativeSelection {
         for (unit, owner) in self.units.iter().zip(&self.owners) {
             verify_sdk_native_artifact(unit, owner)?;
         }
+        tracing::debug!(
+            native_owner_revalidations = self.owners.len(),
+            elapsed_ms = started.elapsed().as_millis(),
+            "retained native SDK handoff verification completed"
+        );
         Ok(())
     }
 
@@ -260,9 +266,15 @@ pub fn select_sdk_native_artifacts(root: &Path) -> ProviderResult<SdkNativeSelec
         .iter()
         .map(|unit| unit.store_identity.clone())
         .collect::<Vec<_>>();
+    let acquisition_start = std::time::Instant::now();
     let selected = store
         .select_payloads_for_execution(&identities)
         .map_err(|error| ProviderError::failure(error.to_string()))?;
+    tracing::debug!(
+        native_owner_acquisitions = selected.len(),
+        elapsed_ms = acquisition_start.elapsed().as_millis(),
+        "canonical native SDK execution owners acquired"
+    );
     for (unit, owner) in catalog.units.iter().zip(&selected) {
         let key = serde_json::to_string(&unit.binding.identity_binding())
             .map_err(|error| ProviderError::failure(error.to_string()))?;
