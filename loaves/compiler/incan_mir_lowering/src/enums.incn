@@ -30,14 +30,14 @@ pub def variant_index(
     declarations: list[RustEnumDeclaration],
     target: &EnumVariantTarget,
 ) -> Result[tuple[int, int], str]:
-    """Resolve construction by variant identity and cross-check the retained owner facts."""
+    """Resolve construction by exact variant and owner identities; written owner aliases remain diagnostic spelling."""
     for owner in range(len(declarations)):
         declaration = declarations[owner]
         for slot in range(len(declaration.variants)):
             variant = declaration.variants[slot]
             if variant.canonical != target.variant_canonical:
                 continue
-            if target.enum_canonical != Some(declaration.canonical) or target.enum_name != declaration.name or target.variant_name != variant.name:
+            if target.enum_canonical != Some(declaration.canonical) or target.variant_name != variant.name:
                 return Err("invalid Body IR enum constructor identity")
             validate_binding(target.binding, len(variant.fields))?
             return Ok((owner, slot))
