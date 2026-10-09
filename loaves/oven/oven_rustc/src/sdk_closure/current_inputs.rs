@@ -5,7 +5,38 @@ use std::path::Path;
 use super::{Error, PreparedUnit, SdkLockedUnit, Seed, environment, fact_out_files, index_fact, validate_seed};
 use crate::native_loaf::{NativeLoafOrigin, NativeLoafRecord};
 
+pub(crate) use super::local::{LocalDependencyCandidate, local_dependency_demands, select_local_dependency};
 pub(crate) use super::native::NativeToolOwners;
+
+/// Read a genuinely unselected registry candidate's source manifest without acquiring its native owner.
+pub(crate) fn registry_source_manifest(blobs: &Path, binding: &SdkLockedUnit) -> Result<toml::Value, Error> {
+    let hex = binding
+        .archive_digest
+        .strip_prefix("sha256:")
+        .ok_or("invalid current candidate archive digest")?;
+    if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("invalid current candidate archive digest".into());
+    }
+    let archive = oven_store::source_archive::VerifiedLoafArchive::read(
+        &blobs.join(format!("{hex}.tar")),
+        &binding.archive_digest,
+    )?;
+    let manifest: toml::Value = toml::from_str(std::str::from_utf8(archive.manifest()?)?)?;
+    if manifest
+        .get("project")
+        .and_then(|project| project.get("name"))
+        .and_then(toml::Value::as_str)
+        != Some(&binding.loaf)
+        || manifest
+            .get("project")
+            .and_then(|project| project.get("version"))
+            .and_then(toml::Value::as_str)
+            != Some(&binding.version)
+    {
+        return Err("current candidate archive differs from its resolution binding".into());
+    }
+    Ok(manifest)
+}
 
 /// Parse and validate the exact resolution contract shared with native preparation, without preparing units.
 pub(crate) fn read_resolution(path: &Path) -> Result<Seed, Error> {
