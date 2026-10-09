@@ -21,6 +21,48 @@ use crate::error::{CliError, CliResult};
 
 const DOMAIN: &str = "ordinary-native-consumer-plan";
 
+/// Select a compiler-tooling plan from its current ordinary declaration and explicit producer inputs.
+///
+/// This adapter keeps the Incan bootstrap on the same current-input and rooted-admission boundary as native tests.
+/// It returns measured native preparation facts alongside the existing plan, whose original execution owners stay
+/// leased through compilation. The runtime engine, when required, remains separate supplemental source authority.
+#[allow(clippy::too_many_arguments)]
+pub fn select_declared_native_loaf_plan(
+    store: &OvenStore,
+    source_receipt: &OvenReceipt,
+    declaration: &Path,
+    rustc: &Path,
+    graph: &Path,
+    index: &Path,
+    blobs: &Path,
+    output: &Path,
+) -> CliResult<(OvenReceipt, OvenDirectRustcPlanSelection, String)> {
+    let declaration = declaration.canonicalize().map_err(failure)?;
+    let owner = declaration
+        .parent()
+        .ok_or_else(|| CliError::failure("ordinary native declaration has no owner"))?;
+    let manifest = oven_model::manifest::ProjectManifest::load(&declaration).map_err(failure)?;
+    let dependencies = manifest.rust_dependency_values();
+    let target = oven_rustc::rustc::rustc_host_target(rustc).map_err(failure)?;
+    let prepared =
+        oven_rustc::native_loaf::prepare_declared_native_loafs(&oven_rustc::native_loaf::NativeLoafConsumerRequest {
+            graph,
+            index,
+            blobs,
+            output,
+            rustc,
+            target: &target,
+            profile: "debug",
+            dependencies: &dependencies,
+            declaration_owner: owner,
+            domain: "target",
+        })
+        .map_err(failure)?;
+    let (receipt, plan) = select_native_loaf_plan(store, source_receipt, prepared.closure())?;
+    let report = serde_json::to_string(prepared.report()).map_err(failure)?;
+    Ok((receipt, plan, report))
+}
+
 /// Bind current declaration-selected physical roots into a consumer receipt and retain its exact native inputs.
 ///
 /// The caller supplies a closure selected by current source, lock and intent authority. Root record identities seal
