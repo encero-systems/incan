@@ -577,6 +577,9 @@ def scalar_rvalue(
                 match collection_equality(builder, operator, left, right, span)?:
                     Some(result) => return Ok(RvalueKind.Use(result))
                     None => pass
+                match text_equality(builder, operator, left, right, span)?:
+                    Some(result) => return Ok(RvalueKind.Use(result))
+                    None => pass
             if operator == BinOp.Div:
                 if not float_operand(builder.nominals, builder.locals[builder.local_offset:], left, span)? or not float_operand(
                     builder.nominals,
@@ -660,6 +663,49 @@ def collection_equality(
             references = [list_borrow(builder, places[0], false, span)?, list_borrow(builder, places[1], false, span)?]
             return Ok(Some(emit_collection_equality(builder, ty, references, operator == BinOp.Ne, span)?))
         None => return Ok(None)
+
+
+def text_comparison_operand(builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[bool, str]:
+    """Recognize a concrete text carrier without cloning a value to inspect its type."""
+    match value:
+        RustOperand.Constant(RustConstant.Str(_text)) => return Ok(true)
+        RustOperand.Constant(RustConstant.FrozenStr(_text)) => return Ok(true)
+        RustOperand.Place(read) =>
+            # Collection indexing owns its separate value-materialization path; a probe must not evaluate it twice.
+            for projection in read.place.projection:
+                match projection:
+                    PlaceElem.Index(_index) => return Ok(false)
+                    PlaceElem.Slice(start=_start, end=_end, step=_step) => return Ok(false)
+                    _ => pass
+            mut ty = PlanType.Unit
+            match read.place.global():
+                Some(global) =>
+                    ty = native_source_type(builder.nominals, builder.enums, builder.unions, global.ty, builder.intrinsics)?
+                None =>
+                    place = scalar_place(builder, read.place, span)?
+                    ty = place_type(builder.locals, place)
+            return Ok(ty == PlanType.String or ty == PlanType.FrozenStr)
+        _ => return Ok(false)
+
+
+def text_equality(
+    mut builder: Builder,
+    operator: &BinOp,
+    left: &RustOperand,
+    right: &RustOperand,
+    span: SourceSpan,
+) -> Result[Option[Operand], str]:
+    """Bind equality in a closed text instance to the same borrowed runtime operation as concrete Body IR helpers."""
+    if not text_comparison_operand(builder, left, span)? or not text_comparison_operand(builder, right, span)?:
+        return Ok(None)
+    incoming = builder.owned
+    operands = [borrow_text_operand(builder, left, span)?, borrow_text_operand(builder, right, span)?]
+    mut name = "equal_text"
+    if operator == BinOp.Ne:
+        name = "unequal_text"
+    output = emit_text_helper(builder, name, PlanType.Bool, [PlanType.StringRef, PlanType.StringRef], operands, span)
+    drop_borrowed_text_temporaries(builder, incoming, output.local, span)
+    return Ok(Some(read_place(output, false, span)))
 # =====================================================================================================================
 # The frame builder and ownership
 # =====================================================================================================================
