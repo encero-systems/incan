@@ -12,9 +12,9 @@ use oven_store::store::{
 use oven_store::{OvenGeneratedProjectRequest, digest_bytes, receipt_generated_project};
 
 use super::super::{
-    EDGES_INPUT, NativeLoafClosure, NativeLoafDependency, NativeLoafGraph, NativeLoafOrigin, NativeLoafPhysicalBinding,
-    NativeLoafReference, NativeLoafSource, ORIGIN_INPUT, SOURCE_INPUT, Store, physical_edges_input, select_owner,
-    source_binding_input,
+    EDGES_INPUT, NativeLoafClosure, NativeLoafDependency, NativeLoafGraph, NativeLoafInspectionWork, NativeLoafOrigin,
+    NativeLoafPhysicalBinding, NativeLoafReference, NativeLoafSource, ORIGIN_INPUT, SOURCE_INPUT, Store,
+    physical_edges_input, select_owner, source_binding_input,
 };
 use crate::native_loaf::tests::replace_owned_fixture;
 
@@ -280,7 +280,15 @@ fn dev7_native_source_projection_live_and_installed_preserve_exact_facts_and_ali
     let native_owner = Arc::clone(&selected.native_owner);
     let roots = vec![selected.declared_root("public_parent")?];
     let closure = graph.select(&roots)?;
-    let inputs = closure.inspection_inputs()?;
+    let expected_work = NativeLoafInspectionWork {
+        source_projection_attempts: 2,
+        manifest_read_attempts: 2,
+        generated_member_observation_attempts: 1,
+        native_owner_acquisitions: 0,
+    };
+    let mut construction = NativeLoafInspectionWork::default();
+    let inputs = closure.graph().inspection_inputs_with_work(&mut construction)?;
+    assert_eq!(construction, expected_work);
     assert!(Arc::ptr_eq(
         inputs.units().get(&parent_id).ok_or("descriptor missing")?.selected(),
         &selected
@@ -294,7 +302,12 @@ fn dev7_native_source_projection_live_and_installed_preserve_exact_facts_and_ali
             .native_owner,
         &native_owner
     ));
-    let first = inputs.inspection_project()?;
+    let mut first_work = NativeLoafInspectionWork::default();
+    let first = inputs.inspection_project_with_work(&mut first_work)?;
+    assert_eq!(first_work, expected_work);
+    let mut repeat_work = NativeLoafInspectionWork::default();
+    assert_eq!(inputs.inspection_project_with_work(&mut repeat_work)?, first);
+    assert_eq!(repeat_work, expected_work);
     let index = inputs
         .units()
         .keys()
@@ -484,15 +497,33 @@ fn dev7_native_source_projection_keeps_versions_host_roles_and_exact_selected_se
     assert_eq!(projection.units().len(), 4);
     projection.inspection_project()?;
     let root = graph.units.get(&one).ok_or("root missing")?.declared_root("one")?;
-    let narrow = graph.select(&[root])?.inspection_inputs()?;
+    let mut narrow_work = NativeLoafInspectionWork::default();
+    let narrow = graph
+        .select(&[root])?
+        .graph()
+        .inspection_inputs_with_work(&mut narrow_work)?;
+    assert_eq!(
+        narrow_work,
+        NativeLoafInspectionWork {
+            source_projection_attempts: 1,
+            manifest_read_attempts: 1,
+            generated_member_observation_attempts: 0,
+            native_owner_acquisitions: 0,
+        }
+    );
     assert_eq!(narrow.units().len(), 1);
     assert_ne!(narrow.scope_digest(), projection.scope_digest());
     drop(projection);
     drop(narrow);
     graph.units.remove(&one);
     assert!(graph.inspection_inputs().is_err());
-    let empty = NativeLoafGraph::default().inspection_inputs()?;
-    assert_eq!(empty.inspection_project()?, serde_json::json!({"crates":[]}));
+    let mut empty_work = NativeLoafInspectionWork::default();
+    let empty = NativeLoafGraph::default().inspection_inputs_with_work(&mut empty_work)?;
+    assert_eq!(
+        empty.inspection_project_with_work(&mut empty_work)?,
+        serde_json::json!({"crates":[]})
+    );
+    assert_eq!(empty_work, NativeLoafInspectionWork::default());
     Ok(())
 }
 
@@ -518,5 +549,46 @@ fn dev7_native_source_projection_is_read_only_even_for_transitional_native_domai
     assert!(!proofs.exists());
     inputs.inspection_project()?;
     assert!(!proofs.exists());
+    Ok(())
+}
+
+/// Count actual attempted boundaries on refusals without doing extra reads or acquiring native owners.
+#[test]
+fn dev7_native_source_projection_counters_preserve_refusal_boundaries() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let store = store(&root.path().join("store"));
+    let mut graph = NativeLoafGraph::default();
+    let mut missing = Unit::library("missing_declaration");
+    missing.declaration_inventory = false;
+    publish(root.path(), &store, &mut graph, &missing, &[])?;
+    let mut work = NativeLoafInspectionWork::default();
+    assert!(graph.inspection_inputs_with_work(&mut work).is_err());
+    assert_eq!(
+        work,
+        NativeLoafInspectionWork {
+            source_projection_attempts: 1,
+            manifest_read_attempts: 0,
+            generated_member_observation_attempts: 0,
+            native_owner_acquisitions: 0,
+        }
+    );
+
+    let mut graph = NativeLoafGraph::default();
+    let mut bad = Unit::library("bad_generated_digest");
+    let mut selected_fact = fact();
+    selected_fact.out[0].digest = digest_bytes(b"unrelated generated bytes");
+    bad.fact = Some(selected_fact);
+    publish(root.path(), &store, &mut graph, &bad, &[])?;
+    let mut work = NativeLoafInspectionWork::default();
+    assert!(graph.inspection_inputs_with_work(&mut work).is_err());
+    assert_eq!(
+        work,
+        NativeLoafInspectionWork {
+            source_projection_attempts: 1,
+            manifest_read_attempts: 1,
+            generated_member_observation_attempts: 1,
+            native_owner_acquisitions: 0,
+        }
+    );
     Ok(())
 }

@@ -14,6 +14,23 @@ use super::{
     NativeLoafError, NativeLoafGraph, Result, SelectedNativeLoaf, failed, refused, verify_child_bindings, verify_record,
 };
 
+/// Actual work attempted by this retained source-projection boundary, owned by one command.
+///
+/// Counts accumulate when the caller reuses a report, including work before a refusal. They exclude prior Store
+/// admission and Store verification's internal I/O. This path has no native owner selector: retaining an Arc is not
+/// an acquisition, so it never increments `native_owner_acquisitions`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+pub struct NativeLoafInspectionWork {
+    /// Calls entering source/fact projection, including attempts refused by original-owner verification.
+    pub source_projection_attempts: usize,
+    /// Actual declaration file-read calls, including failed reads; inventory misses do not count as reads.
+    pub manifest_read_attempts: usize,
+    /// Attempts to match a valid declared generated path against the admitted native member inventory.
+    pub generated_member_observation_attempts: usize,
+    /// Native owner selection calls issued by this projection; the retained-only implementation issues none.
+    pub native_owner_acquisitions: usize,
+}
+
 /// One source descriptor retaining the original per-unit record and native owner leases.
 ///
 /// Coordinates describe this admitted generation. Use the containing inputs' verified handoff before inspection;
@@ -77,6 +94,11 @@ impl NativeLoafInspectionInputs {
     ///
     /// This does not select new owners, write closure proofs, read an authored checkout or consult an index/Git.
     pub fn inspection_project(&self) -> Result<serde_json::Value> {
+        self.inspection_project_with_work(&mut NativeLoafInspectionWork::default())
+    }
+
+    /// Perform the same verified handoff while reporting actual work, including attempts before a refusal.
+    pub fn inspection_project_with_work(&self, work: &mut NativeLoafInspectionWork) -> Result<serde_json::Value> {
         let selected = self
             .units
             .iter()
@@ -90,7 +112,7 @@ impl NativeLoafInspectionInputs {
         let mut crates = Vec::new();
         for unit in self.units.values() {
             verify_child_bindings(&unit.selected.record, &selected)?;
-            let source = source_projection(&unit.selected)?;
+            let source = source_projection(&unit.selected, work)?;
             if source.crate_name != unit.crate_name
                 || source.edition != unit.edition
                 || source.root_module != unit.root_module
@@ -128,12 +150,15 @@ impl NativeLoafInspectionInputs {
 }
 
 /// Retain an already admitted ordinary set; no Store acquisition or SDK inventory supplies source authority.
-pub(super) fn from_graph(graph: &NativeLoafGraph) -> Result<NativeLoafInspectionInputs> {
+pub(super) fn from_graph(
+    graph: &NativeLoafGraph,
+    work: &mut NativeLoafInspectionWork,
+) -> Result<NativeLoafInspectionInputs> {
     let mut units = BTreeMap::new();
     let mut targets = BTreeSet::new();
     for (identity, selected) in &graph.units {
         verify_child_bindings(&selected.record, &graph.units)?;
-        let source = source_projection(selected)?;
+        let source = source_projection(selected, work)?;
         if selected.record.source.domain == "target" {
             targets.insert(&selected.record.recipe.intent.target);
         }
@@ -169,10 +194,14 @@ struct SourceProjection {
 }
 
 /// Verify original complete inventories, then reconstruct source/fact inputs without a live producer shortcut.
-fn source_projection(unit: &SelectedNativeLoaf) -> Result<SourceProjection> {
+fn source_projection(unit: &SelectedNativeLoaf, work: &mut NativeLoafInspectionWork) -> Result<SourceProjection> {
+    work.source_projection_attempts += 1;
     // Full admitted verification is intentional even for transitional domains with writable closure-proof caches.
     verify_record(&unit.record, &unit.record_owner, &unit.native_owner, true)?;
-    let manifest = super::selection::source_manifest(unit)?;
+    let manifest = super::selection::source_manifest_with_reader(unit, &mut |path| {
+        work.manifest_read_attempts += 1;
+        std::fs::read(path).map_err(failed)
+    })?;
     let project = manifest
         .get("project")
         .ok_or_else(|| refused("inspection source has no project"))?;
@@ -258,7 +287,7 @@ fn source_projection(unit: &SelectedNativeLoaf) -> Result<SourceProjection> {
         return Err(refused("inspection build-script source lacks its sealed declared fact"));
     }
     if let Some(fact) = &fact {
-        validate_fact(unit, fact)?;
+        validate_fact(unit, fact, work)?;
     }
     Ok(SourceProjection {
         manifest,
@@ -272,7 +301,7 @@ fn source_projection(unit: &SelectedNativeLoaf) -> Result<SourceProjection> {
 }
 
 /// Check generated inputs against the producer's exact selection and admitted immutable generated members.
-fn validate_fact(unit: &SelectedNativeLoaf, fact: &RustFactRecord) -> Result<()> {
+fn validate_fact(unit: &SelectedNativeLoaf, fact: &RustFactRecord, work: &mut NativeLoafInspectionWork) -> Result<()> {
     let intent = &unit.record.recipe.intent;
     let mut features = fact.features.clone();
     features.sort();
@@ -293,6 +322,7 @@ fn validate_fact(unit: &SelectedNativeLoaf, fact: &RustFactRecord) -> Result<()>
             return Err(refused("inspection generated fact has invalid or duplicate paths"));
         }
         let relative = format!(".oven-out/{}", output.name);
+        work.generated_member_observation_attempts += 1;
         source_member(unit, &relative)?;
         let member = unit
             .native_owner
