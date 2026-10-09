@@ -15,6 +15,11 @@
       "dependency_graph": "workspaces/oven/compiler-frontend-tests-native.json",
       "use_compiler_resolution": true
     },
+    "loaves/compiler/incan_provider/src/lib.rs": {
+      "declaration": "workspaces/compiler-bootstrap/test-declarations/provider-unit.loaf.toml",
+      "dependency_graph": "workspaces/oven/compiler-metadata-tests-native.json",
+      "use_compiler_resolution": true
+    },
     "loaves/compiler/incan_test_support/src/lib.rs": {
       "declaration": "loaves/compiler/incan_test_support/loaf.toml",
       "dependency_graph": "workspaces/oven/compiler-frontend-tests-native.json",
@@ -32,6 +37,18 @@
       ],
       "dependency_graph": "workspaces/oven/compiler-oven-tests-native.json",
       "use_compiler_resolution": true
+    },
+    "loaves/toolchain/incan-cli/src/lib.rs": {
+      "declaration": "workspaces/compiler-bootstrap/test-declarations/cli-unit.loaf.toml",
+      "dependency_graph": "workspaces/oven/compiler-metadata-tests-native.json",
+      "use_compiler_resolution": true,
+      "inputs": [
+        "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/refused_adopter_relying_on_a_dependency_trait_default",
+        "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/refused_dependency_default_calling_a_builtin",
+        "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/refused_dependency_default_constructing_a_private_model",
+        "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/refused_feature_gated_export_of_dependency",
+        "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/refused_imported_partial_without_carried_default"
+      ]
     }
   }
 }

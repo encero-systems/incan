@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3465 | 232 | 431 |
-| re-point | 1485 | 91 | 1056 |
+| keep | 3466 | 233 | 431 |
+| re-point | 1485 | 91 | 1057 |
 | retire | 1506 | 153 | 0 |
 | unaffected | 1760 | 179 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8216** | **655** | **1492** |
+| **Total** | **8217** | **656** | **1493** |
 
 - Retire-class tests: 1506, of which twinned 1022, dies 294, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -72,7 +72,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/tests/fixtures` | `**/*.incn` | 12 | re-point | #1561 | driver integration fixtures (generated_rust_* artifact projects, callability, native consumer); their owner tests are retire-class. |
 | `loaves/compiler/incan_emit/tests/codegen_snapshots` | `**/*.incn` | 180 | re-point | #1561 | snapshot corpus inputs considered as programs; the .snap outputs retire with codegen_snapshot_tests.rs. |
 | `loaves/compiler/incan_test_support/fixtures` | `*.incn` | 12 | re-point | #1561 | top-level regression programs run by CLI integration tests (rfc023/rfc030/rfc064/rfc088 behavior, reflection, model traits). |
-| `loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies` | `<name>.incn or <name>/` | 26 | re-point | #1561 | behavior fixtures that are projects with in-fixture path dependencies (`[dependencies] <name> = { path = "deps/<name>" }`, reached through `pub::<name>`): the runner bakes every provider in dependency order before the run, with no Cargo authority, so a twin can prove what a consumer prints (or which diagnostic refuses it) across a package boundary. Run by behavior_cli_dependencies_tests.rs; a provider that would need Cargo (one that itself declares `[dependencies]`) fails its fixture at the suite's Cargo guard, so such fixtures stay parked. Each names the retire tests it twins in `# retires:` lines. |
+| `loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies` | `<name>.incn or <name>/` | 27 | re-point | #1561 | behavior fixtures that are projects with in-fixture path dependencies (`[dependencies] <name> = { path = "deps/<name>" }`, reached through `pub::<name>`): the runner bakes every provider in dependency order before the run, with no Cargo authority, so a twin can prove what a consumer prints (or which diagnostic refuses it) across a package boundary. Run by behavior_cli_dependencies_tests.rs; a provider that would need Cargo (one that itself declares `[dependencies]`) fails its fixture at the suite's Cargo guard, so such fixtures stay parked. Each names the retire tests it twins in `# retires:` lines. |
 | `loaves/compiler/incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns` | `<name>.incn or <name>/` | 12 | re-point | #1561 | behavior fixtures about boolean logic, comparisons, operator precedence, and conditions expressed through value and record patterns, twinning retire-class lowering, emission and CLI tests whose observable is a program's output. Run by behavior_cli_tests.rs; a fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines. |
 | `loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations` | `<name>.incn or <name>/` | 36 | re-point | #1561 | behavior fixtures about modules, facades and imports across files, models, methods, traits and their defaults, generics, decorators and web types, twinning retire-class lowering, emission and CLI tests whose observable is a program's output. Run by behavior_cli_tests.rs; a fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines. |
 | `loaves/compiler/incan_test_support/fixtures/behavior/cli_refusals` | `<name>.incn or <name>/` | 48 | re-point | #1561 | behavior fixtures whose observable is a check-time refusal: each program is refused with the diagnostic code its header declares and is never run. Run by behavior_cli_tests.rs; a fixture is proved by checking a program, so it is re-point today and stays valid after the route flips; a fixture that twins a retire test names it in `# retires:` lines. |
@@ -127,7 +127,7 @@ The collector counts these in the text of each test function and of the file-loc
 
 `Lines` is the file length; `Test lines` is the test region the split threshold applies to: the `#[cfg(test)]` modules when the file has any, otherwise the whole file. `Twins` is `twinned/retire-class` and `Dies` the number recorded `dies`, for files with retire-class tests. Per-test rows follow a file only when it carries per-test overrides.
 
-### `loaves/compiler/incan_driver` (541 tests in 74 files: keep 239, re-point 19, retire 103, unaffected 180)
+### `loaves/compiler/incan_driver` (542 tests in 75 files: keep 240, re-point 19, retire 103, unaffected 180)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -195,8 +195,9 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/tests/generated_rust_callability_artifact_tests.rs` | 1 | 258 | 258 | retire | 1/1 | 0 | - | #1561 | text 1, run 1, checker 1 | The generated Cargo manifests and the `transforms.rs`/`main.rs` text (fn-pointer parameters, qualified provider calls) die with #654; the surviving observable, the consumer run printing `2 3 4` (a `Callable` value passed across a `pub::` package boundary, which no other test runs), is the twin: a project fixture carrying the producer under `deps/callability_core`, which the runner bakes before `incan run` (harness-deps). |
 | `loaves/compiler/incan_driver/tests/generated_rust_native_consumer_tests.rs` | 1 | 367 | 367 | retire | 0/1 | 1 | - | #1561 | run 1 | public generated-Rust artifact contract (RFC 120 projections, native consumers, audit) |
 | `loaves/compiler/incan_driver/tests/mir_plan_contract_tests.rs` | 3 | 141 | 141 | keep | - | - | - | #1337 | checker 1, parser 1 | public Incan scalar native-plan contract and required sibling dependency boundary |
-| `loaves/compiler/incan_driver/tests/native_driver_project_tests.rs` | 82 | 4388 | 4388 | keep | - | - | planned: native_driver_project_tests/collections.rs for focused collection parity cases | #1337 | run 81, checker 4 | Oven-built pinned native driver; scalar plan and real Body IR lowering; unchanged benchmark byte parity and opt-in census of every behavior fixture |
+| `loaves/compiler/incan_driver/tests/native_driver_project_tests.rs` | 82 | 4391 | 4391 | keep | - | - | planned: native_driver_project_tests/collections.rs for focused collection parity cases | #1337 | run 81, checker 4 | Oven-built pinned native driver; scalar plan and real Body IR lowering; unchanged benchmark byte parity and opt-in census of every behavior fixture |
 | `loaves/compiler/incan_driver/tests/native_driver_project_tests/census.rs` | 5 | 561 | 561 | keep | - | - | - | #1337 | - | Direct-route census refusal grouping and bounded process capture; route-independent measurement support |
+| `loaves/compiler/incan_driver/tests/native_driver_project_tests/dev7_carrier_admission.rs` | 1 | 70 | 70 | keep | - | - | - | #1337 | run 1 | Real frontend and Incan lower_module accept nested carrier layouts; actual native validation rejects independent malformed payload paths, layouts, collection identities and by-value recursion. |
 | `loaves/compiler/incan_driver/tests/native_driver_project_tests/enum_alias_admission.rs` | 1 | 47 | 47 | keep | - | - | - | #1337 | run 1 | Actual Incan lower_module accepts checked aliases and rejects independently corrupted canonical enum targets, payloads and bindings. |
 | `loaves/compiler/incan_driver/tests/native_driver_project_tests/tail.rs` | 10 | 400 | 400 | keep | - | - | - | #1337 | run 10 | Direct-route small statements, operators and places compared byte for byte with legacy output |
 | `loaves/compiler/incan_driver/tests/native_library_projection_publication_tests.rs` | 2 | 260 | 260 | keep | - | - | - | #1698 | codegen 2, replacement 2 | Completed library publication rollback restores changed and absent local projection markers without losing retained package caches. |
@@ -1816,7 +1817,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
 | `loaves/compiler/incan_frontend/src/api_metadata.rs` | 17 | 3778 | 944 | keep | - | - | - | #1561 | checker 17, parser 17 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
-| `loaves/compiler/incan_frontend/src/body_ir.rs` | 2 | 1327 | 49 | keep | - | - | - | #1561 | - | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
+| `loaves/compiler/incan_frontend/src/body_ir.rs` | 2 | 1325 | 49 | keep | - | - | - | #1561 | - | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/body_ir/stdlib_delegations.rs` | 1 | 139 | 28 | keep | - | - | - | #1337 | checker 1 | Canonical SDK Package forwarding proof rejects wrong owners and stale declaration spans without emitted spelling dispatch. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/async_and_race.rs` | 15 | 412 | 412 | keep | - | - | - | #1561 | replacement 1 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/calls_and_arguments.rs` | 62 | 1774 | 1774 | keep | - | - | required | #1561 | parser 1 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
@@ -2541,7 +2542,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
 | `loaves/kernel/incan_semantics_core/src/authority.rs` | 9 | 344 | 177 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
-| `loaves/kernel/incan_semantics_core/src/body_ir.rs` | 32 | 4882 | 1099 | keep | - | - | - | #1561 | replacement 1 | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
+| `loaves/kernel/incan_semantics_core/src/body_ir.rs` | 32 | 4893 | 1099 | keep | - | - | - | #1561 | replacement 1 | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_semantics_core/src/closure_digest.rs` | 12 | 430 | 226 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_semantics_core/src/dependencies.rs` | 4 | 317 | 155 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_semantics_core/src/emitted_symbol.rs` | 7 | 559 | 177 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |

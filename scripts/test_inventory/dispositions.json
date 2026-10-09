@@ -638,6 +638,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/dev7_carrier_admission.rs": {
+      "disposition": "keep",
+      "notes": "Real frontend and Incan lower_module accept nested carrier layouts; actual native validation rejects independent malformed payload paths, layouts, collection identities and by-value recursion.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/tests/native_driver_project_tests/enum_alias_admission.rs": {
       "disposition": "keep",
       "notes": "Actual Incan lower_module accepts checked aliases and rejects independently corrupted canonical enum targets, payloads and bindings.",
