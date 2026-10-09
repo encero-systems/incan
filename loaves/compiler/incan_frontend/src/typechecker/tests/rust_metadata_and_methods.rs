@@ -1313,3 +1313,207 @@ fn test_real_rust_inspect_preserves_concrete_borrowed_param_pointees() -> Result
     );
     Ok(())
 }
+
+/// Seed foreign ownership facts without loading a Rust workspace; source aliases must not choose the projection.
+#[cfg(feature = "rust_inspect")]
+fn dev7_mutable_projection_checker(
+    partial: bool,
+) -> Result<(tempfile::TempDir, TypeChecker), Box<dyn std::error::Error>> {
+    use incan_lang::interop::{
+        RustMutableReferenceCandidate, RustMutableReferenceTypeParam, RustTypeMetadataCompleteness,
+    };
+    let workspace = seeded_rust_inspect_workspace()?;
+    let mut checker = TypeChecker::new();
+    checker.set_rust_inspect_manifest_dir(workspace.path().to_path_buf());
+    for name in ["FooBar", "Widget", "Gadget"] {
+        let generic = name == "FooBar";
+        let metadata = RustItemMetadata {
+            canonical_path: format!("demo::{name}"),
+            definition_path: Some(format!("demo::{name}")),
+            visibility: RustVisibility::Public,
+            kind: RustItemKind::Type(RustTypeInfo {
+                type_params: if generic { vec!["T".to_string()] } else { Vec::new() },
+                type_param_defaults: Vec::new(),
+                mutable_reference_type_params: if generic {
+                    vec![RustMutableReferenceTypeParam {
+                        type_param: "T".to_string(),
+                        direct_trait_bounds: vec!["demo::MutableData".to_string()],
+                        mutable_reference_candidates: vec![RustMutableReferenceCandidate {
+                            required_traits: Vec::new(),
+                            required_associated_type_bindings: Vec::new(),
+                            fallback_is_complete: true,
+                        }],
+                        tuple_composition_arities: vec![2],
+                    }]
+                } else {
+                    Vec::new()
+                },
+                expanded_derive_traits: Vec::new(),
+                has_const_params: false,
+                alias_target: None,
+                metadata_completeness: if partial {
+                    RustTypeMetadataCompleteness::FieldsAndVariantsOnly
+                } else {
+                    RustTypeMetadataCompleteness::Complete
+                },
+                methods: Vec::new(),
+                implemented_traits: if !generic && !partial {
+                    vec![RustImplementedTrait {
+                        path: "demo::MutableData".to_string(),
+                        mutable_reference: true,
+                    }]
+                } else {
+                    Vec::new()
+                },
+                fields: Vec::new(),
+                variants: Vec::new(),
+            }),
+        };
+        checker
+            .rust_inspect_cache
+            .insert_test_item(workspace.path(), metadata)?;
+    }
+    Ok((workspace, checker))
+}
+
+/// Immutable parameters, fields and return annotations must not demand complete foreign ownership metadata.
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn dev7_mutable_projection_immutable_annotations_do_not_demand_complete_metadata()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::demo import FooBar as ProviderHandle, Widget, Gadget
+
+def identity(value: ProviderHandle[tuple[Widget, Gadget]]) -> ProviderHandle[tuple[Widget, Gadget]]:
+  return value
+
+class Owner:
+  value: ProviderHandle[tuple[Widget, Gadget]]
+
+  def method(self, value: ProviderHandle[tuple[Widget, Gadget]]) -> None:
+    pass
+
+trait Slot:
+  def require(self, value: ProviderHandle[tuple[Widget, Gadget]]) -> None:
+    ...
+"#;
+    let tokens = lexer::lex(source).map_err(|errors| format!("lex failed: {errors:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errors| format!("parse failed: {errors:?}"))?;
+    let (_workspace, mut checker) = dev7_mutable_projection_checker(true)?;
+    checker
+        .check_program(&ast)
+        .map_err(|errors| format!("check failed: {errors:?}"))?;
+    assert_eq!(
+        checker.rust_complete_type_lookup_requests.get(),
+        0,
+        "immutable annotations must keep partial source metadata instead of initiating a complete lookup"
+    );
+    assert!(
+        checker
+            .type_info()
+            .rust
+            .mutable_reference_type_argument_projections
+            .is_empty()
+    );
+    Ok(())
+}
+
+/// Source mut controls projection even when a direct foreign handle's callable marker preserves its owned outer ABI.
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn dev7_mutable_projection_preserves_function_method_and_trait_slots() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::demo import FooBar as ProviderHandle, Widget, Gadget
+
+def move_value(mut value: ProviderHandle[tuple[Widget, Gadget]]) -> None:
+  pass
+
+class Owner:
+  def method(self, mut value: ProviderHandle[tuple[Widget, Gadget]]) -> None:
+    pass
+
+trait Slot:
+  def require(self, mut value: ProviderHandle[tuple[Widget, Gadget]]) -> None:
+    ...
+"#;
+    let tokens = lexer::lex(source).map_err(|errors| format!("lex failed: {errors:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errors| format!("parse failed: {errors:?}"))?;
+    let (_workspace, mut checker) = dev7_mutable_projection_checker(false)?;
+    checker
+        .check_program(&ast)
+        .map_err(|errors| format!("check failed: {errors:?}"))?;
+    assert!(checker.rust_complete_type_lookup_requests.get() > 0);
+    let annotation = "ProviderHandle[tuple[Widget, Gadget]]";
+    for (start, _) in source.match_indices(annotation) {
+        let projections = checker
+            .type_info()
+            .rust
+            .mutable_reference_type_argument_projections
+            .get(&(start, start + annotation.len()))
+            .ok_or("mutable parameter lost its foreign projection")?;
+        assert_eq!(
+            projections,
+            &vec![MutableRustTypeArgumentProjection {
+                argument_position: 0,
+                reference_leaf_paths: vec![vec![0], vec![1]],
+            }]
+        );
+    }
+    let SymbolKind::Function(info) = &checker.lookup_symbol("move_value").ok_or("function missing")?.kind else {
+        return Err("expected function binding".into());
+    };
+    assert!(
+        !info.params.first().ok_or("parameter missing")?.is_mut,
+        "direct Rust ownership must remain distinct from the source mut projection demand"
+    );
+    Ok(())
+}
+
+/// Collecting an imported source callable still records its mutable foreign-generic contract.
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn dev7_mutable_projection_preserves_imported_source_callable() -> Result<(), Box<dyn std::error::Error>> {
+    let dependency = r#"
+from rust::demo import FooBar as ProviderHandle, Widget, Gadget
+
+pub def move_value(mut value: ProviderHandle[tuple[Widget, Gadget]]) -> None:
+  pass
+"#;
+    let consumer = "from helpers import move_value\n";
+    let dependency_tokens = lexer::lex(dependency).map_err(|errors| format!("dependency lex failed: {errors:?}"))?;
+    let dependency_ast =
+        parser::parse(&dependency_tokens).map_err(|errors| format!("dependency parse failed: {errors:?}"))?;
+    let consumer_tokens = lexer::lex(consumer).map_err(|errors| format!("consumer lex failed: {errors:?}"))?;
+    let consumer_ast =
+        parser::parse(&consumer_tokens).map_err(|errors| format!("consumer parse failed: {errors:?}"))?;
+    let (_workspace, mut checker) = dev7_mutable_projection_checker(false)?;
+    checker.import_module(&dependency_ast, "helpers");
+    let annotation = "ProviderHandle[tuple[Widget, Gadget]]";
+    let start = dependency.find(annotation).ok_or("dependency annotation missing")?;
+    assert_eq!(
+        checker
+            .type_info()
+            .rust
+            .mutable_reference_type_argument_projections
+            .get(&(start, start + annotation.len())),
+        Some(&vec![MutableRustTypeArgumentProjection {
+            argument_position: 0,
+            reference_leaf_paths: vec![vec![0], vec![1]],
+        }]),
+        "imported collection must retain the dependency AST's exact ownership projection before consumer checking"
+    );
+    let (_consumer_workspace, mut consumer_checker) = dev7_mutable_projection_checker(false)?;
+    consumer_checker
+        .check_with_imports(&consumer_ast, &[("helpers", &dependency_ast)])
+        .map_err(|errors| format!("imported callable check failed: {errors:?}"))?;
+    assert!(consumer_checker.rust_complete_type_lookup_requests.get() > 0);
+    let SymbolKind::Function(info) = &consumer_checker
+        .lookup_symbol("move_value")
+        .ok_or("imported callable missing")?
+        .kind
+    else {
+        return Err("expected imported function".into());
+    };
+    assert!(!info.params.first().ok_or("imported parameter missing")?.is_mut);
+    Ok(())
+}
