@@ -17,6 +17,15 @@ pub const NATIVE_RUNTIME_ENGINE_SOURCE: &str = "native-runtime-engine";
 /// Prepared executable installed beside its receipt-bound compiler by the Incan bootstrap.
 pub const NATIVE_RUNTIME_ENGINE_FILE: &str = "native-runtime-inputs";
 
+/// Digest an exact compiler input with replacement-sensitive local file observations.
+///
+/// This is only a content-digest accelerator: callers must still identify the actually loaded file and compare the
+/// result with their build-bound evidence. Unix observations reject replacement and preserved-mtime edits; other
+/// platforms read the bytes conservatively. A missing or malformed observation never grants an identity.
+pub fn digest_native_compiler_input(path: &Path) -> std::io::Result<String> {
+    super::file_freshness::digest_file(path)
+}
+
 /// Forward source-current completed-output selection without the optional borrowed-tuple argument that Incan cannot
 /// emit.
 ///

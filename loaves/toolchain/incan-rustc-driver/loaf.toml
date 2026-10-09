@@ -9,7 +9,6 @@ incan_mir_lowering = { loaf = "incan_mir_lowering", path = "../../compiler/incan
 
 incan_driver = { loaf = "incan_driver", path = "../../compiler/incan_driver", default-features = false, features = ["cli", "rust_inspect", "std_async", "std_testing", "std_decorators"] }
 thiserror = { loaf = "crates-io/thiserror", version = "2" }
-sha2 = { loaf = "crates-io/sha2", version = "0.10.9" }
 incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
 incan_frontend = { loaf = "incan_frontend", path = "../../compiler/incan_frontend", default-features = false }
 
