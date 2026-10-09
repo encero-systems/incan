@@ -1055,19 +1055,12 @@ impl ProviderPlan {
         }
 
         let mut records = project_dependency_records(&library_manifest_index, package_features)?;
-        let mut namespace_issuers = BTreeMap::new();
         if let Some(inventory) = sdk_inventory {
-            let selected = sdk_provider_records(inventory, sdk_components)?;
-            namespace_issuers.extend(
-                selected
-                    .iter()
-                    .map(|record| (record.identity.stable_key(), Arc::new(record.clone()))),
-            );
-            records.extend(selected);
+            records.extend(sdk_provider_records(inventory, sdk_components)?);
         }
-        let mut plan = Self::new(library_manifest_index, records, used_module_paths)?;
-        plan.namespace_issuers = namespace_issuers;
-        Ok(plan)
+        // Public inventory descriptors retain legacy provider behavior, but cannot authenticate an issuer.
+        // Reserved ordinary-package grants require the future retained installed-set/publication capability.
+        Self::new(library_manifest_index, records, used_module_paths)
     }
 
     /// Construct one catalog from admitted ordinary library metadata and independently retained namespace grants.

@@ -751,25 +751,27 @@ fn strict_git_source_error(resolved: &ResolvedDependencies) -> Option<String> {
 }
 
 #[cfg(test)]
+/// Exercise the real lock writer and retain its private evidence for transition controls.
+pub(crate) fn publish_lock_evidence(root: &Path) -> CliResult<PublishedOvenProjectLock> {
+    use crate::lock::test_support::{empty_project_requirements, empty_resolved};
+    let (_, publication) = generate_oven_lockfile_with_evidence(
+        root,
+        &empty_resolved(),
+        &empty_project_requirements(),
+        &CargoFeatureSelection::default(),
+        &SemanticLockState::default(),
+        None,
+    )?;
+    Ok(PublishedOvenProjectLock {
+        dependency_surface: empty_resolved(),
+        publication,
+    })
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::lock::test_support::{empty_project_requirements, empty_resolved};
-
-    /// Exercise the real lock writer and retain its private evidence for transition controls.
-    fn publish_lock_evidence(root: &Path) -> CliResult<PublishedOvenProjectLock> {
-        let (_, publication) = generate_oven_lockfile_with_evidence(
-            root,
-            &empty_resolved(),
-            &empty_project_requirements(),
-            &CargoFeatureSelection::default(),
-            &SemanticLockState::default(),
-            None,
-        )?;
-        Ok(PublishedOvenProjectLock {
-            dependency_surface: empty_resolved(),
-            publication,
-        })
-    }
 
     #[test]
     fn published_lock_evidence_binds_writer_location_and_exact_bytes() -> Result<(), Box<dyn std::error::Error>> {

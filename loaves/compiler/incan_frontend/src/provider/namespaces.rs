@@ -1,8 +1,8 @@
 //! Namespace capabilities retained from an already validated immutable provider selection.
 //!
 //! Ordinary checked package admission may consume these grants, but package names and self-declared module claims
-//! never mint reserved namespace authority. An ordinary installed-set producer remains the final replacement for
-//! the existing inventory-backed grant producer (#1337/#1698).
+//! never mint reserved namespace authority. Public inventory descriptors are not issuer evidence: the ordinary
+//! installed-set/publication authenticator remains an explicit caller gate (#1337/#1698).
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -19,7 +19,8 @@ impl SelectedProviderNamespace {
     /// Retain one enabled, materialized namespace grant from an existing validated provider plan.
     ///
     /// The caller must subsequently bind its manifest, artifact and exact package owner through ordinary admission.
-    /// This compatibility producer does not authorize a new namespace or transplant a grant onto another artifact.
+    /// This transfer does not issue authority. Public records and inventories cannot create its private issuer;
+    /// admission refuses until a trusted installed-set/publication producer supplies that capability.
     pub fn from_plan(plan: &ProviderPlan, provider_identity: &str) -> Result<Self, String> {
         let issuer = plan
             .namespace_issuer(provider_identity)
