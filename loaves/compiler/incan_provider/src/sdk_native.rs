@@ -94,6 +94,84 @@ pub struct SdkNativeSelection {
     pub owners: Vec<OvenStoreExecutionPayload>,
 }
 
+/// Resolve required Rust facets to their owning Loaves using the admitted source declarations.
+///
+/// A native output's link name is independent of its package name. The selected owners retain the source/output
+/// leases through this observation and subsequent identity projection; filenames and ambient checkout manifests
+/// cannot supply the association. Each required facet must have exactly one compatible host-macro or target-library
+/// binding in the selection.
+pub fn sdk_native_runtime_loaves(selection: &SdkNativeSelection, required: &[&str]) -> ProviderResult<Vec<String>> {
+    if selection.units.len() != selection.owners.len() {
+        return Err(ProviderError::failure("native runtime units and owners disagree"));
+    }
+    let mut facets: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (unit, owner) in selection.units.iter().zip(&selection.owners) {
+        if unit.binding.loaf.starts_with("crates-io/") {
+            continue;
+        }
+        verify_sdk_native_artifact(unit, owner)?;
+        let relative = "source/loaf.toml";
+        let admitted = owner
+            .admitted_materialized_files()
+            .iter()
+            .find(|file| file.relative_path == relative)
+            .ok_or_else(|| ProviderError::failure("native runtime unit has no admitted Loaf declaration"))?;
+        let path = owner.artifact_root.join(relative);
+        let bytes = std::fs::read(&path).map_err(|error| ProviderError::failure(error.to_string()))?;
+        if oven_store::digest_bytes(&bytes) != admitted.digest {
+            return Err(ProviderError::failure(
+                "native runtime declaration differs from its admitted bytes",
+            ));
+        }
+        let declaration: toml::Value =
+            toml::from_str(std::str::from_utf8(&bytes).map_err(|error| ProviderError::failure(error.to_string()))?)
+                .map_err(|error| ProviderError::failure(error.to_string()))?;
+        let package = declaration
+            .get("project")
+            .and_then(|project| project.get("name"))
+            .and_then(toml::Value::as_str)
+            .ok_or_else(|| ProviderError::failure("native runtime declaration has no package name"))?;
+        if package != unit.binding.loaf {
+            return Err(ProviderError::failure(
+                "native runtime package differs from its admitted binding",
+            ));
+        }
+        let rust = declaration.get("rust");
+        let name = rust
+            .and_then(|rust| rust.get("name"))
+            .and_then(toml::Value::as_str)
+            .unwrap_or(package)
+            .replace('-', "_");
+        if !required.contains(&name.as_str()) {
+            continue;
+        }
+        let kind = rust
+            .and_then(|rust| rust.get("type"))
+            .and_then(toml::Value::as_str)
+            .unwrap_or("lib");
+        let extension = Path::new(&unit.relative_path)
+            .extension()
+            .and_then(|extension| extension.to_str());
+        let compatible = match kind {
+            "proc-macro" => unit.binding.domain == "host" && matches!(extension, Some("dylib" | "so" | "dll")),
+            "lib" => unit.binding.domain == "target" && extension == Some("rlib"),
+            _ => false,
+        };
+        if compatible {
+            facets.entry(name).or_default().push(unit.binding.loaf.clone());
+        }
+    }
+    required
+        .iter()
+        .map(|name| match facets.get(*name).map(Vec::as_slice) {
+            Some([loaf]) => Ok(loaf.clone()),
+            _ => Err(ProviderError::failure(format!(
+                "native runtime facet `{name}` has no unique admitted Loaf"
+            ))),
+        })
+        .collect()
+}
+
 /// Select native descriptors with their admitted owners instead of allowing consumers to trust output paths alone.
 pub fn select_sdk_native_artifacts(root: &Path) -> ProviderResult<SdkNativeSelection> {
     let catalog: SdkNativeArtifactCatalog = serde_json::from_slice(
@@ -131,40 +209,54 @@ pub fn select_sdk_native_artifacts(root: &Path) -> ProviderResult<SdkNativeSelec
     for (unit, owner) in catalog.units.iter().zip(&selected) {
         let key = serde_json::to_string(&unit.binding.identity_binding())
             .map_err(|error| ProviderError::failure(error.to_string()))?;
-        let actual: oven_rustc::sdk_closure::SdkLockedUnit =
-            serde_json::from_slice(&owner.payload).map_err(|error| ProviderError::failure(error.to_string()))?;
-        let actual = serde_json::to_value(actual.identity_binding())
-            .map_err(|error| ProviderError::failure(error.to_string()))?;
-        let expected = serde_json::to_value(unit.binding.identity_binding())
-            .map_err(|error| ProviderError::failure(error.to_string()))?;
-        if receipts.get(&key) != Some(&unit.receipt_identity)
-            || actual != expected
-            || owner.manifest.domain != format!("sdk-source-unit-{}", unit.binding.domain)
-            || owner.manifest.receipt_identity != unit.receipt_identity
-            || unit.relative_path.contains(['/', '\\'])
-            || !matches!(
-                Path::new(&unit.relative_path)
-                    .extension()
-                    .and_then(|extension| extension.to_str()),
-                Some("rlib" | "dylib" | "so" | "dll")
-            )
-            || !owner
-                .admitted_materialized_files()
-                .iter()
-                .any(|file| file.relative_path == unit.relative_path && file.digest == unit.digest)
-        {
+        if receipts.get(&key) != Some(&unit.receipt_identity) {
             return Err(ProviderError::failure(
-                "SDK native output catalog disagrees with its admitted store entry",
+                "SDK native output catalog disagrees with its selected receipt",
             ));
         }
-        owner
-            .verify_proven_native_payload()
-            .map_err(|error| ProviderError::failure(error.to_string()))?;
+        verify_sdk_native_artifact(unit, owner)?;
     }
     Ok(SdkNativeSelection {
         units: catalog.units,
         owners: selected,
     })
+}
+
+/// Authenticate a native descriptor against its retained owner before selecting its output or package facets.
+fn verify_sdk_native_artifact(
+    unit: &oven_rustc::sdk_closure::SdkNativeArtifact,
+    owner: &OvenStoreExecutionPayload,
+) -> ProviderResult<()> {
+    owner
+        .verify_proven_native_payload()
+        .map_err(|error| ProviderError::failure(error.to_string()))?;
+    let actual: oven_rustc::sdk_closure::SdkLockedUnit =
+        serde_json::from_slice(&owner.payload).map_err(|error| ProviderError::failure(error.to_string()))?;
+    let actual =
+        serde_json::to_value(actual.identity_binding()).map_err(|error| ProviderError::failure(error.to_string()))?;
+    let expected = serde_json::to_value(unit.binding.identity_binding())
+        .map_err(|error| ProviderError::failure(error.to_string()))?;
+    if actual != expected
+        || unit.store_identity != owner.manifest.identity
+        || owner.manifest.domain != format!("sdk-source-unit-{}", unit.binding.domain)
+        || owner.manifest.receipt_identity != unit.receipt_identity
+        || unit.relative_path.contains(['/', '\\'])
+        || !matches!(
+            Path::new(&unit.relative_path)
+                .extension()
+                .and_then(|extension| extension.to_str()),
+            Some("rlib" | "dylib" | "so" | "dll")
+        )
+        || !owner
+            .admitted_materialized_files()
+            .iter()
+            .any(|file| file.relative_path == unit.relative_path && file.digest == unit.digest)
+    {
+        return Err(ProviderError::failure(
+            "SDK native output catalog disagrees with its admitted store entry",
+        ));
+    }
+    Ok(())
 }
 
 /// Explicit immutable archive and index inputs for automatic source SDK preparation.
@@ -500,10 +592,23 @@ pub fn sdk_native_dependency_is_covered(
             }
         }
         if !sdk_native_facet_path_matches(package, &canonical)? {
+            if !canonical.join("loaf.toml").is_file() {
+                return Ok(false);
+            }
+            let declaration: toml::Value = toml::from_str(
+                &std::fs::read_to_string(canonical.join("loaf.toml"))
+                    .map_err(|error| ProviderError::failure(error.to_string()))?,
+            )
+            .map_err(|error| ProviderError::failure(error.to_string()))?;
+            let loaf = declaration
+                .get("project")
+                .and_then(|project| project.get("name"))
+                .and_then(toml::Value::as_str)
+                .ok_or_else(|| ProviderError::failure("native companion has no declared Loaf identity"))?;
             if !selection
                 .units
                 .iter()
-                .any(|unit| unit.binding.loaf == package && !unit.binding.loaf.starts_with("crates-io/"))
+                .any(|unit| unit.binding.loaf == loaf && !unit.binding.loaf.starts_with("crates-io/"))
             {
                 return Ok(false);
             }
@@ -585,7 +690,7 @@ fn sdk_native_facet_path_matches(crate_name: &str, path: &Path) -> ProviderResul
 
 #[cfg(test)]
 mod tests {
-    /// A compiler companion path is admitted by source identity and refuses mutation even when its name is unchanged.
+    /// Native companions retain their package/facet association and refuse changed source or forged selection facts.
     #[test]
     fn compiler_companion_path_requires_current_source_identity() -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
@@ -593,7 +698,7 @@ mod tests {
         std::fs::create_dir_all(project.join("src"))?;
         std::fs::write(
             project.join("loaf.toml"),
-            "[project]\nname='companion'\nversion='1.0.0'\n[rust]\nname='companion'\ntype='lib'\nedition='2024'\n",
+            "[project]\nname='companion-package'\nversion='1.0.0'\n[rust]\nname='companion'\ntype='lib'\nedition='2024'\n",
         )?;
         std::fs::write(project.join("src/lib.rs"), "pub fn value() -> u8 { 1 }")?;
         let seed = root.path().join("seed.json");
@@ -606,7 +711,39 @@ mod tests {
         std::fs::create_dir(&authority)?;
         super::write_sdk_native_authority(&closure, &authority)?;
         super::write_sdk_native_artifact_catalog(&closure, &output.join("store"), &authority)?;
-        let selection = super::select_sdk_native_artifacts(&authority)?;
+        let mut selection = super::select_sdk_native_artifacts(&authority)?;
+        assert_eq!(
+            super::sdk_native_runtime_loaves(&selection, &["companion"])?,
+            ["companion-package"]
+        );
+        assert!(super::sdk_native_runtime_loaves(&selection, &["companion-package"]).is_err());
+        selection.units[0].binding.loaf = "wrong-owner".to_string();
+        assert!(super::sdk_native_runtime_loaves(&selection, &["companion"]).is_err());
+        selection.units[0].binding.loaf = "companion-package".to_string();
+        selection.units[0].binding.domain = "host".to_string();
+        assert!(super::sdk_native_runtime_loaves(&selection, &["companion"]).is_err());
+        selection.units[0].binding.domain = "target".to_string();
+        let declaration = selection.owners[0].artifact_root.join("source/loaf.toml");
+        let admitted_bytes = std::fs::read(&declaration)?;
+        let replacement = declaration.with_extension("replacement");
+        std::fs::write(
+            &replacement,
+            "[project]\nname='companion-package'\n[rust]\nname='forged-facet'\n",
+        )?;
+        std::fs::rename(&replacement, &declaration)?;
+        assert!(super::sdk_native_runtime_loaves(&selection, &["forged-facet"]).is_err());
+        std::fs::write(&replacement, admitted_bytes)?;
+        std::fs::rename(&replacement, &declaration)?;
+        assert_eq!(
+            super::sdk_native_runtime_loaves(&selection, &["companion"])?,
+            ["companion-package"]
+        );
+        let mut duplicate = super::select_sdk_native_artifacts(&authority)?;
+        duplicate.units.extend(selection.units.iter().cloned());
+        duplicate
+            .owners
+            .extend(super::select_sdk_native_artifacts(&authority)?.owners);
+        assert!(super::sdk_native_runtime_loaves(&duplicate, &["companion"]).is_err());
         let inventory = crate::SdkInventory {
             root: authority,
             sdk_id: "fixture".to_string(),
@@ -625,6 +762,17 @@ mod tests {
             optional: false,
             package: None,
         };
+        let unpublished = oven_model::manifest::DependencySpec {
+            source: oven_model::manifest::DependencySource::Path {
+                path: root.path().join("unpublished"),
+            },
+            ..request.clone()
+        };
+        assert!(!super::sdk_native_dependency_is_covered(
+            &inventory,
+            &selection,
+            &unpublished
+        )?);
         assert!(super::sdk_native_dependency_is_covered(
             &inventory, &selection, &request
         )?);
@@ -636,6 +784,10 @@ mod tests {
         assert!(!super::sdk_native_dependency_is_covered(
             &inventory, &selection, &request
         )?);
+        assert_eq!(
+            super::sdk_native_runtime_loaves(&selection, &["companion"])?,
+            ["companion-package"]
+        );
         Ok(())
     }
 

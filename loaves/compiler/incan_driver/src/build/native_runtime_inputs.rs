@@ -74,7 +74,13 @@ struct Request<'a> {
     provider_records: &'a [String],
     stdlib_facets: &'a [String],
     dependency_records: Vec<DependencyRecord<'a>>,
-    runtime_units: Vec<&'static str>,
+    runtime_units: &'a [String],
+}
+
+/// Runtime projection carries its selected Loaves; dependency projection requires no runtime roots.
+enum Projection<'a> {
+    Runtime(&'a [String]),
+    DependencyRoots,
 }
 
 #[derive(Deserialize)]
@@ -87,13 +93,43 @@ struct Response {
 
 /// Project inputs using the engine already bound to the active source compiler's receipt.
 pub(crate) fn runtime_inputs(
+    inventory_root: &Path,
     catalog: &[u8],
     providers: &[String],
     facets: &[String],
     dependencies: &[DependencySpec],
 ) -> CliResult<BTreeMap<String, String>> {
     let (engine, digest) = bound_compiler_engine()?;
-    exchange(&engine, &digest, catalog, providers, facets, dependencies, "runtime")
+    let selection = incan_provider::sdk_native::select_sdk_native_artifacts(inventory_root)?;
+    let receipts: BTreeMap<String, String> =
+        serde_json::from_slice(catalog).map_err(|error| CliError::failure(error.to_string()))?;
+    if receipts.len() != selection.units.len() {
+        return Err(CliError::failure(
+            "native runtime catalog differs from its selected units",
+        ));
+    }
+    for unit in &selection.units {
+        let key = serde_json::to_string(&unit.binding.identity_binding())
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        if receipts.get(&key) != Some(&unit.receipt_identity) {
+            return Err(CliError::failure(
+                "native runtime catalog differs from its selected receipt",
+            ));
+        }
+    }
+    let required = incan_provider::sdk_native::sdk_native_runtime_loaves(
+        &selection,
+        &oven_model::toolchain_layout::SDK_RUNTIME_CRATES,
+    )?;
+    exchange(
+        &engine,
+        &digest,
+        catalog,
+        providers,
+        facets,
+        dependencies,
+        Projection::Runtime(&required),
+    )
 }
 
 /// Project requested native dependency roots through an explicitly source-bound bootstrap engine.
@@ -117,7 +153,15 @@ pub(crate) fn dependency_inputs(
                 .get(NATIVE_RUNTIME_ENGINE_SOURCE)
         })
         .ok_or_else(|| CliError::failure("compiler bootstrap receipt has no native-runtime engine binding"))?;
-    exchange(engine, digest, catalog, &[], &[], dependencies, "dependency-roots")
+    exchange(
+        engine,
+        digest,
+        catalog,
+        &[],
+        &[],
+        dependencies,
+        Projection::DependencyRoots,
+    )
 }
 
 /// Resolve and verify the source-built compiler and its engine once during this compiler process.
@@ -196,7 +240,7 @@ fn exchange(
     providers: &[String],
     facets: &[String],
     dependencies: &[DependencySpec],
-    operation: &str,
+    projection: Projection<'_>,
 ) -> CliResult<BTreeMap<String, String>> {
     let engine_digest = super::file_freshness::digest_file(engine)
         .map_err(|error| CliError::failure(format!("{}: {error}", engine.display())))?;
@@ -229,6 +273,10 @@ fn exchange(
             source,
         });
     }
+    let (operation, runtime_units) = match projection {
+        Projection::Runtime(units) => ("runtime", units),
+        Projection::DependencyRoots => ("dependency-roots", &[][..]),
+    };
     let request = Request {
         schema: "incan.native-runtime-inputs.request/1",
         operation,
@@ -238,11 +286,7 @@ fn exchange(
         provider_records: providers,
         stdlib_facets: facets,
         dependency_records,
-        runtime_units: if operation == "runtime" {
-            oven_model::toolchain_layout::SDK_RUNTIME_CRATES.to_vec()
-        } else {
-            Vec::new()
-        },
+        runtime_units,
     };
     let bytes = serde_json::to_vec(&request).map_err(|error| CliError::failure(error.to_string()))?;
     let directory = tempfile::tempdir().map_err(|error| CliError::failure(error.to_string()))?;
