@@ -1,6 +1,7 @@
 //! Map rust-analyzer `hir` definitions into [`incan_lang::interop::RustItemMetadata`].
 
 use std::collections::{BTreeMap, HashSet};
+use std::time::{Duration, Instant};
 
 use incan_lang::interop::{
     RustAssociatedTypeBinding, RustAssociatedTypeRequirement, RustExpandedDeriveTrait, RustFieldInfo, RustFunctionSig,
@@ -1489,6 +1490,35 @@ fn crate_dependency_closure(surface_crate: Crate, db: &RootDatabase) -> HashSet<
     closure
 }
 
+/// Time one existing type-metadata operation only when extractor debug evidence is enabled.
+///
+/// The closure runs exactly once and returns its original value. Nested candidate/solver measurements describe
+/// subphases of the surrounding trait phase and must not be added to that aggregate a second time.
+fn trace_type_metadata_phase<T>(phase: &'static str, collect: impl FnOnce() -> T) -> T {
+    if !tracing::enabled!(tracing::Level::DEBUG) {
+        return collect();
+    }
+    let started = Instant::now();
+    let value = collect();
+    tracing::debug!(
+        phase,
+        elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+        "type metadata phase completed"
+    );
+    value
+}
+
+/// Actual candidate and solver work for one unchanged receiver/environment and its authorized trait surface.
+#[derive(Default)]
+struct TraitImplementationWork {
+    trait_candidates: usize,
+    authorized_candidates: usize,
+    unique_authorized_traits: HashSet<Trait>,
+    solver_calls: usize,
+    solver_elapsed: Duration,
+    accepted_candidates: usize,
+}
+
 /// Collect non-blanket trait impls whose traits belong to the queried Rust surface dependency closure.
 ///
 /// `Impl::all_for_type` scans the entire loaded rust-analyzer graph. Rust's orphan rules allow a downstream crate to
@@ -1501,16 +1531,51 @@ fn collect_implemented_traits(
     mutable_reference: bool,
     db: &RootDatabase,
 ) -> Vec<RustImplementedTrait> {
+    let observe = tracing::enabled!(tracing::Level::DEBUG);
+    let _span = tracing::debug_span!(
+        "rust_trait_implementation_collection",
+        mutable_reference,
+        authorized_trait_crates = authorized_trait_crates.len()
+    )
+    .entered();
+    let collection_started = observe.then(Instant::now);
+    let candidates_started = observe.then(Instant::now);
+    let candidates = Impl::all_for_type(db, ty.clone());
+    if let Some(started) = candidates_started {
+        tracing::debug!(
+            candidate_acquisitions = 1,
+            candidates = candidates.len(),
+            elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+            "trait implementation candidates acquired"
+        );
+    }
+    let mut work = TraitImplementationWork::default();
     let mut traits = BTreeMap::new();
-    for impl_def in Impl::all_for_type(db, ty.clone()) {
+    for impl_def in candidates {
         let Some(trait_def) = impl_def.trait_(db) else {
             continue;
         };
+        if observe {
+            work.trait_candidates += 1;
+        }
         if !authorized_trait_crates.contains(&trait_def.module(db).krate(db)) {
             continue;
         }
-        if !ty.clone().impls_trait(db, trait_def, &[]) {
+        if observe {
+            work.authorized_candidates += 1;
+            work.unique_authorized_traits.insert(trait_def);
+            work.solver_calls += 1;
+        }
+        let solver_started = observe.then(Instant::now);
+        let implements = ty.clone().impls_trait(db, trait_def, &[]);
+        if let Some(started) = solver_started {
+            work.solver_elapsed += started.elapsed();
+        }
+        if !implements {
             continue;
+        }
+        if observe {
+            work.accepted_candidates += 1;
         }
         let path = canonical_module_def_path(ModuleDef::Trait(trait_def), db)
             .unwrap_or_else(|| trait_def.name(db).as_str().to_owned());
@@ -1520,6 +1585,19 @@ fn collect_implemented_traits(
                 path,
                 mutable_reference,
             },
+        );
+    }
+    if let Some(started) = collection_started {
+        tracing::debug!(
+            trait_candidates = work.trait_candidates,
+            authorized_candidates = work.authorized_candidates,
+            unique_authorized_traits = work.unique_authorized_traits.len(),
+            solver_calls = work.solver_calls,
+            solver_elapsed_ms = work.solver_elapsed.as_secs_f64() * 1000.0,
+            accepted_candidates = work.accepted_candidates,
+            accepted_trait_paths = traits.len(),
+            elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+            "trait implementation collection completed"
         );
     }
     traits.into_values().collect()
@@ -1965,36 +2043,49 @@ fn extract_rust_item_inner(
     db: &RootDatabase,
     canonical_path: &str,
 ) -> Result<RustItemMetadata, RustMetadataError> {
+    let _span = tracing::debug_span!("rust_metadata_extraction", canonical_path).entered();
     let (crate_name, segments) = split_canonical_path(canonical_path)?;
     let krate =
         find_crate(workspace, crate_name).ok_or_else(|| RustMetadataError::CrateNotFound(crate_name.to_owned()))?;
     let dt = DisplayTarget::from_crate(db, krate.base());
-    let authorized_trait_crates = crate_dependency_closure(krate, db);
-    let resolved = resolve_rust_path(db, krate, &segments)?;
+    let authorized_trait_crates =
+        trace_type_metadata_phase("authorized_trait_crates", || crate_dependency_closure(krate, db));
+    let resolved = trace_type_metadata_phase("resolve_path", || resolve_rust_path(db, krate, &segments))?;
     let def = resolved.definition;
     let vis = map_visibility(def.visibility(db));
     let kind = match def {
         ModuleDef::Module(m) => RustItemKind::Module(module_children(m, db)),
         ModuleDef::Function(f) => RustItemKind::Function(extract_function_sig(f, db, dt)),
         ModuleDef::Adt(adt) => {
-            let ty = adt.ty(db);
-            let generics = source_adt_generics(adt, db);
-            let type_param_defaults = canonical_type_param_defaults(&generics, adt.module(db), db);
+            let (ty, generics, type_param_defaults) = trace_type_metadata_phase("adt_owner_and_generics", || {
+                let ty = adt.ty(db);
+                let generics = source_adt_generics(adt, db);
+                let defaults = canonical_type_param_defaults(&generics, adt.module(db), db);
+                (ty, generics, defaults)
+            });
             RustItemKind::Type(RustTypeInfo {
                 type_params: generics.type_params,
                 type_param_defaults,
-                mutable_reference_type_params: adt_mutable_reference_type_params(adt, db),
-                expanded_derive_traits: expanded_adt_derived_traits(adt, db),
+                mutable_reference_type_params: trace_type_metadata_phase("mutable_reference_projection", || {
+                    adt_mutable_reference_type_params(adt, db)
+                }),
+                expanded_derive_traits: trace_type_metadata_phase("expanded_derives", || {
+                    expanded_adt_derived_traits(adt, db)
+                }),
                 has_const_params: generics.has_const_params,
                 alias_target: None,
                 metadata_completeness: Default::default(),
-                methods: collect_inherent_methods(ty.clone(), db, dt),
-                implemented_traits: collect_type_implemented_traits(ty.clone(), &authorized_trait_crates, db),
-                fields: collect_public_fields(ty.clone(), db, dt, crate_name),
-                variants: match adt {
+                methods: trace_type_metadata_phase("inherent_methods", || collect_inherent_methods(ty.clone(), db, dt)),
+                implemented_traits: trace_type_metadata_phase("implemented_traits", || {
+                    collect_type_implemented_traits(ty.clone(), &authorized_trait_crates, db)
+                }),
+                fields: trace_type_metadata_phase("public_fields", || {
+                    collect_public_fields(ty.clone(), db, dt, crate_name)
+                }),
+                variants: trace_type_metadata_phase("enum_variants", || match adt {
                     Adt::Enum(enum_) => collect_enum_variant_payloads(enum_, ty, db, dt, crate_name),
                     _ => Vec::new(),
-                },
+                }),
             })
         }
         ModuleDef::BuiltinType(b) => {
@@ -2007,9 +2098,11 @@ fn extract_rust_item_inner(
                 has_const_params: false,
                 alias_target: None,
                 metadata_completeness: Default::default(),
-                methods: collect_inherent_methods(ty.clone(), db, dt),
-                implemented_traits: collect_type_implemented_traits(ty.clone(), &authorized_trait_crates, db),
-                fields: collect_public_fields(ty, db, dt, crate_name),
+                methods: trace_type_metadata_phase("inherent_methods", || collect_inherent_methods(ty.clone(), db, dt)),
+                implemented_traits: trace_type_metadata_phase("implemented_traits", || {
+                    collect_type_implemented_traits(ty.clone(), &authorized_trait_crates, db)
+                }),
+                fields: trace_type_metadata_phase("public_fields", || collect_public_fields(ty, db, dt, crate_name)),
                 variants: Vec::new(),
             })
         }
@@ -2042,9 +2135,11 @@ fn extract_rust_item_inner(
                     .and_then(|target| source_type_alias_identity_display(a, target.as_str(), db).or(Some(target)))
                     .or_else(|| Some(format_ty(&ty, db, dt))),
                 metadata_completeness: Default::default(),
-                methods: collect_inherent_methods(ty.clone(), db, dt),
-                implemented_traits: collect_type_implemented_traits(ty.clone(), &authorized_trait_crates, db),
-                fields: collect_public_fields(ty, db, dt, crate_name),
+                methods: trace_type_metadata_phase("inherent_methods", || collect_inherent_methods(ty.clone(), db, dt)),
+                implemented_traits: trace_type_metadata_phase("implemented_traits", || {
+                    collect_type_implemented_traits(ty.clone(), &authorized_trait_crates, db)
+                }),
+                fields: trace_type_metadata_phase("public_fields", || collect_public_fields(ty, db, dt, crate_name)),
                 variants: Vec::new(),
             })
         }
