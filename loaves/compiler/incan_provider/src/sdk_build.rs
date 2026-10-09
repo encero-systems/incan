@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::process::Command;
 use std::sync::Arc;
+use std::time::Instant;
 use std::{env, fs};
 
 use incan_lang::lang::stdlib;
@@ -45,8 +46,25 @@ pub fn prepare_sdk_provider_inventory_with_native_publisher(
     inputs: &crate::sdk_native::SdkNativeInputs,
     publish: impl FnMut(&Path, &Path, &SdkInventory, &oven_rustc::sdk_closure::SdkCompiledClosure) -> ProviderResult<()>,
 ) -> ProviderResult<Arc<SdkInventory>> {
-    let publication = SdkProviderPublication::resolve(publisher_store_root, source_root_override)?;
-    prepare_native_sdk_provider_inventory(publication, inputs, publish)
+    let publication = trace_sdk_stage("resolve_publication", || {
+        SdkProviderPublication::resolve(publisher_store_root, source_root_override)
+    })?;
+    trace_sdk_stage("publication_total", || {
+        prepare_native_sdk_provider_inventory(publication, inputs, publish)
+    })
+}
+
+/// Report completed or refused publication stages without changing their result or authority.
+fn trace_sdk_stage<T>(phase: &str, action: impl FnOnce() -> ProviderResult<T>) -> ProviderResult<T> {
+    let start = Instant::now();
+    let result = action();
+    tracing::debug!(
+        phase,
+        elapsed_ms = start.elapsed().as_secs_f64() * 1000.0,
+        success = result.is_ok(),
+        "SDK preparation stage completed"
+    );
+    result
 }
 
 /// Retain all native selections across the checked publication transaction and its final durable rename.
@@ -55,25 +73,46 @@ fn prepare_native_sdk_provider_inventory(
     inputs: &crate::sdk_native::SdkNativeInputs,
     mut publish: impl FnMut(&Path, &Path, &SdkInventory, &oven_rustc::sdk_closure::SdkCompiledClosure) -> ProviderResult<()>,
 ) -> ProviderResult<Arc<SdkInventory>> {
-    let catalog = SdkSourceCatalog::read_from_path(&publication.stdlib_root.join(SDK_SOURCE_CATALOG_FILE))
-        .map_err(|error| ProviderError::failure(error.to_string()))?;
-    catalog
-        .validate_compiler_version(incan_lang::version::INCAN_VERSION)
-        .map_err(|error| ProviderError::failure(error.to_string()))?;
-    let _lock = acquire_sdk_provider_store_lock(&publication.store_root)?;
-    let closure = crate::sdk_native::prepare_sdk_native_closure(&publication.stdlib_root, &catalog, inputs)?;
-    let receipts = crate::sdk_native::sdk_native_receipts(&closure)?;
-    let identity = crate::sdk_store::sdk_provider_sealed_store_identity_with_graph(
-        &publication.stdlib_root,
-        &publication.executable,
-        &publication.distribution_profile,
-        &receipts,
-        inputs.compiler_graph.as_deref(),
-    )?;
-    if let Some(inventory) = load_published_sdk_inventory(&publication.store_root, &identity)? {
-        validate_native_sdk_entry(&inventory.root, &receipts)?;
-        publish_native_receipt_hint(&publication.store_root, &receipts)?;
-        record_sdk_provider_root(&inventory.root)?;
+    let catalog = trace_sdk_stage("read_validate_catalog", || {
+        let catalog = SdkSourceCatalog::read_from_path(&publication.stdlib_root.join(SDK_SOURCE_CATALOG_FILE))
+            .map_err(|error| ProviderError::failure(error.to_string()))?;
+        catalog
+            .validate_compiler_version(incan_lang::version::INCAN_VERSION)
+            .map_err(|error| ProviderError::failure(error.to_string()))?;
+        Ok(catalog)
+    })?;
+    let _lock = trace_sdk_stage("store_lock", || {
+        acquire_sdk_provider_store_lock(&publication.store_root)
+    })?;
+    let closure = trace_sdk_stage("native_closure", || {
+        crate::sdk_native::prepare_sdk_native_closure(&publication.stdlib_root, &catalog, inputs)
+    })?;
+    tracing::debug!(
+        native_units = closure.units().len(),
+        native_compiled = closure.report().compiled.len(),
+        native_reused = closure.report().reused.len(),
+        "SDK native closure retained"
+    );
+    let receipts = trace_sdk_stage("project_native_receipts", || {
+        crate::sdk_native::sdk_native_receipts(&closure)
+    })?;
+    let identity = trace_sdk_stage("initial_sealed_identity", || {
+        crate::sdk_store::sdk_provider_sealed_store_identity_with_graph(
+            &publication.stdlib_root,
+            &publication.executable,
+            &publication.distribution_profile,
+            &receipts,
+            inputs.compiler_graph.as_deref(),
+        )
+    })?;
+    if let Some(inventory) = trace_sdk_stage("lookup_publication", || {
+        load_published_sdk_inventory(&publication.store_root, &identity)
+    })? {
+        trace_sdk_stage("reuse_validate_and_repair_hint", || {
+            validate_native_sdk_entry(&inventory.root, &receipts)?;
+            publish_native_receipt_hint(&publication.store_root, &receipts)?;
+            record_sdk_provider_root(&inventory.root)
+        })?;
         return Ok(inventory);
     }
     let artifact_root = publication.store_root.join(&identity);
@@ -82,35 +121,47 @@ fn prepare_native_sdk_provider_inventory(
             "sealed SDK identity already exists without a complete inventory",
         ));
     }
-    let staging = staged_sdk_provider_root(&publication.store_root, &identity)?;
+    let staging = trace_sdk_stage("create_staging", || {
+        staged_sdk_provider_root(&publication.store_root, &identity)
+    })?;
     let result = (|| {
-        build_sdk_components_into_staging(
-            &catalog,
-            &staging,
-            &closure,
-            &inputs.output.join("store"),
-            &publication.distribution_profile,
-            &mut publish,
-        )?;
-        let current_identity = crate::sdk_store::sdk_provider_sealed_store_identity_with_graph(
-            &publication.stdlib_root,
-            &publication.executable,
-            &publication.distribution_profile,
-            &receipts,
-            inputs.compiler_graph.as_deref(),
-        )?;
+        trace_sdk_stage("checked_components_total", || {
+            build_sdk_components_into_staging(
+                &catalog,
+                &staging,
+                &closure,
+                &inputs.output.join("store"),
+                &publication.distribution_profile,
+                &mut publish,
+            )
+        })?;
+        let current_identity = trace_sdk_stage("final_sealed_identity", || {
+            crate::sdk_store::sdk_provider_sealed_store_identity_with_graph(
+                &publication.stdlib_root,
+                &publication.executable,
+                &publication.distribution_profile,
+                &receipts,
+                inputs.compiler_graph.as_deref(),
+            )
+        })?;
         if current_identity != identity {
             return Err(ProviderError::failure(
                 "SDK sources changed while checked components were being published",
             ));
         }
-        sync_sdk_provider_tree(&staging)?;
-        fs::rename(&staging, &artifact_root).map_err(|error| ProviderError::failure(error.to_string()))?;
-        sync_sdk_provider_store(&publication.store_root)?;
-        publish_native_receipt_hint(&publication.store_root, &receipts)?;
-        let published = load_published_sdk_inventory(&publication.store_root, &identity)?
-            .ok_or_else(|| ProviderError::failure("sealed SDK publication lost its inventory"))?;
-        record_sdk_provider_root(&artifact_root)?;
+        trace_sdk_stage("durable_staging_sync", || sync_sdk_provider_tree(&staging))?;
+        trace_sdk_stage("generation_rename_and_store_sync", || {
+            fs::rename(&staging, &artifact_root).map_err(|error| ProviderError::failure(error.to_string()))?;
+            sync_sdk_provider_store(&publication.store_root)
+        })?;
+        trace_sdk_stage("publish_native_receipt_hint", || {
+            publish_native_receipt_hint(&publication.store_root, &receipts)
+        })?;
+        let published = trace_sdk_stage("reload_published_inventory", || {
+            load_published_sdk_inventory(&publication.store_root, &identity)?
+                .ok_or_else(|| ProviderError::failure("sealed SDK publication lost its inventory"))
+        })?;
+        trace_sdk_stage("record_published_root", || record_sdk_provider_root(&artifact_root))?;
         Ok(published)
     })();
     if result.is_err() && staging.exists() {
@@ -133,14 +184,22 @@ fn build_sdk_components_into_staging(
         &oven_rustc::sdk_closure::SdkCompiledClosure,
     ) -> ProviderResult<()>,
 ) -> ProviderResult<()> {
-    fs::create_dir_all(staging).map_err(|error| ProviderError::failure(error.to_string()))?;
-    crate::sdk_native::write_sdk_native_authority(closure, staging)?;
-    crate::sdk_native::write_sdk_native_artifact_catalog(closure, native_store, staging)?;
+    trace_sdk_stage("write_native_authority_and_catalog", || {
+        fs::create_dir_all(staging).map_err(|error| ProviderError::failure(error.to_string()))?;
+        crate::sdk_native::write_sdk_native_authority(closure, staging)?;
+        crate::sdk_native::write_sdk_native_artifact_catalog(closure, native_store, staging)
+    })?;
     let mut inventory = source_catalog_inventory(catalog, staging);
     let mut unavailable = std::collections::BTreeMap::new();
+    let mut attempted = 0;
+    let mut published = 0;
     for component in catalog.publication_order() {
+        let _component_span = tracing::debug_span!("sdk_component_publication", component = %component.id).entered();
+        attempted += 1;
         let output = staging.join("components").join(&component.id);
-        if let Err(error) = publish(&component.project_root, &output, &inventory, closure) {
+        if let Err(error) = trace_sdk_stage("component_driver_callback", || {
+            publish(&component.project_root, &output, &inventory, closure)
+        }) {
             if component.mandatory {
                 return Err(error);
             }
@@ -150,17 +209,28 @@ fn build_sdk_components_into_staging(
             }
             continue;
         }
-        record_native_component_provider(&mut inventory, component, &output)?;
+        trace_sdk_stage("component_payload_validation_and_binding", || {
+            record_native_component_provider(&mut inventory, component, &output)
+        })?;
+        published += 1;
     }
-    fs::write(
-        staging.join("unavailable-components.json"),
-        serde_json::to_vec_pretty(&unavailable).map_err(|error| ProviderError::failure(error.to_string()))?,
-    )
-    .map_err(|error| ProviderError::failure(error.to_string()))?;
-    restrict_staged_sdk_profile(catalog, profile, staging, &mut inventory)?;
-    inventory
-        .write_to_path(&staging.join(SDK_INVENTORY_FILE))
-        .map_err(|error| ProviderError::failure(error.to_string()))
+    tracing::debug!(
+        attempted_components = attempted,
+        published_components = published,
+        unavailable_components = unavailable.len(),
+        "SDK component callbacks completed"
+    );
+    trace_sdk_stage("profile_and_inventory_write", || {
+        fs::write(
+            staging.join("unavailable-components.json"),
+            serde_json::to_vec_pretty(&unavailable).map_err(|error| ProviderError::failure(error.to_string()))?,
+        )
+        .map_err(|error| ProviderError::failure(error.to_string()))?;
+        restrict_staged_sdk_profile(catalog, profile, staging, &mut inventory)?;
+        inventory
+            .write_to_path(&staging.join(SDK_INVENTORY_FILE))
+            .map_err(|error| ProviderError::failure(error.to_string()))
+    })
 }
 
 /// Atomically replace the discovery hint after its complete immutable SDK generation has been published.

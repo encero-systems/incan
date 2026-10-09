@@ -2635,7 +2635,10 @@ fn build_source_metadata_indexes(
     external_crates: &HashSet<String>,
     preferred_external_paths: &HashMap<String, String>,
 ) -> (HashMap<String, String>, HashMap<String, Vec<RustMethodSig>>) {
-    let files = source_rs_files(source_root)
+    let parse_start = Instant::now();
+    let source_files = source_rs_files(source_root);
+    let discovered_files = source_files.len();
+    let files = source_files
         .into_iter()
         .filter_map(|source_path| {
             let source = fs::read_to_string(&source_path).ok()?;
@@ -2655,8 +2658,12 @@ fn build_source_metadata_indexes(
             })
         })
         .collect::<Vec<_>>();
+    let parse_and_aliases_ms = parse_start.elapsed().as_secs_f64() * 1000.0;
+    let reexports_start = Instant::now();
     let public_reexports =
         collect_source_public_reexport_paths(crate_name, external_crates, preferred_external_paths, files.as_slice());
+    let public_reexports_ms = reexports_start.elapsed().as_secs_f64() * 1000.0;
+    let methods_start = Instant::now();
     let mut methods_by_type: HashMap<String, Vec<RustMethodSig>> = HashMap::new();
     let mut seen = HashSet::new();
     let implicit_prelude = !files
@@ -2684,26 +2691,51 @@ fn build_source_metadata_indexes(
     for methods in methods_by_type.values_mut() {
         methods.sort_by(|left, right| left.name.cmp(&right.name));
     }
+    tracing::debug!(
+        root = %source_root.display(),
+        crate_name,
+        discovered_files,
+        parsed_files = files.len(),
+        parse_and_aliases_ms,
+        public_reexports_ms,
+        public_reexports = public_reexports.len(),
+        inherent_methods_ms = methods_start.elapsed().as_secs_f64() * 1000.0,
+        method_receiver_types = methods_by_type.len(),
+        indexed_methods = seen.len(),
+        implicit_prelude,
+        "dependency source metadata indexes built"
+    );
     (public_reexports, methods_by_type)
 }
 
-/// Ensure source-level metadata indexes are built together so dependency source files are not walked once per index.
+/// Ensure both source indexes together; the demand label reports the caller without changing cache authority.
 fn ensure_source_metadata_indexes(
     inner: &mut CacheInner,
     source_root: &Path,
     crate_name: &str,
     external_crates: &HashSet<String>,
     preferred_external_paths: &HashMap<String, String>,
+    demand: &str,
 ) -> SourceMetadataIndexKey {
+    let start = Instant::now();
+    let _demand_span = tracing::debug_span!("source_metadata_index_demand", demand, crate_name).entered();
     let key = SourceMetadataIndexKey::new(source_root, crate_name, external_crates, preferred_external_paths);
-    if !inner.source_public_reexport_paths.contains_key(&key)
-        || !inner.source_inherent_method_indexes.contains_key(&key)
-    {
+    let cache_hit = inner.source_public_reexport_paths.contains_key(&key)
+        && inner.source_inherent_method_indexes.contains_key(&key);
+    if !cache_hit {
         let (public_reexports, methods) =
             build_source_metadata_indexes(&key.source_root, crate_name, external_crates, preferred_external_paths);
         inner.source_public_reexport_paths.insert(key.clone(), public_reexports);
         inner.source_inherent_method_indexes.insert(key.clone(), methods);
     }
+    tracing::debug!(
+        root = %key.source_root.display(),
+        demand,
+        crate_name,
+        cache_hit,
+        elapsed_ms = start.elapsed().as_secs_f64() * 1000.0,
+        "dependency source metadata index demand completed"
+    );
     key
 }
 
@@ -2721,6 +2753,7 @@ fn source_public_reexports_for(
         crate_name,
         external_crates,
         preferred_external_paths,
+        "public_reexports",
     );
     inner
         .source_public_reexport_paths
@@ -2744,6 +2777,7 @@ fn source_inherent_methods_for_type(
         crate_name,
         external_crates,
         preferred_external_paths,
+        "inherent_methods",
     );
     inner
         .source_inherent_method_indexes

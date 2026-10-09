@@ -1073,6 +1073,7 @@ fn prepare_library_project_with_context(
                 &library_manifest.contract_metadata.provider.namespace_claims,
             )?;
         context.validate_component_facets(&manifest)?;
+        let vocab_start = Instant::now();
         // The desugarer module is built here and copied into the component by `package_desugarer_artifact`.
         let desugarer_scratch = tempfile::tempdir().map_err(|error| CliError::failure(error.to_string()))?;
         if let Some(vocab) = incan_provider::vocab_extraction::collect_native_sdk_vocab_metadata(
@@ -1086,12 +1087,14 @@ fn prepare_library_project_with_context(
             library_manifest.vocab = Some(vocab.payload);
             library_manifest.soft_keywords.activations = vocab.compatibility_activations;
         }
+        record_timing(&mut timings_ms, "library_collect_vocab_metadata", vocab_start);
         #[cfg(feature = "rust_inspect")]
         let inspection = rust_inspect_manifest_dir
             .as_ref()
             .map(|workspace| workspace.manifest_dir());
         #[cfg(not(feature = "rust_inspect"))]
         let inspection = None;
+        let codegen_start = Instant::now();
         crate::build::native_sdk::generate_native_sdk_sources(
             &out_dir,
             &project_name,
@@ -1104,6 +1107,18 @@ fn prepare_library_project_with_context(
             &declared,
             inspection,
         )?;
+        record_timing(&mut timings_ms, "library_native_sdk_codegen", codegen_start);
+        record_timing(&mut timings_ms, "library_prepare_total", prepare_start);
+        for (phase, elapsed_ms) in &timings_ms {
+            tracing::debug!(
+                component = %project_name,
+                phase,
+                elapsed_ms,
+                checked_modules = modules.len(),
+                abi_query_paths = metadata_query_paths.len(),
+                "SDK checked library preparation phase completed"
+            );
+        }
         return Ok(LibraryPreparation::Native {
             manifest: Box::new(library_manifest),
             executable: executable_surface,

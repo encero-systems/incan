@@ -4,6 +4,8 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::env;
 use std::path::{Path, PathBuf};
+#[cfg(feature = "rust_inspect")]
+use std::time::Instant;
 
 use crate::build::rust_extern::RustExternDeclContext;
 use crate::error::{CliError, CliResult};
@@ -51,6 +53,7 @@ pub fn collect_library_rust_abi(
     }
 
     let inspector = Inspector::new(InspectorConfig::new(rust_inspect_manifest_dir.to_path_buf()));
+    let extraction_start = Instant::now();
     let mut items = Vec::new();
     let mut complete_requests = 0;
     for path in query_paths {
@@ -77,6 +80,8 @@ pub fn collect_library_rust_abi(
             }
         }
     }
+    let complete_extraction_ms = extraction_start.elapsed().as_secs_f64() * 1000.0;
+    let persistence_start = Instant::now();
     // Persisting metadata is an accelerator, not publication authority; retain the original best-effort behavior.
     if complete_requests > 0
         && let Err(error) = inspector.cache().persist_manifest_dir(rust_inspect_manifest_dir)
@@ -91,6 +96,9 @@ pub fn collect_library_rust_abi(
         complete_abi_requests = complete_requests,
         complete_abi_items = items.len(),
         persistence_attempts = usize::from(complete_requests > 0),
+        complete_extraction_ms,
+        persistence_ms = persistence_start.elapsed().as_secs_f64() * 1000.0,
+        root = %rust_inspect_manifest_dir.display(),
         "public Rust ABI metadata batch completed"
     );
     Ok(LibraryRustAbi::from_items(items))

@@ -7,6 +7,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Instant;
 use std::{env, fs};
 
 use sha2::{Digest, Sha256};
@@ -300,12 +301,20 @@ pub(crate) fn sdk_provider_sealed_store_identity_with_graph(
     hasher.update(incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION.to_le_bytes());
     hasher.update(distribution_profile.as_bytes());
     hasher.update([0]);
+    let compiler_start = Instant::now();
     hasher.update(sdk_provider_compiler_digest(executable)?);
+    let compiler_digest_ms = compiler_start.elapsed().as_secs_f64() * 1000.0;
+    let source_start = Instant::now();
     hash_sealed_sdk_source_tree(stdlib_root, stdlib_root, &mut hasher)?;
+    let stdlib_source_hash_ms = source_start.elapsed().as_secs_f64() * 1000.0;
+    let graph_start = Instant::now();
     if let Some(graph) = compiler_graph {
         hasher.update(b"compiler-native-graph\0");
         hasher.update(crate::sdk_native::compiler_native_graph_digest(graph)?.as_bytes());
     }
+    let compiler_graph_hash_ms = graph_start.elapsed().as_secs_f64() * 1000.0;
+    let companion_start = Instant::now();
+    let mut companion_roots = 0;
     // Discovery must invalidate a stale receipt hint when an external local companion changes, before preparation
     // has had an opportunity to produce that companion's replacement native receipt.
     if let Some(source_root) = stdlib_root.parent().and_then(Path::parent) {
@@ -313,12 +322,15 @@ pub(crate) fn sdk_provider_sealed_store_identity_with_graph(
             hasher.update(relative.as_bytes());
             let root = source_root.join(relative);
             if root.is_dir() {
+                companion_roots += 1;
                 hash_sealed_sdk_source_tree(&root, &root, &mut hasher)?;
             } else {
                 hasher.update(b"absent\0");
             }
         }
     }
+    let companion_source_hash_ms = companion_start.elapsed().as_secs_f64() * 1000.0;
+    let receipts_start = Instant::now();
     for (binding, receipt) in native_receipts {
         if binding.is_empty()
             || !receipt.starts_with("sha256:")
@@ -334,6 +346,17 @@ pub(crate) fn sdk_provider_sealed_store_identity_with_graph(
         hasher.update(receipt.as_bytes());
         hasher.update([0xff]);
     }
+    tracing::debug!(
+        compiler_digest_ms,
+        stdlib_source_hash_ms,
+        compiler_graph_hash_ms,
+        compiler_graph_present = compiler_graph.is_some(),
+        companion_source_hash_ms,
+        companion_roots,
+        native_receipts = native_receipts.len(),
+        receipt_hash_ms = receipts_start.elapsed().as_secs_f64() * 1000.0,
+        "SDK sealed identity inputs hashed"
+    );
     Ok(hex::encode(hasher.finalize()))
 }
 
