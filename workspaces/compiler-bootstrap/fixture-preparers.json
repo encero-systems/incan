@@ -15,6 +15,11 @@
       "dependency_graph": "workspaces/oven/compiler-frontend-tests-native.json",
       "use_compiler_resolution": true
     },
+    "loaves/compiler/incan_test_support/src/lib.rs": {
+      "declaration": "loaves/compiler/incan_test_support/loaf.toml",
+      "dependency_graph": "workspaces/oven/compiler-frontend-tests-native.json",
+      "use_compiler_resolution": true
+    },
     "loaves/compiler/rust_inspect/src/lib.rs": {
       "declaration": "workspaces/compiler-bootstrap/test-declarations/rust-inspect-unit.loaf.toml",
       "dependency_graph": "workspaces/oven/compiler-frontend-tests-native.json",

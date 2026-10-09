@@ -638,6 +638,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/enum_alias_admission.rs": {
+      "disposition": "keep",
+      "notes": "Actual Incan lower_module accepts checked aliases and rejects independently corrupted canonical enum targets, payloads and bindings.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/tests/native_driver_project_tests/tail.rs": {
       "disposition": "keep",
       "notes": "Direct-route small statements, operators and places compared byte for byte with legacy output",
@@ -8408,7 +8416,7 @@
       "disposition": "unaffected",
       "notes": "Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level.",
       "owner": 1561,
-      "split_required": false,
+      "split_required": true,
       "split_target": "",
       "twin": ""
     },
@@ -8431,6 +8439,14 @@
     "loaves/compiler/rust_inspect/src/loader/loaf_manifest.rs": {
       "disposition": "unaffected",
       "notes": "Loaf source and frozen graph inspection without Cargo metadata; validates source containment, alias edges and selected facts.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/rust_inspect/src/loader/native_macros.rs": {
+      "disposition": "unaffected",
+      "notes": "Native macro ownership admission rejects executable macro paths without retained store authority, including nested graphs.",
       "owner": 1698,
       "split_required": false,
       "split_target": "",
@@ -9196,6 +9212,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_rustc/src/rustc/foundations.rs": {
+      "disposition": "unaffected",
+      "notes": "Observed file digest entry preserves absolute, normalized and symlink-free artifact path admission.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_rustc/src/rustc/inspection.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
@@ -9700,6 +9724,14 @@
       "disposition": "unaffected",
       "notes": "CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/src/commands/diagnostics.rs": {
+      "disposition": "keep",
+      "notes": "Check-only public dependency metadata, source and graph invalidation, exact feature selection, nominal authority and missing-metadata refusal; no native execution authority.",
+      "owner": 1698,
       "split_required": false,
       "split_target": "",
       "twin": ""

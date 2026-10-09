@@ -280,7 +280,9 @@ us-english-fix:
 
 .PHONY: behavior-roots  ## quality - Regenerate the behavior roots (one libtest case per behavior fixture) from their areas
 behavior-roots:
-	@INCAN_WRITE_BEHAVIOR_ROOTS=1 cargo test -p incan_test_support --lib behavior_roots::tests::behavior_roots_match_their_areas -- --exact --nocapture
+	@INCAN_WRITE_BEHAVIOR_ROOTS=1 INCAN_INTERNAL_TEST_SOURCE_ROOT="$(CURDIR)" $(MAKE) test-one \
+		TEST_ROOT=loaves/compiler/incan_test_support/src/lib.rs \
+		TEST_EXACT=behavior_roots::tests::behavior_roots_match_their_areas
 
 .PHONY: test-inventory  ## quality - Regenerate the test corpus inventory page from the tree and dispositions.json
 test-inventory:

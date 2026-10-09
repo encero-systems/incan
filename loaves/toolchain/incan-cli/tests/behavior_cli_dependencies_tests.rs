@@ -96,6 +96,12 @@ fn dependency_union_surface_keeps_reexported_element_fields() -> CaseResult {
     assert_fixture_holds(AREA, "dependency_union_surface_keeps_reexported_element_fields")
 }
 
+/// Runs the fixture `dev7_dependency_enum_reexports`.
+#[test]
+fn dev7_dependency_enum_reexports() -> CaseResult {
+    assert_fixture_holds(AREA, "dev7_dependency_enum_reexports")
+}
+
 /// Runs the fixture `fallible_iterator_chain_without_trait_import`.
 #[test]
 fn fallible_iterator_chain_without_trait_import() -> CaseResult {
