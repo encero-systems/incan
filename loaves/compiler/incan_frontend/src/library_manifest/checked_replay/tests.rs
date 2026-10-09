@@ -1,0 +1,122 @@
+//! Real checked-export replay and corrupted published-contract controls for #1337/#1698.
+
+use super::*;
+use crate::library_exports::collect_checked_public_exports;
+use crate::typechecker::TypeChecker;
+
+/// Obtain declaration authority from the frontend rather than inventing canonical test identities.
+fn checked(source: &str) -> Result<Vec<CheckedNamedExport>, String> {
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("lex: {errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("parse: {errors:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker.set_current_package_identity(Some("ordinary".to_string()));
+    checker.set_current_module_path(Some(vec!["lib".to_string()]));
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("check: {errors:?}"))?;
+    Ok(collect_checked_public_exports(&program, &checker))
+}
+
+/// Round-trip through the serialized replay payload before invoking its actual consumer.
+fn replay(export: &CheckedNamedExport) -> Result<CheckedNamedExport, String> {
+    let record = CheckedExportReplay::from_checked("ordinary", "1.0.0", export).map_err(|error| error.to_string())?;
+    let bytes = serde_json::to_vec(&record).map_err(|error| error.to_string())?;
+    let decoded: CheckedExportReplay = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+    decoded.to_checked().map_err(|error| error.to_string())
+}
+
+#[test]
+fn ordinary_checked_replay_preserves_callable_defaults_mutability_and_identity() -> Result<(), String> {
+    let exports = checked("pub def scale(mut value: int, factor: int = 3) -> int:\n  return value * factor\n")?;
+    let original = exports.first().ok_or("missing scale export")?;
+    let restored = replay(original)?;
+    let (CheckedExportKind::Function(original), CheckedExportKind::Function(restored_function)) =
+        (&original.kind, &restored.kind)
+    else {
+        return Err("function shape lost".into());
+    };
+    assert_eq!(original.params, restored_function.params);
+    assert_eq!(original.param_defaults, restored_function.param_defaults);
+    assert_eq!(original.return_type, restored_function.return_type);
+    assert!(restored.identity.canonical.is_some());
+    assert_eq!(restored.identity.source_path, vec!["lib", "scale"]);
+    Ok(())
+}
+
+#[test]
+fn ordinary_checked_replay_preserves_members_bounds_and_partial_bindings() -> Result<(), String> {
+    let exports = checked(
+        r#"
+pub model Counter:
+    value: int = 4
+    def read(self, fallback: int = 2) -> int:
+        return self.value + fallback
+
+pub enum State:
+    Ready
+    Count(int)
+
+pub def label(size: int, text: str) -> str:
+    return text
+
+pub small = partial label(size=3)
+"#,
+    )?;
+    for export in &exports {
+        let restored = replay(export)?;
+        assert_eq!(restored.name, export.name);
+        assert_eq!(restored.identity.source_path, export.identity.source_path);
+        match (&export.kind, &restored.kind) {
+            (CheckedExportKind::Model(a), CheckedExportKind::Model(b)) => {
+                assert_eq!(a.fields.len(), b.fields.len());
+                assert_eq!(a.fields[0].default, b.fields[0].default);
+                assert_eq!(a.methods[0].params, b.methods[0].params);
+                assert_eq!(a.methods[0].param_defaults, b.methods[0].param_defaults);
+                assert_eq!(a.methods[0].receiver, b.methods[0].receiver);
+                assert!(b.fields[0].canonical.is_some());
+                assert!(b.methods[0].canonical.is_some());
+            }
+            (CheckedExportKind::Enum(a), CheckedExportKind::Enum(b)) => {
+                assert_eq!(a.variants.len(), b.variants.len());
+                assert_eq!(a.variants[1].fields, b.variants[1].fields);
+                assert!(b.variants.iter().all(|variant| variant.canonical.is_some()));
+            }
+            (CheckedExportKind::Partial(a), CheckedExportKind::Partial(b)) => {
+                assert_eq!(a.params, b.params);
+                assert_eq!(a.presets.len(), b.presets.len());
+                assert_eq!(a.target_path, b.target_path);
+            }
+            (CheckedExportKind::Function(_), CheckedExportKind::Function(_)) => {}
+            _ => return Err("export classification changed".into()),
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn ordinary_checked_replay_refuses_missing_authority_wrong_kind_and_version() -> Result<(), String> {
+    let exports = checked("pub def value() -> int:\n  return 1\n")?;
+    let export = exports.first().ok_or("missing export")?;
+    let valid = CheckedExportReplay::from_checked("ordinary", "1.0.0", export).map_err(|error| error.to_string())?;
+    let mut missing = valid.clone();
+    missing.projection.contract_metadata.identity_graph.exports[0].canonical = None;
+    assert!(missing.to_checked().is_err());
+    let mut wrong_kind = valid.clone();
+    wrong_kind.projection.contract_metadata.identity_graph.exports[0].kind = ExportIdentityKind::Model;
+    assert!(wrong_kind.to_checked().is_err());
+    let mut wrong_version = valid.clone();
+    wrong_version.schema_version += 1;
+    assert!(wrong_version.to_checked().is_err());
+    let mut missing_shape = valid;
+    missing_shape.projection.exports.functions.clear();
+    assert!(missing_shape.to_checked().is_err());
+    Ok(())
+}
+
+#[test]
+fn ordinary_checked_replay_refuses_unrepresented_checked_defaults() -> Result<(), String> {
+    let exports = checked("pub def label(text: str = \"a\" + \"b\") -> str:\n  return text\n")?;
+    let export = exports.first().ok_or("missing export")?;
+    assert!(CheckedExportReplay::from_checked("ordinary", "1.0.0", export).is_err());
+    Ok(())
+}

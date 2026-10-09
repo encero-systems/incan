@@ -7,6 +7,7 @@
 //! reverse. The model is transport-agnostic — JSON is the on-disk encoding, behind typed read and write APIs.
 
 mod artifact;
+mod checked_replay;
 mod model;
 pub mod published_layout;
 #[cfg(test)]
@@ -26,6 +27,7 @@ pub use artifact::{
     digest_provider_semantic_artifact_with_context_and_cache, digest_provider_source_inputs,
     digest_toolchain_source_tree_with_cache, read_native_provider_artifact,
 };
+pub use checked_replay::CheckedExportReplay;
 pub use model::*;
 pub use type_projection::{
     VisitTypeRefs, contains_native_union, with_checked_native_unions, with_checked_type_origins,
