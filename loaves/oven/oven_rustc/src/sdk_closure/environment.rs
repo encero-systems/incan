@@ -85,24 +85,56 @@ pub(super) fn adopted_about(
     if bindings.is_empty() {
         return Ok(BTreeMap::new());
     }
-    let listing = std::process::Command::new("git")
+    adopted_about_with_reader(bindings, &adoption_paths(index, commit)?, &mut |path| {
+        index_file(index, commit, path)
+    })
+}
+
+/// List pinned event coordinates independently of file reads; the working-tree contents remain irrelevant.
+pub(super) fn adoption_paths(index: &Path, commit: &str) -> Result<Vec<String>, Error> {
+    adoption_paths_with_counter(index, commit, &mut 0)
+}
+
+/// Count successfully launched event-listing processes alongside the selected command-owned file transport.
+pub(super) fn adoption_paths_with_counter(
+    index: &Path,
+    commit: &str,
+    processes: &mut usize,
+) -> Result<Vec<String>, Error> {
+    let child = std::process::Command::new("git")
         .arg("-C")
         .arg(index)
         .args(["ls-tree", "-r", "--name-only", commit, "--", "events/"])
-        .output()?;
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    *processes += 1;
+    let listing = child.wait_with_output()?;
     if !listing.status.success() {
         return Err("cannot enumerate pinned adoption events".into());
     }
+    Ok(std::str::from_utf8(&listing.stdout)?
+        .lines()
+        .map(str::to_string)
+        .collect())
+}
+
+/// Apply the existing ordered adoption projection through either canonical pinned file reader.
+pub(super) fn adopted_about_with_reader(
+    bindings: &[SdkLockedUnit],
+    paths: &[String],
+    read: &mut dyn FnMut(&str) -> Result<Vec<u8>, Error>,
+) -> Result<BTreeMap<String, serde_json::Value>, Error> {
     let suffixes: Vec<_> = bindings
         .iter()
         .map(|unit| format!("-adopt-{}-{}.json", unit.loaf.replace('/', "-"), unit.version))
         .collect();
     let mut records = BTreeMap::new();
-    for path in std::str::from_utf8(&listing.stdout)?
-        .lines()
+    for path in paths
+        .iter()
         .filter(|path| suffixes.iter().any(|suffix| path.ends_with(suffix)))
     {
-        let event: serde_json::Value = serde_json::from_slice(&index_file(index, commit, path)?)?;
+        let event: serde_json::Value = serde_json::from_slice(&read(path)?)?;
         if event.get("kind").and_then(serde_json::Value::as_str) != Some("adopt") {
             return Err("adoption event has inconsistent kind".into());
         }

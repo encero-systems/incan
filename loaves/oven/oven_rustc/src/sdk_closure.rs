@@ -22,6 +22,7 @@ const INDEX_COMMIT: &str = "6ec35e0d7e2d202496e2f7a108bb5111b6a9ff87";
 
 pub(crate) mod current_inputs;
 mod environment;
+mod index_batch;
 mod local;
 mod native;
 mod physical_edges;
@@ -1009,6 +1010,15 @@ fn fact_out_files(
     binding: &SdkLockedUnit,
     fact: &oven_model::manifest::RustFactRecord,
 ) -> Result<Vec<FactOutFile>, Error> {
+    fact_out_files_with_reader(binding, fact, &mut |relative| index_file(index, index_commit, relative))
+}
+
+/// Share generated-file digest validation between compatibility reads and one command-owned pinned reader.
+fn fact_out_files_with_reader(
+    binding: &SdkLockedUnit,
+    fact: &oven_model::manifest::RustFactRecord,
+    read: &mut dyn FnMut(&str) -> Result<Vec<u8>, Error>,
+) -> Result<Vec<FactOutFile>, Error> {
     let mut files = Vec::new();
     for member in &fact.out {
         for path in [&member.name, &member.path] {
@@ -1019,11 +1029,7 @@ fn fact_out_files(
                 return Err("invalid generated fact path".into());
             }
         }
-        let bytes = index_file(
-            index,
-            index_commit,
-            &format!("{}/{}/{}", binding.loaf, binding.version, member.path),
-        )?;
+        let bytes = read(&format!("{}/{}/{}", binding.loaf, binding.version, member.path))?;
         if digest_bytes(&bytes) != member.digest {
             return Err("generated fact digest mismatch".into());
         }
@@ -1035,35 +1041,71 @@ fn fact_out_files(
     Ok(files)
 }
 
-/// Read one file from the pinned index commit without consulting its mutable worktree.
+/// Read one blob from the pinned index commit without consulting its mutable worktree.
 fn index_file(index: &Path, index_commit: &str, relative: &str) -> Result<Vec<u8>, Error> {
-    validate_index_commit(index_commit)?;
-    if Path::new(relative).components().any(|component| {
-        !matches!(component, std::path::Component::Normal(_))
-            || matches!(
-                component.as_os_str().to_str(),
-                Some("Cargo.toml" | "Cargo.toml.orig" | "Cargo.lock")
-            )
-    }) {
-        return Err("index read must name an owner-relative non-Cargo file".into());
+    index_file_with_counter(index, index_commit, relative, &mut 0)
+}
+
+/// Keep the compatibility transport's complete commit admission and raw blob contract, counting actual launches.
+fn index_file_with_counter(
+    index: &Path,
+    index_commit: &str,
+    relative: &str,
+    processes: &mut usize,
+) -> Result<Vec<u8>, Error> {
+    validate_index_relative(relative)?;
+    validate_index_pin(index, index_commit, processes)?;
+    let child = std::process::Command::new("git")
+        .arg("-C")
+        .arg(index)
+        .args(["cat-file", "blob", &format!("{index_commit}:{relative}")])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    *processes += 1;
+    let output = child.wait_with_output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "pinned index blob unavailable: {relative}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
     }
-    let kind = std::process::Command::new("git")
+    Ok(output.stdout)
+}
+
+/// Refuse non-commit pins through Git itself, retaining the same check for unsupported batch transports.
+fn validate_index_pin(index: &Path, index_commit: &str, processes: &mut usize) -> Result<(), Error> {
+    validate_index_commit(index_commit)?;
+    let child = std::process::Command::new("git")
         .arg("-C")
         .arg(index)
         .args(["cat-file", "-t", index_commit])
-        .output()?;
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    *processes += 1;
+    let kind = child.wait_with_output()?;
     if !kind.status.success() || kind.stdout != b"commit\n" {
         return Err("index pin must identify an existing Git commit object".into());
     }
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(index)
-        .args(["show", &format!("{index_commit}:{relative}")])
-        .output()?;
-    if !output.status.success() {
-        return Err(format!("pinned index file unavailable: {relative}").into());
+    Ok(())
+}
+
+/// Preserve owner-relative non-Cargo paths for either reader; a NUL cannot be represented by Git or an OS path.
+fn validate_index_relative(relative: &str) -> Result<(), Error> {
+    if relative.as_bytes().contains(&0)
+        || Path::new(relative).components().any(|component| {
+            !matches!(component, std::path::Component::Normal(_))
+                || matches!(
+                    component.as_os_str().to_str(),
+                    Some("Cargo.toml" | "Cargo.toml.orig" | "Cargo.lock")
+                )
+        })
+    {
+        return Err("index read must name an owner-relative non-Cargo file".into());
     }
-    Ok(output.stdout)
+    Ok(())
 }
 
 /// Refuse mutable revisions and abbreviated commits before consulting any index file.
@@ -1083,12 +1125,25 @@ fn index_fact(
     toolchain: &str,
     profile: &str,
 ) -> Result<Option<oven_model::manifest::RustFactRecord>, Error> {
-    let entry = index_entry(index, index_commit, binding)?;
+    index_fact_with_reader(binding, target, toolchain, profile, &mut |relative| {
+        index_file(index, index_commit, relative)
+    })
+}
+
+/// Select the identical complete fact through either canonical pinned file transport.
+fn index_fact_with_reader(
+    binding: &SdkLockedUnit,
+    target: &str,
+    toolchain: &str,
+    profile: &str,
+    read: &mut dyn FnMut(&str) -> Result<Vec<u8>, Error>,
+) -> Result<Option<oven_model::manifest::RustFactRecord>, Error> {
+    let entry = index_entry_with_reader(binding, read)?;
     let relative = entry
         .get("manifest")
         .and_then(serde_json::Value::as_str)
         .ok_or("pinned index manifest is absent")?;
-    let manifest: toml::Value = toml::from_str(std::str::from_utf8(&index_file(index, index_commit, relative)?)?)?;
+    let manifest: toml::Value = toml::from_str(std::str::from_utf8(&read(relative)?)?)?;
     let mut selected = Vec::new();
     if let Some(facts) = manifest
         .get("rust")
@@ -1114,7 +1169,15 @@ fn index_fact(
 
 /// Read exactly one index version and verify its association with the admitted archive.
 fn index_entry(index: &Path, index_commit: &str, binding: &SdkLockedUnit) -> Result<serde_json::Value, Error> {
-    let bytes = index_file(index, index_commit, &format!("index/{}", binding.loaf))?;
+    index_entry_with_reader(binding, &mut |relative| index_file(index, index_commit, relative))
+}
+
+/// Verify the same exact package/version/archive association independently of file transport.
+fn index_entry_with_reader(
+    binding: &SdkLockedUnit,
+    read: &mut dyn FnMut(&str) -> Result<Vec<u8>, Error>,
+) -> Result<serde_json::Value, Error> {
+    let bytes = read(&format!("index/{}", binding.loaf))?;
     let lines = std::str::from_utf8(&bytes)?;
     let mut entries = Vec::new();
     for line in lines.lines() {

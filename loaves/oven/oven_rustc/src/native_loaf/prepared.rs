@@ -73,6 +73,19 @@ pub struct NativeLoafConsumerReport {
     pub compiler_closure_checks: usize,
     /// Actual current proc-macro linker-closure observations.
     pub linker_closure_checks: usize,
+    /// Git processes started by current recipe replay, excluding declaration root selection and independent cold
+    /// preparation.
+    pub index_git_processes: usize,
+    /// Complete batch requests submitted, including the initial commit-type check.
+    pub index_batch_requests: usize,
+    /// Current pinned file demands, including repeated command-local reads.
+    pub index_file_requests: usize,
+    /// Distinct pinned blobs read through the selected Git transport.
+    pub index_blob_reads: usize,
+    /// File demands served by this command's already admitted pinned bytes.
+    pub index_blob_cache_hits: usize,
+    /// Actual pinned blob payload bytes read, excluding protocol headers and commit metadata.
+    pub index_blob_bytes: usize,
     /// Best-effort coordinate-hint persistence failure; immutable native authority remains usable without the hint.
     pub hint_persistence_error: Option<String>,
     /// Measured whole boundary time, including current-input validation and genuine miss preparation.
@@ -127,6 +140,7 @@ struct Current {
     tools: current_inputs::NativeToolOwners,
     link: Option<Option<String>>,
     candidates: BTreeMap<String, Vec<CurrentCandidate>>,
+    index: Option<current_inputs::PinnedIndexBatch>,
 }
 
 /// Current source-only candidate facts; this descriptor confers no physical or semantic execution authority.
@@ -186,6 +200,7 @@ fn prepare_with(
             Ok(closure) => {
                 if current.matches(request, &closure, &hint.roots, &mut report)? {
                     report.prepared_reuse = true;
+                    current.finish_index()?;
                     finish_report(&closure, &current, &mut report, started);
                     return Ok(NativeLoafConsumerPreparation { closure, report });
                 }
@@ -213,6 +228,7 @@ fn prepare_with(
             "new native preparation differs from the command's current source/lock/compiler inputs",
         ));
     }
+    current.finish_index()?;
     if let Err(error) = write_hint(
         &hint_path,
         &Hint {
@@ -275,6 +291,7 @@ impl Current {
             tools: Default::default(),
             link: None,
             candidates: BTreeMap::new(),
+            index: None,
         })
     }
 
@@ -302,8 +319,23 @@ impl Current {
                 serde_json::from_value(serde_json::to_value(&unit.record.source).map_err(failed)?).map_err(failed)
             })
             .collect::<Result<Vec<crate::sdk_closure::SdkLockedUnit>>>()?;
-        let about = current_inputs::selected_about(request.index, &self.graph.index_commit, &bindings)
-            .map_err(NativeLoafError::Failed)?;
+        let about = if bindings.is_empty() {
+            BTreeMap::new()
+        } else {
+            if self.index.is_none() {
+                self.index = Some(
+                    current_inputs::PinnedIndexBatch::open(request.index, &self.graph.index_commit)
+                        .map_err(NativeLoafError::Failed)?,
+                );
+            }
+            current_inputs::selected_about(
+                &bindings,
+                self.index
+                    .as_mut()
+                    .ok_or_else(|| refused("current pinned index reader missing"))?,
+            )
+            .map_err(NativeLoafError::Failed)?
+        };
         for unit in closure.graph.units.values() {
             unit.verify()?;
             let record = &unit.record;
@@ -407,10 +439,9 @@ impl Current {
                 &manifest,
                 origin,
                 &self.seed,
-                request.index,
-                &self.graph.index_commit,
                 &metadata,
                 &mut self.tools,
+                self.index.as_mut(),
             )
             .map_err(NativeLoafError::Failed)?
             {
@@ -442,6 +473,14 @@ impl Current {
             &mut self.local,
         )?;
         Ok(serde_json::to_value(expected).map_err(failed)? == serde_json::to_value(hinted_roots).map_err(failed)?)
+    }
+
+    /// Require the command-owned Git child to terminate successfully before publishing or handing off current facts.
+    fn finish_index(&mut self) -> Result<()> {
+        if let Some(index) = &mut self.index {
+            index.finish().map_err(NativeLoafError::Failed)?;
+        }
+        Ok(())
     }
 
     /// Reapply the same producer selector to the current declared candidate world, rather than trusting a hint's
@@ -690,6 +729,15 @@ fn finish_report(
     report.current_local_sources = current.local.loads;
     report.native_tool_owner_checks = current.tools.checks;
     report.current_local_dependency_candidates = current.candidates.values().map(Vec::len).sum();
+    if let Some(index) = &current.index {
+        let work = index.work();
+        report.index_git_processes = work.processes;
+        report.index_batch_requests = work.requests;
+        report.index_file_requests = work.file_requests;
+        report.index_blob_reads = work.blob_reads;
+        report.index_blob_cache_hits = work.cache_hits;
+        report.index_blob_bytes = work.blob_bytes;
+    }
     report.seconds = started.elapsed().as_secs_f64();
 }
 
