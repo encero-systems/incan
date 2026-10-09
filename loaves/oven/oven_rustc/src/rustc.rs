@@ -5,6 +5,7 @@
 //! the selected Rust compiler and refuses hidden Cargo state.
 
 mod artifact;
+mod codegen;
 mod compiled_unit;
 mod diagnostics;
 pub mod driver_grant;
@@ -34,6 +35,7 @@ mod toolchain;
 // and the rustc diagnostic report. Every path stays where callers expect it -- re-exported here rather than
 // re-homed -- so this is a move, not an interface change.
 pub use artifact::*;
+pub use codegen::OvenRustcCodegenOptions;
 #[allow(
     unused_imports,
     reason = "the native source publisher consumes compiled-unit identities in its next wiring slice"
@@ -138,8 +140,9 @@ pub use invocation::{
     bake_direct_rustc_run, bake_direct_rustc_test, bake_trusted_direct_rustc_dylib, bake_trusted_direct_rustc_library,
     bake_trusted_direct_rustc_library_in_store, bake_trusted_direct_rustc_library_with_artifact_role,
     bake_trusted_direct_rustc_proc_macro, bake_trusted_direct_rustc_proc_macro_with_artifact_role,
-    bake_trusted_direct_rustc_run, bake_trusted_direct_rustc_run_with_artifact_role, bake_trusted_direct_rustc_test,
-    run_trusted_rustdoc_test, trusted_artifact_plan_for_source_evidence,
+    bake_trusted_direct_rustc_run, bake_trusted_direct_rustc_run_in_store,
+    bake_trusted_direct_rustc_run_with_artifact_role, bake_trusted_direct_rustc_test,
+    bake_trusted_direct_rustc_test_in_store, run_trusted_rustdoc_test, trusted_artifact_plan_for_source_evidence,
 };
 use manifest_validation::*;
 #[cfg(test)]
@@ -351,6 +354,47 @@ pub struct OvenTrustedDirectRustcTargetRequest<'a> {
     pub features: &'a [String],
     /// Whether Cargo's publisher compiled this libtest root with `-C prefer-dynamic`.
     pub prefer_dynamic: bool,
+}
+
+impl<'a> OvenTrustedDirectRustcTargetRequest<'a> {
+    /// Borrow a retained caller-owned target and composed plan through the Rust function interop boundary.
+    ///
+    /// Removable bridge for #872: stage zero treats this struct's borrowed slice field as an opaque Rust type and
+    /// rejects an Incan list during field construction and function calls. This constructor borrows the feature set
+    /// already declared by the receipt. The caller keeps the receipt, selected plan and leases alive for the complete
+    /// execution.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "mirrors the existing explicit trusted target request for #872"
+    )]
+    pub fn new(
+        receipt: &'a OvenReceipt,
+        artifacts: &'a OvenRustcArtifactManifest,
+        artifact_root: &'a Path,
+        artifact_plan: &'a OvenRustcArtifactPlan,
+        rustc: &'a Path,
+        source: &'a Path,
+        output: &'a Path,
+        crate_name: &'a str,
+        edition: &'a str,
+        source_evidence_key: &'a str,
+        prefer_dynamic: bool,
+    ) -> Self {
+        Self {
+            receipt,
+            artifacts,
+            artifact_root,
+            artifact_plan: Some(artifact_plan),
+            rustc,
+            source,
+            output,
+            crate_name,
+            edition,
+            source_evidence_key,
+            features: &receipt.intent.features,
+            prefer_dynamic,
+        }
+    }
 }
 
 /// Request to run one receipt-bound Rustdoc doctest root from an actively leased compiler-suite artifact.

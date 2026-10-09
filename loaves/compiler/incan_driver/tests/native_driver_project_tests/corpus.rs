@@ -293,7 +293,39 @@ fn compile_source(
     sysroot: &Path,
     closure: &NativeClosure,
 ) -> Result<Output, Box<dyn std::error::Error>> {
-    Ok(source_command(driver, source, output, sysroot, closure).output()?)
+    let started = support::command_timing_started();
+    let result = source_command(driver, source, output, sysroot, closure).output()?;
+    support::report_command_timing(
+        &format!(
+            "fixture native {}",
+            source.file_name().ok_or("source has no file name")?.to_string_lossy()
+        ),
+        started,
+    );
+    Ok(result)
+}
+
+/// Measure the reference compilation separately while retaining its normal compiler and output authority.
+fn compile_numeric_reference(
+    project: &Path,
+    source: &Path,
+    output: &Path,
+) -> Result<Output, Box<dyn std::error::Error>> {
+    let started = support::command_timing_started();
+    let mut command = support::repo_command();
+    command.current_dir(project).arg("build").arg(source).arg(output);
+    if std::env::var_os("INCAN_TEST_REQUIRE_NUMERIC_REFERENCE_REUSE").is_some() {
+        command.env("INCAN_TEST_REQUIRE_STORED_NATIVE_REUSE", "1");
+    }
+    let result = command.output()?;
+    support::report_command_timing(
+        &format!(
+            "fixture reference {}",
+            source.file_name().ok_or("source has no file name")?.to_string_lossy()
+        ),
+        started,
+    );
+    Ok(result)
 }
 
 /// Construct the exact direct-route invocation so bounded census execution shares dependency selection.
@@ -610,12 +642,7 @@ pub(super) fn check_numerics(
     );
     let legacy_output = project.join("legacy");
     success(
-        &support::repo_command()
-            .current_dir(&project)
-            .arg("build")
-            .arg(&source)
-            .arg(&legacy_output)
-            .output()?,
+        &compile_numeric_reference(&project, &source, &legacy_output)?,
         "numerics legacy compilation",
     );
     let expected = Command::new(legacy_output.join("oven/release/numerics")).output()?;
@@ -662,12 +689,7 @@ fn check_numeric_wrapping(
     );
     let legacy = project.join("wrapping-legacy");
     success(
-        &support::repo_command()
-            .current_dir(project)
-            .arg("build")
-            .arg(&source)
-            .arg(&legacy)
-            .output()?,
+        &compile_numeric_reference(project, &source, &legacy)?,
         "wrapping legacy compilation",
     );
     let expected = Command::new(legacy.join("oven/release/wrapping")).output()?;
@@ -698,12 +720,7 @@ fn check_numeric_failure(
     );
     let legacy = project.join(format!("{name}-legacy"));
     success(
-        &support::repo_command()
-            .current_dir(project)
-            .arg("build")
-            .arg(&path)
-            .arg(&legacy)
-            .output()?,
+        &compile_numeric_reference(project, &path, &legacy)?,
         "numeric failure legacy compilation",
     );
     let expected = Command::new(legacy.join("oven/release").join(name)).output()?;

@@ -20,13 +20,35 @@ pub fn select_prepared_native_sdk_plan(
     source_receipt: &oven_store::OvenReceipt,
     dependencies: &[oven_model::manifest::DependencySpec],
 ) -> CliResult<(oven_store::OvenReceipt, oven_rustc::plan::OvenDirectRustcPlanSelection)> {
+    let (engine, digest) = super::native_runtime_inputs::bound_compiler_engine()?;
+    let receipt = oven_store::receipt_with_build_unit_input(
+        source_receipt,
+        super::native_runtime_inputs::NATIVE_RUNTIME_ENGINE_SOURCE,
+        digest,
+    )
+    .map_err(|error| CliError::failure(error.to_string()))?;
+    select_prepared_native_sdk_plan_with_engine(store, &receipt, dependencies, &engine)
+}
+
+/// Select bootstrap roots through the Incan engine bound as a supplemental source in the caller's receipt.
+///
+/// This explicit path allows the stage-zero bootstrap to prepare its engine before the new compiler exists.
+pub fn select_prepared_native_sdk_plan_with_engine(
+    store: &oven_store::store::OvenStore,
+    source_receipt: &oven_store::OvenReceipt,
+    dependencies: &[oven_model::manifest::DependencySpec],
+    engine: &Path,
+) -> CliResult<(oven_store::OvenReceipt, oven_rustc::plan::OvenDirectRustcPlanSelection)> {
     let inventory = incan_provider::inventory::discover_or_reuse_published_sdk_inventory()?
         .ok_or_else(|| CliError::failure("compiler tooling requires a prepared native SDK"))?;
     let catalog = std::fs::read(inventory.root.join(".sealed-native-receipts.json"))
         .map_err(|error| CliError::failure(error.to_string()))?;
     let receipt = bind_native_catalog(source_receipt, &catalog)?;
-    let roots = oven_store::digest_dependency_specs(dependencies, incan_oven_facet::provider_hooks().as_ref())
-        .map_err(|error| CliError::failure(error.to_string()))?;
+    let inputs = super::native_runtime_inputs::dependency_inputs(engine, source_receipt, &catalog, dependencies)?;
+    let roots = inputs
+        .get("rust-dependencies")
+        .ok_or_else(|| CliError::failure("Incan native-runtime response has no dependency identity"))?
+        .clone();
     let receipt = oven_store::receipt_with_build_unit_input(&receipt, "sdk-native-roots", roots)
         .map_err(|error| CliError::failure(error.to_string()))?;
     let selection = super::native_sdk_plan::select_native_sdk_plan(store, &receipt, dependencies)?

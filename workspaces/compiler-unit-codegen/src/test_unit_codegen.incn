@@ -1,0 +1,65 @@
+"""Check profile binding and refusal before the native executor receives compiler options."""
+
+from std.json import JsonValue
+from unit_codegen import bind_unit_codegen
+
+
+def seed() -> str:
+    """Keep source and feature evidence alongside the one exact declaration target."""
+    return "{\"schema\":\"incan.oven.loaf-resolution/2\",\"units\":[{\"loaf\":\"crates-io/sha2\",\"version\":\"0.10.9\",\"domain\":\"target\",\"features\":[\"std\"],\"archive_digest\":\"unchanged-source\",\"edges\":[]}]}"
+
+
+def policy(selections: str) -> str:
+    """Wrap explicit selections in the compiler's named development profile."""
+    return "{\"schema\":\"incan.compiler-unit-codegen/1\",\"profiles\":{\"debug\":[" + selections + "]}}"
+
+
+def selection(version: str, level: str) -> str:
+    """Declare optimization while preserving development assertion semantics."""
+    return "{\"loaf\":\"crates-io/sha2\",\"version\":\"" + version + "\",\"domain\":\"target\",\"options\":{\"opt_level\":\"" + level + "\",\"debug_assertions\":true,\"overflow_checks\":true}}"
+
+
+pub def test_codegen_preserves_locked_sources_and_features() -> Result[None, str]:
+    """Profile binding adds execution options without changing any resolver-owned unit facts."""
+    original = JsonValue.parse(seed()).map_err((error) => error.message())?
+    output = bind_unit_codegen(seed(), policy(selection("0.10.9", "3")), "debug")?
+    bound = JsonValue.parse(output).map_err((error) => error.message())?
+    original_units = original.require("units").map_err((error) => error.message())?
+    bound_units = bound.require("units").map_err((error) => error.message())?
+    assert original_units.equals(bound_units)
+    declarations = bound.require("unit_codegen").map_err((error) => error.message())?
+    rows = declarations.expect_array().map_err((error) => error.message())?
+    assert len(rows) == 1
+    options = rows[0].require("options").map_err((error) => error.message())?
+    assertions = options.require("debug_assertions").map_err((error) => error.message())?
+    overflow = options.require("overflow_checks").map_err((error) => error.message())?
+    assert assertions.expect_bool().map_err((error) => error.message())?
+    assert overflow.expect_bool().map_err((error) => error.message())?
+    return Ok(None)
+
+
+pub def test_codegen_refuses_wrong_binding_duplicate_and_invalid_level() -> None:
+    """A declaration cannot silently apply to another version, appear twice, or invent a compiler flag value."""
+    for declarations in [selection("0.11.0", "3"), selection("0.10.9", "3") + "," + selection("0.10.9", "3"), selection(
+        "0.10.9",
+        "invalid",
+    )]:
+        match bind_unit_codegen(seed(), policy(declarations), "debug"):
+            Ok(_) =>
+                assert false, "invalid compiler unit declaration was accepted"
+            Err(_) => pass
+
+
+pub def test_codegen_refuses_missing_profile_and_rebinding() -> Result[None, str]:
+    """The profile must be declared and a projected input cannot be used to hide an earlier option set."""
+    declared = policy(selection("0.10.9", "3"))
+    match bind_unit_codegen(seed(), declared, "release"):
+        Ok(_) =>
+            assert false, "undeclared profile was accepted"
+        Err(_) => pass
+    bound = bind_unit_codegen(seed(), declared, "debug")?
+    match bind_unit_codegen(bound, declared, "debug"):
+        Ok(_) =>
+            assert false, "already projected compiler options were replaced"
+        Err(_) => pass
+    return Ok(None)

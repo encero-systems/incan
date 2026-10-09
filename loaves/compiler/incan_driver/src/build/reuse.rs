@@ -5,9 +5,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::build::library_outputs::{library_publication_receipts, packaged_library_loaf_store_root};
+use crate::build::library_outputs::packaged_library_loaf_store_root;
 use crate::build::output_materialization::{
-    caller_project_output_path, materialize_project_output, project_output_projection_is_current,
+    caller_project_output_path, executable_projection_publication_paths, library_projection_publication_receipts,
+    materialize_project_output, project_output_projection_is_current,
 };
 use crate::build::output_paths::{validate_packaged_library_metadata_files, validated_project_output_relative_path};
 use crate::build::output_selection::{
@@ -17,9 +18,7 @@ use crate::build::package_loafs::{
     copy_receipted_oven_store_entry, decode_packaged_library_loaf_manifest, validated_packaged_library_loaf_profile,
 };
 use crate::build::plan_authority::explicit_bake_profiles;
-use crate::build::source_authority::{
-    baked_project_lock_dependencies_fingerprint, digest_baked_project_source_authority, project_bake_receipt_path,
-};
+use crate::build::source_authority::{digest_baked_project_source_authority, project_bake_receipt_path};
 use crate::build::{
     MemoizedPackagedProviderAuthority, OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION, OVEN_PROJECT_OUTPUT_ARTIFACT_PATH,
     OvenBakeProjectTarget, OvenPackagedLibraryLoafManifest, OvenPackagedLibraryLoafProfile,
@@ -88,6 +87,14 @@ fn located_project_output(
 /// Atomically retain a verified output's address as a replaceable local selection hint.
 fn remember_project_output(receipt_path: &Path, identity: &str) {
     let locator = receipt_path.with_extension("output.json");
+    if fs::read(&locator)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<String>(&bytes).ok())
+        .as_deref()
+        == Some(identity)
+    {
+        return;
+    }
     let staged = locator.with_extension(format!("{}.tmp", std::process::id()));
     let result = serde_json::to_vec(identity)
         .map_err(std::io::Error::other)
@@ -272,7 +279,7 @@ fn inspection_constituent_was_evicted(store: &OvenStore, error: &OvenRustcError)
 /// One requested target/profile and its verified local publication receipt.
 type ExpectedReuseOutput = (OvenBakeProjectTarget, PathBuf, String, PathBuf, oven_store::OvenReceipt);
 
-/// One leased output paired with the local receipt it must continue to satisfy.
+/// One leased output paired with its verified producer receipt and the local path to select it.
 type SelectedReuseOutput = (
     OvenBakeProjectTarget,
     OvenStoredProjectOutput,
@@ -285,7 +292,6 @@ struct CurrentReuseAuthority<'a> {
     source_digest: &'a str,
     compiler_digest: &'a str,
     dependency_digest: &'a str,
-    lock_fingerprint: &'a Option<String>,
     target: &'a str,
     toolchain: &'a str,
 }
@@ -372,7 +378,9 @@ fn select_current_project_output(
 ) -> CliResult<Option<SelectedReuseOutput>> {
     let (project_target, entrypoint, profile, receipt_path, receipt) = expected;
     // Source-equivalent publications from older compiler generations may sort before the current generation.
-    // Select the exact compiler and lock authority before choosing a candidate.
+    // Select the exact compiler and dependency authority before choosing a candidate. Source authority already binds
+    // the canonical authored lock projection. Its derived fingerprint can change with a compiler-owned SDK refresh
+    // without changing that projection, so it remains diagnostic metadata rather than an additional reuse veto.
     let target_identity = crate::build::oven_bake_project_target_identity(project_root, project_target, &entrypoint)?;
     let relative_entrypoint = crate::build::output_paths::project_relative_entrypoint(project_root, &entrypoint);
     let located = located.filter(|output| {
@@ -383,7 +391,6 @@ fn select_current_project_output(
             && output.profile == profile
             && output.payload.compiler_identity_digest.as_deref() == Some(authority.compiler_digest)
             && output.payload.dependency_authority_digest.as_deref() == Some(authority.dependency_digest)
-            && output.payload.lock_dependencies_fingerprint == *authority.lock_fingerprint
     });
     let output = match located {
         Some(output) => Some(output),
@@ -400,7 +407,6 @@ fn select_current_project_output(
         .find(|output| {
             output.payload.compiler_identity_digest.as_deref() == Some(authority.compiler_digest)
                 && output.payload.dependency_authority_digest.as_deref() == Some(authority.dependency_digest)
-                && output.payload.lock_dependencies_fingerprint == *authority.lock_fingerprint
         }),
     };
     let Some(output) = output else {
@@ -415,13 +421,58 @@ fn select_current_project_output(
                 && output.payload.required_project_loafs.is_empty() => {}
         OvenBakeProjectTarget::Executable => return Ok(None),
     }
-    if receipt.identity != output.payload.receipt_identity
+    let receipt = if receipt.identity != output.payload.receipt_identity
         || receipt.build_unit_identity != output.payload.build_unit_identity
         || receipt.intent != output.intent
     {
+        let Some(original) = recovered_project_output_receipt(store, &output, &receipt)? else {
+            return Ok(None);
+        };
+        original
+    } else {
+        receipt
+    };
+    Ok(Some((project_target, output, receipt_path, receipt)))
+}
+
+/// Recover an older project generation's receipt only from its verified immutable store witness.
+///
+/// The caller has already checked exact source, compiler, dependency, lock and target authority. A newer local receipt
+/// is a lineage hint, not a veto on restoring those older inputs. The retained producer witness must match the selected
+/// output and the requested project, compatibility and intent. Legacy entries without that witness remain cache misses.
+fn recovered_project_output_receipt(
+    store: &OvenStore,
+    output: &OvenStoredProjectOutput,
+    local: &oven_store::OvenReceipt,
+) -> CliResult<Option<oven_store::OvenReceipt>> {
+    let selected = store
+        .select_payloads_for_execution(std::slice::from_ref(&output.identity))
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let Some(receipt) = selected.first().and_then(|entry| entry.original_native_receipt()) else {
+        return Ok(None);
+    };
+    receipt
+        .verify_identity()
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    if receipt.identity != output.payload.receipt_identity
+        || receipt.build_unit_identity != output.payload.build_unit_identity
+        || receipt.intent != output.intent
+        || receipt.intent != local.intent
+        || receipt.project != local.project
+        || receipt.compatibility != local.compatibility
+    {
         return Ok(None);
     }
-    Ok(Some((project_target, output, receipt_path, receipt)))
+    Ok(Some(receipt.clone()))
+}
+
+/// Compare a local publication pointer with its already verified selected receipt without touching warm files.
+fn selected_receipt_is_current(path: &Path, receipt: &oven_store::OvenReceipt) -> bool {
+    fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<oven_store::OvenReceipt>(&bytes).ok())
+        .as_ref()
+        == Some(receipt)
 }
 
 /// Build the reused report and repair projections transactionally only after all selection authorities agree.
@@ -493,14 +544,60 @@ fn restore_reused_outputs(
     trace_reuse_timing(started, "caller projection");
     // A verified warm hit leaves the artifact in place. Repairing a stale projection captures the whole prior
     // library before any profile is copied; a later handoff cache miss must roll back before starting a fresh bake.
-    let publication = if library_current {
+    let library_receipts_current = selected_outputs
+        .iter()
+        .filter(|(target, _, _, _)| *target == OvenBakeProjectTarget::Library)
+        .all(|(_, _, path, receipt)| selected_receipt_is_current(path, receipt));
+    let executable_outputs = selected_outputs
+        .iter()
+        .filter(|(target, _, _, _)| *target == OvenBakeProjectTarget::Executable)
+        .collect::<Vec<_>>();
+    let executable_current = executable_outputs
+        .iter()
+        .try_fold(true, |current, (_, output, path, receipt)| {
+            Ok::<_, CliError>(
+                project_output_projection_is_current(project_root, output)?
+                    && selected_receipt_is_current(path, receipt)
+                    && current,
+            )
+        })?;
+    let executable_paths = if executable_current {
         None
     } else {
-        Some(library_publication::LibraryPublication::begin(
+        let (artifacts, mut metadata) = executable_projection_publication_paths(
             project_root,
-            &project_root.join("target/lib"),
-            library_publication_receipts(project_root)?,
-        )?)
+            executable_outputs.iter().map(|(_, output, _, _)| output),
+        )?;
+        for (_, _, path, _) in &executable_outputs {
+            metadata.push((*path).clone());
+            metadata.push(path.with_extension("output.json"));
+        }
+        Some((artifacts, metadata))
+    };
+    let publication = if library_current && library_receipts_current {
+        None
+    } else {
+        Some(
+            library_publication::LibraryPublication::begin(
+                project_root,
+                &project_root.join("target/lib"),
+                library_projection_publication_receipts(project_root, library_outputs.iter().copied())?,
+            )?
+            .retaining_package_cache(),
+        )
+    };
+    let executable_publication = if let Some((artifacts, metadata)) = executable_paths {
+        match crate::build::output_publication::OutputPublication::begin(project_root, artifacts, metadata) {
+            Ok(publication) => Some(publication),
+            Err(error) => {
+                return match publication {
+                    Some(publication) => publication.finish_reuse(Err(error)),
+                    None => Err(error),
+                };
+            }
+        }
+    } else {
+        None
     };
     let result = (|| {
         if !library_current {
@@ -517,12 +614,20 @@ fn restore_reused_outputs(
                 materialize_project_output(project_root, output)?;
             }
         }
-        for (_, output, receipt_path, _) in selected_outputs {
+        for (_, output, receipt_path, receipt) in selected_outputs {
+            if !selected_receipt_is_current(receipt_path, receipt) {
+                oven_store::write_receipt(receipt, receipt_path)
+                    .map_err(|error| CliError::failure(error.to_string()))?;
+            }
             remember_project_output(receipt_path, &output.identity);
         }
         Ok(Some(report))
     })();
-    match publication {
+    let result = match publication {
+        Some(publication) => publication.finish_reuse(result),
+        None => result,
+    };
+    match executable_publication {
         Some(publication) => publication.finish_reuse(result),
         None => result,
     }
@@ -553,7 +658,6 @@ pub fn try_reuse_baked_project(
         Ok,
     )?;
     let toolchain = rustc_identity(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
-    let lock_dependencies_fingerprint = baked_project_lock_dependencies_fingerprint(project_root)?;
     let Some(expected_outputs) = expected_reuse_outputs(project_root, targets, &target, &toolchain)? else {
         return Ok(None);
     };
@@ -577,7 +681,6 @@ pub fn try_reuse_baked_project(
         source_digest: &source_authority_digest,
         compiler_digest: &compiler_identity_digest,
         dependency_digest: &dependency_authority_digest,
-        lock_fingerprint: &lock_dependencies_fingerprint,
         target: &target,
         toolchain: &toolchain,
     };

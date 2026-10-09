@@ -3825,6 +3825,22 @@
       "version": "0.4.3"
     },
     {
+      "archive_digest": "sha256:4d6c82577abb070d427024ba3ce703c91430ea1a823892191834177631d267fa",
+      "domain": "target",
+      "edges": [
+        {
+          "dependency_key": "regex-automata",
+          "domain": "target",
+          "loaf": "crates-io/regex-automata",
+          "version": "0.4.18"
+        }
+      ],
+      "features": [],
+      "loaf": "crates-io/matchers",
+      "target_predicates": [],
+      "version": "0.2.0"
+    },
+    {
       "archive_digest": "sha256:31fc73ff28e19b62037176f1865b3840aab65a6a18db9e009a95776367a3f599",
       "domain": "target",
       "edges": [],
@@ -7443,7 +7459,9 @@
       ],
       "features": [
         "alloc",
+        "dfa-build",
         "dfa-onepass",
+        "dfa-search",
         "hybrid",
         "meta",
         "nfa",
@@ -9704,10 +9722,40 @@
       "domain": "target",
       "edges": [
         {
+          "dependency_key": "matchers",
+          "domain": "target",
+          "loaf": "crates-io/matchers",
+          "version": "0.2.0"
+        },
+        {
+          "dependency_key": "nu-ansi-term",
+          "domain": "target",
+          "loaf": "crates-io/nu-ansi-term",
+          "version": "0.50.3"
+        },
+        {
+          "dependency_key": "once_cell",
+          "domain": "target",
+          "loaf": "crates-io/once_cell",
+          "version": "1.21.4"
+        },
+        {
+          "dependency_key": "regex-automata",
+          "domain": "target",
+          "loaf": "crates-io/regex-automata",
+          "version": "0.4.18"
+        },
+        {
           "dependency_key": "sharded-slab",
           "domain": "target",
           "loaf": "crates-io/sharded-slab",
           "version": "0.1.7"
+        },
+        {
+          "dependency_key": "smallvec",
+          "domain": "target",
+          "loaf": "crates-io/smallvec",
+          "version": "1.16.2"
         },
         {
           "dependency_key": "thread_local",
@@ -9720,6 +9768,12 @@
           "domain": "target",
           "loaf": "crates-io/time",
           "version": "0.3.55"
+        },
+        {
+          "dependency_key": "tracing",
+          "domain": "target",
+          "loaf": "crates-io/tracing",
+          "version": "0.1.44"
         },
         {
           "dependency_key": "tracing-core",
@@ -9736,13 +9790,21 @@
       ],
       "features": [
         "alloc",
+        "ansi",
+        "default",
+        "env-filter",
         "fmt",
         "local-time",
+        "matchers",
+        "nu-ansi-term",
+        "once_cell",
         "registry",
         "sharded-slab",
+        "smallvec",
         "std",
         "thread_local",
         "time",
+        "tracing",
         "tracing-log"
       ],
       "loaf": "crates-io/tracing-subscriber",

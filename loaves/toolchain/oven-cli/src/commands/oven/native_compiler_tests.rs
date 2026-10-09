@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use crate::{CliError, CliResult, ExitCode};
 use oven_model::manifest::ProjectManifest;
-use oven_rustc::rustc::{OvenTrustedDirectRustcTargetRequest, bake_trusted_direct_rustc_test};
+use oven_rustc::rustc::{OvenTrustedDirectRustcTargetRequest, bake_trusted_direct_rustc_test_in_store};
 use oven_store::store::{OvenStore, OvenStoreLimits};
 
 /// Execute one declared test root without converting ambient Cargo metadata or silently falling back to Cargo.
@@ -91,20 +91,23 @@ fn execute(
         .file_stem()
         .and_then(|name| name.to_str())
         .ok_or("test crate name is not UTF-8")?;
-    let baked = bake_trusted_direct_rustc_test(&OvenTrustedDirectRustcTargetRequest {
-        receipt: &receipt,
-        artifacts: &artifacts,
-        artifact_root: selection.output_guard_root(),
-        artifact_plan: Some(&plan),
-        rustc: &rustc,
-        source: &source,
-        output: &executable,
-        crate_name,
-        edition: "2024",
-        source_evidence_key: "test-root",
-        features: &[],
-        prefer_dynamic: false,
-    })?;
+    let baked = bake_trusted_direct_rustc_test_in_store(
+        &OvenTrustedDirectRustcTargetRequest {
+            receipt: &receipt,
+            artifacts: &artifacts,
+            artifact_root: selection.output_guard_root(),
+            artifact_plan: Some(&plan),
+            rustc: &rustc,
+            source: &source,
+            output: &executable,
+            crate_name,
+            edition: "2024",
+            source_evidence_key: "test-root",
+            features: &[],
+            prefer_dynamic: false,
+        },
+        &store,
+    )?;
     let compilation_ms = compilation_started.elapsed().as_millis();
 
     // ---- Inventory-verified native execution ----

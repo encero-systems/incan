@@ -1,0 +1,65 @@
+"""Bind declared compiler dependency options to exact resolved units, independently of Cargo profiles."""
+
+from std.json import JsonValue
+
+
+def text(document: JsonValue, key: str) -> Result[str, str]:
+    """Require a named string before treating it as a compiler selection fact."""
+    value = document.require(key).map_err((error) => error.message())?
+    return value.expect_str().map_err((error) => error.message())
+
+
+def exact_keys(document: JsonValue, expected: list[str]) -> Result[None, str]:
+    """Refuse unknown or missing declaration fields rather than silently dropping a compiler option."""
+    keys = document.keys()
+    if len(keys) != len(expected):
+        return Err("compiler codegen declaration has missing or unknown fields")
+    for key in keys:
+        if key not in expected:
+            return Err("unknown compiler codegen declaration field: " + key)
+    return Ok(None)
+
+
+pub def bind_unit_codegen(seed_source: str, policy_source: str, profile: str) -> Result[str, str]:
+    """Project one declared profile onto exact locked units without resolving, compiling or inheriting flags."""
+    mut seed = JsonValue.parse(seed_source).map_err((error) => error.message())?
+    policy = JsonValue.parse(policy_source).map_err((error) => error.message())?
+    exact_keys(policy, ["schema", "profiles"])?
+    if text(policy, "schema")? != "incan.compiler-unit-codegen/1":
+        return Err("unsupported compiler unit codegen declaration")
+    if text(seed, "schema")? != "incan.oven.loaf-resolution/2":
+        return Err("compiler unit codegen requires resolution schema 2")
+    if seed.contains_key("unit_codegen"):
+        return Err("resolution already carries compiler unit codegen; use the original resolved input")
+    profiles = policy.require("profiles").map_err((error) => error.message())?
+    declared = profiles.require(profile).map_err((error) => error.message())?
+    selections = declared.expect_array().map_err((error) => error.message())?
+    resolved = seed.require("units").map_err((error) => error.message())?
+    units = resolved.expect_array().map_err((error) => error.message())?
+    mut seen: list[str] = []
+    for selection in selections:
+        exact_keys(selection, ["loaf", "version", "domain", "options"])?
+        loaf = text(selection, "loaf")?
+        version = text(selection, "version")?
+        domain = text(selection, "domain")?
+        key = loaf + "@" + version + "#" + domain
+        if key in seen:
+            return Err("duplicate compiler unit codegen selection: " + key)
+        seen.append(key)
+        mut matches = 0
+        for unit in units:
+            if text(unit, "loaf")? == loaf and text(unit, "version")? == version and text(unit, "domain")? == domain:
+                matches += 1
+        if matches != 1:
+            return Err("compiler unit codegen selection must name exactly one resolved unit: " + key)
+        options = selection.require("options").map_err((error) => error.message())?
+        exact_keys(options, ["opt_level", "debug_assertions", "overflow_checks"])?
+        level = text(options, "opt_level")?
+        if level not in ["0", "1", "2", "3", "s", "z"]:
+            return Err("unsupported compiler optimization level: " + level)
+        assertions = options.require("debug_assertions").map_err((error) => error.message())?
+        assertions.expect_bool().map_err((error) => error.message())?
+        overflow = options.require("overflow_checks").map_err((error) => error.message())?
+        overflow.expect_bool().map_err((error) => error.message())?
+    seed.set("unit_codegen", declared).map_err((error) => error.message())?
+    return seed.to_json().map_err((error) => error.message())

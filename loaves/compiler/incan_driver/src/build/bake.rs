@@ -70,8 +70,8 @@ use oven_model::manifest::ProjectManifest;
 use oven_rustc::plan::OvenDirectRustcPlanSelection;
 use oven_rustc::rustc::{
     OvenCallerOwnedRustcLibrary, OvenRustcError, OvenTrustedDirectRustcTargetRequest,
-    attach_caller_owned_rustc_libraries, bake_trusted_direct_rustc_library_in_store, bake_trusted_direct_rustc_run,
-    bake_trusted_direct_rustc_run_with_artifact_role,
+    attach_caller_owned_rustc_libraries, bake_trusted_direct_rustc_library_in_store,
+    bake_trusted_direct_rustc_run_in_store, bake_trusted_direct_rustc_run_with_artifact_role,
 };
 use oven_store::store::OvenArtifactKind;
 use oven_store::{
@@ -167,20 +167,23 @@ pub fn bake_oven_project(
     for directory in &extra_dependency_search_paths {
         artifact_plan.retain_caller_dependency_search_path(directory.clone());
     }
-    let direct = bake_trusted_direct_rustc_run(&OvenTrustedDirectRustcTargetRequest {
-        receipt: &prepared.receipt,
-        artifacts: prepared.plan_selection.artifacts(),
-        artifact_root: prepared.plan_selection.output_guard_root(),
-        artifact_plan: Some(&artifact_plan),
-        rustc: &prepared.rustc,
-        source: &prepared.generator.crate_root_path(),
-        output: &oven_binary_path(prepared, profile),
-        crate_name: &prepared.crate_name,
-        edition: &prepared.rust_edition,
-        source_evidence_key: "generated-root",
-        features: &prepared.receipt.intent.features,
-        prefer_dynamic: false,
-    });
+    let direct = bake_trusted_direct_rustc_run_in_store(
+        &OvenTrustedDirectRustcTargetRequest {
+            receipt: &prepared.receipt,
+            artifacts: prepared.plan_selection.artifacts(),
+            artifact_root: prepared.plan_selection.output_guard_root(),
+            artifact_plan: Some(&artifact_plan),
+            rustc: &prepared.rustc,
+            source: &prepared.generator.crate_root_path(),
+            output: &oven_binary_path(prepared, profile),
+            crate_name: &prepared.crate_name,
+            edition: &prepared.rust_edition,
+            source_evidence_key: "generated-root",
+            features: &prepared.receipt.intent.features,
+            prefer_dynamic: false,
+        },
+        &open_default_oven_store()?,
+    );
     classify_direct_rustc_bake(&prepared.crate_name, direct)
 }
 
@@ -1431,6 +1434,26 @@ pub fn bake_oven_project_targets(
     {
         return Ok(reused);
     }
+    let reconciled = crate::build::lock_reuse::try_reuse_with_resolved_provider_lock(
+        &manifest,
+        &dependency_surface_entrypoint,
+        package_features,
+        || {
+            authority_context.lock_published();
+            try_reuse_baked_project(
+                &project_root,
+                &targets,
+                &store,
+                package_features,
+                requested_target,
+                &mut authority_context,
+            )
+        },
+    )?;
+    if let Some(reused) = reconciled {
+        return Ok(reused);
+    }
+    authority_context.lock_published();
     if std::env::var_os("INCAN_TEST_REQUIRE_COMPLETED_BAKE_REUSE").is_some() {
         return Err(CliError::failure(
             "completed project reuse missed before frontend preparation",

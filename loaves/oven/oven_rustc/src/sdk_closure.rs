@@ -26,7 +26,7 @@ mod native;
 
 pub use local::{
     LocalFacetSelection, compile_local_sdk_facet, compile_local_sdk_facet_for_target, compile_local_sdk_facets,
-    local_sdk_facet_source_digest,
+    local_sdk_facet_source_digest, local_sdk_facet_source_inputs,
 };
 
 struct CompileContext<'a> {
@@ -37,6 +37,7 @@ struct CompileContext<'a> {
     store: &'a OvenStore,
     compiler_digest: String,
     profile: &'a str,
+    unit_codegen: &'a [UnitCodegenSelection],
 }
 
 /// Explicit authority and physical inputs for compiling an adopted closure without Cargo.
@@ -127,6 +128,22 @@ pub struct SdkLockedPredicate {
 struct Seed {
     schema: String,
     units: Vec<SdkLockedUnit>,
+    #[serde(default)]
+    unit_codegen: Vec<UnitCodegenSelection>,
+}
+
+/// Exact selector and typed options projected by Incan; this adapter does not infer a profile or resolve a unit.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UnitCodegenSelection {
+    /// Registry-qualified Loaf supplied by the declaration.
+    loaf: String,
+    /// Exact resolved version supplied by the declaration.
+    version: String,
+    /// Host or target domain supplied by the declaration.
+    domain: String,
+    /// Explicit compiler arguments, retained in the selected unit receipt.
+    options: crate::rustc::OvenRustcCodegenOptions,
 }
 
 /// Measured compile outcomes, including refused units and their dependent units.
@@ -216,6 +233,25 @@ pub fn prepare_closure(request: &ClosureCompileRequest<'_>) -> Result<SdkCompile
     if seed.schema == "incan.oven.loaf-resolution/2" && seed.units.iter().any(|unit| unit.edges.is_none()) {
         return Err("resolution schema 2 requires dependency edges on every unit; re-resolve the lock".into());
     }
+    if !seed.unit_codegen.is_empty() && seed.schema != "incan.oven.loaf-resolution/2" {
+        return Err("SDK codegen declarations require resolution schema 2".into());
+    }
+    let mut declared = BTreeSet::new();
+    for selection in &seed.unit_codegen {
+        selection.options.validate()?;
+        if !declared.insert((&selection.loaf, &selection.version, &selection.domain))
+            || seed
+                .units
+                .iter()
+                .filter(|unit| {
+                    unit.loaf == selection.loaf && unit.version == selection.version && unit.domain == selection.domain
+                })
+                .count()
+                != 1
+        {
+            return Err("codegen selection must uniquely name one resolved SDK unit".into());
+        }
+    }
     std::fs::create_dir_all(output)?;
     let toolchain = rustc_identity(rustc)?;
     let scratch = tempfile::Builder::new().prefix("sdk-source-").tempdir_in(output)?;
@@ -232,6 +268,7 @@ pub fn prepare_closure(request: &ClosureCompileRequest<'_>) -> Result<SdkCompile
         store: &store,
         compiler_digest: compiler_closure_digest(rustc, target)?,
         profile,
+        unit_codegen: &seed.unit_codegen,
     };
     let mut closure = compile_units(&units, &context)?;
     closure.report.seconds = started.elapsed().as_secs_f64();
@@ -799,6 +836,22 @@ fn unit_receipt(
         )
         .with_build_unit_input("compiler-binary", &context.compiler_digest),
     )?;
+    if let Some(selection) = context.unit_codegen.iter().find(|selection| {
+        selection.loaf == unit.binding.loaf
+            && selection.version == unit.binding.version
+            && selection.domain == unit.binding.domain
+    }) {
+        if unit.build_script {
+            return Err(
+                "SDK codegen override requires a build fact bound to those options for a build-script unit".into(),
+            );
+        }
+        receipt = oven_store::receipt_with_build_unit_input(
+            &receipt,
+            "sdk-codegen-options",
+            serde_json::to_string(&selection.options)?,
+        )?;
+    }
     if let Some(fact) = &unit.fact {
         receipt = oven_store::receipt_with_build_unit_input(&receipt, "sdk-build-fact", serde_json::to_string(fact)?)?;
     }

@@ -1,0 +1,12 @@
+"""Minimized retained newtype-field ownership failure at a generic Rust argument boundary."""
+
+from rust::std::process import Command
+from std.fs import Path
+
+
+def main() -> None:
+    """Passing one field must preserve the Incan path used by the following method call."""
+    path = Path(".")
+    mut command = Command.new("echo")
+    command.arg(path.0)
+    println(path.joinpath("kept").0)

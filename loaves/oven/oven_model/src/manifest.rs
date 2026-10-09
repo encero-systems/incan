@@ -1284,6 +1284,15 @@ impl ProjectManifest {
         &self.rust_dependencies
     }
 
+    /// Materialize declared dependency values for Incan callers that cannot yet traverse a borrowed Rust map.
+    ///
+    /// Removable interop bridge for #872: `rust_dependencies().values()` is rejected as a method on `&Dict` by the
+    /// retained stage-zero compiler. This performs no activation or resolution; callers retain the existing
+    /// manifest and native-plan authorities. Remove this bridge when borrowed container methods are supported.
+    pub fn rust_dependency_values(&self) -> Vec<DependencySpec> {
+        self.rust_dependencies.values().cloned().collect()
+    }
+
     /// Development inputs materialized by an environment or effective dependency projection.
     /// Authored top-level development dependency tables are refused.
     pub fn rust_dev_dependencies(&self) -> &HashMap<String, DependencySpec> {

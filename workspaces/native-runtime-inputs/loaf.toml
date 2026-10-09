@@ -1,0 +1,4 @@
+[project]
+name = "native_runtime_inputs"
+version = "0.1.0"
+private = true

@@ -1,0 +1,46 @@
+# Authored toolchain facet; Cargo declarations are retained migration inputs only.
+[project]
+name = "oven_cli"
+version = "0.6.0-dev.6"
+private = true
+license = "Apache-2.0"
+description = "The oven command: the explicit Oven receipt, bounded-store and native direct-rustc workflow, the lock command and the toolchain inspection helpers"
+
+[project.features]
+default = ["rust_inspect", "std_testing", "std_async", "std_decorators"]
+rust_inspect = ["dep:rust_inspect", "rust_inspect/inspector", "incan_frontend/rust_inspect", "incan_provider/rust_inspect", "incan_driver/rust_inspect"]
+std_testing = ["incan_frontend/std_testing", "incan_provider/std_testing", "incan_driver/std_testing"]
+std_async = ["incan_frontend/std_async", "incan_provider/std_async", "incan_driver/std_async"]
+std_decorators = ["incan_frontend/std_decorators", "incan_provider/std_decorators", "incan_driver/std_decorators"]
+
+[dependencies]
+semver = { loaf = "crates-io/semver", version = "1.0.27" }
+incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
+incan_driver = { default-features = false, features = ["cli"], loaf = "incan_driver", path = "../../compiler/incan_driver" }
+incan_frontend = { default-features = false, loaf = "incan_frontend", path = "../../compiler/incan_frontend" }
+incan_oven_facet = { loaf = "incan_oven_facet", path = "../../compiler/incan_oven_facet" }
+incan_provider = { default-features = false, loaf = "incan_provider", path = "../../compiler/incan_provider" }
+oven_model = { loaf = "oven_model", path = "../../oven/oven_model", version = "0.6.0-dev.5" }
+oven_rustc = { loaf = "oven_rustc", path = "../../oven/oven_rustc", version = "0.6.0-dev.5" }
+oven_cargo_compat = { loaf = "oven_cargo_compat", path = "../../oven/oven_cargo_compat", version = "0.6.0-dev.5" }
+oven_interop = { loaf = "oven_interop", path = "../../oven/oven_interop", version = "0.6.0-dev.5" }
+oven_store = { loaf = "oven_store", path = "../../oven/oven_store", version = "0.6.0-dev.5" }
+rust_inspect = { default-features = false, loaf = "rust_inspect", optional = true, path = "../../compiler/rust_inspect" }
+clap = { features = ["derive"], loaf = "crates-io/clap", version = "4.4" }
+serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
+serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
+sha2 = { loaf = "crates-io/sha2", version = "0.10.9" }
+rustix = { features = ["fs", "time"], loaf = "crates-io/rustix", version = "1.1.4" }
+tempfile = { loaf = "crates-io/tempfile", version = "3" }
+toml = { loaf = "crates-io/toml", version = "0.9" }
+toml_edit = { features = ["parse", "serde"], loaf = "crates-io/toml_edit", version = "0.25" }
+tracing-subscriber = { features = ["env-filter"], loaf = "crates-io/tracing-subscriber", version = "0.3" }
+
+[rust]
+name = "oven_cli"
+type = "lib"
+edition = "2024"
+
+[[rust.bin]]
+name = "oven"
+path = "src/main.rs"

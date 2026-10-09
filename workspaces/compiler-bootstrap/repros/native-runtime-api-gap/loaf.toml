@@ -1,0 +1,5 @@
+[project]
+name="native_runtime_api_gap"
+private=true
+[dependencies]
+oven_rustc = { loaf="oven_rustc", path="../../../../loaves/oven/oven_rustc" }

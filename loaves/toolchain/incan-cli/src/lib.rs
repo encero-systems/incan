@@ -69,7 +69,7 @@ pub use oven_cli::cli::{
 };
 
 /// ASCII art logo - embedded at compile time from the package's assets/logo.txt
-const LOGO: &str = include_str!("../assets/logo.txt");
+const LOGO: &str = include_str!("assets/logo.txt");
 const VERSION: &str = incan_lang::version::INCAN_VERSION;
 
 // ============================================================================

@@ -1,0 +1,191 @@
+"""Exercise native identity binding and refusal without an ambient Cargo tree or a compiler process."""
+
+from std.json import JsonValue
+from runtime_inputs import project
+from std.collections import OrdinalKey
+from std.encoding.hex import hexlify
+from std.hash import sha256
+
+
+def digest[T with OrdinalKey](value: T) -> str:
+    """Independently check the public SHA-256 wire binding."""
+    return "sha256:" + hexlify(sha256.digest(value.ordinal_bytes()))
+
+
+def request() -> Result[JsonValue, str]:
+    """Use two declared unit names for this projection fixture; production transports the toolchain registry."""
+    catalog = JsonValue.object(
+        {"{\"loaf\":\"incan_lang\"}": JsonValue.string(
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ), "{\"loaf\":\"incan_derive\"}": JsonValue.string(
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        )},
+    )
+    catalog_source = catalog.to_json().map_err((error) => error.message())?
+    return Ok(
+        JsonValue.object(
+            {"schema": JsonValue.string("incan.native-runtime-inputs.request/1"), "operation": JsonValue.string(
+                "runtime",
+            ), "compiler_version": JsonValue.string("0.6.0-dev.6"), "sdk_codegen_revision": JsonValue.string("1"), "native_catalog": JsonValue.string(
+                catalog_source,
+            ), "provider_records": JsonValue.array([JsonValue.string("provider|module|facet|link")]), "stdlib_facets": JsonValue.array(
+                [JsonValue.string("std_core")],
+            ), "dependency_records": JsonValue.array([]), "runtime_units": JsonValue.array(
+                [JsonValue.string("incan_lang"), JsonValue.string("incan_derive")],
+            )},
+        ),
+    )
+
+
+def response(value: JsonValue) -> Result[JsonValue, str]:
+    """Execute the same source projection as the prepared engine."""
+    source = value.to_json().map_err((error) => error.message())?
+    output = project(source)?
+    return JsonValue.parse(output).map_err((error) => error.message())
+
+
+pub def test_runtime_identity_binds_request_catalog_and_unit_records() -> Result[None, str]:
+    """Native authority replaces metadata reads while compiler, provider and feature inputs stay explicit."""
+    original = request()?
+    source = original.to_json().map_err((error) => error.message())?
+    result = response(original)?
+    request_digest = result.require("request_digest").map_err((error) => error.message())?
+    assert request_digest.expect_str().map_err((error) => error.message())? == digest(source)
+    inputs = result.require("inputs").map_err((error) => error.message())?
+    catalog = original.require("native_catalog").map_err((error) => error.message())?
+    expected = digest(catalog.expect_str().map_err((error) => error.message())?)
+    closure = inputs.require("sdk-native-closure").map_err((error) => error.message())?
+    assert closure.expect_str().map_err((error) => error.message())? == expected
+    assert inputs.contains_key("runtime-source-incan-lang")
+    assert inputs.contains_key("runtime-source-incan-derive")
+    assert inputs.contains_key("provider-plan")
+    assert inputs.contains_key("stdlib-facets")
+    assert inputs.contains_key("rust-dependencies")
+    assert inputs.contains_key("runtime-identity-domain")
+    return Ok(None)
+
+
+pub def test_runtime_identity_changes_with_catalog_provider_and_features() -> Result[None, str]:
+    """One request cannot reuse another request's provider, feature or native receipt identity."""
+    base = response(request()?)?
+    for name in ["provider_records", "stdlib_facets", "native_catalog"]:
+        mut changed = request()?
+        mut value = JsonValue.array([JsonValue.string("changed")])
+        if name == "native_catalog":
+            catalog = JsonValue.object(
+                {"{\"loaf\":\"incan_lang\"}": JsonValue.string(
+                    "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                ), "{\"loaf\":\"incan_derive\"}": JsonValue.string(
+                    "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                )},
+            )
+            value = JsonValue.string(catalog.to_json().map_err((error) => error.message())?)
+        changed.set(name, value).map_err((error) => error.message())?
+        result = response(changed)?
+        assert not result.equals(base)
+        inputs = result.require("inputs").map_err((error) => error.message())?
+        original_inputs = base.require("inputs").map_err((error) => error.message())?
+        assert not inputs.equals(original_inputs)
+    return Ok(None)
+
+
+pub def test_runtime_identity_refuses_absent_and_malformed_native_authority() -> Result[None, str]:
+    """Empty, incomplete and malformed catalogs produce no usable response."""
+    for catalog in ["{}", "{\"{\\\"loaf\\\":\\\"incan_lang\\\"}\":\"sha256:bad\"}", "{\"{\\\"loaf\\\":\\\"incan_lang\\\"}\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}"]:
+        mut changed = request()?
+        changed.set("native_catalog", JsonValue.string(catalog)).map_err((error) => error.message())?
+        source = changed.to_json().map_err((error) => error.message())?
+        match project(source):
+            Ok(_) =>
+                assert false, "invalid native catalog was accepted"
+            Err(_) => pass
+    return Ok(None)
+
+
+pub def test_runtime_identity_refuses_unknown_metadata_and_schema() -> Result[None, str]:
+    """Cargo metadata and an unknown exchange version cannot silently enter native identity."""
+    mut changed = request()?
+    changed.set("Cargo.lock", JsonValue.string("ambient")).map_err((error) => error.message())?
+    source = changed.to_json().map_err((error) => error.message())?
+    match project(source):
+        Ok(_) =>
+            assert false, "Cargo metadata was accepted as native input"
+        Err(_) => pass
+    mut changed = request()?
+    changed.set("schema", JsonValue.string("wrong")).map_err((error) => error.message())?
+    schema_source = changed.to_json().map_err((error) => error.message())?
+    match project(schema_source):
+        Ok(_) =>
+            assert false, "unknown native runtime schema was accepted"
+        Err(_) => pass
+    return Ok(None)
+
+
+pub def test_dependency_roots_bind_alias_features_version_and_activation() -> Result[None, str]:
+    """Every requested root fact affects identity even when all requests share the same native catalog."""
+    declaration = JsonValue
+        .parse(
+            "{\"alias\":\"sha2\",\"package\":null,\"version\":\"0.10\",\"features\":[],\"default_features\":false,\"optional\":false,\"source\":{\"kind\":\"registry\"}}",
+        )
+        .map_err((error) => error.message())?
+    mut base = request()?
+    base.set("dependency_records", JsonValue.array([declaration])).map_err((error) => error.message())?
+    original = response(base)?
+    for key in ["alias", "package", "version", "features", "default_features", "optional"]:
+        mut changed_declaration = JsonValue
+            .parse(
+                "{\"alias\":\"sha2\",\"package\":null,\"version\":\"0.10\",\"features\":[],\"default_features\":false,\"optional\":false,\"source\":{\"kind\":\"registry\"}}",
+            )
+            .map_err((error) => error.message())?
+        mut value = JsonValue.string("changed")
+        if key == "features":
+            value = JsonValue.array([JsonValue.string("changed")])
+        if key in ["default_features", "optional"]:
+            value = JsonValue.bool(true)
+        changed_declaration.set(key, value).map_err((error) => error.message())?
+        mut changed = request()?
+        changed.set("dependency_records", JsonValue.array([changed_declaration])).map_err((error) => error.message())?
+        result = response(changed)?
+        result_inputs = result.require("inputs").map_err((error) => error.message())?
+        original_inputs = original.require("inputs").map_err((error) => error.message())?
+        assert not result_inputs.equals(original_inputs)
+    return Ok(None)
+
+
+pub def test_dependency_roots_refuse_ambient_path_and_malformed_declarations() -> Result[None, str]:
+    """Local source content belongs to admitted native units; an absolute source path cannot become portable authority."""
+    for declaration in ["{\"alias\":\"local\",\"package\":null,\"version\":null,\"features\":[],\"default_features\":false,\"optional\":false,\"source\":{\"kind\":\"path\",\"path\":\"/ambient\"}}", "{\"alias\":\"local\"}"]:
+        mut changed = request()?
+        entry = JsonValue.parse(declaration).map_err((error) => error.message())?
+        changed.set("dependency_records", JsonValue.array([entry])).map_err((error) => error.message())?
+        source = changed.to_json().map_err((error) => error.message())?
+        match project(source):
+            Ok(_) =>
+                assert false, "ambient or incomplete native declaration was accepted"
+            Err(_) => pass
+    return Ok(None)
+
+
+pub def test_dependency_roots_ignore_order_and_identical_duplicate_requests() -> Result[None, str]:
+    """Hash-map iteration cannot recompile an unchanged compiler or native test root."""
+    first = JsonValue
+        .parse(
+            "{\"alias\":\"serde\",\"package\":null,\"version\":\"1\",\"features\":[],\"default_features\":false,\"optional\":false,\"source\":{\"kind\":\"registry\"}}",
+        )
+        .map_err((error) => error.message())?
+    second = JsonValue
+        .parse(
+            "{\"alias\":\"serde_json\",\"package\":null,\"version\":\"1\",\"features\":[],\"default_features\":false,\"optional\":false,\"source\":{\"kind\":\"registry\"}}",
+        )
+        .map_err((error) => error.message())?
+    mut base = request()?
+    base.set("dependency_records", JsonValue.array([first, second])).map_err((error) => error.message())?
+    original = response(base)?
+    expected = original.require("inputs").map_err((error) => error.message())?
+    for entries in [[second, first], [first, second, first]]:
+        mut changed = request()?
+        changed.set("dependency_records", JsonValue.array(entries)).map_err((error) => error.message())?
+        result = response(changed)?
+        inputs = result.require("inputs").map_err((error) => error.message())?
+        assert inputs.equals(expected)
+    return Ok(None)

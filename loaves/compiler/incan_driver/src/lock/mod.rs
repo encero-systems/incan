@@ -8,6 +8,7 @@
 #[cfg(feature = "rust_inspect")]
 pub mod registry_sources;
 pub mod resolution;
+pub(crate) mod reuse;
 #[cfg(feature = "rust_inspect")]
 pub mod rust_inspect;
 pub mod test_inputs;
