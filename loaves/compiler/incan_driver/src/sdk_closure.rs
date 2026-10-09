@@ -81,6 +81,7 @@ fn install_sdk_inspection_authority_from(
     for file in [
         rust_inspect::OVEN_DIRECT_INSPECTION_AUTHORITY_FILE,
         OVEN_DIRECT_LOAF_PROJECT_FILE,
+        rust_inspect::OVEN_DIRECT_PROC_MACRO_AUTHORITY_FILE,
     ] {
         std::fs::copy(root.join(file), destination.join(file)).map_err(|error| {
             CliError::failure(format!("failed to install sealed SDK inspection authority: {error}"))

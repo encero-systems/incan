@@ -1,6 +1,7 @@
 [dependencies]
 hex = { loaf = "crates-io/hex", version = "0.4.3" }
 incan_lang = { loaf = "incan_lang", optional = true, path = "../../kernel/incan_lang" }
+oven_store = { loaf = "oven_store", optional = true, path = "../../oven/oven_store" }
 proc-macro2 = { loaf = "crates-io/proc-macro2", version = "1.0" }
 quote = { loaf = "crates-io/quote", version = "1.0" }
 ra_ap_hir = { loaf = "crates-io/ra_ap_hir", optional = true, version = "0.0.325" }
@@ -33,6 +34,7 @@ version = "0.6.0-dev.6"
 default = ["inspector"]
 inspector = [
     "dep:incan_lang",
+    "dep:oven_store",
     "dep:toml",
     "dep:semver",
     "dep:ra_ap_hir",

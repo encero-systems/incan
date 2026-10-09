@@ -1,6 +1,8 @@
 [dependencies]
 hex = { loaf = "crates-io/hex", version = "0.4.3" }
 incan_lang = { loaf = "incan_lang", path = "../../../loaves/kernel/incan_lang" }
+oven_store = { loaf = "oven_store", path = "../../../loaves/oven/oven_store" }
+oven_rustc = { loaf = "oven_rustc", path = "../../../loaves/oven/oven_rustc" }
 proc-macro2 = { loaf = "crates-io/proc-macro2", version = "1.0" }
 quote = { loaf = "crates-io/quote", version = "1.0" }
 ra_ap_hir = { loaf = "crates-io/ra_ap_hir", version = "0.0.325" }

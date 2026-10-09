@@ -195,6 +195,7 @@ fn validate_native_sdk_entry(root: &Path, receipts: &std::collections::BTreeMap<
     if &retained != receipts
         || !root.join(".sealed-native-units.json").is_file()
         || !root.join(rust_inspect::OVEN_DIRECT_LOAF_PROJECT_FILE).is_file()
+        || !root.join(rust_inspect::OVEN_DIRECT_PROC_MACRO_AUTHORITY_FILE).is_file()
         || !root.join(rust_inspect::OVEN_DIRECT_INSPECTION_AUTHORITY_FILE).is_file()
     {
         return Err(ProviderError::failure(

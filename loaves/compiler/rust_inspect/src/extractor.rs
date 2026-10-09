@@ -1969,7 +1969,179 @@ mod tests {
 
     use super::{RustWorkspace, exact_numeric_boundary_display, extract_rust_item};
     use crate::cache::RustMetadataCache;
-    use crate::loader::{OVEN_CARGO_BOOTSTRAP_INSPECTION_MARKER, OVEN_DIRECT_INSPECTION_MARKER};
+    use crate::loader::OVEN_DIRECT_INSPECTION_MARKER;
+
+    /// Prepare real macro output through the receipt-bound native executor, retaining it in the fixture store.
+    ///
+    /// Source snapshots and output receipts use the same production SDK path. A subsequent fixture can reuse its
+    /// identical output across temporary source directories; the inspector independently reacquires its own lease.
+    fn prepare_native_macro_fixture(
+        root: &std::path::Path,
+        driver: &std::path::Path,
+        provider: &std::path::Path,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use oven_rustc::sdk_closure::{ClosureCompileRequest, compile_local_sdk_facet, prepare_closure};
+        let rustc = std::env::var_os("RUSTC")
+            .map(std::path::PathBuf::from)
+            .ok_or("native macro fixture requires its selected Rust compiler")?;
+        let prepared = std::env::var_os("INCAN_INTERNAL_OVEN_EXPLICIT_BAKE_WORKSPACE")
+            .map(std::path::PathBuf::from)
+            .ok_or("native macro fixture requires its managed fixture store")?
+            .join("rust-inspect-native-macros");
+        fs::create_dir_all(&prepared)?;
+        let lock = root.join("native-macro-seed.json");
+        fs::write(&lock, b"{\"schema\":\"incan.oven.loaf-resolution/2\",\"units\":[]}")?;
+        let target = oven_rustc::rustc::rustc_host_target(&rustc)?;
+        let mut closure = prepare_closure(&ClosureCompileRequest {
+            primary: &[],
+            lock: &lock,
+            blobs: root,
+            output: &prepared,
+            rustc: &rustc,
+            index: root,
+            index_commit: "ee71d3e50de10d4fd7d8f817e0b1df04885bddb0",
+            target: &target,
+            profile: "debug",
+        })?;
+        for (project, domain) in [(driver, "host"), (provider, "target"), (root, "target")] {
+            compile_local_sdk_facet(&mut closure, project, &[], domain, &prepared, &rustc)?;
+        }
+        closure.require_complete()?;
+        let graph = closure.inspection_project();
+        let crates = graph["crates"]
+            .as_array()
+            .ok_or("native macro fixture has no source graph")?;
+        let mut sources = Vec::new();
+        let mut macros = Vec::new();
+        for (unit, record) in closure.units().iter().zip(crates) {
+            let source_root = unit.source_root();
+            assert_eq!(
+                record["env"]["CARGO_MANIFEST_DIR"].as_str(),
+                source_root.to_str(),
+                "macro queries must use the retained source owner instead of a publisher staging directory"
+            );
+            let source_digest = crate::loader::digest_oven_source_tree(&source_root)?;
+            sources.push(crate::loader::OvenInspectionRegistrySource {
+                package: unit.binding().loaf.clone(),
+                version: unit.binding().version.clone(),
+                registry: "registry+https://example.invalid/native-fixtures".to_string(),
+                checksum: source_digest.clone(),
+                features: unit.binding().features.clone(),
+                source_root,
+                source_digest,
+            });
+            if record["is_proc_macro"].as_bool() == Some(true) {
+                let artifact = unit.native_artifact()?;
+                macros.push(crate::loader::OvenInspectionProcMacro {
+                    root_module: record["root_module"]
+                        .as_str()
+                        .map(std::path::PathBuf::from)
+                        .ok_or("native macro fixture omitted its source module")?,
+                    store: prepared.join("store"),
+                    identity: artifact.store_identity,
+                    receipt_identity: artifact.receipt_identity,
+                    relative_path: artifact.relative_path,
+                    digest: artifact.digest,
+                });
+            }
+        }
+        crate::loader::write_oven_inspection_source_authority(root, sources)?;
+        crate::loader::write_oven_inspection_proc_macro_authority(root, macros)?;
+        fs::write(
+            root.join(crate::loader::OVEN_DIRECT_LOAF_PROJECT_FILE),
+            serde_json::to_vec_pretty(&graph)?,
+        )?;
+        Ok(())
+    }
+
+    /// Keep admission failures distinct from ordinary missing expansion: no unowned library reaches a server.
+    fn assert_native_macro_authority_rejections(root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+        let path = root.join(crate::loader::OVEN_DIRECT_PROC_MACRO_AUTHORITY_FILE);
+        let bytes = fs::read(&path)?;
+        let authority: serde_json::Value = serde_json::from_slice(&bytes)?;
+        for (field, replacement, expected) in [
+            (
+                "digest",
+                "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "coordinates disagree",
+            ),
+            (
+                "receipt_identity",
+                "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "coordinates disagree",
+            ),
+            ("relative_path", "missing_macro.dylib", "coordinates disagree"),
+            ("relative_path", "../unowned_macro.dylib", "owner-relative"),
+            ("root_module", "src/lib.rs", ""),
+        ] {
+            let mut invalid = authority.clone();
+            // The source-owner mismatch uses the existing consumer source, not a nonexistent path.
+            invalid["macros"][0][field] = if field == "root_module" {
+                serde_json::json!(root.join(replacement).canonicalize()?)
+            } else {
+                serde_json::json!(replacement)
+            };
+            fs::write(&path, serde_json::to_vec_pretty(&invalid)?)?;
+            let rejected = RustWorkspace::load(root, &|_| ());
+            assert!(
+                matches!(rejected, Err(crate::error::RustMetadataError::LoadWorkspace { message, .. })
+                if message.contains(if expected.is_empty() { "coordinates disagree" } else { expected })),
+                "native macro admission must reject changed {field} before workspace loading"
+            );
+        }
+        fs::write(&path, bytes)?;
+        let entry = &authority["macros"][0];
+        let store = oven_store::store::OvenStore::new(
+            entry["store"].as_str().ok_or("fixture macro has no store")?,
+            oven_store::store::OvenStoreLimits::new(4 << 30, 4 << 30, 4 << 30),
+        );
+        let owners = store.select_payloads_for_execution(&[entry["identity"]
+            .as_str()
+            .ok_or("fixture macro has no identity")?
+            .to_string()])?;
+        let owner = owners.first().ok_or("fixture macro has no admitted owner")?;
+        let graph: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join(crate::loader::OVEN_DIRECT_LOAF_PROJECT_FILE))?)?;
+        for (compiler, host) in [
+            (
+                "rustc incompatible-fixture-compiler",
+                owner.manifest.intent.target.as_str(),
+            ),
+            (owner.manifest.intent.toolchain.as_str(), "incompatible-fixture-host"),
+        ] {
+            let mut selected_graph = graph.clone();
+            let rejected =
+                crate::loader::select_native_macros_for_test_compiler(root, &mut selected_graph, compiler, host);
+            assert!(
+                matches!(rejected, Err(crate::error::RustMetadataError::LoadWorkspace { message, .. })
+                if message.contains("coordinates disagree")),
+                "an admitted macro from another compiler or host must never reach the macro server"
+            );
+            assert_eq!(
+                selected_graph, graph,
+                "rejected admission must leave executable paths absent"
+            );
+        }
+        Ok(())
+    }
+
+    /// A live inspector independently protects its macro output even after the fixture publisher releases it.
+    fn assert_inspector_holds_macro_lease(root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+        let authority: serde_json::Value = serde_json::from_slice(&fs::read(
+            root.join(crate::loader::OVEN_DIRECT_PROC_MACRO_AUTHORITY_FILE),
+        )?)?;
+        let entry = &authority["macros"][0];
+        let identity = entry["identity"].as_str().ok_or("fixture macro has no identity")?;
+        let bounded = oven_store::store::OvenStore::new(
+            entry["store"].as_str().ok_or("fixture macro has no store")?,
+            oven_store::store::OvenStoreLimits::new(0, 0, 0),
+        );
+        let preview = bounded.preview_prune()?;
+        assert!(preview.dry_run);
+        assert!(preview.skipped_active_entries.iter().any(|held| held == identity));
+        assert!(!preview.removed_entries.iter().any(|removed| removed == identity));
+        Ok(())
+    }
 
     #[test]
     fn exact_numeric_boundary_display_preserves_widths() {
@@ -2223,7 +2395,10 @@ struct __IncanDeriveProbe3;
 "#,
         )?;
 
+        prepare_native_macro_fixture(tmp.path(), &driver, &provider)?;
+        assert_native_macro_authority_rejections(tmp.path())?;
         let expanded_workspace = RustWorkspace::load_with_options(tmp.path(), &|_| {}, true)?;
+        assert_inspector_holds_macro_lease(tmp.path())?;
         let generated = extract_rust_item(&expanded_workspace, "tuple_provider_probe::GeneratedByDriver")?;
         assert!(matches!(generated.kind, RustItemKind::Type(_)));
         let widget = extract_rust_item(&expanded_workspace, "tuple_provider_probe::Widget")?;
@@ -2335,7 +2510,7 @@ struct __IncanDeriveProbe3;
         assert_eq!(
             expanded_info.mutable_reference_type_params[0].tuple_composition_arities,
             [2, 3],
-            "Cargo-authorized proc-macro expansion must expose the generated tuple impls through HIR"
+            "receipt-owned native proc-macro expansion must expose the generated tuple impls through HIR"
         );
         let defaulted = extract_rust_item(&expanded_workspace, "tuple_provider_probe::Defaulted")?;
         let RustItemKind::Type(defaulted_info) = &defaulted.kind else {
@@ -2346,10 +2521,6 @@ struct __IncanDeriveProbe3;
             [Some("tuple_provider_probe::Mutable".to_string())],
             "HIR metadata must retain canonical declared default type arguments"
         );
-        fs::write(
-            tmp.path().join(OVEN_CARGO_BOOTSTRAP_INSPECTION_MARKER),
-            b"test Cargo semantic bootstrap\n",
-        )?;
 
         let assert_contract = |metadata: &incan_lang::interop::RustItemMetadata| -> Result<(), std::io::Error> {
             let RustItemKind::Type(info) = &metadata.kind else {
@@ -2388,13 +2559,13 @@ struct __IncanDeriveProbe3;
             };
 
         let cache = RustMetadataCache::new();
-        let metadata = cache.get_or_extract(tmp.path(), "tuple_provider_probe::FooBar", &|_| ())?;
+        let metadata = cache.get_or_extract_complete(tmp.path(), "tuple_provider_probe::FooBar", &|_| ())?;
         assert_contract(metadata.as_ref())?;
-        let widget = cache.get_or_extract(tmp.path(), "tuple_provider_probe::Widget", &|_| ())?;
+        let widget = cache.get_or_extract_complete(tmp.path(), "tuple_provider_probe::Widget", &|_| ())?;
         assert_widget_contract(widget.as_ref())?;
-        let defaulted = cache.get_or_extract(tmp.path(), "tuple_provider_probe::Defaulted", &|_| ())?;
+        let defaulted = cache.get_or_extract_complete(tmp.path(), "tuple_provider_probe::Defaulted", &|_| ())?;
         assert_defaulted_contract(defaulted.as_ref())?;
-        let component = cache.get_or_extract(tmp.path(), "tuple_provider_probe::Component", &|_| ())?;
+        let component = cache.get_or_extract_complete(tmp.path(), "tuple_provider_probe::Component", &|_| ())?;
         let RustItemKind::Trait(component_info) = &component.kind else {
             return Err(std::io::Error::other("expected cached Component trait metadata").into());
         };
@@ -2406,7 +2577,8 @@ struct __IncanDeriveProbe3;
                 .map(|implementation| implementation.path.as_str()),
             Some("tuple_provider_probe::component::Component")
         );
-        let misleading_trait = cache.get_or_extract(tmp.path(), "tuple_provider_probe::Misleading", &|_| ())?;
+        let misleading_trait =
+            cache.get_or_extract_complete(tmp.path(), "tuple_provider_probe::Misleading", &|_| ())?;
         let RustItemKind::Trait(misleading_trait_info) = &misleading_trait.kind else {
             return Err(std::io::Error::other("expected cached same-spelling Misleading trait metadata").into());
         };
@@ -2418,7 +2590,7 @@ struct __IncanDeriveProbe3;
                 .map(|implementation| implementation.path.as_str()),
             Some("tuple_provider_probe::Other")
         );
-        let component_macro = cache.get_or_extract(tmp.path(), "tuple_driver::Component", &|_| ())?;
+        let component_macro = cache.get_or_extract_complete(tmp.path(), "tuple_driver::Component", &|_| ())?;
         let RustItemKind::Macro(component_macro_info) = &component_macro.kind else {
             return Err(std::io::Error::other("expected cached Component macro metadata").into());
         };
@@ -2464,7 +2636,6 @@ struct __IncanDeriveProbe3;
         );
 
         drop(expanded_workspace);
-        fs::remove_file(tmp.path().join(OVEN_CARGO_BOOTSTRAP_INSPECTION_MARKER))?;
         fs::write(
             tmp.path().join(OVEN_DIRECT_INSPECTION_MARKER),
             b"test completed direct inspection\n",
