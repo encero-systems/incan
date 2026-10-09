@@ -1014,6 +1014,9 @@ impl Place {
                 PlaceElem::UnionMember { ty } => {
                     let _ = write!(&mut out, ".union[{ty}]");
                 }
+                PlaceElem::OptionPayload { option_type, payload_type } => {
+                    let _ = write!(&mut out, ".some[{option_type}->{payload_type}]");
+                }
                 PlaceElem::Index(operand) => {
                     let _ = write!(&mut out, "[{}]", operand.render_snapshot());
                 }
@@ -1066,6 +1069,14 @@ pub enum PlaceElem {
     UnionMember {
         /// Exact alias-expanded member type proved at this source read.
         ty: IncanType,
+    },
+    /// A read whose checked narrowed type proves the retained Option stores its Some payload. Container and payload
+    /// types are both retained so publication and lowering validate this step rather than infer it from control flow.
+    OptionPayload {
+        /// Exact checked type of the physical Option storage before this projection.
+        option_type: IncanType,
+        /// Exact checked type of its Some payload before any subsequent union-member projection.
+        payload_type: IncanType,
     },
 }
 

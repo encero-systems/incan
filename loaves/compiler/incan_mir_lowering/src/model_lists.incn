@@ -17,20 +17,24 @@ pub def model_list_read(mut builder: Builder, source: &RustPlace, span: SourceSp
             root = builder.locals[int(local.index()) + 1 + builder.local_offset].ty
             match root:
                 PlanType.Model(_owner, _name) => pass
+                PlanType.Enum(_owner, _name) => pass
                 PlanType.ModelRef(_owner, _name) => pass
                 PlanType.ModelMutRef(_owner, _name) => pass
                 _ => return Ok(None)
     mut count = 0
     for projection in source.projection:
         match projection:
-            PlaceElem.Field(name=_name, canonical=_canonical, structural=_structural) =>
-                count += 1
+            PlaceElem.Field(name=_name, canonical=_canonical, structural=_structural) => count += 1
+            PlaceElem.OptionPayload(option_type=_container, payload_type=_payload) => count += 1
+            PlaceElem.UnionMember(ty=_member) => count += 1
             _ => break
     if count == len(source.projection):
         return Ok(None)
     if count == 0:
         return Err("unsupported Body IR model indexing without a field")
-    mut place = model_prefix(builder.nominals, builder.locals[builder.local_offset:], source, count, span)?
+    mut place = model_prefix(
+        builder.nominals, builder.locals[builder.local_offset:], source, count, span, builder.enums, builder.unions, builder.intrinsics,
+    )?
     place.local += builder.local_offset
     for position in range(count, len(source.projection)):
         match source.projection[position]:
@@ -48,6 +52,7 @@ def model_element(ty: PlanType) -> bool:
     """Nominal list elements are cloned owners, while primitive elements remain copyable."""
     match ty:
         PlanType.Model(_owner, _name) => return true
+        PlanType.Enum(_owner, _name) => return true
         _ => return false
 
 

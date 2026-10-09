@@ -296,6 +296,13 @@ impl<'a> PublicationAudit<'a> {
                 } => {}
                 PlaceElem::Field { .. } => return Err(CoverageReason::UnresolvedReference),
                 PlaceElem::UnionMember { ty } => self.ty(ty)?,
+                PlaceElem::OptionPayload {
+                    option_type,
+                    payload_type,
+                } => {
+                    self.ty(option_type)?;
+                    self.ty(payload_type)?;
+                }
                 PlaceElem::Index(value) => self.operand(value)?,
                 PlaceElem::Slice { start, end, step } => {
                     for value in [start, end, step].into_iter().flatten() {

@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use crate::error::PlanError;
 use crate::plan::{
     BinaryOp, Callee, CalleeKind, Constant, Function, ListLeaf, Operand, OperandKind, Place, Plan, PlanType,
-    Projection, RvalueKind, SizedNumeric, SourceSpan, StatementKind, TerminatorKind, UnaryOp, Unwind,
+    Projection, RvalueKind, SizedNumeric, SourceSpan, StatementKind, TerminatorKind, UnaryOp, Unwind, list_leaf_type,
     tuple_element_type,
 };
 
@@ -118,6 +118,7 @@ enum Leaf {
     Str,
     Tuple(Vec<Scalar>),
     Model(i64),
+    Enum(i64),
     U8,
     Unit,
     Decimal,
@@ -139,6 +140,7 @@ impl Leaf {
                     .collect(),
             ),
             ListLeaf::Model(index, _) => Leaf::Model(*index),
+            ListLeaf::Enum(index, _) => Leaf::Enum(*index),
             ListLeaf::U8 => Leaf::U8,
             ListLeaf::Unit => Leaf::Unit,
             ListLeaf::Decimal => Leaf::Decimal,
@@ -245,6 +247,7 @@ pub fn validate(plan: &Plan) -> Result<(), PlanError> {
     }
     validate_models(plan)?;
     validate_enums(plan)?;
+    validate_value_layouts(plan)?;
     let mut paths = BTreeSet::new();
     for external in &plan.externals {
         span(&external.span)?;
@@ -395,7 +398,10 @@ fn field_owner(function: &Function, ty: Scalar, dereference: bool) -> Result<Sca
     }
     match ty {
         Scalar::ModelRef(owner) | Scalar::ModelMutRef(owner) => Ok(Scalar::Model(owner)),
-        _ => Err(invalid(function, "field dereference requires a nominal receiver reference")),
+        _ => Err(invalid(
+            function,
+            "field dereference requires a nominal receiver reference",
+        )),
     }
 }
 
@@ -407,6 +413,7 @@ fn projected_field(
     slot: i64,
     field_type: &PlanType,
 ) -> Result<Scalar, PlanError> {
+    validate_model_type(plan, field_type)?;
     let expected = match owner {
         Scalar::Tuple(elements) => usize::try_from(slot)
             .ok()
@@ -421,10 +428,38 @@ fn projected_field(
                 .ok_or_else(|| invalid(function, "unknown model field"))?;
             scalar(&field.ty)
         }
-        _ => return Err(invalid(function, "field projection requires a matching nominal or tuple owner")),
+        _ => {
+            return Err(invalid(
+                function,
+                "field projection requires a matching nominal or tuple owner",
+            ));
+        }
     };
     require(function, scalar(field_type), &expected, "projected field type")?;
     Ok(expected)
+}
+
+/// Validate each enum downcast against the exact owner, active variant slot, and retained payload field type.
+fn projected_variant_field(
+    plan: &Plan,
+    function: &Function,
+    owner: Scalar,
+    variant: i64,
+    slot: i64,
+    field_type: &PlanType,
+) -> Result<Scalar, PlanError> {
+    validate_model_type(plan, field_type)?;
+    let Scalar::Enum(owner) = owner else {
+        return Err(invalid(function, "variant projection requires an enum owner"));
+    };
+    let declaration = enum_declaration(plan, owner).ok_or_else(|| invalid(function, "unknown enum owner"))?;
+    let field = usize::try_from(variant)
+        .ok()
+        .and_then(|index| declaration.variants.get(index))
+        .and_then(|variant| usize::try_from(slot).ok().and_then(|index| variant.fields.get(index)))
+        .ok_or_else(|| invalid(function, "unknown enum payload field"))?;
+    require(function, scalar(field_type), scalar(field), "enum payload projection")?;
+    Ok(scalar(field))
 }
 
 /// Resolve checked arithmetic, list dereferences, and nominal projections, verifying reference shape and canonical
@@ -435,6 +470,7 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
     match &value.projection {
         Projection::Whole => Ok(ty),
         Projection::VariantField(variant, slot, field_type) => {
+            validate_model_type(plan, field_type)?;
             let Scalar::Enum(owner) = ty else {
                 return Err(invalid(function, "variant projection requires an enum owner"));
             };
@@ -477,7 +513,13 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
             }
             let mut owner = field_owner(function, ty, matches!(value.projection, Projection::DerefFields(_)))?;
             for field in fields {
-                owner = projected_field(plan, function, owner, field.slot, &field.ty)?;
+                owner = match field.variant {
+                    -1 => projected_field(plan, function, owner, field.slot, &field.ty)?,
+                    variant if variant >= 0 => {
+                        projected_variant_field(plan, function, owner, variant, field.slot, &field.ty)?
+                    }
+                    _ => return Err(invalid(function, "invalid field path variant")),
+                };
             }
             Ok(owner)
         }
@@ -611,7 +653,12 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             if !matches!(value.kind, OperandKind::Literal(Constant::Text(_))) {
                 return Err(invalid(function, "FrozenStr construction requires static literal text"));
             }
-            require(function, operand(plan, function, value)?, Scalar::StrRef, "frozen literal")?;
+            require(
+                function,
+                operand(plan, function, value)?,
+                Scalar::StrRef,
+                "frozen literal",
+            )?;
             Ok(Scalar::FrozenStr)
         }
         RvalueKind::NumericCast(value, source, target) => {
@@ -982,6 +1029,15 @@ fn validate_array_length(function: &Function, ty: Scalar) -> Result<(), PlanErro
         Scalar::Dict(_, Leaf::Tuple(_))
         | Scalar::DictRef(_, Leaf::Tuple(_))
         | Scalar::DictMutRef(_, Leaf::Tuple(_)) => Err(invalid(function, "tuple dictionary values are not admitted")),
+        Scalar::Set(Leaf::Enum(_))
+        | Scalar::SetRef(Leaf::Enum(_))
+        | Scalar::SetMutRef(Leaf::Enum(_))
+        | Scalar::Dict(Leaf::Enum(_), _)
+        | Scalar::DictRef(Leaf::Enum(_), _)
+        | Scalar::DictMutRef(Leaf::Enum(_), _) => Err(invalid(
+            function,
+            "enum hashed keys require retained Eq and Hash authority",
+        )),
         Scalar::Set(Leaf::Model(_))
         | Scalar::SetRef(Leaf::Model(_))
         | Scalar::SetMutRef(Leaf::Model(_))
@@ -1362,6 +1418,25 @@ fn model(plan: &Plan, index: i64) -> Option<&crate::plan::ModelDeclaration> {
 
 /// Require flat scalar/text tuple layouts and consistent nominal declaration identities.
 fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
+    match ty {
+        PlanType::List(leaf, _)
+        | PlanType::ListRef(leaf, _)
+        | PlanType::ListMutRef(leaf, _)
+        | PlanType::Set(leaf)
+        | PlanType::SetRef(leaf)
+        | PlanType::SetMutRef(leaf)
+        | PlanType::Generator(leaf, _)
+        | PlanType::GeneratorMutRef(leaf, _)
+        | PlanType::GeneratorYield(leaf, _)
+        | PlanType::GeneratorYieldRef(leaf, _) => {
+            validate_model_type(plan, &list_leaf_type(leaf.clone()))?;
+        }
+        PlanType::Dict(key, value) | PlanType::DictRef(key, value) | PlanType::DictMutRef(key, value) => {
+            validate_model_type(plan, &list_leaf_type(key.clone()))?;
+            validate_model_type(plan, &list_leaf_type(value.clone()))?;
+        }
+        _ => {}
+    }
     if matches!(ty, PlanType::Tuple(_)) && !source_signature_type(&scalar(ty)) {
         return Err(PlanError::Invalid {
             function: "tuple".into(),
@@ -1456,7 +1531,7 @@ fn valid_nominal_derives(derives: &[String], tuple: bool) -> bool {
 /// Validate named model layouts and single-slot newtypes, rejecting cyclic layouts before invoking rustc.
 fn validate_models(plan: &Plan) -> Result<(), PlanError> {
     let mut names: BTreeSet<_> = plan.functions.iter().map(|function| function.name.clone()).collect();
-    for (index, declaration) in plan.models.iter().enumerate() {
+    for declaration in &plan.models {
         span(&declaration.span)?;
         let tuple = declaration.fields.len() == 1 && declaration.fields[0].name == "0";
         let derives_valid = valid_nominal_derives(&declaration.derives, tuple);
@@ -1491,14 +1566,6 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
                 });
             }
             validate_model_type(plan, &field.ty)?;
-            if let PlanType::Model(owner, _) = &field.ty {
-                if usize::try_from(*owner).ok().is_some_and(|owner| owner >= index) {
-                    return Err(PlanError::Invalid {
-                        function: declaration.name.clone(),
-                        reason: "unsupported recursive or forward model field".into(),
-                    });
-                }
-            }
         }
     }
     Ok(())
@@ -1539,7 +1606,7 @@ fn enum_declaration(plan: &Plan, index: i64) -> Option<&crate::plan::EnumDeclara
     usize::try_from(index).ok().and_then(|index| plan.enums.get(index))
 }
 
-/// Reject malformed layouts, unsupported derives and forward or recursive payload layouts before rustc runs.
+/// Reject malformed enum layouts and unsupported derives; validate exact forward references before size-cycle checks.
 fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
     let mut names: BTreeSet<_> = plan
         .functions
@@ -1547,7 +1614,7 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
         .map(|value| &value.name)
         .chain(plan.models.iter().map(|value| &value.name))
         .collect();
-    for (index, declaration) in plan.enums.iter().enumerate() {
+    for declaration in &plan.enums {
         span(&declaration.span)?;
         let error = || PlanError::Invalid {
             function: declaration.name.clone(),
@@ -1598,13 +1665,66 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
                 if !source_signature_type(&scalar(field)) {
                     return Err(error());
                 }
-                if let PlanType::Enum(owner, _) = field {
-                    if usize::try_from(*owner).ok().is_none_or(|owner| owner >= index) {
-                        return Err(error());
-                    }
-                }
             }
         }
     }
+    Ok(())
+}
+
+/// Reject infinitely sized by-value nominal/enum layouts while allowing cycles behind collections and references.
+fn validate_value_layouts(plan: &Plan) -> Result<(), PlanError> {
+    let mut visiting = BTreeSet::new();
+    let mut complete = BTreeSet::new();
+    for (index, declaration) in plan.models.iter().enumerate() {
+        visit_value_layout(plan, false, index, &declaration.name, &mut visiting, &mut complete)?;
+    }
+    for (index, declaration) in plan.enums.iter().enumerate() {
+        visit_value_layout(plan, true, index, &declaration.name, &mut visiting, &mut complete)?;
+    }
+    Ok(())
+}
+
+/// Walk only direct ownership edges; collection leaves are validated separately and do not affect native size.
+fn visit_value_layout(
+    plan: &Plan,
+    is_enum: bool,
+    index: usize,
+    name: &str,
+    visiting: &mut BTreeSet<(bool, usize)>,
+    complete: &mut BTreeSet<(bool, usize)>,
+) -> Result<(), PlanError> {
+    let key = (is_enum, index);
+    if complete.contains(&key) {
+        return Ok(());
+    }
+    if !visiting.insert(key) {
+        return Err(PlanError::Invalid {
+            function: name.into(),
+            reason: "recursive by-value layout".into(),
+        });
+    }
+    let fields: Vec<&PlanType> = if is_enum {
+        plan.enums[index]
+            .variants
+            .iter()
+            .flat_map(|variant| &variant.fields)
+            .collect()
+    } else {
+        plan.models[index].fields.iter().map(|field| &field.ty).collect()
+    };
+    for field in fields {
+        let (owner_is_enum, owner, owner_name) = match field {
+            PlanType::Enum(owner, name) => (true, *owner, name),
+            PlanType::Model(owner, name) => (false, *owner, name),
+            _ => continue,
+        };
+        let owner = usize::try_from(owner).map_err(|_| PlanError::Invalid {
+            function: owner_name.clone(),
+            reason: "invalid by-value layout owner".into(),
+        })?;
+        visit_value_layout(plan, owner_is_enum, owner, owner_name, visiting, complete)?;
+    }
+    visiting.remove(&key);
+    complete.insert(key);
     Ok(())
 }

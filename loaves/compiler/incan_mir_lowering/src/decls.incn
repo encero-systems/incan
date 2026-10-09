@@ -47,7 +47,7 @@ def static_list_accessors(leaf: ListLeaf) -> Result[tuple[str, str], str]:
     return Ok((f"incan_native_runtime::read_static_{name}_list", f"incan_native_runtime::write_static_{name}_list"))
 
 
-pub def lower_model_declarations(module: &BodyIrModule, file: str) -> Result[list[ModelDeclaration], str]:
+pub def lower_model_declarations(module: &BodyIrModule, file: str, intrinsics: list[EnumDeclaration] = []) -> Result[list[ModelDeclaration], str]:
     """Retain checked field layout and derives for admitted plain model, class, and newtype declarations."""
     unions = collect_unions(module)
     mut models: list[ModelDeclaration] = []
@@ -64,7 +64,7 @@ pub def lower_model_declarations(module: &BodyIrModule, file: str) -> Result[lis
                         module.enum_declarations,
                         unions,
                         declaration.field_types[slot],
-                        [],
+                        intrinsics,
                     )?,
                     span=SourceSpan(file=file, line=1, column=1),
                 ),

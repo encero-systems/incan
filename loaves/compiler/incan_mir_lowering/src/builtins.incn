@@ -41,6 +41,7 @@ pub def list_call(
     terminate_call(builder, CalleeKind.Instantiated(path, element), arguments, destination, span)
     match result:
         PlanType.Model(_index, _name) => builder.owned.append(destination.local)
+        PlanType.Enum(_index, _name) => builder.owned.append(destination.local)
         _ =>
             if result == PlanType.String or is_owned_collection(result) or tuple_has_owners(result):
                 builder.owned.append(destination.local)
