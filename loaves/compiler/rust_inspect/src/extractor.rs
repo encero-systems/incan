@@ -879,14 +879,59 @@ fn expanded_adt_derived_traits_with_probe_predicates(
 ///
 /// The generated inspection root invokes each requested derive on a distinct top-level probe using the exact
 /// canonical macro path. Matching that compiler-authored attribute supplies provenance without assuming that a macro
-/// and any trait it implements share a name or module. Dependency crates cannot contribute evidence because their
-/// crates have reverse dependencies and therefore are not graph heads.
+/// and any trait it implements share a name or module. Crates with reverse dependencies cannot contribute probe
+/// evidence because the traversal admits only graph heads.
 fn macro_derive_probe_outputs(canonical_path: &str, db: &RootDatabase) -> Vec<RustExpandedDeriveTrait> {
+    let mut work = MacroDeriveProbeWork {
+        requests: 1,
+        head_scope_visits: 0,
+    };
+    let outputs = macro_derive_probe_outputs_inner(canonical_path, db, &mut work);
+    tracing::debug!(
+        canonical_path,
+        requests = work.requests,
+        head_scope_visits = work.head_scope_visits,
+        expanded_traits = outputs.len(),
+        "derive probe work completed"
+    );
+    #[cfg(test)]
+    MACRO_DERIVE_PROBE_WORK.with(|counts| {
+        let previous = counts.get();
+        counts.set(MacroDeriveProbeWork {
+            requests: previous.requests + work.requests,
+            head_scope_visits: previous.head_scope_visits + work.head_scope_visits,
+        });
+    });
+    outputs
+}
+
+/// Count actual probe requests and HIR graph-head scope visits, rather than cache-map observations.
+#[derive(Clone, Copy, Default)]
+struct MacroDeriveProbeWork {
+    requests: usize,
+    head_scope_visits: usize,
+}
+
+#[cfg(test)]
+std::thread_local! {
+    /// Isolate synchronous extraction work from concurrently running native tests.
+    static MACRO_DERIVE_PROBE_WORK: std::cell::Cell<MacroDeriveProbeWork> = const {
+        std::cell::Cell::new(MacroDeriveProbeWork { requests: 0, head_scope_visits: 0 })
+    };
+}
+
+/// Gather matching probe expansions while counting each actual HIR graph-head scope visit.
+fn macro_derive_probe_outputs_inner(
+    canonical_path: &str,
+    db: &RootDatabase,
+    work: &mut MacroDeriveProbeWork,
+) -> Vec<RustExpandedDeriveTrait> {
     let expected_attribute = format!("#[derive({canonical_path})]");
     for krate in Crate::all(db) {
         if krate.is_builtin(db) || !krate.reverse_dependencies(db).is_empty() {
             continue;
         }
+        work.head_scope_visits += 1;
         for (_, definition) in krate.root_module(db).scope(db, None) {
             let ScopeDef::ModuleDef(ModuleDef::Adt(adt)) = definition else {
                 continue;
@@ -1627,9 +1672,10 @@ fn module_children(module: Module, db: &RootDatabase) -> RustModuleInfo {
 
 /// Extract a trait's public associated items and any same-path derive-macro expansion contract.
 ///
-/// `derive_path` is the consumer-visible import path rather than the trait definition path because Rust keeps traits
-/// and derive macros in separate namespaces and a facade may re-export them from different crates.
-fn trait_info(tr: Trait, derive_path: &str, db: &RootDatabase, dt: DisplayTarget) -> RustTraitInfo {
+/// `derive_path` is present only when that exact consumer-visible path resolves to a derive macro in the macro
+/// namespace. A facade may re-export the trait and macro from different crates, so the trait's definition path or
+/// final name cannot establish this fact. Ordinary traits need no graph-wide derive-probe search.
+fn trait_info(tr: Trait, derive_path: Option<&str>, db: &RootDatabase, dt: DisplayTarget) -> RustTraitInfo {
     let mut items = Vec::new();
     for item in tr.items(db) {
         match item {
@@ -1666,8 +1712,8 @@ fn trait_info(tr: Trait, derive_path: &str, db: &RootDatabase, dt: DisplayTarget
     // Traits and derive macros live in separate Rust namespaces. A public facade can therefore re-export a trait
     // from its defining crate and a same-spelling derive macro from another crate. Probe the path the consumer
     // actually imported, not the trait's definition path, because only the former preserves that macro namespace.
-    let derive_macro = (!derive_path.is_empty())
-        .then(|| macro_derive_probe_outputs(derive_path, db))
+    let derive_macro = derive_path
+        .map(|path| macro_derive_probe_outputs(path, db))
         .filter(|outputs| !outputs.is_empty())
         .map(|expanded_traits| RustMacroInfo { expanded_traits });
     RustTraitInfo { items, derive_macro }
@@ -1686,11 +1732,48 @@ fn find_crate(workspace: &RustWorkspace, crate_name: &str) -> Option<Crate> {
 /// rust-analyzer's direct path resolver is preferred. The scope walk is the compatibility fallback needed for facade
 /// paths whose final spelling occupies more than one Rust namespace.
 fn resolve_module_def(db: &RootDatabase, krate: Crate, segments: &[Name]) -> Result<ModuleDef, RustMetadataError> {
+    resolve_rust_path(db, krate, segments).map(|resolved| resolved.definition)
+}
+
+/// Retain the selected definition and a same-path derive macro from one canonical namespace resolution.
+struct ResolvedRustPath {
+    definition: ModuleDef,
+    derive_macro: Option<ra_ap_hir::Macro>,
+}
+
+/// Select a real derive macro from resolved namespaces without inferring it from a trait name or source attribute.
+fn resolved_derive_macro(
+    mut definitions: impl Iterator<Item = ModuleDef>,
+    db: &RootDatabase,
+) -> Option<ra_ap_hir::Macro> {
+    definitions.find_map(|definition| match definition {
+        ModuleDef::Macro(macro_) if macro_.is_derive(db) => Some(macro_),
+        _ => None,
+    })
+}
+
+/// Resolve all final namespaces through the existing HIR resolver and facade compatibility scope walk.
+///
+/// Preserve the first selected definition while retaining any derive macro under that exact imported path. This
+/// avoids scanning unrelated graph heads to prove that a plain trait has no associated derive contract.
+fn resolve_rust_path(
+    db: &RootDatabase,
+    krate: Crate,
+    segments: &[Name],
+) -> Result<ResolvedRustPath, RustMetadataError> {
     let root = krate.root_module(db);
     if let Some(mut it) = root.resolve_mod_path(db, segments.iter().cloned())
         && let Some(first) = it.next()
     {
-        return Ok(first.into_module_def());
+        let definition = first.into_module_def();
+        let derive_macro = resolved_derive_macro(
+            std::iter::once(definition).chain(it.map(|item| item.into_module_def())),
+            db,
+        );
+        return Ok(ResolvedRustPath {
+            definition,
+            derive_macro,
+        });
     }
 
     let mut module = root;
@@ -1705,10 +1788,20 @@ fn resolve_module_def(db: &RootDatabase, krate: Crate, segments: &[Name]) -> Res
             let Some((_, scope_def)) = matches.next() else {
                 return Err(RustMetadataError::PathNotResolved(segments_display(segments)));
             };
-            return match scope_def {
-                ScopeDef::ModuleDef(def) => Ok(def),
-                _ => Err(RustMetadataError::PathNotResolved(segments_display(segments))),
+            let ScopeDef::ModuleDef(definition) = scope_def else {
+                return Err(RustMetadataError::PathNotResolved(segments_display(segments)));
             };
+            let derive_macro = resolved_derive_macro(
+                std::iter::once(definition).chain(matches.filter_map(|(_, scope_def)| match scope_def {
+                    ScopeDef::ModuleDef(definition) => Some(definition),
+                    _ => None,
+                })),
+                db,
+            );
+            return Ok(ResolvedRustPath {
+                definition,
+                derive_macro,
+            });
         }
 
         let next_module = matches.find_map(|(_, scope_def)| match scope_def {
@@ -1877,7 +1970,8 @@ fn extract_rust_item_inner(
         find_crate(workspace, crate_name).ok_or_else(|| RustMetadataError::CrateNotFound(crate_name.to_owned()))?;
     let dt = DisplayTarget::from_crate(db, krate.base());
     let authorized_trait_crates = crate_dependency_closure(krate, db);
-    let def = resolve_module_def(db, krate, &segments)?;
+    let resolved = resolve_rust_path(db, krate, &segments)?;
+    let def = resolved.definition;
     let vis = map_visibility(def.visibility(db));
     let kind = match def {
         ModuleDef::Module(m) => RustItemKind::Module(module_children(m, db)),
@@ -1925,7 +2019,15 @@ fn extract_rust_item_inner(
         ModuleDef::Static(s) => RustItemKind::Constant {
             type_display: source_static_type_identity_display(s, db).unwrap_or_else(|| format_ty(&s.ty(db), db, dt)),
         },
-        ModuleDef::Trait(t) => RustItemKind::Trait(trait_info(t, canonical_path, db, dt)),
+        ModuleDef::Trait(t) => {
+            let derive_path = resolved.derive_macro.map(|_| canonical_path);
+            tracing::debug!(
+                canonical_path,
+                has_derive_macro = derive_path.is_some(),
+                "trait derive namespace resolved"
+            );
+            RustItemKind::Trait(trait_info(t, derive_path, db, dt))
+        }
         ModuleDef::TypeAlias(a) => {
             let ty = a.ty(db);
             let generics = source_type_alias_generics(a, db);
@@ -2213,6 +2315,68 @@ impl Codec {
         Ok(())
     }
 
+    /// Drain work observed by this test thread at the real derive-probe traversal boundaries.
+    fn take_macro_derive_probe_work() -> super::MacroDeriveProbeWork {
+        super::MACRO_DERIVE_PROBE_WORK.with(std::cell::Cell::take)
+    }
+
+    /// Ordinary traits and function-like macro names must not demand derive-probe graph-head scopes.
+    #[test]
+    fn dev7_trait_derive_namespace_gate_avoids_unrelated_head_scopes() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        fs::create_dir_all(tmp.path().join("src"))?;
+        fs::write(
+            tmp.path().join("loaf.toml"),
+            "[project]\nname='plain-trait-probe'\nversion='0.1.0'\n[rust]\nname='plain_trait_probe'\ntype='lib'\nedition='2024'\n",
+        )?;
+        fs::write(tmp.path().join(OVEN_DIRECT_INSPECTION_MARKER), b"direct\n")?;
+        fs::write(
+            tmp.path().join("src/lib.rs"),
+            r#"pub trait Plain { fn encode(&self) -> u8; }
+#[macro_export]
+macro_rules! Plain { () => {}; }
+pub struct __IncanDeriveProbeUnrelated;
+"#,
+        )?;
+        let workspace = RustWorkspace::load(tmp.path(), &|_| ())?;
+        take_macro_derive_probe_work();
+        let std_trait = extract_rust_item(&workspace, "std::io::Read")?;
+        let RustItemKind::Trait(info) = std_trait.kind else {
+            return Err(std::io::Error::other("expected std Read trait metadata").into());
+        };
+        assert!(info.derive_macro.is_none());
+        assert!(
+            info.items.iter().any(|item| matches!(
+                item,
+                incan_lang::interop::RustTraitAssoc::Function { name, .. } if name == "read"
+            )),
+            "ordinary trait methods must remain complete"
+        );
+        let work = take_macro_derive_probe_work();
+        assert_eq!(work.requests, 0);
+        assert_eq!(
+            work.head_scope_visits, 0,
+            "a std trait must not inspect the unrelated project head"
+        );
+
+        let plain = extract_rust_item(&workspace, "plain_trait_probe::Plain")?;
+        let RustItemKind::Trait(info) = plain.kind else {
+            return Err(std::io::Error::other("expected same-path plain trait metadata").into());
+        };
+        assert!(
+            info.derive_macro.is_none(),
+            "a function-like macro is not a derive macro"
+        );
+        assert!(info.items.iter().any(|item| matches!(
+            item,
+            incan_lang::interop::RustTraitAssoc::Function { name, .. } if name == "encode"
+        )));
+        let work = take_macro_derive_probe_work();
+        assert_eq!(work.requests, 0);
+        assert_eq!(work.head_scope_visits, 0);
+        Ok(())
+    }
+
     #[test]
     fn expanded_tuple_contract_flows_through_metadata_and_disk_cache() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
@@ -2379,7 +2543,15 @@ type = "lib"
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
-            r#"pub use tuple_provider_probe::*;
+            r#"extern crate self as tuple_consumer_probe;
+pub use tuple_provider_probe::*;
+pub mod facade {
+    pub use tuple_provider_probe::component::Component;
+    pub use tuple_driver::Component;
+}
+
+#[derive(tuple_consumer_probe::facade::Component)]
+struct __IncanDeriveProbeFacade;
 
 #[derive(tuple_provider_probe::Component)]
 struct __IncanDeriveProbe0;
@@ -2464,6 +2636,34 @@ struct __IncanDeriveProbe3;
         assert!(
             other_info.derive_macro.is_none(),
             "an implemented trait must not acquire macro identity from another spelling"
+        );
+        take_macro_derive_probe_work();
+        let facade = extract_rust_item(&expanded_workspace, "tuple_consumer_probe::facade::Component")?;
+        assert_eq!(
+            facade.definition_path.as_deref(),
+            Some("tuple_provider_probe::component::Component")
+        );
+        let RustItemKind::Trait(facade_info) = facade.kind else {
+            return Err(std::io::Error::other("expected reexported facade trait metadata").into());
+        };
+        let facade_derive = facade_info
+            .derive_macro
+            .as_ref()
+            .and_then(|macro_info| macro_info.expanded_traits.first())
+            .ok_or_else(|| std::io::Error::other("expected exact facade derive-macro output"))?;
+        assert_eq!(facade_derive.path, "tuple_provider_probe::component::Component");
+        assert_eq!(
+            facade_derive
+                .associated_type_bindings
+                .first()
+                .map(|binding| binding.value_path.as_str()),
+            Some("tuple_provider_probe::Mutable")
+        );
+        let work = take_macro_derive_probe_work();
+        assert_eq!(work.requests, 1);
+        assert!(
+            work.head_scope_visits > 0,
+            "a genuine derive must retain checked probe traversal"
         );
         let component_macro = extract_rust_item(&expanded_workspace, "tuple_driver::Component")?;
         let RustItemKind::Macro(component_macro_info) = component_macro.kind else {
