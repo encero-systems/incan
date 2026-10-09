@@ -88,8 +88,8 @@ fn ordinary_metadata_owner_first_repeat_and_fresh_output_replay() -> Result<(), 
             fs::read(package.output.path().join("src/lib.rs"))?
         );
         assert_eq!(
-            LibraryManifest::read_from_path(&fresh.path().join(format!("{name}.incnlib")))?.to_json()?,
-            repeat.manifest().to_json()?
+            LibraryManifest::read_from_path(&fresh.path().join(format!("{name}.incnlib")))?.to_json_string()?,
+            repeat.manifest().to_json_string()?
         );
     }
     Ok(())
