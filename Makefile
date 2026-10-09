@@ -32,7 +32,9 @@ INCAN_TEST_OVEN_RELEASE_TOOLCHAIN_ROOT ?= $(TARGET_DIR)/oven-alpha-release-toolc
 INCAN_TEST_OVEN_RELEASE_COMPILER_BIN ?= $(TARGET_DIR)/debug/incan
 INCAN_TEST_OVEN_RELEASE_POLICY_HOME ?= $(TARGET_DIR)/oven-alpha-release-policy-home
 INCAN_TEST_OVEN_RELEASE_POLICY_REPORT ?= $(TARGET_DIR)/oven-alpha-release-policy.json
-INCAN_TEST_OVEN_COMPILER_SUITE_STORE ?= $(TARGET_DIR)/oven-compiler-suite-store
+# Bootstrap engine preparation uses ordinary Oven commands under this home. Source-current output selection must
+# use that same shared store; a separate default would miss even an engine the preparation just reused.
+INCAN_TEST_OVEN_COMPILER_SUITE_STORE ?= $(INCAN_TEST_OVEN_HOME)/oven/store/v2
 # Kept across runs: explicit-bake roots (the native driver root bakes the whole compiler) reuse their fixture state.
 INCAN_TEST_OVEN_EXPLICIT_BAKE_WORKSPACE ?= $(TARGET_DIR)/oven-explicit-bake-workspace
 # Caller-owned compiler-suite outputs are one-use. `test-oven` creates a fresh directory below this root and removes
