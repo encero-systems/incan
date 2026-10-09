@@ -1,4 +1,4 @@
-# behavior: checked generic model fields widen i8 to int in either written argument order and f32 to float, while equal i8 fields retain their carrier
+# behavior: checked generic model fields widen i8 to int in either written argument order and f32 to an explicitly selected float carrier, while equal i8 fields retain their carrier
 # expect-stdout:
 #   3
 #   5
@@ -24,7 +24,7 @@ def main() -> None:
     println(reversed.first)
     println(reversed.second)
     single: f32 = 1.5
-    floating = Pair(first=single, second=2.5)
+    floating = Pair[float](first=single, second=2.5)
     println(floating.first)
     println(floating.second)
     other: i8 = 4
