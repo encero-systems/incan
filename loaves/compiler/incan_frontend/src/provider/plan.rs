@@ -397,12 +397,14 @@ pub struct ProviderPlan {
     public_artifacts: BTreeMap<String, PublicProviderArtifact>,
     /// Public dependency edges retained by artifact admission, keyed by the containing artifact root.
     public_dependencies: BTreeMap<PathBuf, Vec<(String, String)>>,
+    /// Command-local checked declaration owners keyed by exact package identity, independently of import aliases.
+    checked_source_records: BTreeMap<String, ProviderRecord>,
+    /// Declared semantic dependency edges, retaining each alias without granting a transitive import namespace.
+    checked_source_dependencies: BTreeMap<String, Vec<(String, String)>>,
     /// Reserved namespace roots owned by the one SDK component currently being compiled from source.
     ///
     /// This bootstrap-only grant disappears once the checked provider manifest is published and must never be
     /// populated by installed SDK consumers.
-    checked_source_records: BTreeMap<String, ProviderRecord>,
-    checked_source_dependencies: BTreeMap<String, Vec<(String, String)>>,
     bootstrap_sdk_namespace_roots: BTreeSet<String>,
     /// Process-local identity assigned when this immutable record set is constructed.
     semantic_projection_identity: u64,
@@ -425,9 +427,20 @@ impl ProviderPlan {
         for record in records {
             validate_provider_record(&record)?;
             let key = record.identity.stable_key();
-            if indexed_records.contains_key(&key) {
-                return Err(ProviderPlanError::DuplicateIdentity { identity: key });
-            }
+            let is_checked_source = |record: &ProviderRecord| {
+                let NamespaceAuthority::ProjectDependency { dependency_key } = &record.authority else {
+                    return false;
+                };
+                matches!(library_manifest_index.get(dependency_key), Some(LibraryManifestIndexEntry::Loaded { metadata, .. }) if metadata.kind == LibraryArtifactKind::CheckedSource)
+            };
+            let shared_source = if let Some(existing) = indexed_records.get(&key) {
+                if !is_checked_source(existing) || !is_checked_source(&record) {
+                    return Err(ProviderPlanError::DuplicateIdentity { identity: key });
+                }
+                true
+            } else {
+                false
+            };
             for claim in &record.namespace_claims {
                 if let Some(existing_key) = module_catalog.get(claim) {
                     let existing_record = indexed_records.get(existing_key);
@@ -447,7 +460,14 @@ impl ProviderPlan {
                 }
                 module_catalog.insert(claim.clone(), key.clone());
             }
-            indexed_records.insert(key, record);
+            if shared_source {
+                // Each alias's claims were independently validated above before entering the shared owner record.
+                if let Some(existing) = indexed_records.get_mut(&key) {
+                    existing.namespace_claims.extend(record.namespace_claims);
+                }
+            } else {
+                indexed_records.insert(key, record);
+            }
         }
         let checked_source_records = indexed_records.iter().filter(|(_, record)| {
             let NamespaceAuthority::ProjectDependency { dependency_key } = &record.authority else { return false; };
@@ -474,18 +494,17 @@ impl ProviderPlan {
 
     /// Retain a checked child's semantic dependency graph without granting transitive import namespaces or artifacts.
     pub fn retain_checked_source_dependencies(&mut self, library: &str, child: &ProviderPlan) -> Result<(), String> {
-        let parent = self.checked_source_records.values().find(|record| matches!(&record.authority, NamespaceAuthority::ProjectDependency { dependency_key } if dependency_key == library))
-            .ok_or_else(|| format!("checked source import container `{library}` is missing"))?.identity.stable_key();
+        let parent = self.checked_source_import_identity(library)?.stable_key();
         let mut edges = Vec::new();
-        for record in child
-            .records
-            .values()
-            .filter(|record| child.checked_source_records.contains_key(&record.identity.stable_key()))
-        {
-            if let NamespaceAuthority::ProjectDependency { dependency_key } = &record.authority {
-                edges.push((dependency_key.clone(), record.identity.stable_key()));
+        for (alias, _, metadata) in child.library_manifest_index.loaded_entries() {
+            if metadata.kind == LibraryArtifactKind::CheckedSource {
+                edges.push((
+                    alias.to_string(),
+                    child.checked_source_import_identity(alias)?.stable_key(),
+                ));
             }
         }
+        edges.sort();
         self.checked_source_records.extend(child.checked_source_records.clone());
         self.checked_source_dependencies
             .extend(child.checked_source_dependencies.clone());
@@ -502,11 +521,26 @@ impl ProviderPlan {
         self
     }
 
+    /// Bind a declared source import alias to its canonical checked owner rather than one record's alias authority.
+    fn checked_source_import_identity(&self, library: &str) -> Result<ProviderIdentity, String> {
+        let Some(LibraryManifestIndexEntry::Loaded { manifest, metadata }) = self.library_manifest_index.get(library)
+        else {
+            return Err(format!("checked source import container `{library}` is missing"));
+        };
+        if metadata.kind != LibraryArtifactKind::CheckedSource {
+            return Err(format!("import container `{library}` has no checked source authority"));
+        }
+        let identity = checked_source_provider_identity(manifest)?;
+        self.checked_source_records
+            .get(&identity.stable_key())
+            .map(|record| record.identity.clone())
+            .ok_or_else(|| format!("checked source import container `{library}` has no matching declaration owner"))
+    }
+
     /// Find a source semantic route through already-checked declared dependency edges.
     fn checked_source_route(&self, library: &str, identity: &ProviderIdentity) -> Result<Vec<String>, String> {
-        let owner = self.records.values().find(|record| matches!(&record.authority, NamespaceAuthority::ProjectDependency { dependency_key } if dependency_key == library))
-            .ok_or_else(|| format!("checked source import container `{library}` is missing"))?;
-        let mut pending = std::collections::VecDeque::from([(owner.identity.stable_key(), Vec::new())]);
+        let owner = self.checked_source_import_identity(library)?;
+        let mut pending = std::collections::VecDeque::from([(owner.stable_key(), Vec::new())]);
         let mut seen = BTreeSet::new();
         while let Some((key, route)) = pending.pop_front() {
             if !seen.insert(key.clone()) {
@@ -1781,6 +1815,20 @@ fn in_memory_sdk_record(manifest: LibraryManifest) -> ProviderRecord {
     }
 }
 
+/// Derive one canonical command-local owner for a checked manifest, independent of its consumer's alias spelling.
+fn checked_source_provider_identity(manifest: &LibraryManifest) -> Result<ProviderIdentity, String> {
+    let wire = canonical_manifest_digest(manifest)?;
+    let mut digest = Sha256::new();
+    digest.update(b"checked-source-v1\0");
+    digest.update(wire.as_bytes());
+    Ok(ProviderIdentity {
+        name: manifest.name.clone(),
+        version: manifest.version.clone(),
+        digest: format!("sha256:{}", hex::encode(digest.finalize())),
+        feature_projection: manifest.contract_metadata.provider.active_features.clone(),
+    })
+}
+
 /// Normalize loaded ordinary dependencies into provider records under their consumer-granted `pub::<key>` roots.
 fn project_dependency_records(
     index: &LibraryManifestIndex,
@@ -1820,15 +1868,13 @@ fn project_dependency_records(
                 format!("parser-source:{dependency_key}:{}@{}", manifest.name, manifest.version)
             }
             LibraryArtifactKind::CheckedSource => {
-                let wire = canonical_manifest_digest(manifest).map_err(|error| ProviderPlanError::ManifestLoad {
-                    provider: manifest.name.clone(),
-                    path: artifact.manifest_path.clone(),
-                    message: error.to_string(),
-                })?;
-                let mut digest = Sha256::new();
-                digest.update(b"checked-source-v1\0");
-                digest.update(wire.as_bytes());
-                format!("sha256:{}", hex::encode(digest.finalize()))
+                checked_source_provider_identity(manifest)
+                    .map_err(|error| ProviderPlanError::ManifestLoad {
+                        provider: manifest.name.clone(),
+                        path: artifact.manifest_path.clone(),
+                        message: error,
+                    })?
+                    .digest
             }
             LibraryArtifactKind::StandardVocab => {
                 format!("standard-vocab:{dependency_key}:{}@{}", manifest.name, manifest.version)
@@ -1861,6 +1907,13 @@ fn project_dependency_records(
             },
         });
     }
+    // Canonical identities can share several independently checked aliases. Choose their retained provenance
+    // deterministically so the semantic plan fingerprint does not depend on HashMap traversal order.
+    records.sort_by(|left, right| {
+        left.identity
+            .cmp(&right.identity)
+            .then_with(|| left.namespace_claims.cmp(&right.namespace_claims))
+    });
     Ok(records)
 }
 

@@ -655,6 +655,39 @@ mod dev7_checked_provider_metadata_tests {
         assert_no_outputs(root)
     }
 
+    /// Two declared aliases share a source nominal owner while each retains its declared import route.
+    #[test]
+    fn dev7_checked_provider_metadata_dual_alias_nominal() -> TestResult {
+        let scratch = tempfile::tempdir()?;
+        let root = scratch.path();
+        write_package(
+            root,
+            "[project]\nname='consumer'\n[dependencies]\nfirst={path='deps/widgets'}\nsecond={path='deps/widgets'}\n",
+            "main.incn",
+            "from pub::first import Widget\nfrom pub::second import Widget as OtherWidget\n\ndef value(item: Widget) -> int:\n    return item.value\n\ndef main() -> None:\n    first = Widget(value=41)\n    second = OtherWidget(value=42)\n    print(value(first), value(second))\n",
+        )?;
+        write_package(
+            &root.join("deps/widgets"),
+            "[project]\nname='widgets'\n",
+            "lib.incn",
+            "pub model Widget:\n    value: int\n",
+        )?;
+        let entry = root.join("src/main.incn");
+        let report = check_path_report_with_selections(&entry, &FeatureSelection::default(), None)?;
+        assert!(report.ok(), "{report:?}");
+        assert_eq!(source_identity(&entry, "first")?, source_identity(&entry, "second")?);
+        let session = CompilationSession::discover_for_check(&entry, &FeatureSelection::default(), None)?;
+        assert_eq!(
+            session
+                .provider_plan
+                .records()
+                .filter(|record| record.identity.name == "widgets")
+                .count(),
+            1
+        );
+        assert_no_outputs(root)
+    }
+
     /// Fresh vocabulary companions refuse at metadata discovery rather than compiling during check.
     #[test]
     fn dev7_checked_provider_metadata_vocab_cache_miss() -> TestResult {
