@@ -62,6 +62,7 @@ pub struct PendingDesugarerArtifact {
 enum VocabExtractionMode {
     PackageArtifacts,
     ParserOnly,
+    CacheOnly,
 }
 
 #[derive(Debug, Clone)]
@@ -291,6 +292,21 @@ pub fn collect_library_vocab_metadata_for_parser(
     )
 }
 
+/// Read compatible prepared parser metadata without compiling a companion or writing cache entries.
+pub fn collect_library_vocab_metadata_for_check(
+    manifest: &ProjectManifest,
+    project_root: &Path,
+    generated_cargo_target_dir: Option<&Path>,
+) -> ProviderResult<Option<LibraryVocabExtraction>> {
+    collect_library_vocab_metadata_with_mode(
+        manifest,
+        project_root,
+        generated_cargo_target_dir,
+        VocabExtractionMode::CacheOnly,
+        None,
+    )
+}
+
 /// Collect vocab companion metadata using either full package artifacts or parser-only source metadata.
 fn collect_library_vocab_metadata_with_mode(
     manifest: &ProjectManifest,
@@ -323,6 +339,13 @@ fn collect_library_vocab_metadata_with_mode(
         generated_cargo_target_dir,
     )?;
     let cached = read_cached_vocab_companion(&cache_context)?;
+    if mode == VocabExtractionMode::CacheOnly && cached.is_none() {
+        return Err(ProviderError::failure(format!(
+            "check requires compatible prepared vocabulary metadata for {} at {}; preparation authority is missing and check cannot compile the companion",
+            companion_crate_root.display(),
+            cache_context.cache_dir.display()
+        )));
+    }
     let cache_hit = cached.is_some();
     let cached_had_desugarer_artifact = cached
         .as_ref()
@@ -382,7 +405,7 @@ fn collect_library_vocab_metadata_with_mode(
     let compatibility_activations = project_soft_keyword_activations(&metadata.keyword_registrations);
     let pending_desugarer_artifact = match mode {
         VocabExtractionMode::PackageArtifacts => pending_desugarer_artifact,
-        VocabExtractionMode::ParserOnly => None,
+        VocabExtractionMode::ParserOnly | VocabExtractionMode::CacheOnly => None,
     };
 
     Ok(Some(LibraryVocabExtraction {
@@ -1827,6 +1850,63 @@ mod tests {
                 keyword: "await".to_string(),
             }]
         );
+        Ok(())
+    }
+
+    /// Cache-only check reuses a compatible prepared payload and refuses after authored companion inputs change.
+    #[test]
+    fn dev7_checked_provider_metadata_vocab_cache_hit_and_edit() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root)?;
+        let companion =
+            write_vocab_companion_crate(&root, "companion", "dev7_checked_provider_metadata_companion_cached")?;
+        let path = root.join("loaf.toml");
+        fs::write(&path, "[project]\nname='widgets'\n[vocab]\ncrate='companion'\n")?;
+        let manifest = ProjectManifest::from_str(&fs::read_to_string(&path)?, &path)?;
+        let target = temp.path().join("cache");
+        let context = vocab_companion_cache_context(
+            &root,
+            &companion,
+            "dev7_checked_provider_metadata_companion_cached",
+            Some(&target),
+        )?;
+        let metadata = incan_vocab::VocabMetadata {
+            keyword_registrations: vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "widgets.dsl".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec::new(
+                    "await",
+                    incan_vocab::KeywordSurfaceKind::ControlFlow,
+                )],
+                valid_decorators: Vec::new(),
+            }],
+            ..Default::default()
+        };
+        write_cached_vocab_companion(&context, &metadata, None)?;
+        let before = fs::read(context.cache_dir.join(VOCAB_COMPANION_CACHE_FILE))?;
+        let payload = collect_library_vocab_metadata_for_check(&manifest, &root, Some(&target))?
+            .ok_or("cached payload missing")?;
+        assert_eq!(payload.payload.keyword_registrations.len(), 1);
+        assert_eq!(payload.compatibility_activations.len(), 1);
+        assert_eq!(fs::read(context.cache_dir.join(VOCAB_COMPANION_CACHE_FILE))?, before);
+        assert!(!context.cache_dir.join("target").exists());
+        let source = fs::read_to_string(companion.join("src/lib.rs"))?;
+        fs::write(
+            companion.join("src/lib.rs"),
+            format!("{source}\n// edited authored companion input\n"),
+        )?;
+        let error = collect_library_vocab_metadata_for_check(&manifest, &root, Some(&target))
+            .err()
+            .ok_or("changed inputs reused stale vocab metadata")?;
+        assert!(
+            error.to_string().contains("preparation authority is missing"),
+            "{error}"
+        );
+        fs::write(companion.join("src/lib.rs"), source)?;
+        assert!(collect_library_vocab_metadata_for_check(&manifest, &root, Some(&target))?.is_some());
+        assert!(!context.cache_dir.join("target").exists());
         Ok(())
     }
 
