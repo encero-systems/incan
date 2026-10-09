@@ -19,6 +19,14 @@
       "declaration": "workspaces/compiler-bootstrap/test-declarations/rust-inspect-unit.loaf.toml",
       "dependency_graph": "workspaces/oven/compiler-frontend-tests-native.json",
       "use_compiler_resolution": true
+    },
+    "loaves/oven/oven_rustc/src/lib.rs": {
+      "declaration": "loaves/oven/oven_rustc/src/lib.loaf.toml",
+      "inputs": [
+        "loaves/oven/oven_rustc/tests/common"
+      ],
+      "dependency_graph": "workspaces/oven/compiler-oven-tests-native.json",
+      "use_compiler_resolution": true
     }
   }
 }

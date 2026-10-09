@@ -2,6 +2,7 @@
 
 use super::*;
 
+use crate as native_oven;
 use crate::rustc as native_rustc;
 #[path = "../../../tests/common/generated_output_store_cases.rs"]
 mod generated_output_store_cases;

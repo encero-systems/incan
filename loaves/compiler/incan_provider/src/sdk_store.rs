@@ -4,19 +4,15 @@
 //! Native SDK publication identities combine compiler and source bytes, the SDK seed, native receipts, and the
 //! publication profile. Legacy identity helpers remain for callers outside the automatic native publication path.
 
-use std::collections::{BTreeSet, HashMap};
-use std::io::Read;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{LazyLock, Mutex};
 use std::{env, fs};
 
 use sha2::{Digest, Sha256};
 
 use crate::effect_digest::{COMPILER_RUST_EFFECT_ROOTS, COMPILER_STDLIB_ROOT, compiler_effect_digest};
 use crate::error::{ProviderError, ProviderResult};
-static SDK_PROVIDER_COMPILER_DIGESTS: LazyLock<Mutex<HashMap<PathBuf, [u8; 32]>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Internal provider-store override used by isolated compiler and packaging tests.
 pub const INTERNAL_SDK_PROVIDER_STORE_ENV: &str = "INCAN_INTERNAL_SDK_PROVIDER_STORE";
@@ -660,43 +656,23 @@ fn is_sdk_provider_compiler_checkout(candidate: &Path, stdlib_root: &Path) -> bo
     }
 }
 
-/// Hash the running compiler once per process with SHA-256, the hash family every other identity in the toolchain uses,
-/// independent of its path.
+/// Select the compiler's exact content digest with Oven's cross-command metadata-bound acceleration.
+///
+/// Decode the original raw SHA-256 bytes so SDK identities remain byte-equivalent to uncached hashing. Every
+/// observation checks replacement-sensitive metadata rather than trusting a process-local path memo.
 fn sdk_provider_compiler_digest(executable: &Path) -> ProviderResult<[u8; 32]> {
-    if let Some(digest) = SDK_PROVIDER_COMPILER_DIGESTS
-        .lock()
-        .map_err(|_| ProviderError::failure("failed to lock the compiler-content digest cache"))?
-        .get(executable)
-        .copied()
-    {
-        return Ok(digest);
-    }
-
-    let mut executable_file = fs::File::open(executable).map_err(|error| {
+    let (_, observed) = oven_store::store::digest_regular_file(executable).map_err(|error| {
         ProviderError::failure(format!(
-            "failed to read compiler executable {}: {error}",
+            "failed to digest compiler executable {}: {error}",
             executable.display()
         ))
     })?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let read = executable_file.read(&mut buffer).map_err(|error| {
-            ProviderError::failure(format!(
-                "failed to read compiler executable {}: {error}",
-                executable.display()
-            ))
-        })?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    let digest: [u8; 32] = hasher.finalize().into();
-    SDK_PROVIDER_COMPILER_DIGESTS
-        .lock()
-        .map_err(|_| ProviderError::failure("failed to lock the compiler-content digest cache"))?
-        .insert(executable.to_path_buf(), digest);
+    let encoded = observed
+        .strip_prefix("sha256:")
+        .ok_or_else(|| ProviderError::failure("compiler content digest is not SHA-256"))?;
+    let mut digest = [0_u8; 32];
+    hex::decode_to_slice(encoded, &mut digest)
+        .map_err(|error| ProviderError::failure(format!("invalid compiler content digest: {error}")))?;
     Ok(digest)
 }
 
@@ -1043,6 +1019,30 @@ mod tests {
             "the memo key took {} ms, which is no longer a per-command cost",
             elapsed.as_millis()
         );
+        Ok(())
+    }
+
+    /// Cached compiler observations preserve raw SDK identity and invalidate edits or replacement at the same path.
+    #[test]
+    fn compiler_content_digest_reobserves_same_path() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let compiler = root.path().join("incan");
+        fs::write(&compiler, b"native bytes")?;
+        let first: [u8; 32] = Sha256::digest(b"native bytes").into();
+        assert_eq!(super::sdk_provider_compiler_digest(&compiler)?, first);
+        assert_eq!(super::sdk_provider_compiler_digest(&compiler)?, first);
+        let modified = fs::metadata(&compiler)?.modified()?;
+        fs::write(&compiler, b"edited bytes")?;
+        fs::File::options()
+            .write(true)
+            .open(&compiler)?
+            .set_times(fs::FileTimes::new().set_modified(modified))?;
+        let changed: [u8; 32] = Sha256::digest(b"edited bytes").into();
+        assert_eq!(super::sdk_provider_compiler_digest(&compiler)?, changed);
+        let replacement = root.path().join("replacement");
+        fs::write(&replacement, b"native bytes")?;
+        fs::rename(replacement, &compiler)?;
+        assert_eq!(super::sdk_provider_compiler_digest(&compiler)?, first);
         Ok(())
     }
 

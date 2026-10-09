@@ -3414,8 +3414,53 @@ fn publish_materialized_file_digest(path: &Path, record: &MaterializedFileDigest
     result
 }
 
-/// Hash one materialized file with observed-stat acceleration and exact byte-count verification.
+/// Digest a regular file with persistent, metadata-bound acceleration across commands.
+///
+/// The returned length and SHA-256 identity depend only on observed bytes. Cache coordinates and metadata never enter
+/// artifact identity. Unix device, inode and change time invalidate replacements and preserved-mtime edits; platforms
+/// without those observations always hash bytes. Missing, malformed or unwritable cache records only forfeit
+/// acceleration. Callers must still enforce their own receipt, path and owner admission rules.
+pub fn digest_regular_file(path: &Path) -> Result<(u64, String), OvenStoreError> {
+    let cache = std::env::var_os("INCAN_HOME")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .filter(|path| !path.is_empty())
+                .map(|path| PathBuf::from(path).join(".incan"))
+        })
+        .map(|root| root.join("cache/observed-file-digests-v1"));
+    let canonical = fs::canonicalize(path).map_err(|source| OvenStoreError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let record = cache.map(|root| {
+        root.join(format!(
+            "{:x}.json",
+            Sha256::digest(canonical.as_os_str().as_encoded_bytes())
+        ))
+    });
+    let observed = digest_observed_file(path, record.as_deref())?;
+    Ok((observed.length, observed.digest))
+}
+
+/// Content identity and physical reads from one held-file observation; warm lookups read no artifact bytes.
+struct ObservedFileDigest {
+    length: u64,
+    digest: String,
+    input_bytes_read: u64,
+}
+
+/// Hash one materialized file using its existing cache namespace outside the published inventory.
 fn digest_materialized_file(path: &Path) -> Result<(u64, String), OvenStoreError> {
+    let cache_path = materialized_digest_cache_path(path);
+    let observed = digest_observed_file(path, cache_path.as_deref())?;
+    Ok((observed.length, observed.digest))
+}
+
+/// Hash the exact held file, or reuse a digest bound to its replacement-sensitive metadata.
+fn digest_observed_file(path: &Path, cache_path: Option<&Path>) -> Result<ObservedFileDigest, OvenStoreError> {
     let mut file = File::open(path).map_err(|source| OvenStoreError::Io {
         path: path.to_path_buf(),
         source,
@@ -3424,10 +3469,8 @@ fn digest_materialized_file(path: &Path) -> Result<(u64, String), OvenStoreError
         path: path.to_path_buf(),
         source,
     })?;
-    let cache_path = materialized_digest_cache_path(path);
     if !before.identity.is_empty()
         && let Some(record) = cache_path
-            .as_ref()
             .and_then(|path| fs::read(path).ok())
             .and_then(|bytes| serde_json::from_slice::<MaterializedFileDigest>(&bytes).ok())
         && record.stamp == before
@@ -3436,7 +3479,17 @@ fn digest_materialized_file(path: &Path) -> Result<(u64, String), OvenStoreError
             .strip_prefix("sha256:")
             .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
     {
-        return Ok((before.length, record.digest));
+        let after = materialized_file_stamp(&file).map_err(|source| OvenStoreError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        if before == after {
+            return Ok(report_observed_file_digest(path, before.length, record.digest, 0));
+        }
+        return Err(OvenStoreError::Integrity {
+            identity: path.display().to_string(),
+            message: "regular file changed during digest lookup".into(),
+        });
     }
     let mut hasher = Sha256::new();
     let mut logical_bytes = 0_u64;
@@ -3474,14 +3527,30 @@ fn digest_materialized_file(path: &Path) -> Result<(u64, String), OvenStoreError
     let digest = format!("sha256:{}", hex::encode(hasher.finalize()));
     if let Some(path) = cache_path {
         let _published = publish_materialized_file_digest(
-            &path,
+            path,
             &MaterializedFileDigest {
                 stamp: before,
                 digest: digest.clone(),
             },
         );
     }
-    Ok((logical_bytes, digest))
+    Ok(report_observed_file_digest(path, logical_bytes, digest, logical_bytes))
+}
+
+/// Report authoritative byte reads separately from stat observations and cache-record IO.
+fn report_observed_file_digest(path: &Path, length: u64, digest: String, input_bytes_read: u64) -> ObservedFileDigest {
+    let observed = ObservedFileDigest {
+        length,
+        digest,
+        input_bytes_read,
+    };
+    if std::env::var_os("INCAN_OVEN_TRACE_FILE_DIGESTS").is_some() {
+        eprintln!(
+            "Oven file digest: {}",
+            serde_json::json!({"path":path, "scheme":"raw-sha256-v1", "input_bytes_read":observed.input_bytes_read})
+        );
+    }
+    observed
 }
 
 /// Collect regular materialized files while rejecting links and non-file entry types.
@@ -4430,6 +4499,100 @@ pub(crate) mod tests {
     use std::collections::BTreeMap;
     use std::fs::{self, OpenOptions};
     use std::path::{Path, PathBuf};
+
+    /// Cold reads, warm reuse, edits, replacement, malformed records and cache failures preserve byte authority.
+    #[cfg(unix)]
+    #[test]
+    fn observed_file_digest_counts_reads_and_invalidates() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("compiler");
+        let cache = root.path().join("cache/digest.json");
+        fs::write(&source, b"native bytes")?;
+        let first = super::digest_observed_file(&source, Some(&cache))?;
+        assert_eq!(first.digest, crate::digest_bytes(b"native bytes"));
+        assert_eq!(first.input_bytes_read, 12);
+        let warm = super::digest_observed_file(&source, Some(&cache))?;
+        assert_eq!(warm.digest, first.digest);
+        assert_eq!(warm.input_bytes_read, 0);
+
+        let modified = fs::metadata(&source)?.modified()?;
+        fs::write(&source, b"edited bytes")?;
+        fs::File::options()
+            .write(true)
+            .open(&source)?
+            .set_times(fs::FileTimes::new().set_modified(modified))?;
+        let changed = super::digest_observed_file(&source, Some(&cache))?;
+        assert_eq!(changed.digest, crate::digest_bytes(b"edited bytes"));
+        assert_eq!(changed.input_bytes_read, 12);
+        assert_eq!(super::digest_observed_file(&source, Some(&cache))?.input_bytes_read, 0);
+
+        let replacement = root.path().join("replacement");
+        fs::write(&replacement, b"native bytes")?;
+        fs::File::options()
+            .write(true)
+            .open(&replacement)?
+            .set_times(fs::FileTimes::new().set_modified(modified))?;
+        fs::rename(&replacement, &source)?;
+        let restored = super::digest_observed_file(&source, Some(&cache))?;
+        assert_eq!(restored.digest, first.digest);
+        assert_eq!(restored.input_bytes_read, 12);
+
+        fs::write(&cache, b"malformed")?;
+        let malformed = super::digest_observed_file(&source, Some(&cache))?;
+        assert_eq!(malformed.digest, first.digest);
+        assert_eq!(malformed.input_bytes_read, 12);
+        let mut record: super::MaterializedFileDigest = serde_json::from_slice(&fs::read(&cache)?)?;
+        record.digest = "invalid SHA-256".to_string();
+        fs::write(&cache, serde_json::to_vec(&record)?)?;
+        assert_eq!(super::digest_observed_file(&source, Some(&cache))?.input_bytes_read, 12);
+
+        let unavailable = root.path().join("unavailable");
+        fs::write(&unavailable, b"not a directory")?;
+        let fallback = super::digest_observed_file(&source, Some(&unavailable.join("digest.json")))?;
+        assert_eq!(fallback.digest, first.digest);
+        assert_eq!(fallback.input_bytes_read, 12);
+        assert_eq!(super::digest_observed_file(&source, None)?.input_bytes_read, 12);
+        assert!(super::digest_observed_file(root.path(), Some(&cache)).is_err());
+        assert!(super::digest_observed_file(&root.path().join("missing"), Some(&cache)).is_err());
+        Ok(())
+    }
+
+    /// A separate process reuses the persisted observation without reading authoritative file bytes.
+    #[cfg(unix)]
+    #[test]
+    fn observed_file_digest_reuses_across_processes() -> Result<(), Box<dyn std::error::Error>> {
+        const SOURCE: &str = "INCAN_OBSERVED_DIGEST_TEST_SOURCE";
+        const CACHE: &str = "INCAN_OBSERVED_DIGEST_TEST_CACHE";
+        if let Some(source) = std::env::var_os(SOURCE) {
+            let cache = std::env::var_os(CACHE).ok_or("child cache was not provided")?;
+            let observed = super::digest_observed_file(Path::new(&source), Some(Path::new(&cache)))?;
+            assert_eq!(observed.digest, crate::digest_bytes(b"native bytes"));
+            assert_eq!(observed.input_bytes_read, 0);
+            return Ok(());
+        }
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("compiler");
+        let cache = root.path().join("digest.json");
+        fs::write(&source, b"native bytes")?;
+        assert_eq!(super::digest_observed_file(&source, Some(&cache))?.input_bytes_read, 12);
+        let child = std::process::Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "store::tests::observed_file_digest_reuses_across_processes",
+                "--nocapture",
+            ])
+            .env(SOURCE, &source)
+            .env(CACHE, &cache)
+            .output()?;
+        assert!(
+            child.status.success(),
+            "child failed: {} {}",
+            String::from_utf8_lossy(&child.stdout),
+            String::from_utf8_lossy(&child.stderr)
+        );
+        assert!(String::from_utf8_lossy(&child.stdout).contains("1 passed"));
+        Ok(())
+    }
 
     /// Stat-bound hashes invalidate same-length preserved-mtime edits and malformed records.
     #[test]

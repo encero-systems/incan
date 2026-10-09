@@ -1,4 +1,5 @@
 //! Native integration controls for the prepared public Oven APIs.
+use oven_rustc as native_oven;
 use oven_rustc::rustc as native_rustc;
 #[path = "common/generated_output_store_cases.rs"]
 mod generated_output_store_cases;
