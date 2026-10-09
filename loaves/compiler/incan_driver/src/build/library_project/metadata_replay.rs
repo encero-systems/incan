@@ -22,7 +22,11 @@ use incan_provider::PackageFeaturePlan;
 use oven_model::manifest::ProjectManifest;
 use oven_rustc::rustc::{resolve_active_rustc, rustc_host_target, rustc_identity};
 use oven_store::store::OvenStore;
-use oven_store::{OvenReceipt, digest_bytes, digest_project_source_tree};
+use oven_store::{
+    OvenProjectSourceTreeEvidence, OvenReceipt, digest_bytes, digest_project_source_tree, project_source_tree_evidence,
+};
+
+pub(crate) mod lock_transition;
 
 /// One source-current ordinary checked owner request and the current original dependency/native leases it binds.
 pub(crate) struct MetadataPreparation {
@@ -365,6 +369,118 @@ pub(crate) fn observe_library_source_digest(root: &Path, exact_features: &[Strin
 
 /// Observe the exact active authored source closure without invoking the Incan lexer, parser or checker.
 pub(crate) fn current_source_digest(root: &Path, features: &PackageFeaturePlan) -> CliResult<String> {
+    current_source_snapshot(root, features)?.digest()
+}
+
+/// Complete opaque source evidence and the exact non-tree graph facts needed to isolate one lock publication.
+struct MetadataSourceSnapshot {
+    source: BTreeMap<PathBuf, serde_json::Value>,
+    edges: Vec<incan_provider::ResolvedFeatureDependencyEdge>,
+    trees: BTreeMap<PathBuf, OvenProjectSourceTreeEvidence>,
+    external_locks: BTreeMap<PathBuf, Option<String>>,
+}
+
+impl MetadataSourceSnapshot {
+    /// Bind complete package trees, selected graph facts and any exact canonical lock outside those trees.
+    fn digest(&self) -> CliResult<String> {
+        Ok(digest_bytes(
+            &serde_json::to_vec(&(&self.source, &self.edges, &self.external_locks))
+                .map_err(|error| invalid(error.to_string()))?,
+        ))
+    }
+
+    /// Prove that every authored/Rust/feature/graph input agrees apart from this one exact published lock.
+    fn unchanged_except_published_lock(&self, later: &Self, lock: &Path, digest: &str) -> CliResult<bool> {
+        if self.edges != later.edges
+            || self.source.keys().ne(later.source.keys())
+            || self.external_locks.keys().ne(later.external_locks.keys())
+        {
+            return Ok(false);
+        }
+        let mut observed_lock = false;
+        for (path, original) in &self.external_locks {
+            let current = later.external_locks.get(path);
+            if path == lock {
+                observed_lock = true;
+                if current.and_then(Option::as_deref) != Some(digest) {
+                    return Ok(false);
+                }
+            } else if current != Some(original) {
+                return Ok(false);
+            }
+        }
+        for (root, original) in &self.source {
+            let mut before = original.clone();
+            let mut after = later
+                .source
+                .get(root)
+                .ok_or_else(|| invalid("lock transition source node disappeared"))?
+                .clone();
+            before
+                .as_object_mut()
+                .ok_or_else(|| invalid("lock transition source node is not an object"))?
+                .remove("source");
+            after
+                .as_object_mut()
+                .ok_or_else(|| invalid("lock transition source node is not an object"))?
+                .remove("source");
+            if before != after {
+                return Ok(false);
+            }
+            let original = self
+                .trees
+                .get(root)
+                .ok_or_else(|| invalid("lock transition lacks original source evidence"))?;
+            let current = later
+                .trees
+                .get(root)
+                .ok_or_else(|| invalid("lock transition lacks current source evidence"))?;
+            if let Ok(relative) = lock.strip_prefix(root) {
+                observed_lock = true;
+                if current
+                    .file_digest(relative)
+                    .map_err(|error| invalid(error.to_string()))?
+                    != Some(digest)
+                    || !original
+                        .unchanged_except_exact_file(current, relative)
+                        .map_err(|error| invalid(error.to_string()))?
+                {
+                    return Ok(false);
+                }
+            } else if original.digest().map_err(|error| invalid(error.to_string()))?
+                != current.digest().map_err(|error| invalid(error.to_string()))?
+            {
+                return Ok(false);
+            }
+        }
+        Ok(observed_lock)
+    }
+}
+
+/// Observe one canonical lock outside package trees, preserving explicit absence and rejecting symlink replacement.
+fn external_lock_digest(lock: &Path) -> CliResult<Option<String>> {
+    match std::fs::symlink_metadata(lock) {
+        Ok(metadata) if metadata.file_type().is_file() => {
+            let (_, digest) =
+                oven_store::store::digest_regular_file(lock).map_err(|error| invalid(error.to_string()))?;
+            let current = std::fs::symlink_metadata(lock).map_err(|error| invalid(error.to_string()))?;
+            if !current.file_type().is_file()
+                || metadata.len() != current.len()
+                || metadata.modified().map_err(|error| invalid(error.to_string()))?
+                    != current.modified().map_err(|error| invalid(error.to_string()))?
+            {
+                return Err(invalid("canonical metadata lock changed during observation"));
+            }
+            Ok(Some(digest))
+        }
+        Ok(_) => Err(invalid("canonical metadata lock is not a regular file")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(invalid(error.to_string())),
+    }
+}
+
+/// Snapshot the same shared observer, retaining per-file evidence without weaker parallel traversal rules.
+fn current_source_snapshot(root: &Path, features: &PackageFeaturePlan) -> CliResult<MetadataSourceSnapshot> {
     let root = std::fs::canonicalize(root).map_err(|error| invalid(error.to_string()))?;
     let mut reachable = BTreeSet::from([root.clone()]);
     loop {
@@ -379,6 +495,7 @@ pub(crate) fn current_source_digest(root: &Path, features: &PackageFeaturePlan) 
         }
     }
     let mut source = BTreeMap::new();
+    let mut trees = BTreeMap::new();
     let mut rust_sources = BTreeMap::new();
     for package in features
         .packages()
@@ -418,17 +535,23 @@ pub(crate) fn current_source_digest(root: &Path, features: &PackageFeaturePlan) 
                 ))
             })
             .collect::<CliResult<BTreeMap<_, _>>>()?;
-        source.insert(package.project_root.clone(), serde_json::json!({
-            "name": package.package_name,
-            "features": {
-                "active": package.features.active_features,
-                "optional_dependencies": package.features.active_optional_dependencies,
-                "dependency_features": package.features.dependency_features,
-                "required_components": package.features.required_sdk_components,
-            },
-            "rust_edges": rust_edges,
-            "source": digest_project_source_tree(&package.project_root).map_err(|error| invalid(error.to_string()))?,
-        }));
+        let tree = project_source_tree_evidence(&package.project_root).map_err(|error| invalid(error.to_string()))?;
+        let source_digest = tree.digest().map_err(|error| invalid(error.to_string()))?;
+        trees.insert(package.project_root.clone(), tree);
+        source.insert(
+            package.project_root.clone(),
+            serde_json::json!({
+                "name": package.package_name,
+                "features": {
+                    "active": package.features.active_features,
+                    "optional_dependencies": package.features.active_optional_dependencies,
+                    "dependency_features": package.features.dependency_features,
+                    "required_components": package.features.required_sdk_components,
+                },
+                "rust_edges": rust_edges,
+                "source": source_digest,
+            }),
+        );
     }
     if !source.contains_key(&root) {
         return Err(invalid("metadata source root is absent from the current feature graph"));
@@ -436,10 +559,23 @@ pub(crate) fn current_source_digest(root: &Path, features: &PackageFeaturePlan) 
     let edges = features
         .edges()
         .filter(|edge| reachable.contains(&edge.from))
+        .cloned()
         .collect::<Vec<_>>();
-    Ok(digest_bytes(
-        &serde_json::to_vec(&(source, edges)).map_err(|error| invalid(error.to_string()))?,
-    ))
+    // A canonical workspace lock can be outside every selected package tree. Bind only that exact file,
+    // including absence, rather than pulling unrelated workspace siblings into semantic source authority.
+    let mut external_locks = BTreeMap::new();
+    for package_root in trees.keys() {
+        let lock = lock_transition::canonical_lock_coordinate(package_root)?;
+        if !trees.keys().any(|root| lock.starts_with(root)) {
+            external_locks.insert(lock.clone(), external_lock_digest(&lock)?);
+        }
+    }
+    Ok(MetadataSourceSnapshot {
+        source,
+        edges,
+        trees,
+        external_locks,
+    })
 }
 
 /// Conservatively bind full native/macro graph, all current checked provider contracts and authored standard sources.

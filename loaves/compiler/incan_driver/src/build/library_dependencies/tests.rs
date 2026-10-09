@@ -281,11 +281,11 @@ fn ordinary_admission_separates_metadata_from_execution_integrity() -> Result<()
     Ok(())
 }
 
-/// Reserved authority comes from an existing validated grant and stays bound to that exact admitted artifact.
+/// Public records and inventories cannot issue reserved authority; ordinary aliases retain no reserved grant.
 #[test]
 fn ordinary_admission_reserved_grant_cannot_be_transplanted_or_self_claimed() -> Result<(), Box<dyn std::error::Error>>
 {
-    let (_root, artifact, mut input) = checked_package()?;
+    let (_root, artifact, input) = checked_package()?;
     let manifest = LibraryManifest::read_from_path(&artifact.manifest_path)?;
     let identity = ProviderIdentity {
         name: manifest.name.clone(),
@@ -344,7 +344,7 @@ fn ordinary_admission_reserved_grant_cannot_be_transplanted_or_self_claimed() ->
         )]),
         profiles: BTreeMap::new(),
     };
-    // This compatibility producer validates the actual descriptor and artifact before retaining issuer authority.
+    // Descriptor validity preserves legacy providers, but a public DTO proves no trusted namespace issuer.
     let prior = ProviderPlan::from_resolved_inputs(
         LibraryManifestIndex::default(),
         None,
@@ -352,35 +352,14 @@ fn ordinary_admission_reserved_grant_cannot_be_transplanted_or_self_claimed() ->
         None,
         std::iter::empty(),
     )?;
-    let grant = SelectedProviderNamespace::from_plan(&prior, &identity.stable_key())?;
-    let copied = ProviderPlan::new(
-        LibraryManifestIndex::default(),
-        vec![grant.record().clone()],
-        std::iter::empty(),
-    )?;
-    assert!(SelectedProviderNamespace::from_plan(&copied, &identity.stable_key()).is_err());
-    input.import_alias = None;
-    input.namespace = Some(grant.clone());
-    let admitted = PreparedLibraryDependencies::admit(&[input.clone()], TARGET, TOOLCHAIN, limits())?;
-    admitted.validate_module_usage(&BTreeSet::from([vec!["std".into(), "core".into()]]))?;
-    let retained = SelectedProviderNamespace::from_plan(admitted.provider_plan(), &identity.stable_key())?;
-    assert!(std::ptr::eq(grant.record(), retained.record()));
     assert!(
-        admitted
-            .validate_module_usage(&BTreeSet::from([vec!["std".into(), "unselected".into()]]))
-            .is_err()
-    );
-    assert!(
-        admitted
-            .provider_plan()
+        prior
             .active_records()
-            .any(|record| record.namespace_claims.contains(&vec!["std".into(), "core".into()]))
+            .any(|record| record.authority == NamespaceAuthority::SdkReserved)
     );
-    let (_another, other_artifact, mut other) = checked_package()?;
-    other.import_alias = None;
-    other.namespace = Some(grant);
-    assert_ne!(artifact.crate_root, other_artifact.crate_root);
-    assert!(PreparedLibraryDependencies::admit(&[other], TARGET, TOOLCHAIN, limits()).is_err());
+    assert!(SelectedProviderNamespace::from_plan(&prior, &identity.stable_key()).is_err());
+    let copied = ProviderPlan::new(LibraryManifestIndex::default(), vec![record], std::iter::empty())?;
+    assert!(SelectedProviderNamespace::from_plan(&copied, &identity.stable_key()).is_err());
     let mut ungranted = input;
     ungranted.import_alias = Some("std".into());
     ungranted.namespace = None;

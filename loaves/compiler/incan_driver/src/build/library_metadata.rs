@@ -202,6 +202,26 @@ impl SelectedLibraryMetadata {
         validate_output_contract(destination, &self.payload).map(|_| ())
     }
 
+    /// Require an explicitly re-sealed source recipe to preserve the full original checked/generated output contract.
+    pub(crate) fn verify_same_checked_output(&self, candidate: &Self) -> CliResult<()> {
+        self.verify()?;
+        candidate.verify()?;
+        if self.payload.manifest_relative_path != candidate.payload.manifest_relative_path
+            || self.payload.metadata_files != candidate.payload.metadata_files
+            || self.payload.generated_files != candidate.payload.generated_files
+            || self.payload.required_rust_abi != candidate.payload.required_rust_abi
+            || serde_json::to_vec(&self.payload.checked_requirements)
+                .map_err(|error| CliError::failure(error.to_string()))?
+                != serde_json::to_vec(&candidate.payload.checked_requirements)
+                    .map_err(|error| CliError::failure(error.to_string()))?
+        {
+            return Err(CliError::failure(
+                "checked output changed while finalizing the authored source generation",
+            ));
+        }
+        Ok(())
+    }
+
     /// Import this exact leased owner into a package Store without selecting an equivalent replacement.
     /// Destination publication re-observes the full file closure and must preserve the original content identity.
     pub fn export_into(&self, destination: &OvenStore) -> CliResult<LibraryMetadataReference> {
