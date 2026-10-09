@@ -141,7 +141,7 @@ fn execute(
     let compilation_ms = compilation_started.elapsed().as_millis();
 
     // ---- Inventory-verified native execution ----
-    let environment = execution_environment(&compiler_root, owner, &inventory.root, &explicit_bake_workspace)?;
+    let environment = execution_environment(&compiler_root, owner, &inventory.root, &explicit_bake_workspace, &rustc)?;
     execute_cases(
         &executable,
         &exact_names,
@@ -244,6 +244,7 @@ fn execution_environment(
     owner: &Path,
     sdk: &Path,
     workspace: &Path,
+    rustc: &Path,
 ) -> Result<BTreeMap<String, String>, Box<dyn std::error::Error>> {
     let mut environment = compilation_environment(owner)?;
     let compiler = std::env::current_exe()?.with_file_name("incan");
@@ -252,6 +253,7 @@ fn execution_environment(
         ("CARGO_BIN_EXE_incan", compiler.as_path()),
         ("INCAN_SDK_INVENTORY", inventory.as_path()),
         ("INCAN_SOURCE_ROOT", root),
+        ("RUSTC", rustc),
         ("INCAN_INTERNAL_TEST_SOURCE_ROOT", root),
         ("INCAN_INTERNAL_OVEN_EXPLICIT_BAKE_WORKSPACE", workspace),
     ] {

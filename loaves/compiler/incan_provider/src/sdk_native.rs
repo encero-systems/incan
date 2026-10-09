@@ -45,6 +45,32 @@ pub fn write_sdk_native_artifact_catalog(
         store: store.to_path_buf(),
         units,
     };
+    let graph = closure.inspection_project();
+    let crates = graph["crates"]
+        .as_array()
+        .ok_or_else(|| ProviderError::failure("native closure has no inspection graph"))?;
+    let mut macros = Vec::new();
+    for (unit, record) in closure.units().iter().zip(crates) {
+        if record["is_proc_macro"].as_bool() != Some(true) {
+            continue;
+        }
+        let artifact = unit
+            .native_artifact()
+            .map_err(|error| ProviderError::failure(error.to_string()))?;
+        macros.push(rust_inspect::OvenInspectionProcMacro {
+            root_module: record["root_module"]
+                .as_str()
+                .map(PathBuf::from)
+                .ok_or_else(|| ProviderError::failure("native macro has no selected source module"))?,
+            store: store.to_path_buf(),
+            identity: artifact.store_identity,
+            receipt_identity: artifact.receipt_identity,
+            relative_path: artifact.relative_path,
+            digest: artifact.digest,
+        });
+    }
+    rust_inspect::write_oven_inspection_proc_macro_authority(root, macros)
+        .map_err(|error| ProviderError::failure(error.to_string()))?;
     std::fs::write(
         root.join(".sealed-native-units.json"),
         serde_json::to_vec_pretty(&catalog).map_err(|error| ProviderError::failure(error.to_string()))?,

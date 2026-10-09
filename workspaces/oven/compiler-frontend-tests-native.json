@@ -57,6 +57,16 @@
       "project": "../../loaves/compiler/incan_test_support",
       "domain": "target",
       "features": []
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/oven/oven_store"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/oven/oven_rustc"
     }
   ]
 }

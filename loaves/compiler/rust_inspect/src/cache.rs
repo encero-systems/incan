@@ -223,6 +223,7 @@ fn hash_workspace_fingerprint_inputs(hasher: &mut Sha256, root: &Path) -> Result
             "src/lib.rs",
             crate::loader::OVEN_DIRECT_LOAF_PROJECT_FILE,
             crate::loader::OVEN_DIRECT_INSPECTION_AUTHORITY_FILE,
+            crate::loader::OVEN_DIRECT_PROC_MACRO_AUTHORITY_FILE,
         ] {
             hasher.update(relative.as_bytes());
             hasher.update([0]);
@@ -259,6 +260,7 @@ fn hash_workspace_fingerprint_inputs(hasher: &mut Sha256, root: &Path) -> Result
         for relative in [
             crate::loader::OVEN_DIRECT_LOAF_PROJECT_FILE,
             crate::loader::OVEN_DIRECT_INSPECTION_AUTHORITY_FILE,
+            crate::loader::OVEN_DIRECT_PROC_MACRO_AUTHORITY_FILE,
         ] {
             hasher.update(relative.as_bytes());
             match fs::read(root.join(relative)) {

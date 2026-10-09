@@ -17,6 +17,7 @@ test_fixtures = []
 # compiler needs in every build because the SDK effect digest folds it in.
 inspector = [
     "dep:incan_lang",
+    "dep:oven_store",
     "dep:toml",
     "dep:semver",
     "dep:ra_ap_hir",
@@ -37,6 +38,7 @@ path = "src/lib.rs"
 
 [dependencies]
 incan_lang = { workspace = true, optional = true }
+oven_store = { workspace = true, optional = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -62,4 +64,5 @@ proc-macro2 = { workspace = true }
 quote = { workspace = true }
 
 [dev-dependencies]
+oven_rustc = { workspace = true }
 tempfile = "3"

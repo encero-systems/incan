@@ -40,10 +40,10 @@ pub fn compile_local_sdk_facets(
             owner.join(&selection.project).join("loaf.toml"),
         )?)?;
         let name = declaration
-            .get("rust")
-            .and_then(|rust| rust.get("name"))
+            .get("project")
+            .and_then(|project| project.get("name"))
             .and_then(toml::Value::as_str)
-            .ok_or("selected local unit has no Rust name")?;
+            .ok_or("selected local unit has no Loaf project name")?;
         if names
             .insert((name.to_string(), selection.domain.clone()), index)
             .is_some()
@@ -283,7 +283,7 @@ fn prepare_local_unit(
         primary: true,
         _source_lease: None,
         binding: SdkLockedUnit {
-            loaf: sources.name,
+            loaf: sources.loaf,
             version,
             archive_digest: oven_store::digest_source_tree(snapshot)?,
             domain: domain.to_string(),
@@ -303,7 +303,7 @@ fn prepare_local_unit(
 struct LocalFacetSources {
     declaration: String,
     manifest: toml::Value,
-    name: String,
+    loaf: String,
     files: Vec<(std::path::PathBuf, std::path::PathBuf)>,
 }
 
@@ -316,6 +316,12 @@ fn local_facet_sources(project: &Path) -> Result<LocalFacetSources, Error> {
     }
     let declaration = std::fs::read_to_string(&manifest_path)?;
     let mut manifest: toml::Value = toml::from_str(&declaration)?;
+    let loaf = manifest
+        .get("project")
+        .and_then(|project| project.get("name"))
+        .and_then(toml::Value::as_str)
+        .ok_or("local Loaf has no project name")?
+        .to_string();
     let name = manifest
         .get("rust")
         .and_then(|rust| rust.get("name"))
@@ -380,7 +386,7 @@ fn local_facet_sources(project: &Path) -> Result<LocalFacetSources, Error> {
     Ok(LocalFacetSources {
         declaration,
         manifest,
-        name,
+        loaf,
         files,
     })
 }
@@ -643,9 +649,9 @@ mod tests {
             std::fs::write(
                 project.join("loaf.toml"),
                 format!(
-                    "[project]\nname='{name}'\nversion='1.0.0'\n[rust]\nname='{name}'\ntype='lib'\nedition='2024'\n{}",
+                    "[project]\nname='{name}-package'\nversion='1.0.0'\n[rust]\nname='{name}'\ntype='lib'\nedition='2024'\n{}",
                     if name == "consumer" {
-                        "[dependencies]\nleaf={loaf='leaf',path='../leaf'}\nabsent={loaf='absent',optional=true,path='../absent'}\n"
+                        "[dependencies]\nleaf={loaf='leaf-package',path='../leaf'}\nabsent={loaf='absent',optional=true,path='../absent'}\n"
                     } else {
                         ""
                     }
@@ -678,7 +684,8 @@ mod tests {
         compile_local_sdk_facets(&mut closure, &selections, root.path(), store.path(), &rustc)?;
         assert!(closure.report.failed.is_empty(), "{:?}", closure.report.failed);
         assert_eq!(closure.units.len(), 2);
-        assert_eq!(closure.units[0].binding.loaf, "leaf");
+        assert_eq!(closure.units[0].binding.loaf, "leaf-package");
+        assert_eq!(closure.units[0].inspection["display_name"].as_str(), Some("leaf"));
         assert_eq!(closure.units[1].inspection["deps"][0]["name"].as_str(), Some("leaf"));
         Ok(())
     }

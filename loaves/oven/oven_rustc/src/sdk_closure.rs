@@ -386,6 +386,8 @@ fn inspection_unit(
         .and_then(toml::Value::as_str)
         .unwrap_or("src/lib.rs");
     let mut environment = environment::package_environment(unit)?;
+    // Macro queries inspect the retained source owner, not the publisher's temporary/stable staging projection.
+    environment.insert("CARGO_MANIFEST_DIR".to_string(), source.to_string_lossy().into_owned());
     let mut cfg = unit
         .binding
         .features

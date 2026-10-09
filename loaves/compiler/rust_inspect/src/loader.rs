@@ -23,6 +23,14 @@ use sha2::{Digest, Sha256};
 use super::error::RustMetadataError;
 
 mod loaf_manifest;
+mod native_macros;
+
+#[cfg(test)]
+pub(crate) use native_macros::select_native_macros_for_test_compiler;
+
+pub use native_macros::{
+    OVEN_DIRECT_PROC_MACRO_AUTHORITY_FILE, OvenInspectionProcMacro, write_oven_inspection_proc_macro_authority,
+};
 
 /// A loaded Cargo workspace suitable for `hir` queries.
 ///
@@ -38,6 +46,24 @@ pub struct RustWorkspace {
     /// rust-analyzer's proc-macro API crate into Oven's self-hosted compiler graph.
     #[allow(dead_code)]
     proc_macro_client: Option<Box<dyn Any + Send + Sync>>,
+    /// Retain immutable macro outputs for all lazy queries and until after the proc-macro client is dropped.
+    #[allow(dead_code)]
+    native_macro_owners: Vec<oven_store::store::OvenStoreExecutionPayload>,
+    /// Lazy macro requests use the projection as their working directory, so it must outlive their client.
+    #[allow(dead_code)]
+    native_project: Option<OvenInspectionProject>,
+}
+
+/// Remove only this load's unique project description once every database and macro client is gone.
+struct OvenInspectionProject {
+    directory: PathBuf,
+}
+
+impl Drop for OvenInspectionProject {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(self.directory.join("rust-project.json"));
+        let _ = fs::remove_dir(&self.directory);
+    }
 }
 
 /// A sequence scoped to this process keeps generated direct-project descriptions independent when libtests run in
@@ -1449,18 +1475,35 @@ impl RustWorkspace {
     ) -> Result<Self, RustMetadataError> {
         let manifest_dir = manifest_dir.canonicalize()?;
         let payload = Self::oven_project_json_payload_with_source_authority(&manifest_dir)?;
+        let mut graph: serde_json::Value =
+            serde_json::from_slice(&payload).map_err(|error| RustMetadataError::LoadWorkspace {
+                path: manifest_dir.clone(),
+                message: error.to_string(),
+            })?;
+        let native_macro_owners = native_macros::select_native_macros(&manifest_dir, &mut graph)?;
+        let payload = serde_json::to_vec(&graph).map_err(|error| RustMetadataError::LoadWorkspace {
+            path: manifest_dir.clone(),
+            message: error.to_string(),
+        })?;
         let sequence = OVEN_PROJECT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let project_dir = target_dir
             .join("incan-oven-rust-projects")
             .join(format!("{}-{sequence}", std::process::id()));
         fs::create_dir_all(&project_dir)?;
+        let native_project = OvenInspectionProject {
+            directory: project_dir.clone(),
+        };
         // rust-analyzer recognizes only this exact filename when discovering a build-system-neutral graph. A suffix
         // such as `*.rust-project.json` makes it climb to an ancestor Cargo.toml and silently reintroduce Cargo.
         let project_path = project_dir.join("rust-project.json");
         fs::write(&project_path, payload)?;
         let load_config = LoadCargoConfig {
             load_out_dirs_from_check: false,
-            with_proc_macro_server: ProcMacroServerChoice::None,
+            with_proc_macro_server: if native_macro_owners.is_empty() {
+                ProcMacroServerChoice::None
+            } else {
+                active_proc_macro_server()
+            },
             prefill_caches: false,
             num_worker_threads: 1,
             proc_macro_processes: 1,
@@ -1472,15 +1515,21 @@ impl RustWorkspace {
                     message: error.to_string(),
                 }
             });
-        let _ = fs::remove_file(&project_path);
-        let _ = fs::remove_dir(&project_dir);
-        let (db, vfs, _pm) = result?;
+        let (db, vfs, pm) = result?;
+        if !native_macro_owners.is_empty() && pm.is_none() {
+            return Err(RustMetadataError::LoadWorkspace {
+                path: manifest_dir,
+                message: "direct inspection could not start the selected toolchain's proc-macro server".to_string(),
+            });
+        }
         let crate_index = Self::build_crate_index(&db);
         Ok(RustWorkspace {
             db,
             crate_index,
             vfs,
-            proc_macro_client: None,
+            proc_macro_client: pm.map(|client| Box::new(client) as Box<dyn Any + Send + Sync>),
+            native_macro_owners,
+            native_project: Some(native_project),
         })
     }
 
@@ -1557,6 +1606,8 @@ impl RustWorkspace {
             crate_index,
             vfs,
             proc_macro_client: pm.map(|client| Box::new(client) as Box<dyn Any + Send + Sync>),
+            native_macro_owners: Vec::new(),
+            native_project: None,
         })
     }
 
