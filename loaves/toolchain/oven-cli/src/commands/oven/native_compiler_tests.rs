@@ -1,7 +1,7 @@
-//! Receipt-bound compiler test roots using authored Loaf dependencies and the prepared native SDK.
+//! Receipt-bound compiler test roots using authored dependencies and ordinary native Loafs.
 //!
-//! This selected-root path does not publish or consume the transitional Cargo test-unit graph. The SDK supplies
-//! immutable dependencies; each sibling test declaration supplies its direct aliases, and the receipt binds the
+//! Native-only preparation supplies immutable dependencies; each sibling declaration supplies its direct aliases,
+//! and the receipt binds the
 //! complete test module tree and the explicit compilation environment before the existing direct-Rustc runner runs.
 //! Local cfg features are resolved from the test declaration and bound before stored output selection.
 
@@ -11,8 +11,11 @@ use std::time::Instant;
 
 use crate::{CliError, CliResult, ExitCode};
 use oven_model::manifest::ProjectManifest;
+use oven_rustc::native_loaf::NativeLoafGraph;
 use oven_rustc::rustc::{OvenTrustedDirectRustcTargetRequest, bake_trusted_direct_rustc_test_in_store};
 use oven_store::store::{OvenStore, OvenStoreLimits};
+
+mod preparation;
 
 /// Execute one declared test root without converting ambient Cargo metadata or silently falling back to Cargo.
 #[allow(clippy::too_many_arguments)]
@@ -20,6 +23,9 @@ pub(crate) fn run(
     compiler_root: PathBuf,
     target: PathBuf,
     declaration: Option<PathBuf>,
+    native_graph: Option<PathBuf>,
+    native_index: Option<PathBuf>,
+    native_blobs: Option<PathBuf>,
     source_inputs: Vec<PathBuf>,
     exact_names: Vec<String>,
     output: PathBuf,
@@ -30,6 +36,9 @@ pub(crate) fn run(
         compiler_root,
         target,
         declaration,
+        native_graph,
+        native_index,
+        native_blobs,
         source_inputs,
         exact_names,
         output,
@@ -45,6 +54,9 @@ fn execute(
     compiler_root: PathBuf,
     target: PathBuf,
     declaration: Option<PathBuf>,
+    native_graph: Option<PathBuf>,
+    native_index: Option<PathBuf>,
+    native_blobs: Option<PathBuf>,
     source_inputs: Vec<PathBuf>,
     exact_names: Vec<String>,
     output: PathBuf,
@@ -55,7 +67,7 @@ fn execute(
     let compiler_root = compiler_root.canonicalize()?;
     let source = validated_source(&compiler_root, &target)?;
 
-    // ---- Source authority and native SDK selection ----
+    // ---- Source authority and ordinary native dependency selection ----
     let tests = source.parent().ok_or("test source has no parent")?;
     let owner = tests.parent().ok_or("test source has no package owner")?;
     let declaration = validated_input(
@@ -63,6 +75,10 @@ fn execute(
         &declaration.unwrap_or_else(|| source.with_extension("loaf.toml")),
     )?;
     let manifest = ProjectManifest::load(&declaration)?;
+    let declaration_owner = declaration
+        .parent()
+        .ok_or("test declaration has no owner")?
+        .to_path_buf();
     let mut source_inputs = source_inputs
         .iter()
         .map(|input| validated_input(&compiler_root, input))
@@ -75,13 +91,6 @@ fn execute(
         .as_ref()
         .ok_or("test declaration has no project identity")?;
     let features = compilation_features(&manifest)?;
-    let inventory = incan_provider::inventory::discover_or_reuse_published_sdk_inventory()?
-        .ok_or("native compiler tests require a prepared SDK inventory")?;
-    let unavailable: BTreeMap<String, serde_json::Value> =
-        serde_json::from_slice(&std::fs::read(inventory.root.join("unavailable-components.json"))?)?;
-    if !unavailable.is_empty() {
-        return Err(format!("native SDK components are unavailable: {:?}", unavailable.keys()).into());
-    }
     let compile_environment = compilation_environment(owner)?;
     let receipt = test_receipt(
         &compiler_root,
@@ -106,8 +115,34 @@ fn execute(
         ),
     );
     let dependencies = manifest.rust_dependencies().values().cloned().collect::<Vec<_>>();
+    let prepared = if dependencies.is_empty() {
+        None
+    } else {
+        Some(preparation::prepare(
+            &compiler_root,
+            native_graph
+                .as_deref()
+                .ok_or("native dependencies require --native-graph")?,
+            native_index
+                .as_deref()
+                .ok_or("native dependencies require --native-index")?,
+            native_blobs
+                .as_deref()
+                .ok_or("native dependencies require --native-blobs")?,
+            &rustc,
+        )?)
+    };
+    let closure = if let Some(prepared) = &prepared {
+        let roots = prepared
+            .graph()
+            .select_dependency_roots(&dependencies, &declaration_owner, "target")?;
+        prepared.graph().select(&roots)?
+    } else {
+        NativeLoafGraph::default().select(&[])?
+    };
     let (receipt, selection) =
-        incan_driver::build::native_sdk::select_prepared_native_sdk_plan(&store, &receipt, &dependencies)?;
+        incan_driver::build::native_loaf_plan::select_native_loaf_plan(&store, &receipt, &closure)?;
+    preparation::write_report(&output, prepared.as_ref(), &closure)?;
     let plan_ms = started.elapsed().as_millis();
 
     // ---- Receipt-bound test compilation ----
@@ -141,7 +176,7 @@ fn execute(
     let compilation_ms = compilation_started.elapsed().as_millis();
 
     // ---- Inventory-verified native execution ----
-    let environment = execution_environment(&compiler_root, owner, &inventory.root, &explicit_bake_workspace, &rustc)?;
+    let environment = execution_environment(&compiler_root, owner, &explicit_bake_workspace, &rustc)?;
     execute_cases(
         &executable,
         &exact_names,
@@ -190,7 +225,7 @@ fn compilation_features(manifest: &ProjectManifest) -> Result<Vec<String>, Box<d
     Ok(selected.active_features.into_iter().collect())
 }
 
-/// Bind the test's full module closure, selected native SDK location and compilation inputs to its receipt.
+/// Bind the test's full module closure and explicit compilation inputs before native dependency selection.
 #[allow(clippy::too_many_arguments)]
 fn test_receipt(
     root: &Path,
@@ -242,16 +277,13 @@ fn compilation_environment(owner: &Path) -> Result<BTreeMap<String, String>, Box
 fn execution_environment(
     root: &Path,
     owner: &Path,
-    sdk: &Path,
     workspace: &Path,
     rustc: &Path,
 ) -> Result<BTreeMap<String, String>, Box<dyn std::error::Error>> {
     let mut environment = compilation_environment(owner)?;
     let compiler = std::env::current_exe()?.with_file_name("incan");
-    let inventory = sdk.join(incan_provider::SDK_INVENTORY_FILE);
     for (name, path) in [
         ("CARGO_BIN_EXE_incan", compiler.as_path()),
-        ("INCAN_SDK_INVENTORY", inventory.as_path()),
         ("INCAN_SOURCE_ROOT", root),
         ("RUSTC", rustc),
         ("INCAN_INTERNAL_TEST_SOURCE_ROOT", root),

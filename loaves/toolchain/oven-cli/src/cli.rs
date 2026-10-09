@@ -353,7 +353,7 @@ pub enum OvenCommand {
         #[command(subcommand)]
         command: OvenLegacyCargoCommand,
     },
-    /// Run one authored compiler test root against the receipt-selected native SDK closure
+    /// Run one authored compiler test root against ordinary declaration-selected native Loafs
     #[command(hide = true)]
     CompilerNativeTests {
         /// Source checkout owning the test root and its authored Loaf dependencies
@@ -365,6 +365,15 @@ pub enum OvenCommand {
         /// Authored dependency declaration; defaults to the source's sibling `.loaf.toml`
         #[arg(long)]
         declaration: Option<PathBuf>,
+        /// Explicit resolved registry selection and local facet policy, without a standard-library publication
+        #[arg(long)]
+        native_graph: Option<PathBuf>,
+        /// Registry index containing the exact revision declared by the native graph
+        #[arg(long)]
+        native_index: Option<PathBuf>,
+        /// Digest-addressed source archives needed by the native graph
+        #[arg(long)]
+        native_blobs: Option<PathBuf>,
         /// Additional checkout-owned compiled or embedded source input, repeated for separate files or trees
         #[arg(long = "input")]
         source_inputs: Vec<PathBuf>,
@@ -377,7 +386,7 @@ pub enum OvenCommand {
         /// Persistent source workspaces for explicit native fixture bakes
         #[arg(long)]
         explicit_bake_workspace: PathBuf,
-        /// Compiler executable matching the prepared SDK units
+        /// Compiler executable matching the selected native Loafs
         #[arg(long)]
         rustc: PathBuf,
     },
