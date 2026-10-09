@@ -548,7 +548,7 @@ struct OvenProjectLock {
 }
 
 /// Hash one source tree by portable path and exact bytes, matching Oven's Loaf source identity.
-fn digest_oven_source_tree(root: &Path) -> Result<String, RustMetadataError> {
+pub(crate) fn digest_oven_source_tree(root: &Path) -> Result<String, RustMetadataError> {
     /// Collect portable source-tree records while rejecting links and special files.
     fn collect(root: &Path, current: &Path, records: &mut BTreeMap<String, String>) -> Result<(), RustMetadataError> {
         let mut entries = fs::read_dir(current)?.collect::<Result<Vec<_>, _>>()?;

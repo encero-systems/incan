@@ -289,8 +289,22 @@ impl Holder {
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            "[package]\nname = \"mir_digest_probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            tmp.path().join("loaf.toml"),
+            r#"[project]
+name = "mir_digest_probe"
+version = "0.1.0"
+
+[rust]
+name = "mir_digest_probe"
+edition = "2021"
+type = "lib"
+"#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(tmp.path().join("src/lib.rs"), source)?;
         let workspace = RustWorkspace::load(tmp.path(), &|_| ())?;
