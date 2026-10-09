@@ -9388,6 +9388,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_rustc/src/sdk_closure/digest_reuse_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven native input freshness: actual linker and extern planners retain raw content identities, zero-byte warm observations, preserved-mtime edits, symlink retargets and missing-input refusal; child-local cache and tracing prevent environment races.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_rustc/src/sdk_closure/environment.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; closure units receive Cargo's package environment from the locked binding and pinned adoption metadata, bound into the receipt.",
