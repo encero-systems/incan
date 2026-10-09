@@ -96,8 +96,8 @@ TEST_RUNTIME_ENV = $(TEST_ENV) \
 	INCAN_SDK_INVENTORY="$$(cat "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)")/sdk-inventory.json"
 # Make owns only command transport; Incan selects and prepares the exact compiler inputs for builds and tests.
 COMPILER_DEVELOPMENT = $(TEST_ENV) sh "$(CURDIR)/scripts/compiler_development.sh" \
-	"$(CURDIR)" "$(abspath $(TARGET_DIR))" "$(INCAN_TEST_BOOTSTRAP_COMPILER)" "$(INCAN_TEST_SUITE_TOOLCHAIN)" \
-	"$(abspath $(INCAN_TEST_SDK_PROVIDER_PATH_FILE))" "$(abspath $(INCAN_TEST_OVEN_COMPILER_SUITE_STORE))"
+	"$(CURDIR)" "$(TARGET_DIR)" "$(INCAN_TEST_BOOTSTRAP_COMPILER)" "$(INCAN_TEST_SUITE_TOOLCHAIN)" \
+	"$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)" "$(INCAN_TEST_OVEN_COMPILER_SUITE_STORE)"
 ifneq ($(strip $(INCAN_TEST_COMMAND_TIMINGS)),)
 TEST_RUNTIME_ENV += INCAN_TEST_COMMAND_TIMINGS="$(INCAN_TEST_COMMAND_TIMINGS)"
 endif
@@ -147,12 +147,14 @@ _incan_link_debug_to_cargo_bin:
 	@set -e; \
 		if [ "$(INCAN_LINK_CARGO_BIN)" != "1" ] || [ "$(INCAN_SKIP_CARGO_BIN_LINK)" = "1" ]; then exit 0; fi; \
 		if [ ! -f "$(TARGET_DIR)/debug/incan" ]; then echo "incan: expected $(TARGET_DIR)/debug/incan after build"; exit 1; fi; \
+		output_root="$(TARGET_DIR)"; \
+		case "$$output_root" in /*) ;; *) output_root="$(CURDIR)/$$output_root" ;; esac; \
 		mkdir -p "$(HOME)/.cargo/bin"; \
-		ln -sf "$(abspath $(TARGET_DIR))/debug/incan" "$(HOME)/.cargo/bin/incan"; \
-		echo "\033[32m✓ Linked ~/.cargo/bin/incan -> $(abspath $(TARGET_DIR))/debug/incan\033[0m"; \
+		ln -sf "$$output_root/debug/incan" "$(HOME)/.cargo/bin/incan"; \
+		echo "\033[32m✓ Linked ~/.cargo/bin/incan -> $$output_root/debug/incan\033[0m"; \
 		if [ -f "$(TARGET_DIR)/debug/incan-lsp" ]; then \
-			ln -sf "$(abspath $(TARGET_DIR))/debug/incan-lsp" "$(HOME)/.cargo/bin/incan-lsp"; \
-			echo "\033[32m✓ Linked ~/.cargo/bin/incan-lsp -> $(abspath $(TARGET_DIR))/debug/incan-lsp\033[0m"; \
+			ln -sf "$$output_root/debug/incan-lsp" "$(HOME)/.cargo/bin/incan-lsp"; \
+			echo "\033[32m✓ Linked ~/.cargo/bin/incan-lsp -> $$output_root/debug/incan-lsp\033[0m"; \
 	fi
 
 .PHONY: build  ## build - Debug build (compiler, LSP, oven); links ~/.cargo/bin/incan + incan-lsp locally
@@ -164,12 +166,12 @@ build:
 .PHONY: build-fast  ## build - Debug build (compiler only); links ~/.cargo/bin/incan locally
 build-fast:
 	@echo "\033[1mBuilding compiler only (debug)...\033[0m"
-	@$(COMPILER_DEVELOPMENT) build "$(abspath $(TARGET_DIR))/debug/incan"
+	@$(COMPILER_DEVELOPMENT) build "$(TARGET_DIR)/debug/incan"
 	@$(MAKE) _incan_link_debug_to_cargo_bin
 
 .PHONY: build-quiet
 build-quiet:
-	@$(COMPILER_DEVELOPMENT) quiet "$(abspath $(TARGET_DIR))/debug/incan"
+	@$(COMPILER_DEVELOPMENT) quiet "$(TARGET_DIR)/debug/incan"
 
 .PHONY: release  ## build - Release build (optimized)
 release:
@@ -868,7 +870,7 @@ test-timings:
 test-one:
 	@test -n "$(TEST_ROOT)" || { echo "usage: make test-one TEST_ROOT=loaves/toolchain/incan-cli/tests/cli_provider_boundary_tests.rs" >&2; exit 2; }
 	@echo "\033[1mRunning $(TEST_ROOT)$(if $(TEST_EXACT), ($(TEST_EXACT)),) through Oven...\033[0m"
-	@$(COMPILER_DEVELOPMENT) test "$(TEST_ROOT)" "$(TEST_EXACT)" "$(abspath $(INCAN_TEST_OVEN_TEST_ONE_REPORT))"
+	@$(COMPILER_DEVELOPMENT) test "$(TEST_ROOT)" "$(TEST_EXACT)" "$(INCAN_TEST_OVEN_TEST_ONE_REPORT)"
 
 # =============================================================================
 # Tooling
