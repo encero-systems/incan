@@ -32,6 +32,7 @@ pub(crate) struct MetadataPreparation {
     pub native_context: Option<Arc<NativeSdkCommandContext>>,
     pub rustc: PathBuf,
     dependency_owners: Vec<Arc<SelectedLibraryMetadata>>,
+    delivery_coordinates: BTreeMap<String, String>,
 }
 
 impl MetadataPreparation {
@@ -40,9 +41,16 @@ impl MetadataPreparation {
     pub fn observe(
         project: &ProjectManifest,
         session: &CompilationSession,
+        out_dir: &Path,
         native_sdk: Option<&NativeSdkPublicationContext<'_>>,
         authority: Option<&mut OvenProjectBakeAuthorityContext>,
     ) -> CliResult<Option<Self>> {
+        if !metadata_output_is_observable(project.project_root(), out_dir) {
+            tracing::debug!("ordinary checked metadata reuse unavailable for output within authored source");
+            return Ok(None);
+        }
+        // Relative provider descriptors require an existing owned generated root, exactly as fresh publication does.
+        std::fs::create_dir_all(out_dir).map_err(|error| invalid(error.to_string()))?;
         let store = open_default_oven_store()?;
         let producer_digest = crate::build::source_authority::current_compiler_identity_digest()?;
         let rustc = resolve_active_rustc().map_err(|error| invalid(error.to_string()))?;
@@ -136,6 +144,7 @@ impl MetadataPreparation {
             );
             dependency_owners.push(selected);
         }
+        let delivery_coordinates = current_delivery_coordinates(out_dir, session)?;
         let native_context = if native_sdk.is_some() {
             None
         } else {
@@ -148,12 +157,7 @@ impl MetadataPreparation {
             return Ok(None);
         }
         let semantic_authority_digest = semantic_authority(session, native_sdk, native_context.as_deref())?;
-        let policy = serde_json::json!({
-            "contract": "ordinary-checked-library-requirements-v1",
-            "namespace_grants": native_sdk.map(|context| &context.namespace_roots),
-            "source_provider_mode": std::env::var_os(incan_provider::SDK_PROVIDER_BUILD_ENV).is_some(),
-            "generated_facade": "temporary-rust-bridge-v1",
-        });
+        let policy_digest = metadata_policy_digest(native_sdk, &delivery_coordinates)?;
         let recipe = LibraryMetadataRecipe {
             name,
             version,
@@ -161,7 +165,7 @@ impl MetadataPreparation {
             producer_digest,
             semantic_authority_digest,
             dependencies,
-            policy_digest: digest_bytes(&serde_json::to_vec(&policy).map_err(|error| invalid(error.to_string()))?),
+            policy_digest,
             target,
             toolchain,
             features: session.active_features.iter().cloned().collect(),
@@ -174,6 +178,7 @@ impl MetadataPreparation {
             native_context,
             rustc,
             dependency_owners,
+            delivery_coordinates,
         }))
     }
 
@@ -198,13 +203,15 @@ impl MetadataPreparation {
         &self,
         project: &ProjectManifest,
         session: &CompilationSession,
+        out_dir: &Path,
         native_sdk: Option<&NativeSdkPublicationContext<'_>>,
     ) -> CliResult<()> {
         let features = session
             .package_feature_plan
             .as_ref()
             .ok_or_else(|| invalid("missing current feature authority"))?;
-        if current_source_digest(project.project_root(), features)? != self.recipe.source_digest
+        if current_delivery_coordinates(out_dir, session)? != self.delivery_coordinates
+            || current_source_digest(project.project_root(), features)? != self.recipe.source_digest
             || crate::build::source_authority::current_compiler_identity_digest()? != self.recipe.producer_digest
             || semantic_authority(session, native_sdk, self.native_context.as_deref())?
                 != self.recipe.semantic_authority_digest
@@ -255,6 +262,84 @@ impl MetadataPreparation {
         }
         Ok(())
     }
+}
+
+/// Restrict reuse until source authority can exclude arbitrary supported generated-output placements explicitly.
+fn metadata_output_is_observable(root: &Path, output: &Path) -> bool {
+    let Ok(root) = std::fs::canonicalize(root) else {
+        return false;
+    };
+    let normalized = std::fs::canonicalize(output).or_else(|_| {
+        let parent = output
+            .parent()
+            .ok_or_else(|| std::io::Error::other("output has no parent"))?;
+        let name = output
+            .file_name()
+            .ok_or_else(|| std::io::Error::other("output has no name"))?;
+        std::fs::canonicalize(parent).map(|parent| parent.join(name))
+    });
+    let Ok(output) = normalized else {
+        return false;
+    };
+    match output.strip_prefix(root) {
+        Ok(relative) => relative.components().any(|component| {
+            matches!(
+                component.as_os_str().to_str(),
+                Some("target" | ".incan" | ".ralph-cache")
+            )
+        }),
+        Err(_) => true,
+    }
+}
+
+/// Keep physical delivery paths in the conservative recipe until immutable checked contracts are coordinate-free.
+fn metadata_policy_digest(
+    native_sdk: Option<&NativeSdkPublicationContext<'_>>,
+    delivery_coordinates: &BTreeMap<String, String>,
+) -> CliResult<String> {
+    let policy = serde_json::json!({
+        "contract": "ordinary-checked-library-requirements-v1",
+        "namespace_grants": native_sdk.map(|context| &context.namespace_roots),
+        "source_provider_mode": std::env::var_os(incan_provider::SDK_PROVIDER_BUILD_ENV).is_some(),
+        "generated_facade": "temporary-rust-bridge-v1",
+        "delivery_coordinates": delivery_coordinates,
+    });
+    Ok(digest_bytes(
+        &serde_json::to_vec(&policy).map_err(|error| invalid(error.to_string()))?,
+    ))
+}
+
+/// Bind all potentially emitted physical provider descriptors before source use selects its narrower plan.
+fn current_delivery_coordinates(output: &Path, session: &CompilationSession) -> CliResult<BTreeMap<String, String>> {
+    let mut roots = BTreeMap::new();
+    for (alias, _, artifact) in session.library_manifest_index.loaded_entries() {
+        roots.insert(format!("public:{alias}"), artifact.crate_root.clone());
+    }
+    // Selection is intentionally conservative until checked and delivery representations are independent. Unused
+    // available SDK providers may cause misses, but an emitted private edge cannot escape this coordinate contract.
+    for record in session.provider_plan.active_sdk_records() {
+        if let Some(artifact) = &record.artifact {
+            roots.insert(
+                format!("private:{}", record.identity.stable_key()),
+                artifact.crate_root.clone(),
+            );
+        }
+    }
+    project_delivery_coordinates(output, &roots)
+}
+
+/// Use the same physical relative-path authority as fresh compiled provider metadata publication.
+fn project_delivery_coordinates(
+    output: &Path,
+    roots: &BTreeMap<String, PathBuf>,
+) -> CliResult<BTreeMap<String, String>> {
+    roots
+        .iter()
+        .map(|(alias, root)| {
+            crate::build::provider_metadata::relative_provider_artifact_path(output, root)
+                .map(|relative| (alias.clone(), relative))
+        })
+        .collect()
 }
 
 /// Observe the exact active authored source closure without invoking the Incan lexer, parser or checker.
@@ -386,7 +471,8 @@ pub(crate) struct PendingMetadataPublication {
 impl PendingMetadataPublication {
     /// Publish only after the ordinary output writer has finalized the full checked file closure.
     pub fn publish(self, prepared: &crate::build::PreparedLibraryProject) -> CliResult<Arc<SelectedLibraryMetadata>> {
-        self.preparation.revalidate(&self.project, &self.session, None)?;
+        self.preparation
+            .revalidate(&self.project, &self.session, &prepared.out_dir, None)?;
         let owner = crate::build::library_metadata::publish_library_metadata_with_requirements(
             &self.preparation.store,
             &self.preparation.recipe,
@@ -446,7 +532,7 @@ pub(super) fn prepare_replayed_library(request: ReplayRequest<'_>) -> CliResult<
         authority,
     } = request;
     let started = Instant::now();
-    preparation.revalidate(project, session, native_sdk)?;
+    preparation.revalidate(project, session, &out_dir, native_sdk)?;
     let contract = selected
         .checked_requirements()
         .ok_or_else(|| invalid("metadata owner lacks checked planning inputs"))?;

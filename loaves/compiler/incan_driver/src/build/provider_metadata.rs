@@ -322,7 +322,7 @@ fn compiled_provider_dependencies(
 }
 
 /// Compute one normalized portable path between two existing provider artifact roots.
-fn relative_provider_artifact_path(from: &Path, to: &Path) -> CliResult<String> {
+pub(crate) fn relative_provider_artifact_path(from: &Path, to: &Path) -> CliResult<String> {
     let from = fs::canonicalize(from).map_err(|error| {
         CliError::failure(format!(
             "failed to canonicalize provider artifact root {}: {error}",

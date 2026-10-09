@@ -598,6 +598,7 @@ fn prepare_library_project_with_context(
         metadata_replay::MetadataPreparation::observe(
             &manifest,
             &compilation_session,
+            &out_dir,
             native_sdk,
             authority_context.as_deref_mut(),
         )?
@@ -1157,7 +1158,7 @@ fn prepare_library_project_with_context(
             );
             match contract {
                 Ok(contract) => {
-                    preparation.revalidate(&manifest, &compilation_session, native_sdk)?;
+                    preparation.revalidate(&manifest, &compilation_session, &out_dir, native_sdk)?;
                     let manifest_path = crate::build::library_outputs::write_checked_library_payload(
                         &out_dir,
                         &library_manifest,
