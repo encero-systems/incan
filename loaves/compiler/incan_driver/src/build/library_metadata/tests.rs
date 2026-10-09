@@ -1,9 +1,20 @@
 //! Real ordinary metadata Store controls; no mirrored receipt or admission implementation.
 
-use super::*;
+use super::{
+    LIBRARY_METADATA_DOMAIN, LibraryMetadataDependency, LibraryMetadataRecipe, SelectedLibraryMetadata,
+    publish_library_metadata, select_library_metadata,
+};
+use crate::build::OvenPackagedLibraryMetadataFile;
+use crate::error::CliResult;
+use incan_frontend::library_manifest::LibraryManifest;
 use incan_frontend::library_manifest::LibraryRustAbi;
+use incan_lang::interop::metadata::RustItemKind;
 use incan_lang::interop::metadata::{RustItemMetadata, RustTypeInfo, RustTypeMetadataCompleteness, RustVisibility};
+use oven_store::digest_bytes;
 use oven_store::store::OvenStoreLimits;
+use oven_store::store::{OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore};
+use std::collections::{BTreeMap, BTreeSet};
+use std::{fs, sync::Arc};
 use tempfile::TempDir;
 
 /// Give every test a complete ordinary source declaration and finalized generated artifact.
@@ -219,7 +230,7 @@ fn ordinary_metadata_refuses_forged_payload_and_receipt() -> Result<(), Box<dyn 
             materialized_directories: Vec::new(),
         })?;
         assert!(
-            select_library_metadata(&store, &package.recipe, &package.recipe.receipt(package.source.path())?)?.is_err()
+            select_library_metadata(&store, &package.recipe, &package.recipe.receipt(package.source.path())?).is_err()
         );
     }
     Ok(())

@@ -1,7 +1,9 @@
 //! Real checked-export replay and corrupted published-contract controls for #1337/#1698.
 
-use super::*;
+use super::CheckedExportReplay;
 use crate::library_exports::collect_checked_public_exports;
+use crate::library_exports::{CheckedExportKind, CheckedNamedExport, CheckedParamDefault, CheckedParamDefaultArg};
+use crate::library_manifest::ExportIdentityKind;
 use crate::typechecker::TypeChecker;
 
 /// Obtain declaration authority from the frontend rather than inventing canonical test identities.
@@ -118,5 +120,67 @@ fn ordinary_checked_replay_refuses_unrepresented_checked_defaults() -> Result<()
     let exports = checked("pub def label(text: str = \"a\" + \"b\") -> str:\n  return text\n")?;
     let export = exports.first().ok_or("missing export")?;
     assert!(CheckedExportReplay::from_checked("ordinary", "1.0.0", export).is_err());
+    Ok(())
+}
+
+/// Corrupt a real checked default's nested callable facts before encoding; neither unnamed nor preset parameters
+/// may disappear, including when the default call is nested under list/dict containers or other call arguments.
+#[test]
+fn ordinary_checked_replay_refuses_lossy_nested_default_signatures() -> Result<(), String> {
+    let exports = checked(
+        "pub def scale(value: int) -> int:\n  return value\n\npub def answer(value: int = scale(3)) -> int:\n  return value\n",
+    )?;
+    let original = exports
+        .iter()
+        .find(|export| export.name == "answer")
+        .ok_or("missing answer")?;
+    let restored = replay(original)?;
+    let (CheckedExportKind::Function(function), CheckedExportKind::Function(replayed)) =
+        (&original.kind, &restored.kind)
+    else {
+        return Err("missing callable".into());
+    };
+    assert_eq!(function.param_defaults, replayed.param_defaults);
+    for unnamed in [true, false] {
+        for container in 0..4 {
+            let mut changed = original.clone();
+            let CheckedExportKind::Function(function) = &mut changed.kind else {
+                return Err("missing callable".into());
+            };
+            let default = function
+                .param_defaults
+                .first_mut()
+                .and_then(Option::as_mut)
+                .ok_or("missing default")?;
+            let CheckedParamDefault::Call {
+                signature: Some(signature),
+                ..
+            } = default
+            else {
+                return Err("missing checked nested call signature".into());
+            };
+            let parameter = signature.params.first_mut().ok_or("missing nested parameter")?;
+            if unnamed {
+                parameter.name = None;
+            } else {
+                parameter.is_partial_preset = true;
+            }
+            let nested = default.clone();
+            *default = match container {
+                0 => nested,
+                1 => CheckedParamDefault::List(vec![nested]),
+                2 => CheckedParamDefault::Dict(vec![(CheckedParamDefault::String("value".into()), nested)]),
+                _ => CheckedParamDefault::Call {
+                    path: vec!["scale".into()],
+                    args: vec![CheckedParamDefaultArg {
+                        name: None,
+                        value: nested,
+                    }],
+                    signature: None,
+                },
+            };
+            assert!(CheckedExportReplay::from_checked("ordinary", "1.0.0", &changed).is_err());
+        }
+    }
     Ok(())
 }

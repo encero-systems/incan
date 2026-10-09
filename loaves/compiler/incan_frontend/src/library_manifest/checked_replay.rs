@@ -7,8 +7,21 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::*;
-use crate::library_exports::*;
+use super::{
+    CanonicalIdentityExport, EnumValueExport, EnumValueTypeExport, ExportIdentityKind, ExportIdentityProjection,
+    FieldExport, FieldVisibilityExport, FunctionExport, ImplementationTraitBoundOriginExport, LibraryManifest,
+    LibraryManifestError, MethodExport, NewtypeConstraintExport, ParamDefaultExport, ParamExport, ParamKindExport,
+    PartialExport, PartialTargetKindExport, PresetValueExport, PropertyExport, ReceiverExport, TypeBoundExport,
+    TypeParamExport, TypeRef, VisitTypeRefs, params_from_checked, resolved_type_from_manifest_type_ref,
+};
+use crate::library_exports::{
+    CheckedAliasExport, CheckedClassExport, CheckedConstExport, CheckedEnumExport, CheckedEnumVariant,
+    CheckedEnumVariantAlias, CheckedExportIdentity, CheckedExportKind, CheckedExportProjection, CheckedField,
+    CheckedFunctionExport, CheckedMethod, CheckedModelExport, CheckedNamedExport, CheckedNewtypeExport,
+    CheckedParamDefault, CheckedParamDefaultArg, CheckedParamDefaultCallSignature, CheckedPartialExport,
+    CheckedPartialPreset, CheckedPartialTargetKind, CheckedPresetValue, CheckedProperty, CheckedStaticExport,
+    CheckedTraitExport, CheckedTypeAliasExport, CheckedTypeBound, CheckedTypeParam,
+};
 use crate::symbols::{
     CallableParam, ImplementationTraitBoundInfo, ImplementationTraitBoundOriginInfo, ImplementationTypeParamInfo,
 };
@@ -248,7 +261,7 @@ impl CheckedExportReplay {
         let [(kind, shape)] = kinds.as_slice() else {
             return Err(invalid("checked export replay requires one complete shape"));
         };
-        if *kind != identity.kind {
+        if *kind != identity.kind || shape_name(shape) != identity.public_name {
             return Err(invalid("checked export replay shape and identity kinds disagree"));
         }
         let mut origins = BTreeMap::new();
@@ -318,6 +331,9 @@ fn validate_replayable_shape(kind: &CheckedExportKind) -> Result<(), LibraryMani
                 "checked callable facts are not fully represented by the published contract",
             ));
         }
+        for value in defaults.iter().flatten() {
+            validate_default(value)?;
+        }
         Ok(())
     };
     match kind {
@@ -342,6 +358,16 @@ fn validate_replayable_shape(kind: &CheckedExportKind) -> Result<(), LibraryMani
         }
         _ => {}
     }
+    let fields = match kind {
+        CheckedExportKind::Model(value) => value.fields.as_slice(),
+        CheckedExportKind::Class(value) => value.fields.as_slice(),
+        _ => &[],
+    };
+    for field in fields {
+        if let Some(value) = &field.default {
+            validate_default(value)?;
+        }
+    }
     let methods = match kind {
         CheckedExportKind::Model(value) => &value.methods,
         CheckedExportKind::Class(value) => &value.methods,
@@ -354,6 +380,58 @@ fn validate_replayable_shape(kind: &CheckedExportKind) -> Result<(), LibraryMani
         validate(&method.params, &method.param_defaults)?;
     }
     Ok(())
+}
+
+/// Validate nested default-call signatures before their canonical encoder can filter checked parameter facts.
+fn validate_default(value: &CheckedParamDefault) -> Result<(), LibraryManifestError> {
+    match value {
+        CheckedParamDefault::List(values) => {
+            for value in values {
+                validate_default(value)?;
+            }
+        }
+        CheckedParamDefault::Dict(values) => {
+            for (key, value) in values {
+                validate_default(key)?;
+                validate_default(value)?;
+            }
+        }
+        CheckedParamDefault::Call { args, signature, .. } => {
+            for argument in args {
+                validate_default(&argument.value)?;
+            }
+            if let Some(signature) = signature {
+                let projected = params_from_checked(&signature.params, &[]);
+                if projected.len() != signature.params.len()
+                    || signature.params.iter().any(|parameter| parameter.is_partial_preset)
+                {
+                    return Err(invalid("nested checked default signature is not fully represented"));
+                }
+            }
+        }
+        CheckedParamDefault::Unsupported => {
+            return Err(invalid("unsupported checked default cannot be replayed losslessly"));
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Bind the unique shape's own spelling to its canonical public identity rather than trusting its kind alone.
+fn shape_name(value: &CheckedExportKind) -> &str {
+    match value {
+        CheckedExportKind::Function(value) => &value.name,
+        CheckedExportKind::Partial(value) => &value.name,
+        CheckedExportKind::Alias(value) => &value.name,
+        CheckedExportKind::TypeAlias(value) => &value.name,
+        CheckedExportKind::Model(value) => &value.name,
+        CheckedExportKind::Class(value) => &value.name,
+        CheckedExportKind::Trait(value) => &value.name,
+        CheckedExportKind::Enum(value) => &value.name,
+        CheckedExportKind::Newtype(value) => &value.name,
+        CheckedExportKind::Const(value) => &value.name,
+        CheckedExportKind::Static(value) => &value.name,
+    }
 }
 
 /// Recover partial preset flags from the explicit checked preset-to-parameter binding.
