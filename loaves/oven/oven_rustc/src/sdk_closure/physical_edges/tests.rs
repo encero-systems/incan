@@ -42,6 +42,7 @@ fn node(
     .with_generated_source("sdk-root", &source)
     .with_build_unit_input("sdk-source-archive", &binding.archive_digest)
     .with_build_unit_input("domain", &binding.domain);
+    request = request.with_build_unit_input(crate::native_loaf::ORIGIN_INPUT, "registry");
     for (alias, dependency) in selected {
         request = request.with_build_unit_input(format!("extern:{alias}"), dependency.native_artifact()?.digest);
     }
@@ -114,7 +115,7 @@ fn dev7_physical_edges_capture_original_named_owner_without_reacquisition() -> R
     assert_eq!(edges[0].destination().binding.features, ["enabled"]);
     assert_eq!(edges[0].destination().store_identity, child.entry_identity());
     assert_eq!(edges[0].destination().receipt_identity, before);
-    assert_eq!(edges[0].store(), root.path().join("store"));
+    assert_eq!(edges[0].store(), root.path().join("store").canonicalize()?);
     verify(&parent.owner, &parent.reproduced_receipt, edges, &selected)?;
     assert_eq!(child.compiled_identity(), before);
     // The fixture outputs are data controls; validation uses their descriptors, not rustc or a fresh owner search.

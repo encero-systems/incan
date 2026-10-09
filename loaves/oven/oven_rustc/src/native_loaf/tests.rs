@@ -64,6 +64,7 @@ fn publish_with_domain(
     .with_generated_source("native-root", &source_file)
     .with_build_unit_input("source-generation", &source.archive_digest)
     .with_build_unit_input("domain", &source.domain)
+    .with_build_unit_input(ORIGIN_INPUT, NativeLoafOrigin::Registry.as_str())
     .with_build_unit_input(SOURCE_INPUT, source_binding_input(&source)?);
     let mut edges = Vec::new();
     for (alias, identity) in dependencies {
@@ -121,6 +122,326 @@ fn store(root: &Path) -> OvenStore {
         root,
         OvenStoreLimits::new(16 * 1024 * 1024, 16 * 1024 * 1024, 16 * 1024 * 1024),
     )
+}
+
+/// Publish inventoried source declarations with explicit producer provenance for root-selection controls.
+fn publish_declaration(
+    root: &Path,
+    store: &OvenStore,
+    graph: &mut NativeLoafGraph,
+    manifest: &toml::Value,
+    archive_digest: &str,
+    features: &[&str],
+    origin: NativeLoafOrigin,
+    domain: &str,
+) -> TestResult<String> {
+    let project = root.join(format!("publisher-{}", graph.units.len()));
+    std::fs::create_dir_all(&project)?;
+    let declaration = project.join("loaf.toml");
+    std::fs::write(&declaration, toml::to_string(manifest)?)?;
+    let source = NativeLoafSource {
+        loaf: manifest["project"]["name"]
+            .as_str()
+            .ok_or("fixture name missing")?
+            .to_string(),
+        version: manifest["project"]["version"]
+            .as_str()
+            .ok_or("fixture version missing")?
+            .to_string(),
+        archive_digest: archive_digest.to_string(),
+        domain: domain.to_string(),
+        features: features.iter().map(|feature| feature.to_string()).collect(),
+        target_predicates: Vec::new(),
+    };
+    let recipe = receipt_generated_project(
+        &OvenGeneratedProjectRequest::new(
+            &project,
+            &source.loaf,
+            &source.version,
+            "fixture-target",
+            "fixture-toolchain",
+            "debug",
+            source.features.clone(),
+        )
+        .with_generated_source("source-declaration", &declaration)
+        .with_build_unit_input("domain", domain)
+        .with_build_unit_input(ORIGIN_INPUT, origin.as_str())
+        .with_build_unit_input(SOURCE_INPUT, source_binding_input(&source)?)
+        .with_build_unit_input(EDGES_INPUT, physical_edges_input(&[])?),
+    )?;
+    let output = project.join("libfixture.rlib");
+    std::fs::write(&output, b"identical native output, independently sealed declaration")?;
+    let published = store.publish(&OvenArtifactPublishRequest {
+        receipt: recipe.clone(),
+        domain: "ordinary-fixture-native".to_string(),
+        kind: OvenArtifactKind::Engine,
+        payload: serde_json::to_vec(&source)?,
+        materialized_files: vec![
+            OvenArtifactMaterializedFile {
+                source_path: output,
+                relative_path: "libfixture.rlib".to_string(),
+            },
+            OvenArtifactMaterializedFile {
+                source_path: declaration,
+                relative_path: "source/loaf.toml".to_string(),
+            },
+        ],
+        materialized_directories: Vec::new(),
+    })?;
+    let native = NativeLoafReference {
+        identity: published.identity.clone(),
+        receipt_identity: recipe.identity.clone(),
+        domain: published.domain,
+        relative_path: "libfixture.rlib".to_string(),
+        digest: published
+            .materialized_files
+            .iter()
+            .find(|member| member.relative_path == "libfixture.rlib")
+            .ok_or("fixture output missing")?
+            .digest
+            .clone(),
+    };
+    let owner = select_owner(Store::Writable(store), &published.identity)?;
+    Ok(graph.publish(store, source, native, recipe, owner, Vec::new())?)
+}
+
+/// Construct a genuine local mapped source tree, including authored defaults and feature aliases.
+fn local_declaration(root: &Path) -> TestResult<PathBuf> {
+    let project = root.join("current");
+    std::fs::create_dir_all(project.join("src"))?;
+    std::fs::write(project.join("src/lib.rs"), "pub const CURRENT: u8 = 1;\n")?;
+    std::fs::write(
+        project.join("loaf.toml"),
+        "[project]\nname='local_fixture'\nversion='1.0.0'\n[project.features]\ndefault=['enabled']\nenabled=[]\nextra=[]\n[rust]\nname='local_fixture'\n",
+    )?;
+    Ok(project)
+}
+
+/// Build an active declaration without invoking a resolver or changing its optional activation semantics.
+fn dependency(alias: &str, source: oven_model::manifest::DependencySource) -> oven_model::manifest::DependencySpec {
+    oven_model::manifest::DependencySpec {
+        crate_name: alias.to_string(),
+        version: Some("^1.0".to_string()),
+        features: Vec::new(),
+        default_features: true,
+        source,
+        optional: false,
+        package: None,
+    }
+}
+
+/// Current local source/default closure is mandatory, and two declared aliases retain the same original owner.
+#[test]
+fn dev7_native_loaf_declaration_local_aliases_features_and_source_restoration() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let native = store(&temp.path().join("store"));
+    let current = local_declaration(temp.path())?;
+    let (manifest, digest) = crate::sdk_closure::local_native_source_selection(&current)?;
+    let mut graph = NativeLoafGraph::default();
+    let identity = publish_declaration(
+        temp.path(),
+        &native,
+        &mut graph,
+        &manifest,
+        &digest,
+        &["default", "enabled"],
+        NativeLoafOrigin::Local,
+        "target",
+    )?;
+    let declaration = dependency(
+        "renamed-local",
+        oven_model::manifest::DependencySource::Path {
+            path: PathBuf::from("current"),
+        },
+    );
+    let mut second = declaration.clone();
+    second.crate_name = "another_alias".to_string();
+    let roots = graph.select_dependency_roots(&[declaration.clone(), second], temp.path(), "target")?;
+    assert_eq!(
+        roots.iter().map(|root| root.alias.as_str()).collect::<Vec<_>>(),
+        ["renamed_local", "another_alias"]
+    );
+    assert!(
+        roots
+            .iter()
+            .all(|root| root.record_identity == identity && root.source.features == ["default", "enabled"])
+    );
+    let closure = graph.select(&roots)?;
+    assert_eq!(closure.graph.units.len(), 1);
+    assert!(Arc::ptr_eq(
+        graph.units.get(&identity).ok_or("original missing")?,
+        closure.graph.units.get(&identity).ok_or("selected missing")?
+    ));
+    let source = current.join("src/lib.rs");
+    let original = std::fs::read(&source)?;
+    std::fs::write(&source, "pub const CURRENT: u8 = 2;\n")?;
+    refuses(
+        graph.select_dependency_roots(std::slice::from_ref(&declaration), temp.path(), "target"),
+        "no current",
+    )?;
+    std::fs::write(&source, original)?;
+    assert_eq!(
+        graph
+            .select_dependency_roots(std::slice::from_ref(&declaration), temp.path(), "target")?
+            .len(),
+        1
+    );
+    let mut missing_feature = declaration.clone();
+    missing_feature.features.push("extra".to_string());
+    refuses(
+        graph.select_dependency_roots(&[missing_feature], temp.path(), "target"),
+        "no current",
+    )?;
+    let mut wrong_package = declaration.clone();
+    wrong_package.package = Some("some_other_source".to_string());
+    refuses(
+        graph.select_dependency_roots(&[wrong_package], temp.path(), "target"),
+        "contradicts",
+    )?;
+    refuses(
+        graph.select_dependency_roots(&[declaration], temp.path(), "host"),
+        "no current",
+    )?;
+    Ok(())
+}
+
+/// Registry rename/version matching and macro domains use admitted declarations; incompatible origins never match.
+#[test]
+fn dev7_native_loaf_declaration_registry_macro_origin_and_ambiguity() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let native = store(&temp.path().join("store"));
+    let manifest: toml::Value = toml::from_str(
+        "[project]\nname='crates-io/macros'\nversion='1.0.0'\n[project.features]\nextra=[]\n[rust]\ntype='proc-macro'\n",
+    )?;
+    let mut graph = NativeLoafGraph::default();
+    let identity = publish_declaration(
+        temp.path(),
+        &native,
+        &mut graph,
+        &manifest,
+        "sha256:registry-fixture",
+        &[],
+        NativeLoafOrigin::Registry,
+        "host",
+    )?;
+    let mut renamed = dependency("renamed_macro", oven_model::manifest::DependencySource::Registry);
+    renamed.package = Some("macros".to_string());
+    let roots = graph.select_dependency_roots(std::slice::from_ref(&renamed), temp.path(), "target")?;
+    assert_eq!(roots[0].source.domain, "host");
+    assert_eq!(roots[0].record_identity, identity);
+    let mut wrong_version = renamed.clone();
+    wrong_version.version = Some("^2.0".to_string());
+    refuses(
+        graph.select_dependency_roots(&[wrong_version], temp.path(), "target"),
+        "no current",
+    )?;
+    let mut missing = renamed.clone();
+    missing.package = Some("absent".to_string());
+    missing.optional = true;
+    refuses(
+        graph.select_dependency_roots(&[missing], temp.path(), "target"),
+        "no current",
+    )?;
+    publish_declaration(
+        temp.path(),
+        &native,
+        &mut graph,
+        &manifest,
+        "sha256:different-registry-fixture",
+        &["extra"],
+        NativeLoafOrigin::Registry,
+        "host",
+    )?;
+    refuses(
+        graph.select_dependency_roots(&[renamed], temp.path(), "target"),
+        "ambiguous",
+    )?;
+
+    let current = local_declaration(temp.path())?;
+    let (local_manifest, digest) = crate::sdk_closure::local_native_source_selection(&current)?;
+    let mut wrong_origin = NativeLoafGraph::default();
+    publish_declaration(
+        &temp.path().join("wrong-origin"),
+        &native,
+        &mut wrong_origin,
+        &local_manifest,
+        &digest,
+        &["default", "enabled"],
+        NativeLoafOrigin::Registry,
+        "target",
+    )?;
+    let local = dependency("local", oven_model::manifest::DependencySource::Path { path: current });
+    refuses(
+        wrong_origin.select_dependency_roots(&[local], temp.path(), "target"),
+        "no current",
+    )?;
+    assert!(graph.select_dependency_roots(&[], temp.path(), "target")?.is_empty());
+    Ok(())
+}
+
+/// A prepared facet lacking the authored default closure cannot satisfy a default-enabled declaration.
+#[test]
+fn dev7_native_loaf_declaration_requires_defaults_and_admitted_manifest() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let native = store(&temp.path().join("store"));
+    let current = local_declaration(temp.path())?;
+    let (manifest, digest) = crate::sdk_closure::local_native_source_selection(&current)?;
+    let mut graph = NativeLoafGraph::default();
+    publish_declaration(
+        temp.path(),
+        &native,
+        &mut graph,
+        &manifest,
+        &digest,
+        &[],
+        NativeLoafOrigin::Local,
+        "target",
+    )?;
+    let mut declaration = dependency("local", oven_model::manifest::DependencySource::Path { path: current });
+    refuses(
+        graph.select_dependency_roots(std::slice::from_ref(&declaration), temp.path(), "target"),
+        "no current",
+    )?;
+    declaration.default_features = false;
+    assert_eq!(
+        graph
+            .select_dependency_roots(std::slice::from_ref(&declaration), temp.path(), "target")?
+            .len(),
+        1
+    );
+    let unit = graph.units.values().next().ok_or("fixture missing")?;
+    std::fs::write(
+        unit.native_owner.artifact_root.join("source/loaf.toml"),
+        "[project]\nname='substituted'\n",
+    )?;
+    assert!(
+        graph
+            .select_dependency_roots(&[declaration], temp.path(), "target")
+            .is_err()
+    );
+    Ok(())
+}
+
+/// A malformed explicit graph refuses before compiler acquisition, output creation or ambient discovery.
+#[test]
+fn dev7_native_loaf_explicit_graph_refuses_unknown_authority_before_preparation() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let graph = temp.path().join("native-graph.json");
+    std::fs::write(
+        &graph,
+        r#"{"index_commit":"fixture","registry_lock":"lock.json","facets":[],"sdk_inventory":"ambient"}"#,
+    )?;
+    let absent = temp.path().join("absent");
+    let output = temp.path().join("output");
+    let error = prepare_resolved_native_loafs(&graph, &absent, &absent, &output, &absent, "fixture-target", "debug")
+        .err()
+        .ok_or("unknown graph authority accepted")?;
+    assert!(
+        error.to_string().contains("unknown field"),
+        "unexpected graph refusal: {error}"
+    );
+    assert!(!output.exists());
+    Ok(())
 }
 
 /// Project an exact declared root from already checked fixture authority.
@@ -575,6 +896,13 @@ fn dev7_native_loaf_resealed_recipe_and_graph_intents_refuse() -> TestResult {
     forged.recipe.intent.target = "forged-target".to_string();
     canonicalize_receipt(&mut forged.recipe)?;
     let root = reseal(&native, &forged)?;
+    refuses(
+        NativeLoafClosure::admit(&native, &[root]),
+        "sealed source, receipt or intent",
+    )?;
+    let mut forged_origin = record.clone();
+    forged_origin.recipe = receipt_with_build_unit_input(&forged_origin.recipe, ORIGIN_INPUT, "local")?;
+    let root = reseal(&native, &forged_origin)?;
     refuses(
         NativeLoafClosure::admit(&native, &[root]),
         "sealed source, receipt or intent",

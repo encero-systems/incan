@@ -25,6 +25,8 @@ mod local;
 mod native;
 mod physical_edges;
 
+pub(crate) use local::{local_native_source_selection, native_required_features};
+
 pub use physical_edges::SdkPhysicalNativeEdge;
 
 pub use local::{
@@ -166,6 +168,7 @@ pub struct SdkClosureReport {
 
 struct PreparedUnit {
     binding: SdkLockedUnit,
+    source_origin: crate::native_loaf::NativeLoafOrigin,
     about: serde_json::Value,
     primary: bool,
     /// Lock handle prevents concurrent macros or fact materialization from changing this source during compilation.
@@ -499,6 +502,7 @@ fn prepare_units(
             });
             let (root, lease) = environment::stable_sources(&root, &binding, &metadata, primary, fact.as_ref())?;
             Ok(PreparedUnit {
+                source_origin: crate::native_loaf::NativeLoafOrigin::Registry,
                 about: metadata,
                 primary,
                 _source_lease: Some(lease),
@@ -727,6 +731,11 @@ fn compile_unit(
     }
     let source = unit.root.join(relative);
     let mut receipt = unit_receipt(unit, context, &source)?;
+    receipt = oven_store::receipt_with_build_unit_input(
+        &receipt,
+        crate::native_loaf::ORIGIN_INPUT,
+        unit.source_origin.as_str(),
+    )?;
     receipt = oven_store::receipt_with_build_unit_input(
         &receipt,
         crate::native_loaf::SOURCE_INPUT,
@@ -1634,6 +1643,7 @@ mod tests {
     /// Parse a script-free seed unit for graph-selection regression tests.
     pub(super) fn unit(loaf: &str, domain: &str, manifest: &str, features: &[&str]) -> Result<PreparedUnit, Error> {
         Ok(PreparedUnit {
+            source_origin: crate::native_loaf::NativeLoafOrigin::Registry,
             binding: SdkLockedUnit {
                 loaf: loaf.to_string(),
                 version: "1.0.0".to_string(),
