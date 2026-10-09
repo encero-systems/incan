@@ -3,6 +3,7 @@
 //! This selected-root path does not publish or consume the transitional Cargo test-unit graph. The SDK supplies
 //! immutable dependencies; each sibling test declaration supplies its direct aliases, and the receipt binds the
 //! complete test module tree and the explicit compilation environment before the existing direct-Rustc runner runs.
+//! Local cfg features are resolved from the test declaration and bound before stored output selection.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -54,6 +55,7 @@ fn execute(
         .project
         .as_ref()
         .ok_or("test declaration has no project identity")?;
+    let features = compilation_features(&manifest)?;
     let inventory = incan_provider::inventory::discover_or_reuse_published_sdk_inventory()?
         .ok_or("native compiler tests require a prepared SDK inventory")?;
     let unavailable: BTreeMap<String, serde_json::Value> =
@@ -62,7 +64,15 @@ fn execute(
         return Err(format!("native SDK components are unavailable: {:?}", unavailable.keys()).into());
     }
     let compile_environment = compilation_environment(owner)?;
-    let receipt = test_receipt(&compiler_root, &source, tests, project, &rustc, &compile_environment)?;
+    let receipt = test_receipt(
+        &compiler_root,
+        &source,
+        tests,
+        project,
+        &rustc,
+        &features,
+        &compile_environment,
+    )?;
     std::fs::create_dir_all(&output)?;
     let store = OvenStore::new(
         output
@@ -103,7 +113,7 @@ fn execute(
             crate_name,
             edition: "2024",
             source_evidence_key: "test-root",
-            features: &[],
+            features: &features,
             prefer_dynamic: false,
         },
         &store,
@@ -121,6 +131,7 @@ fn execute(
         plan_ms,
         compilation_ms,
         baked.reused,
+        &features,
     )?;
     Ok(ExitCode::SUCCESS)
 }
@@ -134,13 +145,31 @@ fn validated_source(root: &Path, target: &Path) -> Result<PathBuf, Box<dyn std::
     Ok(source)
 }
 
+/// Resolve local unit cfg features with the package feature authority; dependency features remain authored Rust inputs.
+fn compilation_features(manifest: &ProjectManifest) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let selected = incan_provider::PackageFeatureGraph::from_manifest(manifest)?
+        .resolve(&incan_provider::FeatureSelection::default())?;
+    if !selected.active_optional_dependencies.is_empty()
+        || !selected.dependency_features.is_empty()
+        || !selected.required_sdk_components.is_empty()
+    {
+        return Err(
+            "native test cfg features require local includes; declare Rust dependency features in [rust.dependencies]"
+                .into(),
+        );
+    }
+    Ok(selected.active_features.into_iter().collect())
+}
+
 /// Bind the test's full module closure, selected native SDK location and compilation inputs to its receipt.
+#[allow(clippy::too_many_arguments)]
 fn test_receipt(
     root: &Path,
     source: &Path,
     tests: &Path,
     project: &oven_model::manifest::ProjectSection,
     rustc: &Path,
+    features: &[String],
     environment: &BTreeMap<String, String>,
 ) -> Result<oven_store::OvenReceipt, Box<dyn std::error::Error>> {
     let request = oven_store::OvenGeneratedProjectRequest::new(
@@ -153,7 +182,7 @@ fn test_receipt(
         oven_rustc::rustc::rustc_host_target(rustc)?,
         oven_rustc::rustc::rustc_identity(rustc)?,
         "debug",
-        Vec::new(),
+        features.to_vec(),
     )
     .with_generated_source("test-root", source)
     .with_generated_source_tree("test-modules", tests)
@@ -205,6 +234,7 @@ fn execute_cases(
     plan_ms: u128,
     compilation_ms: u128,
     reused: bool,
+    features: &[String],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let report = if exact_names.is_empty() {
         oven_rustc::native_test::run_native_test_batch_all_for_request(
@@ -241,6 +271,7 @@ fn execute_cases(
             "timings_ms": {"native_plan": plan_ms, "test_compilation": compilation_ms,
                 "inventory": report.timing.inventory_elapsed_ms, "execution": report.timing.execution_elapsed_ms},
             "test_binary_reused": reused,
+            "unit_features": features,
         }))?,
     )?;
     print!("{}", report.output);
@@ -287,9 +318,9 @@ mod tests {
         };
         let rustc = oven_rustc::rustc::resolve_active_rustc()?;
         let environment = BTreeMap::new();
-        let first = test_receipt(root.path(), &source, &tests, &project, &rustc, &environment)?;
+        let first = test_receipt(root.path(), &source, &tests, &project, &rustc, &[], &environment)?;
         std::fs::write(tests.join("helper.rs"), "pub fn value() -> bool { false }")?;
-        let second = test_receipt(root.path(), &source, &tests, &project, &rustc, &environment)?;
+        let second = test_receipt(root.path(), &source, &tests, &project, &rustc, &[], &environment)?;
         assert_ne!(first.identity, second.identity);
         first.verify_identity()?;
         second.verify_identity()?;
