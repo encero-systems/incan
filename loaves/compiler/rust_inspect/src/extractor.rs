@@ -1983,12 +1983,22 @@ mod tests {
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "canonical_identity_probe"
 version = "0.1.0"
+
+[rust]
+name = "canonical_identity_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -2016,7 +2026,7 @@ impl Codec {
                 .find(|method| method.name == name)
                 .map(|method| method.signature.return_type.as_str())
         };
-        assert_eq!(return_type("bytes"), Some("std::vec::Vec<u8>"));
+        assert_eq!(return_type("bytes"), Some("alloc::vec::Vec<u8>"));
         assert_eq!(return_type("signed"), Some("Vec<i32>"));
         assert_eq!(
             return_type("payload"),
@@ -2040,15 +2050,22 @@ impl Codec {
         fs::create_dir_all(driver.join("src"))?;
         fs::create_dir_all(provider.join("src"))?;
         fs::write(
-            driver.join("Cargo.toml"),
-            r#"[package]
+            driver.join("loaf.toml"),
+            r#"[project]
 name = "tuple-driver"
 version = "0.1.0"
-edition = "2021"
 
-[lib]
-proc-macro = true
+[rust]
+name = "tuple_driver"
+edition = "2021"
+type = "proc-macro"
 "#,
+        )?;
+        fs::write(
+            driver
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             driver.join("src/lib.rs"),
@@ -2105,15 +2122,25 @@ pub fn derive_misleading(input: TokenStream) -> TokenStream {
 "#,
         )?;
         fs::write(
-            provider.join("Cargo.toml"),
-            r#"[package]
+            provider.join("loaf.toml"),
+            r#"[project]
 name = "tuple-provider-probe"
 version = "0.1.0"
+
+[rust]
+name = "tuple_provider_probe"
 edition = "2021"
+type = "lib"
 
 [dependencies]
-tuple-driver = { path = "../tuple-driver" }
+"tuple-driver" = { "loaf" = "tuple-driver", "path" = "../tuple-driver" }
 "#,
+        )?;
+        fs::write(
+            provider
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             provider.join("src/lib.rs"),
@@ -2157,16 +2184,26 @@ tuple_range!(impl_tuple_query_data, 9, 10, F);
 "#,
         )?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "tuple-consumer-probe"
 version = "0.1.0"
+
+[rust]
+name = "tuple_consumer_probe"
 edition = "2021"
+type = "lib"
 
 [dependencies]
-tuple-provider-probe = { path = "tuple-provider" }
-tuple-driver = { path = "tuple-driver" }
+"tuple-provider-probe" = { "loaf" = "tuple-provider-probe", "path" = "tuple-provider" }
+"tuple-driver" = { "loaf" = "tuple-driver", "path" = "tuple-driver" }
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -2483,12 +2520,22 @@ struct __IncanDeriveProbe3;
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_trait_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_trait_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -2530,34 +2577,117 @@ impl Labeled for Thing {}
         }
 
         fs::write(
-            trait_api.join("Cargo.toml"),
-            "[package]\nname = \"trait_api\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            trait_api.join("loaf.toml"),
+            r#"[project]
+name = "trait_api"
+version = "0.1.0"
+
+[rust]
+name = "trait_api"
+edition = "2021"
+type = "lib"
+"#,
+        )?;
+        fs::write(
+            trait_api
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(trait_api.join("src/lib.rs"), "pub trait Intrinsic {}\n")?;
         fs::write(
-            surface_api.join("Cargo.toml"),
-            "[package]\nname = \"surface_api\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ntrait_api = { path = \"../trait-api\" }\n",
+            surface_api.join("loaf.toml"),
+            r#"[project]
+name = "surface_api"
+version = "0.1.0"
+
+[rust]
+name = "surface_api"
+edition = "2021"
+type = "lib"
+
+[dependencies]
+"trait_api" = { "loaf" = "trait_api", "path" = "../trait-api" }
+"#,
+        )?;
+        fs::write(
+            surface_api
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             surface_api.join("src/lib.rs"),
             "pub struct Thing;\npub type ThingAlias = Thing;\n\nimpl trait_api::Intrinsic for Thing {}\n",
         )?;
         fs::write(
-            downstream_api.join("Cargo.toml"),
-            "[package]\nname = \"downstream_api\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nsurface_api = { path = \"../surface-api\" }\n",
+            downstream_api.join("loaf.toml"),
+            r#"[project]
+name = "downstream_api"
+version = "0.1.0"
+
+[rust]
+name = "downstream_api"
+edition = "2021"
+type = "lib"
+
+[dependencies]
+"surface_api" = { "loaf" = "surface_api", "path" = "../surface-api" }
+"#,
+        )?;
+        fs::write(
+            downstream_api
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             downstream_api.join("src/lib.rs"),
             "pub trait Ambient {}\n\nimpl Ambient for surface_api::Thing {}\n",
         )?;
         fs::write(
-            clean_probe.join("Cargo.toml"),
-            "[package]\nname = \"clean_probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nsurface_api = { path = \"../surface-api\" }\n",
+            clean_probe.join("loaf.toml"),
+            r#"[project]
+name = "clean_probe"
+version = "0.1.0"
+
+[rust]
+name = "clean_probe"
+edition = "2021"
+type = "lib"
+
+[dependencies]
+"surface_api" = { "loaf" = "surface_api", "path" = "../surface-api" }
+"#,
+        )?;
+        fs::write(
+            clean_probe
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(clean_probe.join("src/lib.rs"), "pub fn load_surface() {}\n")?;
         fs::write(
-            polluted_probe.join("Cargo.toml"),
-            "[package]\nname = \"polluted_probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nsurface_api = { path = \"../surface-api\" }\ndownstream_api = { path = \"../downstream-api\" }\n",
+            polluted_probe.join("loaf.toml"),
+            r#"[project]
+name = "polluted_probe"
+version = "0.1.0"
+
+[rust]
+name = "polluted_probe"
+edition = "2021"
+type = "lib"
+
+[dependencies]
+"surface_api" = { "loaf" = "surface_api", "path" = "../surface-api" }
+"downstream_api" = { "loaf" = "downstream_api", "path" = "../downstream-api" }
+"#,
+        )?;
+        fs::write(
+            polluted_probe
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(polluted_probe.join("src/lib.rs"), "pub fn load_graph() {}\n")?;
 
@@ -2604,12 +2734,22 @@ impl Labeled for Thing {}
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_field_order_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_field_order_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -2636,12 +2776,22 @@ edition = "2021"
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_raw_field_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_raw_field_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -2668,12 +2818,22 @@ edition = "2021"
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_tuple_struct_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_tuple_struct_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -2699,12 +2859,22 @@ pub struct Color;
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_field_identity_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_field_identity_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -2743,12 +2913,22 @@ pub struct Envelope {
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_module_alias_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_module_alias_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -2792,8 +2972,22 @@ pub fn consume(payload: backend::Payload) {
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            "[package]\nname = \"demo_constant_probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            tmp.path().join("loaf.toml"),
+            r#"[project]
+name = "demo_constant_probe"
+version = "0.1.0"
+
+[rust]
+name = "demo_constant_probe"
+edition = "2021"
+type = "lib"
+"#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -2817,37 +3011,92 @@ pub fn consume(payload: backend::Payload) {
             fs::create_dir_all(tmp.path().join(path))?;
         }
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "duplicate_root"
 version = "0.1.0"
+
+[rust]
+name = "duplicate_root"
 edition = "2021"
+type = "lib"
 
 [dependencies]
-shared = { path = "selected", version = "2" }
-bridge = { path = "bridge" }
+"shared" = { "loaf" = "shared", "path" = "selected", "version" = "2" }
+"bridge" = { "loaf" = "bridge", "path" = "bridge" }
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(tmp.path().join("src/lib.rs"), "pub fn root() {}\n")?;
         fs::write(
-            tmp.path().join("selected/Cargo.toml"),
-            "[package]\nname = \"shared\"\nversion = \"2.0.0\"\nedition = \"2021\"\n",
+            tmp.path().join("selected/loaf.toml"),
+            r#"[project]
+name = "shared"
+version = "2.0.0"
+
+[rust]
+name = "shared"
+edition = "2021"
+type = "lib"
+"#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("selected/loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("selected/src/lib.rs"),
             "pub struct Marker { pub selected: u32 }\n",
         )?;
         fs::write(
-            tmp.path().join("transitive/Cargo.toml"),
-            "[package]\nname = \"shared\"\nversion = \"1.0.0\"\nedition = \"2021\"\n",
+            tmp.path().join("transitive/loaf.toml"),
+            r#"[project]
+name = "shared"
+version = "1.0.0"
+
+[rust]
+name = "shared"
+edition = "2021"
+type = "lib"
+"#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("transitive/loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("transitive/src/lib.rs"),
             "pub struct Marker { pub transitive: u32 }\n",
         )?;
         fs::write(
-            tmp.path().join("bridge/Cargo.toml"),
-            "[package]\nname = \"bridge\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nshared = { path = \"../transitive\", version = \"1\" }\n",
+            tmp.path().join("bridge/loaf.toml"),
+            r#"[project]
+name = "bridge"
+version = "0.1.0"
+
+[rust]
+name = "bridge"
+edition = "2021"
+type = "lib"
+
+[dependencies]
+"shared" = { "loaf" = "shared", "path" = "../transitive", "version" = "1" }
+"#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("bridge/loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("bridge/src/lib.rs"),
@@ -2872,12 +3121,22 @@ bridge = { path = "bridge" }
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_alias_identity_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_alias_identity_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -2895,7 +3154,7 @@ pub type ArrayRef = Arc<dyn Array>;
         };
         assert_eq!(
             info.alias_target.as_deref(),
-            Some("std::sync::Arc<dyn demo_alias_identity_probe::Array>")
+            Some("alloc::sync::Arc<dyn demo_alias_identity_probe::Array>")
         );
         Ok(())
     }
@@ -2905,12 +3164,22 @@ pub type ArrayRef = Arc<dyn Array>;
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_alias_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_alias_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -2942,12 +3211,22 @@ pub type SliceCallback =
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_borrow_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_borrow_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -2994,12 +3273,22 @@ impl Codec {
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_owner_generic_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_owner_generic_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -3033,12 +3322,22 @@ impl<'a, T, const N: usize, U> Factory<'a, T, N, U> {
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_structural_mut_ref_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_structural_mut_ref_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -3106,12 +3405,22 @@ impl<T: MutableComponent<Mutability = Mutable>> MutableData for &mut T {}
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_trait_solver_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_trait_solver_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -3174,12 +3483,22 @@ impl QueryData for Entity {}
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_callback_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_callback_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -3210,12 +3529,22 @@ pub fn run_inline<D: FnMut(&mut Data, &OutputCallbackInfo) + Send + 'static>(cal
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_slice_callback_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_slice_callback_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
