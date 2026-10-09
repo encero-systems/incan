@@ -15,9 +15,12 @@ use oven_rustc::rustc::{OvenTrustedDirectRustcTargetRequest, bake_trusted_direct
 use oven_store::store::{OvenStore, OvenStoreLimits};
 
 /// Execute one declared test root without converting ambient Cargo metadata or silently falling back to Cargo.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run(
     compiler_root: PathBuf,
     target: PathBuf,
+    declaration: Option<PathBuf>,
+    source_inputs: Vec<PathBuf>,
     exact_names: Vec<String>,
     output: PathBuf,
     explicit_bake_workspace: PathBuf,
@@ -26,6 +29,8 @@ pub(crate) fn run(
     execute(
         compiler_root,
         target,
+        declaration,
+        source_inputs,
         exact_names,
         output,
         explicit_bake_workspace,
@@ -35,9 +40,12 @@ pub(crate) fn run(
 }
 
 /// Validate root containment and its authored dependency contract before acquiring any execution plan.
+#[allow(clippy::too_many_arguments)]
 fn execute(
     compiler_root: PathBuf,
     target: PathBuf,
+    declaration: Option<PathBuf>,
+    source_inputs: Vec<PathBuf>,
     exact_names: Vec<String>,
     output: PathBuf,
     explicit_bake_workspace: PathBuf,
@@ -50,7 +58,18 @@ fn execute(
     // ---- Source authority and native SDK selection ----
     let tests = source.parent().ok_or("test source has no parent")?;
     let owner = tests.parent().ok_or("test source has no package owner")?;
-    let manifest = ProjectManifest::load(&source.with_extension("loaf.toml"))?;
+    let declaration = validated_input(
+        &compiler_root,
+        &declaration.unwrap_or_else(|| source.with_extension("loaf.toml")),
+    )?;
+    let manifest = ProjectManifest::load(&declaration)?;
+    let mut source_inputs = source_inputs
+        .iter()
+        .map(|input| validated_input(&compiler_root, input))
+        .collect::<Result<Vec<_>, _>>()?;
+    source_inputs.push(declaration);
+    source_inputs.sort();
+    source_inputs.dedup();
     let project = manifest
         .project
         .as_ref()
@@ -71,6 +90,7 @@ fn execute(
         project,
         &rustc,
         &features,
+        &source_inputs,
         &compile_environment,
     )?;
     std::fs::create_dir_all(&output)?;
@@ -145,6 +165,15 @@ fn validated_source(root: &Path, target: &Path) -> Result<PathBuf, Box<dyn std::
     Ok(source)
 }
 
+/// Admit explicit source evidence only inside the checkout whose test compilation it will authorize.
+fn validated_input(root: &Path, input: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let input = root.join(input).canonicalize()?;
+    if !input.starts_with(root) {
+        return Err("test input must stay inside the selected compiler checkout".into());
+    }
+    Ok(input)
+}
+
 /// Resolve local unit cfg features with the package feature authority; dependency features remain authored Rust inputs.
 fn compilation_features(manifest: &ProjectManifest) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let selected = incan_provider::PackageFeatureGraph::from_manifest(manifest)?
@@ -170,9 +199,10 @@ fn test_receipt(
     project: &oven_model::manifest::ProjectSection,
     rustc: &Path,
     features: &[String],
+    inputs: &[PathBuf],
     environment: &BTreeMap<String, String>,
 ) -> Result<oven_store::OvenReceipt, Box<dyn std::error::Error>> {
-    let request = oven_store::OvenGeneratedProjectRequest::new(
+    let mut request = oven_store::OvenGeneratedProjectRequest::new(
         root,
         project.name.as_deref().ok_or("test declaration has no project name")?,
         project
@@ -187,6 +217,18 @@ fn test_receipt(
     .with_generated_source("test-root", source)
     .with_generated_source_tree("test-modules", tests)
     .with_build_unit_input("test-environment", serde_json::to_string(environment)?);
+    for input in inputs {
+        let relative = input.strip_prefix(root)?.to_str().ok_or("test input is not UTF-8")?;
+        let role = format!("test-input:{relative}");
+        let metadata = std::fs::metadata(input)?;
+        request = if metadata.is_dir() {
+            request.with_generated_source_tree(role, input)
+        } else if metadata.is_file() {
+            request.with_generated_source(role, input)
+        } else {
+            return Err("test input must be a regular file or directory".into());
+        };
+    }
     oven_store::receipt_generated_project(&request).map_err(Into::into)
 }
 
@@ -318,9 +360,9 @@ mod tests {
         };
         let rustc = oven_rustc::rustc::resolve_active_rustc()?;
         let environment = BTreeMap::new();
-        let first = test_receipt(root.path(), &source, &tests, &project, &rustc, &[], &environment)?;
+        let first = test_receipt(root.path(), &source, &tests, &project, &rustc, &[], &[], &environment)?;
         std::fs::write(tests.join("helper.rs"), "pub fn value() -> bool { false }")?;
-        let second = test_receipt(root.path(), &source, &tests, &project, &rustc, &[], &environment)?;
+        let second = test_receipt(root.path(), &source, &tests, &project, &rustc, &[], &[], &environment)?;
         assert_ne!(first.identity, second.identity);
         first.verify_identity()?;
         second.verify_identity()?;

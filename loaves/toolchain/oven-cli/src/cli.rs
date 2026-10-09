@@ -359,9 +359,15 @@ pub enum OvenCommand {
         /// Source checkout owning the test root and its authored Loaf dependencies
         #[arg(long, default_value = ".")]
         compiler_root: PathBuf,
-        /// Checkout-relative Rust libtest source with a sibling `.loaf.toml` declaration
+        /// Checkout-relative Rust libtest source
         #[arg(long)]
         target: PathBuf,
+        /// Authored dependency declaration; defaults to the source's sibling `.loaf.toml`
+        #[arg(long)]
+        declaration: Option<PathBuf>,
+        /// Additional checkout-owned compiled or embedded source input, repeated for separate files or trees
+        #[arg(long = "input")]
+        source_inputs: Vec<PathBuf>,
         /// Exact inventory-verified case, including explicitly selected ignored cases
         #[arg(long = "exact")]
         exact_names: Vec<String>,

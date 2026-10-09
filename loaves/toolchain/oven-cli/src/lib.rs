@@ -258,6 +258,8 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
         OvenCommand::CompilerNativeTests {
             compiler_root,
             target,
+            declaration,
+            source_inputs,
             exact_names,
             output,
             explicit_bake_workspace,
@@ -265,6 +267,8 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
         } => commands::oven::native_compiler_tests::run(
             compiler_root,
             target,
+            declaration,
+            source_inputs,
             exact_names,
             output,
             explicit_bake_workspace,

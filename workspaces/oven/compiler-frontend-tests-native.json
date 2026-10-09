@@ -1,0 +1,62 @@
+{
+  "index_commit": "ee71d3e50de10d4fd7d8f817e0b1df04885bddb0",
+  "registry_lock": "compiler-suite-native-lock.json",
+  "facets": [
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/compiler/incan_format"
+    },
+    {
+      "domain": "target",
+      "features": [
+        "default",
+        "std_async",
+        "std_decorators",
+        "std_testing"
+      ],
+      "project": "../../loaves/compiler/incan_semantics_stdlib"
+    },
+    {
+      "domain": "target",
+      "features": [
+        "inspector",
+        "test_fixtures"
+      ],
+      "project": "../../loaves/compiler/rust_inspect"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/kernel/incan_lang"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/kernel/incan_semantics_core"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/kernel/incan_syntax"
+    },
+    {
+      "domain": "target",
+      "features": [
+        "default",
+        "serde"
+      ],
+      "project": "../../loaves/kernel/incan_vocab"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/oven/oven_model"
+    },
+    {
+      "project": "../../loaves/compiler/incan_test_support",
+      "domain": "target",
+      "features": []
+    }
+  ]
+}

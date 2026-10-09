@@ -1,0 +1,41 @@
+[dependencies]
+hex = { loaf = "crates-io/hex", version = "0.4.3" }
+incan_lang = { loaf = "incan_lang", path = "../../../loaves/kernel/incan_lang" }
+proc-macro2 = { loaf = "crates-io/proc-macro2", version = "1.0" }
+quote = { loaf = "crates-io/quote", version = "1.0" }
+ra_ap_hir = { loaf = "crates-io/ra_ap_hir", version = "0.0.325" }
+ra_ap_hir_def = { loaf = "crates-io/ra_ap_hir_def", version = "0.0.325" }
+ra_ap_hir_expand = { loaf = "crates-io/ra_ap_hir_expand", version = "0.0.325" }
+ra_ap_hir_ty = { loaf = "crates-io/ra_ap_hir_ty", version = "0.0.325" }
+ra_ap_ide_db = { loaf = "crates-io/ra_ap_ide_db", version = "0.0.325" }
+ra_ap_load-cargo = { loaf = "crates-io/ra_ap_load-cargo", version = "0.0.325" }
+ra_ap_paths = { loaf = "crates-io/ra_ap_paths", version = "0.0.325" }
+ra_ap_project_model = { loaf = "crates-io/ra_ap_project_model", version = "0.0.325" }
+ra_ap_syntax = { loaf = "crates-io/ra_ap_syntax", version = "0.0.325" }
+ra_ap_vfs = { loaf = "crates-io/ra_ap_vfs", version = "0.0.325" }
+semver = { loaf = "crates-io/semver", version = "1.0" }
+serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
+serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
+sha2 = { loaf = "crates-io/sha2", version = "0.10.9" }
+syn = { features = ["full", "parsing", "printing"], loaf = "crates-io/syn", version = "2.0" }
+thiserror = { loaf = "crates-io/thiserror", version = "2.0" }
+toml = { loaf = "crates-io/toml", version = "0.9" }
+tempfile = { loaf = "crates-io/tempfile", version = "3" }
+tracing = { loaf = "crates-io/tracing", version = "0.1" }
+
+[project]
+description = "Rust inspect metadata extraction substrate for Incan"
+license = "Apache-2.0"
+name = "rust-inspect-native-unit-tests"
+private = true
+version = "0.6.0-dev.6"
+
+[project.features]
+default = ["inspector", "test_fixtures"]
+inspector = []
+test_fixtures = []
+
+[rust]
+edition = "2024"
+name = "rust_inspect"
+type = "lib"

@@ -1,12 +1,12 @@
 """Exercise native unit feature admission, inventory, invalidation and exact restoration through the public CLI."""
 
-from rust::std::env import args
+from rust::std::env import args, var
 from rust::std::process import Command, exit
 from std.fs import Path
 from std.json import JsonValue
 
 
-def invoke(root: Path, compiler: str, rustc: str, name: str, guarded: bool) -> Result[bool, str]:
+def invoke(root: Path, compiler: str, rustc: str, name: str, guarded: bool, inputs: list[str] = []) -> Result[bool, str]:
     """Retain each child result; a reuse guard must refuse before any replacement test compilation."""
     output_path = root.joinpath("output")
     fixtures = root.joinpath("fixtures")
@@ -16,6 +16,9 @@ def invoke(root: Path, compiler: str, rustc: str, name: str, guarded: bool) -> R
     saved_report = root.joinpath(name + ".report.json")
     native_path = root.joinpath("output/native-libtest")
     saved_native = root.joinpath(name + ".native-libtest")
+    mut input_paths: list[str] = []
+    for relative in inputs:
+        input_paths.append(root.joinpath(relative).0)
     mut command = Command.new(compiler)
     command.arg("oven").arg("compiler-native-tests")
     command.arg("--compiler-root").arg(root.0)
@@ -23,6 +26,8 @@ def invoke(root: Path, compiler: str, rustc: str, name: str, guarded: bool) -> R
     command.arg("--output").arg(output_path.0)
     command.arg("--explicit-bake-workspace").arg(fixtures.0)
     command.arg("--rustc").arg(rustc)
+    for input_path in input_paths:
+        command.arg("--input").arg(input_path)
     if guarded:
         command.env("INCAN_TEST_REQUIRE_STORED_NATIVE_REUSE", "1")
     output = command.output().map_err((error) => str(error))?
@@ -102,6 +107,76 @@ def exercise(compiler: str, rustc: str, root: Path) -> Result[None, str]:
     return Ok(None)
 
 
+def exercise_inputs(compiler: str, rustc: str, root: Path, bound: bool, tree: bool = false) -> Result[None, str]:
+    """An included helper outside the root directory must invalidate the binary before guarded reuse."""
+    tests = root.joinpath("owner/tests")
+    tests.mkdir(true, true).map_err((error) => error.message())?
+    shared = root.joinpath("owner/shared")
+    shared.mkdir(true, true).map_err((error) => error.message())?
+    source = "#[path = \"../shared/helper.rs\"]\nmod helper;\n#[test]\nfn external_input() { assert_eq!(helper::value(), 7); }\n"
+    tests.joinpath("root.rs").write_text(source, "utf-8", "strict", None).map_err((error) => error.message())?
+    declaration = "[project]\nname = \"native_external_input_control\"\nversion = \"0.1.0\"\n"
+    tests.joinpath("root.loaf.toml").write_text(declaration, "utf-8", "strict", None).map_err((error) => error.message())?
+    helper = shared.joinpath("helper.rs")
+    original_source = "pub fn value() -> i32 { 7 }\n"
+    helper.write_text(original_source, "utf-8", "strict", None).map_err((error) => error.message())?
+    mut inputs: list[str] = []
+    if bound:
+        if tree:
+            inputs.append("owner/shared")
+        else:
+            inputs.append("owner/shared/helper.rs")
+    if not invoke(root, compiler, rustc, "input-cold", false, inputs)?:
+        return Err("external-input native compilation failed")
+    check_report(root, 1, false)?
+    native = root.joinpath("output/native-libtest")
+    original = native.read_bytes().map_err((error) => error.message())?
+    if not invoke(root, compiler, rustc, "input-unchanged", true, inputs)?:
+        return Err("unchanged external inputs did not reuse the admitted binary")
+    check_report(root, 1, true)?
+    helper.write_text("pub fn value() -> i32 { 6 }\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    if invoke(root, compiler, rustc, "input-changed-guard", true, inputs)?:
+        return Err("changed outside helper reused the stale passing test binary")
+    preserved = native.read_bytes().map_err((error) => error.message())?
+    if preserved != original:
+        return Err("external-input guarded refusal changed the admitted binary")
+    if invoke(root, compiler, rustc, "input-changed", false, inputs)?:
+        return Err("changed outside helper did not execute its failing assertion")
+    text = root.joinpath("output/compiler-suite-report.json").read_text("utf-8", "strict").map_err((error) => error.message())?
+    report = JsonValue.parse(text).map_err((error) => error.message())?
+    counts = report.require("case_counts").map_err((error) => error.message())?
+    failed = counts.require("failed").map_err((error) => error.message())?
+    if failed.expect_int().map_err((error) => error.message())? != 1:
+        return Err("changed helper failed before the actual test assertion")
+    root.joinpath("input-changed.report.json").write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
+    changed = native.read_bytes().map_err((error) => error.message())?
+    if changed == original:
+        return Err("changed outside helper did not replace the compiled binary")
+    root.joinpath("input-changed.native-libtest").write_bytes(changed).map_err((error) => error.message())?
+    helper.write_text(original_source, "utf-8", "strict", None).map_err((error) => error.message())?
+    if not invoke(root, compiler, rustc, "input-restored", true, inputs)?:
+        return Err("exact outside-helper restoration did not reuse the original binary")
+    check_report(root, 1, true)?
+    restored = native.read_bytes().map_err((error) => error.message())?
+    if restored != original:
+        return Err("outside-helper restoration did not recover original bytes")
+    println("native source-input control passed: changed helper invalidated, assertion executed, original bytes restored")
+    return Ok(None)
+
+
+def controls(compiler: str, rustc: str, root: Path) -> Result[None, str]:
+    """The diagnostic legacy mode demonstrates the missing input before adding explicit receipt binding."""
+    mode_variable: str = "INCAN_NATIVE_INPUT_CONTROL_LEGACY"
+    match var(mode_variable):
+        Ok(value) =>
+            if value == "1":
+                return exercise_inputs(compiler, rustc, root, false)
+        Err(_) => pass
+    exercise(compiler, rustc, root)?
+    exercise_inputs(compiler, rustc, root.joinpath("source-inputs"), true)?
+    return exercise_inputs(compiler, rustc, root.joinpath("source-input-trees"), true, true)
+
+
 def main() -> None:
     """Accept an explicit compiler, pinned Rustc and empty task-owned probe directory."""
     mut arguments: list[str] = []
@@ -119,7 +194,7 @@ def main() -> None:
             if path.exists():
                 println("native test control requires a new task-owned directory")
                 exit(2)
-            match exercise(arguments[1], arguments[2], path):
+            match controls(arguments[1], arguments[2], path):
                 Ok(_) => return
                 Err(error) =>
                     println(error)
