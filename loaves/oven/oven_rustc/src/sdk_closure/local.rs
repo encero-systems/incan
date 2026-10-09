@@ -186,6 +186,7 @@ pub fn compile_local_sdk_facet_for_target(
     std::fs::create_dir_all(output)?;
     let snapshot = tempfile::Builder::new().prefix("sdk-local-").tempdir_in(output)?;
     let mut unit = prepare_local_unit(project, snapshot.path(), features, domain)?;
+    let edges = selected_local_edges(&unit, closure)?;
     if let Some(selected) = closure
         .units
         .iter()
@@ -203,6 +204,16 @@ pub fn compile_local_sdk_facet_for_target(
             )
             .into());
         }
+        let dependencies = edges
+            .iter()
+            .map(|(alias, index)| (alias.as_str(), &closure.units[*index]))
+            .collect::<Vec<_>>();
+        super::physical_edges::verify(
+            &selected.owner,
+            &selected.reproduced_receipt,
+            &selected.physical_edges,
+            &dependencies,
+        )?;
         selected.owner.verify_admitted_payload()?;
         closure
             .report
@@ -214,7 +225,6 @@ pub fn compile_local_sdk_facet_for_target(
         super::environment::stable_sources(&unit.root, &unit.binding, &unit.about, unit.primary, None)?;
     unit.root = source;
     unit._source_lease = Some(lease);
-    let edges = selected_local_edges(&unit, closure)?;
     let externs = edges
         .iter()
         .map(|(alias, index)| (alias.clone(), closure.units[*index].output.clone()))
@@ -239,7 +249,12 @@ pub fn compile_local_sdk_facet_for_target(
         profile: "debug",
         unit_codegen: &[],
     };
-    let (path, reused, owner) = compile_unit(&unit, &context, externs, searches)?;
+    let (path, reused, owner, reproduced_receipt) = compile_unit(&unit, &context, externs, searches)?;
+    let selected_dependencies = edges
+        .iter()
+        .map(|(alias, index)| (alias.as_str(), &closure.units[*index]))
+        .collect::<Vec<_>>();
+    let physical_edges = super::physical_edges::capture(&owner, &reproduced_receipt, &selected_dependencies)?;
     let dependencies = edges
         .iter()
         .map(|(name, index)| serde_json::json!({"crate": index, "name": name}))
@@ -251,6 +266,8 @@ pub fn compile_local_sdk_facet_for_target(
         output: path,
         owner,
         inspection,
+        physical_edges,
+        reproduced_receipt,
     });
     if reused {
         closure.report.reused.push(label);
