@@ -275,10 +275,11 @@ impl OvenStoreExecutionPayload {
     ///
     /// A lease protects the selected entry from store pruning; it does not authenticate mutable public fields. This
     /// checks those fields against the original selected coordinate and content identity before a new physical
-    /// consumer borrows them, and it is deliberately cheap: it stats the artifact root rather than hashing what is
-    /// under it. A consumer that never reads the closure must use [`Self::verify_admitted_payload`], which adds that
-    /// walk. One that is about to read every file anyway — a store-to-store import building a destination manifest —
-    /// proves the closure with that read instead, by handing this manifest to the publication as its expectation.
+    /// consumer borrows them. It authenticates the current primary payload file against both the manifest and the
+    /// retained bytes, then stats the artifact root rather than hashing the closure underneath it. A consumer that
+    /// never reads the closure must use [`Self::verify_admitted_payload`], which adds that walk. One that is about
+    /// to read every file anyway — a store-to-store import building a destination manifest — proves the closure
+    /// with that read instead, by handing this manifest to the publication as its expectation.
     pub fn verify_admitted_record(&self) -> Result<(), OvenStoreError> {
         let manifest = verify_published_entry_manifest(&self.admitted_entry_root)?;
         if manifest.identity != self.admitted_identity
@@ -290,9 +291,8 @@ impl OvenStoreExecutionPayload {
                 message: "execution payload no longer matches its original admitted record and root".to_string(),
             });
         }
-        if u64::try_from(self.payload.len()).ok() != Some(manifest.payload.logical_bytes)
-            || digest_bytes(&self.payload) != manifest.payload.digest
-        {
+        let current_payload = verified_payload_bytes(&self.admitted_entry_root, &manifest)?;
+        if current_payload != self.payload {
             return Err(OvenStoreError::Integrity {
                 identity: self.admitted_identity.clone(),
                 message: "execution payload bytes disagree with the original admitted descriptor".to_string(),
