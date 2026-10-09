@@ -2,7 +2,7 @@
 
 use super::{
     LIBRARY_METADATA_DOMAIN, LibraryMetadataDependency, LibraryMetadataRecipe, SelectedLibraryMetadata,
-    publish_library_metadata, select_library_metadata,
+    publish_library_metadata, select_library_metadata, select_library_metadata_reference,
 };
 use crate::build::OvenPackagedLibraryMetadataFile;
 use crate::error::CliResult;
@@ -323,5 +323,92 @@ fn ordinary_metadata_refuses_mismatched_semantic_sidecar() -> Result<(), Box<dyn
     selected.replay(tempfile::tempdir()?.path())?;
     fs::write(&surface, b"changed checked body")?;
     assert!(package.publish(BTreeSet::new()).is_err());
+    Ok(())
+}
+
+/// Portable handoff imports the original Engine owner, not merely a reference to an ambient Store coordinate.
+#[test]
+fn ordinary_metadata_package_export_preserves_original_owner_and_lease() -> Result<(), Box<dyn std::error::Error>> {
+    let package = Package::new("ordinary")?;
+    let selected = package.publish(BTreeSet::new())?;
+    let root = tempfile::tempdir()?;
+    let destination = OvenStore::new(root.path(), *package.store().limits());
+    let reference = selected.export_into(&destination)?;
+    assert_eq!(reference.owner_identity, selected.reference().owner_identity);
+    let admitted = select_library_metadata_reference(&destination, &reference)?;
+    drop(selected);
+    let bounded = OvenStore::new(package.store_root.path(), OvenStoreLimits::new(1, 1, 1));
+    let _ = bounded.prune()?;
+    admitted.replay(tempfile::tempdir()?.path())?;
+    assert_eq!(admitted.reference().owner_identity, reference.owner_identity);
+    let mut wrong = reference.clone();
+    wrong.owner_identity = digest_bytes(b"same bytes different owner");
+    assert!(select_library_metadata_reference(&destination, &wrong).is_err());
+    Ok(())
+}
+
+/// Dependency retention checks complete package/receipt/contract facts and holds the actual original owner.
+#[test]
+fn ordinary_metadata_dependency_retention_requires_exact_checked_owner() -> Result<(), Box<dyn std::error::Error>> {
+    let dependency = Package::new("dependency")?;
+    let selected = dependency.publish(BTreeSet::new())?;
+    let reference = selected.reference();
+    let mut package = Package::new("ordinary")?;
+    package.recipe.dependencies.insert(
+        "renamed_dependency".into(),
+        LibraryMetadataDependency {
+            name: "dependency".into(),
+            version: "1.0.0".into(),
+            receipt_identity: reference.receipt.identity.clone(),
+            owner_identity: reference.owner_identity.clone(),
+            checked_digest: digest_bytes(&serde_json::to_vec(selected.checked_files())?),
+        },
+    );
+    let root = package.publish(BTreeSet::new())?;
+    assert!(root.retaining_dependencies(&[]).is_err());
+    let retained = root.retaining_dependencies(&[Arc::clone(&selected)])?;
+    drop(selected);
+    let bounded = OvenStore::new(dependency.store_root.path(), OvenStoreLimits::new(1, 1, 1));
+    let _ = bounded.prune()?;
+    retained._dependency_owners[0].verify()?;
+    let other_package = Package::new("other")?;
+    let other = other_package.publish(BTreeSet::new())?;
+    assert!(root.retaining_dependencies(&[other]).is_err());
+    let mut wrong = package.recipe.clone();
+    wrong
+        .dependencies
+        .get_mut("renamed_dependency")
+        .ok_or("missing dependency")?
+        .name = "other".into();
+    package.recipe = wrong;
+    let mismatch = package.publish(BTreeSet::new())?;
+    assert!(mismatch.retaining_dependencies(&retained._dependency_owners).is_err());
+    Ok(())
+}
+
+/// Separately valid dependency manifests cannot silently select different facts for one shared canonical definition.
+#[test]
+fn ordinary_metadata_refuses_competing_canonical_rust_facts_across_dependencies()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut first = LibraryManifest::new("first", "1.0.0");
+    let mut second = LibraryManifest::new("second", "1.0.0");
+    let item = RustItemMetadata {
+        canonical_path: "companion::First".into(),
+        definition_path: Some("companion::Canonical".into()),
+        visibility: RustVisibility::Public,
+        kind: RustItemKind::Constant {
+            type_display: "i64".into(),
+        },
+    };
+    first.rust_abi = LibraryRustAbi::from_items(vec![item.clone()]);
+    let mut alias = item;
+    alias.canonical_path = "companion::Second".into();
+    second.rust_abi = LibraryRustAbi::from_items(vec![alias.clone()]);
+    super::validate_rust_fact_agreement([&first, &second])?;
+    alias.kind = RustItemKind::Constant {
+        type_display: "String".into(),
+    };
+    second.rust_abi = LibraryRustAbi::from_items(vec![alias]);
+    assert!(super::validate_rust_fact_agreement([&first, &second]).is_err());
     Ok(())
 }

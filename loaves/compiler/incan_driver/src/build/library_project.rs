@@ -7,13 +7,16 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+mod current_plans;
+pub(crate) mod metadata_replay;
+
 use sha2::Sha256;
 
 use crate::backend::selection::digest_output;
 use crate::backend::{IrCodegen, ProjectGenerator};
 use crate::build::backend_selection::{finalize_backend_receipt, select_build_backend};
 use crate::build::caller_facet::CallerFacetRequest;
-use crate::build::caller_owned::{append_oven_interop_execution_build_inputs, oven_caller_owned_libraries};
+use crate::build::caller_owned::append_oven_interop_execution_build_inputs;
 use crate::build::library_exports::{
     LibraryReexportResolver, collect_library_rust_abi, collect_library_rust_abi_query_paths, module_key,
     public_ordinal_type_identities, resolve_library_project_root, validate_library_entrypoint,
@@ -23,26 +26,17 @@ use crate::build::library_outputs::{
     package_desugarer_artifact, remove_generated_library_self_dependencies,
 };
 use crate::build::oven_project::project_extension_base_loaf;
-use crate::build::plan_authority::{
-    compiler_selected_path_authority, declared_rust_libraries_missing_from_selected_plan_with_current_project_paths,
-    explicit_bake_profiles, oven_source_inline_dependency_specs,
-};
-use crate::build::plan_selection::{
-    format_oven_registry_dependency_requirements, packaged_provider_selection_links_required_stdlib,
-    registry_leaf_authority_for_plan_selection,
-};
+use crate::build::plan_authority::{explicit_bake_profiles, oven_source_inline_dependency_specs};
 use crate::build::provider_compilation::{
-    checked_packaged_provider_profiles, checked_provider_compilation_requirements,
-    import_packaged_provider_loafs_for_explicit_bake,
+    checked_packaged_provider_profiles, import_packaged_provider_loafs_for_explicit_bake,
 };
 use crate::build::provider_metadata::{
     collect_unprojected_provider_modules, compiled_provider_metadata, synchronize_projected_provider_dependencies,
 };
 use crate::build::rust_extern::{collect_rust_extern_contexts, multi_file_output_identity, rust_extern_report_paths};
 use crate::build::{
-    CompiledProviderMetadataInputs, OvenDirectRustcPlanPreparation, OvenPreparedLibrary, OvenPreparedLibraryProfile,
-    OvenProjectBakeAuthorityContext, OvenProjectDependencySurface, OvenProjectPlanMode, OvenToolchainMaterialization,
-    PreparedLibraryProject, manifest_project_report, packaged_provider_candidates, record_timing, source_file_report,
+    CompiledProviderMetadataInputs, OvenProjectBakeAuthorityContext, OvenProjectPlanMode, PreparedLibraryProject,
+    manifest_project_report, record_timing, source_file_report,
 };
 use crate::build_report::{
     BuildOvenReport, BuildReportDraft, BuildReportMode, cargo_report, dependencies_report, generated_project_report,
@@ -50,7 +44,7 @@ use crate::build_report::{
 };
 use crate::cargo_policy::{CargoPolicy, cargo_command_flags, enforce_project_toolchain_constraint};
 use crate::diagnostics::render_module_warnings;
-use crate::error::{CliError, CliResult, oven_plan_error, oven_rustc_error};
+use crate::error::{CliError, CliResult};
 use crate::generated_cache::resolve_generated_cargo_target;
 #[cfg(feature = "rust_inspect")]
 use crate::lock::OvenRustInspectSourceAuthorityRequest;
@@ -96,22 +90,9 @@ use incan_provider::vocab_extraction::{
     PendingDesugarerArtifact, collect_library_vocab_metadata, oven_vocab_direct_rustc_context_from_plan,
 };
 use incan_provider::{FeatureSelection, SDK_PROVIDER_BUILD_ENV};
-use oven_cargo_compat::provider_compilation_requirements_digest;
 use oven_model::lock::CargoFeatureSelection;
-use oven_rustc::loaf::{
-    OVEN_DEPENDENCY_MISS_SUMMARY, OVEN_LOAF_MISS_GUIDANCE, OVEN_NO_IMPLICIT_DEPENDENCY_BUILD,
-    OVEN_SOURCE_COMPILER_VOCAB_SUPPORT_BUILD_INPUT,
-};
-use oven_rustc::plan::composition::compose_selected_packaged_provider_plan;
-use oven_rustc::plan::selection::select_packaged_provider_plans;
-use oven_rustc::rustc::{
-    materialize_declared_rust_libraries_with_selected_path_authority, resolve_active_rustc, rustc_host_target,
-    rustc_identity,
-};
-use oven_store::{
-    OvenGeneratedProjectRequest, generated_project_source_evidence, receipt_generated_project_with_source_evidence,
-    write_receipt,
-};
+use oven_rustc::loaf::OVEN_SOURCE_COMPILER_VOCAB_SUPPORT_BUILD_INPUT;
+use oven_rustc::rustc::{resolve_active_rustc, rustc_host_target, rustc_identity};
 use sha2::Digest as _;
 
 /// Checked public metadata shared by source inspection and durable library publication.
@@ -515,6 +496,7 @@ pub(crate) enum LibraryPreparation {
     Native {
         manifest: Box<LibraryManifest>,
         executable: Vec<u8>,
+        metadata_owner: Option<Arc<crate::build::library_metadata::SelectedLibraryMetadata>>,
     },
 }
 
@@ -607,6 +589,40 @@ fn prepare_library_project_with_context(
             sdk_profile_override,
         )?
     };
+    let mut metadata_preparation = if normal_oven
+        && caller_facet.is_none()
+        && cargo_features.is_empty()
+        && !cargo_no_default_features
+        && !cargo_all_features
+    {
+        metadata_replay::MetadataPreparation::observe(
+            &manifest,
+            &compilation_session,
+            native_sdk,
+            authority_context.as_deref_mut(),
+        )?
+    } else {
+        None
+    };
+    if let Some(preparation) = metadata_preparation.as_ref()
+        && let Some(selected) = preparation.select()?
+    {
+        return metadata_replay::prepare_replayed_library(metadata_replay::ReplayRequest {
+            preparation,
+            selected,
+            project: &manifest,
+            session: &compilation_session,
+            native_sdk,
+            out_dir,
+            entrypoint: lib_entry,
+            cargo_policy: &cargo_policy,
+            package_features,
+            sdk_profile_override,
+            oven_plan_mode,
+            include_interop_execution,
+            authority: authority_context,
+        });
+    }
     let modules =
         crate::modules::collect_library_modules_detailed_with_session(lib_entry.clone(), &compilation_session)
             .map_err(|failure| CliError::failure(failure.render_human()))?;
@@ -632,6 +648,7 @@ fn prepare_library_project_with_context(
         .ok_or_else(|| CliError::failure("library compilation session is missing its package feature graph"))?;
     let library_manifest_index = compilation_session.library_manifest_index.clone();
     let mut project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
+    let source_requirements = project_requirements.clone();
     let provider_plan = compilation_session.provider_plan_for_modules(&modules)?;
     let compiled_sdk_modules = CompiledSdkModules::from_provider_plan(&provider_plan);
     extend_requirements_with_provider_plan(&mut project_requirements, &provider_plan)?;
@@ -820,7 +837,9 @@ fn prepare_library_project_with_context(
     };
     record_timing(&mut timings_ms, "library_resolve_lock_payload", lock_start);
     let native_admission_start = Instant::now();
-    let native_sdk_context = if normal_oven && native_sdk.is_none() {
+    let native_sdk_context = if let Some(preparation) = metadata_preparation.as_ref() {
+        preparation.native_context.clone()
+    } else if normal_oven && native_sdk.is_none() {
         match authority_context.as_deref_mut() {
             Some(context) => context.native_sdk_context()?,
             None => super::NativeSdkCommandContext::discover()?,
@@ -855,23 +874,37 @@ fn prepare_library_project_with_context(
             "v1".to_string(),
         );
     }
-    let oven_rustc = normal_oven
-        .then(resolve_active_rustc)
-        .transpose()
-        .map_err(|error| CliError::failure(error.to_string()))?;
+    let oven_rustc = if let Some(preparation) = &metadata_preparation {
+        Some(preparation.rustc.clone())
+    } else {
+        normal_oven
+            .then(resolve_active_rustc)
+            .transpose()
+            .map_err(|error| CliError::failure(error.to_string()))?
+    };
     let requested_target = authority_context
         .as_ref()
         .and_then(|context| context.requested_target.clone());
-    let oven_target = match (oven_rustc.as_ref(), requested_target) {
-        (Some(_), Some(target)) => Some(target),
-        (Some(rustc), None) => Some(rustc_host_target(rustc).map_err(|error| CliError::failure(error.to_string()))?),
-        (None, _) => None,
+    let oven_target = if let Some(preparation) = &metadata_preparation {
+        Some(preparation.recipe.target.clone())
+    } else {
+        match (oven_rustc.as_ref(), requested_target) {
+            (Some(_), Some(target)) => Some(target),
+            (Some(rustc), None) => {
+                Some(rustc_host_target(rustc).map_err(|error| CliError::failure(error.to_string()))?)
+            }
+            (None, _) => None,
+        }
     };
-    let oven_toolchain = oven_rustc
-        .as_ref()
-        .map(|rustc| rustc_identity(rustc))
-        .transpose()
-        .map_err(|error| CliError::failure(error.to_string()))?;
+    let oven_toolchain = if let Some(preparation) = &metadata_preparation {
+        Some(preparation.recipe.toolchain.clone())
+    } else {
+        oven_rustc
+            .as_ref()
+            .map(|rustc| rustc_identity(rustc))
+            .transpose()
+            .map_err(|error| CliError::failure(error.to_string()))?
+    };
     let oven_store = (normal_oven && native_sdk.is_none())
         .then(open_default_oven_store)
         .transpose()?;
@@ -1108,6 +1141,50 @@ fn prepare_library_project_with_context(
             inspection,
         )?;
         record_timing(&mut timings_ms, "library_native_sdk_codegen", codegen_start);
+        let metadata_owner = if let Some(preparation) = metadata_preparation.take() {
+            let contract = checked_requirement_contract(
+                &manifest,
+                &compilation_session,
+                &source_requirements,
+                &library_manifest,
+                &inline_imports,
+                &selected_exports,
+                &project_version,
+                &modules,
+                lib_module,
+                &metadata_query_paths,
+                None,
+            );
+            match contract {
+                Ok(contract) => {
+                    preparation.revalidate(&manifest, &compilation_session, native_sdk)?;
+                    let manifest_path = crate::build::library_outputs::write_checked_library_payload(
+                        &out_dir,
+                        &library_manifest,
+                        &executable_surface,
+                    )?;
+                    Some(
+                        crate::build::library_metadata::publish_library_metadata_with_requirements(
+                            &preparation.store,
+                            &preparation.recipe,
+                            &preparation.receipt,
+                            &out_dir,
+                            &manifest_path,
+                            contract.rust_abi_queries.clone(),
+                            Some(contract),
+                        )?
+                        .retaining_dependencies(preparation.dependency_owners())?,
+                    )
+                }
+                Err(error) => {
+                    tracing::debug!(reason = %error, "checked library replay contract is unavailable");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         record_timing(&mut timings_ms, "library_prepare_total", prepare_start);
         for (phase, elapsed_ms) in &timings_ms {
             tracing::debug!(
@@ -1122,6 +1199,7 @@ fn prepare_library_project_with_context(
         return Ok(LibraryPreparation::Native {
             manifest: Box::new(library_manifest),
             executable: executable_surface,
+            metadata_owner,
         });
     }
     let manifest_path = out_dir.join(format!("{project_name}.incnlib"));
@@ -1373,204 +1451,31 @@ fn prepare_library_project_with_context(
     );
     let oven_profiles_start = Instant::now();
     let oven = if normal_oven {
-        let rustc = oven_rustc.ok_or_else(|| CliError::failure("normal Oven library build omitted rustc"))?;
-        let target = oven_target.ok_or_else(|| CliError::failure("normal Oven library build omitted target"))?;
-        let toolchain =
-            oven_toolchain.ok_or_else(|| CliError::failure("normal Oven library build omitted toolchain"))?;
-        let store = oven_store
-            .as_ref()
-            .ok_or_else(|| CliError::failure("normal Oven library build omitted its bounded store"))?;
-        let link_closure =
-            oven_rustc::rustc::pinned_link_closure_identity(&rustc, &target).map_err(oven_rustc_error)?;
-        let mut profiles = BTreeMap::new();
-        let oven_receipt_source_evidence_start = Instant::now();
-        let mut source_evidence_request = OvenGeneratedProjectRequest::new(
-            &project_root,
-            &project_name,
-            &project_version,
-            target.clone(),
-            toolchain.clone(),
-            "debug",
-            Vec::new(),
-        )
-        .with_generated_source("generated-root", generator.crate_root_path())
-        .with_generated_source_tree("generated-source-tree", generator.output_dir().join("src"));
-        for (name, value) in oven_build_inputs.as_ref().into_iter().flat_map(|inputs| inputs.iter()) {
-            source_evidence_request = source_evidence_request.with_build_unit_input(name.clone(), value.clone());
-        }
-        let generated_source_evidence = generated_project_source_evidence(&source_evidence_request)
-            .map_err(|error| CliError::failure(error.to_string()))?;
-        record_timing(
-            &mut timings_ms,
-            "library_oven_receipt_source_evidence",
-            oven_receipt_source_evidence_start,
-        );
-        for profile in explicit_bake_profiles() {
-            let mut receipt_request = OvenGeneratedProjectRequest::new(
-                &project_root,
-                &project_name,
-                &project_version,
-                target.clone(),
-                toolchain.clone(),
-                profile,
-                Vec::new(),
-            )
-            .with_generated_source("generated-root", generator.crate_root_path())
-            .with_generated_source_tree("generated-source-tree", generator.output_dir().join("src"));
-            for (name, value) in oven_build_inputs.as_ref().into_iter().flat_map(|inputs| inputs.iter()) {
-                receipt_request = receipt_request.with_build_unit_input(name.clone(), value.clone());
-            }
-            let provider_candidates = packaged_provider_candidates(&checked_provider_profiles, profile);
-            let selected_provider_inputs =
-                select_packaged_provider_plans(store, &provider_candidates).map_err(oven_plan_error)?;
-            let provider_compilations = checked_provider_compilation_requirements(
-                &selected_provider_inputs,
-                &checked_provider_profiles,
-                profile,
-                oven_build_inputs
+        Some(current_plans::prepare_current_library_profiles(
+            current_plans::CurrentLibraryPlanInputs {
+                project_root: &project_root,
+                project_name: &project_name,
+                project_version: &project_version,
+                generator: &generator,
+                provider_plan: &provider_plan,
+                checked_provider_profiles: &checked_provider_profiles,
+                build_inputs: oven_build_inputs
                     .as_ref()
                     .ok_or_else(|| CliError::failure("library lacks checked runtime inputs"))?,
-            )?;
-            if !provider_compilations.is_empty() {
-                receipt_request = receipt_request.with_build_unit_input(
-                    "provider-compilation-requirements",
-                    provider_compilation_requirements_digest(&provider_compilations)
-                        .map_err(|error| CliError::failure(error.to_string()))?,
-                );
-            }
-            if let Some(identity) = &link_closure {
-                receipt_request = receipt_request.with_build_unit_input("link-closure", identity);
-            }
-            let receipt = receipt_generated_project_with_source_evidence(&receipt_request, &generated_source_evidence)
-                .map_err(|error| CliError::failure(error.to_string()))?;
-            let receipt_path = if profile == "release" {
-                oven_store::default_receipt_path(&project_root)
-            } else {
-                oven_store::default_receipt_path(&project_root).with_file_name("library-debug-receipt.json")
-            };
-            write_receipt(&receipt, receipt_path.clone()).map_err(|error| CliError::failure(error.to_string()))?;
-            let required_registry_dependencies = format_oven_registry_dependency_requirements(&oven_plan_dependencies);
-            let oven_select_direct_rustc_plan_start = Instant::now();
-            // An imported package Loaf is sufficient only for consume-only commands. An explicit library bake must
-            // instead publish the library's own direct registry roots with its complete generated source closure.
-            let packaged_provider_selection = if oven_plan_mode == OvenProjectPlanMode::ConsumeOnly {
-                packaged_provider_selection_links_required_stdlib(
-                    compose_selected_packaged_provider_plan(selected_provider_inputs, &provider_candidates, &receipt)
-                        .map_err(oven_plan_error)?,
-                    &provider_plan,
-                )?
-            } else {
-                None
-            };
-            let plan_preparation = if let Some(selection) = packaged_provider_selection {
-                Some(OvenDirectRustcPlanPreparation {
-                    plan_selection: selection,
-                    materialization: OvenToolchainMaterialization::Reused,
-                    cargo_process_started: false,
-                })
-            } else {
-                super::plan_selection::select_or_bake_generated_project_plan_with_native_sdk(
-                    oven_plan_mode,
-                    store,
-                    &receipt,
-                    OvenProjectDependencySurface {
-                        selection: &oven_plan_dependencies,
-                    provider_compilations: &provider_compilations,
-                    },
-                    generator.output_dir(),
-                    &generator.crate_root_path(),
-                    &rustc,
-                    native_sdk_context.as_deref(),
-                )?
-            }
-            .ok_or_else(|| {
-                CliError::failure(format!(
-                    "{}. `incan build --lib` {}. {} (Needs: {}. `{profile}` build record {}; generated project: {}; receipt: {}.)",
-                    OVEN_DEPENDENCY_MISS_SUMMARY,
-                    OVEN_NO_IMPLICIT_DEPENDENCY_BUILD,
-                    OVEN_LOAF_MISS_GUIDANCE,
-                    required_registry_dependencies,
-                    receipt.identity,
-                    generator.output_dir().display(),
-                    receipt_path.display(),
-                ))
-            })?;
-            record_timing(
-                &mut timings_ms,
-                "library_oven_select_direct_rustc_plan",
-                oven_select_direct_rustc_plan_start,
-            );
-            let plan_selection = plan_preparation.plan_selection;
-            let oven_validate_direct_rustc_plan_start = Instant::now();
-            let registry_authority = registry_leaf_authority_for_plan_selection(&plan_selection)?;
-            let full_artifact_plan = plan_selection.artifact_plan();
-            let artifact_plan = plan_selection
-                .source_artifact_plan("generated-root")
-                .map_err(oven_rustc_error)?;
-            super::plan_authority::validate_selected_plan_registry_dependencies_with_native_sdk(
-                &oven_plan_dependencies,
-                &artifact_plan,
-                registry_authority.as_ref(),
-                profile,
-                native_sdk_context.as_deref(),
-            )?;
-            let inline_libraries = declared_rust_libraries_missing_from_selected_plan_with_current_project_paths(
-                oven_inline_rust_dependencies.as_deref().unwrap_or_default(),
-                &artifact_plan,
-                plan_selection.seals_current_project_path_dependencies(),
-            );
-            let selected_path_authority = compiler_selected_path_authority(full_artifact_plan, Some(&provider_plan));
-            record_timing(
-                &mut timings_ms,
-                "library_oven_validate_direct_rustc_plan",
-                oven_validate_direct_rustc_plan_start,
-            );
-            let oven_prepare_caller_owned_libraries_start = Instant::now();
-            let mut caller_owned_libraries = oven_caller_owned_libraries(&provider_plan, profile)?;
-            caller_owned_libraries.extend(
-                materialize_declared_rust_libraries_with_selected_path_authority(
-                    &generator.output_dir().join("oven").join("inline-rust"),
-                    &rustc,
-                    &target,
-                    profile,
-                    &inline_libraries,
-                    registry_authority.as_ref(),
-                    selected_path_authority.as_ref(),
-                )
-                .map_err(oven_rustc_error)?,
-            );
-            record_timing(
-                &mut timings_ms,
-                "library_oven_prepare_caller_owned_libraries",
-                oven_prepare_caller_owned_libraries_start,
-            );
-            caller_owned_libraries.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
-            if caller_owned_libraries
-                .windows(2)
-                .any(|pair| pair[0].crate_name == pair[1].crate_name)
-            {
-                return Err(CliError::failure(
-                    "Oven Alpha resolved duplicate caller-owned Rust library crate names while preparing a library",
-                ));
-            }
-            profiles.insert(
-                profile.to_string(),
-                OvenPreparedLibraryProfile {
-                    native_sdk_context: native_sdk_context.clone(),
-                    receipt,
-                    plan_selection,
-                    materialization: plan_preparation.materialization,
-                    provider_plan: provider_plan.clone(),
-                    caller_owned_libraries,
-                },
-            );
-        }
-        Some(OvenPreparedLibrary {
-            rustc,
-            crate_name: ProjectGenerator::rust_target_name(&project_name),
-            rust_edition: rust_edition.clone().unwrap_or_else(|| "2024".to_string()),
-            profiles,
-        })
+                inline_dependencies: &oven_plan_dependencies,
+                rustc: oven_rustc.ok_or_else(|| CliError::failure("normal Oven library build omitted rustc"))?,
+                target: oven_target.ok_or_else(|| CliError::failure("normal Oven library build omitted target"))?,
+                toolchain: oven_toolchain
+                    .ok_or_else(|| CliError::failure("normal Oven library build omitted toolchain"))?,
+                store: oven_store
+                    .as_ref()
+                    .ok_or_else(|| CliError::failure("normal Oven library build omitted its bounded store"))?,
+                native_sdk_context,
+                oven_plan_mode,
+                rust_edition: rust_edition.clone(),
+            },
+            &mut timings_ms,
+        )?)
     } else {
         None
     };
@@ -1672,6 +1577,29 @@ fn prepare_library_project_with_context(
     record_timing(&mut timings_ms, "library_generate_rust", codegen_start);
     record_timing(&mut timings_ms, "library_prepare_total", prepare_start);
 
+    let checked_requirements = if metadata_preparation.is_some() {
+        match checked_requirement_contract(
+            &manifest,
+            &compilation_session,
+            &source_requirements,
+            &library_manifest,
+            &inline_imports,
+            &selected_exports,
+            &project_version,
+            &modules,
+            lib_module,
+            &metadata_query_paths,
+            report_draft.backend.clone(),
+        ) {
+            Ok(contract) => Some(contract),
+            Err(error) => {
+                tracing::debug!(reason = %error, "checked library replay contract is unavailable");
+                None
+            }
+        }
+    } else {
+        None
+    };
     // The caller namespace names entrypoint-relative declarations. Keep canonical identities intact while removing
     // the checked entrypoint module prefix from this separate caller-selection projection.
     let mut checked_exports = selected_exports;
@@ -1680,6 +1608,16 @@ fn prepare_library_project_with_context(
             export.identity.source_path.drain(..lib_module.path_segments.len());
         }
     }
+
+    let pending_metadata = match (metadata_preparation, checked_requirements) {
+        (Some(preparation), Some(requirements)) => Some(metadata_replay::PendingMetadataPublication {
+            preparation,
+            session: compilation_session,
+            project: manifest,
+            requirements,
+        }),
+        _ => None,
+    };
 
     Ok(LibraryPreparation::Project(Box::new(PreparedLibraryProject {
         checked_exports,
@@ -1693,9 +1631,61 @@ fn prepare_library_project_with_context(
         timings_ms,
         report: report_draft,
         oven,
+        metadata_owner: None,
+        pending_metadata,
         #[cfg(feature = "rust_inspect")]
         rust_inspect_manifest_dir: rust_inspect_manifest_dir
             .as_ref()
             .map(|workspace| workspace.manifest_dir().to_path_buf()),
     })))
+}
+
+/// Capture the same checked planning contract for ordinary and standard package preparation.
+#[allow(clippy::too_many_arguments)]
+fn checked_requirement_contract(
+    manifest: &oven_model::manifest::ProjectManifest,
+    session: &CompilationSession,
+    requirements: &incan_provider::requirements::ProjectRequirements,
+    library_manifest: &LibraryManifest,
+    imports: &[incan_provider::dependency_resolver::InlineRustImport],
+    exports: &[CheckedNamedExport],
+    version: &str,
+    modules: &[ParsedModule],
+    entry: &ParsedModule,
+    rust_abi_queries: &[String],
+    backend: Option<crate::backend::selection::BackendExecutionReceipt>,
+) -> CliResult<crate::build::library_metadata::requirements::CheckedLibraryRequirements> {
+    crate::build::library_metadata::validate_required_rust_abi(
+        library_manifest,
+        &rust_abi_queries.iter().cloned().collect(),
+    )?;
+    let source_modules = modules
+        .iter()
+        .map(|module| {
+            let relative = module
+                .file_path
+                .strip_prefix(manifest.project_root())
+                .map_err(|_| CliError::failure("checked module source has no portable package binding"))?
+                .to_str()
+                .ok_or_else(|| CliError::failure("checked module source is not UTF-8"))?
+                .replace('\\', "/");
+            Ok((relative, module.path_segments.clone()))
+        })
+        .collect::<CliResult<BTreeMap<_, _>>>()?;
+    crate::build::library_metadata::requirements::CheckedLibraryRequirements::capture(
+        crate::build::library_metadata::requirements::CheckedLibraryCapture {
+            project: manifest,
+            index: &session.library_manifest_index,
+            requirements,
+            imports,
+            exports,
+            version,
+            used_module_paths: incan_provider::inventory::provider_used_module_paths(modules),
+            source_modules,
+            entry_module: entry.path_segments.clone(),
+            rust_abi_queries: rust_abi_queries.iter().cloned().collect(),
+            rust_extern_paths: rust_extern_report_paths(&collect_rust_extern_contexts(modules)),
+            backend,
+        },
+    )
 }

@@ -79,9 +79,9 @@ pub const OVEN_PACKAGED_LIBRARY_LOAF_STORE_RELATIVE_PATH: &str = "oven/loafs";
 
 /// Current wire schema for package-owned Oven Loaf handoff metadata.
 ///
-/// Version 6 seals the checked `.incnlib` manifest and every manifest-declared provider sidecar by relative path and
-/// digest, in addition to requiring release-cohort project-extension entries.
-pub const OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION: u32 = 6;
+/// Version 7 adds an immutable ordinary checked-metadata owner and its validated planning replay contract.
+/// Version 6 remains readable for native handoff, but has no checked metadata replay authority.
+pub const OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION: u32 = 7;
 
 /// Current wire schema for completed receipt-bound project-output Loafs.
 ///
@@ -187,6 +187,10 @@ pub struct PreparedLibraryProject {
     pub timings_ms: BTreeMap<String, u64>,
     pub report: BuildReportDraft,
     pub oven: Option<OvenPreparedLibrary>,
+    /// Original immutable checked metadata lease retained through publication and consumer use.
+    pub metadata_owner: Option<Arc<library_metadata::SelectedLibraryMetadata>>,
+    /// Source-current publication authority, consumed only after every checked sidecar is finalized.
+    pub(crate) pending_metadata: Option<library_project::metadata_replay::PendingMetadataPublication>,
     #[cfg(feature = "rust_inspect")]
     pub rust_inspect_manifest_dir: Option<PathBuf>,
 }
@@ -352,6 +356,9 @@ pub struct OvenPackagedLibraryLoafManifest {
     /// metadata to describe a different API, vocabulary surface, or desugarer than the explicit provider bake
     /// produced. These records bind that complete public handoff without copying it into each profile.
     pub metadata_files: Vec<OvenPackagedLibraryMetadataFile>,
+    /// Original immutable checked-metadata owner; absent legacy authority is a metadata preparation miss.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_metadata: Option<library_metadata::LibraryMetadataReference>,
     pub profiles: BTreeMap<String, OvenPackagedLibraryLoafProfile>,
 }
 

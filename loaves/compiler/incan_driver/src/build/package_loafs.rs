@@ -269,7 +269,7 @@ pub fn decode_packaged_library_loaf_manifest(
             path.display()
         ))
     })?;
-    if manifest.schema_version != OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION {
+    if manifest.schema_version != OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION && manifest.schema_version != 6 {
         return Err(CliError::failure(format!(
             "Oven Alpha cannot use pub::{} package Loaf manifest at {}: schema {} is unsupported; rebake the provider with this Incan release",
             artifact.dependency_key,
@@ -824,6 +824,7 @@ mod tests {
             source_authority_digest: digest_baked_project_source_authority(package.path())?,
             compiler_version: INCAN_VERSION.to_string(),
             metadata_files: packaged_library_metadata_files(&library_manifest_path, &library_manifest, &artifact_root)?,
+            checked_metadata: None,
             profiles: BTreeMap::from([
                 (
                     "debug".to_string(),
@@ -888,11 +889,15 @@ mod tests {
         assert!(sidecar_error.to_string().contains("declared sidecars"));
         fs::write(&sidecar, sealed_sidecar)?;
 
-        manifest.schema_version = OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION - 1;
+        // Schema 6 carries the same complete native contract, but supplies no checked-metadata replay authority.
+        manifest.schema_version = 6;
+        write_packaged_library_loaf_manifest(&artifact_root, &manifest)?;
+        assert!(packaged_library_loaf_profile(&artifact, "debug", "aarch64-apple-darwin", "rustc fixture")?.is_some());
+        manifest.schema_version = 5;
         write_packaged_library_loaf_manifest(&artifact_root, &manifest)?;
         let schema_error = packaged_library_loaf_profile(&artifact, "debug", "aarch64-apple-darwin", "rustc fixture")
             .err()
-            .ok_or("a package manifest from the previous package release-cohort schema must fail closed")?;
+            .ok_or("a package manifest lacking the current native release-cohort contract must fail closed")?;
         assert!(schema_error.to_string().contains("schema"));
         manifest.schema_version = OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION;
 

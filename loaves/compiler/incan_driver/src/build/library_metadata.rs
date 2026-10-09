@@ -8,6 +8,9 @@ use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
+pub mod requirements;
+use requirements::CheckedLibraryRequirements;
+
 use incan_frontend::library_manifest::LibraryManifest;
 use incan_lang::interop::metadata::RustItemKind;
 use oven_store::store::{
@@ -21,7 +24,7 @@ use super::output_paths::{packaged_library_metadata_files, validated_project_out
 use crate::error::{CliError, CliResult};
 
 /// Ordinary checked-library payload schema; absent older authority is a preparation miss.
-pub const LIBRARY_METADATA_SCHEMA_VERSION: u32 = 1;
+pub const LIBRARY_METADATA_SCHEMA_VERSION: u32 = 2;
 /// Shared Store domain for checked ordinary package contracts, including installed standard packages.
 pub const LIBRARY_METADATA_DOMAIN: &str = "incan-library-metadata-v1";
 
@@ -90,13 +93,16 @@ struct LibraryMetadataPayload {
     metadata_files: Vec<OvenPackagedLibraryMetadataFile>,
     generated_files: Vec<OvenPackagedLibraryMetadataFile>,
     required_rust_abi: BTreeSet<String>,
+    #[serde(default)]
+    checked_requirements: Option<CheckedLibraryRequirements>,
 }
 
 /// Admitted checked output with the original immutable Store coordinate and lease.
 pub struct SelectedLibraryMetadata {
-    owner: OvenStoreExecutionPayload,
+    owner: Arc<OvenStoreExecutionPayload>,
     payload: LibraryMetadataPayload,
     manifest: LibraryManifest,
+    _dependency_owners: Vec<Arc<SelectedLibraryMetadata>>,
 }
 
 impl LibraryMetadataRecipe {
@@ -179,6 +185,125 @@ impl SelectedLibraryMetadata {
         }
     }
 
+    /// Revalidate the same original owner and its sealed output closure without selecting a substitute.
+    pub fn verify(&self) -> CliResult<()> {
+        self.owner
+            .verify_admitted_payload()
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        validate_output_contract(&self.owner.artifact_root, &self.payload).map(|_| ())
+    }
+
+    /// Import this exact leased owner into a package Store without selecting an equivalent replacement.
+    /// Destination publication re-observes the full file closure and must preserve the original content identity.
+    pub fn export_into(&self, destination: &OvenStore) -> CliResult<LibraryMetadataReference> {
+        self.verify()?;
+        let files = self
+            .owner
+            .manifest
+            .materialized_files
+            .iter()
+            .map(|file| OvenArtifactMaterializedFile {
+                source_path: self.owner.artifact_root.join(&file.relative_path),
+                relative_path: file.relative_path.clone(),
+            })
+            .collect();
+        let directories = self
+            .owner
+            .manifest
+            .materialized_directories
+            .iter()
+            .map(|directory| oven_store::store::OvenArtifactMaterializedDirectory {
+                source_path: self.owner.artifact_root.join(&directory.relative_path),
+                relative_path: directory.relative_path.clone(),
+            })
+            .collect();
+        let exported = destination
+            .publish_verified_import(
+                &OvenArtifactPublishRequest {
+                    receipt: self.payload.receipt.clone(),
+                    domain: self.owner.manifest.domain.clone(),
+                    kind: self.owner.manifest.kind,
+                    payload: self.owner.payload.clone(),
+                    materialized_files: files,
+                    materialized_directories: directories,
+                },
+                self.owner.admitted_materialized_files(),
+                self.owner.admitted_materialized_directories(),
+            )
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        if exported.identity != self.owner.manifest.identity
+            || exported.receipt_identity != self.payload.receipt.identity
+            || exported.build_unit_identity != self.payload.receipt.build_unit_identity
+            || exported.intent != self.payload.receipt.intent
+        {
+            return Err(CliError::failure(
+                "ordinary checked metadata owner changed during package export",
+            ));
+        }
+        Ok(self.reference())
+    }
+
+    /// Retain the exact admitted dependency owners through the same original lease, without reacquiring coordinates.
+    pub(crate) fn retaining_dependencies(&self, dependencies: &[Arc<SelectedLibraryMetadata>]) -> CliResult<Arc<Self>> {
+        let expected = self
+            .payload
+            .recipe
+            .dependencies
+            .values()
+            .map(|dependency| {
+                (
+                    dependency.owner_identity.clone(),
+                    dependency.receipt_identity.clone(),
+                    dependency.name.clone(),
+                    dependency.version.clone(),
+                    dependency.checked_digest.clone(),
+                )
+            })
+            .collect::<BTreeSet<_>>();
+        let actual = dependencies
+            .iter()
+            .map(|dependency| {
+                dependency.verify()?;
+                Ok((
+                    dependency.owner.manifest.identity.clone(),
+                    dependency.payload.receipt.identity.clone(),
+                    dependency.manifest.name.clone(),
+                    dependency.manifest.version.clone(),
+                    digest_bytes(
+                        &serde_json::to_vec(dependency.checked_files())
+                            .map_err(|error| CliError::failure(error.to_string()))?,
+                    ),
+                ))
+            })
+            .collect::<CliResult<BTreeSet<_>>>()?;
+        if expected != actual {
+            return Err(CliError::failure(
+                "checked metadata dependency lease set disagrees with its recipe",
+            ));
+        }
+        Ok(Arc::new(Self {
+            owner: Arc::clone(&self.owner),
+            payload: self.payload.clone(),
+            manifest: self.manifest.clone(),
+            _dependency_owners: dependencies.to_vec(),
+        }))
+    }
+
+    /// Borrow validated checked planning inputs. Missing older knowledge is an explicit production replay miss.
+    pub fn checked_requirements(&self) -> Option<&CheckedLibraryRequirements> {
+        self.payload.checked_requirements.as_ref()
+    }
+
+    /// Borrow the exact reproduced source recipe; consumers must establish currentness separately.
+    pub fn recipe(&self) -> &LibraryMetadataRecipe {
+        &self.payload.recipe
+    }
+
+    /// Borrow the complete admitted checked file contract for dependency authority binding.
+    pub fn checked_files(&self) -> &[OvenPackagedLibraryMetadataFile] {
+        &self.payload.metadata_files
+    }
+
     /// Revalidate the held owner and copy only its exact checked/generated closure to a publication destination.
     ///
     /// No frontend work occurs here. The caller retains this selection through aggregate/package publication and
@@ -247,6 +372,39 @@ pub fn select_library_metadata(
     admit(candidates.remove(0), recipe, receipt).map(|selected| Some(Arc::new(selected)))
 }
 
+/// Admit an exact package-carried reference through its original immutable owner, without granting source currentness.
+pub fn select_library_metadata_reference(
+    store: &OvenStore,
+    reference: &LibraryMetadataReference,
+) -> CliResult<Arc<SelectedLibraryMetadata>> {
+    if reference.schema_version != LIBRARY_METADATA_SCHEMA_VERSION {
+        return Err(CliError::failure("unsupported checked library reference version"));
+    }
+    reference
+        .receipt
+        .verify_identity()
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let mut candidates = store
+        .select_payloads_matching_for_execution(|manifest| {
+            manifest.identity == reference.owner_identity
+                && manifest.kind == OvenArtifactKind::Engine
+                && manifest.domain == LIBRARY_METADATA_DOMAIN
+                && manifest.receipt_identity == reference.receipt.identity
+                && manifest.build_unit_identity == reference.receipt.build_unit_identity
+                && manifest.intent == reference.receipt.intent
+        })
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    if candidates.len() != 1 {
+        return Err(CliError::failure(
+            "missing or competing checked library reference owner",
+        ));
+    }
+    let owner = candidates.remove(0);
+    let payload: LibraryMetadataPayload =
+        serde_json::from_slice(&owner.payload).map_err(|error| CliError::failure(error.to_string()))?;
+    admit(owner, &payload.recipe, &reference.receipt).map(Arc::new)
+}
+
 /// Publish finalized checked metadata and generated facade files through ordinary immutable Engine admission.
 ///
 /// The caller must recapture its source-current recipe immediately before this call and retain current dependency
@@ -259,6 +417,30 @@ pub fn publish_library_metadata(
     manifest_path: &Path,
     required_rust_abi: BTreeSet<String>,
 ) -> CliResult<Arc<SelectedLibraryMetadata>> {
+    publish_library_metadata_with_requirements(
+        store,
+        recipe,
+        receipt,
+        artifact_root,
+        manifest_path,
+        required_rust_abi,
+        None,
+    )
+}
+
+/// Publish an ordinary checked owner carrying a complete planning contract for source-free frontend replay.
+pub fn publish_library_metadata_with_requirements(
+    store: &OvenStore,
+    recipe: &LibraryMetadataRecipe,
+    receipt: &OvenReceipt,
+    artifact_root: &Path,
+    manifest_path: &Path,
+    required_rust_abi: BTreeSet<String>,
+    checked_requirements: Option<CheckedLibraryRequirements>,
+) -> CliResult<Arc<SelectedLibraryMetadata>> {
+    if let Some(contract) = &checked_requirements {
+        contract.validate()?;
+    }
     recipe.validate()?;
     receipt
         .verify_identity()
@@ -279,6 +461,7 @@ pub fn publish_library_metadata(
         metadata_files: packaged_library_metadata_files(manifest_path, &manifest, artifact_root)?,
         generated_files: generated_files(artifact_root)?,
         required_rust_abi,
+        checked_requirements,
     };
     validate_output_contract(artifact_root, &payload)?;
     let materialized_files = payload
@@ -359,6 +542,9 @@ fn admit(
         ));
     }
     validate_recipe_receipt(recipe, receipt)?;
+    if let Some(contract) = &payload.checked_requirements {
+        contract.validate()?;
+    }
     let expected: BTreeMap<_, _> = payload
         .metadata_files
         .iter()
@@ -380,9 +566,10 @@ fn admit(
     }
     let manifest = validate_output_contract(&owner.artifact_root, &payload)?;
     Ok(SelectedLibraryMetadata {
-        owner,
+        owner: Arc::new(owner),
         payload,
         manifest,
+        _dependency_owners: Vec::new(),
     })
 }
 
@@ -435,21 +622,24 @@ fn validate_output_contract(root: &Path, payload: &LibraryMetadataPayload) -> Cl
             ));
         }
     }
-    if let Some(abi) = manifest.rust_abi.as_ref() {
-        let mut facts = BTreeMap::new();
-        for item in &abi.items {
-            for path in std::iter::once(&item.canonical_path).chain(item.definition_path.as_ref()) {
-                if let Some(previous) = facts.insert(path, &item.kind)
-                    && previous != &item.kind
-                {
-                    return Err(CliError::failure(format!(
-                        "checked library ABI has competing facts for `{path}`"
-                    )));
-                }
-            }
-        }
+    validate_required_rust_abi(&manifest, &payload.required_rust_abi)?;
+    if let Some(contract) = &payload.checked_requirements
+        && contract.rust_abi_queries != payload.required_rust_abi
+    {
+        return Err(CliError::failure(
+            "checked requirement ABI promises disagree with the sealed owner",
+        ));
     }
-    for query in &payload.required_rust_abi {
+    Ok(manifest)
+}
+
+/// Require complete promised ABI facts and refuse competing canonical facts before granting replay authority.
+pub(crate) fn validate_required_rust_abi(
+    manifest: &LibraryManifest,
+    required_rust_abi: &BTreeSet<String>,
+) -> CliResult<()> {
+    validate_rust_fact_agreement(std::iter::once(manifest))?;
+    for query in required_rust_abi {
         if query.trim().is_empty() {
             return Err(CliError::failure("checked library ABI requirement is empty"));
         }
@@ -466,7 +656,30 @@ fn validate_output_contract(root: &Path, payload: &LibraryMetadataPayload) -> Cl
             )));
         }
     }
-    Ok(manifest)
+    Ok(())
+}
+
+/// Reject conflicting aliases or definitions across the complete admitted checked dependency surface.
+pub(crate) fn validate_rust_fact_agreement<'a>(
+    manifests: impl IntoIterator<Item = &'a LibraryManifest>,
+) -> CliResult<()> {
+    let mut facts = BTreeMap::new();
+    for manifest in manifests {
+        if let Some(abi) = manifest.rust_abi.as_ref() {
+            for item in &abi.items {
+                for path in std::iter::once(&item.canonical_path).chain(item.definition_path.as_ref()) {
+                    if let Some(previous) = facts.insert(path, &item.kind)
+                        && previous != &item.kind
+                    {
+                        return Err(CliError::failure(format!(
+                            "checked library ABI has competing facts for `{path}`"
+                        )));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Inventory every regular generated source file using safe relative paths and exact content digests.
