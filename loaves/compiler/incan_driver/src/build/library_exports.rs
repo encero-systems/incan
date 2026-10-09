@@ -453,6 +453,15 @@ mod tests {
         Ok(())
     }
 
+    /// Prepare the supported dependency-free Loaf inspection route with explicit sysroot-only source authority.
+    #[cfg(feature = "rust_inspect")]
+    fn dev7_mutable_demand_prepare_local_abi_workspace(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        crate::lock::registry_sources::acquire_explicit_project_inspection_sources(root, root, &[])?;
+        fs::write(root.join(rust_inspect::OVEN_DIRECT_INSPECTION_MARKER), "1\n")?;
+        fs::write(root.join(rust_inspect::OVEN_LOAF_ONLY_INSPECTION_MARKER), "1\n")?;
+        Ok(())
+    }
+
     /// ABI publication promotes partial records, survives source restoration and refuses missing extraction authority.
     #[cfg(feature = "rust_inspect")]
     #[test]
@@ -466,6 +475,7 @@ mod tests {
         let source = root.path().join("src/lib.rs");
         let original = "pub trait Intrinsic {}\npub struct Thing;\nimpl Intrinsic for Thing {}\n";
         fs::write(&source, original)?;
+        dev7_mutable_demand_prepare_local_abi_workspace(root.path())?;
         let query = "abi_demand_probe::Thing";
         let paths = vec![query.to_string()];
         let cache = rust_inspect::RustMetadataCache::new();
@@ -525,9 +535,22 @@ mod tests {
         cache.invalidate_manifest_dir(root.path())?;
         assert_eq!(collect_library_rust_abi(root.path(), &paths)?, Some(first));
         let unprepared = tempfile::tempdir()?;
+        fs::write(
+            unprepared.path().join(rust_inspect::OVEN_DIRECT_INSPECTION_MARKER),
+            "1\n",
+        )?;
+        fs::write(
+            unprepared.path().join(rust_inspect::OVEN_LOAF_ONLY_INSPECTION_MARKER),
+            "1\n",
+        )?;
+        let error = collect_library_rust_abi(unprepared.path(), &paths)
+            .err()
+            .ok_or("missing Loaf inspection preparation was accepted")?;
         assert!(
-            collect_library_rust_abi(unprepared.path(), &paths).is_err(),
-            "missing inspection authority must remain an extraction refusal"
+            error
+                .to_string()
+                .contains("Loaf-only inspection has no authored probe declaration"),
+            "missing preparation must refuse on the direct Loaf route: {error}"
         );
         Ok(())
     }
@@ -544,6 +567,7 @@ mod tests {
             "[project]\nname='abi_flush_probe'\nversion='1.0.0'\n[rust]\nname='abi_flush_probe'\ntype='lib'\nedition='2021'\n",
         )?;
         fs::write(root.path().join("src/lib.rs"), "pub struct Thing;\n")?;
+        dev7_mutable_demand_prepare_local_abi_workspace(root.path())?;
         let paths = vec!["abi_flush_probe::Thing".to_string()];
         let first = collect_library_rust_abi(root.path(), &paths)?.ok_or("missing checked ABI")?;
         let temporary_cache = root.path().join(".incan_rust_inspect_cache.tmp");
