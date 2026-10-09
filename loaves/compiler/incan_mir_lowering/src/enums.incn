@@ -65,20 +65,17 @@ pub def unit_variant(
 
 
 pub def pattern_variant(declaration: &RustEnumDeclaration, pattern: &RustPattern) -> Result[int, str]:
-    """Admit only canonical variant patterns and irrefutable fallback patterns; payload recursion stays explicit."""
+    """Resolve exact variant identities while allowing checked owner aliases; payload layout and ownership stay explicit."""
     match pattern:
         RustPattern.Wildcard => return Ok(-1)
-        RustPattern.Enum(canonical=identity, name=name, variant=name_variant, fields=fields) =>
+        RustPattern.Enum(canonical=identity, name=_name, variant=name_variant, fields=fields) =>
             for slot in range(len(declaration.variants)):
                 variant = declaration.variants[slot]
                 if identity.clone() == Some(variant.canonical):
-                    # Constructor patterns retain the parser's qualified `Owner::Variant` spelling.
-                    spelling = str(name_variant)
-                    qualified = f"{declaration.name}::{variant.name}"
-                    if (str(name) != "" and str(name) != str(declaration.name)) or (
-                        spelling != str(variant.name)
-                        and spelling != qualified
-                    ) or len(fields) != len(variant.fields):
+                    # The exact variant identity above proves the owner; reexports can rename its written path.
+                    # Retain the member-spelling check without treating the source owner alias as a carrier name.
+                    components = str(name_variant).split("::")
+                    if components[len(components) - 1] != str(variant.name) or len(fields) != len(variant.fields):
                         return Err("invalid Body IR enum pattern layout")
                     validate_payload_patterns(fields)?
                     return Ok(slot)
