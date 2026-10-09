@@ -130,19 +130,15 @@ fn execute(
                 .as_deref()
                 .ok_or("native dependencies require --native-blobs")?,
             &rustc,
+            &dependencies,
+            &declaration_owner,
         )?)
     };
-    let closure = if let Some(prepared) = &prepared {
-        let roots = prepared
-            .graph()
-            .select_dependency_roots(&dependencies, &declaration_owner, "target")?;
-        prepared.graph().select(&roots)?
-    } else {
-        NativeLoafGraph::default().select(&[])?
-    };
+    let empty = NativeLoafGraph::default().select(&[])?;
+    let closure = prepared.as_ref().map_or(&empty, |prepared| prepared.closure());
     let (receipt, selection) =
-        incan_driver::build::native_loaf_plan::select_native_loaf_plan(&store, &receipt, &closure)?;
-    preparation::write_report(&output, prepared.as_ref(), &closure)?;
+        incan_driver::build::native_loaf_plan::select_native_loaf_plan(&store, &receipt, closure)?;
+    preparation::write_report(&output, prepared.as_ref(), closure)?;
     let plan_ms = started.elapsed().as_millis();
 
     // ---- Receipt-bound test compilation ----

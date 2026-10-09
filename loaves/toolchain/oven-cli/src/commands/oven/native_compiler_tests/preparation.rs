@@ -2,7 +2,10 @@
 
 use std::path::Path;
 
-use oven_rustc::native_loaf::{NativeLoafClosure, NativeLoafPreparation, prepare_resolved_native_loafs};
+use oven_model::manifest::DependencySpec;
+use oven_rustc::native_loaf::{
+    NativeLoafClosure, NativeLoafConsumerPreparation, NativeLoafConsumerRequest, prepare_declared_native_loafs,
+};
 
 /// Prepare exact native records in a shared worktree-owned cache without publishing checked library components.
 pub(super) fn prepare(
@@ -11,24 +14,35 @@ pub(super) fn prepare(
     index: &Path,
     blobs: &Path,
     rustc: &Path,
-) -> Result<NativeLoafPreparation, Box<dyn std::error::Error>> {
+    dependencies: &[DependencySpec],
+    declaration_owner: &Path,
+) -> Result<NativeLoafConsumerPreparation, Box<dyn std::error::Error>> {
     let output = compiler_root.join("target/compiler-development/native-loafs");
     let target = oven_rustc::rustc::rustc_host_target(rustc)?;
-    Ok(prepare_resolved_native_loafs(
-        graph, index, blobs, &output, rustc, &target, "debug",
-    )?)
+    Ok(prepare_declared_native_loafs(&NativeLoafConsumerRequest {
+        graph,
+        index,
+        blobs,
+        output: &output,
+        rustc,
+        target: &target,
+        profile: "debug",
+        dependencies,
+        declaration_owner,
+        domain: "target",
+    })?)
 }
 
 /// Retain actual preparation work and selected physical closure counts beside the native test report.
 pub(super) fn write_report(
     output: &Path,
-    preparation: Option<&NativeLoafPreparation>,
+    preparation: Option<&NativeLoafConsumerPreparation>,
     closure: &NativeLoafClosure,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let report = serde_json::json!({
         "schema": "incan.compiler-test-native-loaf-preparation/1",
-        "native": preparation.map(NativeLoafPreparation::report),
-        "prepared_native_units": preparation.map_or(0, |prepared| prepared.graph().units().len()),
+        "native": preparation.map(NativeLoafConsumerPreparation::report),
+        "prepared_native_units": preparation.map_or(0, |prepared| prepared.report().prepared_units),
         "selected_native_units": closure.graph().units().len(),
         "roots": closure.roots(),
         "checked_library_publications": 0,
