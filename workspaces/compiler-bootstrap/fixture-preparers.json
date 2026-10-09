@@ -49,6 +49,14 @@
         "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/refused_feature_gated_export_of_dependency",
         "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/refused_imported_partial_without_carried_default"
       ]
+    },
+    "loaves/compiler/incan_driver/src/lib.rs": {
+      "declaration": "workspaces/compiler-bootstrap/test-declarations/driver-unit.loaf.toml",
+      "inputs": [
+        "loaves/stdlib/interop/src/interop.incn"
+      ],
+      "dependency_graph": "workspaces/oven/compiler-metadata-tests-native.json",
+      "use_compiler_resolution": true
     }
   }
 }

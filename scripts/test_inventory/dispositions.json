@@ -202,7 +202,7 @@
     },
     "loaves/compiler/incan_driver/src/build/native_sdk_plan.rs": {
       "disposition": "unaffected",
-      "notes": "Receipt-bound SDK native artifact retention, source-role member bindings and compiler mismatch refusal; no generated Cargo graph or dependency resolution.",
+      "notes": "Receipt-bound native SDK plans and the actual covered test-envelope path retain original command owners; store-backed controls verify member bindings, compiler mismatch refusal and owner lifetime without generated Cargo metadata.",
       "owner": 1698,
       "split_required": false,
       "split_target": "",
@@ -8320,7 +8320,7 @@
     },
     "loaves/compiler/incan_provider/src/sdk_native.rs": {
       "disposition": "unaffected",
-      "notes": "SDK system source imports parse against Loaf-only dependency declarations; native publication is exercised by sdk_build's receipt and rollback regression.",
+      "notes": "Canonical native SDK admission revalidates original payloads, witnesses and publication catalogs; store-backed controls refuse changed receipt/output catalogs and post-admission edge injection without granting edges authority.",
       "owner": 1698,
       "split_required": false,
       "split_target": "",
@@ -11585,6 +11585,14 @@
       "disposition": "unaffected",
       "notes": "Oven tools command; the build_run hit is a Cargo config hint, not an Incan build.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/plan/shared.rs": {
+      "disposition": "unaffected",
+      "notes": "Command-held native owners retain exact original leases through pruning, refuse missing/substituted owners and changed witnesses, and preserve independent acquisition for other plan domains. Controls use real store publication without Cargo.",
+      "owner": 1698,
       "split_required": false,
       "split_target": "",
       "twin": ""
