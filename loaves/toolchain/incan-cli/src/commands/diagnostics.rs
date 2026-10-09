@@ -613,7 +613,7 @@ mod dev7_checked_provider_metadata_tests {
             &root.join("deps/leaf"),
             "[project]\nname='leaf'\n",
             "lib.incn",
-            "pub model Widget:\n    value: int\n\npub newtype Tag = int\n",
+            "pub model Widget:\n    pub value: int\n\npub newtype Tag = int\n",
         )?;
         let entry = root.join("src/main.incn");
         let report = check_path_report_with_selections(&entry, &FeatureSelection::default(), None)?;
@@ -646,12 +646,24 @@ mod dev7_checked_provider_metadata_tests {
             &root.join("deps/widgets"),
             "[project]\nname='widgets'\n",
             "lib.incn",
-            "pub model Widget:\n    value: int\n",
+            "pub model Widget:\n    pub value: int\n",
         )?;
         let entry = root.join("src/main.incn");
         let report = check_path_report_with_selections(&entry, &FeatureSelection::default(), None)?;
         assert!(report.ok(), "{report:?}");
-        source_identity(&entry, "widgets")?;
+        let identity = source_identity(&entry, "widgets")?;
+        let producer = root.join("deps/widgets/src/lib.incn");
+        fs::write(&producer, "pub model Widget:\n    value: int\n")?;
+        let private = check_path_report_with_selections(&entry, &FeatureSelection::default(), None)?;
+        assert!(!private.ok(), "private producer field was exposed");
+        assert!(private.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "INCAN-T0001"
+                && diagnostic.message.contains("Field 'value'")
+                && diagnostic.message.contains("private")
+        }));
+        fs::write(&producer, "pub model Widget:\n    pub value: int\n")?;
+        assert!(check_path_report_with_selections(&entry, &FeatureSelection::default(), None)?.ok());
+        assert_eq!(source_identity(&entry, "widgets")?, identity);
         assert_no_outputs(root)
     }
 
@@ -670,7 +682,7 @@ mod dev7_checked_provider_metadata_tests {
             &root.join("deps/widgets"),
             "[project]\nname='widgets'\n",
             "lib.incn",
-            "pub model Widget:\n    value: int\n",
+            "pub model Widget:\n    pub value: int\n",
         )?;
         let entry = root.join("src/main.incn");
         let report = check_path_report_with_selections(&entry, &FeatureSelection::default(), None)?;
