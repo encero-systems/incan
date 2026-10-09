@@ -225,10 +225,10 @@ fn publish_selected_provider_loaf(
 
 /// Finalize an ordinary library package after its actual profile outputs and final source authority are published.
 ///
-/// This shared producer boundary preserves the ordinary bake handoff. The caller retains the checked preparation and its
-/// profile selections through publication, exports every profile closure before entering, and supplies its final
-/// source authority after lock publication. Checked metadata keeps its original owner; no empty profile or
-/// replacement metadata owner is manufactured here. The index becomes visible only after metadata export succeeds.
+/// This shared producer boundary preserves the ordinary bake handoff. The caller retains the checked preparation and
+/// its profile selections through publication, exports every profile closure before entering, and supplies its final
+/// source authority after lock publication. The metadata and generation leases remain held through atomic index
+/// publication. Real profile outputs are required; source freshness is verified before the association is sealed.
 pub(crate) fn publish_checked_library_package(
     prepared: &PreparedLibraryProject,
     source_authority_digest: &str,
@@ -237,15 +237,34 @@ pub(crate) fn publish_checked_library_package(
 ) -> CliResult<()> {
     let metadata_files =
         packaged_library_metadata_files(&prepared.manifest_path, &prepared.library_manifest, &prepared.out_dir)?;
+    let package_store = OvenStore::with_release(
+        packaged_library_loaf_store_root(&prepared.out_dir),
+        limits,
+        &incan_oven_facet::compiler_identity(),
+    );
     let checked_metadata = prepared
         .metadata_owner
         .as_ref()
         .map(|owner| {
-            owner.export_into(&OvenStore::with_release(
-                packaged_library_loaf_store_root(&prepared.out_dir),
-                limits,
-                &incan_oven_facet::compiler_identity(),
-            ))
+            owner.verify_materialization(&prepared.out_dir)?;
+            if owner.checked_files() != metadata_files {
+                return Err(CliError::failure(
+                    "ordinary package metadata differs from its original checked owner",
+                ));
+            }
+            owner.export_into(&package_store)
+        })
+        .transpose()?;
+    let generation_owner = prepared
+        .metadata_owner
+        .as_ref()
+        .map(|owner| {
+            super::library_generation::publish_library_generation(
+                &package_store,
+                &prepared.project_root,
+                source_authority_digest,
+                owner,
+            )
         })
         .transpose()?;
     let manifest = OvenPackagedLibraryLoafManifest {
@@ -254,6 +273,7 @@ pub(crate) fn publish_checked_library_package(
         compiler_version: INCAN_VERSION.to_string(),
         metadata_files,
         checked_metadata,
+        checked_generation: generation_owner.as_ref().map(|owner| owner.reference()),
         profiles,
     };
     write_packaged_library_loaf_manifest(&prepared.out_dir, &manifest)
@@ -864,6 +884,7 @@ mod tests {
             compiler_version: INCAN_VERSION.to_string(),
             metadata_files: packaged_library_metadata_files(&library_manifest_path, &library_manifest, &artifact_root)?,
             checked_metadata: None,
+            checked_generation: None,
             profiles: BTreeMap::from([
                 (
                     "debug".to_string(),

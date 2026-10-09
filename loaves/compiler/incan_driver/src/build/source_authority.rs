@@ -2259,6 +2259,7 @@ headers = ["interop/include/bridge.h"]
             compiler_version: INCAN_VERSION.to_string(),
             metadata_files: packaged_library_metadata_files(&library_manifest_path, &library_manifest, &artifact_root)?,
             checked_metadata: None,
+            checked_generation: None,
             profiles,
         };
         write_packaged_library_loaf_manifest(&artifact_root, &manifest)?;

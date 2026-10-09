@@ -406,6 +406,8 @@ pub struct ProviderPlan {
     /// This bootstrap-only grant disappears once the checked provider manifest is published and must never be
     /// populated by installed SDK consumers.
     bootstrap_sdk_namespace_roots: BTreeSet<String>,
+    /// Original issuer records produced by validated selection, never reconstructed from public record spelling.
+    namespace_issuers: BTreeMap<String, Arc<ProviderRecord>>,
     /// Process-local identity assigned when this immutable record set is constructed.
     semantic_projection_identity: u64,
     /// Complete process-independent key derived once from the admitted immutable provider records.
@@ -433,8 +435,10 @@ impl ProviderPlan {
                 };
                 matches!(library_manifest_index.get(dependency_key), Some(LibraryManifestIndexEntry::Loaded { metadata, .. }) if metadata.kind == LibraryArtifactKind::CheckedSource)
             };
-            let shared_source = if let Some(existing) = indexed_records.get(&key) {
-                if !is_checked_source(existing) || !is_checked_source(&record) {
+            let shared_owner = if let Some(existing) = indexed_records.get(&key) {
+                if !(is_checked_source(existing) && is_checked_source(&record))
+                    && !same_materialized_alias_owner(existing, &record)
+                {
                     return Err(ProviderPlanError::DuplicateIdentity { identity: key });
                 }
                 true
@@ -460,7 +464,7 @@ impl ProviderPlan {
                 }
                 module_catalog.insert(claim.clone(), key.clone());
             }
-            if shared_source {
+            if shared_owner {
                 // Each alias's claims were independently validated above before entering the shared owner record.
                 if let Some(existing) = indexed_records.get_mut(&key) {
                     existing.namespace_claims.extend(record.namespace_claims);
@@ -487,6 +491,7 @@ impl ProviderPlan {
             checked_source_records,
             checked_source_dependencies: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
+            namespace_issuers: BTreeMap::new(),
             semantic_projection_identity: next_provider_semantic_projection_identity(),
             semantic_projection_persistent_key: Some(semantic_projection_persistent_key),
         })
@@ -592,6 +597,11 @@ impl ProviderPlan {
         projected.used_module_paths = used_module_paths;
         projected.semantic_projection_identity = next_provider_semantic_projection_identity();
         projected
+    }
+
+    /// Borrow a retained producer capability; public record construction never issues this authority.
+    pub(super) fn namespace_issuer(&self, identity: &str) -> Option<&Arc<ProviderRecord>> {
+        self.namespace_issuers.get(identity)
     }
 
     /// Return the consumer-side dependency manifest index normalized into this plan.
@@ -1045,10 +1055,19 @@ impl ProviderPlan {
         }
 
         let mut records = project_dependency_records(&library_manifest_index, package_features)?;
+        let mut namespace_issuers = BTreeMap::new();
         if let Some(inventory) = sdk_inventory {
-            records.extend(sdk_provider_records(inventory, sdk_components)?);
+            let selected = sdk_provider_records(inventory, sdk_components)?;
+            namespace_issuers.extend(
+                selected
+                    .iter()
+                    .map(|record| (record.identity.stable_key(), Arc::new(record.clone()))),
+            );
+            records.extend(selected);
         }
-        Self::new(library_manifest_index, records, used_module_paths)
+        let mut plan = Self::new(library_manifest_index, records, used_module_paths)?;
+        plan.namespace_issuers = namespace_issuers;
+        Ok(plan)
     }
 
     /// Construct one catalog from admitted ordinary library metadata and independently retained namespace grants.
@@ -1066,7 +1085,12 @@ impl ProviderPlan {
     {
         let mut records = project_dependency_records(&library_manifest_index, None)?;
         records.extend(namespaces.iter().map(|namespace| namespace.record().clone()));
-        Self::new(library_manifest_index, records, used_module_paths)
+        let mut plan = Self::new(library_manifest_index, records, used_module_paths)?;
+        plan.namespace_issuers = namespaces
+            .iter()
+            .map(|namespace| (namespace.record().identity.stable_key(), Arc::clone(namespace.issuer())))
+            .collect();
+        Ok(plan)
     }
 
     /// Create a plan that carries an ordinary dependency index and no SDK providers.
@@ -1108,6 +1132,7 @@ impl ProviderPlan {
             checked_source_records: BTreeMap::new(),
             checked_source_dependencies: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
+            namespace_issuers: BTreeMap::new(),
             semantic_projection_identity: next_provider_semantic_projection_identity(),
             semantic_projection_persistent_key: Some(semantic_projection_persistent_key),
         }
@@ -1182,6 +1207,7 @@ impl ProviderPlan {
             checked_source_records: BTreeMap::new(),
             checked_source_dependencies: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
+            namespace_issuers: BTreeMap::new(),
             semantic_projection_identity: next_provider_semantic_projection_identity(),
             semantic_projection_persistent_key: Some(semantic_projection_persistent_key),
         }
@@ -1407,7 +1433,7 @@ impl ProviderPlan {
                     || facet
                         .required_modules
                         .iter()
-                        .map(|module| canonical_provider_module(provider, module))
+                        .flat_map(|module| canonical_provider_modules(provider, module))
                         .any(|module| self.used_module_paths.contains(&module))
             })
             .collect()
@@ -1795,17 +1821,25 @@ fn render_provider_provenance(provenance: &ProviderProvenance) -> String {
     }
 }
 
-/// Apply one provider's consumer-granted namespace to a provider-local module path.
-fn canonical_provider_module(provider: &ProviderRecord, module: &[String]) -> Vec<String> {
-    let mut canonical = match &provider.authority {
-        NamespaceAuthority::ProjectDependency { dependency_key } => {
-            vec!["pub".to_string(), dependency_key.clone()]
-        }
-        NamespaceAuthority::SdkReserved => vec!["std".to_string()],
-        NamespaceAuthority::Compiler => Vec::new(),
+/// Apply every independently granted import alias to one shared owner's provider-local facet module.
+fn canonical_provider_modules(provider: &ProviderRecord, module: &[String]) -> Vec<Vec<String>> {
+    let namespaces = match &provider.authority {
+        NamespaceAuthority::ProjectDependency { .. } => provider
+            .namespace_claims
+            .iter()
+            .filter(|claim| claim.first().map(String::as_str) == Some("pub") && claim.len() >= 2)
+            .map(|claim| claim[..2].to_vec())
+            .collect::<BTreeSet<_>>(),
+        NamespaceAuthority::SdkReserved => BTreeSet::from([vec!["std".to_string()]]),
+        NamespaceAuthority::Compiler => BTreeSet::from([Vec::new()]),
     };
-    canonical.extend(module.iter().cloned());
-    canonical
+    namespaces
+        .into_iter()
+        .map(|mut namespace| {
+            namespace.extend_from_slice(module);
+            namespace
+        })
+        .collect()
 }
 
 /// Normalize one checked source-bootstrap manifest into the same record shape as an installed SDK provider.
@@ -1944,6 +1978,52 @@ fn project_dependency_records(
             .then_with(|| left.namespace_claims.cmp(&right.namespace_claims))
     });
     Ok(records)
+}
+
+/// Share two independently checked aliases only when their original physical owner and checked contract agree.
+/// Equal output digests at different coordinates and competing reserved issuers remain duplicate identities.
+fn same_materialized_alias_owner(left: &ProviderRecord, right: &ProviderRecord) -> bool {
+    let (
+        NamespaceAuthority::ProjectDependency {
+            dependency_key: left_alias,
+        },
+        NamespaceAuthority::ProjectDependency {
+            dependency_key: right_alias,
+        },
+    ) = (&left.authority, &right.authority)
+    else {
+        return false;
+    };
+    if left_alias == right_alias
+        || left.available != right.available
+        || left.enabled != right.enabled
+        || left.implementation_facets != right.implementation_facets
+    {
+        return false;
+    }
+    let (Some(left_artifact), Some(right_artifact), Some(left_manifest), Some(right_manifest)) =
+        (&left.artifact, &right.artifact, &left.manifest, &right.manifest)
+    else {
+        return false;
+    };
+    if left_artifact.kind != LibraryArtifactKind::Materialized
+        || right_artifact.kind != LibraryArtifactKind::Materialized
+    {
+        return false;
+    }
+    for (record, alias, artifact) in [(left, left_alias, left_artifact), (right, right_alias, right_artifact)] {
+        if artifact.dependency_key != *alias
+            || !matches!(&record.provenance,
+            ProviderProvenance::ProjectDependency { dependency_key, manifest_path }
+                if dependency_key == alias && manifest_path == &artifact.manifest_path)
+        {
+            return false;
+        }
+    }
+    let mut canonical_right = right_artifact.clone();
+    canonical_right.dependency_key = left_artifact.dependency_key.clone();
+    left_artifact == &canonical_right
+        && matches!((left_manifest.to_json_string(), right_manifest.to_json_string()), (Ok(left), Ok(right)) if left == right)
 }
 
 /// Normalize every known SDK provider, including disabled and unavailable component records, into the shared catalog.
