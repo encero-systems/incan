@@ -20,13 +20,12 @@ use crate::build::output_materialization::{
     warn_for_completed_output_lock_fingerprint_drift,
 };
 use crate::build::output_paths::{
-    library_project_output_sidecars, normalized_project_entrypoint, oven_binary_path, packaged_library_metadata_files,
-    project_locked_registry_packages, project_output_bake_files, project_root_for_completed_output,
-    validated_project_output_relative_path,
+    library_project_output_sidecars, normalized_project_entrypoint, oven_binary_path, project_locked_registry_packages,
+    project_output_bake_files, project_root_for_completed_output, validated_project_output_relative_path,
 };
 use crate::build::output_selection::project_output_report_snapshot;
 use crate::build::oven_project::{prepare_oven_project, remove_completed_generated_cargo_lock};
-use crate::build::package_loafs::{export_selected_package_loaf, write_packaged_library_loaf_manifest};
+use crate::build::package_loafs::{export_selected_package_loaf, publish_checked_library_package};
 use crate::build::plan_authority::{
     collect_caller_owned_provider_registry_leaf_authority, explicit_bake_profiles,
     rematerialize_caller_owned_libraries_with_authority_context, replace_caller_owned_package_libraries,
@@ -45,8 +44,7 @@ use crate::build::source_authority::{
     baked_project_lock_dependencies_fingerprint, canonical_baked_project_lock_path, project_bake_receipt_path,
 };
 use crate::build::{
-    BuildCommandOptions, CompletedOutputPolicy, LibraryInspectionConstituent,
-    OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION, OvenBakeProjectTarget, OvenPackagedLibraryLoafManifest,
+    BuildCommandOptions, CompletedOutputPolicy, LibraryInspectionConstituent, OvenBakeProjectTarget,
     OvenPackagedLibraryLoafProfile, OvenPreparedLibrary, OvenPreparedProject, OvenProjectBakeAuthorityContext,
     OvenProjectBakeOutputReport, OvenProjectBakeProfileReport, OvenProjectBakeReport, OvenProjectOutputBakeRequest,
     OvenProjectPlanMode, OvenStoredProjectOutput, PendingOvenProjectOutput, PreparedLibraryProject,
@@ -62,7 +60,6 @@ use crate::project::discover_effective_project_manifest;
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect_workspace::mark_oven_direct_rust_inspection;
 use incan_frontend::library_manifest::published_layout::packaged_library_loaf_manifest_path;
-use incan_lang::version::INCAN_VERSION;
 use incan_provider::FeatureSelection;
 use oven_cargo_compat::direct_rustc_compile_environment;
 use oven_model::manifest::ProjectManifest;
@@ -1642,31 +1639,12 @@ pub fn bake_oven_project_targets(
                     })?;
                     let library_sidecars =
                         library_project_output_sidecars(&prepared.library_manifest, &prepared.out_dir)?;
-                    let metadata_files = packaged_library_metadata_files(
-                        &prepared.manifest_path,
-                        &prepared.library_manifest,
-                        &prepared.out_dir,
+                    publish_checked_library_package(
+                        &prepared,
+                        source_authority_digest,
+                        package_profiles,
+                        *store.limits(),
                     )?;
-                    let checked_metadata = prepared
-                        .metadata_owner
-                        .as_ref()
-                        .map(|owner| {
-                            owner.export_into(&oven_store::store::OvenStore::with_release(
-                                &package_store_root,
-                                *store.limits(),
-                                &incan_oven_facet::compiler_identity(),
-                            ))
-                        })
-                        .transpose()?;
-                    let published_manifest = OvenPackagedLibraryLoafManifest {
-                        schema_version: OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION,
-                        source_authority_digest: source_authority_digest.to_string(),
-                        compiler_version: INCAN_VERSION.to_string(),
-                        metadata_files,
-                        checked_metadata,
-                        profiles: package_profiles,
-                    };
-                    write_packaged_library_loaf_manifest(&prepared.out_dir, &published_manifest)?;
                     let package_loaf_manifest = packaged_library_loaf_manifest_path(&prepared.out_dir);
                     let package_loaf_store_relative_path = package_store_root
                         .strip_prefix(&prepared.project_root)

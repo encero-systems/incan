@@ -1,15 +1,18 @@
 //! Package Loafs: exporting, copying, publishing, reading and validating the Loaf a public library package
 //! carries beside its artifact.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::build::library_outputs::packaged_library_loaf_store_root;
-use crate::build::output_paths::{validate_packaged_library_metadata_files, validated_project_output_relative_path};
+use crate::build::output_paths::{
+    packaged_library_metadata_files, validate_packaged_library_metadata_files, validated_project_output_relative_path,
+};
 use crate::build::source_authority::digest_baked_project_source_authority;
 use crate::build::{
     CheckedPackagedProviderProfile, OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION, OvenPackagedLibraryLoafManifest,
-    OvenPackagedLibraryLoafProfile,
+    OvenPackagedLibraryLoafProfile, PreparedLibraryProject,
 };
 use crate::error::{CliError, CliResult, oven_rustc_error};
 use incan_frontend::library_manifest::published_layout::packaged_library_loaf_manifest_path;
@@ -21,7 +24,7 @@ use oven_rustc::rustc::select_direct_rustc_plan_for_execution;
 use oven_store::digest_bytes;
 use oven_store::store::{
     OvenArtifactKind, OvenArtifactMaterializedDirectory, OvenArtifactMaterializedFile, OvenArtifactPublishRequest,
-    OvenStore, PublishedOvenStore,
+    OvenStore, OvenStoreLimits, PublishedOvenStore,
 };
 
 /// Copy one already selected project Loaf into the public provider artifact through normal immutable-store admission.
@@ -218,6 +221,42 @@ fn publish_selected_provider_loaf(
         ));
     }
     Ok(exported)
+}
+
+/// Finalize an ordinary library package after its actual profile outputs and final source authority are published.
+///
+/// This shared producer boundary preserves the ordinary bake handoff. The caller retains the checked preparation and its
+/// profile selections through publication, exports every profile closure before entering, and supplies its final
+/// source authority after lock publication. Checked metadata keeps its original owner; no empty profile or
+/// replacement metadata owner is manufactured here. The index becomes visible only after metadata export succeeds.
+pub(crate) fn publish_checked_library_package(
+    prepared: &PreparedLibraryProject,
+    source_authority_digest: &str,
+    profiles: BTreeMap<String, OvenPackagedLibraryLoafProfile>,
+    limits: OvenStoreLimits,
+) -> CliResult<()> {
+    let metadata_files =
+        packaged_library_metadata_files(&prepared.manifest_path, &prepared.library_manifest, &prepared.out_dir)?;
+    let checked_metadata = prepared
+        .metadata_owner
+        .as_ref()
+        .map(|owner| {
+            owner.export_into(&OvenStore::with_release(
+                packaged_library_loaf_store_root(&prepared.out_dir),
+                limits,
+                &incan_oven_facet::compiler_identity(),
+            ))
+        })
+        .transpose()?;
+    let manifest = OvenPackagedLibraryLoafManifest {
+        schema_version: OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION,
+        source_authority_digest: source_authority_digest.to_string(),
+        compiler_version: INCAN_VERSION.to_string(),
+        metadata_files,
+        checked_metadata,
+        profiles,
+    };
+    write_packaged_library_loaf_manifest(&prepared.out_dir, &manifest)
 }
 
 /// Atomically publish the package-local index only after every referenced Loaf and library output exists.
