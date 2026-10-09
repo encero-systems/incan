@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3485 | 235 | 431 |
+| keep | 3493 | 237 | 431 |
 | re-point | 1487 | 91 | 1058 |
 | retire | 1506 | 153 | 0 |
 | unaffected | 1797 | 183 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8275** | **662** | **1494** |
+| **Total** | **8283** | **664** | **1494** |
 
 - Retire-class tests: 1506, of which twinned 1022, dies 294, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -127,7 +127,7 @@ The collector counts these in the text of each test function and of the file-loc
 
 `Lines` is the file length; `Test lines` is the test region the split threshold applies to: the `#[cfg(test)]` modules when the file has any, otherwise the whole file. `Twins` is `twinned/retire-class` and `Dies` the number recorded `dies`, for files with retire-class tests. Per-test rows follow a file only when it carries per-test overrides.
 
-### `loaves/compiler/incan_driver` (554 tests in 76 files: keep 251, re-point 19, retire 103, unaffected 181)
+### `loaves/compiler/incan_driver` (562 tests in 78 files: keep 259, re-point 19, retire 103, unaffected 181)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -140,23 +140,25 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/backend/project/runner.rs` | 18 | 1031 | 449 | re-point | - | - | - | #1561 | codegen 2, run 14 | project runner: builds and runs the generated project; the run contract (profiles, rebuild triggers) is re-pointed at the replacement route. |
 | `loaves/compiler/incan_driver/src/backend/project/tests/codegen_generator.rs` | 4 | 327 | 327 | retire | 0/4 | 4 | - | #1561 | codegen 4, text 1, run 4, checker 1, parser 3, legacy_ir 1 | codegen into a generated project; asserts generated Rust text. |
 | `loaves/compiler/incan_driver/src/backend/project/tests/lock_payload.rs` | 1 | 26 | 26 | retire | 0/1 | 1 | - | #1561 | codegen 1, run 1 | generated Cargo project shape; dies with the generated-project route |
-| `loaves/compiler/incan_driver/src/build/bake.rs` | 8 | 2241 | 324 | unaffected | - | - | - | #1561 | codegen 1, run 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
+| `loaves/compiler/incan_driver/src/build/bake.rs` | 8 | 2253 | 324 | unaffected | - | - | - | #1561 | codegen 1, run 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/caller_facet.rs` | 7 | 500 | 165 | keep | - | - | - | #1337 | replacement 6, checker 6, parser 6 | checked, usage-derived caller export selection and refusal at the Rust-hosted Incan boundary. |
 | `loaves/compiler/incan_driver/src/build/caller_owned.rs` | 7 | 1044 | 315 | unaffected | - | - | - | #1561 | checker 4 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/file_freshness.rs` | 4 | 313 | 93 | unaffected | - | - | - | #1337 | - | Oven build-input freshness and content identity; shared by both compilation routes. |
 | `loaves/compiler/incan_driver/src/build/inline_command.rs` | 5 | 129 | 75 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/library_exports.rs` | 19 | 1874 | 1473 | keep | - | - | - | #1561 | codegen 1, checker 13, parser 14 | library re-export resolution and Rust ABI query paths from checked declarations. |
-| `loaves/compiler/incan_driver/src/build/library_metadata/tests.rs` | 9 | 328 | 328 | keep | - | - | - | #1698 | checker 9 | Ordinary checked-library metadata ownership: exact recipe and intent binding, sealed sidecars, promised ABI completeness, original owner retention and conflicting native output refusal. These controls remain required after SDK removal. |
-| `loaves/compiler/incan_driver/src/build/library_outputs.rs` | 3 | 253 | 59 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
+| `loaves/compiler/incan_driver/src/build/library_metadata/requirements/tests.rs` | 2 | 94 | 94 | keep | - | - | - | #1698 | checker 2, parser 2 | Portable checked requirement replay preserves exports and current bindings and refuses incomplete planning authority. |
+| `loaves/compiler/incan_driver/src/build/library_metadata/tests.rs` | 12 | 415 | 415 | keep | - | - | - | #1698 | checker 12 | Ordinary checked-library metadata ownership: exact recipe and intent binding, sealed sidecars, promised ABI completeness, original owner retention and conflicting native output refusal. These controls remain required after SDK removal. |
+| `loaves/compiler/incan_driver/src/build/library_outputs.rs` | 3 | 273 | 59 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
+| `loaves/compiler/incan_driver/src/build/library_project/metadata_replay/tests.rs` | 3 | 105 | 105 | keep | - | - | - | #1698 | - | Source-current metadata preflight binds raw source, declarations and external Rust without entering the Incan frontend. |
 | `loaves/compiler/incan_driver/src/build/library_publication.rs` | 7 | 661 | 254 | unaffected | - | - | - | #1561 | checker 7 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
-| `loaves/compiler/incan_driver/src/build/mod.rs` | 3 | 942 | 79 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
-| `loaves/compiler/incan_driver/src/build/native_sdk.rs` | 2 | 580 | 64 | unaffected | - | - | - | #1698 | - | Native SDK facet version/feature selection and canonical receipt catalog binding; no Cargo resolution. |
+| `loaves/compiler/incan_driver/src/build/mod.rs` | 3 | 949 | 79 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
+| `loaves/compiler/incan_driver/src/build/native_sdk.rs` | 2 | 584 | 64 | unaffected | - | - | - | #1698 | - | Native SDK facet version/feature selection and canonical receipt catalog binding; no Cargo resolution. |
 | `loaves/compiler/incan_driver/src/build/native_sdk_plan.rs` | 2 | 792 | 282 | unaffected | - | - | - | #1698 | - | Receipt-bound native SDK plans and the actual covered test-envelope path retain original command owners; store-backed controls verify member bindings, compiler mismatch refusal and owner lifetime without generated Cargo metadata. |
 | `loaves/compiler/incan_driver/src/build/output_materialization.rs` | 3 | 1375 | 467 | unaffected | - | - | - | #1561 | replacement 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/output_paths.rs` | 8 | 1528 | 527 | unaffected | - | - | - | #1561 | codegen 1, run 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/output_selection.rs` | 2 | 1205 | 430 | unaffected | - | - | - | #1561 | replacement 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/oven_project.rs` | 7 | 1422 | 160 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
-| `loaves/compiler/incan_driver/src/build/package_loafs.rs` | 2 | 1015 | 436 | unaffected | - | - | - | #1561 | text 1, checker 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
+| `loaves/compiler/incan_driver/src/build/package_loafs.rs` | 2 | 1020 | 441 | unaffected | - | - | - | #1561 | text 1, checker 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/plan_authority.rs` | 5 | 1387 | 265 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/plan_selection.rs` | 8 | 1432 | 653 | unaffected | - | - | - | #1561 | codegen 1, run 1, checker 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/prepare_project.rs` | 1 | 491 | 74 | retire | 0/1 | 1 | - | #1561 | codegen 1, run 1, checker 1 | prunes the generated project's Cargo dependencies; generated Cargo project shape; dies with the generated-project route |
@@ -165,7 +167,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/build/publication.rs` | 1 | 1042 | 63 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/reuse.rs` | 3 | 1058 | 99 | unaffected | - | - | - | #1561 | - | Build orchestration over Oven; evicted inspection constituents decline explicit-bake cache reuse while damaged entries fail closed. |
 | `loaves/compiler/incan_driver/src/build/rust_bake_reuse.rs` | 2 | 405 | 95 | unaffected | - | - | - | #1337 | - | Receipt-bound Oven bake reuse for Rust caller projects; shared build infrastructure. |
-| `loaves/compiler/incan_driver/src/build/source_authority.rs` | 26 | 2399 | 1453 | unaffected | - | - | - | #1561 | codegen 1, checker 1, parser 21 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
+| `loaves/compiler/incan_driver/src/build/source_authority.rs` | 26 | 2400 | 1454 | unaffected | - | - | - | #1561 | codegen 1, checker 1, parser 21 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build_unit.rs` | 1 | 239 | 27 | unaffected | - | - | - | #1561 | checker 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/cargo_policy.rs` | 5 | 306 | 111 | retire (retire 5) | 2/5 | 2 | - | #1561 | - | Two tests die with the Cargo command line (arg ordering, `INCAN_CARGO_ARGS`); the `INCAN_LOCKED/FROZEN/OFFLINE` env defaults, the `--no-locked/--no-offline/--no-frozen` negations and frozen ⇒ locked+offline survive as Oven lock-policy inputs (maintainer ruling, 2026-09-20) and are twinned by re-point CLI tests. |
 | `loaves/compiler/incan_driver/src/generated_cache.rs` | 18 | 1481 | 447 | retire | 0/18 | 18 | - | #1561 | - | generated-project cache identity and pruning; dies with the generated-project route. |
@@ -202,7 +204,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/tests/native_driver_project_tests/enum_alias_admission.rs` | 1 | 47 | 47 | keep | - | - | - | #1337 | run 1 | Actual Incan lower_module accepts checked aliases and rejects independently corrupted canonical enum targets, payloads and bindings. |
 | `loaves/compiler/incan_driver/tests/native_driver_project_tests/tail.rs` | 10 | 400 | 400 | keep | - | - | - | #1337 | run 10 | Direct-route small statements, operators and places compared byte for byte with legacy output |
 | `loaves/compiler/incan_driver/tests/native_library_projection_publication_tests.rs` | 2 | 260 | 260 | keep | - | - | - | #1698 | codegen 2, replacement 2 | Completed library publication rollback restores changed and absent local projection markers without losing retained package caches. |
-| `loaves/compiler/incan_driver/tests/native_rust_source_authority_tests.rs` | 11 | 755 | 755 | keep | - | - | - | #1698 | checker 3 | Cargo-independent Loaf source authority, sealed provider integrity and generated-root semantic lock bookkeeping; authored, transitive, target and nested inputs remain bound. |
+| `loaves/compiler/incan_driver/tests/native_rust_source_authority_tests.rs` | 11 | 756 | 756 | keep | - | - | - | #1698 | checker 3 | Cargo-independent Loaf source authority, sealed provider integrity and generated-root semantic lock bookkeeping; authored, transitive, target and nested inputs remain bound. |
 | `loaves/compiler/incan_driver/tests/protected_builtin_binding_tests.rs` | 3 | 141 | 141 | keep | - | - | - | #1561 | checker 3, parser 3 | lex/parse/typecheck only. |
 | `loaves/compiler/incan_driver/tests/protected_generic_binding_tests.rs` | 2 | 106 | 106 | keep | - | - | - | #1561 | checker 2, parser 2 | lex/parse/typecheck only. |
 | `loaves/compiler/incan_driver/tests/rust_caller_project_tests.rs` | 3 | 151 | 151 | keep | - | - | - | #1337 | run 3 | receipt-bound direct-rustc Rust caller facet integration, refusal, runtime, and identity coverage |
