@@ -193,6 +193,15 @@ impl SelectedLibraryMetadata {
         validate_output_contract(&self.owner.artifact_root, &self.payload).map(|_| ())
     }
 
+    /// Require a consumer's materialized checked and generated closure to match this original immutable owner.
+    ///
+    /// This observes the destination without repairing it. Profile outputs remain separately validated execution
+    /// inputs; neither equivalent metadata names nor adjacent facade bytes authorize substituting another owner.
+    pub fn verify_materialization(&self, destination: &Path) -> CliResult<()> {
+        self.verify()?;
+        validate_output_contract(destination, &self.payload).map(|_| ())
+    }
+
     /// Import this exact leased owner into a package Store without selecting an equivalent replacement.
     /// Destination publication re-observes the full file closure and must preserve the original content identity.
     pub fn export_into(&self, destination: &OvenStore) -> CliResult<LibraryMetadataReference> {

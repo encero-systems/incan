@@ -11,6 +11,7 @@ pub mod caller_facet;
 pub mod caller_owned;
 mod file_freshness;
 pub mod inline_command;
+pub mod library_dependencies;
 pub mod library_exports;
 pub mod library_metadata;
 pub mod library_outputs;

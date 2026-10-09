@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 
 use incan_lang::lang::stdlib;
 
+use crate::build::library_dependencies::PreparedLibraryDependencies;
 use crate::diagnostics::CliDiagnosticFailure;
 use crate::error::{CliError, CliResult};
 use crate::project::{discover_effective_project_manifest, resolve_project_root, resolve_source_root};
@@ -228,6 +229,8 @@ pub struct CompilationSession {
     /// Collection, requirement discovery, and semantic analysis all need the same projection. Rebuilding it makes
     /// every command rehash provider source roots and, worse, lets a mutable local cache dominate the warm path.
     provider_plans_by_modules: ProviderPlanCache,
+    /// Original ordinary checked package capabilities retained throughout analysis and current plan preparation.
+    admitted_library_dependencies: Option<Arc<PreparedLibraryDependencies>>,
     /// Semantic provider identities reused only within this checked compilation context.
     provider_semantic_identities: Arc<incan_provider::lock_semantics::ProviderSemanticIdentitySession>,
     /// Integrity-checked active SDK catalog, when this toolchain is component-aware.
@@ -497,6 +500,62 @@ impl CompilationSession {
         )
     }
 
+    /// Construct an ordinary session from explicitly selected checked package owners, without SDK discovery.
+    ///
+    /// The caller must prepare every current root dependency and any reserved namespace grant before entering.
+    /// Installed and source-backed packages use the same checked catalog. Missing component adapters refuse;
+    /// native execution still requires separately selected current profiles and native plans.
+    pub fn discover_with_admitted_library_dependencies(
+        entry_path: &Path,
+        feature_selection: &FeatureSelection,
+        dependencies: Arc<PreparedLibraryDependencies>,
+    ) -> CliResult<Self> {
+        let inferred_root = resolve_project_root(entry_path);
+        let manifest = discover_effective_project_manifest(&inferred_root)?
+            .ok_or_else(|| CliError::failure("ordinary admitted session requires a project manifest"))?;
+        let project_root = manifest.project_root().to_path_buf();
+        let package_feature_plan = PackageFeaturePlan::resolve(&manifest, feature_selection)
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        dependencies.validate_feature_plan(&package_feature_plan)?;
+        let active_features = package_feature_plan
+            .root_package()
+            .ok_or_else(|| CliError::failure("ordinary admitted session has no root feature state"))?
+            .features
+            .active_features
+            .clone();
+        let declared_features = PackageFeatureGraph::from_manifest(&manifest)
+            .map_err(|error| CliError::failure(error.to_string()))?
+            .declared_features()
+            .map(str::to_string)
+            .collect();
+        let provider_plan = Arc::clone(dependencies.provider_plan());
+        let library_manifest_index = provider_plan.library_manifest_index().clone();
+        let contract_model_bundles = read_project_model_bundles(&project_root, &manifest.contract_model_bundle_paths())
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        Ok(Self {
+            source_root: resolve_source_root(&project_root, Some(&manifest)),
+            manifest: Some(manifest),
+            library_imported_vocab: library_manifest_index.library_imported_vocab(),
+            library_imported_dsl_surfaces: library_manifest_index.library_imported_dsl_surfaces(),
+            library_manifest_index,
+            provider_plans_by_modules: Arc::new(Mutex::new(BTreeMap::from([(
+                BTreeSet::new(),
+                Arc::clone(&provider_plan),
+            )]))),
+            provider_plan,
+            admitted_library_dependencies: Some(dependencies),
+            provider_semantic_identities: Arc::new(
+                incan_provider::lock_semantics::ProviderSemanticIdentitySession::default(),
+            ),
+            sdk_inventory: None,
+            sdk_components: None,
+            package_feature_plan: Some(package_feature_plan),
+            active_features,
+            declared_features,
+            contract_model_bundles,
+        })
+    }
+
     /// Construct a publisher session from the partial inventory and explicit reserved namespace grants.
     ///
     /// The caller retains native receipts and frozen inspection authority. Discovery never prepares another SDK
@@ -692,6 +751,7 @@ impl CompilationSession {
             library_manifest_index,
             provider_plan,
             provider_plans_by_modules,
+            admitted_library_dependencies: None,
             provider_semantic_identities: Arc::new(
                 incan_provider::lock_semantics::ProviderSemanticIdentitySession::default(),
             ),
@@ -704,6 +764,14 @@ impl CompilationSession {
             library_imported_dsl_surfaces,
             contract_model_bundles,
         })
+    }
+
+    /// Borrow the ordinary original-owner capability retained by an explicitly admitted dependency session.
+    ///
+    /// Compatibility discovery sessions return none. Publication and planning callers must not fabricate a checked
+    /// owner for those sessions or infer that absent authority means an authenticated empty dependency closure.
+    pub fn admitted_library_dependencies(&self) -> Option<&Arc<PreparedLibraryDependencies>> {
+        self.admitted_library_dependencies.as_ref()
     }
 
     /// Return provider semantic identities after revalidating their exact physical and dependency context.
@@ -730,6 +798,10 @@ impl CompilationSession {
         &self,
         used_module_paths: BTreeSet<Vec<String>>,
     ) -> CliResult<Arc<ProviderPlan>> {
+        if let Some(dependencies) = &self.admitted_library_dependencies {
+            dependencies.verify()?;
+            dependencies.validate_module_usage(&used_module_paths)?;
+        }
         if let Some(plan) = self
             .provider_plans_by_modules
             .lock()
@@ -739,19 +811,23 @@ impl CompilationSession {
         {
             return Ok(plan);
         }
-        let plan = ProviderPlan::from_resolved_inputs(
-            self.provider_plan.library_manifest_index().clone(),
-            self.package_feature_plan.as_ref(),
-            self.sdk_inventory.as_deref(),
-            self.sdk_components.as_ref(),
-            used_module_paths.clone(),
-        )
-        .map(|plan| {
-            plan.with_checked_source_graph(&self.provider_plan)
-                .with_bootstrap_sdk_namespace_roots(self.provider_plan.bootstrap_sdk_namespace_roots().cloned())
-        })
-        .map(Arc::new)
-        .map_err(|error| CliError::failure(error.to_string()))?;
+        let plan = if self.admitted_library_dependencies.is_some() {
+            Arc::new(self.provider_plan.project_module_usage(used_module_paths.clone()))
+        } else {
+            ProviderPlan::from_resolved_inputs(
+                self.provider_plan.library_manifest_index().clone(),
+                self.package_feature_plan.as_ref(),
+                self.sdk_inventory.as_deref(),
+                self.sdk_components.as_ref(),
+                used_module_paths.clone(),
+            )
+            .map(|plan| {
+                plan.with_checked_source_graph(&self.provider_plan)
+                    .with_bootstrap_sdk_namespace_roots(self.provider_plan.bootstrap_sdk_namespace_roots().cloned())
+            })
+            .map(Arc::new)
+            .map_err(|error| CliError::failure(error.to_string()))?
+        };
         let mut cached = self
             .provider_plans_by_modules
             .lock()
@@ -1013,6 +1089,7 @@ mod tests {
                 BTreeSet::new(),
                 Arc::clone(&provider_plan),
             )]))),
+            admitted_library_dependencies: None,
             provider_semantic_identities: Arc::new(
                 incan_provider::lock_semantics::ProviderSemanticIdentitySession::default(),
             ),
@@ -1319,6 +1396,7 @@ mod tests {
                 BTreeSet::new(),
                 Arc::clone(&provider_plan),
             )]))),
+            admitted_library_dependencies: None,
             provider_semantic_identities: Arc::new(
                 incan_provider::lock_semantics::ProviderSemanticIdentitySession::default(),
             ),
