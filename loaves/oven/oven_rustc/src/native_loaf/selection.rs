@@ -16,6 +16,46 @@ pub(super) fn select_roots(
     declaration_owner: &Path,
     domain: &str,
 ) -> Result<Vec<NativeLoafRoot>> {
+    select_roots_with_sources(
+        graph,
+        dependencies,
+        declaration_owner,
+        domain,
+        &mut LocalSources::default(),
+    )
+}
+
+/// Command-local mapped source observations shared by current-graph validation and declaration projection.
+#[derive(Default)]
+pub(super) struct LocalSources {
+    selections: BTreeMap<PathBuf, (toml::Value, String)>,
+    /// Actual mapping/hash demands; cache hits do not increment this counter.
+    pub(super) loads: usize,
+}
+
+impl LocalSources {
+    /// Reproduce each canonical current source mapping once during this command, never across commands.
+    pub(super) fn get(&mut self, path: &Path) -> Result<&(toml::Value, String)> {
+        let path = path.canonicalize().map_err(failed)?;
+        if !self.selections.contains_key(&path) {
+            let selected = crate::sdk_closure::local_native_source_selection(&path).map_err(NativeLoafError::Failed)?;
+            self.loads += 1;
+            self.selections.insert(path.clone(), selected);
+        }
+        self.selections
+            .get(&path)
+            .ok_or_else(|| refused("current local source selection is missing"))
+    }
+}
+
+/// Project roots using the same command-owned local source mapping as prepared-consumer validation.
+pub(super) fn select_roots_with_sources(
+    graph: &NativeLoafGraph,
+    dependencies: &[DependencySpec],
+    declaration_owner: &Path,
+    domain: &str,
+    local: &mut LocalSources,
+) -> Result<Vec<NativeLoafRoot>> {
     if !matches!(domain, "host" | "target") {
         return Err(refused("declared native roots require host or target domain"));
     }
@@ -23,7 +63,6 @@ pub(super) fn select_roots(
     if !owner.is_dir() {
         return Err(refused("native declaration owner must be a directory"));
     }
-    let mut local = BTreeMap::<PathBuf, (toml::Value, String)>::new();
     let mut aliases = BTreeSet::new();
     let mut roots = Vec::new();
     for dependency in dependencies {
@@ -50,14 +89,7 @@ pub(super) fn select_roots(
                 // Parsed absolute declarations already contain their manifest owner. Raw relative paths are
                 // explicitly owner-relative; callers parsing a relative manifest must canonicalize it first.
                 let path = owner.join(path).canonicalize().map_err(failed)?;
-                if !local.contains_key(&path) {
-                    let selected =
-                        crate::sdk_closure::local_native_source_selection(&path).map_err(NativeLoafError::Failed)?;
-                    local.insert(path.clone(), selected);
-                }
-                let selected = local
-                    .get(&path)
-                    .ok_or_else(|| refused("current local source selection is missing"))?;
+                let selected = local.get(&path)?;
                 let loaf = project_string(&selected.0, "name")?;
                 if dependency.package.as_deref().is_some_and(|package| package != loaf) {
                     return Err(refused(
@@ -146,7 +178,7 @@ pub(super) fn select_roots(
 }
 
 /// Read only an exact inventoried source declaration and verify the bytes used for semantic root projection.
-fn source_manifest(unit: &SelectedNativeLoaf) -> Result<toml::Value> {
+pub(crate) fn source_manifest(unit: &SelectedNativeLoaf) -> Result<toml::Value> {
     let member = unit
         .native_owner
         .admitted_materialized_files()

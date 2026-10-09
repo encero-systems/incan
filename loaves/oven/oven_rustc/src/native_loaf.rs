@@ -28,10 +28,14 @@ pub(crate) const EDGES_INPUT: &str = "native-physical-edges";
 pub(crate) const ORIGIN_INPUT: &str = "native-source-origin";
 
 mod preparation;
+mod prepared;
 mod selection;
 pub use preparation::{
     NativeLoafFacet, NativeLoafPreparation, NativeLoafPreparationReport, NativeLoafPreparationRequest,
     prepare_native_loafs, prepare_resolved_native_loafs,
+};
+pub use prepared::{
+    NativeLoafConsumerPreparation, NativeLoafConsumerReport, NativeLoafConsumerRequest, prepare_declared_native_loafs,
 };
 
 /// Independently established producer boundary for a native source generation.

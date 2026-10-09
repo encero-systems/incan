@@ -60,17 +60,20 @@ pub struct NativeLoafPreparationReport {
 
 /// Retained per-unit physical owners and measured outcomes of one explicit native-only preparation.
 pub struct NativeLoafPreparation {
-    graph: NativeLoafGraph,
-    report: NativeLoafPreparationReport,
+    pub(super) graph: NativeLoafGraph,
+    pub(super) report: NativeLoafPreparationReport,
 }
 
 /// Explicit resolved graph wire format; parsing supplies paths, never a second dependency resolver.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ResolvedNativeGraph {
-    index_commit: String,
-    registry_lock: PathBuf,
-    facets: Vec<NativeLoafFacet>,
+pub(super) struct ResolvedNativeGraph {
+    /// Exact adopted index authority.
+    pub(super) index_commit: String,
+    /// Owner-relative already resolved registry bindings.
+    pub(super) registry_lock: PathBuf,
+    /// Explicit local source/feature/domain selections.
+    pub(super) facets: Vec<NativeLoafFacet>,
 }
 
 /// Prepare an explicit resolved graph with lock and local facets relative to its canonical document owner.
@@ -86,12 +89,7 @@ pub fn prepare_resolved_native_loafs(
     target: &str,
     profile: &str,
 ) -> Result<NativeLoafPreparation> {
-    let graph = graph.canonicalize().map_err(failed)?;
-    let owner = graph
-        .parent()
-        .ok_or_else(|| refused("resolved native graph has no owner"))?;
-    let selection: ResolvedNativeGraph =
-        serde_json::from_slice(&std::fs::read(&graph).map_err(failed)?).map_err(failed)?;
+    let (owner, selection, _) = read_resolved_native_graph(graph)?;
     prepare_native_loafs(&NativeLoafPreparationRequest {
         lock: &owner.join(selection.registry_lock),
         blobs,
@@ -101,9 +99,21 @@ pub fn prepare_resolved_native_loafs(
         index_commit: &selection.index_commit,
         target,
         profile,
-        facet_owner: owner,
+        facet_owner: &owner,
         facets: &selection.facets,
     })
+}
+
+/// Read one graph snapshot and its exact digest, retaining its canonical relative-path owner.
+pub(super) fn read_resolved_native_graph(graph: &Path) -> Result<(PathBuf, ResolvedNativeGraph, String)> {
+    let graph = graph.canonicalize().map_err(failed)?;
+    let owner = graph
+        .parent()
+        .ok_or_else(|| refused("resolved native graph has no owner"))?
+        .to_path_buf();
+    let bytes = std::fs::read(&graph).map_err(failed)?;
+    let selection = serde_json::from_slice(&bytes).map_err(failed)?;
+    Ok((owner, selection, oven_store::digest_bytes(&bytes)))
 }
 
 impl NativeLoafPreparation {
