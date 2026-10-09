@@ -21,13 +21,12 @@ use std::collections::BTreeMap;
 #[cfg(test)]
 use std::fs;
 use std::path::Path;
-#[cfg(any(feature = "rust_inspect", test))]
 use std::path::PathBuf;
 #[cfg(feature = "rust_inspect")]
 use std::sync::Arc;
 
 use crate::cargo_policy::CargoPolicy;
-use crate::error::CliError;
+use crate::error::{CliError, CliResult};
 #[cfg(feature = "rust_inspect")]
 use crate::generated_cache::GeneratedCacheLease;
 use incan_frontend::ParsedModule;
@@ -359,12 +358,47 @@ pub struct ProjectLockContext {
 /// still contains every member, but a member's inspection and test plans must never adopt sibling dependencies.
 pub struct PublishedOvenProjectLock {
     dependency_surface: ResolvedDependencies,
+    publication: PublishedLockFile,
+}
+
+/// Exact bytes and canonical location observed by the lock writer while holding its publication guard.
+struct PublishedLockFile {
+    canonical_path: PathBuf,
+    content_digest: String,
 }
 
 impl PublishedOvenProjectLock {
     /// Return the exact normal and test dependency surface used to publish the canonical lock.
     pub fn dependency_surface(&self) -> &ResolvedDependencies {
         &self.dependency_surface
+    }
+
+    /// Return the canonical file actually written, including the workspace root when applicable.
+    pub(crate) fn canonical_lock_path(&self) -> &Path {
+        &self.publication.canonical_path
+    }
+
+    /// Return the digest captured by the writer before releasing the publication guard.
+    pub(crate) fn published_content_digest(&self) -> &str {
+        &self.publication.content_digest
+    }
+
+    /// Refuse replacement, removal or changed bytes before accepting a producer-owned lock transition.
+    pub(crate) fn verify_published_file(&self) -> CliResult<()> {
+        let path = self.canonical_lock_path();
+        let metadata = std::fs::symlink_metadata(path).map_err(|error| CliError::failure(error.to_string()))?;
+        if !metadata.file_type().is_file() {
+            return Err(CliError::failure(
+                "published canonical lock is no longer a regular file",
+            ));
+        }
+        let bytes = std::fs::read(path).map_err(|error| CliError::failure(error.to_string()))?;
+        if oven_store::digest_bytes(&bytes) != self.published_content_digest() {
+            return Err(CliError::failure(
+                "published canonical lock changed before metadata finalization",
+            ));
+        }
+        Ok(())
     }
 }
 
