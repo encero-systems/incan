@@ -72,9 +72,9 @@ pub def model_place(
     locals: list[Local],
     value: &RustPlace,
     span: SourceSpan,
-    enums: list[RustEnumDeclaration] = [],
-    unions: list[RustType] = [],
-    intrinsics: list[EnumDeclaration] = [],
+    enums: list[RustEnumDeclaration],
+    unions: list[RustType],
+    intrinsics: list[EnumDeclaration],
 ) -> Result[Place, str]:
     """Require every checker-selected field identity before projecting its retained canonical layout."""
     return model_prefix(declarations, locals, value, len(value.projection), span, enums, unions, intrinsics)
@@ -86,9 +86,9 @@ pub def model_prefix(
     value: &RustPlace,
     count: int,
     span: SourceSpan,
-    enums: list[RustEnumDeclaration] = [],
-    unions: list[RustType] = [],
-    intrinsics: list[EnumDeclaration] = [],
+    enums: list[RustEnumDeclaration],
+    unions: list[RustType],
+    intrinsics: list[EnumDeclaration],
 ) -> Result[Place, str]:
     """Project a checked leading field path without copying or changing the frontend place."""
     if count < 0 or count > len(value.projection):
