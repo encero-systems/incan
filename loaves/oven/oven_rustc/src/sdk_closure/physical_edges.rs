@@ -115,7 +115,7 @@ fn verify_recipe(
 }
 
 /// Read one exact selected node under its original lease and authenticate its full source/output binding.
-fn record(alias: &str, unit: &SdkCompiledUnit) -> Result<SdkPhysicalNativeEdge, Error> {
+pub(super) fn record(alias: &str, unit: &SdkCompiledUnit) -> Result<SdkPhysicalNativeEdge, Error> {
     if alias.is_empty() {
         return Err("physical native edge has an invalid Rust extern alias".into());
     }

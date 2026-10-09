@@ -249,11 +249,13 @@ pub fn compile_local_sdk_facet_for_target(
         profile: "debug",
         unit_codegen: &[],
     };
-    let (path, reused, owner, reproduced_receipt) = compile_unit(&unit, &context, externs, searches)?;
     let selected_dependencies = edges
         .iter()
         .map(|(alias, index)| (alias.as_str(), &closure.units[*index]))
         .collect::<Vec<_>>();
+    let physical_bindings = super::selected_native_bindings(&selected_dependencies)?;
+    let (path, reused, owner, reproduced_receipt) =
+        compile_unit(&unit, &context, externs, searches, &physical_bindings)?;
     let physical_edges = super::physical_edges::capture(&owner, &reproduced_receipt, &selected_dependencies)?;
     let dependencies = edges
         .iter()
