@@ -1374,7 +1374,11 @@ impl RustWorkspace {
                 });
             }
         }
-        let lock = if loaf_only { None } else { load_lock(manifest_dir)? };
+        let lock = if loaf_only || manifest_dir.join("loaf.toml").is_file() {
+            None
+        } else {
+            load_lock(manifest_dir)?
+        };
         let mut graph = OvenProjectGraphBuilder {
             crates: Vec::new(),
             indices: HashMap::new(),

@@ -4,5 +4,21 @@
     "loaves/compiler/incan_driver/tests/native_driver_project_tests.rs": [
       "workspaces/compiler-fixture-preparation"
     ]
+  },
+  "native_roots": {
+    "loaves/compiler/incan_frontend/src/lib.rs": {
+      "declaration": "workspaces/compiler-bootstrap/test-declarations/frontend-unit.loaf.toml",
+      "inputs": [
+        "loaves/compiler/incan_test_support/fixtures/block_docstring_public_type_like.incn",
+        "loaves/stdlib/sdk-components.toml"
+      ],
+      "dependency_graph": "workspaces/oven/compiler-frontend-tests-native.json",
+      "use_compiler_resolution": true
+    },
+    "loaves/compiler/rust_inspect/src/lib.rs": {
+      "declaration": "workspaces/compiler-bootstrap/test-declarations/rust-inspect-unit.loaf.toml",
+      "dependency_graph": "workspaces/oven/compiler-frontend-tests-native.json",
+      "use_compiler_resolution": true
+    }
   }
 }

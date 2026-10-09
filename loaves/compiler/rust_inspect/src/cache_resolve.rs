@@ -102,10 +102,7 @@ const COMPILER_OWNED_CRATE_NAME_PREFIX: &str = "incan_";
 /// true }`-inherited dependency tables) so a path dependency declared through any of those shapes still invalidates the
 /// fingerprint.
 pub(crate) fn path_dependency_dirs_from_manifest(root: &Path) -> Vec<PathBuf> {
-    let Some(manifest_text) = fs::read_to_string(root.join("Cargo.toml")).ok() else {
-        return Vec::new();
-    };
-    let Ok(manifest) = toml::from_str::<toml::Value>(&manifest_text) else {
+    let Ok(manifest) = crate::loader::read_inspection_source_manifest(root) else {
         return Vec::new();
     };
 
@@ -161,13 +158,8 @@ fn dependency_path_in_table(table: Option<&toml::Value>, normalized_crate_name: 
             .unwrap_or(key.as_str());
         let path = declaration.get("path")?.as_str()?;
         let candidate = root.join(path);
-        let manifest_path = candidate.join("Cargo.toml");
-        if !manifest_path.is_file() {
-            return None;
-        }
-        let manifest_crate_names = fs::read_to_string(manifest_path)
+        let manifest_crate_names = crate::loader::read_inspection_source_manifest(&candidate)
             .ok()
-            .and_then(|payload| toml::from_str::<toml::Value>(payload.as_str()).ok())
             .map(|manifest| {
                 [
                     manifest

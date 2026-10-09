@@ -369,8 +369,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         dirs.insert((name, version), dir);
     }
 
-    let resolved = dependency_manifest_dir_from_lock_with_search_roots(&root, "substrait", std::slice::from_ref(&registry_src_root))
-        .ok_or_else(|| std::io::Error::other("expected the lock fallback to resolve substrait"))?;
+    let resolved = dependency_manifest_dir_from_lock_with_search_roots(
+        &root,
+        "substrait",
+        std::slice::from_ref(&registry_src_root),
+    )
+    .ok_or_else(|| std::io::Error::other("expected the lock fallback to resolve substrait"))?;
     assert_eq!(
         resolved,
         dirs[&("substrait", "0.63.0")],
@@ -572,9 +576,17 @@ fn direct_workspace_reads_the_sealed_build_unit_of_the_inspected_version() -> Re
     let incan_lang::interop::RustItemKind::Type(info) = &hit.metadata.kind else {
         return Err(std::io::Error::other("expected a type item").into());
     };
-    let mut names = info.variants.iter().map(|variant| variant.name.as_str()).collect::<Vec<_>>();
+    let mut names = info
+        .variants
+        .iter()
+        .map(|variant| variant.name.as_str())
+        .collect::<Vec<_>>();
     names.sort_unstable();
-    assert_eq!(names, vec!["Empty", "Node"], "the 0.1.0 unit defines the inspected enum: {names:?}");
+    assert_eq!(
+        names,
+        vec!["Empty", "Node"],
+        "the 0.1.0 unit defines the inspected enum: {names:?}"
+    );
     Ok(())
 }
 
@@ -1119,6 +1131,45 @@ fn workspace_fingerprint_ignores_compiler_owned_path_dependencies() -> Result<()
         before, after,
         "editing a compiler-owned incan_* path dependency must not change the workspace fingerprint"
     );
+    Ok(())
+}
+
+/// Editable Loaf cache identity follows Rust source and local dependencies while ignoring neighboring Cargo files.
+#[test]
+fn editable_loaf_fingerprint_binds_source_and_dependency_without_cargo() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let dependency = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("rust/src"))?;
+    fs::create_dir_all(dependency.path().join("src"))?;
+    fs::write(root.path().join("rust/src/lib.rs"), "pub struct Local;\n")?;
+    fs::write(dependency.path().join("src/lib.rs"), "pub struct Foreign;\n")?;
+    fs::write(
+        dependency.path().join("loaf.toml"),
+        "[project]\nname='dependency'\nversion='1.0.0'\n[rust]\nname='dependency_crate'\ntype='lib'\nedition='2024'\n",
+    )?;
+    fs::write(
+        root.path().join("loaf.toml"),
+        format!(
+            "[project]\nname='root'\nversion='1.0.0'\n[rust]\nname='root'\ntype='lib'\nedition='2024'\n[rust.source]\nroot='rust'\n[dependencies]\nrenamed={{loaf='dependency',path={}}}\n",
+            serde_json::to_string(dependency.path())?,
+        ),
+    )?;
+    let original = workspace_fingerprint(root.path())?;
+    fs::write(root.path().join("Cargo.toml"), "invalid compatibility declaration")?;
+    fs::write(root.path().join("Cargo.lock"), "invalid compatibility lock")?;
+    assert_eq!(workspace_fingerprint(root.path())?, original);
+    assert_eq!(
+        dependency_manifest_dir_from_manifest(root.path(), "dependency_crate"),
+        Some(dependency.path().canonicalize()?)
+    );
+    fs::write(root.path().join("rust/src/lib.rs"), "pub struct Changed;\n")?;
+    assert_ne!(workspace_fingerprint(root.path())?, original);
+    fs::write(root.path().join("rust/src/lib.rs"), "pub struct Local;\n")?;
+    assert_eq!(workspace_fingerprint(root.path())?, original);
+    fs::write(dependency.path().join("src/lib.rs"), "pub struct ChangedForeign;\n")?;
+    assert_ne!(workspace_fingerprint(root.path())?, original);
+    fs::write(dependency.path().join("src/lib.rs"), "pub struct Foreign;\n")?;
+    assert_eq!(workspace_fingerprint(root.path())?, original);
     Ok(())
 }
 

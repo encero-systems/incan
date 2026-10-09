@@ -3,6 +3,7 @@
 from rust::std::env import var
 from rust::std::path import Path as RustPath
 from rust::std::process import Command
+from rust::std::time import Instant
 from std.fs import Path
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
@@ -26,8 +27,19 @@ pub def run_selected_tests(root: Path, compiler: Path, source_text: str, exact: 
         if previous.exists():
             previous.rename(evidence.joinpath("previous-" + name)).map_err((error) => error.message())?
     prepare_declared_helpers(root, compiler, relative.to_string_lossy().into_owned(), evidence)?
+    configuration = prepare_declared_native_root(root, compiler, relative.to_string_lossy().into_owned(), cache, evidence)?
     mut command = Command.new(compiler.0)
     command.arg("oven").arg("compiler-native-tests")
+    if "declaration" in configuration.keys():
+        declaration = configuration.require("declaration").map_err((error) => error.message())?
+        command.arg("--declaration").arg(root.joinpath(declaration.expect_str().map_err((error) => error.message())?).0)
+    if "inputs" in configuration.keys():
+        inputs = configuration.require("inputs").map_err((error) => error.message())?
+        for input in inputs.expect_array().map_err((error) => error.message())?:
+            command.arg("--input").arg(root.joinpath(input.expect_str().map_err((error) => error.message())?).0)
+    if "sdk_inventory" in configuration.keys():
+        inventory = configuration.require("sdk_inventory").map_err((error) => error.message())?
+        command.env("INCAN_SDK_INVENTORY", inventory.expect_str().map_err((error) => error.message())?)
     command.arg("--compiler-root").arg(root.0)
     command.arg("--rustc").arg(rustc)
     command.arg("--explicit-bake-workspace").arg(cache.joinpath("fixtures").0)
@@ -57,6 +69,99 @@ pub def run_selected_tests(root: Path, compiler: Path, source_text: str, exact: 
         return Err("selected native report did not establish successful execution")
     println(report_text)
     return Ok(None)
+
+
+def prepare_declared_native_root(root: Path, compiler: Path, source: str, cache: Path, evidence: Path) -> Result[JsonValue, str]:
+    """Prepare a root's separate dependency variant while the source compiler retains its production SDK."""
+    started = Instant.now()
+    text = root.joinpath("workspaces/compiler-bootstrap/fixture-preparers.json").read_text("utf-8", "strict").map_err((error) => error.message())?
+    declaration = JsonValue.parse(text).map_err((error) => error.message())?
+    schema = declaration.require("schema").map_err((error) => error.message())?
+    if schema.expect_str().map_err((error) => error.message())? != "incan.compiler-fixture-preparers/1":
+        return Err("unsupported compiler fixture preparer declaration")
+    if "native_roots" not in declaration.keys():
+        return Ok(JsonValue.object({}))
+    roots = declaration.require("native_roots").map_err((error) => error.message())?
+    if source not in roots.keys():
+        return Ok(JsonValue.object({}))
+    mut configuration = roots.require(source).map_err((error) => error.message())?
+    if "dependency_graph" not in configuration.keys():
+        return Ok(configuration)
+    graph_value = configuration.require("dependency_graph").map_err((error) => error.message())?
+    graph = root.joinpath(graph_value.expect_str().map_err((error) => error.message())?).resolve().map_err((error) => error.message())?
+    RustPath.new(graph.0).strip_prefix(RustPath.new(root.0)).map_err((error) => str(error))?
+    mut graph_text = graph.0
+    if "use_compiler_resolution" in configuration.keys():
+        use_resolution = configuration.require("use_compiler_resolution").map_err((error) => error.message())?
+        if use_resolution.expect_bool().map_err((error) => error.message())?:
+            graph_text = project_test_dependency_graph(graph, cache, source)?
+    marker = cache.joinpath("test-sdks").joinpath(source + ".path")
+    marker.parent().mkdir(true, true).map_err((error) => error.message())?
+    marker_text = marker.0
+    inventory_variable: str = "INCAN_SDK_INVENTORY"
+    marker_variable: str = "INCAN_INTERNAL_SDK_PROVIDER_PATH_FILE"
+    mut command = Command.new(compiler.0)
+    command.env_remove(inventory_variable)
+    command.env_remove(marker_variable)
+    command.env("INCAN_SDK_NATIVE_COMPILER_GRAPH", graph_text)
+    command.arg("prepare-sdk")
+    output = command.output().map_err((error) => str(error))?
+    evidence.joinpath("test-sdk-preparation.stdout").write_bytes(output.stdout).map_err((error) => error.message())?
+    evidence.joinpath("test-sdk-preparation.stderr").write_bytes(output.stderr).map_err((error) => error.message())?
+    if not output.status.success():
+        return Err("declared test dependency preparation failed; retained test-sdk-preparation output has the diagnostic")
+    sdk_root = evidence.joinpath("test-sdk-preparation.stdout").read_text("utf-8", "strict").map_err((error) => error.message())?.strip()
+    if sdk_root == "" or "\n" in sdk_root or "\r" in sdk_root:
+        return Err("declared test dependency preparation did not return one SDK location")
+    inventory = Path(sdk_root).joinpath("sdk-inventory.json")
+    if not inventory.exists():
+        return Err("declared test dependency preparation did not publish its SDK inventory")
+    Path(marker_text).write_text(sdk_root + "\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    preparation = JsonValue.object(
+        {
+            "schema": JsonValue.string("incan.compiler-test-sdk-preparation/1"),
+            "sdk_inventory": JsonValue.string(inventory.0),
+            "elapsed_seconds": JsonValue.float(started.elapsed().as_secs_f64()).map_err((error) => error.message())?,
+        },
+    )
+    evidence.joinpath("test-sdk-preparation.json").write_text(preparation.to_pretty_json().map_err((error) => error.message())?, "utf-8", "strict", None).map_err((error) => error.message())?
+    configuration.set("sdk_inventory", JsonValue.string(inventory.0)).map_err((error) => error.message())?
+    return Ok(configuration)
+
+
+def project_test_dependency_graph(authored: Path, cache: Path, source: str) -> Result[str, str]:
+    """Retain the compiler's resolved registry units and codegen while selecting the root's authored local variants."""
+    variable: str = "INCAN_SDK_NATIVE_COMPILER_GRAPH"
+    compiler_graph = Path(var(variable).map_err((error) => str(error))?).resolve().map_err((error) => error.message())?
+    compiler_text = compiler_graph.read_text("utf-8", "strict").map_err((error) => error.message())?
+    compiler_selection = JsonValue.parse(compiler_text).map_err((error) => error.message())?
+    original_text = authored.read_text("utf-8", "strict").map_err((error) => error.message())?
+    mut projection = JsonValue.parse(original_text).map_err((error) => error.message())?
+    compiler_index = compiler_selection.require("index_commit").map_err((error) => error.message())?
+    test_index = projection.require("index_commit").map_err((error) => error.message())?
+    if compiler_index.expect_str().map_err((error) => error.message())? != test_index.expect_str().map_err((error) => error.message())?:
+        return Err("test dependency graph and compiler resolution use different registry revisions")
+    lock = compiler_selection.require("registry_lock").map_err((error) => error.message())?
+    lock_path = compiler_graph.parent().joinpath(lock.expect_str().map_err((error) => error.message())?).resolve().map_err((error) => error.message())?
+    projection.set("registry_lock", JsonValue.string(lock_path.0)).map_err((error) => error.message())?
+    original_facets = projection.require("facets").map_err((error) => error.message())?
+    mut facets: list[JsonValue] = []
+    for facet in original_facets.expect_array().map_err((error) => error.message())?:
+        mut selected = facet.clone()
+        project = selected.require("project").map_err((error) => error.message())?
+        path = authored.parent().joinpath(project.expect_str().map_err((error) => error.message())?).resolve().map_err((error) => error.message())?
+        selected.set("project", JsonValue.string(path.0)).map_err((error) => error.message())?
+        facets.append(selected)
+    projection.set("facets", JsonValue.array(facets)).map_err((error) => error.message())?
+    text = projection.to_pretty_json().map_err((error) => error.message())?
+    output = cache.joinpath("test-sdks").joinpath(source + ".graph.json")
+    output.parent().mkdir(true, true).map_err((error) => error.message())?
+    if output.exists():
+        previous = output.read_text("utf-8", "strict").map_err((error) => error.message())?
+        if previous == text:
+            return Ok(output.0)
+    output.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
+    return Ok(output.0)
 
 
 def prepare_declared_helpers(root: Path, compiler: Path, source: str, evidence: Path) -> Result[None, str]:

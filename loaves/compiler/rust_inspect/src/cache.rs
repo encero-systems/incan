@@ -211,6 +211,7 @@ fn legacy_versioned_workspace_fingerprint(root: &Path, inspector_version: &str) 
 /// Hash the declarations and selected source authority that govern extraction for this inspection workspace.
 ///
 /// Loaf-only roots bind their probe, frozen graph, and receipt-sealed source catalog without reading Cargo metadata.
+/// Editable Loaf roots bind their declared Rust source tree and path dependencies through the same Loaf reader.
 /// Compatibility roots retain their manifest, lock, and editable path dependencies because Cargo locks do not
 /// checksum local source bytes.
 fn hash_workspace_fingerprint_inputs(hasher: &mut Sha256, root: &Path) -> Result<(), RustMetadataError> {
@@ -234,6 +235,40 @@ fn hash_workspace_fingerprint_inputs(hasher: &mut Sha256, root: &Path) -> Result
                 Err(error) => return Err(error.into()),
             }
             hasher.update([0xff]);
+        }
+        return Ok(());
+    }
+    if root.join("loaf.toml").is_file() {
+        hasher.update(b"editable-loaf-inspection/1\0");
+        hasher.update(fs::read(root.join("loaf.toml"))?);
+        let manifest = crate::loader::read_inspection_source_manifest(root)?;
+        let source = manifest
+            .get("lib")
+            .and_then(|library| library.get("path"))
+            .and_then(toml::Value::as_str)
+            .ok_or_else(|| RustMetadataError::LoadWorkspace {
+                path: root.join("loaf.toml"),
+                message: "inspection Loaf has no Rust source path".to_string(),
+            })?;
+        let source = root.join(source);
+        let directory = source.parent().ok_or_else(|| RustMetadataError::LoadWorkspace {
+            path: source.clone(),
+            message: "inspection source has no parent directory".to_string(),
+        })?;
+        hash_dir_contents(hasher, directory, directory)?;
+        for relative in [
+            crate::loader::OVEN_DIRECT_LOAF_PROJECT_FILE,
+            crate::loader::OVEN_DIRECT_INSPECTION_AUTHORITY_FILE,
+        ] {
+            hasher.update(relative.as_bytes());
+            match fs::read(root.join(relative)) {
+                Ok(bytes) => hasher.update(bytes),
+                Err(error) if error.kind() == ErrorKind::NotFound => hasher.update(b"absent\0"),
+                Err(error) => return Err(error.into()),
+            }
+        }
+        for dependency in crate::cache_resolve::path_dependency_dirs_from_manifest(root) {
+            hash_dir_contents(hasher, &dependency, &dependency)?;
         }
         return Ok(());
     }
