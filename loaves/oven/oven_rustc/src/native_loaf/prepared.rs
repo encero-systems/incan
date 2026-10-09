@@ -649,11 +649,15 @@ impl Current {
     }
 }
 
-/// Canonicalize source declaration coordinates without resolving versions, activating dependencies or reading Cargo.
+/// Canonicalize the complete declaration set by normalized alias, independent of map traversal order.
 fn declaration_key(dependencies: &[DependencySpec], owner: &Path) -> Result<serde_json::Value> {
     let owner = owner.canonicalize().map_err(failed)?;
-    let mut values = Vec::new();
+    let mut values = BTreeMap::new();
     for dependency in dependencies {
+        let alias = dependency.crate_name.replace('-', "_");
+        if alias.is_empty() || values.contains_key(&alias) {
+            return Err(refused("declared native roots repeat an empty or normalized alias"));
+        }
         let source = match &dependency.source {
             DependencySource::Registry => serde_json::json!({"registry": true}),
             DependencySource::Path { path } => {
@@ -666,13 +670,14 @@ fn declaration_key(dependencies: &[DependencySpec], owner: &Path) -> Result<serd
             }
         };
         let features = dependency.features.iter().collect::<BTreeSet<_>>();
-        values.push(
+        values.insert(
+            alias,
             serde_json::json!({"alias": dependency.crate_name, "version": dependency.version,
             "features": features, "defaults": dependency.default_features, "optional": dependency.optional,
             "package": dependency.package, "source": source}),
         );
     }
-    Ok(serde_json::json!({"owner": owner, "declarations": values}))
+    Ok(serde_json::json!({"owner": owner, "declarations": values.into_values().collect::<Vec<_>>()}))
 }
 
 /// Read only optional coordinates; an invalid hint is a miss, while referenced owner corruption remains an error.

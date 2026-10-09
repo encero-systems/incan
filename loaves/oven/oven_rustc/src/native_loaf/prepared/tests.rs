@@ -763,3 +763,79 @@ fn dev7_native_loaf_prepared_registry_edges_features_and_corrupt_owner_refuse() 
     assert!(!reached.get());
     Ok(())
 }
+
+/// Map-derived declaration permutations share one real hint and physical owner; constraints and alias refusals remain
+/// exact.
+#[test]
+fn dev7_native_loaf_prepared_declaration_permutations_reuse() -> TestResult {
+    let mut fixture = Fixture::new()?;
+    let declaration = fixture.dependencies[0].clone();
+    fixture.dependencies = ["z-last", "a_first", "middle"]
+        .iter()
+        .map(|alias| DependencySpec {
+            crate_name: alias.to_string(),
+            ..declaration.clone()
+        })
+        .collect();
+    let current = Current::read(&fixture.request(), &mut NativeLoafConsumerReport::default())?;
+    let key = current.key.clone();
+    let mut graph = NativeLoafGraph::default();
+    fixture.publish(&current, &mut graph, &[])?;
+    let selected = graph.select_dependency_roots(&fixture.dependencies, fixture.root.path(), "target")?;
+    assert_eq!(
+        selected.iter().map(|root| root.alias.as_str()).collect::<Vec<_>>(),
+        ["a_first", "middle", "z_last"]
+    );
+    let first = prepare_with(&fixture.request(), || Ok(prepared(graph)))?;
+    let aliases = first.closure.roots().keys().map(String::as_str).collect::<Vec<_>>();
+    assert_eq!(aliases, ["a_first", "middle", "z_last"]);
+    let dependencies = fixture.dependencies.clone();
+    for order in [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]] {
+        fixture.dependencies = order.into_iter().map(|index| dependencies[index].clone()).collect();
+        let permuted = Current::read(&fixture.request(), &mut NativeLoafConsumerReport::default())?;
+        assert_eq!(permuted.key, key);
+        let repeat = prepare_with(&fixture.request(), || Err(refused("permutation unexpectedly prepared")))?;
+        assert!(repeat.report.prepared_reuse);
+        assert_eq!(repeat.report.preparation_calls, 0);
+        assert_eq!(repeat.report.prepared_units, 0);
+        assert_eq!(repeat.report.selected_units, 1);
+        assert_eq!(repeat.report.selected_native_owners, 1);
+        assert_eq!(repeat.closure.roots(), first.closure.roots());
+    }
+    assert_eq!(std::fs::read_dir(fixture.output.join("consumer-hints"))?.count(), 1);
+    fixture.dependencies = dependencies.clone();
+    let other = fixture.root.path().join("alternative");
+    std::fs::create_dir(&other)?;
+    for constraint in [
+        "version", "features", "defaults", "optional", "package", "source", "alias",
+    ] {
+        fixture.dependencies = dependencies.clone();
+        let dependency = &mut fixture.dependencies[0];
+        match constraint {
+            "version" => dependency.version = Some("^1.0.0".to_string()),
+            "features" => dependency.features.push("new-feature".to_string()),
+            "defaults" => dependency.default_features = !dependency.default_features,
+            "optional" => dependency.optional = !dependency.optional,
+            "package" => dependency.package = Some("current".to_string()),
+            "source" => dependency.source = DependencySource::Path { path: other.clone() },
+            "alias" => dependency.crate_name = "different".to_string(),
+            _ => return Err("unknown declaration constraint".into()),
+        }
+        let changed = Current::read(&fixture.request(), &mut NativeLoafConsumerReport::default())?;
+        assert_ne!(changed.key, key, "declaration constraint omitted: {constraint}");
+    }
+    fixture.dependencies = dependencies;
+    let mut duplicate = fixture.dependencies[0].clone();
+    duplicate.crate_name = "z_last".to_string();
+    fixture.dependencies.push(duplicate);
+    let duplicate_result = Current::read(&fixture.request(), &mut NativeLoafConsumerReport::default());
+    assert!(duplicate_result.is_err());
+    assert!(
+        first
+            .closure
+            .graph
+            .select_dependency_roots(&fixture.dependencies, fixture.root.path(), "target")
+            .is_err()
+    );
+    Ok(())
+}
