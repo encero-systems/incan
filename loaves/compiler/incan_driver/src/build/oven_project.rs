@@ -1089,6 +1089,9 @@ pub fn select_oven_direct_rustc_plan_with_materialization(
     if let Some(selected) = select_published_project_plan(store, receipt, OvenToolchainMaterialization::Reused)? {
         return Ok(Some(selected));
     }
+    if let Some(native) = super::native_sdk_plan::select_native_sdk_plan(store, receipt, registry_dependencies)? {
+        return Ok(Some(native));
+    }
     if let Some(native) = resolve_compiler_owned_loaf_for_registry_dependencies(receipt, registry_dependencies)
         .map_err(|error| CliError::failure(error.to_string()))?
     {
