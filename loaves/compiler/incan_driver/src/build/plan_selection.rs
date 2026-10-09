@@ -7,7 +7,6 @@ use crate::backend::ProjectGenerator;
 use crate::build::output_selection::baked_project_owner_identity;
 use crate::build::oven_project::{
     bake_generated_project_compatibility_plan, project_extension_base_loaf, remove_completed_generated_cargo_lock,
-    select_oven_direct_rustc_plan,
 };
 use crate::build::package_loafs::import_checked_packaged_library_loaf;
 use crate::build::plan_authority::CallerOwnedProviderRegistryClosure;
@@ -277,7 +276,13 @@ pub fn prepare_oven_test_dependency_envelope(
         if !covers {
             continue;
         }
-        let Some(plan_selection) = select_oven_direct_rustc_plan(store, receipt, &publisher_dependencies)? else {
+        let Some(plan_selection) = super::oven_project::select_oven_direct_rustc_plan_with_native_sdk(
+            store,
+            receipt,
+            &publisher_dependencies,
+            native_sdk_context.as_deref(),
+        )?
+        else {
             tracing::debug!(
                 "test dependency envelope: receipt {} covers the surface but selects no stored plan",
                 receipt.identity

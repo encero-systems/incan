@@ -719,7 +719,12 @@ pub fn try_reuse_baked_project(
     if !project_authority_release_loafs_available(&authority)? {
         return Ok(None);
     }
-    let _validated_authority = crate::lock::registry_sources::prepare_project_registry_source_authorities(authority)?;
+    let native_sdk_context = authority_context.native_sdk_context()?;
+    let _validated_authority =
+        crate::lock::registry_sources::prepare_project_registry_source_authorities_with_native_sdk(
+            authority,
+            native_sdk_context,
+        )?;
     trace_reuse_timing(started, "inspection authority validation");
 
     restore_reused_outputs(

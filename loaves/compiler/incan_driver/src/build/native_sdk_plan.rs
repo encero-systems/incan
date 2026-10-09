@@ -44,7 +44,7 @@ impl NativeSdkCommandContext {
             .map_err(crate::error::oven_plan_error)?;
         selection.verify()?;
         tracing::debug!(
-            native_owner_acquisitions = selection.owners.len(),
+            admitted_native_owners = selection.owners.len(),
             elapsed_ms = started.elapsed().as_millis(),
             "native SDK command admission completed"
         );
@@ -511,6 +511,141 @@ fn seal_source_roles(receipt: &oven_store::OvenReceipt, manifest: &mut OvenRustc
 mod tests {
     use super::{native_unit_manifest, native_unit_root_aliases, seal_source_roles};
     use std::path::Path;
+
+    /// The covered debug-target fast path shares the command's original SDK owner instead of reacquiring it.
+    #[test]
+    fn dev7_native_admission_test_envelope_reuses_held_owner() -> Result<(), Box<dyn std::error::Error>> {
+        use oven_store::store::{
+            OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStoreLimits,
+        };
+        use std::collections::BTreeMap;
+        use std::sync::Arc;
+
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("main.rs");
+        std::fs::write(&source, "fn main() {}\n")?;
+        let unit_receipt = oven_store::receipt_generated_project(
+            &oven_store::OvenGeneratedProjectRequest::new(
+                root.path(),
+                "envelope_owner",
+                "1.0.0",
+                "fixture-target",
+                "fixture-toolchain",
+                "debug",
+                Vec::new(),
+            )
+            .with_generated_source("generated-root", &source),
+        )?;
+        let binding = oven_rustc::sdk_closure::SdkLockedUnit {
+            loaf: "crates-io/fixture".to_string(),
+            version: "1.0.0".to_string(),
+            archive_digest: oven_store::digest_bytes(b"fixture source"),
+            domain: "target".to_string(),
+            features: Vec::new(),
+            target_predicates: Vec::new(),
+            edges: None,
+        };
+        let output = root.path().join("libfixture.rlib");
+        std::fs::write(&output, b"opaque held owner control")?;
+        let native_store = super::OvenStore::new(
+            root.path().join("native-store"),
+            OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000),
+        );
+        let owner = native_store.publish(&OvenArtifactPublishRequest {
+            receipt: unit_receipt.clone(),
+            domain: "sdk-source-unit-target".to_string(),
+            kind: OvenArtifactKind::Engine,
+            payload: serde_json::to_vec(&binding.identity_binding())?,
+            materialized_files: vec![OvenArtifactMaterializedFile {
+                source_path: output,
+                relative_path: "libfixture.rlib".to_string(),
+            }],
+            materialized_directories: Vec::new(),
+        })?;
+        let unit = oven_rustc::sdk_closure::SdkNativeArtifact {
+            binding: binding.clone(),
+            store_identity: owner.identity,
+            receipt_identity: unit_receipt.identity.clone(),
+            relative_path: "libfixture.rlib".to_string(),
+            digest: oven_store::digest_bytes(b"opaque held owner control"),
+        };
+        std::fs::write(
+            root.path().join(".sealed-native-units.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": 1, "store": native_store.root(), "units": [unit],
+            }))?,
+        )?;
+        std::fs::write(
+            root.path().join(".sealed-native-receipts.json"),
+            serde_json::to_vec(&BTreeMap::from([(
+                serde_json::to_string(&binding.identity_binding())?,
+                unit_receipt.identity.clone(),
+            )]))?,
+        )?;
+        let context = super::NativeSdkCommandContext::from_inventory(Arc::new(incan_provider::SdkInventory {
+            root: root.path().to_path_buf(),
+            sdk_id: "fixture".to_string(),
+            sdk_version: "1.0.0".to_string(),
+            compiler_requirement: "*".to_string(),
+            provider_codegen_revision: incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION,
+            components: BTreeMap::new(),
+            profiles: BTreeMap::new(),
+        }))?;
+        let digest = oven_store::digest_dependency_specs(&[], incan_oven_facet::provider_hooks().as_ref())?;
+        let receipt = oven_store::receipt_with_build_unit_input(&unit_receipt, "rust-dependencies", digest)?;
+        let receipt = oven_store::receipt_with_build_unit_input(
+            &receipt,
+            "sdk-native-closure",
+            oven_store::digest_bytes(context.receipt_catalog()?),
+        )?;
+        let (mut manifest, files) = native_unit_manifest(&receipt, &context.selection, &[])?;
+        seal_source_roles(&receipt, &mut manifest);
+        let consumer_store = super::OvenStore::new(
+            root.path().join("consumer-store"),
+            OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000),
+        );
+        consumer_store.publish(&OvenArtifactPublishRequest {
+            receipt: receipt.clone(),
+            domain: "sdk-native-consumer-plan".to_string(),
+            kind: OvenArtifactKind::DirectRustcPlan,
+            payload: serde_json::to_vec(&oven_rustc::plan::shared::OvenSharedNativePlan {
+                artifacts: manifest,
+                shared_native_roots: vec![oven_rustc::plan::shared::OvenSharedNativeRoot {
+                    store: native_store.root().to_path_buf(),
+                    identity: context.selection.units[0].store_identity.clone(),
+                    receipt_identity: unit_receipt.identity,
+                    prefix: "units/0".to_string(),
+                }],
+            })?,
+            materialized_files: files,
+            materialized_directories: Vec::new(),
+        })?;
+        let mut bake = crate::build::OvenProjectBakeAuthorityContext {
+            native_sdk_context: Some(Arc::clone(&context)),
+            ..Default::default()
+        };
+        let baseline_owners = Arc::strong_count(&context.selection.owners[0]);
+        let envelope = crate::build::plan_selection::prepare_oven_test_dependency_envelope(
+            &consumer_store,
+            root.path(),
+            &incan_provider::dependency_resolver::ResolvedDependencies {
+                dependencies: Vec::new(),
+                dev_dependencies: Vec::new(),
+            },
+            std::slice::from_ref(&receipt),
+            Some(&mut bake),
+        )?;
+        assert_eq!(envelope.receipt.identity, receipt.identity);
+        assert_eq!(context.admitted_owner_count(), 1);
+        assert_eq!(
+            Arc::strong_count(&context.selection.owners[0]),
+            baseline_owners + 1,
+            "covered target must retain the original Arc, rather than a newly acquired payload"
+        );
+        drop(envelope);
+        assert_eq!(Arc::strong_count(&context.selection.owners[0]), baseline_owners);
+        Ok(())
+    }
 
     /// A real admitted local library becomes a source-scoped plan, with byte validation and compiler mismatch refusal.
     #[test]
