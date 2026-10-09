@@ -1647,11 +1647,23 @@ pub fn bake_oven_project_targets(
                         &prepared.library_manifest,
                         &prepared.out_dir,
                     )?;
+                    let checked_metadata = prepared
+                        .metadata_owner
+                        .as_ref()
+                        .map(|owner| {
+                            owner.export_into(&oven_store::store::OvenStore::with_release(
+                                &package_store_root,
+                                *store.limits(),
+                                &incan_oven_facet::compiler_identity(),
+                            ))
+                        })
+                        .transpose()?;
                     let published_manifest = OvenPackagedLibraryLoafManifest {
                         schema_version: OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION,
                         source_authority_digest: source_authority_digest.to_string(),
                         compiler_version: INCAN_VERSION.to_string(),
                         metadata_files,
+                        checked_metadata,
                         profiles: package_profiles,
                     };
                     write_packaged_library_loaf_manifest(&prepared.out_dir, &published_manifest)?;

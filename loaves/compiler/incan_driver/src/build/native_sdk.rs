@@ -203,7 +203,11 @@ fn publish_component(
         retained_native_facets = context.native_facets.len(),
         "SDK component publication context selected"
     );
-    let LibraryPreparation::Native { manifest, executable } = prepare_native_sdk_component(project, output, &context)?
+    let LibraryPreparation::Native {
+        manifest,
+        executable,
+        metadata_owner: _metadata_owner,
+    } = prepare_native_sdk_component(project, output, &context)?
     else {
         return Err(CliError::failure("native publisher received an ordinary project plan"));
     };

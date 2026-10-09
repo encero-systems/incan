@@ -563,6 +563,7 @@ fn write_sealed_provider_fixture(
         source_authority_digest: digest_baked_project_source_authority(&provider)?,
         compiler_version: INCAN_VERSION.to_string(),
         metadata_files: packaged_library_metadata_files(&metadata, &library, &artifact)?,
+        checked_metadata: None,
         profiles: BTreeMap::from([(
             "debug".to_string(),
             OvenPackagedLibraryLoafProfile {
