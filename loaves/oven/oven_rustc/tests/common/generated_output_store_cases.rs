@@ -481,9 +481,9 @@ fn write_project(root: &Path) -> Result<(), std::io::Error> {
 /// Exercise real admitted units, including one repeated owner under distinct logical prefixes.
 pub(super) fn shared_native_plan_retains_multi_store_owners_and_refuses_substitution()
 -> Result<(), Box<dyn std::error::Error>> {
-    use oven_rustc::plan::selection::select_receipt_direct_rustc_execution_plan;
-    use oven_rustc::plan::shared::{OvenSharedNativePlan, OvenSharedNativeRoot};
-    use oven_rustc::sdk_closure::{compile_local_sdk_facet, prepare_sdk_seed};
+    use super::native_oven::plan::selection::select_receipt_direct_rustc_execution_plan;
+    use super::native_oven::plan::shared::{OvenSharedNativePlan, OvenSharedNativeRoot};
+    use super::native_oven::sdk_closure::{compile_local_sdk_facet, prepare_sdk_seed};
     use oven_store::store::{OvenArtifactKind, OvenArtifactPublishRequest};
     let root = tempfile::tempdir()?;
     let rustc = rustc_path()?;
@@ -526,7 +526,7 @@ pub(super) fn shared_native_plan_retains_multi_store_owners_and_refuses_substitu
             let native = unit.native_artifact()?;
             assert_eq!(
                 native.binding.archive_digest,
-                oven_rustc::sdk_closure::local_sdk_facet_source_digest(
+                super::native_oven::sdk_closure::local_sdk_facet_source_digest(
                     &root.path().join(&native.binding.loaf),
                     root.path()
                 )?,
