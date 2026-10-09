@@ -61,6 +61,7 @@ fn oven_build_unit_inputs_with_provider_records(
     let bytes = std::fs::read(&catalog)
         .map_err(|error| CliError::failure(format!("native runtime catalog {}: {error}", catalog.display())))?;
     crate::build::native_runtime_inputs::runtime_inputs(
+        &inventory.root,
         &bytes,
         &provider_records,
         &requirements.stdlib_facets,

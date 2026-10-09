@@ -614,17 +614,29 @@ pub fn dependency_spec_from_stdlib_dep(dep: &StdlibExtraCrateDep) -> ProviderRes
     }
 }
 
-/// Resolve a namespace's named Rust dependency from admitted component Loaf declarations.
+/// Resolve a namespace's named registry dependency from embedded component Loaf declarations.
 ///
 /// Shared dependencies union their declared features. Incompatible requirements or policy refuse rather than
 /// silently selecting whichever component happens to precede another in the embedded inventory.
+/// Local facets are selected separately from admitted native units; registry lookup never probes their source paths.
 pub fn declared_stdlib_dependency(crate_name: &str) -> ProviderResult<Option<DependencySpec>> {
     let mut merged: Vec<DependencySpec> = Vec::new();
     for (component, content) in stdlib::COMPONENT_MANIFESTS {
-        let manifest = oven_model::manifest::ProjectManifest::from_str(content, Path::new("loaf.toml"))
-            .map_err(|error| ProviderError::failure(format!("stdlib component `{component}`: {error}")))?;
-        if let Some(spec) = manifest.rust_dependencies().get(crate_name) {
-            let mut candidate = spec.clone();
+        let dependencies =
+            oven_model::manifest::registry_loaf_dependencies_from_str(content, Path::new("loaf.toml"))
+                .map_err(|error| ProviderError::failure(format!("stdlib component `{component}`: {error}")))?;
+        if let Some(entries) = dependencies.get(crate_name) {
+            let [entry] = entries.as_slice() else {
+                return Err(ProviderError::failure(format!(
+                    "stdlib component `{component}` dependency `{crate_name}` requires target selection"
+                )));
+            };
+            if entry.target.is_some() {
+                return Err(ProviderError::failure(format!(
+                    "stdlib component `{component}` dependency `{crate_name}` requires target selection"
+                )));
+            }
+            let mut candidate = entry.spec.clone();
             if let Some(existing) = merged.first_mut() {
                 let mut features = existing.features.clone();
                 features.extend(candidate.features.iter().cloned());
@@ -675,6 +687,10 @@ mod semantic_requirement_identity_tests {
     /// Dependency policy comes from the converted component manifests, including adopted package aliases.
     #[test]
     fn amended_loaf_stdlib_requirements_use_declared_policy() -> ProviderResult<()> {
+        let serde = declared_stdlib_dependency("serde")?.ok_or_else(|| ProviderError::failure("missing serde"))?;
+        assert_eq!(serde.source, DependencySource::Registry);
+        assert!(serde.features.iter().any(|feature| feature == "derive"));
+        assert!(declared_stdlib_dependency("incan_std_core")?.is_none());
         let bzip = declared_stdlib_dependency("bzip2")?.ok_or_else(|| ProviderError::failure("missing bzip2"))?;
         assert_eq!(bzip.version.as_deref(), Some("0.6"));
         let md5 = declared_stdlib_dependency("md5")?.ok_or_else(|| ProviderError::failure("missing md5"))?;

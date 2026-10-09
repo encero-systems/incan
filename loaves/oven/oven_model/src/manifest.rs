@@ -1647,6 +1647,35 @@ fn is_rust_loaf_entry(entry: &DependencyEntry, manifest_path: &Path) -> bool {
     }
 }
 
+/// Project explicit registry Loaf edges from an embedded declaration without probing local source paths.
+///
+/// This query uses the canonical dependency grammar and retains target alternatives. It does not admit a complete
+/// project or classify local library/native edges; those require the normal manifest admission boundary.
+pub fn registry_loaf_dependencies_from_str(
+    content: &str,
+    path: &Path,
+) -> Result<BTreeMap<String, Vec<LoafDependency>>, ManifestError> {
+    let document: Document<String> = content
+        .parse()
+        .map_err(|error| manifest_parse_error(path, content, error))?;
+    let spans = ManifestSpans::new(content, &document);
+    validate_dependency_entry_shapes(&spans, path)?;
+    let raw: RawManifest =
+        toml_edit::de::from_document(document.clone()).map_err(|error| manifest_parse_error(path, content, error))?;
+    let Some(mut dependencies) = raw.dependencies else {
+        return Ok(BTreeMap::new());
+    };
+    dependencies.entries.retain(|_, entry| match entry {
+        DependencyEntry::Table(table) => table.loaf.as_deref().is_some_and(|loaf| loaf.starts_with("crates-io/")),
+        DependencyEntry::Targets(entries) => {
+            entries.retain(|entry| entry.loaf.as_deref().is_some_and(|loaf| loaf.starts_with("crates-io/")));
+            !entries.is_empty()
+        }
+        DependencyEntry::Version(_) => false,
+    });
+    parse_loaf_dependencies(Some(&dependencies), &spans, path)
+}
+
 /// Admit scoped Rust Loaves, retaining target alternatives before any consumer selection.
 fn parse_loaf_dependencies(
     table: Option<&DependencyTable>,
@@ -3894,6 +3923,63 @@ mod tests {
     use std::fs;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    /// Embedded registry policy is independent of unrelated local facet directories and keeps target identity.
+    #[test]
+    fn embedded_registry_projection_preserves_declared_policy() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let path = root.path().join("loaf.toml");
+        let content = r#"
+[project]
+name = "demo"
+[dependencies]
+incan_std_core = { loaf = "incan_stdlib_core", path = "missing/core/rust", version = "0.6" }
+md5 = { loaf = "crates-io/md-5", version = "0.10", features = ["std"], default-features = false, optional = true }
+libc = [
+ { loaf = "crates-io/libc", version = "0.2", target = 'cfg(target_os = "linux")' },
+ { loaf = "crates-io/libc", version = "0.2", target = "aarch64-apple-darwin" }
+]
+"#;
+        let dependencies = registry_loaf_dependencies_from_str(content, &path)?;
+        assert!(!dependencies.contains_key("incan_std_core"));
+        let md5 = &dependencies["md5"][0];
+        assert_eq!(md5.loaf, "crates-io/md-5");
+        assert_eq!(md5.spec.package.as_deref(), Some("md-5"));
+        assert_eq!(md5.spec.version.as_deref(), Some("0.10"));
+        assert!(md5.spec.optional);
+        assert!(!md5.spec.default_features);
+        assert_eq!(md5.spec.features, ["std"]);
+        assert_eq!(dependencies["libc"].len(), 2);
+        assert_eq!(dependencies["libc"][1].target.as_deref(), Some("aarch64-apple-darwin"));
+        assert!(ProjectManifest::from_str(content, &path).is_err());
+        let source = root.path().join("missing/core/rust/src");
+        fs::create_dir_all(&source)?;
+        fs::write(source.join("lib.rs"), "pub fn native() {}")?;
+        let dependencies_with_source = registry_loaf_dependencies_from_str(content, &path)?;
+        assert_eq!(dependencies["md5"][0].spec, dependencies_with_source["md5"][0].spec);
+        assert!(ProjectManifest::from_str(content, &path).is_ok());
+        Ok(())
+    }
+
+    /// A source-free registry query still refuses invalid adopted fields and missing target qualification.
+    #[test]
+    fn embedded_registry_projection_refuses_invalid_edges() -> TestResult {
+        for entry in [
+            "{ loaf = 'crates-io/', version = '1' }",
+            "{ loaf = 'crates-io/serde', version = '1', path = 'missing' }",
+            "{ loaf = 'crates-io/serde', version = '1', package = 'serde' }",
+            "[{ loaf = 'crates-io/serde', version = '1' }]",
+            "{ loaf = 'crates-io/serde', version = 'not-semver' }",
+        ] {
+            let content = format!("[project]\nname = 'demo'\n[dependencies]\nserde = {entry}\n");
+            assert!(
+                registry_loaf_dependencies_from_str(&content, Path::new("absent/loaf.toml")).is_err(),
+                "{entry}"
+            );
+        }
+        Ok(())
+    }
+
     /// Shared workspace declarations use the same adopted identity and feature policy as direct edges.
     #[test]
     fn amended_loaf_workspace_dependencies_share_the_declared_model() -> TestResult {
