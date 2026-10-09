@@ -1115,8 +1115,10 @@ mod checked_metadata_restoration_tests {
     use std::fs;
     use std::sync::Arc;
 
-    /// Publish a real checked owner through the ordinary Store boundary without a fabricated admission payload.
-    fn publish_owner(store: &OvenStore) -> Result<Arc<SelectedLibraryMetadata>, Box<dyn std::error::Error>> {
+    /// Publish a real checked owner and retain its authored declaration for later receipt-authentication controls.
+    fn publish_owner(
+        store: &OvenStore,
+    ) -> Result<(tempfile::TempDir, Arc<SelectedLibraryMetadata>), Box<dyn std::error::Error>> {
         let source = tempfile::tempdir()?;
         let output = tempfile::tempdir()?;
         fs::write(
@@ -1139,14 +1141,15 @@ mod checked_metadata_restoration_tests {
             toolchain: "exact restoration test compiler".into(),
             features: Vec::new(),
         };
-        Ok(publish_library_metadata(
+        let owner = publish_library_metadata(
             store,
             &recipe,
             &recipe.receipt(source.path())?,
             output.path(),
             &manifest_path,
             BTreeSet::new(),
-        )?)
+        )?;
+        Ok((source, owner))
     }
 
     /// A completed-output handoff restores the exact original checked owner and supports unchanged package admission.
@@ -1157,7 +1160,7 @@ mod checked_metadata_restoration_tests {
         let limits = OvenStoreLimits::new(16 * 1024 * 1024, 16 * 1024 * 1024, 16 * 1024 * 1024);
         let store = OvenStore::new(original.path(), limits);
         let package_store = OvenStore::new(package.path(), limits);
-        let owner = publish_owner(&store)?;
+        let (_source, owner) = publish_owner(&store)?;
         let reference = owner.reference();
         assert!(restore_reused_library_metadata(
             &store,
@@ -1198,7 +1201,7 @@ mod checked_metadata_restoration_tests {
         let store = OvenStore::new(original.path(), limits);
         let package_store = OvenStore::new(package.path(), limits);
         let absent_store = OvenStore::new(absent.path(), limits);
-        let owner = publish_owner(&store)?;
+        let (source, owner) = publish_owner(&store)?;
         let reference = owner.reference();
         assert!(!restore_reused_library_metadata(
             &absent_store,
@@ -1221,14 +1224,49 @@ mod checked_metadata_restoration_tests {
         let mut wrong = reference.clone();
         let mut wrong_recipe = owner.recipe().clone();
         wrong_recipe.target = "aarch64-apple-darwin".into();
-        wrong.receipt = wrong_recipe.receipt(package.path())?;
+        assert!(source.path().join("loaf.toml").is_file());
+        wrong.receipt = wrong_recipe.receipt(source.path())?;
+        wrong.receipt.verify_identity()?;
+        assert_ne!(wrong.receipt.identity, reference.receipt.identity);
         assert!(restore_reused_library_metadata(&store, &package_store, Some(&wrong), owner.checked_files()).is_err());
         let mut changed = owner.checked_files().to_vec();
         changed.first_mut().ok_or("missing actual checked file")?.digest = digest_bytes(b"changed handoff");
         assert!(restore_reused_library_metadata(&store, &package_store, Some(&reference), &changed).is_err());
         owner.export_into(&package_store)?;
         let (_, root, _, _lease) = package_store.select_payload_for_execution(&reference.owner_identity)?;
-        fs::write(root.join("src/lib.rs"), "pub fn answer() -> i64 { 99 }\n")?;
+        let materialized = root.join("src/lib.rs");
+        let original_metadata = fs::metadata(&materialized)?;
+        let original_permissions = original_metadata.permissions();
+        let original_modified = original_metadata.modified()?;
+        assert!(original_permissions.readonly());
+        // Corrupt only this temporary package owner, preserving its seal before restoration revalidates it.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(
+                &materialized,
+                fs::Permissions::from_mode(original_permissions.mode() | 0o200),
+            )?;
+        }
+        #[cfg(not(unix))]
+        {
+            let mut writable = original_permissions.clone();
+            writable.set_readonly(false);
+            fs::set_permissions(&materialized, writable)?;
+        }
+        let corruption = (|| -> std::io::Result<()> {
+            fs::write(&materialized, "pub fn answer() -> i64 { 99 }\n")?;
+            fs::File::options()
+                .write(true)
+                .open(&materialized)?
+                .set_modified(original_modified)
+        })();
+        fs::set_permissions(&materialized, original_permissions)?;
+        corruption?;
+        assert!(fs::metadata(&materialized)?.permissions().readonly());
+        assert_eq!(fs::metadata(&materialized)?.modified()?, original_modified);
+        assert_eq!(fs::metadata(&materialized)?.len(), original_metadata.len());
+        assert_eq!(fs::read(&materialized)?, b"pub fn answer() -> i64 { 99 }\n");
         assert!(
             restore_reused_library_metadata(&store, &package_store, Some(&reference), owner.checked_files()).is_err()
         );
