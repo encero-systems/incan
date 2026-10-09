@@ -19,6 +19,80 @@ use std::path::Path;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+/// Native compiler inputs reuse observed hashes but invalidate same-size, preserved-mtime edits and replacements.
+#[cfg(unix)]
+#[test]
+fn native_compiler_input_observations_detect_edits_and_replacements() -> TestResult {
+    const CHILD: &str = "INCAN_TEST_NATIVE_COMPILER_INPUT_CHILD";
+    const CASE: &str = "native_compiler_input_observations_detect_edits_and_replacements";
+    if let Some(path) = std::env::var_os(CHILD) {
+        println!(
+            "native compiler input digest: {}",
+            incan_driver::build::native_runtime_inputs::digest_native_compiler_input(Path::new(&path))?
+        );
+        return Ok(());
+    }
+    let temporary = tempfile::tempdir()?;
+    let input = fs::canonicalize(temporary.path())?.join("compiler-library");
+    let original = b"native-input-v1";
+    let changed = b"native-input-v2";
+    fs::write(&input, original)?;
+    let home = temporary.path().join("home");
+    let child = std::env::current_exe()?;
+    let probe = || -> Result<(String, Vec<u64>), Box<dyn std::error::Error>> {
+        let output = std::process::Command::new(&child)
+            .args(["--exact", CASE, "--nocapture"])
+            .env(CHILD, &input)
+            .env("INCAN_HOME", &home)
+            .env("INCAN_OVEN_TRACE_FILE_DIGESTS", "1")
+            .output()?;
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let stdout = String::from_utf8(output.stdout)?;
+        let digest = stdout
+            .lines()
+            .find_map(|line| line.strip_prefix("native compiler input digest: "))
+            .ok_or("child omitted its compiler input digest")?
+            .to_string();
+        let reads = String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .filter_map(|line| line.strip_prefix("Oven file digest: "))
+            .map(serde_json::from_str::<serde_json::Value>)
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter(|record| record["path"].as_str() == input.to_str())
+            .map(|record| record["input_bytes_read"].as_u64().ok_or("missing byte observation"))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((digest, reads))
+    };
+    let length = u64::try_from(original.len())?;
+    assert_eq!(probe()?, (digest_bytes(original), vec![length]));
+    assert_eq!(probe()?, (digest_bytes(original), vec![0]));
+    let modified = fs::metadata(&input)?.modified()?;
+    fs::write(&input, changed)?;
+    fs::File::options()
+        .write(true)
+        .open(&input)?
+        .set_times(fs::FileTimes::new().set_modified(modified))?;
+    assert_eq!(probe()?, (digest_bytes(changed), vec![length]));
+    assert_eq!(probe()?, (digest_bytes(changed), vec![0]));
+    fs::rename(&input, temporary.path().join("old-library"))?;
+    fs::write(&input, original)?;
+    fs::File::options()
+        .write(true)
+        .open(&input)?
+        .set_times(fs::FileTimes::new().set_modified(modified))?;
+    assert_eq!(probe()?, (digest_bytes(original), vec![length]));
+    assert_eq!(probe()?, (digest_bytes(original), vec![0]));
+    for entry in fs::read_dir(home.join("cache/file-digests-v1"))? {
+        fs::write(entry?.path(), "invalid observation")?;
+    }
+    assert_eq!(probe()?, (digest_bytes(original), vec![length]));
+    eprintln!(
+        "native compiler input observations: cold={length}, warm=0, preserved-mtime edit={length}, replacement={length}, malformed cache={length}"
+    );
+    Ok(())
+}
+
 /// Retained compiler validation reads no unchanged executable bytes and rejects preserved-mtime corruption.
 #[test]
 fn native_runtime_compiler_binding_reuses_observed_digest_and_refuses_tampering() -> TestResult {

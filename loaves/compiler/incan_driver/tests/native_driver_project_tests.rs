@@ -724,6 +724,71 @@ fn oven_plan_fixture_shares_debug_native_output() -> Result<(), Box<dyn std::err
     Ok(())
 }
 
+/// Actual native children retain loaded-library identity checks while avoiding unchanged library byte reads.
+#[cfg(unix)]
+#[test]
+fn native_driver_reuses_loaded_library_digest_without_skipping_identity_checks()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("library-observation")?;
+    let source = root.join("main.incn");
+    fs::write(&source, "def main() -> None:\n    println(42)\n")?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let cache = root.join("observed-library-home");
+    let mut library = None;
+    for (index, name) in ["cold", "warm"].into_iter().enumerate() {
+        let native = root.join(name);
+        let compile = corpus::source_command(
+            &fixture.driver_binary("debug"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .env("INCAN_HOME", &cache)
+        .env("INCAN_OVEN_TRACE_FILE_DIGESTS", "1")
+        .output()?;
+        success(&compile, "observed native driver compilation");
+        let observations = String::from_utf8_lossy(&compile.stderr)
+            .lines()
+            .filter_map(|line| line.strip_prefix("Oven file digest: "))
+            .map(serde_json::from_str::<serde_json::Value>)
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter(|record| {
+                record["path"].as_str().is_some_and(|path| {
+                    Path::new(path)
+                        .file_name()
+                        .is_some_and(|name| name.to_string_lossy().starts_with("librustc_driver-"))
+                })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(observations.len(), 1, "the actual loaded library must be checked once");
+        let path = PathBuf::from(
+            observations[0]["path"]
+                .as_str()
+                .ok_or("missing observed library path")?,
+        );
+        let bytes = observations[0]["input_bytes_read"]
+            .as_u64()
+            .ok_or("missing observed library byte count")?;
+        if index == 0 {
+            let length = fs::metadata(&path)?.len();
+            assert!(length > 0);
+            assert_eq!(bytes, length);
+            library = Some(path);
+            eprintln!("native loaded library digest: cold={length}, unchanged=0");
+        } else {
+            assert_eq!(library.as_ref(), Some(&path));
+            assert_eq!(bytes, 0);
+        }
+        let executed = Command::new(&native).output()?;
+        success(&executed, "observed native executable");
+        assert_eq!(executed.stdout, b"42\n");
+    }
+    Ok(())
+}
+
 /// Publish the compiler Loafs, then reuse one driver bake for native output, spans, and typed refusals.
 #[test]
 fn oven_driver_compiles_scalar_plan_and_refuses_invalid_inputs() -> Result<(), Box<dyn std::error::Error>> {
@@ -737,6 +802,8 @@ fn oven_driver_compiles_scalar_plan_and_refuses_invalid_inputs() -> Result<(), B
     fs::copy(driver_source.join("tests/fixtures/scalar.incn"), &source)?;
     let home = &fixture.home;
     let formatting = &fixture.formatting;
+    // The scalar driver consumes this producer's own receipt; the Rust caller owns a separate dependency projection.
+    bake(&runtime, home)?;
     let runtime_caller = root.join("runtime-caller");
     fs::create_dir_all(runtime_caller.join("src"))?;
     fs::write(
