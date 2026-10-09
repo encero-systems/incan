@@ -39,7 +39,7 @@ pub use prepared::{
     NativeLoafConsumerPreparation, NativeLoafConsumerReport, NativeLoafConsumerRequest, prepare_declared_native_loafs,
 };
 
-pub use producer::{NativeLoafInspectionInputs, NativeLoafInspectionUnit};
+pub use producer::{NativeLoafInspectionInputs, NativeLoafInspectionUnit, NativeLoafInspectionWork};
 
 /// Independently established producer boundary for a native source generation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -283,7 +283,15 @@ pub struct NativeLoafClosure {
 impl NativeLoafGraph {
     /// Retain and validate inspection sources for exactly this admitted set, without claiming semantic completeness.
     pub fn inspection_inputs(&self) -> Result<NativeLoafInspectionInputs> {
-        producer::from_graph(self)
+        self.inspection_inputs_with_work(&mut NativeLoafInspectionWork::default())
+    }
+
+    /// Retain the same exact source set with command-owned counts of actual projection work and refused attempts.
+    pub fn inspection_inputs_with_work(
+        &self,
+        work: &mut NativeLoafInspectionWork,
+    ) -> Result<NativeLoafInspectionInputs> {
+        producer::from_graph(self, work)
     }
 
     /// Project already active declaration requirements onto exact prepared source/version/feature/domain roots.

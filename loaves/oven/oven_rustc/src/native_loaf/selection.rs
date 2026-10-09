@@ -180,6 +180,14 @@ pub(super) fn select_roots_with_sources(
 
 /// Read only an exact inventoried source declaration and verify the bytes used for semantic root projection.
 pub(crate) fn source_manifest(unit: &SelectedNativeLoaf) -> Result<toml::Value> {
+    source_manifest_with_reader(unit, &mut |path| std::fs::read(path).map_err(failed))
+}
+
+/// Share exact declaration admission while allowing command-owned observation of actual file-read attempts.
+pub(super) fn source_manifest_with_reader(
+    unit: &SelectedNativeLoaf,
+    read: &mut dyn FnMut(&Path) -> Result<Vec<u8>>,
+) -> Result<toml::Value> {
     let member = unit
         .native_owner
         .admitted_materialized_files()
@@ -190,7 +198,7 @@ pub(crate) fn source_manifest(unit: &SelectedNativeLoaf) -> Result<toml::Value> 
     if !std::fs::symlink_metadata(&path).map_err(failed)?.is_file() {
         return Err(refused("native source declaration is not a plain file"));
     }
-    let bytes = std::fs::read(&path).map_err(failed)?;
+    let bytes = read(&path)?;
     if bytes.len() as u64 != member.logical_bytes || oven_store::digest_bytes(&bytes) != member.digest {
         return Err(refused("native source declaration changed after admission"));
     }
