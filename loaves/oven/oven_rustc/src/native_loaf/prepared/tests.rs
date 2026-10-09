@@ -409,6 +409,122 @@ fn dev7_native_loaf_prepared_empty_dependencies_bypass_all_inputs() -> TestResul
     Ok(())
 }
 
+/// A forged new-key hint cannot hide another compatible local source candidate; incompatible features stay harmless.
+#[test]
+fn dev7_native_loaf_prepared_local_current_candidate_ambiguity_refuses() -> TestResult {
+    let fixture = Fixture::new()?;
+    let parent = fixture.root.path().join("current/loaf.toml");
+    let mut declaration = std::fs::read_to_string(&parent)?;
+    declaration.push_str("\n[dependencies]\nchild_alias={loaf='child',version='^1.0',features=['chosen']}\n");
+    std::fs::write(&parent, declaration)?;
+    for (directory, version) in [("child", "1.0.0"), ("alternative", "1.1.0")] {
+        std::fs::create_dir_all(fixture.root.path().join(directory).join("src"))?;
+        std::fs::write(
+            fixture.root.path().join(directory).join("src/lib.rs"),
+            "pub fn child() {}\n",
+        )?;
+        std::fs::write(
+            fixture.root.path().join(directory).join("loaf.toml"),
+            format!(
+                "[project]\nname='child'\nversion='{version}'\n[project.features]\nchosen=[]\n[rust]\nname='child'\nedition='2021'\n"
+            ),
+        )?;
+    }
+    let mut input = serde_json::json!({"index_commit":"0000000000000000000000000000000000000000",
+        "registry_lock":"lock.json", "facets":[
+            {"project":"child", "features":["chosen"], "domain":"target"},
+            {"project":"current", "features":[], "domain":"target"}]});
+    std::fs::write(&fixture.graph, serde_json::to_vec(&input)?)?;
+    let current = Current::read(&fixture.request(), &mut NativeLoafConsumerReport::default())?;
+    let (manifest, digest) = crate::sdk_closure::local_native_source_selection(&fixture.root.path().join("child"))?;
+    let mut graph = NativeLoafGraph::default();
+    let child = publish_data(
+        &fixture.output,
+        &native_store(&fixture.output),
+        &mut graph,
+        &current,
+        NativeLoafSource {
+            loaf: "child".to_string(),
+            version: "1.0.0".to_string(),
+            archive_digest: digest,
+            domain: "target".to_string(),
+            features: vec!["chosen".to_string()],
+            target_predicates: Vec::new(),
+        },
+        manifest,
+        NativeLoafOrigin::Local,
+        &[],
+    )?;
+    let parent = fixture.publish(&current, &mut graph, &[("child_alias", &child)])?;
+    let roots = vec![
+        graph
+            .units
+            .get(&parent)
+            .ok_or("parent missing")?
+            .declared_root("renamed")?,
+    ];
+    let first = prepare_with(&fixture.request(), || Ok(prepared(graph)))?;
+    assert_eq!(first.report.selected_native_owners, 2);
+    assert_eq!(first.report.current_local_dependency_candidates, 1);
+    input["facets"]
+        .as_array_mut()
+        .ok_or("facets missing")?
+        .push(serde_json::Value::Null);
+    for compatible in [false, true] {
+        input["facets"][2] = serde_json::json!({"project":"alternative",
+            "features":if compatible { vec!["chosen"] } else { Vec::<&str>::new() }, "domain":"target"});
+        std::fs::write(&fixture.graph, serde_json::to_vec(&input)?)?;
+        let changed = Current::read(&fixture.request(), &mut NativeLoafConsumerReport::default())?;
+        let path = fixture
+            .output
+            .join("consumer-hints")
+            .join(format!("{}.json", changed.key.replace(':', "-")));
+        write_hint(
+            &path,
+            &Hint {
+                schema: SCHEMA.to_string(),
+                key: changed.key,
+                roots: roots.clone(),
+            },
+        )?;
+        let reached = std::cell::Cell::new(false);
+        let result = prepare_with(&fixture.request(), || {
+            reached.set(true);
+            Err(refused("must not prepare through current candidate ambiguity"))
+        });
+        assert!(!reached.get());
+        if compatible {
+            let error = result.err().ok_or("compatible current alternative accepted")?;
+            assert!(
+                error.to_string().contains("ambiguous selected bindings"),
+                "unexpected {error}"
+            );
+        } else {
+            let result = result?;
+            assert!(result.report.prepared_reuse);
+            assert_eq!(result.report.preparation_calls, 0);
+            assert_eq!(result.report.prepared_units, 0);
+            assert_eq!(result.report.selected_native_owners, 2);
+            assert_eq!(result.report.current_local_sources, 2);
+            assert_eq!(result.report.current_local_dependency_candidates, 2);
+        }
+    }
+    input["facets"]
+        .as_array_mut()
+        .ok_or("facets missing")?
+        .pop()
+        .ok_or("alternative facet missing")?;
+    std::fs::write(&fixture.graph, serde_json::to_vec(&input)?)?;
+    assert!(
+        prepare_with(&fixture.request(), || Err(refused(
+            "unexpected restoration preparation"
+        )))?
+        .report
+        .prepared_reuse
+    );
+    Ok(())
+}
+
 /// Invoke Git only inside the test-owned temporary index, preserving full diagnostics on failure.
 fn git(root: &Path, arguments: &[&str]) -> TestResult<Vec<u8>> {
     let output = std::process::Command::new("git")

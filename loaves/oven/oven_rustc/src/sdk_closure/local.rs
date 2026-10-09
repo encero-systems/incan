@@ -516,11 +516,66 @@ fn collect_local_sources(
 
 /// Select declared aliases from the frozen closure, rejecting missing, ambiguous, or feature-incomplete bindings.
 fn selected_local_edges(unit: &PreparedUnit, closure: &SdkCompiledClosure) -> Result<Vec<(String, usize)>, Error> {
-    let mut edges = Vec::new();
-    let Some(dependencies) = unit.manifest.get("dependencies").and_then(toml::Value::as_table) else {
-        return Ok(edges);
+    let candidates = closure
+        .units
+        .iter()
+        .map(|selected| LocalDependencyCandidate {
+            loaf: &selected.binding.loaf,
+            version: &selected.binding.version,
+            domain: &selected.binding.domain,
+            features: &selected.binding.features,
+            proc_macro: selected
+                .inspection
+                .get("is_proc_macro")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true),
+        })
+        .collect::<Vec<_>>();
+    local_dependency_demands(&unit.manifest, &unit.binding.features)?
+        .iter()
+        .map(|demand| {
+            Ok((
+                demand.alias.clone(),
+                select_local_dependency(demand, &unit.binding.domain, &candidates)?,
+            ))
+        })
+        .collect()
+}
+
+/// One active authored local dependency demand, shared by native production and current rooted replay.
+pub(crate) struct LocalDependencyDemand {
+    /// Exact normalized compiler alias, including explicit renames.
+    pub(crate) alias: String,
+    /// Authored package identity; never inferred from output bytes or a Rust alias.
+    pub(crate) loaf: String,
+    version: Option<semver::VersionReq>,
+    required: BTreeSet<String>,
+}
+
+/// Source-level selection facts only; physical output identity and retained native ownership stay separate.
+pub(crate) struct LocalDependencyCandidate<'a> {
+    /// Exact source package name.
+    pub(crate) loaf: &'a str,
+    /// Exact selected source version.
+    pub(crate) version: &'a str,
+    /// Explicit host or target source domain.
+    pub(crate) domain: &'a str,
+    /// Complete selected feature set.
+    pub(crate) features: &'a [String],
+    /// Macro domain fact read from the authenticated source declaration.
+    pub(crate) proc_macro: bool,
+}
+
+/// Apply the existing local optional/feature/predicate rules without selecting or acquiring any native owner.
+pub(crate) fn local_dependency_demands(
+    manifest: &toml::Value,
+    features: &[String],
+) -> Result<Vec<LocalDependencyDemand>, Error> {
+    let mut demands = Vec::new();
+    let Some(dependencies) = manifest.get("dependencies").and_then(toml::Value::as_table) else {
+        return Ok(demands);
     };
-    let (_, activated) = local_feature_selection(&unit.manifest, &unit.binding.features)?;
+    let (_, activated) = local_feature_selection(manifest, features)?;
     for (alias, declaration) in dependencies {
         if declaration.get("optional").and_then(toml::Value::as_bool) == Some(true) && !activated.contains_key(alias) {
             continue;
@@ -542,50 +597,62 @@ fn selected_local_edges(unit: &PreparedUnit, closure: &SdkCompiledClosure) -> Re
             .and_then(toml::Value::as_array)
             .into_iter()
             .flatten()
-            .map(|value| value.as_str().ok_or("dependency feature must be a string"))
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(str::to_string)
+                    .ok_or("dependency feature must be a string")
+            })
             .collect::<Result<BTreeSet<_>, _>>()?;
         if let Some(features) = activated.get(alias) {
-            required.extend(features.iter().map(String::as_str));
+            required.extend(features.iter().cloned());
         }
-        let candidates = closure
-            .units
-            .iter()
-            .enumerate()
-            .filter(|(_, selected)| {
-                let domain = if selected
-                    .inspection
-                    .get("is_proc_macro")
-                    .and_then(serde_json::Value::as_bool)
-                    == Some(true)
-                {
-                    "host"
-                } else {
-                    unit.binding.domain.as_str()
-                };
-                selected.binding.loaf == loaf && selected.binding.domain == domain
-            })
-            .filter(|(_, selected)| {
-                version.as_ref().is_none_or(|requirement| {
-                    semver::Version::parse(&selected.binding.version).is_ok_and(|version| requirement.matches(&version))
-                }) && required
-                    .iter()
-                    .all(|feature| selected.binding.features.iter().any(|selected| selected == feature))
-            })
-            .map(|(index, _)| index)
-            .collect::<Vec<_>>();
-        match candidates.as_slice() {
-            [index] => edges.push((alias.replace('-', "_"), *index)),
-            [] => {
-                return Err(format!(
-                    "local SDK dependency {alias} ({loaf}) has no selected {} binding with its required features",
-                    unit.binding.domain
-                )
-                .into());
-            }
-            _ => return Err(format!("local SDK dependency {alias} ({loaf}) has ambiguous selected bindings").into()),
-        }
+        demands.push(LocalDependencyDemand {
+            alias: alias.replace('-', "_"),
+            loaf: loaf.to_string(),
+            version,
+            required,
+        });
     }
-    Ok(edges)
+    Ok(demands)
+}
+
+/// Select exactly one current source candidate through the producer's original domain/version/feature contract.
+pub(crate) fn select_local_dependency(
+    demand: &LocalDependencyDemand,
+    domain: &str,
+    bindings: &[LocalDependencyCandidate<'_>],
+) -> Result<usize, Error> {
+    let candidates = bindings
+        .iter()
+        .enumerate()
+        .filter(|(_, selected)| {
+            let domain = if selected.proc_macro { "host" } else { domain };
+            selected.loaf == demand.loaf && selected.domain == domain
+        })
+        .filter(|(_, selected)| {
+            demand.version.as_ref().is_none_or(|requirement| {
+                semver::Version::parse(selected.version).is_ok_and(|version| requirement.matches(&version))
+            }) && demand
+                .required
+                .iter()
+                .all(|feature| selected.features.iter().any(|selected| selected == feature))
+        })
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    match candidates.as_slice() {
+        [index] => Ok(*index),
+        [] => Err(format!(
+            "local SDK dependency {} ({}) has no selected {domain} binding with its required features",
+            demand.alias, demand.loaf
+        )
+        .into()),
+        _ => Err(format!(
+            "local SDK dependency {} ({}) has ambiguous selected bindings",
+            demand.alias, demand.loaf
+        )
+        .into()),
+    }
 }
 
 /// Expanded local features paired with active dependency aliases and their forwarded feature requests.

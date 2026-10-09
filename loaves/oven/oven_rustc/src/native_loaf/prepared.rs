@@ -1,6 +1,6 @@
 //! Generic prepared-consumer coordinates with source-current rooted admission (#1337, #1698).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -65,6 +65,8 @@ pub struct NativeLoafConsumerReport {
     pub current_local_sources: usize,
     /// Actual current selected registry fact/archive checks.
     pub current_registry_bindings: usize,
+    /// Current source candidates demanded by local dependency selection, without acquiring their native owners.
+    pub current_local_dependency_candidates: usize,
     /// Actual complete native executable-owner selections, deduplicated only within this command.
     pub native_tool_owner_checks: usize,
     /// Actual current compiler standard-library closure observations.
@@ -124,6 +126,17 @@ struct Current {
     local: LocalSources,
     tools: current_inputs::NativeToolOwners,
     link: Option<Option<String>>,
+    candidates: BTreeMap<String, Vec<CurrentCandidate>>,
+}
+
+/// Current source-only candidate facts; this descriptor confers no physical or semantic execution authority.
+struct CurrentCandidate {
+    loaf: String,
+    version: String,
+    domain: String,
+    features: Vec<String>,
+    proc_macro: bool,
+    origin: NativeLoafOrigin,
 }
 
 /// Reuse only source-current declared roots, otherwise prepare through the existing ordinary native producer once.
@@ -261,6 +274,7 @@ impl Current {
             local: LocalSources::default(),
             tools: Default::default(),
             link: None,
+            candidates: BTreeMap::new(),
         })
     }
 
@@ -373,8 +387,12 @@ impl Current {
                         return Ok(false);
                     }
                 }
-            } else if !self.matches_local(source, &manifest)? {
-                return Ok(false);
+            } else {
+                if !self.matches_local(source, &manifest)?
+                    || !self.matches_local_dependencies(request, closure, record, &manifest)?
+                {
+                    return Ok(false);
+                }
             }
             let metadata = if origin == NativeLoafOrigin::Registry {
                 about
@@ -426,6 +444,135 @@ impl Current {
         Ok(serde_json::to_value(expected).map_err(failed)? == serde_json::to_value(hinted_roots).map_err(failed)?)
     }
 
+    /// Reapply the same producer selector to the current declared candidate world, rather than trusting a hint's
+    /// subset.
+    fn matches_local_dependencies(
+        &mut self,
+        request: &NativeLoafConsumerRequest<'_>,
+        closure: &NativeLoafClosure,
+        record: &super::NativeLoafRecord,
+        manifest: &toml::Value,
+    ) -> Result<bool> {
+        let demands = current_inputs::local_dependency_demands(manifest, &record.source.features)
+            .map_err(NativeLoafError::Failed)?;
+        if demands.len() != record.dependencies.len() {
+            return Ok(false);
+        }
+        for demand in demands {
+            let candidates = self.current_candidates(request, closure, &demand.loaf)?;
+            let bindings = candidates
+                .iter()
+                .map(|candidate| current_inputs::LocalDependencyCandidate {
+                    loaf: &candidate.loaf,
+                    version: &candidate.version,
+                    domain: &candidate.domain,
+                    features: &candidate.features,
+                    proc_macro: candidate.proc_macro,
+                })
+                .collect::<Vec<_>>();
+            let selected = current_inputs::select_local_dependency(&demand, &record.source.domain, &bindings)
+                .map_err(NativeLoafError::Failed)?;
+            let candidate = &candidates[selected];
+            let matched = record
+                .dependencies
+                .iter()
+                .filter(|edge| {
+                    edge.alias == demand.alias
+                        && edge.source.loaf == candidate.loaf
+                        && edge.source.version == candidate.version
+                        && edge.source.domain == candidate.domain
+                        && edge.source.features == candidate.features
+                })
+                .collect::<Vec<_>>();
+            let [edge] = matched.as_slice() else {
+                return Ok(false);
+            };
+            let child = closure
+                .graph
+                .units
+                .get(&edge.record_identity)
+                .ok_or_else(|| refused("local native dependency has no admitted child record"))?;
+            if super::source_origin(&child.record.recipe)? != candidate.origin {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Load only demanded package candidates from current source coordinates, never unrelated native owners.
+    fn current_candidates(
+        &mut self,
+        request: &NativeLoafConsumerRequest<'_>,
+        closure: &NativeLoafClosure,
+        loaf: &str,
+    ) -> Result<&[CurrentCandidate]> {
+        if !self.candidates.contains_key(loaf) {
+            let mut candidates = Vec::new();
+            for binding in self.seed.units.iter().filter(|binding| binding.loaf == loaf) {
+                let selected = closure.graph.units.values().find(|unit| {
+                    unit.record.source.loaf == binding.loaf
+                        && unit.record.source.version == binding.version
+                        && unit.record.source.archive_digest == binding.archive_digest
+                        && super::source_origin(&unit.record.recipe)
+                            .is_ok_and(|origin| origin == NativeLoafOrigin::Registry)
+                });
+                let manifest = match selected {
+                    Some(unit) => source_manifest(unit)?,
+                    None => current_inputs::registry_source_manifest(request.blobs, binding)
+                        .map_err(NativeLoafError::Failed)?,
+                };
+                candidates.push(CurrentCandidate {
+                    loaf: binding.loaf.clone(),
+                    version: binding.version.clone(),
+                    domain: binding.domain.clone(),
+                    features: binding.features.clone(),
+                    proc_macro: manifest
+                        .get("rust")
+                        .and_then(|rust| rust.get("type"))
+                        .and_then(toml::Value::as_str)
+                        == Some("proc-macro"),
+                    origin: NativeLoafOrigin::Registry,
+                });
+            }
+            for facet in &self.graph.facets {
+                let manifest: toml::Value = toml::from_str(
+                    &std::fs::read_to_string(self.owner.join(&facet.project).join("loaf.toml")).map_err(failed)?,
+                )
+                .map_err(failed)?;
+                let project = manifest
+                    .get("project")
+                    .ok_or_else(|| refused("current local candidate has no project"))?;
+                if project.get("name").and_then(toml::Value::as_str) != Some(loaf) {
+                    continue;
+                }
+                candidates.push(CurrentCandidate {
+                    loaf: loaf.to_string(),
+                    version: project
+                        .get("version")
+                        .and_then(toml::Value::as_str)
+                        .ok_or_else(|| refused("current local candidate has no version"))?
+                        .to_string(),
+                    domain: facet.domain.clone(),
+                    features: crate::sdk_closure::native_required_features(&manifest, &facet.features, false)
+                        .map_err(NativeLoafError::Failed)?
+                        .into_iter()
+                        .collect(),
+                    proc_macro: manifest
+                        .get("rust")
+                        .and_then(|rust| rust.get("type"))
+                        .and_then(toml::Value::as_str)
+                        == Some("proc-macro"),
+                    origin: NativeLoafOrigin::Local,
+                });
+            }
+            self.candidates.insert(loaf.to_string(), candidates);
+        }
+        self.candidates
+            .get(loaf)
+            .map(Vec::as_slice)
+            .ok_or_else(|| refused("current local dependency candidates missing"))
+    }
+
     /// Compare a selected local unit to its current explicit graph facet using the existing producer mapping.
     fn matches_local(&mut self, source: &super::NativeLoafSource, manifest: &toml::Value) -> Result<bool> {
         let mut found = 0;
@@ -441,16 +588,21 @@ impl Current {
                 .and_then(|project| project.get("name"))
                 .and_then(toml::Value::as_str)
                 != Some(&source.loaf)
+                || declaration
+                    .get("project")
+                    .and_then(|project| project.get("version"))
+                    .and_then(toml::Value::as_str)
+                    != Some(&source.version)
             {
                 continue;
             }
-            let (current, digest) = self.local.get(&path)?;
-            let features = crate::sdk_closure::native_required_features(current, &facet.features, false)
+            let features = crate::sdk_closure::native_required_features(&declaration, &facet.features, false)
                 .map_err(NativeLoafError::Failed)?;
-            if current == manifest
-                && digest == &source.archive_digest
-                && features == source.features.iter().cloned().collect::<BTreeSet<_>>()
-            {
+            if features != source.features.iter().cloned().collect::<BTreeSet<_>>() {
+                continue;
+            }
+            let (current, digest) = self.local.get(&path)?;
+            if current == manifest && digest == &source.archive_digest {
                 found += 1;
             }
         }
@@ -537,6 +689,7 @@ fn finish_report(
         .len();
     report.current_local_sources = current.local.loads;
     report.native_tool_owner_checks = current.tools.checks;
+    report.current_local_dependency_candidates = current.candidates.values().map(Vec::len).sum();
     report.seconds = started.elapsed().as_secs_f64();
 }
 
