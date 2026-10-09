@@ -1023,6 +1023,33 @@ pub fn validate_selected_plan_registry_dependencies(
     registry_authority: Option<&OvenRegistryLeafAuthority>,
     profile: &str,
 ) -> CliResult<()> {
+    if !dependencies.iter().any(|dependency| {
+        matches!(dependency.source, DependencySource::Registry)
+            && selected_plan
+                .externs
+                .iter()
+                .any(|(name, _)| name == &dependency.crate_name.replace('-', "_"))
+    }) {
+        return Ok(());
+    }
+    let context = super::NativeSdkCommandContext::discover()?;
+    validate_selected_plan_registry_dependencies_with_native_sdk(
+        dependencies,
+        selected_plan,
+        registry_authority,
+        profile,
+        context.as_deref(),
+    )
+}
+
+/// Validate the complete dependency list against one command's native admission and existing sealed registry fallback.
+pub fn validate_selected_plan_registry_dependencies_with_native_sdk(
+    dependencies: &[DependencySpec],
+    selected_plan: &OvenRustcArtifactPlan,
+    registry_authority: Option<&OvenRegistryLeafAuthority>,
+    profile: &str,
+    context: Option<&super::NativeSdkCommandContext>,
+) -> CliResult<()> {
     for dependency in dependencies {
         if matches!(dependency.source, DependencySource::Registry) {
             let crate_name = dependency.crate_name.replace('-', "_");
@@ -1031,7 +1058,11 @@ pub fn validate_selected_plan_registry_dependencies(
                 .iter()
                 .find(|(selected_crate, _)| selected_crate == &crate_name)
             {
-                if super::native_sdk_plan::native_registry_dependency_is_selected(dependency, selected_artifact)? {
+                if super::native_sdk_plan::native_registry_dependency_is_selected_with_context(
+                    dependency,
+                    selected_artifact,
+                    context,
+                )? {
                     continue;
                 }
                 validate_selected_sealed_registry_leaf(dependency, selected_artifact, registry_authority, profile)

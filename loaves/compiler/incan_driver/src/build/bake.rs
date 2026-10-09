@@ -33,9 +33,8 @@ use crate::build::plan_authority::{
     replace_selected_package_library_externs,
 };
 use crate::build::plan_selection::{
-    caller_owned_provider_registry_conflict, canonical_project_inspection_dependencies, oven_native_closure_refusal,
-    prepare_oven_test_dependency_envelope, provider_registry_conflict_reason,
-    registry_leaf_authority_for_plan_selection,
+    caller_owned_provider_registry_conflict, oven_native_closure_refusal, prepare_oven_test_dependency_envelope,
+    provider_registry_conflict_reason, registry_leaf_authority_for_plan_selection,
 };
 use crate::build::publication::{
     ProjectInspectionDependencyAuthority, project_output_payload_for_bake, publish_project_inspection_authority,
@@ -1809,8 +1808,13 @@ pub fn bake_oven_project_targets(
             &debug_target_receipts,
             Some(&mut authority_context),
         )?;
+        let native_sdk_context = authority_context.native_sdk_context()?;
         let (registry_dependencies, dev_registry_dependencies) =
-            canonical_project_inspection_dependencies(dependency_surface, debug_target_receipts.first())?;
+            crate::build::plan_selection::canonical_project_inspection_dependencies_with_native_sdk(
+                dependency_surface,
+                debug_target_receipts.first(),
+                native_sdk_context.as_deref(),
+            )?;
         if debug_target_receipts
             .first()
             .is_some_and(|receipt| receipt.sources.build_unit_inputs.contains_key("sdk-native-closure"))

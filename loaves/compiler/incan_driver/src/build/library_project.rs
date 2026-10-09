@@ -25,11 +25,11 @@ use crate::build::library_outputs::{
 use crate::build::oven_project::project_extension_base_loaf;
 use crate::build::plan_authority::{
     compiler_selected_path_authority, declared_rust_libraries_missing_from_selected_plan_with_current_project_paths,
-    explicit_bake_profiles, oven_source_inline_dependency_specs, validate_selected_plan_registry_dependencies,
+    explicit_bake_profiles, oven_source_inline_dependency_specs,
 };
 use crate::build::plan_selection::{
     format_oven_registry_dependency_requirements, packaged_provider_selection_links_required_stdlib,
-    registry_leaf_authority_for_plan_selection, select_or_bake_generated_project_plan,
+    registry_leaf_authority_for_plan_selection,
 };
 use crate::build::provider_compilation::{
     checked_packaged_provider_profiles, checked_provider_compilation_requirements,
@@ -48,7 +48,6 @@ use crate::build_report::{
     BuildOvenReport, BuildReportDraft, BuildReportMode, cargo_report, dependencies_report, generated_project_report,
     incan_dependencies_report, interop_report, oven_generated_project_report, semantic_report,
 };
-use crate::build_unit::oven_build_unit_inputs_with_provider_identities;
 use crate::cargo_policy::{CargoPolicy, cargo_command_flags, enforce_project_toolchain_constraint};
 use crate::diagnostics::render_module_warnings;
 use crate::error::{CliError, CliResult, oven_plan_error, oven_rustc_error};
@@ -58,8 +57,6 @@ use crate::lock::OvenRustInspectSourceAuthorityRequest;
 #[cfg(feature = "rust_inspect")]
 use crate::lock::RustInspectWorkspaceRequest;
 use crate::lock::resolution::{resolve_lock_context, validate_oven_lock_policy};
-#[cfg(feature = "rust_inspect")]
-use crate::lock::rust_inspect::prepare_rust_inspect_workspace;
 use crate::lock::{LockResolution, LockResolutionRequest};
 use crate::modules::{
     build_source_map, collect_rust_dependency_uses, format_dependency_error,
@@ -572,6 +569,7 @@ fn prepare_library_project_with_context(
     caller_facet: Option<&CallerFacetRequest>,
     native_sdk: Option<&crate::build::native_sdk::NativeSdkPublicationContext<'_>>,
 ) -> CliResult<LibraryPreparation> {
+    let mut authority_context = authority_context;
     let prepare_start = Instant::now();
     let mut timings_ms = BTreeMap::new();
     let source_load_start = Instant::now();
@@ -821,13 +819,26 @@ fn prepare_library_project_with_context(
         )
     };
     record_timing(&mut timings_ms, "library_resolve_lock_payload", lock_start);
+    let native_admission_start = Instant::now();
+    let native_sdk_context = if normal_oven && native_sdk.is_none() {
+        match authority_context.as_deref_mut() {
+            Some(context) => context.native_sdk_context()?,
+            None => super::NativeSdkCommandContext::discover()?,
+        }
+    } else {
+        None
+    };
+    if normal_oven && native_sdk.is_none() {
+        record_timing(&mut timings_ms, "library_native_sdk_admission", native_admission_start);
+    }
     let mut oven_build_inputs = (normal_oven && native_sdk.is_none())
         .then(|| {
-            oven_build_unit_inputs_with_provider_identities(
+            crate::build_unit::oven_build_unit_inputs_with_provider_identities_and_native_sdk(
                 &provider_plan,
                 &project_requirements,
                 &resolved,
                 &provider_semantic_identities,
+                native_sdk_context.as_deref(),
             )
         })
         .transpose()?;
@@ -916,35 +927,38 @@ fn prepare_library_project_with_context(
         .transpose()?
         .map(|(rust_inspect_target_path, _rust_inspect_cache_lease)| {
             let rust_inspect_start = Instant::now();
-            let rust_inspect_manifest_dir = prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
-                project_root: &project_root,
-                project_name: project_name.as_str(),
-                cargo_package_name: &lock_cargo_package_name,
-                rust_edition: manifest.rust_edition().map(str::to_string),
-                resolved: &resolved,
-                project_requirements: &project_requirements,
-                lock_payload: lock_payload_for_typecheck.clone(),
-                cargo_lock_projection_root: cargo_lock_projection_root.as_deref(),
-                clear_cargo_lock,
-                cargo_policy_flags: cargo_flags.clone(),
-                cargo_target_dir: &rust_inspect_target_path,
-                rust_inspect_query_paths: &metadata_query_paths,
-                rust_derive_probe_paths: &collect_rust_inspect_derive_probe_paths(&modules),
-                prepare_when_empty: true,
-                direct_oven_inspection: normal_oven,
-                force_direct_prewarm: false,
-                oven_source_authority: normal_oven.then(|| OvenRustInspectSourceAuthorityRequest {
-                    project_version: &project_version,
-                    target: oven_target.as_deref().unwrap_or_default(),
-                    toolchain: oven_toolchain.as_deref().unwrap_or_default(),
-                    profile: "debug",
-                    features: &cargo_features.cargo_features,
-                    build_unit_inputs: oven_build_inputs.as_ref().unwrap_or(&empty_oven_build_inputs),
-                    registry_dependencies: &inspection_dependencies,
-                }),
-                prepared_project_source_authorities: None,
-                explicit_oven_bake: normal_oven && oven_plan_mode == OvenProjectPlanMode::ExplicitBake,
-            })?
+            let rust_inspect_manifest_dir = crate::lock::rust_inspect::prepare_rust_inspect_workspace_with_native_sdk(
+                RustInspectWorkspaceRequest {
+                    project_root: &project_root,
+                    project_name: project_name.as_str(),
+                    cargo_package_name: &lock_cargo_package_name,
+                    rust_edition: manifest.rust_edition().map(str::to_string),
+                    resolved: &resolved,
+                    project_requirements: &project_requirements,
+                    lock_payload: lock_payload_for_typecheck.clone(),
+                    cargo_lock_projection_root: cargo_lock_projection_root.as_deref(),
+                    clear_cargo_lock,
+                    cargo_policy_flags: cargo_flags.clone(),
+                    cargo_target_dir: &rust_inspect_target_path,
+                    rust_inspect_query_paths: &metadata_query_paths,
+                    rust_derive_probe_paths: &collect_rust_inspect_derive_probe_paths(&modules),
+                    prepare_when_empty: true,
+                    direct_oven_inspection: normal_oven,
+                    force_direct_prewarm: false,
+                    oven_source_authority: normal_oven.then(|| OvenRustInspectSourceAuthorityRequest {
+                        project_version: &project_version,
+                        target: oven_target.as_deref().unwrap_or_default(),
+                        toolchain: oven_toolchain.as_deref().unwrap_or_default(),
+                        profile: "debug",
+                        features: &cargo_features.cargo_features,
+                        build_unit_inputs: oven_build_inputs.as_ref().unwrap_or(&empty_oven_build_inputs),
+                        registry_dependencies: &inspection_dependencies,
+                    }),
+                    prepared_project_source_authorities: None,
+                    explicit_oven_bake: normal_oven && oven_plan_mode == OvenProjectPlanMode::ExplicitBake,
+                },
+                native_sdk_context.as_deref(),
+            )?
             .ok_or_else(|| {
                 CliError::failure("rust-inspect workspace preparation did not return a manifest directory")
             })?;
@@ -1440,7 +1454,7 @@ fn prepare_library_project_with_context(
                     cargo_process_started: false,
                 })
             } else {
-                select_or_bake_generated_project_plan(
+                super::plan_selection::select_or_bake_generated_project_plan_with_native_sdk(
                     oven_plan_mode,
                     store,
                     &receipt,
@@ -1451,6 +1465,7 @@ fn prepare_library_project_with_context(
                     generator.output_dir(),
                     &generator.crate_root_path(),
                     &rustc,
+                    native_sdk_context.as_deref(),
                 )?
             }
             .ok_or_else(|| {
@@ -1477,11 +1492,12 @@ fn prepare_library_project_with_context(
             let artifact_plan = plan_selection
                 .source_artifact_plan("generated-root")
                 .map_err(oven_rustc_error)?;
-            validate_selected_plan_registry_dependencies(
+            super::plan_authority::validate_selected_plan_registry_dependencies_with_native_sdk(
                 &oven_plan_dependencies,
                 &artifact_plan,
                 registry_authority.as_ref(),
                 profile,
+                native_sdk_context.as_deref(),
             )?;
             let inline_libraries = declared_rust_libraries_missing_from_selected_plan_with_current_project_paths(
                 oven_inline_rust_dependencies.as_deref().unwrap_or_default(),
@@ -1525,6 +1541,7 @@ fn prepare_library_project_with_context(
             profiles.insert(
                 profile.to_string(),
                 OvenPreparedLibraryProfile {
+                    native_sdk_context: native_sdk_context.clone(),
                     receipt,
                     plan_selection,
                     materialization: plan_preparation.materialization,

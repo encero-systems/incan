@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use oven_rustc::sdk_closure::SdkCompiledClosure;
 use rust_inspect::{
@@ -18,7 +19,7 @@ use crate::error::CliError;
 pub fn install_published_sdk_inspection_authority(
     destination: &Path,
     dependencies: &[oven_model::manifest::DependencySpec],
-) -> Result<Option<Vec<oven_store::store::OvenStoreExecutionPayload>>, CliError> {
+) -> Result<Option<Vec<Arc<oven_store::store::OvenStoreExecutionPayload>>>, CliError> {
     let Some(inventory) = incan_provider::inventory::discover_or_reuse_published_sdk_inventory()
         .map_err(|error| CliError::failure(error.to_string()))?
     else {
@@ -32,7 +33,7 @@ fn install_sdk_inspection_authority_from(
     root: &Path,
     destination: &Path,
     dependencies: &[oven_model::manifest::DependencySpec],
-) -> Result<Option<Vec<oven_store::store::OvenStoreExecutionPayload>>, CliError> {
+) -> Result<Option<Vec<Arc<oven_store::store::OvenStoreExecutionPayload>>>, CliError> {
     let receipts = root.join(".sealed-native-receipts.json");
     if !receipts.is_file() {
         return Ok(None);
@@ -54,8 +55,20 @@ fn install_sdk_inspection_authority_from(
     let inventory = incan_provider::SdkInventory::read_from_path(&root.join(incan_provider::SDK_INVENTORY_FILE))
         .map_err(|error| CliError::failure(error.to_string()))?;
     let selection = incan_provider::sdk_native::select_sdk_native_artifacts(root)?;
+    install_sdk_inspection_authority_from_selection(root, destination, dependencies, &inventory, &selection)
+}
+
+/// Preserve the canonical frozen-source projection while borrowing native owners admitted by the same command.
+pub(crate) fn install_sdk_inspection_authority_from_selection(
+    root: &Path,
+    destination: &Path,
+    dependencies: &[oven_model::manifest::DependencySpec],
+    inventory: &incan_provider::SdkInventory,
+    selection: &incan_provider::sdk_native::SdkNativeSelection,
+) -> Result<Option<Vec<Arc<oven_store::store::OvenStoreExecutionPayload>>>, CliError> {
+    selection.verify()?;
     for dependency in dependencies {
-        if !incan_provider::sdk_native::sdk_native_dependency_is_covered(&inventory, &selection, dependency)? {
+        if !incan_provider::sdk_native::sdk_native_dependency_is_covered(inventory, selection, dependency)? {
             tracing::debug!(
                 ?dependency,
                 "requested dependency is outside the sealed SDK inspection selection"
@@ -63,7 +76,7 @@ fn install_sdk_inspection_authority_from(
             return Ok(None);
         }
     }
-    let selected = selection.owners;
+    let selected = selection.owners.clone();
     let mut retained_roots = selected
         .iter()
         .map(|owner| owner.artifact_root.join("source").canonicalize())

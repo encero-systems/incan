@@ -39,20 +39,20 @@ pub fn select_prepared_native_sdk_plan_with_engine(
     dependencies: &[oven_model::manifest::DependencySpec],
     engine: &Path,
 ) -> CliResult<(oven_store::OvenReceipt, oven_rustc::plan::OvenDirectRustcPlanSelection)> {
-    let inventory = incan_provider::inventory::discover_or_reuse_published_sdk_inventory()?
+    let context = super::NativeSdkCommandContext::discover()?
         .ok_or_else(|| CliError::failure("compiler tooling requires a prepared native SDK"))?;
-    let catalog = std::fs::read(inventory.root.join(".sealed-native-receipts.json"))
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    let receipt = bind_native_catalog(source_receipt, &catalog)?;
-    let inputs = super::native_runtime_inputs::dependency_inputs(engine, source_receipt, &catalog, dependencies)?;
+    let catalog = context.receipt_catalog()?;
+    let receipt = bind_native_catalog(source_receipt, catalog)?;
+    let inputs = super::native_runtime_inputs::dependency_inputs(engine, source_receipt, catalog, dependencies)?;
     let roots = inputs
         .get("rust-dependencies")
         .ok_or_else(|| CliError::failure("Incan native-runtime response has no dependency identity"))?
         .clone();
     let receipt = oven_store::receipt_with_build_unit_input(&receipt, "sdk-native-roots", roots)
         .map_err(|error| CliError::failure(error.to_string()))?;
-    let selection = super::native_sdk_plan::select_native_sdk_plan(store, &receipt, dependencies)?
-        .ok_or_else(|| CliError::failure("prepared SDK has no native dependency plan"))?;
+    let selection =
+        super::native_sdk_plan::select_native_sdk_plan_with_context(store, &receipt, dependencies, Some(&context))?
+            .ok_or_else(|| CliError::failure("prepared SDK has no native dependency plan"))?;
     Ok((receipt, selection.plan_selection))
 }
 

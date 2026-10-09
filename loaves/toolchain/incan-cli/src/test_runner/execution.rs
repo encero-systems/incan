@@ -7,10 +7,6 @@ use std::time::{Duration, Instant};
 use incan_driver::backend::{IrCodegen, ProjectGenerator};
 use incan_driver::cargo_policy::CargoPolicy;
 #[cfg(feature = "rust_inspect")]
-use incan_driver::lock::registry_sources::prepare_project_registry_source_authorities;
-#[cfg(feature = "rust_inspect")]
-use incan_driver::lock::rust_inspect::prepare_rust_inspect_workspace;
-#[cfg(feature = "rust_inspect")]
 use incan_driver::lock::{
     OvenRustInspectSourceAuthorityRequest, PreparedOvenProjectRegistrySourceAuthorities, RustInspectWorkspaceRequest,
 };
@@ -65,6 +61,8 @@ pub(super) struct TestExecutionOptions {
 
 /// Store and immutable source authority opened once for one `incan test` command.
 pub(super) struct OvenTestCommandContext {
+    /// Native admission and original owner leases shared by every parallel harness in this command.
+    native_sdk_context: Option<Arc<incan_driver::build::NativeSdkCommandContext>>,
     project_root: PathBuf,
     planned_test_files: BTreeSet<PathBuf>,
     session: Arc<incan_driver::session::CompilationSession>,
@@ -86,16 +84,23 @@ pub(super) fn prepare_oven_test_command_context(
             .unwrap_or_else(|| infer_test_project_root_without_manifest(representative_test)),
     );
     let store = incan_driver::oven_store::open_default_oven_store()?;
+    let native_sdk_context = incan_driver::build::NativeSdkCommandContext::discover()?;
     let has_conventional_target =
         project_root.join("src/lib.incn").is_file() || project_root.join("src/main.incn").is_file();
     let project_source_authorities = if session.manifest.is_some() && has_conventional_target {
         incan_driver::build::output_selection::load_current_project_registry_source_authorities(&store, &project_root)?
-            .map(prepare_project_registry_source_authorities)
+            .map(|authority| {
+                incan_driver::lock::registry_sources::prepare_project_registry_source_authorities_with_native_sdk(
+                    authority,
+                    native_sdk_context.clone(),
+                )
+            })
             .transpose()?
     } else {
         None
     };
     Ok(Arc::new(OvenTestCommandContext {
+        native_sdk_context,
         project_root,
         planned_test_files: planned_test_files
             .iter()
@@ -2415,11 +2420,15 @@ fn run_file_tests_batch_oven(
         Ok(identity) => identity,
         Err(error) => return failure(error.to_string()),
     };
-    let mut build_unit_inputs =
-        match incan_driver::build_unit::oven_build_unit_inputs(&provider_plan, &requirements, &resolved) {
-            Ok(inputs) => inputs,
-            Err(error) => return failure(error.message),
-        };
+    let mut build_unit_inputs = match incan_driver::build_unit::oven_build_unit_inputs_with_native_sdk(
+        &provider_plan,
+        &requirements,
+        &resolved,
+        command_context.native_sdk_context.as_deref(),
+    ) {
+        Ok(inputs) => inputs,
+        Err(error) => return failure(error.message),
+    };
     if let Err(error) = incan_driver::build::caller_owned::append_oven_interop_execution_build_inputs(
         &mut build_unit_inputs,
         manifest.as_ref(),
@@ -2442,40 +2451,43 @@ fn run_file_tests_batch_oven(
     let rust_inspect_manifest_dir = {
         let metadata_query_paths =
             incan_driver::rust_inspect_workspace::collect_rust_inspect_query_paths(&dependency_modules);
-        match prepare_rust_inspect_workspace(RustInspectWorkspaceRequest {
-            project_root: &project_root,
-            project_name: project_name.as_str(),
-            cargo_package_name: project_name.as_str(),
-            rust_edition: None,
-            resolved: &resolved,
-            project_requirements: &requirements,
-            lock_payload: None,
-            cargo_lock_projection_root: None,
-            clear_cargo_lock: false,
-            cargo_policy_flags: Vec::new(),
-            cargo_target_dir: &project_root
-                .join("target/incan_tests")
-                .join(&dir_suffix)
-                .join("oven/rust-inspect"),
-            rust_inspect_query_paths: &metadata_query_paths,
-            rust_derive_probe_paths: &incan_driver::rust_inspect_workspace::collect_rust_inspect_derive_probe_paths(
-                &dependency_modules,
-            ),
-            prepare_when_empty: false,
-            direct_oven_inspection: true,
-            force_direct_prewarm: false,
-            oven_source_authority: Some(OvenRustInspectSourceAuthorityRequest {
-                project_version: &project_version,
-                target: &rustc_target,
-                toolchain: &rustc_toolchain,
-                profile: "debug",
-                features: &feature_selection.cargo_features,
-                build_unit_inputs: &build_unit_inputs,
-                registry_dependencies: &inspection_registry_dependencies,
-            }),
-            prepared_project_source_authorities: command_context.project_source_authorities.clone(),
-            explicit_oven_bake: false,
-        }) {
+        match incan_driver::lock::rust_inspect::prepare_rust_inspect_workspace_with_native_sdk(
+            RustInspectWorkspaceRequest {
+                project_root: &project_root,
+                project_name: project_name.as_str(),
+                cargo_package_name: project_name.as_str(),
+                rust_edition: None,
+                resolved: &resolved,
+                project_requirements: &requirements,
+                lock_payload: None,
+                cargo_lock_projection_root: None,
+                clear_cargo_lock: false,
+                cargo_policy_flags: Vec::new(),
+                cargo_target_dir: &project_root
+                    .join("target/incan_tests")
+                    .join(&dir_suffix)
+                    .join("oven/rust-inspect"),
+                rust_inspect_query_paths: &metadata_query_paths,
+                rust_derive_probe_paths: &incan_driver::rust_inspect_workspace::collect_rust_inspect_derive_probe_paths(
+                    &dependency_modules,
+                ),
+                prepare_when_empty: false,
+                direct_oven_inspection: true,
+                force_direct_prewarm: false,
+                oven_source_authority: Some(OvenRustInspectSourceAuthorityRequest {
+                    project_version: &project_version,
+                    target: &rustc_target,
+                    toolchain: &rustc_toolchain,
+                    profile: "debug",
+                    features: &feature_selection.cargo_features,
+                    build_unit_inputs: &build_unit_inputs,
+                    registry_dependencies: &inspection_registry_dependencies,
+                }),
+                prepared_project_source_authorities: command_context.project_source_authorities.clone(),
+                explicit_oven_bake: false,
+            },
+            command_context.native_sdk_context.as_deref(),
+        ) {
             Ok(workspace) => workspace,
             Err(error) => return failure(error.message),
         }
@@ -2688,10 +2700,11 @@ fn run_file_tests_batch_oven(
         None => None,
     };
     let owned_plan_selection = if shared_plan_selection.is_none() {
-        match incan_driver::build::oven_project::select_oven_direct_rustc_plan(
+        match incan_driver::build::oven_project::select_oven_direct_rustc_plan_with_native_sdk(
             &command_context.store,
             &receipt,
             &inline_path_dependencies,
+            command_context.native_sdk_context.as_deref(),
         ) {
             Ok(Some(selection)) => Some(selection),
             Ok(None) => {
@@ -3166,6 +3179,7 @@ def captured_resource() -> int:
         )?);
         let store_root = tempfile::tempdir()?;
         let context = OvenTestCommandContext {
+            native_sdk_context: None,
             project_root: absolute_project_root(project.path()),
             planned_test_files: BTreeSet::from([
                 canonical_path_for_cache_key(&first_test),

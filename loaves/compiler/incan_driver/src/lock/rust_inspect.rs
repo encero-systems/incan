@@ -43,6 +43,14 @@ use oven_store::receipt_generated_project;
 pub fn prepare_rust_inspect_workspace(
     request: RustInspectWorkspaceRequest<'_>,
 ) -> CliResult<Option<PreparedRustInspectWorkspace>> {
+    prepare_rust_inspect_workspace_with_native_sdk(request, None)
+}
+
+/// Prepare the ordinary inspection workspace with native source owners already admitted by its command.
+pub fn prepare_rust_inspect_workspace_with_native_sdk(
+    request: RustInspectWorkspaceRequest<'_>,
+    native_sdk: Option<&crate::build::NativeSdkCommandContext>,
+) -> CliResult<Option<PreparedRustInspectWorkspace>> {
     let RustInspectWorkspaceRequest {
         project_root,
         project_name,
@@ -117,6 +125,7 @@ pub fn prepare_rust_inspect_workspace(
                 authority_request,
                 prepared_project_source_authorities,
                 explicit_oven_bake,
+                native_sdk,
             )?;
             source_loaf = prepared._source_loaf;
             project_source_authorities = prepared._project_source_authorities;
@@ -177,11 +186,16 @@ fn prepare_oven_inspection_authority(
     authority_request: OvenRustInspectSourceAuthorityRequest<'_>,
     prepared_project_source_authorities: Option<Arc<crate::lock::PreparedOvenProjectRegistrySourceAuthorities>>,
     explicit_oven_bake: bool,
+    native_sdk: Option<&crate::build::NativeSdkCommandContext>,
 ) -> CliResult<PreparedRustInspectWorkspace> {
-    if let Some(sdk_native) = crate::sdk_closure::install_published_sdk_inspection_authority(
-        manifest_dir,
-        authority_request.registry_dependencies,
-    )? {
+    let sdk_native = match native_sdk {
+        Some(context) => context.install_inspection_authority(manifest_dir, authority_request.registry_dependencies)?,
+        None => crate::sdk_closure::install_published_sdk_inspection_authority(
+            manifest_dir,
+            authority_request.registry_dependencies,
+        )?,
+    };
+    if let Some(sdk_native) = sdk_native {
         return Ok(PreparedRustInspectWorkspace {
             manifest_dir: manifest_dir.to_path_buf(),
             _source_loaf: None,
