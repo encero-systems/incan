@@ -471,6 +471,15 @@ mod tests {
                 .pop()
                 .ok_or("fixture owner missing")?,
         );
+        // Supplied owner indexes use the selector's stable physical root rather than a temporary-directory alias.
+        let admitted_store = owner
+            .artifact_root
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            .ok_or("fixture owner has no admitted store root")?
+            .to_path_buf();
+        assert_eq!(admitted_store, store.root().canonicalize()?);
         let relative_path = "units/0/libfixture.rlib".to_string();
         let digest = oven_store::digest_bytes(b"opaque native control bytes");
         let paths = vec!["units/0".to_string()];
@@ -499,7 +508,7 @@ mod tests {
         let payload = serde_json::to_vec(&OvenSharedNativePlan {
             artifacts: artifacts.clone(),
             shared_native_roots: vec![OvenSharedNativeRoot {
-                store: store.root().to_path_buf(),
+                store: admitted_store,
                 identity: owner.manifest.identity.clone(),
                 receipt_identity: owner.manifest.receipt_identity.clone(),
                 prefix: "units/0".to_string(),

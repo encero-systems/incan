@@ -604,6 +604,15 @@ mod tests {
             root.path().join("consumer-store"),
             OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000),
         );
+        // Match the production plan's held-owner coordinate, including canonicalized temporary-directory ancestors.
+        let admitted_store = context.selection.owners[0]
+            .artifact_root
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            .ok_or("fixture owner has no admitted store root")?
+            .to_path_buf();
+        assert_eq!(admitted_store, native_store.root().canonicalize()?);
         consumer_store.publish(&OvenArtifactPublishRequest {
             receipt: receipt.clone(),
             domain: "sdk-native-consumer-plan".to_string(),
@@ -611,7 +620,7 @@ mod tests {
             payload: serde_json::to_vec(&oven_rustc::plan::shared::OvenSharedNativePlan {
                 artifacts: manifest,
                 shared_native_roots: vec![oven_rustc::plan::shared::OvenSharedNativeRoot {
-                    store: native_store.root().to_path_buf(),
+                    store: admitted_store,
                     identity: context.selection.units[0].store_identity.clone(),
                     receipt_identity: unit_receipt.identity,
                     prefix: "units/0".to_string(),
