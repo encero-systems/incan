@@ -1497,10 +1497,11 @@ impl SdkCompiledClosure {
             return Ok(());
         }
         Err(format!(
-            "SDK closure cannot be sealed: {} missing exact facts; {} unavailable dependents or compile failures\n{}",
+            "SDK closure cannot be sealed: {} missing exact facts; {} unavailable dependents or compile failures\n{}\n{}",
             self.report.refused.len(),
             self.report.failed.len(),
-            self.report.refused.join("\n")
+            self.report.refused.join("\n"),
+            self.report.failed.join("\n")
         )
         .into())
     }
@@ -1862,17 +1863,25 @@ mod tests {
 
     /// Partial closures cannot publish complete SDK source authority even when independent units compiled.
     #[test]
-    fn missing_facts_prevent_complete_sealing() {
+    fn missing_facts_prevent_complete_sealing() -> Result<(), Error> {
         let mut report = SdkClosureReport::default();
-        report
-            .refused
-            .push("(crates-io/missing, 1.0.0, debug, [], target)".to_string());
+        let missing = "(crates-io/missing, 1.0.0, debug, [], target)";
+        let failure = "native product: sandbox_apply: Operation not permitted";
+        report.refused.push(missing.to_string());
+        report.failed.push(failure.to_string());
         let closure = SdkCompiledClosure {
             report,
             units: Vec::new(),
             auxiliary_targets: BTreeMap::new(),
         };
-        assert!(closure.require_complete().is_err());
+        let diagnostic = closure
+            .require_complete()
+            .err()
+            .ok_or("incomplete closure was accepted")?
+            .to_string();
+        assert!(diagnostic.contains(missing));
+        assert!(diagnostic.contains(failure));
+        Ok(())
     }
 
     /// Inspection retains the selected Rust source, alias indices and feature set without rereading declarations.

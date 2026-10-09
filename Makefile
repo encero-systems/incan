@@ -870,7 +870,7 @@ test-timings:
 	@echo "\033[32m✓ Timing report generated in target/cargo-timings\033[0m"
 
 # Incan owns selected-test preparation and retained binaries. Make supplies command inputs and the outer Cargo guard.
-.PHONY: test-one  ## test - Run one receipt-bound compiler-suite source root (optional TEST_EXACT=module::case)
+.PHONY: test-one  ## test - Run one receipt-bound compiler-suite source root (optional space-separated TEST_EXACT names)
 test-one:
 	@test -n "$(TEST_ROOT)" || { echo "usage: make test-one TEST_ROOT=loaves/toolchain/incan-cli/tests/cli_provider_boundary_tests.rs" >&2; exit 2; }
 	@echo "\033[1mRunning $(TEST_ROOT)$(if $(TEST_EXACT), ($(TEST_EXACT)),) through Oven...\033[0m"
