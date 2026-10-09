@@ -5,13 +5,14 @@
 //! the existing inventory-backed grant producer (#1337/#1698).
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use super::plan::{NamespaceAuthority, ProviderPlan, ProviderRecord, active_provider_claims};
 
 /// Exact immutable reserved namespace selection, including its original provider and artifact coordinates.
 #[derive(Debug, Clone)]
 pub struct SelectedProviderNamespace {
-    record: ProviderRecord,
+    issuer: Arc<ProviderRecord>,
 }
 
 impl SelectedProviderNamespace {
@@ -20,10 +21,10 @@ impl SelectedProviderNamespace {
     /// The caller must subsequently bind its manifest, artifact and exact package owner through ordinary admission.
     /// This compatibility producer does not authorize a new namespace or transplant a grant onto another artifact.
     pub fn from_plan(plan: &ProviderPlan, provider_identity: &str) -> Result<Self, String> {
-        let record = plan
-            .records()
-            .find(|record| record.identity.stable_key() == provider_identity)
-            .ok_or_else(|| "selected provider namespace identity is absent".to_string())?;
+        let issuer = plan
+            .namespace_issuer(provider_identity)
+            .ok_or_else(|| "selected provider namespace has no retained producer issuer".to_string())?;
+        let record = issuer.as_ref();
         if record.authority != NamespaceAuthority::SdkReserved
             || !record.available
             || !record.enabled
@@ -49,11 +50,18 @@ impl SelectedProviderNamespace {
         {
             return Err("selected namespace differs from its checked package claims or identity".into());
         }
-        Ok(Self { record: record.clone() })
+        Ok(Self {
+            issuer: Arc::clone(issuer),
+        })
     }
 
     /// Borrow the complete original selected record; consumers cannot rewrite its identity, claims or provenance.
     pub fn record(&self) -> &ProviderRecord {
-        &self.record
+        self.issuer.as_ref()
+    }
+
+    /// Retain the original private issuer capability when constructing another immutable admitted plan.
+    pub(super) fn issuer(&self) -> &Arc<ProviderRecord> {
+        &self.issuer
     }
 }

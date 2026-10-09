@@ -13,6 +13,7 @@ mod file_freshness;
 pub mod inline_command;
 pub mod library_dependencies;
 pub mod library_exports;
+pub mod library_generation;
 pub mod library_metadata;
 pub mod library_outputs;
 pub mod library_project;
@@ -360,6 +361,9 @@ pub struct OvenPackagedLibraryLoafManifest {
     /// Original immutable checked-metadata owner; absent legacy authority is a metadata preparation miss.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checked_metadata: Option<library_metadata::LibraryMetadataReference>,
+    /// Original immutable association of final package source authority and the exact checked generation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_generation: Option<library_generation::LibraryGenerationReference>,
     pub profiles: BTreeMap<String, OvenPackagedLibraryLoafProfile>,
 }
 

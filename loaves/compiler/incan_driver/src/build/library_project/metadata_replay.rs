@@ -342,8 +342,29 @@ fn project_delivery_coordinates(
         .collect()
 }
 
+/// Reconstruct an exact semantic feature projection and observe its authored metadata generation.
+/// Activation explanations do not change semantic inputs; checked active features must reproduce exactly.
+pub(crate) fn observe_library_source_digest(root: &Path, exact_features: &[String]) -> CliResult<String> {
+    let manifest = crate::project::effective_project_manifest_for_exact_root(root)?;
+    let selection = incan_provider::FeatureSelection {
+        requested: exact_features.iter().cloned().collect(),
+        no_default_features: true,
+        all_features: false,
+    };
+    let features = PackageFeaturePlan::resolve(&manifest, &selection).map_err(|error| invalid(error.to_string()))?;
+    if features
+        .root_package()
+        .is_none_or(|root| root.features.active_features.iter().cloned().collect::<Vec<_>>() != exact_features)
+    {
+        return Err(invalid(
+            "checked metadata features differ from current authored feature closure",
+        ));
+    }
+    current_source_digest(root, &features)
+}
+
 /// Observe the exact active authored source closure without invoking the Incan lexer, parser or checker.
-fn current_source_digest(root: &Path, features: &PackageFeaturePlan) -> CliResult<String> {
+pub(crate) fn current_source_digest(root: &Path, features: &PackageFeaturePlan) -> CliResult<String> {
     let root = std::fs::canonicalize(root).map_err(|error| invalid(error.to_string()))?;
     let mut reachable = BTreeSet::from([root.clone()]);
     loop {
@@ -398,7 +419,14 @@ fn current_source_digest(root: &Path, features: &PackageFeaturePlan) -> CliResul
             })
             .collect::<CliResult<BTreeMap<_, _>>>()?;
         source.insert(package.project_root.clone(), serde_json::json!({
-            "name": package.package_name, "features": package.features, "rust_edges": rust_edges,
+            "name": package.package_name,
+            "features": {
+                "active": package.features.active_features,
+                "optional_dependencies": package.features.active_optional_dependencies,
+                "dependency_features": package.features.dependency_features,
+                "required_components": package.features.required_sdk_components,
+            },
+            "rust_edges": rust_edges,
             "source": digest_project_source_tree(&package.project_root).map_err(|error| invalid(error.to_string()))?,
         }));
     }

@@ -12,7 +12,7 @@ use std::sync::Arc;
 use incan_frontend::library_manifest::published_layout::packaged_library_loaf_manifest_path;
 use incan_frontend::library_manifest_index::{
     LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry, dependency_crate_root,
-    load_provider_dependency_artifact,
+    dependency_project_root, load_provider_dependency_artifact,
 };
 use incan_frontend::provider::namespaces::SelectedProviderNamespace;
 use incan_lang::lang::stdlib;
@@ -20,10 +20,12 @@ use incan_provider::{PackageFeaturePlan, ProviderModuleResolution, ProviderPlan}
 use oven_store::digest_bytes;
 use oven_store::store::{OvenStore, OvenStoreLimits};
 
+use super::library_generation::{SelectedLibraryGeneration, select_library_generation_reference};
 use super::library_metadata::{
     SelectedLibraryMetadata, select_library_metadata_reference, validate_rust_fact_agreement,
 };
 use super::library_outputs::packaged_library_loaf_store_root;
+use super::library_project::metadata_replay::observe_library_source_digest;
 use super::package_loafs::{read_packaged_library_loaf_manifest, validated_packaged_library_loaf_profile};
 use super::{
     CheckedPackagedProviderProfile, OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION, OvenPackagedLibraryLoafManifest,
@@ -55,6 +57,7 @@ struct AdmittedLibraryDependency {
     package: OvenPackagedLibraryLoafManifest,
     handoff_digest: String,
     metadata: Arc<SelectedLibraryMetadata>,
+    generation: Arc<SelectedLibraryGeneration>,
     source_available: bool,
 }
 
@@ -138,6 +141,15 @@ impl PreparedLibraryDependencies {
             );
             let metadata = select_library_metadata_reference(&store, reference)?;
             metadata.verify_materialization(&artifact_root)?;
+            let generation = select_library_generation_reference(
+                &store,
+                package.checked_generation.as_ref().ok_or_else(|| {
+                    invalid("ordinary library package has no original checked generation association")
+                })?,
+                Arc::clone(&metadata),
+                &package.source_authority_digest,
+                &package.metadata_files,
+            )?;
             if metadata
                 .manifest()
                 .to_json_string()
@@ -207,10 +219,11 @@ impl PreparedLibraryDependencies {
                 }
                 namespace_selections.push(namespace.clone());
             }
-            let source_available = artifact_root
-                .parent()
-                .and_then(std::path::Path::parent)
+            let source_available = dependency_project_root(&artifact_root)
                 .is_some_and(|root| root.join(oven_model::manifest::LOAF_MANIFEST_FILENAME).is_file());
+            if source_available {
+                validate_authored_generation(&artifact, &metadata)?;
+            }
             if let Some(previous) = nodes.get(&identity) {
                 let previous: &AdmittedLibraryDependency = previous;
                 if previous.artifact.crate_root != artifact_root || previous.handoff_digest != input.handoff_digest {
@@ -226,6 +239,7 @@ impl PreparedLibraryDependencies {
                         package,
                         handoff_digest: input.handoff_digest.clone(),
                         metadata,
+                        generation,
                         source_available,
                     },
                 );
@@ -320,8 +334,10 @@ impl PreparedLibraryDependencies {
             ));
         }
         for edge in features.edges() {
-            let expected =
-                fs::canonicalize(dependency_crate_root(&edge.to)).map_err(|error| invalid(error.to_string()))?;
+            let state = features
+                .package(&edge.to)
+                .ok_or_else(|| invalid("ordinary session dependency feature state is absent"))?;
+            let expected = selected_artifact_root(state)?;
             let node = if edge.from == features.root() {
                 let identity = self
                     .aliases
@@ -336,9 +352,6 @@ impl PreparedLibraryDependencies {
                     .find(|node| node.artifact.crate_root == expected)
                     .ok_or_else(|| invalid("ordinary session transitive edge has no admitted checked package"))?
             };
-            let state = features
-                .package(&edge.to)
-                .ok_or_else(|| invalid("ordinary session dependency feature state is absent"))?;
             if expected != node.artifact.crate_root
                 || state.package_name != node.metadata.manifest().name
                 || state.features.active_features.iter().cloned().collect::<Vec<_>>() != node.metadata.recipe().features
@@ -379,11 +392,7 @@ impl PreparedLibraryDependencies {
     pub fn verify(&self) -> CliResult<()> {
         for node in self.nodes.values() {
             if node.source_available
-                && !node
-                    .artifact
-                    .crate_root
-                    .parent()
-                    .and_then(std::path::Path::parent)
+                && !dependency_project_root(&node.artifact.crate_root)
                     .is_some_and(|root| root.join(oven_model::manifest::LOAF_MANIFEST_FILENAME).is_file())
             {
                 return Err(invalid(
@@ -404,6 +413,10 @@ impl PreparedLibraryDependencies {
                 return Err(invalid("ordinary library checked handoff changed after admission"));
             }
             node.metadata.verify_materialization(&node.artifact.crate_root)?;
+            node.generation.verify()?;
+            if node.source_available {
+                validate_authored_generation(&node.artifact, &node.metadata)?;
+            }
         }
         Ok(())
     }
@@ -489,6 +502,35 @@ fn retain_dependency_owners(nodes: &mut BTreeMap<String, AdmittedLibraryDependen
             .get_mut(&identity)
             .ok_or_else(|| invalid("ordinary checked dependency owner vanished"))?
             .metadata = owner;
+    }
+    Ok(())
+}
+
+/// Follow the resolver's typed source/compiled coordinate contract, including relocated installed artifacts.
+fn selected_artifact_root(state: &incan_provider::ResolvedPackageFeatureState) -> CliResult<PathBuf> {
+    let selected = if let Some(manifest) = &state.manifest {
+        dependency_crate_root(manifest.project_root())
+    } else {
+        state
+            .feature_manifest_path
+            .parent()
+            .ok_or_else(|| invalid("ordinary session compiled manifest has no artifact coordinate"))?
+            .to_path_buf()
+    };
+    fs::canonicalize(selected).map_err(|error| invalid(error.to_string()))
+}
+
+/// Observe authored source in the exact same domain that produced this checked metadata owner.
+fn validate_authored_generation(
+    artifact: &LibraryArtifactMetadata,
+    metadata: &SelectedLibraryMetadata,
+) -> CliResult<()> {
+    let root = dependency_project_root(&artifact.crate_root)
+        .ok_or_else(|| invalid("ordinary library authored generation has no project coordinate"))?;
+    if observe_library_source_digest(&root, &metadata.recipe().features)? != metadata.recipe().source_digest {
+        return Err(invalid(
+            "ordinary library checked owner differs from current authored metadata generation",
+        ));
     }
     Ok(())
 }
