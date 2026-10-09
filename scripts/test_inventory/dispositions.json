@@ -168,6 +168,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/build/library_metadata/tests.rs": {
+      "disposition": "keep",
+      "notes": "Ordinary checked-library metadata ownership: exact recipe and intent binding, sealed sidecars, promised ABI completeness, original owner retention and conflicting native output refusal. These controls remain required after SDK removal.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/build/library_outputs.rs": {
       "disposition": "unaffected",
       "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend.",
@@ -5943,6 +5951,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/library_manifest/checked_replay/tests.rs": {
+      "disposition": "keep",
+      "notes": "Checked export replay preserves canonical identities, defaults, mutability, members, bounds and partial bindings; unsupported or lossy nested facts refuse instead of fabricating checked authority.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/library_manifest/published_layout.rs": {
       "disposition": "keep",
       "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics.",
@@ -9140,6 +9156,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_rustc/src/native_loaf/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Ordinary native record and forward physical closure admission: original leases, declared aliases, installed read-only handoff, source and edge substitution refusal, current local source restoration, feature and origin authority, and authenticated empty closures. Independent of generated Rust and SDK inventories.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_rustc/src/native_test.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). A source module (the native test runner) with a `#[cfg(test)]` region, measured by that region. Reviewed at crate level.",
@@ -9396,14 +9420,6 @@
       "split_target": "",
       "twin": ""
     },
-    "loaves/oven/oven_rustc/src/sdk_closure/physical_edges/tests.rs": {
-      "disposition": "unaffected",
-      "notes": "Actual native preparation records retain exact renamed dependency owners and canonical reproduced recipes; malformed bindings, substituted owners and missing recipe facts refuse, while real local and registry preparation preserve identities and zero-compilation reuse.",
-      "owner": 1698,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
     "loaves/oven/oven_rustc/src/sdk_closure/environment.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; closure units receive Cargo's package environment from the locked binding and pinned adoption metadata, bound into the receipt.",
@@ -9423,6 +9439,14 @@
     "loaves/oven/oven_rustc/src/sdk_closure/native.rs": {
       "disposition": "unaffected",
       "notes": "Oven-native link fact source-catalog and executable-owner refusal boundaries.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/sdk_closure/physical_edges/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Actual native preparation records retain exact renamed dependency owners and canonical reproduced recipes; malformed bindings, substituted owners and missing recipe facts refuse, while real local and registry preparation preserve identities and zero-compilation reuse.",
       "owner": 1698,
       "split_required": false,
       "split_target": "",
