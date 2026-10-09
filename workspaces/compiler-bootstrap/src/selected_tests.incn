@@ -122,9 +122,9 @@ def project_test_dependency_graph(authored: Path, cache: Path, source: str) -> R
     mut projection = JsonValue.parse(original_text).map_err((error) => error.message())?
     compiler_index = compiler_selection.require("index_commit").map_err((error) => error.message())?
     test_index = projection.require("index_commit").map_err((error) => error.message())?
-    if compiler_index.expect_str().map_err((error) => error.message())? != test_index
-        .expect_str()
-        .map_err((error) => error.message())?:
+    compiler_pin = compiler_index.expect_str().map_err((error) => error.message())?
+    test_pin = test_index.expect_str().map_err((error) => error.message())?
+    if compiler_pin != test_pin:
         return Err("test dependency graph and compiler resolution use different registry revisions")
     lock = compiler_selection.require("registry_lock").map_err((error) => error.message())?
     lock_path = compiler_graph
