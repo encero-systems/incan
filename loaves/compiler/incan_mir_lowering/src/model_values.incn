@@ -17,7 +17,10 @@ def nominal_place(builder: Builder, value: &RustOperand, span: SourceSpan) -> Re
             match read.place.local_id():
                 None => return Ok(None)
                 Some(_local) => pass
-            mut place = model_place(builder.nominals, builder.locals[builder.local_offset:], read.place, span)?
+            mut place = model_place(
+                builder.nominals, builder.locals[builder.local_offset:], read.place, span,
+                builder.enums, builder.unions, builder.intrinsics,
+            )?
             place.local += builder.local_offset
             match place_type(builder.locals, place):
                 PlanType.Model(_owner, _name) => return Ok(Some(place))

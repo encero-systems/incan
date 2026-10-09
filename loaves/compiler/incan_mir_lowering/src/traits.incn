@@ -118,12 +118,14 @@ pub def method_index(
     locals: list[Local],
     argument: &ArgumentElement,
     span: SourceSpan,
+    unions: list[RustType],
+    intrinsics: list[EnumDeclaration],
 ) -> Result[int, str]:
     """Select the checked implementation using the concrete receiver's retained layout identity."""
     match target.canonical:
         None => return Err("unsupported Body IR unproven Method")
         Some(_identity) => pass
-    owner = receiver_owner(module, locals, argument, span)?
+    owner = receiver_owner(module, locals, argument, span, unions, intrinsics)?
     mut canonical = target.canonical.clone()
     for implementation in module.trait_implementations:
         if implementation.owner == module.nominal_declarations[owner].canonical and Some(implementation.method) == canonical:
@@ -133,7 +135,7 @@ pub def method_index(
         body = module.bodies[index]
         if body.canonical != canonical or len(body.params) == 0:
             continue
-        receiver = frame_type(module, body.locals[0], [])?
+        receiver = frame_type(module, body.locals[0], intrinsics)?
         if not receiver_matches(receiver, owner):
             continue
         match receiver_mode(body.locals[0].origin):
@@ -155,13 +157,15 @@ def receiver_owner(
     locals: list[Local],
     argument: &ArgumentElement,
     span: SourceSpan,
+    unions: list[RustType],
+    intrinsics: list[EnumDeclaration],
 ) -> Result[int, str]:
     """Read the concrete receiver from its native place, never from a method spelling."""
     match argument.as_one():
         Some(value) =>
             match value:
                 RustOperand.Place(read) =>
-                    place = model_place(module.nominal_declarations, locals, read.place, span)?
+                    place = model_place(module.nominal_declarations, locals, read.place, span, module.enum_declarations, unions, intrinsics)?
                     match place_type(locals, place):
                         PlanType.Model(owner, _name) => return Ok(owner)
                         _ => return Err("unsupported Body IR trait-object receiver")

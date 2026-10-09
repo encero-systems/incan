@@ -130,10 +130,12 @@ pub def method_receiver(
     index: int,
     argument: &RustArgumentElement,
     span: SourceSpan,
+    unions: list[RustType],
+    intrinsics: list[EnumDeclaration],
 ) -> Result[tuple[PlanType, RvalueKind], str]:
     """Require a single receiver argument before lowering its checked borrow in the active local frame."""
     match argument.as_one():
-        Some(value) => return receiver_borrow(module, locals, local_offset, index, value, span)
+        Some(value) => return receiver_borrow(module, locals, local_offset, index, value, span, unions, intrinsics)
         None => return Err("unsupported Body IR Method spread receiver")
 
 
@@ -144,17 +146,19 @@ def receiver_borrow(
     index: int,
     value: &RustOperand,
     span: SourceSpan,
+    unions: list[RustType],
+    intrinsics: list[EnumDeclaration],
 ) -> Result[tuple[PlanType, RvalueKind], str]:
     """Lower the checked receiver to a shared borrow or mutable reborrow without moving its owner."""
     body = module.bodies[index]
-    receiver_type = frame_type(module, body.locals[0], [])?
+    receiver_type = frame_type(module, body.locals[0], intrinsics)?
     match value:
         RustOperand.Place(read) =>
             match read.fact:
                 OwnershipFact.Borrow => pass
                 OwnershipFact.MutBorrow => pass
                 _ => return Err("unsupported Body IR Method receiver ownership")
-            mut receiver = model_place(module.nominal_declarations, locals, read.place, span)?
+            mut receiver = model_place(module.nominal_declarations, locals, read.place, span, module.enum_declarations, unions, intrinsics)?
             receiver.local += local_offset
             match receiver_type:
                 PlanType.ModelRef(_owner, _name) => return Ok((receiver_type, RvalueKind.Borrow(receiver)))

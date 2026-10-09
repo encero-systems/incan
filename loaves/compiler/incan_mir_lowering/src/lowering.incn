@@ -629,11 +629,17 @@ def scalar_rvalue(
                     Some(result) => return Ok(RvalueKind.Use(result))
                     None => pass
             if operator == BinOp.Div:
-                if not float_operand(builder.nominals, builder.locals[builder.local_offset:], left, span)? or not float_operand(
+                if not float_operand(
+                    builder.nominals, builder.locals[builder.local_offset:], left, span,
+                    builder.enums, builder.unions, builder.intrinsics,
+                )? or not float_operand(
                     builder.nominals,
                     builder.locals[builder.local_offset:],
                     right,
                     span,
+                    builder.enums,
+                    builder.unions,
+                    builder.intrinsics,
                 )?:
                     return Err("unsupported Body IR non-float true division operands")
             left_operand = scalar_operator_operand(builder, left, span)?
@@ -1631,10 +1637,14 @@ def lower_method_call(
         return Err("invalid Body IR Method missing receiver")
     if is_json_serialize_method(target):
         return lower_model_json_builtin(builder, arguments, destination, span)
-    match value_method_owner(module, target, builder.locals[builder.local_offset:], arguments[0], span)?:
+    match value_method_owner(
+        module, target, builder.locals[builder.local_offset:], arguments[0], span, builder.unions, builder.intrinsics,
+    )?:
         Some(owner) => return lower_value_enum_method(module, builder, owner, arguments, destination, span)
         None => pass
-    index = method_index(module, target, builder.locals[builder.local_offset:], arguments[0], span)?
+    index = method_index(
+        module, target, builder.locals[builder.local_offset:], arguments[0], span, builder.unions, builder.intrinsics,
+    )?
     mut body = module.bodies[index].clone()
     if len(body.type_parameters) != 0:
         closed = checked_type_arguments(builder, target.type_args)?
@@ -1650,6 +1660,8 @@ def lower_method_call(
         index,
         arguments[0],
         span,
+        builder.unions,
+        builder.intrinsics,
     )?
     reference = temporary(builder, receiver_type, span)
     builder.emit(plan_assign(reference, borrow, span))
@@ -5141,13 +5153,16 @@ def boundary_plan_operand(mut builder: Builder, value: Operand, target: PlanType
         match target:
             PlanType.Enum(owner, _name) =>
                 if owner >= len(builder.enums) and builder.intrinsics[owner - len(builder.enums)].carrier == "":
+                    mut convert = false
                     for union in builder.unions:
                         if str(union) != builder.intrinsics[owner - len(builder.enums)].source_type:
                             continue
                         members = union_members(builder.nominals, builder.enums, union, builder.intrinsics)?
-                        if PlanType.FrozenStr not in members and PlanType.String in members:
-                            text = display_plan_operand(builder, operand, span)?
-                            operand = read_place(text, true, span)
+                        convert = PlanType.FrozenStr not in members and PlanType.String in members
+                        break
+                    if convert:
+                        text = display_plan_operand(builder, operand, span)?
+                        operand = read_place(text, true, span)
             _ => pass
     operation = union_injection(
         builder.nominals,
