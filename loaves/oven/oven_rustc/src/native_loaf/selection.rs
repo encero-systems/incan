@@ -48,7 +48,7 @@ impl LocalSources {
     }
 }
 
-/// Project roots using the same command-owned local source mapping as prepared-consumer validation.
+/// Project validated roots in canonical alias order using the command-owned current source mapping.
 pub(super) fn select_roots_with_sources(
     graph: &NativeLoafGraph,
     dependencies: &[DependencySpec],
@@ -174,6 +174,7 @@ pub(super) fn select_roots_with_sources(
             }
         }
     }
+    roots.sort_by(|left, right| left.alias.cmp(&right.alias));
     Ok(roots)
 }
 
