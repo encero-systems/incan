@@ -419,6 +419,7 @@ mod tests {
     use oven_store::{OvenGeneratedProjectRequest, OvenReceipt, receipt_generated_project};
     use std::collections::BTreeMap;
     use std::fs;
+    use std::path::Path;
     use std::sync::Arc;
 
     /// Opaque artifact bytes exercise store admission and shared ownership without launching a native compiler.
