@@ -1,0 +1,126 @@
+"""Exercise native unit feature admission, inventory, invalidation and exact restoration through the public CLI."""
+
+from rust::std::env import args
+from rust::std::process import Command, exit
+from std.fs import Path
+from std.json import JsonValue
+
+
+def invoke(root: Path, compiler: str, rustc: str, name: str, guarded: bool) -> Result[bool, str]:
+    """Retain each child result; a reuse guard must refuse before any replacement test compilation."""
+    output_path = root.joinpath("output")
+    fixtures = root.joinpath("fixtures")
+    stdout_path = root.joinpath(name + ".stdout")
+    stderr_path = root.joinpath(name + ".stderr")
+    report_path = root.joinpath("output/compiler-suite-report.json")
+    saved_report = root.joinpath(name + ".report.json")
+    native_path = root.joinpath("output/native-libtest")
+    saved_native = root.joinpath(name + ".native-libtest")
+    mut command = Command.new(compiler)
+    command.arg("oven").arg("compiler-native-tests")
+    command.arg("--compiler-root").arg(root.0)
+    command.arg("--target").arg("owner/tests/root.rs")
+    command.arg("--output").arg(output_path.0)
+    command.arg("--explicit-bake-workspace").arg(fixtures.0)
+    command.arg("--rustc").arg(rustc)
+    if guarded:
+        command.env("INCAN_TEST_REQUIRE_STORED_NATIVE_REUSE", "1")
+    output = command.output().map_err((error) => str(error))?
+    stdout_path.write_bytes(output.stdout).map_err((error) => error.message())?
+    stderr_path.write_bytes(output.stderr).map_err((error) => error.message())?
+    succeeded = output.status.success()
+    if succeeded:
+        report = report_path.read_bytes().map_err((error) => error.message())?
+        saved_report.write_bytes(report).map_err((error) => error.message())?
+        native = native_path.read_bytes().map_err((error) => error.message())?
+        saved_native.write_bytes(native).map_err((error) => error.message())?
+    return Ok(succeeded)
+
+
+def check_report(root: Path, count: int, reused: bool) -> Result[None, str]:
+    """Assert the real native inventory and stored-output reuse decision, rather than source-level test counts."""
+    text = root.joinpath("output/compiler-suite-report.json").read_text("utf-8", "strict").map_err((error) => error.message())?
+    report = JsonValue.parse(text).map_err((error) => error.message())?
+    succeeded = report.require("success").map_err((error) => error.message())?
+    if not succeeded.expect_bool().map_err((error) => error.message())?:
+        return Err("native report did not pass")
+    counts = report.require("case_counts").map_err((error) => error.message())?
+    passed = counts.require("passed").map_err((error) => error.message())?
+    if passed.expect_int().map_err((error) => error.message())? != count:
+        return Err("native inventory did not preserve the declared feature-gated test")
+    reuse = report.require("test_binary_reused").map_err((error) => error.message())?
+    if reuse.expect_bool().map_err((error) => error.message())? != reused:
+        return Err("native test reuse decision differs from the required work")
+    return Ok(None)
+
+
+def exercise(compiler: str, rustc: str, root: Path) -> Result[None, str]:
+    """Default features execute two cases; removing the feature executes one and restoration reuses original bytes."""
+    tests = root.joinpath("owner/tests")
+    tests.mkdir(true, true).map_err((error) => error.message())?
+    source = "#[test]\nfn always_present() {}\n#[cfg(feature = \"marker\")]\n#[test]\nfn feature_present() {}\n"
+    tests.joinpath("root.rs").write_text(source, "utf-8", "strict", None).map_err((error) => error.message())?
+    enabled = "[project]\nname = \"native_feature_control\"\nversion = \"0.1.0\"\n[project.features]\ndefault = [\"marker\"]\nmarker = []\n"
+    disabled = "[project]\nname = \"native_feature_control\"\nversion = \"0.1.0\"\n[project.features]\ndefault = []\nmarker = []\n"
+    declaration = tests.joinpath("root.loaf.toml")
+    declaration.write_text(enabled, "utf-8", "strict", None).map_err((error) => error.message())?
+    if not invoke(root, compiler, rustc, "cold", false)?:
+        return Err("cold native test compilation failed")
+    check_report(root, 2, false)?
+    native = root.joinpath("output/native-libtest")
+    original = native.read_bytes().map_err((error) => error.message())?
+    if not invoke(root, compiler, rustc, "unchanged", true)?:
+        return Err("unchanged native unit did not reuse its admitted output")
+    check_report(root, 2, true)?
+    invalid = "[project]\nname = \"native_feature_control\"\nversion = \"0.1.0\"\n[project.features]\ndefault = [\"missing\"]\nmarker = []\n"
+    declaration.write_text(invalid, "utf-8", "strict", None).map_err((error) => error.message())?
+    if invoke(root, compiler, rustc, "invalid-feature", false)?:
+        return Err("unknown unit feature was silently accepted")
+    diagnostic = root.joinpath("invalid-feature.stderr").read_text("utf-8", "strict").map_err((error) => error.message())?
+    if "unknown package feature" not in diagnostic:
+        return Err("invalid unit feature did not fail through the package feature authority")
+    preserved_invalid = native.read_bytes().map_err((error) => error.message())?
+    if preserved_invalid != original:
+        return Err("invalid feature selection changed the admitted native output")
+    declaration.write_text(disabled, "utf-8", "strict", None).map_err((error) => error.message())?
+    if invoke(root, compiler, rustc, "changed-guard", true)?:
+        return Err("changed unit feature selection reused stale native output")
+    preserved = native.read_bytes().map_err((error) => error.message())?
+    if preserved != original:
+        return Err("guarded refusal changed the prior native output")
+    if not invoke(root, compiler, rustc, "changed", false)?:
+        return Err("changed feature selection did not compile")
+    check_report(root, 1, false)?
+    declaration.write_text(enabled, "utf-8", "strict", None).map_err((error) => error.message())?
+    if not invoke(root, compiler, rustc, "restored", true)?:
+        return Err("exact feature restoration did not reuse its original native output")
+    check_report(root, 2, true)?
+    restored = native.read_bytes().map_err((error) => error.message())?
+    if restored != original:
+        return Err("feature restoration did not recover the original native bytes")
+    println("native unit feature control passed: two default cases, one changed case, exact restored output")
+    return Ok(None)
+
+
+def main() -> None:
+    """Accept an explicit compiler, pinned Rustc and empty task-owned probe directory."""
+    mut arguments: list[str] = []
+    for argument in args():
+        arguments.append(argument)
+    if len(arguments) != 4:
+        println("usage: native_test_controls COMPILER RUSTC EMPTY_ROOT")
+        exit(2)
+    root = Path(arguments[3]).absolute().map_err((error) => error.message())
+    match root:
+        Err(error) =>
+            println(error)
+            exit(1)
+        Ok(path) =>
+            if path.exists():
+                println("native test control requires a new task-owned directory")
+                exit(2)
+            match exercise(arguments[1], arguments[2], path):
+                Ok(_) => return
+                Err(error) =>
+                    println(error)
+                    exit(1)
