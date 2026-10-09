@@ -23,6 +23,9 @@ const INDEX_COMMIT: &str = "6ec35e0d7e2d202496e2f7a108bb5111b6a9ff87";
 mod environment;
 mod local;
 mod native;
+mod physical_edges;
+
+pub use physical_edges::SdkPhysicalNativeEdge;
 
 pub use local::{
     LocalFacetSelection, compile_local_sdk_facet, compile_local_sdk_facet_for_target, compile_local_sdk_facets,
@@ -277,7 +280,7 @@ pub fn prepare_closure(request: &ClosureCompileRequest<'_>) -> Result<SdkCompile
 
 /// Compile independent branches in dependency order, retaining every unavailable binding in the report.
 fn compile_units(units: &[PreparedUnit], context: &CompileContext<'_>) -> Result<SdkCompiledClosure, Error> {
-    let mut selected_units = Vec::new();
+    let mut selected_units: Vec<SdkCompiledUnit> = Vec::new();
     let mut report = SdkClosureReport::default();
     let mut pending: BTreeSet<usize> = (0..units.len()).collect();
     let mut artifacts = BTreeMap::new();
@@ -331,7 +334,18 @@ fn compile_units(units: &[PreparedUnit], context: &CompileContext<'_>) -> Result
                 })
                 .collect();
             match compile_unit(unit, context, externs, searches) {
-                Ok((path, reused, owner)) => {
+                Ok((path, reused, owner, reproduced_receipt)) => {
+                    let selected_dependencies = edges
+                        .iter()
+                        .map(|(alias, dependency)| {
+                            let selected = inspection_indices
+                                .get(dependency)
+                                .and_then(|index| selected_units.get(*index))
+                                .ok_or("compiled dependency has no retained native owner")?;
+                            Ok((alias.as_str(), selected))
+                        })
+                        .collect::<Result<Vec<_>, Error>>()?;
+                    let physical_edges = physical_edges::capture(&owner, &reproduced_receipt, &selected_dependencies)?;
                     let dependencies = edges
                         .iter()
                         .map(|(name, dependency)| {
@@ -348,6 +362,8 @@ fn compile_units(units: &[PreparedUnit], context: &CompileContext<'_>) -> Result
                         output: path.clone(),
                         owner,
                         inspection,
+                        physical_edges,
+                        reproduced_receipt,
                     });
                     artifacts.insert(index, path);
                     closures.insert(index, closure);
@@ -678,7 +694,7 @@ fn compile_unit(
     context: &CompileContext<'_>,
     externs: Vec<(String, PathBuf)>,
     searches: Vec<PathBuf>,
-) -> Result<(PathBuf, bool, OvenStoreExecutionPayload), Error> {
+) -> Result<(PathBuf, bool, OvenStoreExecutionPayload, oven_store::OvenReceipt), Error> {
     let _source_lease = unit
         ._source_lease
         .as_ref()
@@ -746,7 +762,7 @@ fn compile_unit(
         .to_string();
     let domain = format!("sdk-source-unit-{}", unit.binding.domain);
     if let Some(owner) = select_native_unit(store, &receipt, &domain)? {
-        return Ok((owner.artifact_root.join(&relative), true, owner));
+        return Ok((owner.artifact_root.join(&relative), true, owner, receipt));
     }
     let request = OvenTrustedDirectRustcTargetRequest {
         receipt: &receipt,
@@ -767,8 +783,8 @@ fn compile_unit(
     } else {
         bake_trusted_direct_rustc_library(&request)?
     };
-    let owner = publish_unit(unit, store, receipt, domain, result.output, &relative)?;
-    Ok((owner.artifact_root.join(relative), result.reused, owner))
+    let owner = publish_unit(unit, store, receipt.clone(), domain, result.output, &relative)?;
+    Ok((owner.artifact_root.join(relative), result.reused, owner, receipt))
 }
 
 /// Reuse an exact native unit locally or import its verified receipt-bound bytes from configured mirrors.
@@ -1212,6 +1228,10 @@ pub struct SdkCompiledUnit {
     owner: OvenStoreExecutionPayload,
     /// Frozen direct-inspection record using the same active edges, features and facts as compilation.
     inspection: serde_json::Value,
+    /// Exact physical inputs checked against the source-current reproduced compilation recipe.
+    physical_edges: Vec<SdkPhysicalNativeEdge>,
+    /// Exact source-current recipe reproduced on both compile and reuse paths; Engine owners do not retain it.
+    reproduced_receipt: oven_store::OvenReceipt,
 }
 
 /// Portable coordinates of one receipt-bound native SDK output inside its retained store entry.
@@ -1231,6 +1251,14 @@ pub struct SdkNativeArtifact {
 }
 
 impl SdkCompiledUnit {
+    /// Borrow verified physical inputs; an empty slice is proven by the reproduced recipe with no extern inputs.
+    ///
+    /// These producer records are not a published graph authority and do not authorize consumer closure selection
+    /// until a source-generation-bound graph seals them (#1337, #1698).
+    pub fn physical_edges(&self) -> &[SdkPhysicalNativeEdge] {
+        &self.physical_edges
+    }
+
     /// Export the native output's admitted coordinates without rereading its source or native bytes.
     pub fn native_artifact(&self) -> Result<SdkNativeArtifact, Error> {
         let relative = self
