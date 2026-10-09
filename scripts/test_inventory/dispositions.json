@@ -160,6 +160,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/build/library_dependencies/tests.rs": {
+      "disposition": "keep",
+      "notes": "Ordinary checked dependency admission preserves original metadata and generation owners, exact aliases, features, namespace issuers and complete checked dependency closure.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/build/library_exports.rs": {
       "disposition": "keep",
       "notes": "library re-export resolution and Rust ABI query paths from checked declarations.",
@@ -188,6 +196,14 @@
       "disposition": "unaffected",
       "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/build/library_project/metadata_replay/lock_transition/tests.rs": {
+      "disposition": "keep",
+      "notes": "Exact canonical lock publication re-seals unchanged checked outputs while preserving source, feature, Rust and writer authority, including workspace locks outside member source trees.",
+      "owner": 1698,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -9180,6 +9196,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_rustc/src/native_loaf/producer/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Ordinary retained native source and fact projection verifies original owners, exact physical aliases, generated inputs and read-only installed admission; it grants no macro execution or semantic-world completeness.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_rustc/src/native_loaf/tests.rs": {
       "disposition": "unaffected",
       "notes": "Ordinary native record and forward physical closure admission: original leases, declared aliases, installed read-only handoff, source and edge substitution refusal, current local source restoration, feature and origin authority, and authenticated empty closures. Independent of generated Rust and SDK inventories.",
@@ -9447,6 +9471,14 @@
     "loaves/oven/oven_rustc/src/sdk_closure/environment.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; closure units receive Cargo's package environment from the locked binding and pinned adoption metadata, bound into the receipt.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/sdk_closure/index_batch/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Pinned registry-index transport preserves exact blob bytes and pin/path authority, bounds Git subprocess work, and reaps command-owned children. These controls remain required for ordinary native preparation.",
       "owner": 1698,
       "split_required": false,
       "split_target": "",
