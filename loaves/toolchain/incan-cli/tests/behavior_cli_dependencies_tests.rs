@@ -102,6 +102,12 @@ fn dev7_dependency_enum_reexports() -> CaseResult {
     assert_fixture_holds(AREA, "dev7_dependency_enum_reexports")
 }
 
+/// Runs the fixture `dev7_nested_carrier_ownership`.
+#[test]
+fn dev7_nested_carrier_ownership() -> CaseResult {
+    assert_fixture_holds(AREA, "dev7_nested_carrier_ownership")
+}
+
 /// Runs the fixture `fallible_iterator_chain_without_trait_import`.
 #[test]
 fn fallible_iterator_chain_without_trait_import() -> CaseResult {
