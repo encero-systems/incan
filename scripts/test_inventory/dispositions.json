@@ -6515,7 +6515,7 @@
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route.",
       "owner": 1561,
-      "split_required": false,
+      "split_required": true,
       "split_target": "",
       "twin": ""
     },
@@ -9180,6 +9180,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_rustc/src/plan/shared.rs": {
+      "disposition": "unaffected",
+      "notes": "Command-held native owners retain exact original leases through pruning, refuse missing/substituted owners and changed witnesses, and preserve independent acquisition for other plan domains. Controls use real store publication without Cargo.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_rustc/src/rustc/compile_environment.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; the validated compile environment envelope accepts Cargo's package metadata values for closure units.",
@@ -11585,14 +11593,6 @@
       "disposition": "unaffected",
       "notes": "Oven tools command; the build_run hit is a Cargo config hint, not an Incan build.",
       "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/oven/oven_rustc/src/plan/shared.rs": {
-      "disposition": "unaffected",
-      "notes": "Command-held native owners retain exact original leases through pruning, refuse missing/substituted owners and changed witnesses, and preserve independent acquisition for other plan domains. Controls use real store publication without Cargo.",
-      "owner": 1698,
       "split_required": false,
       "split_target": "",
       "twin": ""
