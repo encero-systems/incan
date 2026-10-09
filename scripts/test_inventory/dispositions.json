@@ -168,6 +168,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/build/library_metadata/requirements/tests.rs": {
+      "disposition": "keep",
+      "notes": "Portable checked requirement replay preserves exports and current bindings and refuses incomplete planning authority.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/build/library_metadata/tests.rs": {
       "disposition": "keep",
       "notes": "Ordinary checked-library metadata ownership: exact recipe and intent binding, sealed sidecars, promised ABI completeness, original owner retention and conflicting native output refusal. These controls remain required after SDK removal.",
@@ -180,6 +188,14 @@
       "disposition": "unaffected",
       "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/build/library_project/metadata_replay/tests.rs": {
+      "disposition": "keep",
+      "notes": "Source-current metadata preflight binds raw source, declarations and external Rust without entering the Incan frontend.",
+      "owner": 1698,
       "split_required": false,
       "split_target": "",
       "twin": ""
