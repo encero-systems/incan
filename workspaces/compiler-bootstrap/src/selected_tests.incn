@@ -45,8 +45,9 @@ pub def run_selected_tests(root: Path, compiler: Path, source_text: str, exact: 
     command.arg("--explicit-bake-workspace").arg(cache.joinpath("fixtures").0)
     command.arg("--target").arg(source.0)
     command.arg("--output").arg(prepared_text)
-    if exact != "":
-        command.arg("--exact").arg(exact)
+    for name in exact.split(" "):
+        if name != "":
+            command.arg("--exact").arg(name)
     output = command.output().map_err((error) => str(error))?
     evidence.joinpath("command.stdout").write_bytes(output.stdout).map_err((error) => error.message())?
     evidence.joinpath("command.stderr").write_bytes(output.stderr).map_err((error) => error.message())?
@@ -80,7 +81,10 @@ def native_input(name: str, previous: str) -> Result[str, str]:
 
 def prepare_declared_native_root(root: Path, source: str, cache: Path) -> Result[JsonValue, str]:
     """Select the authored native graph; the native runner prepares Loafs without publishing the standard library."""
-    text = root.joinpath("workspaces/compiler-bootstrap/fixture-preparers.json").read_text("utf-8", "strict").map_err((error) => error.message())?
+    text = root
+        .joinpath("workspaces/compiler-bootstrap/fixture-preparers.json")
+        .read_text("utf-8", "strict")
+        .map_err((error) => error.message())?
     declaration = JsonValue.parse(text).map_err((error) => error.message())?
     schema = declaration.require("schema").map_err((error) => error.message())?
     if schema.expect_str().map_err((error) => error.message())? != "incan.compiler-fixture-preparers/1":
@@ -93,7 +97,10 @@ def prepare_declared_native_root(root: Path, source: str, cache: Path) -> Result
     mut graph_text = native_input("INCAN_NATIVE_COMPILER_GRAPH", "INCAN_SDK_NATIVE_COMPILER_GRAPH")?
     if "dependency_graph" in configuration.keys():
         graph_value = configuration.require("dependency_graph").map_err((error) => error.message())?
-        graph = root.joinpath(graph_value.expect_str().map_err((error) => error.message())?).resolve().map_err((error) => error.message())?
+        graph = root
+            .joinpath(graph_value.expect_str().map_err((error) => error.message())?)
+            .resolve()
+            .map_err((error) => error.message())?
         RustPath.new(graph.0).strip_prefix(RustPath.new(root.0)).map_err((error) => str(error))?
         graph_text = graph.0
         if "use_compiler_resolution" in configuration.keys():
@@ -106,24 +113,36 @@ def prepare_declared_native_root(root: Path, source: str, cache: Path) -> Result
 
 def project_test_dependency_graph(authored: Path, cache: Path, source: str) -> Result[str, str]:
     """Retain the compiler's resolved registry units and codegen while selecting the root's authored local variants."""
-    compiler_graph = Path(native_input("INCAN_NATIVE_COMPILER_GRAPH", "INCAN_SDK_NATIVE_COMPILER_GRAPH")?).resolve().map_err((error) => error.message())?
+    compiler_graph = Path(native_input("INCAN_NATIVE_COMPILER_GRAPH", "INCAN_SDK_NATIVE_COMPILER_GRAPH")?)
+        .resolve()
+        .map_err((error) => error.message())?
     compiler_text = compiler_graph.read_text("utf-8", "strict").map_err((error) => error.message())?
     compiler_selection = JsonValue.parse(compiler_text).map_err((error) => error.message())?
     original_text = authored.read_text("utf-8", "strict").map_err((error) => error.message())?
     mut projection = JsonValue.parse(original_text).map_err((error) => error.message())?
     compiler_index = compiler_selection.require("index_commit").map_err((error) => error.message())?
     test_index = projection.require("index_commit").map_err((error) => error.message())?
-    if compiler_index.expect_str().map_err((error) => error.message())? != test_index.expect_str().map_err((error) => error.message())?:
+    if compiler_index.expect_str().map_err((error) => error.message())? != test_index
+        .expect_str()
+        .map_err((error) => error.message())?:
         return Err("test dependency graph and compiler resolution use different registry revisions")
     lock = compiler_selection.require("registry_lock").map_err((error) => error.message())?
-    lock_path = compiler_graph.parent().joinpath(lock.expect_str().map_err((error) => error.message())?).resolve().map_err((error) => error.message())?
+    lock_path = compiler_graph
+        .parent()
+        .joinpath(lock.expect_str().map_err((error) => error.message())?)
+        .resolve()
+        .map_err((error) => error.message())?
     projection.set("registry_lock", JsonValue.string(lock_path.0)).map_err((error) => error.message())?
     original_facets = projection.require("facets").map_err((error) => error.message())?
     mut facets: list[JsonValue] = []
     for facet in original_facets.expect_array().map_err((error) => error.message())?:
         mut selected = facet.clone()
         project = selected.require("project").map_err((error) => error.message())?
-        path = authored.parent().joinpath(project.expect_str().map_err((error) => error.message())?).resolve().map_err((error) => error.message())?
+        path = authored
+            .parent()
+            .joinpath(project.expect_str().map_err((error) => error.message())?)
+            .resolve()
+            .map_err((error) => error.message())?
         selected.set("project", JsonValue.string(path.0)).map_err((error) => error.message())?
         facets.append(selected)
     projection.set("facets", JsonValue.array(facets)).map_err((error) => error.message())?
