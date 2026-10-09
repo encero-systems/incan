@@ -276,7 +276,7 @@ pub struct PreparedRustInspectWorkspace {
     _source_loaf: Option<OvenToolchainLoaf>,
     _project_source_authorities: Option<Arc<PreparedOvenProjectRegistrySourceAuthorities>>,
     /// Native SDK leases protect the frozen graph's immutable source roots throughout inspection.
-    _sdk_native: Vec<oven_store::store::OvenStoreExecutionPayload>,
+    _sdk_native: Vec<Arc<oven_store::store::OvenStoreExecutionPayload>>,
 }
 
 /// Command-local source authority shared by every parallel native-test unit.
@@ -285,6 +285,8 @@ pub struct PreparedRustInspectWorkspace {
 /// batch performs only an in-memory exact-root check and projects the one already validated source catalog and lock.
 #[cfg(feature = "rust_inspect")]
 pub struct PreparedOvenProjectRegistrySourceAuthorities {
+    /// Native admission shared with the test command that prepared this exact source authority.
+    native_sdk_context: Option<Arc<crate::build::NativeSdkCommandContext>>,
     authority: OvenLoadedProjectInspectionAuthority,
     sources: Vec<::rust_inspect::OvenInspectionRegistrySource>,
     registry_lock_source: Option<PathBuf>,

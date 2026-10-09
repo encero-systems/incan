@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::build::{OvenDirectRustcPlanPreparation, OvenToolchainMaterialization};
 use crate::error::{CliError, CliResult};
@@ -11,6 +12,119 @@ use oven_rustc::rustc::{
     OvenRustcSourceSearchClosure, OvenRustcSupportingArtifact,
 };
 use oven_store::store::{OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore};
+
+/// One command's admitted native SDK publication and original execution leases (#1698).
+///
+/// Canonical selectors remain the only admission path. The complete owner set is retained; catalog dependency edges
+/// are not authenticated by identity_binding and cannot select a smaller closure. Every handoff revalidates the
+/// descriptors and receipt witnesses rather than treating this context as a cached authorization boolean.
+pub struct NativeSdkCommandContext {
+    inventory: Arc<incan_provider::SdkInventory>,
+    selection: incan_provider::sdk_native::SdkNativeSelection,
+    shared_owners: oven_rustc::plan::shared::OvenSharedNativeOwners,
+}
+
+impl NativeSdkCommandContext {
+    /// Admit a published native SDK once; legacy inventories without native coordinates keep their existing route.
+    pub fn discover() -> CliResult<Option<Arc<Self>>> {
+        let Some(inventory) = incan_provider::inventory::discover_or_reuse_published_sdk_inventory()? else {
+            return Ok(None);
+        };
+        if !inventory.root.join(".sealed-native-units.json").is_file() {
+            return Ok(None);
+        }
+        Self::from_inventory(inventory).map(Some)
+    }
+
+    /// Bind one explicitly selected inventory to the canonical native descriptors and retained owner index.
+    pub fn from_inventory(inventory: Arc<incan_provider::SdkInventory>) -> CliResult<Arc<Self>> {
+        let started = std::time::Instant::now();
+        let selection = incan_provider::sdk_native::select_sdk_native_artifacts(&inventory.root)?;
+        let shared_owners = oven_rustc::plan::shared::OvenSharedNativeOwners::from_selected(&selection.owners)
+            .map_err(crate::error::oven_plan_error)?;
+        selection.verify()?;
+        tracing::debug!(
+            native_owner_acquisitions = selection.owners.len(),
+            elapsed_ms = started.elapsed().as_millis(),
+            "native SDK command admission completed"
+        );
+        Ok(Arc::new(Self {
+            inventory,
+            selection,
+            shared_owners,
+        }))
+    }
+
+    /// Revalidate metadata, original payloads and witness bytes before projecting another physical consumer.
+    pub fn verify(&self) -> CliResult<()> {
+        self.selection.verify().map_err(Into::into)
+    }
+
+    /// Borrow the canonical receipt bytes captured by the same admission as this command's native owners.
+    pub fn receipt_catalog(&self) -> CliResult<&[u8]> {
+        self.verify()?;
+        Ok(self.selection.receipt_catalog())
+    }
+
+    /// Report the actual number of owners acquired by this context's canonical admission.
+    pub fn admitted_owner_count(&self) -> usize {
+        self.selection.owners.len()
+    }
+
+    /// Project runtime identity through the existing source-bound engine from this exact retained selection.
+    pub(crate) fn runtime_inputs(
+        &self,
+        providers: &[String],
+        facets: &[String],
+        dependencies: &[DependencySpec],
+    ) -> CliResult<BTreeMap<String, String>> {
+        super::native_runtime_inputs::runtime_inputs(
+            &self.selection,
+            self.selection.receipt_catalog(),
+            providers,
+            facets,
+            dependencies,
+        )
+    }
+
+    /// Install the existing frozen SDK inspection projection while sharing its command-admitted source owners.
+    #[cfg(feature = "rust_inspect")]
+    pub(crate) fn install_inspection_authority(
+        &self,
+        destination: &Path,
+        dependencies: &[DependencySpec],
+    ) -> CliResult<Option<Vec<Arc<oven_store::store::OvenStoreExecutionPayload>>>> {
+        crate::sdk_closure::install_sdk_inspection_authority_from_selection(
+            &self.inventory.root,
+            destination,
+            dependencies,
+            &self.inventory,
+            &self.selection,
+        )
+    }
+
+    /// Require a receipt's portable catalog binding to name this exact command-admitted publication.
+    fn verify_receipt(&self, receipt: &oven_store::OvenReceipt) -> CliResult<()> {
+        self.verify()?;
+        if let Some(expected) = receipt.sources.build_unit_inputs.get("sdk-native-closure")
+            && *expected != oven_store::digest_bytes(self.selection.receipt_catalog())
+        {
+            return Err(CliError::failure(
+                "receipt-selected native SDK differs from command admission",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Borrow the exact retained owner index after checking the caller's catalog binding and current witnesses.
+    pub(crate) fn owners_for_receipt(
+        &self,
+        receipt: &oven_store::OvenReceipt,
+    ) -> CliResult<&oven_rustc::plan::shared::OvenSharedNativeOwners> {
+        self.verify_receipt(receipt)?;
+        Ok(&self.shared_owners)
+    }
+}
 
 /// Keep project dependency roots separate from registry capabilities supplied by the receipt-selected SDK.
 ///
@@ -26,26 +140,44 @@ pub(crate) fn project_dependencies_without_sdk_registry_inputs(
     if dependencies.is_empty() {
         return Ok(Vec::new());
     }
+    if receipt
+        .and_then(|receipt| receipt.sources.build_unit_inputs.get("sdk-native-closure"))
+        .is_none()
+    {
+        return Ok(dependencies.to_vec());
+    }
+    let context = NativeSdkCommandContext::discover()?;
+    project_dependencies_without_sdk_registry_inputs_with_context(dependencies, receipt, context.as_deref())
+}
+
+/// Reuse one command's native admission while retaining the existing declaration coverage predicate.
+pub(crate) fn project_dependencies_without_sdk_registry_inputs_with_context(
+    dependencies: &[DependencySpec],
+    receipt: Option<&oven_store::OvenReceipt>,
+    context: Option<&NativeSdkCommandContext>,
+) -> CliResult<Vec<DependencySpec>> {
+    if dependencies.is_empty() {
+        return Ok(Vec::new());
+    }
     let Some(expected) = receipt.and_then(|receipt| receipt.sources.build_unit_inputs.get("sdk-native-closure")) else {
         return Ok(dependencies.to_vec());
     };
-    let inventory = incan_provider::inventory::discover_or_reuse_published_sdk_inventory()?.ok_or_else(|| {
+    let context = context.ok_or_else(|| {
         CliError::failure("receipt-selected native SDK is unavailable; prepare-sdk must restore its authority")
     })?;
-    let bytes = std::fs::read(inventory.root.join(".sealed-native-receipts.json"))
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    let catalog: BTreeMap<String, String> =
-        serde_json::from_slice(&bytes).map_err(|error| CliError::failure(error.to_string()))?;
-    let canonical = serde_json::to_vec(&catalog).map_err(|error| CliError::failure(error.to_string()))?;
-    if oven_store::digest_bytes(&canonical) != *expected {
+    context.verify()?;
+    if oven_store::digest_bytes(context.selection.receipt_catalog()) != *expected {
         return Err(CliError::failure(
             "project authority's native SDK receipt catalog is stale; rerun oven bake",
         ));
     }
-    let selection = incan_provider::sdk_native::select_sdk_native_artifacts(&inventory.root)?;
     let mut project = Vec::new();
     for dependency in dependencies {
-        if incan_provider::sdk_native::sdk_native_dependency_is_covered(&inventory, &selection, dependency)? {
+        if incan_provider::sdk_native::sdk_native_dependency_is_covered(
+            &context.inventory,
+            &context.selection,
+            dependency,
+        )? {
             continue;
         }
         project.push(dependency.clone());
@@ -55,35 +187,48 @@ pub(crate) fn project_dependencies_without_sdk_registry_inputs(
 
 /// Select a published SDK-only closure without letting a native SDK consumer enter compatibility publication.
 ///
-/// Every native unit is reacquired under its original lease, and every provider output is validated against its
+/// Every native unit is admitted under its original lease, and every provider output is validated against its
 /// native descriptor. Uncovered project dependencies refuse here rather than invoking a resolver or Cargo reader.
 pub(crate) fn select_native_sdk_plan(
     store: &OvenStore,
     receipt: &oven_store::OvenReceipt,
     dependencies: &[DependencySpec],
 ) -> CliResult<Option<OvenDirectRustcPlanPreparation>> {
-    let Some(inventory) = incan_provider::inventory::discover_or_reuse_published_sdk_inventory()? else {
+    let context = NativeSdkCommandContext::discover()?;
+    select_native_sdk_plan_with_context(store, receipt, dependencies, context.as_deref())
+}
+
+/// Assemble the canonical SDK-only plan from one admitted command context without reacquiring its native owners.
+pub(crate) fn select_native_sdk_plan_with_context(
+    store: &OvenStore,
+    receipt: &oven_store::OvenReceipt,
+    dependencies: &[DependencySpec],
+    context: Option<&NativeSdkCommandContext>,
+) -> CliResult<Option<OvenDirectRustcPlanPreparation>> {
+    let Some(context) = context else {
         return Ok(None);
     };
-    if !inventory.root.join(".sealed-native-units.json").is_file() {
-        return Ok(None);
-    }
-    let selection = incan_provider::sdk_native::select_sdk_native_artifacts(&inventory.root)?;
+    context.verify_receipt(receipt)?;
+    let inventory = &context.inventory;
+    let selection = &context.selection;
     for dependency in dependencies {
-        if !incan_provider::sdk_native::sdk_native_dependency_is_covered(&inventory, &selection, dependency)? {
+        if !incan_provider::sdk_native::sdk_native_dependency_is_covered(inventory, selection, dependency)? {
             return Err(CliError::failure(format!(
                 "native SDK plan does not cover dependency `{}`; publish its own native authority first",
                 dependency.crate_name
             )));
         }
     }
-    if let Some(plan) =
-        super::plan_selection::select_published_project_plan(store, receipt, OvenToolchainMaterialization::Reused)?
-    {
+    if let Some(plan) = super::plan_selection::select_published_project_plan_with_native_owners(
+        store,
+        receipt,
+        OvenToolchainMaterialization::Reused,
+        Some(&context.shared_owners),
+    )? {
         return Ok(Some(plan));
     }
-    let (mut manifest, mut files) = native_unit_manifest(receipt, &selection, dependencies)?;
-    add_native_providers(&inventory, &mut manifest, &mut files)?;
+    let (mut manifest, mut files) = native_unit_manifest(receipt, selection, dependencies)?;
+    add_native_providers(inventory, &mut manifest, &mut files)?;
     seal_source_roles(receipt, &mut manifest);
     manifest
         .validate_shape(&receipt.intent)
@@ -121,7 +266,12 @@ pub(crate) fn select_native_sdk_plan(
             materialized_directories: Vec::new(),
         })
         .map_err(|error| CliError::failure(error.to_string()))?;
-    super::plan_selection::select_published_project_plan(store, receipt, OvenToolchainMaterialization::Reused)
+    super::plan_selection::select_published_project_plan_with_native_owners(
+        store,
+        receipt,
+        OvenToolchainMaterialization::Reused,
+        Some(&context.shared_owners),
+    )
 }
 
 /// Name admitted native members in distinct logical unit directories without copying their bytes.
@@ -254,19 +404,19 @@ fn native_unit_root_aliases(
     Ok(aliases.into_iter().collect())
 }
 
-/// Validate a registry extern by exact native output bytes and SDK binding, without a Cargo source catalog.
-///
-/// A miss preserves the caller's existing registry authority checks. This grant applies only to the SDK's unique
-/// covered version/feature/domain binding and its admitted output digest, never merely to a same-named crate.
-pub(crate) fn native_registry_dependency_is_selected(dependency: &DependencySpec, artifact: &Path) -> CliResult<bool> {
-    let Some(inventory) = incan_provider::inventory::discover_or_reuse_published_sdk_inventory()? else {
+/// Check one declared extern against the command's retained SDK output and existing version/feature predicate.
+pub(crate) fn native_registry_dependency_is_selected_with_context(
+    dependency: &DependencySpec,
+    artifact: &Path,
+    context: Option<&NativeSdkCommandContext>,
+) -> CliResult<bool> {
+    let Some(context) = context else {
         return Ok(false);
     };
-    if !inventory.root.join(".sealed-native-units.json").is_file() {
-        return Ok(false);
-    }
-    let selection = incan_provider::sdk_native::select_sdk_native_artifacts(&inventory.root)?;
-    if !incan_provider::sdk_native::sdk_native_dependency_is_covered(&inventory, &selection, dependency)? {
+    context.verify()?;
+    let inventory = &context.inventory;
+    let selection = &context.selection;
+    if !incan_provider::sdk_native::sdk_native_dependency_is_covered(inventory, selection, dependency)? {
         return Ok(false);
     }
     let digest =

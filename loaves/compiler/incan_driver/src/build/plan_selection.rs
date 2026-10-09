@@ -7,7 +7,7 @@ use crate::backend::ProjectGenerator;
 use crate::build::output_selection::baked_project_owner_identity;
 use crate::build::oven_project::{
     bake_generated_project_compatibility_plan, project_extension_base_loaf, remove_completed_generated_cargo_lock,
-    select_oven_direct_rustc_plan, select_oven_direct_rustc_plan_with_materialization,
+    select_oven_direct_rustc_plan,
 };
 use crate::build::package_loafs::import_checked_packaged_library_loaf;
 use crate::build::plan_authority::CallerOwnedProviderRegistryClosure;
@@ -70,6 +70,22 @@ pub fn canonical_project_inspection_dependencies(
     resolved: &ResolvedDependencies,
     native_sdk_receipt: Option<&oven_store::OvenReceipt>,
 ) -> CliResult<(Vec<DependencySpec>, Vec<DependencySpec>)> {
+    let context = if native_sdk_receipt
+        .is_some_and(|receipt| receipt.sources.build_unit_inputs.contains_key("sdk-native-closure"))
+    {
+        super::NativeSdkCommandContext::discover()?
+    } else {
+        None
+    };
+    canonical_project_inspection_dependencies_with_native_sdk(resolved, native_sdk_receipt, context.as_deref())
+}
+
+/// Filter normal and development roots through the same receipt-bound command admission.
+pub fn canonical_project_inspection_dependencies_with_native_sdk(
+    resolved: &ResolvedDependencies,
+    native_sdk_receipt: Option<&oven_store::OvenReceipt>,
+    context: Option<&super::NativeSdkCommandContext>,
+) -> CliResult<(Vec<DependencySpec>, Vec<DependencySpec>)> {
     let promoted = promoted_oven_test_dependencies(resolved)?;
     let select = |dependencies: &[DependencySpec]| {
         dependencies
@@ -89,13 +105,15 @@ pub fn canonical_project_inspection_dependencies(
             .collect::<CliResult<Vec<_>>>()
     };
     Ok((
-        super::native_sdk_plan::project_dependencies_without_sdk_registry_inputs(
+        super::native_sdk_plan::project_dependencies_without_sdk_registry_inputs_with_context(
             &select(&resolved.dependencies)?,
             native_sdk_receipt,
+            context,
         )?,
-        super::native_sdk_plan::project_dependencies_without_sdk_registry_inputs(
+        super::native_sdk_plan::project_dependencies_without_sdk_registry_inputs_with_context(
             &select(&resolved.dev_dependencies)?,
             native_sdk_receipt,
+            context,
         )?,
     ))
 }
@@ -197,12 +215,26 @@ pub fn prepare_oven_test_dependency_envelope(
     debug_target_receipts: &[oven_store::OvenReceipt],
     authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
 ) -> CliResult<PreparedOvenTestDependencyEnvelope> {
+    let mut authority_context = authority_context;
     let base_receipt = debug_target_receipts.first().ok_or_else(|| {
         CliError::failure("explicit Oven project bake prepared no debug target receipt for its test dependency surface")
     })?;
-    let dependencies = super::native_sdk_plan::project_dependencies_without_sdk_registry_inputs(
+    let native_sdk_context = if base_receipt
+        .sources
+        .build_unit_inputs
+        .contains_key("sdk-native-closure")
+    {
+        match authority_context.as_deref_mut() {
+            Some(context) => context.native_sdk_context()?,
+            None => super::NativeSdkCommandContext::discover()?,
+        }
+    } else {
+        None
+    };
+    let dependencies = super::native_sdk_plan::project_dependencies_without_sdk_registry_inputs_with_context(
         &promoted_oven_test_dependencies(resolved)?,
         Some(base_receipt),
+        native_sdk_context.as_deref(),
     )?;
     let dependency_surface_digest = digest_dependency_specs(&dependencies, incan_oven_facet::provider_hooks().as_ref())
         .map_err(|error| CliError::failure(error.to_string()))?;
@@ -299,9 +331,12 @@ pub fn prepare_oven_test_dependency_envelope(
         receipt_request.with_build_unit_input("project-owner-identity", baked_project_owner_identity(project_root)?);
     receipt_request = receipt_request.with_build_unit_input("rust-dependencies", publisher_dependency_surface_digest);
     let receipt = receipt_generated_project(&receipt_request).map_err(|error| CliError::failure(error.to_string()))?;
-    let plan_selection = if let Some(prepared) =
-        super::native_sdk_plan::select_native_sdk_plan(store, &receipt, &publisher_dependencies)?
-    {
+    let plan_selection = if let Some(prepared) = super::native_sdk_plan::select_native_sdk_plan_with_context(
+        store,
+        &receipt,
+        &publisher_dependencies,
+        native_sdk_context.as_deref(),
+    )? {
         prepared.plan_selection
     } else if publisher_dependencies
         .iter()
@@ -349,9 +384,43 @@ pub fn select_or_bake_generated_project_plan(
     generated_root: &Path,
     rustc: &Path,
 ) -> CliResult<Option<OvenDirectRustcPlanPreparation>> {
+    select_or_bake_generated_project_plan_with_native_sdk(
+        mode,
+        store,
+        receipt,
+        dependency_surface,
+        generated_project,
+        generated_root,
+        rustc,
+        None,
+    )
+}
+
+/// Select the existing plan/publication route with native owners admitted once by the enclosing command.
+#[allow(clippy::too_many_arguments)] // Existing preparation inputs plus the independent native admission authority.
+pub fn select_or_bake_generated_project_plan_with_native_sdk(
+    mode: OvenProjectPlanMode,
+    store: &OvenStore,
+    receipt: &oven_store::OvenReceipt,
+    dependency_surface: OvenProjectDependencySurface<'_>,
+    generated_project: &Path,
+    generated_root: &Path,
+    rustc: &Path,
+    context: Option<&super::NativeSdkCommandContext>,
+) -> CliResult<Option<OvenDirectRustcPlanPreparation>> {
+    let fallback = if context.is_none() && !receipt_requires_final_interop_plan(receipt) {
+        super::NativeSdkCommandContext::discover()?
+    } else {
+        None
+    };
+    let context = context.or(fallback.as_deref());
     if !receipt_requires_final_interop_plan(receipt)
-        && let Some(plan) =
-            super::native_sdk_plan::select_native_sdk_plan(store, receipt, dependency_surface.selection)?
+        && let Some(plan) = super::native_sdk_plan::select_native_sdk_plan_with_context(
+            store,
+            receipt,
+            dependency_surface.selection,
+            context,
+        )?
     {
         return Ok(Some(plan));
     }
@@ -433,7 +502,12 @@ pub fn select_or_bake_generated_project_plan(
             bootstrap_lock_seeded || materialization == OvenToolchainMaterialization::CompatibilityBaked;
         return Ok(Some(prepared));
     }
-    select_oven_direct_rustc_plan_with_materialization(store, receipt, dependency_surface.selection)
+    super::oven_project::select_oven_direct_rustc_plan_with_materialization_and_native_sdk(
+        store,
+        receipt,
+        dependency_surface.selection,
+        context,
+    )
 }
 
 /// Return whether this receipt requires an exact final native interop plan rather than a base Loaf.
@@ -481,10 +555,31 @@ pub fn select_published_project_plan(
     receipt: &oven_store::OvenReceipt,
     materialization: OvenToolchainMaterialization,
 ) -> CliResult<Option<OvenDirectRustcPlanPreparation>> {
+    select_published_project_plan_with_native_owners(store, receipt, materialization, None)
+}
+
+/// Keep ordinary receipt matching while materializing shared references from command-admitted native leases.
+pub(crate) fn select_published_project_plan_with_native_owners(
+    store: &OvenStore,
+    receipt: &oven_store::OvenReceipt,
+    materialization: OvenToolchainMaterialization,
+    admitted: Option<&oven_rustc::plan::shared::OvenSharedNativeOwners>,
+) -> CliResult<Option<OvenDirectRustcPlanPreparation>> {
     if let Some(selected) = select_published_project_extension_plan(store, receipt, materialization)? {
         return Ok(Some(selected));
     }
-    Ok(select_receipt_direct_rustc_execution_plan(store, receipt)
+    let selected = match admitted {
+        Some(admitted) => {
+            oven_rustc::plan::selection::select_receipt_direct_rustc_execution_plan_with_native_owners_for_domain(
+                store,
+                receipt,
+                admitted,
+                "sdk-native-consumer-plan",
+            )
+        }
+        None => select_receipt_direct_rustc_execution_plan(store, receipt),
+    };
+    Ok(selected
         .map_err(oven_plan_error)?
         .map(|selected| OvenDirectRustcPlanPreparation {
             plan_selection: OvenDirectRustcPlanSelection::Stored(Box::new(selected)),

@@ -53,20 +53,53 @@ fn oven_build_unit_inputs_with_provider_records(
     resolved: &ResolvedDependencies,
     provider_records: Vec<String>,
 ) -> CliResult<BTreeMap<String, String>> {
+    let context = crate::build::NativeSdkCommandContext::discover()?;
+    oven_build_unit_inputs_with_provider_records_and_native_sdk(
+        requirements,
+        resolved,
+        provider_records,
+        context.as_deref(),
+    )
+}
+
+/// Build unit identity with the canonical provider records and a native admission retained by the whole command.
+pub fn oven_build_unit_inputs_with_native_sdk(
+    provider_plan: &ProviderPlan,
+    requirements: &ProjectRequirements,
+    resolved: &ResolvedDependencies,
+    context: Option<&crate::build::NativeSdkCommandContext>,
+) -> CliResult<BTreeMap<String, String>> {
+    let provider_records = oven_native_provider_records(provider_plan, &semantic_sdk_path_dependencies(requirements))?;
+    oven_build_unit_inputs_with_provider_records_and_native_sdk(requirements, resolved, provider_records, context)
+}
+
+/// Combine already checked provider identities with the same native admission used by plan selection.
+pub fn oven_build_unit_inputs_with_provider_identities_and_native_sdk(
+    provider_plan: &ProviderPlan,
+    requirements: &ProjectRequirements,
+    resolved: &ResolvedDependencies,
+    semantic_identities: &CheckedProviderSemanticIdentities,
+    context: Option<&crate::build::NativeSdkCommandContext>,
+) -> CliResult<BTreeMap<String, String>> {
+    let provider_records = oven_native_provider_records_with_checked_identities(
+        provider_plan,
+        &semantic_sdk_path_dependencies(requirements),
+        semantic_identities,
+    )?;
+    oven_build_unit_inputs_with_provider_records_and_native_sdk(requirements, resolved, provider_records, context)
+}
+
+/// Finish the canonical identity exchange without reacquiring command-admitted native owners.
+fn oven_build_unit_inputs_with_provider_records_and_native_sdk(
+    requirements: &ProjectRequirements,
+    resolved: &ResolvedDependencies,
+    provider_records: Vec<String>,
+    context: Option<&crate::build::NativeSdkCommandContext>,
+) -> CliResult<BTreeMap<String, String>> {
     let mut dependencies = resolved.dependencies.clone();
     dependencies.extend(resolved.dev_dependencies.clone());
-    let inventory = incan_provider::inventory::discover_or_reuse_published_sdk_inventory()?
-        .ok_or_else(|| CliError::failure("native runtime identity requires a prepared native SDK"))?;
-    let catalog = inventory.root.join(".sealed-native-receipts.json");
-    let bytes = std::fs::read(&catalog)
-        .map_err(|error| CliError::failure(format!("native runtime catalog {}: {error}", catalog.display())))?;
-    crate::build::native_runtime_inputs::runtime_inputs(
-        &inventory.root,
-        &bytes,
-        &provider_records,
-        &requirements.stdlib_facets,
-        &dependencies,
-    )
+    let context = context.ok_or_else(|| CliError::failure("native runtime identity requires a prepared native SDK"))?;
+    context.runtime_inputs(&provider_records, &requirements.stdlib_facets, &dependencies)
 }
 
 /// Encode only the compiler-owned SDK capabilities a generated native crate can exercise.

@@ -19,6 +19,7 @@ mod lock_reuse;
 pub mod native_runtime_inputs;
 pub mod native_sdk;
 pub(crate) mod native_sdk_plan;
+pub use native_sdk_plan::NativeSdkCommandContext;
 pub mod output_materialization;
 pub mod output_paths;
 mod output_publication;
@@ -109,6 +110,8 @@ pub const OVEN_PROJECT_OUTPUT_ARTIFACT_PATH: &str = "output/native";
 /// This deliberately contains no Cargo target path or command. Generated Rust and the final binary are caller-owned;
 /// the selected native closure retains its store lease until the direct-Rustc bake and any child execution complete.
 pub struct OvenPreparedProject {
+    /// Command-owned native admission retained through compilation and child execution.
+    pub native_sdk_context: Option<Arc<NativeSdkCommandContext>>,
     pub generator: ProjectGenerator,
     pub project_root: PathBuf,
     pub entrypoint: PathBuf,
@@ -200,6 +203,8 @@ pub struct OvenPreparedLibrary {
 /// `incan build --lib` has historically produced a release artifact; retaining both avoids linking a library against
 /// a different profile's hashed Rust dependencies and never delegates that mismatch to Cargo.
 pub struct OvenPreparedLibraryProfile {
+    /// Shared admission used by all profiles of this library command.
+    pub native_sdk_context: Option<Arc<NativeSdkCommandContext>>,
     pub receipt: oven_store::OvenReceipt,
     pub plan_selection: OvenDirectRustcPlanSelection,
     pub materialization: OvenToolchainMaterialization,
@@ -421,11 +426,25 @@ pub struct MemoizedPackagedProviderAuthority {
 /// invalidation, or representation outside this command invocation.
 #[derive(Default)]
 pub struct OvenProjectBakeAuthorityContext {
+    /// Native owners shared by all targets/profiles in this explicit bake invocation.
+    pub native_sdk_context: Option<Arc<NativeSdkCommandContext>>,
     pub source_digester: ProjectSourceAuthorityDigester,
     pub providers: HashMap<PathBuf, MemoizedPackagedProviderAuthority>,
     pub initial_project_source_authority: Option<String>,
     /// Caller-owned target override accepted only by explicit project bake.
     pub requested_target: Option<String>,
+}
+
+impl OvenProjectBakeAuthorityContext {
+    /// Admit the native SDK once for this bake and revalidate retained authority before another target borrows it.
+    pub fn native_sdk_context(&mut self) -> CliResult<Option<Arc<NativeSdkCommandContext>>> {
+        if let Some(context) = &self.native_sdk_context {
+            context.verify()?;
+        } else {
+            self.native_sdk_context = NativeSdkCommandContext::discover()?;
+        }
+        Ok(self.native_sdk_context.clone())
+    }
 }
 
 /// One manifest-backed Incan entrypoint admitted by `incan oven bake`.

@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use oven_rustc::sdk_closure::{
     ClosureCompileRequest, LocalFacetSelection, SdkCompiledClosure, compile_local_sdk_facet,
@@ -82,7 +83,7 @@ pub fn write_sdk_native_artifact_catalog(
 ///
 /// Selection uses immutable store coordinates recorded during publication. It never discovers an ambient source
 /// cache, resolves requirements, or trusts a native path independently of its admitted output digest.
-pub fn retain_sdk_native_artifacts(root: &Path) -> ProviderResult<Vec<OvenStoreExecutionPayload>> {
+pub fn retain_sdk_native_artifacts(root: &Path) -> ProviderResult<Vec<Arc<OvenStoreExecutionPayload>>> {
     select_sdk_native_artifacts(root).map(|selection| selection.owners)
 }
 
@@ -91,7 +92,59 @@ pub struct SdkNativeSelection {
     /// Exact output descriptors in the same order as their retained execution owners.
     pub units: Vec<oven_rustc::sdk_closure::SdkNativeArtifact>,
     /// Leases and verified source/output payloads that authorize the coordinates above.
-    pub owners: Vec<OvenStoreExecutionPayload>,
+    pub owners: Vec<Arc<OvenStoreExecutionPayload>>,
+    authority_root: PathBuf,
+    coordinate_catalog_digest: String,
+    receipt_catalog: Vec<u8>,
+}
+
+impl SdkNativeSelection {
+    /// Revalidate retained descriptors and witnesses before another command-owned consumer borrows this selection.
+    ///
+    /// Sharing leases does not make mutable public records or their on-disk receipt witnesses authoritative.
+    pub fn verify(&self) -> ProviderResult<()> {
+        self.verify_catalog()?;
+        if self.units.len() != self.owners.len() {
+            return Err(ProviderError::failure("native SDK units and retained owners disagree"));
+        }
+        for (unit, owner) in self.units.iter().zip(&self.owners) {
+            verify_sdk_native_artifact(unit, owner)?;
+        }
+        Ok(())
+    }
+
+    /// Borrow the canonical receipt catalog captured by the same admission that retained the native owners.
+    pub fn receipt_catalog(&self) -> &[u8] {
+        &self.receipt_catalog
+    }
+
+    /// Refuse changed publication metadata without granting authority to its unauthenticated dependency edges.
+    ///
+    /// The complete coordinate digest freezes a command's observation, including edge bytes. It does not prove
+    /// those edges: only the identity binding and output descriptors are authenticated by the retained payloads.
+    pub fn verify_catalog(&self) -> ProviderResult<()> {
+        let catalog: SdkNativeArtifactCatalog = serde_json::from_slice(
+            &std::fs::read(self.authority_root.join(".sealed-native-units.json"))
+                .map_err(|error| ProviderError::failure(error.to_string()))?,
+        )
+        .map_err(|error| ProviderError::failure(error.to_string()))?;
+        let receipts: BTreeMap<String, String> = serde_json::from_slice(
+            &std::fs::read(self.authority_root.join(".sealed-native-receipts.json"))
+                .map_err(|error| ProviderError::failure(error.to_string()))?,
+        )
+        .map_err(|error| ProviderError::failure(error.to_string()))?;
+        if oven_store::digest_bytes(
+            &serde_json::to_vec(&catalog).map_err(|error| ProviderError::failure(error.to_string()))?,
+        ) != self.coordinate_catalog_digest
+            || serde_json::to_vec(&receipts).map_err(|error| ProviderError::failure(error.to_string()))?
+                != self.receipt_catalog
+        {
+            return Err(ProviderError::failure(
+                "native SDK publication changed after command admission",
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Resolve required Rust facets to their owning Loaves using the admitted source declarations.
@@ -194,6 +247,10 @@ pub fn select_sdk_native_artifacts(root: &Path) -> ProviderResult<SdkNativeSelec
             "SDK native coordinate and receipt catalogs disagree",
         ));
     }
+    let coordinate_catalog_digest = oven_store::digest_bytes(
+        &serde_json::to_vec(&catalog).map_err(|error| ProviderError::failure(error.to_string()))?,
+    );
+    let receipt_catalog = serde_json::to_vec(&receipts).map_err(|error| ProviderError::failure(error.to_string()))?;
     let store = OvenStore::new(
         catalog.store,
         OvenStoreLimits::new(4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024),
@@ -218,7 +275,10 @@ pub fn select_sdk_native_artifacts(root: &Path) -> ProviderResult<SdkNativeSelec
     }
     Ok(SdkNativeSelection {
         units: catalog.units,
-        owners: selected,
+        owners: selected.into_iter().map(Arc::new).collect(),
+        authority_root: root.to_path_buf(),
+        coordinate_catalog_digest,
+        receipt_catalog,
     })
 }
 
@@ -690,6 +750,127 @@ fn sdk_native_facet_path_matches(crate_name: &str, path: &Path) -> ProviderResul
 
 #[cfg(test)]
 mod tests {
+    /// Publish opaque test artifacts through the real store to exercise catalog admission without native compilation.
+    fn dev7_native_admission_fixture()
+    -> Result<(tempfile::TempDir, super::SdkNativeSelection), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("main.rs");
+        std::fs::write(&source, "fn main() {}\n")?;
+        let receipt = oven_store::receipt_generated_project(
+            &oven_store::OvenGeneratedProjectRequest::new(
+                root.path(),
+                "catalog_control",
+                "1.0.0",
+                "fixture-target",
+                "fixture-toolchain",
+                "debug",
+                Vec::new(),
+            )
+            .with_generated_source("generated-root", &source),
+        )?;
+        let binding = oven_rustc::sdk_closure::SdkLockedUnit {
+            loaf: "crates-io/fixture".to_string(),
+            version: "1.0.0".to_string(),
+            archive_digest: oven_store::digest_bytes(b"source fixture"),
+            domain: "target".to_string(),
+            features: Vec::new(),
+            target_predicates: Vec::new(),
+            edges: None,
+        };
+        let output = root.path().join("libfixture.rlib");
+        std::fs::write(&output, b"opaque native control bytes")?;
+        let store = oven_store::store::OvenStore::new(
+            root.path().join("store"),
+            oven_store::store::OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000),
+        );
+        let published = store.publish(&oven_store::store::OvenArtifactPublishRequest {
+            receipt: receipt.clone(),
+            domain: "sdk-source-unit-target".to_string(),
+            kind: oven_store::store::OvenArtifactKind::Engine,
+            payload: serde_json::to_vec(&binding.identity_binding())?,
+            materialized_files: vec![oven_store::store::OvenArtifactMaterializedFile {
+                source_path: output,
+                relative_path: "libfixture.rlib".to_string(),
+            }],
+            materialized_directories: Vec::new(),
+        })?;
+        let artifact = oven_rustc::sdk_closure::SdkNativeArtifact {
+            binding: binding.clone(),
+            store_identity: published.identity,
+            receipt_identity: receipt.identity.clone(),
+            relative_path: "libfixture.rlib".to_string(),
+            digest: oven_store::digest_bytes(b"opaque native control bytes"),
+        };
+        let catalog = super::SdkNativeArtifactCatalog {
+            schema_version: 1,
+            store: store.root().to_path_buf(),
+            units: vec![artifact],
+        };
+        std::fs::write(
+            root.path().join(".sealed-native-units.json"),
+            serde_json::to_vec(&catalog)?,
+        )?;
+        std::fs::write(
+            root.path().join(".sealed-native-receipts.json"),
+            serde_json::to_vec(&std::collections::BTreeMap::from([(
+                serde_json::to_string(&binding.identity_binding())?,
+                receipt.identity,
+            )]))?,
+        )?;
+        let selection = super::select_sdk_native_artifacts(root.path())?;
+        Ok((root, selection))
+    }
+
+    /// A changed receipt or output catalog cannot replace metadata captured with the retained command owners.
+    #[test]
+    fn dev7_native_admission_refuses_changed_catalogs() -> Result<(), Box<dyn std::error::Error>> {
+        let (root, selection) = dev7_native_admission_fixture()?;
+        selection.verify()?;
+        for name in [".sealed-native-receipts.json", ".sealed-native-units.json"] {
+            let path = root.path().join(name);
+            let original = std::fs::read(&path)?;
+            let mut changed: serde_json::Value = serde_json::from_slice(&original)?;
+            if name.contains("receipts") {
+                let values = changed.as_object_mut().ok_or("receipt catalog is not an object")?;
+                for receipt in values.values_mut() {
+                    *receipt = serde_json::json!("substituted-receipt");
+                }
+            } else {
+                changed["units"][0]["digest"] = serde_json::json!(oven_store::digest_bytes(b"substituted-output"));
+            }
+            std::fs::write(&path, serde_json::to_vec(&changed)?)?;
+            assert!(selection.verify().is_err(), "changed {name} accepted");
+            std::fs::write(&path, original)?;
+            selection.verify()?;
+        }
+        Ok(())
+    }
+
+    /// Unauthenticated catalog edges cannot retarget a retained command or extend its selected output set.
+    #[test]
+    fn dev7_native_admission_refuses_injected_edges_after_admission() -> Result<(), Box<dyn std::error::Error>> {
+        let (root, selection) = dev7_native_admission_fixture()?;
+        let path = root.path().join(".sealed-native-units.json");
+        let original = std::fs::read(&path)?;
+        let mut value: serde_json::Value = serde_json::from_slice(&original)?;
+        value["units"][0]["binding"]["edges"] = serde_json::json!([{
+            "dependency_key": "forged", "loaf": "crates-io/unadmitted", "version": "1.0.0", "domain": "target",
+        }]);
+        std::fs::write(&path, serde_json::to_vec(&value)?)?;
+        assert!(
+            selection.verify().is_err(),
+            "injected edges replaced the command observation"
+        );
+        // A fresh canonical selector still admits only the real output owner; edges convey no artifact authority.
+        let fresh = super::select_sdk_native_artifacts(root.path())?;
+        assert_eq!(fresh.units.len(), 1);
+        assert_eq!(fresh.owners.len(), 1);
+        assert_eq!(fresh.units[0].store_identity, selection.units[0].store_identity);
+        std::fs::write(&path, original)?;
+        selection.verify()?;
+        Ok(())
+    }
+
     /// Native companions retain their package/facet association and refuse changed source or forged selection facts.
     #[test]
     fn compiler_companion_path_requires_current_source_identity() -> Result<(), Box<dyn std::error::Error>> {

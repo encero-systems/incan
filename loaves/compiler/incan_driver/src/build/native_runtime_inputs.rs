@@ -93,14 +93,14 @@ struct Response {
 
 /// Project inputs using the engine already bound to the active source compiler's receipt.
 pub(crate) fn runtime_inputs(
-    inventory_root: &Path,
+    selection: &incan_provider::sdk_native::SdkNativeSelection,
     catalog: &[u8],
     providers: &[String],
     facets: &[String],
     dependencies: &[DependencySpec],
 ) -> CliResult<BTreeMap<String, String>> {
     let (engine, digest) = bound_compiler_engine()?;
-    let selection = incan_provider::sdk_native::select_sdk_native_artifacts(inventory_root)?;
+    selection.verify()?;
     let receipts: BTreeMap<String, String> =
         serde_json::from_slice(catalog).map_err(|error| CliError::failure(error.to_string()))?;
     if receipts.len() != selection.units.len() {
@@ -118,7 +118,7 @@ pub(crate) fn runtime_inputs(
         }
     }
     let required = incan_provider::sdk_native::sdk_native_runtime_loaves(
-        &selection,
+        selection,
         &oven_model::toolchain_layout::SDK_RUNTIME_CRATES,
     )?;
     exchange(

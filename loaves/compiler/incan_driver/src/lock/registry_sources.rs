@@ -30,7 +30,15 @@ use oven_rustc::rustc::validate_project_extension_payload_against_base;
 
 /// Resolve one exact project authority and all named constituents once for the complete test command.
 pub fn prepare_project_registry_source_authorities(
+    authority: OvenLoadedProjectInspectionAuthority,
+) -> CliResult<Arc<PreparedOvenProjectRegistrySourceAuthorities>> {
+    prepare_project_registry_source_authorities_with_native_sdk(authority, None)
+}
+
+/// Prepare canonical command-owned inspection authority while reusing its explicitly admitted native SDK.
+pub fn prepare_project_registry_source_authorities_with_native_sdk(
     mut authority: OvenLoadedProjectInspectionAuthority,
+    native_sdk_context: Option<Arc<crate::build::NativeSdkCommandContext>>,
 ) -> CliResult<Arc<PreparedOvenProjectRegistrySourceAuthorities>> {
     struct ResolvedSourceCatalog {
         root: PathBuf,
@@ -243,8 +251,10 @@ pub fn prepare_project_registry_source_authorities(
         &mut release_loafs,
         test_dependency_stored_roles,
         test_dependency_release_identity,
+        native_sdk_context.as_deref(),
     )?;
     Ok(Arc::new(PreparedOvenProjectRegistrySourceAuthorities {
+        native_sdk_context,
         authority,
         sources,
         registry_lock_source,
@@ -271,6 +281,7 @@ fn prepare_project_test_dependency_plan(
     release_loafs: &mut Vec<oven_rustc::loaf::OvenToolchainLoaf>,
     mut stored_roles: Vec<(usize, usize, Option<String>)>,
     release_identity: Option<String>,
+    native_sdk_context: Option<&crate::build::NativeSdkCommandContext>,
 ) -> CliResult<Option<OvenDirectRustcPlanSelection>> {
     let envelope = authority.payload.test_dependency_envelope.as_ref();
     if envelope.is_none() {
@@ -289,8 +300,17 @@ fn prepare_project_test_dependency_plan(
             }
         };
         let selected = authority.stored_constituents.remove(stored_index);
-        let plan = oven_rustc::plan::selection::project_test_dependency_plan_from_constituent(selected, &receipt)
-            .map_err(crate::error::oven_plan_error)?;
+        let admitted = if selected.manifest.domain == "sdk-native-consumer-plan" {
+            native_sdk_context
+                .map(|context| context.owners_for_receipt(&receipt))
+                .transpose()?
+        } else {
+            None
+        };
+        let plan = oven_rustc::plan::selection::project_test_dependency_plan_from_constituent_with_native_owners(
+            selected, &receipt, admitted,
+        )
+        .map_err(crate::error::oven_plan_error)?;
         if let Some(dependency_key) = dependency_key {
             providers.push((dependency_key, receipt, plan));
         } else {
@@ -399,10 +419,19 @@ impl PreparedOvenProjectRegistrySourceAuthorities {
             dependencies: dependencies.to_vec(),
             dev_dependencies: Vec::new(),
         })?;
-        let promoted = crate::build::native_sdk_plan::project_dependencies_without_sdk_registry_inputs(
-            &promoted,
-            self.native_sdk_dependency_receipt(),
-        )?;
+        let promoted = match self.native_sdk_context.as_deref() {
+            Some(context) => {
+                crate::build::native_sdk_plan::project_dependencies_without_sdk_registry_inputs_with_context(
+                    &promoted,
+                    self.native_sdk_dependency_receipt(),
+                    Some(context),
+                )?
+            }
+            None => crate::build::native_sdk_plan::project_dependencies_without_sdk_registry_inputs(
+                &promoted,
+                self.native_sdk_dependency_receipt(),
+            )?,
+        };
         if !project_inspection_authority_supports_dependencies(&self.authority.payload, &promoted) {
             return Err(project_inspection_selection_mismatch("this test dependency subset"));
         }
@@ -447,10 +476,19 @@ impl PreparedOvenProjectRegistrySourceAuthorities {
         manifest_dir: &Path,
         dependencies: &[DependencySpec],
     ) -> CliResult<bool> {
-        let project_dependencies = crate::build::native_sdk_plan::project_dependencies_without_sdk_registry_inputs(
-            dependencies,
-            self.native_sdk_dependency_receipt(),
-        )?;
+        let project_dependencies = match self.native_sdk_context.as_deref() {
+            Some(context) => {
+                crate::build::native_sdk_plan::project_dependencies_without_sdk_registry_inputs_with_context(
+                    dependencies,
+                    self.native_sdk_dependency_receipt(),
+                    Some(context),
+                )?
+            }
+            None => crate::build::native_sdk_plan::project_dependencies_without_sdk_registry_inputs(
+                dependencies,
+                self.native_sdk_dependency_receipt(),
+            )?,
+        };
         let dependencies = project_dependencies.as_slice();
         let registry_dependency_count = dependencies
             .iter()

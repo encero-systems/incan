@@ -311,7 +311,7 @@ pub struct OvenStoredDirectRustcExecutionPlan {
     pub artifact_plan: OvenRustcArtifactPlan,
     _lease: OvenStoreLease,
     /// Independent receipt-addressed native units retained for the entire consumer execution.
-    _shared_owners: Vec<oven_store::store::OvenStoreExecutionPayload>,
+    _shared_owners: Vec<std::sync::Arc<oven_store::store::OvenStoreExecutionPayload>>,
     /// Logical coordinates bound to the original leased native owners or plan-owned facade files.
     pub(crate) shared_paths: std::collections::BTreeMap<String, PathBuf>,
 }
