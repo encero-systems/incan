@@ -287,13 +287,15 @@ fn indexed_carrier_control() -> TestResult<()> {
     )?;
     validation::validate(&plan)?;
     let mut corrupted = module.clone();
-    let PlaceElem::OptionPayload { option_type, .. } = &mut indexed_projection(&mut corrupted)?.projection[0] else {
+    let PlaceElem::OptionPayload {
+        option_type,
+        payload_type,
+    } = &mut indexed_projection(&mut corrupted)?.projection[0]
+    else {
         return Err("expected optional list payload".into());
     };
-    *option_type = IncanType::Generic {
-        base: "Option".into(),
-        args: vec![IncanType::Primitive(IncanPrimitiveType::Str)],
-    };
+    // The list payload is already admitted, so this isolates container-owner validation rather than missing layout.
+    *option_type = payload_type.clone();
     for (label, corrupted, family) in [
         (
             "wrong indexed container",
