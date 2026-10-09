@@ -477,3 +477,167 @@ fn write_project(root: &Path) -> Result<(), std::io::Error> {
     fs::write(root.join("Cargo.lock"), "version = 4\n")?;
     fs::write(root.join("fixture.rs"), "pub fn fixture() {}\n")
 }
+
+/// Exercise real admitted units, including one repeated owner under distinct logical prefixes.
+pub(super) fn shared_native_plan_retains_multi_store_owners_and_refuses_substitution()
+-> Result<(), Box<dyn std::error::Error>> {
+    use oven_rustc::plan::selection::select_receipt_direct_rustc_execution_plan;
+    use oven_rustc::plan::shared::{OvenSharedNativePlan, OvenSharedNativeRoot};
+    use oven_rustc::sdk_closure::{compile_local_sdk_facet, prepare_sdk_seed};
+    use oven_store::store::{OvenArtifactKind, OvenArtifactPublishRequest};
+    let root = tempfile::tempdir()?;
+    let rustc = rustc_path()?;
+    let seed = root.path().join("seed.json");
+    fs::write(&seed, r#"{"schema":"incan.oven.loaf-resolution/1","units":[]}"#)?;
+    let mut closures = Vec::new();
+    let mut references = Vec::new();
+    let mut artifacts = None;
+    let source = root.path().join("main.rs");
+    fs::write(&source, "fn main() {}\n")?;
+    let receipt = receipt_generated_project(
+        &OvenGeneratedProjectRequest::new(
+            root.path(),
+            "shared_owners",
+            "0.1.0",
+            rustc_host_target(&rustc)?,
+            rustc_identity(&rustc)?,
+            "debug",
+            Vec::new(),
+        )
+        .with_generated_source("generated-root", &source),
+    )?;
+    let mut manifest = empty_manifest(&receipt);
+    for (store_name, names) in [("first", vec!["alpha", "beta"]), ("second", vec!["gamma"])] {
+        let output = root.path().join(store_name);
+        let mut closure = prepare_sdk_seed(&seed, root.path(), &output, &rustc, root.path())?;
+        for name in names {
+            let project = root.path().join(name);
+            fs::create_dir_all(project.join("src"))?;
+            fs::write(
+                project.join("loaf.toml"),
+                format!(
+                    "[project]\nname='{name}'\nversion='1.0.0'\n[rust]\nname='{name}'\ntype='lib'\nedition='2024'\n"
+                ),
+            )?;
+            fs::write(project.join("src/lib.rs"), "pub fn value() -> u8 { 42 }\n")?;
+            compile_local_sdk_facet(&mut closure, &project, &[], "target", &output, &rustc)?;
+        }
+        for unit in closure.units() {
+            let native = unit.native_artifact()?;
+            assert_eq!(
+                native.binding.archive_digest,
+                oven_rustc::sdk_closure::local_sdk_facet_source_digest(
+                    &root.path().join(&native.binding.loaf),
+                    root.path()
+                )?,
+                "mapped source hashing must retain the actual publisher identity"
+            );
+            let owner = OvenStore::new(
+                output.join("store"),
+                OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000),
+            )
+            .select_payloads_for_execution(std::slice::from_ref(&native.store_identity))?
+            .pop()
+            .ok_or("compiled native unit has no owner")?;
+            for repetition in 0..if native.binding.loaf == "alpha" { 2 } else { 1 } {
+                let prefix = format!("units/{}", references.len());
+                manifest.dependency_search_paths.push(prefix.clone());
+                for file in owner
+                    .admitted_materialized_files()
+                    .iter()
+                    .filter(|f| !f.relative_path.starts_with("source/"))
+                {
+                    manifest
+                        .supporting_artifacts
+                        .push(executor::OvenRustcSupportingArtifact {
+                            relative_path: format!("{prefix}/{}", file.relative_path),
+                            digest: file.digest.clone(),
+                        });
+                }
+                manifest.externs.push(executor::OvenRustcArtifactExtern {
+                    crate_name: format!("{}_{repetition}", native.binding.loaf),
+                    relative_path: format!("{prefix}/{}", native.relative_path),
+                    digest: native.digest.clone(),
+                });
+                references.push(OvenSharedNativeRoot {
+                    store: output.join("store"),
+                    identity: native.store_identity.clone(),
+                    receipt_identity: native.receipt_identity.clone(),
+                    prefix,
+                });
+            }
+        }
+        closures.push(closure);
+    }
+    manifest.supporting_artifacts.retain(|f| {
+        !manifest
+            .externs
+            .iter()
+            .any(|external| external.relative_path == f.relative_path)
+    });
+    let shared = OvenSharedNativePlan {
+        artifacts: manifest,
+        shared_native_roots: references,
+    };
+    let payload = serde_json::to_value(&shared)?;
+    for (name, change) in [
+        ("valid", None),
+        ("receipt", Some("receipt_identity")),
+        ("identity", Some("identity")),
+        ("digest", Some("digest")),
+        ("prefix", Some("prefix")),
+    ] {
+        let store = OvenStore::new(
+            root.path().join(name),
+            OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000),
+        );
+        let mut value = payload.clone();
+        if let Some(field) = change {
+            if field == "digest" {
+                value["externs"][0][field] = serde_json::json!(oven_store::digest_bytes(b"substituted"));
+            } else if field == "prefix" {
+                value["shared_native_roots"][1][field] = value["shared_native_roots"][0][field].clone();
+            } else {
+                value["shared_native_roots"][0][field] = serde_json::json!(oven_store::digest_bytes(b"substituted"));
+            }
+        }
+        store.publish(&OvenArtifactPublishRequest {
+            receipt: receipt.clone(),
+            domain: "sdk-native-consumer-plan".into(),
+            kind: OvenArtifactKind::DirectRustcPlan,
+            payload: serde_json::to_vec(&value)?,
+            materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
+        })?;
+        let selected = select_receipt_direct_rustc_execution_plan(&store, &receipt);
+        if change.is_some() {
+            assert!(selected.is_err(), "substitution {name} must refuse");
+        } else {
+            let selected = selected?.ok_or("shared consumer was not selected")?;
+            assert_eq!(selected.artifact_plan.externs.len(), 4);
+            assert_eq!(selected.artifact_plan.externs[0].1, selected.artifact_plan.externs[1].1);
+            artifacts = Some(selected);
+        }
+    }
+    drop(closures);
+    let selected = artifacts.ok_or("valid consumer selection was lost")?;
+    for name in ["first", "second"] {
+        OvenStore::new(root.path().join(name).join("store"), OvenStoreLimits::new(1, 1, 1)).prune()?;
+    }
+    for (_, file) in &selected.artifact_plan.externs {
+        assert!(file.is_file(), "leased output must survive pruning");
+    }
+    drop(selected);
+    for name in ["first", "second"] {
+        OvenStore::new(root.path().join(name).join("store"), OvenStoreLimits::new(1, 1, 1)).prune()?;
+    }
+    let valid_store = OvenStore::new(
+        root.path().join("valid"),
+        OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000),
+    );
+    assert!(
+        select_receipt_direct_rustc_execution_plan(&valid_store, &receipt).is_err(),
+        "missing native owners must refuse"
+    );
+    Ok(())
+}

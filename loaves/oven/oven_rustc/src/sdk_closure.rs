@@ -26,7 +26,7 @@ mod native;
 
 pub use local::{
     LocalFacetSelection, compile_local_sdk_facet, compile_local_sdk_facet_for_target, compile_local_sdk_facets,
-    local_sdk_facet_source_digest, local_sdk_facet_source_inputs,
+    local_sdk_facet_source_digest, local_sdk_facet_source_digest_with, local_sdk_facet_source_inputs,
 };
 
 struct CompileContext<'a> {

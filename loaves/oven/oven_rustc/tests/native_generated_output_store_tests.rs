@@ -27,3 +27,9 @@ fn generated_library_store_reuses_across_outputs_and_refuses_stale_sources() -> 
 fn generated_binary_store_reuses_executable_bytes_across_outputs() -> Result<(), Box<dyn std::error::Error>> {
     generated_output_store_cases::generated_binary_store_reuses_executable_bytes_across_outputs()
 }
+
+/// Shared plans retain every native owner across stores and refuse substituted coordinates or member digests.
+#[test]
+fn shared_native_plan_retains_multi_store_owners_and_refuses_substitution() -> Result<(), Box<dyn std::error::Error>> {
+    generated_output_store_cases::shared_native_plan_retains_multi_store_owners_and_refuses_substitution()
+}

@@ -294,8 +294,10 @@ fn digest_rust_loaf_node(
         )));
     }
     let manifest = effective_project_manifest_for_exact_root(&root)?;
-    let source = oven_rustc::sdk_closure::local_sdk_facet_source_digest(&root, &std::env::temp_dir())
-        .map_err(|error| CliError::failure(format!("cannot bind Rust Loaf source at {}: {error}", root.display())))?;
+    let source = oven_rustc::sdk_closure::local_sdk_facet_source_digest_with(&root, |path| {
+        Ok(super::file_freshness::digest_file(path)?)
+    })
+    .map_err(|error| CliError::failure(format!("cannot bind Rust Loaf source at {}: {error}", root.display())))?;
     let mut records = BTreeMap::from([
         ("loaf-rust-source-v1".to_string(), source),
         (

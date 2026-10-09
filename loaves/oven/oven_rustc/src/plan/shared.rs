@@ -90,15 +90,12 @@ pub(super) fn materialize(
     let expected = expected_artifacts(artifacts)?;
     let mut locations = BTreeMap::new();
     let mut directories = BTreeMap::new();
-    let mut owners = Vec::new();
+    let owners = select_shared_owners(&shared.shared_native_roots)?;
     for reference in &shared.shared_native_roots {
-        owners.push(bind_shared_owner(
-            reference,
-            artifacts,
-            &expected,
-            &mut locations,
-            &mut directories,
-        )?);
+        let owner = owners
+            .get(&(reference.store.clone(), reference.identity.clone()))
+            .ok_or_else(|| OvenPlanError::selection("shared native unit is unavailable"))?;
+        bind_shared_owner(reference, owner, artifacts, &expected, &mut locations, &mut directories)?;
     }
     bind_local_members(&expected, artifact_root, &mut locations)?;
     for directory in artifacts
@@ -118,28 +115,50 @@ pub(super) fn materialize(
     }
     let plan = execution_plan(artifacts, &locations, &directories)?;
     locations.extend(directories);
-    Ok(Some((plan, owners, locations)))
+    Ok(Some((plan, owners.into_values().collect(), locations)))
 }
 
-/// Reacquire one original native unit and bind only its complete admitted output inventory.
+/// Acquire each store's complete requested set atomically, retaining one lease per distinct native owner.
+///
+/// Logical aliases may name one owner more than once. Grouping them avoids repeatedly opening the store and
+/// reclaiming staging under its manager lock; receipt and member validation still run for every logical reference.
+fn select_shared_owners(
+    references: &[OvenSharedNativeRoot],
+) -> OvenPlanResult<BTreeMap<(PathBuf, String), OvenStoreExecutionPayload>> {
+    let mut identities_by_store: BTreeMap<PathBuf, BTreeSet<String>> = BTreeMap::new();
+    for reference in references {
+        identities_by_store
+            .entry(reference.store.clone())
+            .or_default()
+            .insert(reference.identity.clone());
+    }
+    let mut owners = BTreeMap::new();
+    for (root, identities) in identities_by_store {
+        let store = OvenStore::new(root.clone(), OvenStoreLimits::new(u64::MAX, u64::MAX, u64::MAX));
+        let identities = identities.into_iter().collect::<Vec<_>>();
+        let selected = store
+            .select_payloads_for_execution(&identities)
+            .map_err(|error| OvenPlanError::selection(error.to_string()))?;
+        for (identity, owner) in identities.into_iter().zip(selected) {
+            owner
+                .verify_proven_native_payload()
+                .map_err(|error| OvenPlanError::selection(error.to_string()))?;
+            owners.insert((root.clone(), identity), owner);
+        }
+    }
+    Ok(owners)
+}
+
+/// Bind one logical reference to its already leased owner and complete admitted output inventory.
 fn bind_shared_owner(
     reference: &OvenSharedNativeRoot,
+    owner: &OvenStoreExecutionPayload,
     artifacts: &OvenRustcArtifactManifest,
     expected: &BTreeMap<String, String>,
     locations: &mut BTreeMap<String, PathBuf>,
     directories: &mut BTreeMap<String, PathBuf>,
-) -> OvenPlanResult<OvenStoreExecutionPayload> {
+) -> OvenPlanResult<()> {
     safe_relative(&reference.prefix)?;
-    let store = OvenStore::new(
-        reference.store.clone(),
-        OvenStoreLimits::new(u64::MAX, u64::MAX, u64::MAX),
-    );
-    let mut selected = store
-        .select_payloads_for_execution(std::slice::from_ref(&reference.identity))
-        .map_err(|error| OvenPlanError::selection(error.to_string()))?;
-    let owner = selected
-        .pop()
-        .ok_or_else(|| OvenPlanError::selection("shared native unit is unavailable"))?;
     if owner.manifest.receipt_identity != reference.receipt_identity
         || owner.manifest.intent.target != artifacts.intent.target
         || owner.manifest.intent.toolchain != artifacts.intent.toolchain
@@ -149,9 +168,6 @@ fn bind_shared_owner(
             "shared native unit receipt or compiler differs from consumer",
         ));
     }
-    owner
-        .verify_proven_native_payload()
-        .map_err(|error| OvenPlanError::selection(error.to_string()))?;
     for file in owner
         .admitted_materialized_files()
         .iter()
@@ -180,7 +196,7 @@ fn bind_shared_owner(
             directories.insert(directory.clone(), owner.artifact_root.join(relative));
         }
     }
-    Ok(owner)
+    Ok(())
 }
 
 /// Bind plan-owned facade files only after containment and exact digest validation.
