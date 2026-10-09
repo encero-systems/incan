@@ -3,6 +3,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::build::library_project::{LibraryPreparation, prepare_native_sdk_component};
 use crate::error::{CliError, CliResult};
@@ -121,7 +122,15 @@ impl NativeSdkPublicationContext<'_> {
 
 /// Discover an installed SDK or publish source components with the driver's checked in-process publisher.
 pub fn prepare_or_discover_sdk_inventory() -> CliResult<Option<Arc<SdkInventory>>> {
-    if let Some(inventory) = incan_provider::inventory::discover_or_reuse_published_sdk_inventory()? {
+    let discovery_start = Instant::now();
+    let discovery = incan_provider::inventory::discover_or_reuse_published_sdk_inventory();
+    tracing::debug!(
+        elapsed_ms = discovery_start.elapsed().as_secs_f64() * 1000.0,
+        success = discovery.is_ok(),
+        found = discovery.as_ref().is_ok_and(|inventory| inventory.is_some()),
+        "SDK inventory discovery completed"
+    );
+    if let Some(inventory) = discovery? {
         return Ok(Some(inventory));
     }
     if std::env::var_os(incan_provider::SDK_PROVIDER_BUILD_ENV).is_some() {
@@ -137,9 +146,14 @@ pub fn prepare_or_discover_sdk_inventory() -> CliResult<Option<Arc<SdkInventory>
         std::env::var_os("INCAN_HOME"),
         std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")),
     );
+    let inputs_start = Instant::now();
     let inputs = incan_provider::sdk_native::SdkNativeInputs::discover(&store)?;
     let catalog = SdkSourceCatalog::read_from_path(&stdlib.join(incan_provider::SDK_SOURCE_CATALOG_FILE))
         .map_err(|error| CliError::failure(error.to_string()))?;
+    tracing::debug!(
+        elapsed_ms = inputs_start.elapsed().as_secs_f64() * 1000.0,
+        "SDK native inputs and source catalog selected"
+    );
     incan_provider::sdk_build::prepare_sdk_provider_inventory_with_native_publisher(
         None,
         None,
@@ -161,6 +175,7 @@ fn publish_component(
     inventory: &SdkInventory,
     closure: &SdkCompiledClosure,
 ) -> CliResult<()> {
+    let context_start = Instant::now();
     let component = catalog
         .components
         .values()
@@ -182,10 +197,17 @@ fn publish_component(
             .map(|name| name.trim_start_matches("lib").to_string())
             .collect(),
     };
+    tracing::debug!(
+        elapsed_ms = context_start.elapsed().as_secs_f64() * 1000.0,
+        direct_rust_dependencies = context.dependencies.len(),
+        retained_native_facets = context.native_facets.len(),
+        "SDK component publication context selected"
+    );
     let LibraryPreparation::Native { manifest, executable } = prepare_native_sdk_component(project, output, &context)?
     else {
         return Err(CliError::failure("native publisher received an ordinary project plan"));
     };
+    let surface_start = Instant::now();
     let manifest = *manifest;
     let manifest_path = output.join(format!("{}.incnlib", manifest.name));
     let executable_path =
@@ -204,18 +226,35 @@ fn publish_component(
     manifest
         .write_to_path(&manifest_path)
         .map_err(|error| CliError::failure(error.to_string()))?;
+    tracing::debug!(
+        elapsed_ms = surface_start.elapsed().as_secs_f64() * 1000.0,
+        "SDK component manifest and executable surfaces written"
+    );
+    let receipt_start = Instant::now();
+    let receipts = incan_provider::sdk_native::sdk_native_receipts(closure)?;
+    tracing::debug!(
+        elapsed_ms = receipt_start.elapsed().as_secs_f64() * 1000.0,
+        native_receipts = receipts.len(),
+        "SDK component native receipts projected"
+    );
+    let output_artifact = compile_native_sdk_facade(&manifest_path, output, &context)?;
+    let descriptor_start = Instant::now();
     let native = incan_frontend::library_manifest::NativeProviderArtifact {
         schema_version: 1,
         name: manifest.name,
         version: manifest.version,
-        receipts: incan_provider::sdk_native::sdk_native_receipts(closure)?,
-        output: compile_native_sdk_facade(&manifest_path, output, &context)?,
+        receipts,
+        output: output_artifact,
     };
     std::fs::write(
         output.join("native-provider.json"),
         serde_json::to_vec_pretty(&native).map_err(|error| CliError::failure(error.to_string()))?,
     )
     .map_err(|error| CliError::failure(error.to_string()))?;
+    tracing::debug!(
+        elapsed_ms = descriptor_start.elapsed().as_secs_f64() * 1000.0,
+        "SDK component native descriptor written"
+    );
     Ok(())
 }
 
@@ -316,6 +355,7 @@ fn compile_native_sdk_facade(
     context: &NativeSdkPublicationContext<'_>,
 ) -> CliResult<incan_frontend::library_manifest::NativeProviderOutput> {
     use crate::backend::ProjectGenerator;
+    let inputs_start = Instant::now();
     let manifest = incan_frontend::library_manifest::LibraryManifest::read_from_path(manifest_path)
         .map_err(|error| CliError::failure(error.to_string()))?;
     let crate_name = ProjectGenerator::rust_target_name(&manifest.name);
@@ -389,13 +429,28 @@ fn compile_native_sdk_facade(
             )));
         }
     }
+    let dependency_paths = paths.len();
+    let direct_externs = externs.len();
     for path in paths {
         command.arg("-L").arg(format!("dependency={}", path.display()));
     }
     for (name, path) in externs {
         command.arg("--extern").arg(format!("{name}={}", path.display()));
     }
-    let result = command.output().map_err(|error| CliError::failure(error.to_string()))?;
+    tracing::debug!(
+        elapsed_ms = inputs_start.elapsed().as_secs_f64() * 1000.0,
+        dependency_paths,
+        direct_externs,
+        "SDK native facade inputs selected"
+    );
+    let compilation_start = Instant::now();
+    let result = command.output();
+    tracing::debug!(
+        elapsed_ms = compilation_start.elapsed().as_secs_f64() * 1000.0,
+        success = result.as_ref().is_ok_and(|output| output.status.success()),
+        "SDK native facade rustc completed"
+    );
+    let result = result.map_err(|error| CliError::failure(error.to_string()))?;
     if !result.status.success() {
         return Err(CliError::failure(format!(
             "native SDK facade {} failed:\n{}",
@@ -403,8 +458,13 @@ fn compile_native_sdk_facade(
             String::from_utf8_lossy(&result.stderr)
         )));
     }
+    let digest_start = Instant::now();
     let digest =
         oven_store::digest_bytes(&std::fs::read(&artifact).map_err(|error| CliError::failure(error.to_string()))?);
+    tracing::debug!(
+        elapsed_ms = digest_start.elapsed().as_secs_f64() * 1000.0,
+        "SDK native facade output digested"
+    );
     Ok(incan_frontend::library_manifest::NativeProviderOutput {
         crate_name,
         relative_path,
