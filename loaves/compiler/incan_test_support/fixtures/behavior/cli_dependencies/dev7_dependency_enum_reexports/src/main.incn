@@ -1,0 +1,31 @@
+# behavior: dependency enum aliases through two reexports retain their owner and payload layout even when another enum has the same member names in a different order (#1337, #1698)
+# expect-stdout:
+#   41
+#   0
+#   42
+#   -1
+
+from pub::messages import RelayedPacket as LocalPacket, Other
+
+
+def packet_value(packet: LocalPacket) -> int:
+    match packet:
+        case LocalPacket.Value(value):
+            return value
+        case LocalPacket.Empty:
+            return 0
+
+
+def other_value(packet: Other) -> int:
+    match packet:
+        case Other.Empty:
+            return -1
+        case Other.Value(value):
+            return value
+
+
+def main() -> None:
+    println(packet_value(LocalPacket.Value(41)))
+    println(packet_value(LocalPacket.Empty))
+    println(other_value(Other.Value(42)))
+    println(other_value(Other.Empty))
