@@ -184,10 +184,39 @@ fn ordinary_metadata_refuses_changed_owner_and_extra_replay_files() -> Result<()
     selected.replay(destination.path())?;
     fs::write(destination.path().join("src/injected.rs"), "pub fn injected() {}\n")?;
     assert!(selected.replay(destination.path()).is_err());
-    fs::write(
-        selected.owner.artifact_root.join("src/lib.rs"),
-        "pub fn answer() -> i64 { 99 }\n",
-    )?;
+    let materialized = selected.owner.artifact_root.join("src/lib.rs");
+    let original_metadata = fs::metadata(&materialized)?;
+    let original_permissions = original_metadata.permissions();
+    let original_modified = original_metadata.modified()?;
+    assert!(original_permissions.readonly());
+    // Corrupt this fixture's sealed bytes, then restore its permissions before testing admission.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(
+            &materialized,
+            fs::Permissions::from_mode(original_permissions.mode() | 0o200),
+        )?;
+    }
+    #[cfg(not(unix))]
+    {
+        let mut writable = original_permissions.clone();
+        writable.set_readonly(false);
+        fs::set_permissions(&materialized, writable)?;
+    }
+    let corruption = (|| -> std::io::Result<()> {
+        fs::write(&materialized, "pub fn answer() -> i64 { 99 }\n")?;
+        fs::File::options()
+            .write(true)
+            .open(&materialized)?
+            .set_modified(original_modified)
+    })();
+    fs::set_permissions(&materialized, original_permissions)?;
+    corruption?;
+    assert!(fs::metadata(&materialized)?.permissions().readonly());
+    assert_eq!(fs::metadata(&materialized)?.modified()?, original_modified);
+    assert_eq!(fs::metadata(&materialized)?.len(), original_metadata.len());
+    assert_eq!(fs::read(&materialized)?, b"pub fn answer() -> i64 { 99 }\n");
     assert!(selected.replay(tempfile::tempdir()?.path()).is_err());
     Ok(())
 }
