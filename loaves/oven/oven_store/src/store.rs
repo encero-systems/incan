@@ -3399,7 +3399,10 @@ fn materialized_digest_cache_path(path: &Path) -> Option<PathBuf> {
     )))
 }
 
-/// Publish a complete hash record atomically; a write failure only forfeits future acceleration.
+/// Publish a complete optional hash record atomically without receipt-level durability.
+///
+/// A lost or malformed cache record only causes another content read. Syncing each record and its directory would
+/// turn a cold inventory into thousands of durability barriers without strengthening artifact or receipt authority.
 fn publish_materialized_file_digest(path: &Path, record: &MaterializedFileDigest) -> io::Result<()> {
     let parent = path
         .parent()
@@ -3407,7 +3410,12 @@ fn publish_materialized_file_digest(path: &Path, record: &MaterializedFileDigest
     fs::create_dir_all(parent)?;
     let sequence = STAGING_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let staged = parent.join(format!(".digest-{}-{sequence}.tmp", std::process::id()));
-    let result = crate::write_receipt_staged(&serde_json::to_vec(record)?, &staged, path, parent);
+    let result = (|| {
+        let mut bytes = serde_json::to_vec(record)?;
+        bytes.push(b'\n');
+        fs::write(&staged, bytes)?;
+        fs::rename(&staged, path)
+    })();
     if result.is_err() {
         let _removed = fs::remove_file(&staged);
     }
@@ -4590,6 +4598,42 @@ pub(crate) mod tests {
         assert_eq!(super::digest_observed_file(&source, None)?.input_bytes_read, 12);
         assert!(super::digest_observed_file(root.path(), Some(&cache)).is_err());
         assert!(super::digest_observed_file(&root.path().join("missing"), Some(&cache)).is_err());
+        Ok(())
+    }
+
+    /// Concurrent optional cache publishers expose complete records and preserve the held file's byte identity.
+    #[cfg(unix)]
+    #[test]
+    fn observed_file_digest_cache_concurrent_publication() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("compiler");
+        let cache = root.path().join("cache/digest.json");
+        fs::write(&source, b"concurrent native bytes")?;
+        let expected = crate::digest_bytes(b"concurrent native bytes");
+        std::thread::scope(|scope| -> Result<(), Box<dyn std::error::Error>> {
+            let mut workers = Vec::new();
+            for _ in 0..4 {
+                let source = &source;
+                let cache = &cache;
+                let expected = &expected;
+                workers.push(scope.spawn(move || -> Result<(), super::OvenStoreError> {
+                    for _ in 0..16 {
+                        let observed = super::digest_observed_file(source, Some(cache))?;
+                        assert_eq!(observed.digest, *expected);
+                    }
+                    Ok(())
+                }));
+            }
+            for worker in workers {
+                worker.join().map_err(|_| "digest cache worker panicked")??;
+            }
+            Ok(())
+        })?;
+        let record: super::MaterializedFileDigest = serde_json::from_slice(&fs::read(&cache)?)?;
+        assert_eq!(record.digest, expected);
+        let repeat = super::digest_observed_file(&source, Some(&cache))?;
+        assert_eq!(repeat.input_bytes_read, 0);
+        assert_eq!(fs::read_dir(cache.parent().ok_or("cache has no parent")?)?.count(), 1);
         Ok(())
     }
 
