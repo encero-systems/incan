@@ -1,0 +1,4 @@
+[project]
+name = "dev7_nested_carrier_ownership"
+version = "0.1.0"
+private = true

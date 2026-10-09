@@ -29,7 +29,7 @@ pub model SourceSpan:
 
 @derive(Clone, PartialEq)
 pub enum ListLeaf:
-    """Scalar, flat tuple, and retained model leaves; hash keys exclude floats and models, and dictionary values stay scalar."""
+    """Scalar, flat tuple, and exact retained nominal/carrier leaves; hash keys still require admitted Eq and Hash authority."""
 
     Int
     Float
@@ -37,6 +37,7 @@ pub enum ListLeaf:
     Str
     Tuple(list[TupleElement])
     Model(int, str)
+    Enum(int, str)
     U8
     Unit
     Decimal
@@ -157,6 +158,7 @@ pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
         ListLeaf.Str => return PlanType.String
         ListLeaf.Tuple(elements) => return PlanType.Tuple(elements)
         ListLeaf.Model(index, name) => return PlanType.Model(index, name)
+        ListLeaf.Enum(index, name) => return PlanType.Enum(index, name)
         ListLeaf.U8 => return PlanType.U8
         ListLeaf.Unit => return PlanType.Unit
         ListLeaf.Decimal => return PlanType.Decimal
@@ -196,6 +198,8 @@ pub model FieldProjection:
 
     pub slot: int
     pub ty: PlanType
+    # A nonnegative variant selects the checked enum payload before this field; -1 keeps an ordinary field.
+    pub variant: int = -1
 
 
 @derive(Clone, PartialEq)

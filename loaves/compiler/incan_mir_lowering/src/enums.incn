@@ -13,6 +13,7 @@ from rust::incan_semantics_core::body_ir import (
 )
 from pub::incan_mir_plan import EnumDeclaration, EnumVariant, PlanType, SourceSpan
 from models import model_type as plain_model_type
+from layout_types import native_source_type as retained_source_type
 
 
 pub def enum_type(declarations: list[RustEnumDeclaration], ty: &RustType) -> Option[PlanType]:
@@ -137,7 +138,9 @@ pub def native_source_type(
         None => return plain_model_type(nominals, ty)
 
 
-pub def lower_enum_declarations(module: &RustBodyIrModule, file: str) -> Result[list[EnumDeclaration], str]:
+pub def lower_enum_declarations(
+    module: &RustBodyIrModule, file: str, intrinsics: list[EnumDeclaration] = [],
+) -> Result[list[EnumDeclaration], str]:
     """Copy checked source-order variants and derives into the native declaration plan."""
     mut declarations: list[EnumDeclaration] = []
     for declaration in module.enum_declarations:
@@ -145,7 +148,7 @@ pub def lower_enum_declarations(module: &RustBodyIrModule, file: str) -> Result[
         for variant in declaration.variants:
             mut fields: list[PlanType] = []
             for ty in variant.fields:
-                fields.append(native_source_type(module.nominal_declarations, module.enum_declarations, ty, [])?)
+                fields.append(retained_source_type(module.nominal_declarations, module.enum_declarations, [], ty, intrinsics)?)
             variants.append(EnumVariant(name=str(variant.name), fields=fields))
         declarations.append(
             EnumDeclaration(

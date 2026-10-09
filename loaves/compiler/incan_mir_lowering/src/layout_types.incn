@@ -1,0 +1,62 @@
+"""Resolve complete checked carrier and collection types against one retained native layout context."""
+
+from rust::incan_semantics_core import IncanType as RustType, IncanCallableParamKind
+from rust::incan_semantics_core::body_ir import NominalDeclaration, EnumDeclaration as RustEnumDeclaration
+from pub::incan_mir_plan import PlanType, ListLeaf, EnumDeclaration
+from models import model_type
+from enums import enum_type
+from collections import primitive_leaf
+
+
+pub def native_source_type(
+    nominals: list[NominalDeclaration],
+    enums: list[RustEnumDeclaration],
+    unions: list[RustType],
+    ty: &RustType,
+    intrinsics: list[EnumDeclaration],
+) -> Result[PlanType, str]:
+    """Use retained carrier identity before recursively resolving collection elements; never reopen source syntax."""
+    for index in range(len(intrinsics)):
+        if intrinsics[index].source_type == str(ty):
+            return Ok(PlanType.Enum(len(enums) + index, intrinsics[index].name))
+    match enum_type(enums, ty):
+        Some(result) => return Ok(result)
+        None => pass
+    match ty:
+        RustType.Function(params=parameters, return_type=result) =>
+            mut signature: list[PlanType] = []
+            for parameter in parameters:
+                if parameter.kind != IncanCallableParamKind.Normal or parameter.is_mut:
+                    return Err("unsupported Body IR function pointer with rest or mutable parameters")
+                signature.append(native_source_type(nominals, enums, unions, parameter.ty, intrinsics)?)
+            signature.append(native_source_type(nominals, enums, unions, result, intrinsics)?)
+            return Ok(PlanType.FunctionPointer(signature))
+        RustType.Generic(base=base, args=arguments) =>
+            if base == "List" and len(arguments) == 1:
+                element = native_source_type(nominals, enums, unions, arguments[0], intrinsics)?
+                match element:
+                    PlanType.List(leaf, depth) => return Ok(PlanType.List(leaf, depth + 1))
+                    _ => return Ok(PlanType.List(collection_leaf(element)?, 1))
+            if base == "Dict" and len(arguments) == 2:
+                key = primitive_leaf(arguments[0], true)?
+                value = native_source_type(nominals, enums, unions, arguments[1], intrinsics)?
+                return Ok(PlanType.Dict(key, collection_leaf(value)?))
+        _ => pass
+    return model_type(nominals, ty)
+
+
+pub def collection_leaf(ty: PlanType) -> Result[ListLeaf, str]:
+    """Keep exact source nominal and intrinsic carrier identities alongside the existing primitive leaves."""
+    match ty:
+        PlanType.Int => return Ok(ListLeaf.Int)
+        PlanType.Float => return Ok(ListLeaf.Float)
+        PlanType.Bool => return Ok(ListLeaf.Bool)
+        PlanType.String => return Ok(ListLeaf.Str)
+        PlanType.FrozenStr => return Ok(ListLeaf.FrozenStr)
+        PlanType.U8 => return Ok(ListLeaf.U8)
+        PlanType.Unit => return Ok(ListLeaf.Unit)
+        PlanType.Decimal => return Ok(ListLeaf.Decimal)
+        PlanType.Tuple(elements) => return Ok(ListLeaf.Tuple(elements))
+        PlanType.Model(owner, name) => return Ok(ListLeaf.Model(owner, name))
+        PlanType.Enum(owner, name) => return Ok(ListLeaf.Enum(owner, name))
+        _ => return Err("unsupported Body IR collection element representation")

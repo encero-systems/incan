@@ -898,11 +898,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 let mut place = bir::Place::from_local(id);
                 // The local keeps its storage type; a read keeps the checker's narrower member as an explicit
                 // projection.
-                if let Some(local) = self.locals.get(id.index())
-                    && matches!(&local.ty, IncanType::Generic { base, args } if base == "Union" && args.contains(ty))
-                    && local.ty != *ty
-                {
-                    place.projection.push(bir::PlaceElem::UnionMember { ty: ty.clone() });
+                if let Some(local) = self.locals.get(id.index()) {
+                    carrier_projection::retain_checked_narrowing(&mut place, &local.ty, ty);
                 }
                 return Some(place);
             }
@@ -1257,6 +1254,7 @@ mod refusals;
 mod reads;
 
 mod collect;
+mod carrier_projection;
 mod static_aliases;
 
 mod bodies;
