@@ -15,6 +15,7 @@ serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
 sha2 = { loaf = "crates-io/sha2", version = "0.10.9" }
 thiserror = { loaf = "crates-io/thiserror", version = "2.0" }
 toml = { loaf = "crates-io/toml", version = "0.9" }
+tracing = { loaf = "crates-io/tracing", version = "0.1" }
 wasmtime = { default-features = false, features = ["cranelift", "runtime", "std"], loaf = "crates-io/wasmtime", version = "36.0.17" }
 
 [project]
