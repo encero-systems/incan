@@ -66,6 +66,21 @@ pub fn synchronize_projected_provider_dependencies(
 
 /// Build transport-stable provider facts from the checked physical artifact projection.
 pub fn compiled_provider_metadata(inputs: CompiledProviderMetadataInputs<'_>) -> CliResult<CompiledProviderMetadata> {
+    provider_metadata(inputs, true)
+}
+
+/// Retain the same checked declaration and feature facts without granting compiled dependency or facet authority.
+pub(crate) fn checked_source_provider_metadata(
+    inputs: CompiledProviderMetadataInputs<'_>,
+) -> CliResult<CompiledProviderMetadata> {
+    provider_metadata(inputs, false)
+}
+
+/// Project public semantic facts once, freezing physical implementation edges only for an artifact publisher.
+fn provider_metadata(
+    inputs: CompiledProviderMetadataInputs<'_>,
+    materialized: bool,
+) -> CliResult<CompiledProviderMetadata> {
     let graph =
         PackageFeatureGraph::from_manifest(inputs.manifest).map_err(|error| CliError::failure(error.to_string()))?;
     let root_features = inputs
@@ -141,13 +156,21 @@ pub fn compiled_provider_metadata(inputs: CompiledProviderMetadataInputs<'_>) ->
     fact_requirements.sort();
     fact_requirements.dedup();
 
-    let provider_dependencies = compiled_provider_dependencies(
-        inputs.feature_plan,
-        inputs.library_manifest_index,
-        inputs.provider_plan,
-        inputs.artifact_root,
-    )?;
-    let implementation_facets = provider_implementation_facets(&namespace_claims)?;
+    let provider_dependencies = if materialized {
+        compiled_provider_dependencies(
+            inputs.feature_plan,
+            inputs.library_manifest_index,
+            inputs.provider_plan,
+            inputs.artifact_root,
+        )?
+    } else {
+        Vec::new()
+    };
+    let implementation_facets = if materialized {
+        provider_implementation_facets(&namespace_claims)?
+    } else {
+        Vec::new()
+    };
     let operation_descriptors = provider_operation_metadata_from_checked_type_info(inputs.checked_type_info_by_path)?;
     let semantic_source_inputs = inputs
         .modules

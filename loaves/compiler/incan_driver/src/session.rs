@@ -7,8 +7,8 @@
 
 #[cfg(test)]
 use std::cell::Cell;
-use std::collections::HashSet;
 use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -23,7 +23,9 @@ use incan_frontend::contract_metadata::{
     CanonicalModelBundle, materialize_contract_models, read_project_model_bundles,
 };
 use incan_frontend::hir::build_semantic_module_snapshot_v0;
-use incan_frontend::library_manifest_index::LibraryManifestIndex;
+use incan_frontend::library_manifest_index::{
+    LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
+};
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::testing_markers::{
     TestingMarkerSemantics, load_testing_marker_semantics, testing_marker_semantics_from_manifest,
@@ -36,8 +38,8 @@ use incan_provider::inventory::{
     sdk_provider_bootstrap_namespace_roots, validate_component_inventory_selection,
 };
 use incan_provider::requirements::{
-    DependencyManifestMode, SdkInventorySource, parser_only_library_manifest_index,
-    prepare_library_dependency_artifacts,
+    DependencyManifestMode, SdkInventorySource, checked_source_library_manifest_index,
+    parser_only_library_manifest_index, prepare_library_dependency_artifacts,
 };
 use incan_provider::{
     FeatureSelection, PackageFeatureGraph, PackageFeaturePlan, ProviderModuleResolution, ProviderPlan,
@@ -244,6 +246,147 @@ pub struct CompilationSession {
 }
 
 impl CompilationSession {
+    /// Check local provider sources against their public package contract without granting execution authority.
+    pub fn discover_for_check(
+        entry_path: &Path,
+        feature_selection: &FeatureSelection,
+        sdk_profile_override: Option<&str>,
+    ) -> CliResult<Self> {
+        let mut session = Self::discover_with_dependency_mode_and_sdk_source(
+            entry_path,
+            DependencyManifestMode::CheckMetadata,
+            SdkInventorySource::DiscoverOnly,
+            feature_selection,
+            sdk_profile_override,
+        )?;
+        let Some(features) = session.package_feature_plan.clone() else {
+            return Ok(session);
+        };
+        session.check_source_dependencies(
+            &features,
+            sdk_profile_override,
+            &mut BTreeMap::new(),
+            &mut BTreeSet::new(),
+        )?;
+        Ok(session)
+    }
+
+    /// Materialize only command-local checked metadata, sharing exact feature instances across a dependency graph.
+    fn check_source_dependencies(
+        &mut self,
+        features: &PackageFeaturePlan,
+        sdk_profile_override: Option<&str>,
+        completed: &mut BTreeMap<
+            (PathBuf, BTreeSet<String>),
+            (incan_frontend::library_manifest::LibraryManifest, Arc<ProviderPlan>),
+        >,
+        visiting: &mut BTreeSet<PathBuf>,
+    ) -> CliResult<()> {
+        let Some(manifest) = self.manifest.as_ref() else {
+            return Ok(());
+        };
+        let mut entries = HashMap::new();
+        let mut checked_dependencies = Vec::new();
+        let active = self
+            .package_feature_plan
+            .as_ref()
+            .and_then(|plan| plan.root_package())
+            .map(|root| root.active_dependencies.clone())
+            .unwrap_or_default();
+        for key in active {
+            let Some(dependency) = manifest.library_dependencies().get(&key) else {
+                continue;
+            };
+            if !dependency
+                .path
+                .join(oven_model::manifest::LOAF_MANIFEST_FILENAME)
+                .is_file()
+            {
+                if let Some(entry) = self.library_manifest_index.get(&key) {
+                    entries.insert(key, entry.clone());
+                }
+                continue;
+            }
+            let root = dependency
+                .path
+                .canonicalize()
+                .map_err(|error| CliError::failure(error.to_string()))?;
+            let selected = features
+                .package(&root)
+                .map(|state| state.features.active_features.clone())
+                .unwrap_or_default();
+            let identity = (root.clone(), selected.clone());
+            let checked = if let Some(checked) = completed.get(&identity) {
+                checked.clone()
+            } else {
+                if !visiting.insert(root.clone()) {
+                    return Err(CliError::failure(format!(
+                        "checked source provider dependency cycle at {}",
+                        root.display()
+                    )));
+                }
+                let child_manifest = discover_effective_project_manifest(&root)?
+                    .ok_or_else(|| CliError::failure("source dependency manifest disappeared during checking"))?;
+                let child_entry = crate::build::library_exports::validate_library_entrypoint(&child_manifest)?;
+                let selection = FeatureSelection {
+                    requested: selected,
+                    no_default_features: true,
+                    all_features: false,
+                };
+                let mut child = Self::discover_with_dependency_mode_and_sdk_source(
+                    &child_entry,
+                    DependencyManifestMode::CheckMetadata,
+                    SdkInventorySource::DiscoverOnly,
+                    &selection,
+                    sdk_profile_override,
+                )?;
+                child.check_source_dependencies(features, sdk_profile_override, completed, visiting)?;
+                let checked = crate::build::library_project::checked_source_library_manifest(&child, &child_entry)?;
+                visiting.remove(&root);
+                let checked = (checked, Arc::clone(&child.provider_plan));
+                completed.insert(identity, checked.clone());
+                checked
+            };
+            let (checked, child_plan) = checked;
+            checked_dependencies.push((key.clone(), child_plan));
+            let metadata = LibraryArtifactMetadata::for_checked_source(&key, &checked.name, root);
+            entries.insert(
+                key,
+                LibraryManifestIndexEntry::Loaded {
+                    manifest: Box::new(checked),
+                    metadata,
+                },
+            );
+        }
+        self.library_manifest_index = LibraryManifestIndex::from_entries(entries);
+        add_selected_standard_vocab_providers(
+            &mut self.library_manifest_index,
+            self.sdk_inventory.as_deref(),
+            self.sdk_components.as_ref(),
+        )?;
+        self.library_imported_vocab = self.library_manifest_index.library_imported_vocab();
+        self.library_imported_dsl_surfaces = self.library_manifest_index.library_imported_dsl_surfaces();
+        let mut plan = ProviderPlan::from_resolved_inputs(
+            self.library_manifest_index.clone(),
+            self.package_feature_plan.as_ref(),
+            self.sdk_inventory.as_deref(),
+            self.sdk_components.as_ref(),
+            std::iter::empty(),
+        )
+        .map_err(|error| CliError::failure(error.to_string()))?
+        .with_bootstrap_sdk_namespace_roots(self.provider_plan.bootstrap_sdk_namespace_roots().cloned());
+        for (dependency, child) in checked_dependencies {
+            plan.retain_checked_source_dependencies(&dependency, &child)
+                .map_err(CliError::failure)?;
+        }
+        self.provider_plan = Arc::new(plan);
+        self.provider_plans_by_modules = Arc::new(Mutex::new(BTreeMap::from([(
+            BTreeSet::new(),
+            Arc::clone(&self.provider_plan),
+        )])));
+        Ok(())
+    }
+
     /// Prepare the CLI check path's Rust metadata context from this session's manifest and selected providers.
     /// Both diagnostics and native Body IR consumers must use this boundary before analysis so Rust signatures and
     /// derives are checked under the same defaults. The returned lease must remain alive through checking; programs
@@ -480,6 +623,9 @@ impl CompilationSession {
                     active_dependencies.iter().map(String::as_str),
                 )
             }
+            (Some(manifest), DependencyManifestMode::CheckMetadata) if !active_dependencies.is_empty() => {
+                checked_source_library_manifest_index(manifest, &active_dependencies)?
+            }
             (Some(manifest), DependencyManifestMode::ParserOnly) if !active_dependencies.is_empty() => {
                 parser_only_library_manifest_index(manifest, &active_dependencies)?
             }
@@ -601,7 +747,8 @@ impl CompilationSession {
             used_module_paths.clone(),
         )
         .map(|plan| {
-            plan.with_bootstrap_sdk_namespace_roots(self.provider_plan.bootstrap_sdk_namespace_roots().cloned())
+            plan.with_checked_source_graph(&self.provider_plan)
+                .with_bootstrap_sdk_namespace_roots(self.provider_plan.bootstrap_sdk_namespace_roots().cloned())
         })
         .map(Arc::new)
         .map_err(|error| CliError::failure(error.to_string()))?;

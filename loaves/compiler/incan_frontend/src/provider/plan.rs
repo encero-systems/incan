@@ -290,6 +290,17 @@ pub struct PublicProviderArtifact {
     pub artifact: LibraryArtifactMetadata,
 }
 
+/// Public semantic metadata admitted by exact checked identity, independently of physical execution authority.
+#[derive(Debug, Clone)]
+pub struct PublicProviderMetadata {
+    /// Exact selected declaration owner and feature projection.
+    pub identity: ProviderIdentity,
+    /// Checked public declaration contract.
+    pub manifest: Arc<LibraryManifest>,
+    /// Whether native layout wiring is backed by an admitted physical artifact.
+    pub materialized: bool,
+}
+
 /// Mutable bookkeeping carried through one compiled-provider graph traversal.
 ///
 /// These three answer "where have we been", not "what did we produce". Keeping them apart from
@@ -350,6 +361,7 @@ fn provider_semantic_projection_persistent_key(records: &BTreeMap<String, Provid
                 "kind": match artifact.kind {
                     LibraryArtifactKind::Materialized => "materialized",
                     LibraryArtifactKind::ParserSource => "parser_source",
+                    LibraryArtifactKind::CheckedSource => "checked_source",
                     LibraryArtifactKind::StandardVocab => "standard_vocab",
                 },
             })
@@ -389,6 +401,8 @@ pub struct ProviderPlan {
     ///
     /// This bootstrap-only grant disappears once the checked provider manifest is published and must never be
     /// populated by installed SDK consumers.
+    checked_source_records: BTreeMap<String, ProviderRecord>,
+    checked_source_dependencies: BTreeMap<String, Vec<(String, String)>>,
     bootstrap_sdk_namespace_roots: BTreeSet<String>,
     /// Process-local identity assigned when this immutable record set is constructed.
     semantic_projection_identity: u64,
@@ -435,6 +449,10 @@ impl ProviderPlan {
             }
             indexed_records.insert(key, record);
         }
+        let checked_source_records = indexed_records.iter().filter(|(_, record)| {
+            let NamespaceAuthority::ProjectDependency { dependency_key } = &record.authority else { return false; };
+            matches!(library_manifest_index.get(dependency_key), Some(LibraryManifestIndexEntry::Loaded { metadata, .. }) if metadata.kind == LibraryArtifactKind::CheckedSource)
+        }).map(|(key, record)| (key.clone(), record.clone())).collect();
         let artifact_graph = resolve_artifact_graph(&indexed_records)?;
         let semantic_projection_persistent_key = provider_semantic_projection_persistent_key(&indexed_records);
         Ok(Self {
@@ -446,10 +464,89 @@ impl ProviderPlan {
             sdk_artifact_projections: artifact_graph.projections,
             public_artifacts: artifact_graph.public_artifacts,
             public_dependencies: artifact_graph.public_dependencies,
+            checked_source_records,
+            checked_source_dependencies: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
             semantic_projection_identity: next_provider_semantic_projection_identity(),
             semantic_projection_persistent_key: Some(semantic_projection_persistent_key),
         })
+    }
+
+    /// Retain a checked child's semantic dependency graph without granting transitive import namespaces or artifacts.
+    pub fn retain_checked_source_dependencies(&mut self, library: &str, child: &ProviderPlan) -> Result<(), String> {
+        let parent = self.checked_source_records.values().find(|record| matches!(&record.authority, NamespaceAuthority::ProjectDependency { dependency_key } if dependency_key == library))
+            .ok_or_else(|| format!("checked source import container `{library}` is missing"))?.identity.stable_key();
+        let mut edges = Vec::new();
+        for record in child
+            .records
+            .values()
+            .filter(|record| child.checked_source_records.contains_key(&record.identity.stable_key()))
+        {
+            if let NamespaceAuthority::ProjectDependency { dependency_key } = &record.authority {
+                edges.push((dependency_key.clone(), record.identity.stable_key()));
+            }
+        }
+        self.checked_source_records.extend(child.checked_source_records.clone());
+        self.checked_source_dependencies
+            .extend(child.checked_source_dependencies.clone());
+        self.checked_source_dependencies.insert(parent, edges);
+        Ok(())
+    }
+
+    /// Carry the session's checked source graph into an immutable module-usage projection.
+    pub fn with_checked_source_graph(mut self, source: &ProviderPlan) -> Self {
+        self.checked_source_records
+            .extend(source.checked_source_records.clone());
+        self.checked_source_dependencies
+            .extend(source.checked_source_dependencies.clone());
+        self
+    }
+
+    /// Find a source semantic route through already-checked declared dependency edges.
+    fn checked_source_route(&self, library: &str, identity: &ProviderIdentity) -> Result<Vec<String>, String> {
+        let owner = self.records.values().find(|record| matches!(&record.authority, NamespaceAuthority::ProjectDependency { dependency_key } if dependency_key == library))
+            .ok_or_else(|| format!("checked source import container `{library}` is missing"))?;
+        let mut pending = std::collections::VecDeque::from([(owner.identity.stable_key(), Vec::new())]);
+        let mut seen = BTreeSet::new();
+        while let Some((key, route)) = pending.pop_front() {
+            if !seen.insert(key.clone()) {
+                continue;
+            }
+            if key == identity.stable_key() {
+                return Ok(route);
+            }
+            for (dependency, child) in self.checked_source_dependencies.get(&key).into_iter().flatten() {
+                let mut next = route.clone();
+                next.push(dependency.clone());
+                pending.push_back((child.clone(), next));
+            }
+        }
+        Err(format!(
+            "public signature in `{library}` has no checked source dependency route to {}",
+            identity.stable_key()
+        ))
+    }
+
+    /// Resolve checked nominal metadata along the selected semantic or physical public dependency graph.
+    pub fn public_nominal_metadata_projection(
+        &self,
+        library: &str,
+        origin: &crate::library_manifest::NominalTypeOriginExport,
+    ) -> Result<
+        (
+            PublicProviderMetadata,
+            crate::library_manifest::ExportIdentity,
+            Vec<String>,
+        ),
+        String,
+    > {
+        let (target, export) = self.public_nominal_metadata(origin)?;
+        let route = if target.materialized {
+            self.public_artifact_route(library, &target.identity)?
+        } else {
+            self.checked_source_route(library, &target.identity)?
+        };
+        Ok((target, export, route))
     }
 
     /// Return the consumer-side dependency manifest index normalized into this plan.
@@ -700,6 +797,7 @@ impl ProviderPlan {
         &self,
         origin: &crate::library_manifest::NominalTypeOriginExport,
     ) -> Result<(PublicProviderArtifact, crate::library_manifest::ExportIdentity), String> {
+        let (_, export) = self.public_nominal_metadata(origin)?;
         let target = self
             .public_artifacts
             .get(&origin.provider.stable_key())
@@ -709,6 +807,36 @@ impl ProviderPlan {
                     origin.provider.stable_key()
                 )
             })?;
+        Ok((target.clone(), export))
+    }
+
+    /// Resolve public nominal membership from exact checked metadata without requiring execution authority.
+    pub fn public_nominal_metadata(
+        &self,
+        origin: &crate::library_manifest::NominalTypeOriginExport,
+    ) -> Result<(PublicProviderMetadata, crate::library_manifest::ExportIdentity), String> {
+        let target = if let Some(target) = self.public_artifacts.get(&origin.provider.stable_key()) {
+            PublicProviderMetadata {
+                identity: target.identity.clone(),
+                manifest: Arc::clone(&target.manifest),
+                materialized: true,
+            }
+        } else {
+            let record = self
+                .checked_source_records
+                .get(&origin.provider.stable_key())
+                .ok_or_else(|| {
+                    format!(
+                        "public signature requires unadmitted checked provider {}",
+                        origin.provider.stable_key()
+                    )
+                })?;
+            PublicProviderMetadata {
+                identity: record.identity.clone(),
+                manifest: record.manifest.clone().ok_or("checked source contract is missing")?,
+                materialized: false,
+            }
+        };
         let canonical = origin
             .canonical
             .hydrate()
@@ -764,6 +892,37 @@ impl ProviderPlan {
         else {
             return Err(format!("import container `{importing_library}` is unavailable"));
         };
+        if metadata.kind == LibraryArtifactKind::CheckedSource {
+            let mut candidates = BTreeMap::new();
+            for record in self.checked_source_records.values() {
+                if self.checked_source_route(importing_library, &record.identity).is_ok()
+                    && matches!(&canonical.origin, incan_semantics_core::SymbolOrigin::Package { library, .. } if library == &record.identity.name)
+                    && record.manifest.as_ref().is_some_and(|manifest| {
+                        manifest.contract_metadata.identity_graph.exports.iter().any(|entry| {
+                            entry
+                                .canonical
+                                .as_ref()
+                                .and_then(|identity| identity.hydrate())
+                                .as_ref()
+                                == Some(canonical)
+                        })
+                    })
+                {
+                    candidates.insert(record.identity.stable_key(), record.identity.clone());
+                }
+            }
+            if candidates.len() != 1 {
+                return Err(format!(
+                    "type `{}` has {} checked declaring providers through `{importing_library}`",
+                    canonical.declaration_name,
+                    candidates.len()
+                ));
+            }
+            return candidates
+                .into_values()
+                .next()
+                .ok_or("checked declaring provider disappeared".into());
+        }
         let mut pending = vec![normalize_artifact_root(&metadata.crate_root)];
         let mut seen = BTreeSet::new();
         let mut candidates = BTreeMap::new();
@@ -883,6 +1042,8 @@ impl ProviderPlan {
             sdk_artifact_projections: Vec::new(),
             public_artifacts: BTreeMap::new(),
             public_dependencies: BTreeMap::new(),
+            checked_source_records: BTreeMap::new(),
+            checked_source_dependencies: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
             semantic_projection_identity: next_provider_semantic_projection_identity(),
             semantic_projection_persistent_key: Some(semantic_projection_persistent_key),
@@ -955,6 +1116,8 @@ impl ProviderPlan {
             sdk_artifact_projections: Vec::new(),
             public_artifacts: BTreeMap::new(),
             public_dependencies: BTreeMap::new(),
+            checked_source_records: BTreeMap::new(),
+            checked_source_dependencies: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
             semantic_projection_identity: next_provider_semantic_projection_identity(),
             semantic_projection_persistent_key: Some(semantic_projection_persistent_key),
@@ -1625,10 +1788,17 @@ fn project_dependency_records(
 ) -> Result<Vec<ProviderRecord>, ProviderPlanError> {
     let mut records = Vec::new();
     for (dependency_key, manifest, artifact) in index.loaded_entries() {
-        let active_features = package_features
-            .and_then(|features| features.package(artifact_project_root(artifact)))
-            .map(|package| package.features.active_features.clone())
-            .unwrap_or_else(|| manifest.contract_metadata.provider.active_features.clone());
+        // A command-local checked manifest already represents the unified graph-wide source instance. A nested
+        // producer session's feature plan contains only its own descendants' requests, so it cannot narrow that
+        // instance after another branch contributed additional features.
+        let active_features = if artifact.kind == LibraryArtifactKind::CheckedSource {
+            manifest.contract_metadata.provider.active_features.clone()
+        } else {
+            package_features
+                .and_then(|features| features.package(artifact_project_root(artifact)))
+                .map(|package| package.features.active_features.clone())
+                .unwrap_or_else(|| manifest.contract_metadata.provider.active_features.clone())
+        };
         let relative_claims = active_provider_claims(manifest, &active_features);
         let namespace_claims = relative_claims
             .into_iter()
@@ -1648,6 +1818,17 @@ fn project_dependency_records(
             }
             LibraryArtifactKind::ParserSource => {
                 format!("parser-source:{dependency_key}:{}@{}", manifest.name, manifest.version)
+            }
+            LibraryArtifactKind::CheckedSource => {
+                let wire = canonical_manifest_digest(manifest).map_err(|error| ProviderPlanError::ManifestLoad {
+                    provider: manifest.name.clone(),
+                    path: artifact.manifest_path.clone(),
+                    message: error.to_string(),
+                })?;
+                let mut digest = Sha256::new();
+                digest.update(b"checked-source-v1\0");
+                digest.update(wire.as_bytes());
+                format!("sha256:{}", hex::encode(digest.finalize()))
             }
             LibraryArtifactKind::StandardVocab => {
                 format!("standard-vocab:{dependency_key}:{}@{}", manifest.name, manifest.version)
@@ -1673,7 +1854,11 @@ fn project_dependency_records(
             enabled: true,
             manifest: Some(Arc::new(manifest.clone())),
             artifact: (artifact.kind == LibraryArtifactKind::Materialized).then(|| artifact.clone()),
-            implementation_facets: implementation_facets(manifest, &active_features),
+            implementation_facets: if artifact.kind == LibraryArtifactKind::CheckedSource {
+                Vec::new()
+            } else {
+                implementation_facets(manifest, &active_features)
+            },
         });
     }
     Ok(records)

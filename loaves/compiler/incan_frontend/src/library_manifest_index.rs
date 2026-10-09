@@ -71,7 +71,7 @@ pub struct LibraryArtifactMetadata {
     pub cargo_toml_path: PathBuf,
     /// Path to generated crate entrypoint (`src/lib.rs`).
     pub crate_lib_path: PathBuf,
-    /// Whether this entry names a complete generated artifact or source-derived parser metadata only.
+    /// Whether this entry names a generated artifact, source-derived metadata, or standard vocabulary.
     pub kind: LibraryArtifactKind,
 }
 
@@ -82,6 +82,8 @@ pub enum LibraryArtifactKind {
     Materialized,
     /// Only source-derived syntax metadata is available for parser-only tooling such as formatting.
     ParserSource,
+    /// Checked public source metadata for a command-local check; no generated or native artifact exists.
+    CheckedSource,
     /// An SDK-provided artifact used only to activate and desugar standard vocabulary.
     ///
     /// The SDK provider plan remains the authority for executable standard modules, so this cannot become a package
@@ -892,6 +894,18 @@ impl LibraryArtifactMetadata {
             manifest_name,
             crate_root,
             kind: LibraryArtifactKind::ParserSource,
+        }
+    }
+
+    /// Retain a checked source package's coordinates without claiming compiled execution authority.
+    pub fn for_checked_source(
+        dependency_key: impl Into<String>,
+        manifest_name: impl Into<String>,
+        project_root: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            kind: LibraryArtifactKind::CheckedSource,
+            ..Self::for_parser_source(dependency_key, manifest_name, project_root)
         }
     }
 

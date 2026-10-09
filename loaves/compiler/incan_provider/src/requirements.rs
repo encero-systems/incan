@@ -15,7 +15,7 @@ use incan_lang::lang::stdlib::{StdlibExtraCrateDep, StdlibExtraCrateSource};
 
 use crate::dependency_resolver::ResolvedDependencies;
 use crate::error::{ProviderError, ProviderResult};
-use crate::vocab_extraction::collect_library_vocab_metadata_for_parser;
+use crate::vocab_extraction::{collect_library_vocab_metadata_for_check, collect_library_vocab_metadata_for_parser};
 use crate::{PackageFeaturePlan, SDK_PROVIDER_BUILD_ENV, SdkArtifactProjection, SdkDependencyRebinding};
 use incan_frontend::ast::ImportKind;
 use incan_frontend::library_manifest::LibraryManifest;
@@ -65,6 +65,8 @@ pub enum DependencyManifestMode {
     /// Materialize direct-Rustc caller-owned libraries for a normal Oven consumer.
     OvenArtifacts,
     ParserOnly,
+    /// Read checked source context and prepared vocabulary metadata without creating native artifacts.
+    CheckMetadata,
 }
 
 impl DependencyManifestMode {
@@ -73,7 +75,7 @@ impl DependencyManifestMode {
         match self {
             Self::FullArtifacts => Some(LibraryDependencyPreparation::LegacyManifestOnly),
             Self::OvenArtifacts => Some(LibraryDependencyPreparation::OvenDirectRustc),
-            Self::ParserOnly => None,
+            Self::ParserOnly | Self::CheckMetadata => None,
         }
     }
 
@@ -114,6 +116,23 @@ pub fn parser_only_library_manifest_index(
     manifest: &ProjectManifest,
     active_dependencies: &BTreeSet<String>,
 ) -> ProviderResult<LibraryManifestIndex> {
+    source_library_manifest_index(manifest, active_dependencies, false)
+}
+
+/// Load source parser context for check using only compatible already-prepared vocabulary metadata.
+pub fn checked_source_library_manifest_index(
+    manifest: &ProjectManifest,
+    active_dependencies: &BTreeSet<String>,
+) -> ProviderResult<LibraryManifestIndex> {
+    source_library_manifest_index(manifest, active_dependencies, true)
+}
+
+/// Share dependency authority selection while distinguishing parser preparation from cache-only checking.
+fn source_library_manifest_index(
+    manifest: &ProjectManifest,
+    active_dependencies: &BTreeSet<String>,
+    cache_only: bool,
+) -> ProviderResult<LibraryManifestIndex> {
     let existing_index = LibraryManifestIndex::from_project_manifest_dependencies(
         manifest,
         active_dependencies.iter().map(String::as_str),
@@ -137,7 +156,7 @@ pub fn parser_only_library_manifest_index(
             {
                 entries.insert(
                     dependency_key.clone(),
-                    parser_only_library_manifest_entry(dependency_key, &dependency.path)?,
+                    parser_only_library_manifest_entry(dependency_key, &dependency.path, cache_only)?,
                 );
             }
             Some(entry) => {
@@ -154,6 +173,7 @@ pub fn parser_only_library_manifest_index(
 fn parser_only_library_manifest_entry(
     dependency_key: &str,
     dependency_root: &Path,
+    cache_only: bool,
 ) -> ProviderResult<LibraryManifestIndexEntry> {
     let dependency_root = fs::canonicalize(dependency_root).unwrap_or_else(|_| dependency_root.to_path_buf());
     let manifest_path = dependency_root.join(LOAF_MANIFEST_FILENAME);
@@ -183,7 +203,12 @@ fn parser_only_library_manifest_entry(
     let generated_cargo_target_dir = env::var_os(GENERATED_CARGO_TARGET_DIR_ENV)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from);
-    if let Some(vocab_extraction) = collect_library_vocab_metadata_for_parser(
+    let collect = if cache_only {
+        collect_library_vocab_metadata_for_check
+    } else {
+        collect_library_vocab_metadata_for_parser
+    };
+    if let Some(vocab_extraction) = collect(
         &dependency_manifest,
         &project_root,
         generated_cargo_target_dir.as_deref(),
