@@ -54,7 +54,7 @@ name = "dev7_carrier_admission"
 path = "src/main.rs"
 unstable_features = ["rustc_private"]
 toolchain_components = ["rustc-dev"]
-sysroot_dependencies = ["rustc_driver"]
+sysroot_dependencies = ["rustc_driver", "rustc_interface"]
 "#
         ),
     )?;
@@ -63,7 +63,7 @@ sysroot_dependencies = ["rustc_driver"]
     success(&output, "nested carrier admission controls");
     assert_eq!(
         output.stdout,
-        b"nested carrier admission: 2 positive, 7 Body IR negative, and 8 native plan negative controls passed\n"
+        b"nested carrier admission: 5 positive, 15 Body IR negative, and 8 native plan negative controls passed\n"
     );
     Ok(())
 }

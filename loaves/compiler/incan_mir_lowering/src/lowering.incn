@@ -1763,12 +1763,16 @@ def lower_local_call(
     """Call a canonical retained body; local span identities must agree when present."""
     match target.direct_call_id:
         None =>
-            # Imported calls have no source-local span id; the complete canonical target selected their body.
-            # Keep the stronger local contract when the declaration belongs to the caller's module.
+            # Publication removes source-local call ids even within one package fragment. Its exact validated
+            # canonical target selected this unique body; source modules still require their local span proof.
             match body.canonical:
                 Some(identity) =>
-                    if canonical_module_identity(identity) == Some(builder.module_identity):
-                        return Err("unsupported Body IR local NamedCallableTarget without direct identity")
+                    match identity.origin:
+                        SymbolOrigin.Module(_path) =>
+                            if canonical_module_identity(identity) == Some(builder.module_identity):
+                                return Err("unsupported Body IR local NamedCallableTarget without direct identity")
+                        SymbolOrigin.Package(library=_library, module_path=_path) => pass
+                        _ => return Err("unsupported Body IR unproven NamedCallableTarget")
                 None => return Err("unsupported Body IR unproven NamedCallableTarget")
         Some(call_id) =>
             if call_id != body.direct_call_id:
@@ -4708,7 +4712,21 @@ def lower_enum_match(
     mut source = plan_place(0, span)
     match scrutinee:
         RustOperand.Place(read) =>
-            source = scalar_place(builder, read.place, span)?
+            mut indexed = false
+            for projection in read.place.projection:
+                match projection:
+                    PlaceElem.Index(_index) => indexed = true
+                    _ => pass
+            if indexed:
+                # Collection reads clone one element before inspecting its tag. Evaluate the checked index once
+                # and keep the parent alive; an index cannot be interpreted as a model field projection.
+                operand = value_operand(builder, scrutinee, span)?
+                match operand.kind:
+                    OperandKind.Move(place) => source = place
+                    OperandKind.Copy(place) => source = place
+                    _ => return Err("unsupported Body IR nonplace enum match scrutinee")
+            else:
+                source = scalar_place(builder, read.place, span)?
         _ => return Err("unsupported Body IR nonplace enum match scrutinee")
     match place_type(builder.locals, source):
         PlanType.Enum(_owner, _name) => pass
