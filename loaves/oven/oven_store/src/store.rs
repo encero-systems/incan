@@ -7,7 +7,7 @@
 use oven_model::compiler_identity::{CompilerIdentity, RELEASE_DOMAIN_PREFIX};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{self, File, OpenOptions, TryLockError};
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -3461,80 +3461,116 @@ fn digest_materialized_file(path: &Path) -> Result<(u64, String), OvenStoreError
 
 /// Hash the exact held file, or reuse a digest bound to its replacement-sensitive metadata.
 fn digest_observed_file(path: &Path, cache_path: Option<&Path>) -> Result<ObservedFileDigest, OvenStoreError> {
+    digest_observed_file_with_stamp(path, cache_path, materialized_file_stamp)
+}
+
+/// Retry unstable observations without weakening metadata admission or trusting a receipt's expected digest.
+///
+/// Three attempts tolerate a transient hard-link publication but bound work on continually changing files. Each
+/// attempt observes the same held handle before and after hashing; the stamp callback is the production metadata
+/// syscall boundary and lets race controls change the real file at an exact observation point.
+fn digest_observed_file_with_stamp(
+    path: &Path,
+    cache_path: Option<&Path>,
+    mut stamp: impl FnMut(&File) -> io::Result<MaterializedFileStamp>,
+) -> Result<ObservedFileDigest, OvenStoreError> {
     let mut file = File::open(path).map_err(|source| OvenStoreError::Io {
         path: path.to_path_buf(),
         source,
     })?;
-    let before = materialized_file_stamp(&file).map_err(|source| OvenStoreError::Io {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    if !before.identity.is_empty()
-        && let Some(record) = cache_path
-            .and_then(|path| fs::read(path).ok())
-            .and_then(|bytes| serde_json::from_slice::<MaterializedFileDigest>(&bytes).ok())
-        && record.stamp == before
-        && record
-            .digest
-            .strip_prefix("sha256:")
-            .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
-    {
-        let after = materialized_file_stamp(&file).map_err(|source| OvenStoreError::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        if before == after {
-            return Ok(report_observed_file_digest(path, before.length, record.digest, 0));
-        }
-        return Err(OvenStoreError::Integrity {
-            identity: path.display().to_string(),
-            message: "regular file changed during digest lookup".into(),
-        });
-    }
-    let mut hasher = Sha256::new();
-    let mut logical_bytes = 0_u64;
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let read = file.read(&mut buffer).map_err(|source| OvenStoreError::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-        let read = u64::try_from(read).map_err(|_| OvenStoreError::Integrity {
-            identity: path.display().to_string(),
-            message: "materialized artifact read count does not fit the supported accounting range".to_string(),
-        })?;
-        logical_bytes = logical_bytes
-            .checked_add(read)
-            .ok_or_else(|| OvenStoreError::Integrity {
-                identity: path.display().to_string(),
-                message: "materialized artifact byte count exceeds the supported accounting range".to_string(),
+    let mut input_bytes_read = 0_u64;
+    for attempt in 0..3 {
+        if attempt != 0 {
+            file.rewind().map_err(|source| OvenStoreError::Io {
+                path: path.to_path_buf(),
+                source,
             })?;
-    }
-    let after = materialized_file_stamp(&file).map_err(|source| OvenStoreError::Io {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    if before != after || logical_bytes != before.length {
-        return Err(OvenStoreError::Integrity {
-            identity: path.display().to_string(),
-            message: "materialized artifact changed while hashing".into(),
-        });
-    }
-    let digest = format!("sha256:{}", hex::encode(hasher.finalize()));
-    if let Some(path) = cache_path {
-        let _published = publish_materialized_file_digest(
+        }
+        let before = stamp(&file).map_err(|source| OvenStoreError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        if !before.identity.is_empty()
+            && let Some(record) = cache_path
+                .and_then(|path| fs::read(path).ok())
+                .and_then(|bytes| serde_json::from_slice::<MaterializedFileDigest>(&bytes).ok())
+            && record.stamp == before
+            && record
+                .digest
+                .strip_prefix("sha256:")
+                .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        {
+            let after = stamp(&file).map_err(|source| OvenStoreError::Io {
+                path: path.to_path_buf(),
+                source,
+            })?;
+            if before == after {
+                return Ok(report_observed_file_digest(
+                    path,
+                    before.length,
+                    record.digest,
+                    input_bytes_read,
+                ));
+            }
+            continue;
+        }
+        let mut hasher = Sha256::new();
+        let mut logical_bytes = 0_u64;
+        let mut buffer = [0_u8; 64 * 1024];
+        loop {
+            let read = file.read(&mut buffer).map_err(|source| OvenStoreError::Io {
+                path: path.to_path_buf(),
+                source,
+            })?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+            let read = u64::try_from(read).map_err(|_| OvenStoreError::Integrity {
+                identity: path.display().to_string(),
+                message: "materialized artifact read count does not fit the supported accounting range".to_string(),
+            })?;
+            logical_bytes = logical_bytes
+                .checked_add(read)
+                .ok_or_else(|| OvenStoreError::Integrity {
+                    identity: path.display().to_string(),
+                    message: "materialized artifact byte count exceeds the supported accounting range".to_string(),
+                })?;
+            input_bytes_read = input_bytes_read
+                .checked_add(read)
+                .ok_or_else(|| OvenStoreError::Integrity {
+                    identity: path.display().to_string(),
+                    message: "physical digest reads exceed the supported accounting range".to_string(),
+                })?;
+        }
+        let after = stamp(&file).map_err(|source| OvenStoreError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        if before != after || logical_bytes != before.length {
+            continue;
+        }
+        let digest = format!("sha256:{}", hex::encode(hasher.finalize()));
+        if let Some(path) = cache_path {
+            let _published = publish_materialized_file_digest(
+                path,
+                &MaterializedFileDigest {
+                    stamp: before,
+                    digest: digest.clone(),
+                },
+            );
+        }
+        return Ok(report_observed_file_digest(
             path,
-            &MaterializedFileDigest {
-                stamp: before,
-                digest: digest.clone(),
-            },
-        );
+            logical_bytes,
+            digest,
+            input_bytes_read,
+        ));
     }
-    Ok(report_observed_file_digest(path, logical_bytes, digest, logical_bytes))
+    Err(OvenStoreError::Integrity {
+        identity: path.display().to_string(),
+        message: "materialized artifact changed during each digest observation".into(),
+    })
 }
 
 /// Report authoritative byte reads separately from stat observations and cache-record IO.
@@ -4554,6 +4590,92 @@ pub(crate) mod tests {
         assert_eq!(super::digest_observed_file(&source, None)?.input_bytes_read, 12);
         assert!(super::digest_observed_file(root.path(), Some(&cache)).is_err());
         assert!(super::digest_observed_file(&root.path().join("missing"), Some(&cache)).is_err());
+        Ok(())
+    }
+
+    /// Hard-link publication invalidates an observation without invalidating immutable bytes; a stable retry is
+    /// admitted.
+    #[cfg(unix)]
+    #[test]
+    fn observed_file_digest_retries_hard_link_metadata_changes() -> Result<(), Box<dyn std::error::Error>> {
+        for cached in [false, true] {
+            let root = tempfile::tempdir()?;
+            let source = root.path().join("compiler");
+            let alias = root.path().join("alias");
+            let cache = root.path().join("cache/digest.json");
+            fs::write(&source, b"native bytes")?;
+            if cached {
+                let _ = super::digest_observed_file(&source, Some(&cache))?;
+            }
+            let mut observations = 0;
+            let observed = super::digest_observed_file_with_stamp(&source, Some(&cache), |file| {
+                observations += 1;
+                if observations == 2 {
+                    fs::hard_link(&source, &alias)?;
+                }
+                super::materialized_file_stamp(file)
+            })?;
+            assert_eq!(observed.digest, crate::digest_bytes(b"native bytes"));
+            assert_eq!(observed.length, 12);
+            assert_eq!(observed.input_bytes_read, if cached { 12 } else { 24 });
+            assert_eq!(observations, 4);
+            assert_eq!(super::digest_observed_file(&source, Some(&cache))?.input_bytes_read, 0);
+        }
+        Ok(())
+    }
+
+    /// An actual preserved-mtime edit must yield its freshly observed bytes, never the earlier cached identity.
+    #[cfg(unix)]
+    #[test]
+    fn observed_file_digest_retry_rehashes_changed_bytes() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("compiler");
+        let cache = root.path().join("cache/digest.json");
+        fs::write(&source, b"native bytes")?;
+        let modified = fs::metadata(&source)?.modified()?;
+        let mut observations = 0;
+        let observed = super::digest_observed_file_with_stamp(&source, Some(&cache), |file| {
+            observations += 1;
+            if observations == 2 {
+                fs::write(&source, b"edited bytes")?;
+                fs::File::options()
+                    .write(true)
+                    .open(&source)?
+                    .set_times(fs::FileTimes::new().set_modified(modified))?;
+            }
+            super::materialized_file_stamp(file)
+        })?;
+        assert_eq!(observed.digest, crate::digest_bytes(b"edited bytes"));
+        assert_ne!(observed.digest, crate::digest_bytes(b"native bytes"));
+        assert_eq!(observed.length, 12);
+        assert_eq!(observed.input_bytes_read, 24);
+        assert_eq!(observations, 4);
+        assert_eq!(super::digest_observed_file(&source, Some(&cache))?.input_bytes_read, 0);
+        Ok(())
+    }
+
+    /// Continually changing metadata must remain an integrity failure after a bounded number of observations.
+    #[cfg(unix)]
+    #[test]
+    fn observed_file_digest_retry_refuses_unstable_files() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("compiler");
+        let alias = root.path().join("alias");
+        fs::write(&source, b"native bytes")?;
+        let mut observations = 0;
+        let result = super::digest_observed_file_with_stamp(&source, None, |file| {
+            observations += 1;
+            if observations % 2 == 0 {
+                if alias.exists() {
+                    fs::remove_file(&alias)?;
+                } else {
+                    fs::hard_link(&source, &alias)?;
+                }
+            }
+            super::materialized_file_stamp(file)
+        });
+        assert!(matches!(result, Err(OvenStoreError::Integrity { .. })));
+        assert!(observations <= 6, "unstable observations must not retry indefinitely");
         Ok(())
     }
 
