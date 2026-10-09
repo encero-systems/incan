@@ -14,6 +14,10 @@ use crate::build::library_exports::resolve_library_project_root;
 use crate::build::library_outputs::{
     library_publication_receipts, packaged_library_loaf_store_root, write_library_manifest_artifacts,
 };
+use crate::build::library_project::metadata_replay::MetadataPreparation;
+use crate::build::library_project::metadata_replay::lock_transition::{
+    MetadataLockTransition, MetadataTransitionContext,
+};
 use crate::build::library_project::{prepare_library_project, prepare_library_project_with_caller_facet};
 use crate::build::output_materialization::{
     completed_output_default_backend_receipt, select_default_project_output,
@@ -609,6 +613,62 @@ fn publish_project_lock_after_provider_bake(
     package_features: &FeatureSelection,
 ) -> CliResult<PublishedOvenProjectLock> {
     publish_oven_project_lock(project_root, entrypoint, package_features)
+}
+
+/// Retain complete ordinary metadata authority before the producer publishes its canonical lock.
+fn capture_library_metadata_lock_transition(
+    prepared: &PreparedLibraryProject,
+    features: &FeatureSelection,
+    authority: &mut OvenProjectBakeAuthorityContext,
+) -> CliResult<Option<MetadataLockTransition>> {
+    let Some(metadata) = &prepared.metadata_owner else {
+        return Ok(None);
+    };
+    let project = crate::project::effective_project_manifest_for_exact_root(&prepared.project_root)?;
+    let session = crate::session::CompilationSession::discover_for_oven(&prepared.entrypoint, features, None)?;
+    let preparation = MetadataPreparation::observe(&project, &session, &prepared.out_dir, None, Some(authority))?
+        .ok_or_else(|| CliError::failure("ordinary metadata lost preparation authority before lock publication"))?;
+    MetadataLockTransition::capture(
+        preparation,
+        &MetadataTransitionContext {
+            project: &project,
+            session: &session,
+            out_dir: &prepared.out_dir,
+            manifest_path: &prepared.manifest_path,
+            native_sdk: None,
+        },
+        std::sync::Arc::clone(metadata),
+    )
+    .map(Some)
+}
+
+/// Reobserve current authority and finalize checked metadata after the exact producer-owned lock write.
+fn finalize_library_metadata_lock_transition(
+    prepared: &mut PreparedLibraryProject,
+    transition: Option<MetadataLockTransition>,
+    published: &PublishedOvenProjectLock,
+    features: &FeatureSelection,
+    authority: &mut OvenProjectBakeAuthorityContext,
+) -> CliResult<()> {
+    let Some(transition) = transition else {
+        return Ok(());
+    };
+    let project = crate::project::effective_project_manifest_for_exact_root(&prepared.project_root)?;
+    let session = crate::session::CompilationSession::discover_for_oven(&prepared.entrypoint, features, None)?;
+    let candidate = MetadataPreparation::observe(&project, &session, &prepared.out_dir, None, Some(authority))?
+        .ok_or_else(|| CliError::failure("ordinary metadata lost preparation authority after lock publication"))?;
+    prepared.metadata_owner = Some(transition.finalize(
+        candidate,
+        &MetadataTransitionContext {
+            project: &project,
+            session: &session,
+            out_dir: &prepared.out_dir,
+            manifest_path: &prepared.manifest_path,
+            native_sdk: None,
+        },
+        published,
+    )?);
+    Ok(())
 }
 
 /// Discover the conventional or explicitly declared binary roots of a project's Rust facet.
@@ -1627,12 +1687,23 @@ pub fn bake_oven_project_targets(
                         });
                     }
                     write_library_manifest_artifacts(&mut prepared)?;
+                    let metadata_transition =
+                        capture_library_metadata_lock_transition(&prepared, package_features, &mut authority_context)?;
                     published_project_lock = Some(publish_project_lock_after_provider_bake(
                         &project_root,
                         &dependency_surface_entrypoint,
                         package_features,
                     )?);
                     authority_context.lock_published();
+                    finalize_library_metadata_lock_transition(
+                        &mut prepared,
+                        metadata_transition,
+                        published_project_lock.as_ref().ok_or_else(|| {
+                            CliError::failure("ordinary library metadata lost its published lock proof")
+                        })?,
+                        package_features,
+                        &mut authority_context,
+                    )?;
                     source_authority_digest = Some(authority_context.project_source_authority(&project_root)?);
                     let source_authority_digest = source_authority_digest.as_deref().ok_or_else(|| {
                         CliError::failure("explicit Oven library bake lost its final source authority")

@@ -255,6 +255,10 @@ pub(crate) fn publish_checked_library_package(
             owner.export_into(&package_store)
         })
         .transpose()?;
+    let exported_metadata_owner = checked_metadata
+        .as_ref()
+        .map(|reference| super::library_metadata::select_library_metadata_reference(&package_store, reference))
+        .transpose()?;
     let generation_owner = prepared
         .metadata_owner
         .as_ref()
@@ -276,7 +280,10 @@ pub(crate) fn publish_checked_library_package(
         checked_generation: generation_owner.as_ref().map(|owner| owner.reference()),
         profiles,
     };
-    write_packaged_library_loaf_manifest(&prepared.out_dir, &manifest)
+    write_packaged_library_loaf_manifest(&prepared.out_dir, &manifest)?;
+    // The destination lease protects the imported metadata while generation publication may prune this Store.
+    drop(exported_metadata_owner);
+    Ok(())
 }
 
 /// Atomically publish the package-local index only after every referenced Loaf and library output exists.
