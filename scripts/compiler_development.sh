@@ -20,6 +20,16 @@ case "$mode:$#" in
     *) echo "invalid compiler-development mode or argument count" >&2; exit 2 ;;
 esac
 
+# Shell quoting preserves spaces in an output root; Make's abspath treats them as a list of paths.
+absolute_path() {
+    case "$1" in
+        /*) printf '%s\n' "$1" ;;
+        *) printf '%s/%s\n' "$source_root" "$1" ;;
+    esac
+}
+target_dir=$(absolute_path "$target_dir")
+sdk_path_file=$(absolute_path "$sdk_path_file")
+store=$(absolute_path "$store")
 mkdir -p "$target_dir/compiler-development/command-evidence"
 evidence_name=$mode
 if [ "$mode" = test ]; then evidence_name=test-one; fi
@@ -66,12 +76,15 @@ cd "$source_root/workspaces/compiler-bootstrap"
     > "$command_evidence/bootstrap-preparation.json" 2> "$command_evidence/bootstrap-preparation.stderr"
 export INCAN_COMPILER_STAGE_ZERO="$stage_zero"
 if [ "$mode" = test ]; then
-    export INCAN_TEST_OVEN_TEST_ONE_REPORT="$3"
+    report=$3
+    if [ -n "$report" ]; then report=$(absolute_path "$report"); fi
+    export INCAN_TEST_OVEN_TEST_ONE_REPORT="$report"
     "$stage_zero" run "$source_root/workspaces/compiler-bootstrap/src/main.incn" -- \
         --test "$source_root" "$1" "$2" "$RUSTC" "$store"
 else
+    output=$(absolute_path "$1")
     "$stage_zero" run "$source_root/workspaces/compiler-bootstrap/src/main.incn" -- \
-        "$source_root" "$1" "$RUSTC" "$store" > "$command_evidence/compiler-bootstrap.json"
+        "$source_root" "$output" "$RUSTC" "$store" > "$command_evidence/compiler-bootstrap.json"
     if [ "$mode" = build ]; then
         cat "$command_evidence/compiler-bootstrap.json"
         echo "Compiler-development evidence: $command_evidence"
