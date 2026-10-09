@@ -4,6 +4,7 @@ extern crate rustc_abi;
 extern crate rustc_ast;
 extern crate rustc_hir;
 extern crate rustc_index;
+extern crate rustc_interface;
 extern crate rustc_middle;
 extern crate rustc_span;
 extern crate thin_vec;
@@ -13,9 +14,15 @@ extern crate thin_vec;
 use incan_frontend::{body_ir::build_body_ir_module_v0, lexer, parser, typechecker::TypeChecker};
 use incan_mir_lowering::caller::incan::lower_module;
 use incan_semantics_core::{
-    IncanPrimitiveType, IncanType,
-    body_ir::{Block, BodyIrModule, Operand, Place, PlaceElem, Rvalue, StatementKind},
+    CompilerNodeId, IncanPrimitiveType, IncanType, SymbolOrigin,
+    body_ir::{
+        Block, BodyIrModule, CallableTarget, Callee, NamedCallableTarget, Operand, Place, PlaceElem, Rvalue,
+        StatementKind,
+    },
+    canonical_module_identity,
+    executable_representation::{SurfaceReader, build_surface},
 };
+use std::collections::BTreeSet;
 
 type TestResult<T> = Result<T, Box<dyn std::error::Error>>;
 
@@ -45,15 +52,275 @@ def main() -> None:
 
 /// Obtain projection and declaration facts from the real frontend before mutating any retained input.
 fn checked_module() -> TestResult<BodyIrModule> {
-    let tokens = lexer::lex(SOURCE).map_err(|errors| format!("{errors:?}"))?;
+    checked_source(SOURCE, "dev7_carrier_admission")
+}
+
+/// Retain genuine frontend identities for each independent source control.
+fn checked_source(source: &str, module: &str) -> TestResult<BodyIrModule> {
+    let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
     let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
-    let module_path = vec!["dev7_carrier_admission".to_owned()];
+    let module_path = vec![module.to_owned()];
     let mut checker = TypeChecker::new();
     checker.set_current_module_path(Some(module_path.clone()));
     checker
         .check_program(&program)
         .map_err(|errors| format!("{errors:?}"))?;
     Ok(build_body_ir_module_v0(&program, &module_path, checker.type_info()))
+}
+
+const CALL_SOURCE: &str = r#"pub def echo(value: int) -> int:
+    return value
+
+pub def main() -> None:
+    echo(7)
+"#;
+
+/// Decode actual package fragments whose publisher deliberately removed every call's source-local span id.
+fn published_calls(source: &BodyIrModule) -> TestResult<BodyIrModule> {
+    let public: BTreeSet<_> = source
+        .bodies
+        .iter()
+        .map(|body| {
+            let mut identity = body.canonical.clone().ok_or("missing source body identity")?;
+            let SymbolOrigin::Module(module_path) = identity.origin else {
+                return Err("expected checked source owner");
+            };
+            identity.origin = SymbolOrigin::Package {
+                library: "dev7_calls".into(),
+                module_path,
+            };
+            Ok(identity)
+        })
+        .collect::<Result<_, &str>>()?;
+    let bytes = build_surface(
+        std::slice::from_ref(source),
+        "dev7_calls",
+        "1.0.0",
+        &public,
+        &BTreeSet::new(),
+    )?;
+    let reader = SurfaceReader::open(&bytes)?;
+    let mut published = source.clone();
+    published.bodies.clear();
+    for identity in &public {
+        published.bodies.push(reader.declaration(identity)?);
+    }
+    let first = public.first().ok_or("missing published identity")?;
+    published.module_id = CompilerNodeId::module(canonical_module_identity(first).ok_or("missing package owner")?);
+    Ok(published)
+}
+
+/// Select the retained ordinary call by statement kind, with no name-based verifier.
+fn named_call(module: &mut BodyIrModule) -> TestResult<&mut NamedCallableTarget> {
+    for body in &mut module.bodies {
+        for statement in &mut body.block.stmts {
+            if let StatementKind::Call {
+                callee: Callee::Function(CallableTarget::Named(target)),
+                ..
+            } = &mut statement.kind
+            {
+                return Ok(target);
+            }
+        }
+    }
+    Err("missing checked named call".into())
+}
+
+/// Require the real Incan lowerer to reject an independently corrupted callable identity.
+fn rejected_call(module: &BodyIrModule, label: &str, family: &str) -> TestResult<()> {
+    match lower_module(module, CALL_SOURCE.to_owned(), "dev7_calls.incn".to_owned()) {
+        Err(reason) if reason.starts_with(family) => Ok(()),
+        Err(reason) => Err(format!("{label}: expected {family}, got {reason}").into()),
+        Ok(_) => Err(format!("{label}: malformed callable identity was admitted").into()),
+    }
+}
+
+/// Preserve source-local span proof while admitting package calls exclusively through unique canonical bodies.
+fn callable_controls() -> TestResult<()> {
+    let source = checked_source(CALL_SOURCE, "dev7_calls")?;
+    let plan = lower_module(&source, CALL_SOURCE.to_owned(), "dev7_calls.incn".to_owned())?;
+    validation::validate(&plan)?;
+    let mut published = published_calls(&source)?;
+    if named_call(&mut published)?.direct_call_id.is_some() {
+        return Err("publisher retained a source-local call id".into());
+    }
+    let plan = lower_module(&published, CALL_SOURCE.to_owned(), "dev7_calls.incn".to_owned())?;
+    validation::validate(&plan)?;
+
+    let mut module = source.clone();
+    named_call(&mut module)?.direct_call_id = None;
+    rejected_call(
+        &module,
+        "missing local span identity",
+        "unsupported Body IR local NamedCallableTarget without direct identity",
+    )?;
+
+    let mut module = published.clone();
+    named_call(&mut module)?.canonical = None;
+    rejected_call(
+        &module,
+        "missing package authority",
+        "unsupported Body IR builtin or unproven NamedCallableTarget",
+    )?;
+
+    let mut module = published.clone();
+    let identity = named_call(&mut module)?
+        .canonical
+        .as_mut()
+        .ok_or("missing published call identity")?;
+    let SymbolOrigin::Package { library, .. } = &mut identity.origin else {
+        return Err("expected published callable owner".into());
+    };
+    *library = "foreign_same_spelling".into();
+    rejected_call(
+        &module,
+        "foreign package owner",
+        "unsupported Body IR imported or unresolved canonical call target",
+    )?;
+
+    let mut module = published.clone();
+    named_call(&mut module)?
+        .canonical
+        .as_mut()
+        .ok_or("missing published call identity")?
+        .declaration_span
+        .end += 1;
+    rejected_call(
+        &module,
+        "wrong package declaration span",
+        "unsupported Body IR imported or unresolved canonical call target",
+    )?;
+
+    let mut module = published.clone();
+    let wrong_span = CompilerNodeId::declaration_span(module.module_id.path(), 0, 1);
+    named_call(&mut module)?.direct_call_id = Some(wrong_span);
+    rejected_call(
+        &module,
+        "wrong present package span identity",
+        "Body IR call identity disagrees with target body",
+    )?;
+
+    let mut module = published.clone();
+    let target = named_call(&mut module)?
+        .canonical
+        .clone()
+        .ok_or("missing published call identity")?;
+    let duplicate = module
+        .bodies
+        .iter()
+        .find(|body| body.canonical.as_ref() == Some(&target))
+        .ok_or("missing published target body")?
+        .clone();
+    module.bodies.push(duplicate);
+    rejected_call(
+        &module,
+        "duplicate canonical target bodies",
+        "unsupported Body IR imported or unresolved canonical call target",
+    )?;
+    Ok(())
+}
+
+const INDEXED_SOURCE: &str = r#"def first(values: Option[List[Result[str, str]]]) -> str:
+    if values is not None:
+        match values[0]:
+            Ok(inner) => return inner
+            Err(error) => return error
+    return "empty"
+
+def main() -> None:
+    first(Some([Ok("retained")]))
+"#;
+
+/// Locate the checked optional payload followed by a list index in the actual enum match scrutinee.
+fn indexed_match(block: &mut Block) -> Option<&mut Place> {
+    for statement in &mut block.stmts {
+        match &mut statement.kind {
+            StatementKind::Assign {
+                rvalue:
+                    Rvalue::Match {
+                        scrutinee: Operand::Place(read),
+                        ..
+                    },
+                ..
+            } if read
+                .place
+                .projection
+                .iter()
+                .any(|step| matches!(step, PlaceElem::Index(_))) =>
+            {
+                return Some(&mut read.place);
+            }
+            StatementKind::If { then_block, .. } => {
+                if let Some(place) = indexed_match(then_block) {
+                    return Some(place);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Require a retained indexed path, so a frontend simplification cannot quietly remove this test's boundary.
+fn indexed_projection(module: &mut BodyIrModule) -> TestResult<&mut Place> {
+    for body in &mut module.bodies {
+        if let Some(place) = indexed_match(&mut body.block) {
+            return Ok(place);
+        }
+    }
+    Err("missing checked indexed enum scrutinee".into())
+}
+
+/// Exercise an indexed enum match inside a checked optional list without bypassing the actual frontend.
+fn indexed_carrier_control() -> TestResult<()> {
+    let mut module = checked_source(INDEXED_SOURCE, "dev7_indexed_carrier")?;
+    if !matches!(
+        indexed_projection(&mut module)?.projection.first(),
+        Some(PlaceElem::OptionPayload { .. })
+    ) {
+        return Err("missing optional list payload authority".into());
+    }
+    let plan = lower_module(
+        &module,
+        INDEXED_SOURCE.to_owned(),
+        "dev7_indexed_carrier.incn".to_owned(),
+    )?;
+    validation::validate(&plan)?;
+    let mut corrupted = module.clone();
+    let PlaceElem::OptionPayload { option_type, .. } = &mut indexed_projection(&mut corrupted)?.projection[0] else {
+        return Err("expected optional list payload".into());
+    };
+    *option_type = IncanType::Generic {
+        base: "Option".into(),
+        args: vec![IncanType::Primitive(IncanPrimitiveType::Str)],
+    };
+    for (label, corrupted, family) in [
+        (
+            "wrong indexed container",
+            corrupted,
+            "invalid Body IR optional projection owner",
+        ),
+        {
+            let mut corrupted = module.clone();
+            indexed_projection(&mut corrupted)?.projection.remove(0);
+            (
+                "missing indexed payload",
+                corrupted,
+                "unsupported Body IR model indexing without a field",
+            )
+        },
+    ] {
+        match lower_module(
+            &corrupted,
+            INDEXED_SOURCE.to_owned(),
+            "dev7_indexed_carrier.incn".to_owned(),
+        ) {
+            Err(reason) if reason.starts_with(family) => {}
+            Err(reason) => return Err(format!("{label}: expected {family}, got {reason}").into()),
+            Ok(_) => return Err(format!("{label}: malformed indexed payload was admitted").into()),
+        }
+    }
+    Ok(())
 }
 
 /// Locate the actual optional/union/newtype return path, traversing checked branch bodies without changing them.
@@ -320,6 +587,8 @@ fn main() -> TestResult<()> {
     validation::validate(&heap)?;
     body_controls(&baseline)?;
     plan_controls(&plan)?;
-    println!("nested carrier admission: 2 positive, 7 Body IR negative, and 8 native plan negative controls passed");
+    callable_controls()?;
+    indexed_carrier_control()?;
+    println!("nested carrier admission: 5 positive, 15 Body IR negative, and 8 native plan negative controls passed");
     Ok(())
 }
