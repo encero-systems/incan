@@ -64,6 +64,48 @@ pub struct NativeLoafPreparation {
     report: NativeLoafPreparationReport,
 }
 
+/// Explicit resolved graph wire format; parsing supplies paths, never a second dependency resolver.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResolvedNativeGraph {
+    index_commit: String,
+    registry_lock: PathBuf,
+    facets: Vec<NativeLoafFacet>,
+}
+
+/// Prepare an explicit resolved graph with lock and local facets relative to its canonical document owner.
+///
+/// The index, archives, output, compiler, target and profile are supplied by the caller. This entry point has no
+/// SDK discovery, environment-derived authority or standard-library companion publication.
+pub fn prepare_resolved_native_loafs(
+    graph: &Path,
+    index: &Path,
+    blobs: &Path,
+    output: &Path,
+    rustc: &Path,
+    target: &str,
+    profile: &str,
+) -> Result<NativeLoafPreparation> {
+    let graph = graph.canonicalize().map_err(failed)?;
+    let owner = graph
+        .parent()
+        .ok_or_else(|| refused("resolved native graph has no owner"))?;
+    let selection: ResolvedNativeGraph =
+        serde_json::from_slice(&std::fs::read(&graph).map_err(failed)?).map_err(failed)?;
+    prepare_native_loafs(&NativeLoafPreparationRequest {
+        lock: &owner.join(selection.registry_lock),
+        blobs,
+        output,
+        rustc,
+        index,
+        index_commit: &selection.index_commit,
+        target,
+        profile,
+        facet_owner: owner,
+        facets: &selection.facets,
+    })
+}
+
 impl NativeLoafPreparation {
     /// Borrow complete producer-authenticated ordinary records and original native leases.
     pub fn graph(&self) -> &NativeLoafGraph {

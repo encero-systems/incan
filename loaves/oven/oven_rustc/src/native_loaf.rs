@@ -24,12 +24,35 @@ const INPUT: &str = "native-loaf-record";
 pub(crate) const SOURCE_INPUT: &str = "native-source-binding";
 /// Native recipe input binding the complete physical selected-destination set.
 pub(crate) const EDGES_INPUT: &str = "native-physical-edges";
+/// Native recipe input retaining explicit archive-versus-local preparation provenance.
+pub(crate) const ORIGIN_INPUT: &str = "native-source-origin";
 
 mod preparation;
+mod selection;
 pub use preparation::{
     NativeLoafFacet, NativeLoafPreparation, NativeLoafPreparationReport, NativeLoafPreparationRequest,
-    prepare_native_loafs,
+    prepare_native_loafs, prepare_resolved_native_loafs,
 };
+
+/// Independently established producer boundary for a native source generation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeLoafOrigin {
+    /// Source admitted from a digest-verified archive and pinned adopted index.
+    Registry,
+    /// Source mapped from the explicitly selected current authored local project.
+    Local,
+}
+
+impl NativeLoafOrigin {
+    /// Stable recipe spelling, assigned by the producer rather than inferred from a graph name.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Registry => "registry",
+            Self::Local => "local",
+        }
+    }
+}
 
 /// Exact source selection supplied by the native producer, without catalog-only graph edges.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -180,6 +203,11 @@ pub struct SelectedNativeLoaf {
 }
 
 impl SelectedNativeLoaf {
+    /// Borrow the explicit preparation origin authenticated by this native recipe.
+    pub fn source_origin(&self) -> Result<NativeLoafOrigin> {
+        self.verify()?;
+        source_origin(&self.record.recipe)
+    }
     /// Project an exact declared-root request from this current producer/admission authority, preserving its alias.
     pub fn declared_root(&self, alias: &str) -> Result<NativeLoafRoot> {
         self.verify()?;
@@ -246,6 +274,21 @@ pub struct NativeLoafClosure {
 }
 
 impl NativeLoafGraph {
+    /// Project already active declaration requirements onto exact prepared source/version/feature/domain roots.
+    ///
+    /// The caller owns optional/cfg/test activation through its existing resolver. This helper does not activate or
+    /// silently skip declarations, resolve new versions, or compile missing units. Local paths must reproduce the
+    /// producer's current authored source mapping; registry roots use verified archive-origin source metadata.
+    /// The owner is a directory. Relative dependency paths are owner-relative; load parsed declarations from a
+    /// canonical manifest path so parser-resolved paths are absolute and cannot be joined to their owner twice.
+    pub fn select_dependency_roots(
+        &self,
+        dependencies: &[oven_model::manifest::DependencySpec],
+        declaration_owner: &Path,
+        domain: &str,
+    ) -> Result<Vec<NativeLoafRoot>> {
+        selection::select_roots(self, dependencies, declaration_owner, domain)
+    }
     /// Borrow exact admitted records, for declaration-authorized root selection and inspection of physical facts.
     pub fn units(&self) -> &BTreeMap<String, Arc<SelectedNativeLoaf>> {
         &self.units
@@ -600,6 +643,7 @@ fn verify_record(
 fn verify_native(record: &NativeLoafRecord, owner: &OvenStoreExecutionPayload, read_only: bool) -> Result<()> {
     verify_owner(owner, read_only)?;
     record.recipe.verify_identity().map_err(failed)?;
+    source_origin(&record.recipe)?;
     let source = &record.source;
     let native = &record.native;
     let admitted_source: NativeLoafSource = serde_json::from_slice(&owner.payload).map_err(failed)?;
@@ -669,6 +713,15 @@ fn verify_native(record: &NativeLoafRecord, owner: &OvenStoreExecutionPayload, r
         ));
     }
     Ok(())
+}
+
+/// Read only explicit independently assigned producer provenance; unknown or absent authority is refused.
+fn source_origin(recipe: &OvenReceipt) -> Result<NativeLoafOrigin> {
+    match recipe.sources.build_unit_inputs.get(ORIGIN_INPUT).map(String::as_str) {
+        Some("registry") => Ok(NativeLoafOrigin::Registry),
+        Some("local") => Ok(NativeLoafOrigin::Local),
+        _ => Err(refused("native source preparation origin is unavailable")),
+    }
 }
 
 /// Preserve held integrity checks while keeping immutable published Stores free of closure-proof writes.

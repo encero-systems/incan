@@ -110,6 +110,21 @@ pub fn local_sdk_facet_source_digest_with(
     mut digest_source: impl FnMut(&Path) -> Result<String, Error>,
 ) -> Result<String, Error> {
     let sources = local_facet_sources(project)?;
+    digest_local_facet_sources(&sources, &mut digest_source)
+}
+
+/// Reproduce the current local producer mapping once for declaration-authorized native selection.
+pub(crate) fn local_native_source_selection(project: &Path) -> Result<(toml::Value, String), Error> {
+    let sources = local_facet_sources(project)?;
+    let digest = digest_local_facet_sources(&sources, |path| Ok(oven_store::store::digest_regular_file(path)?.1))?;
+    Ok((sources.manifest, digest))
+}
+
+/// Hash the exact mapped source geometry shared by publication and current-source admission.
+fn digest_local_facet_sources(
+    sources: &LocalFacetSources,
+    mut digest_source: impl FnMut(&Path) -> Result<String, Error>,
+) -> Result<String, Error> {
     let mut records = BTreeMap::from([
         (
             ".oven-authored-loaf.toml".to_string(),
@@ -298,6 +313,7 @@ fn prepare_local_unit(
         .to_string();
     let (features, _) = local_feature_selection(&manifest, features)?;
     Ok(PreparedUnit {
+        source_origin: crate::native_loaf::NativeLoafOrigin::Local,
         about: serde_json::Value::Null,
         primary: true,
         _source_lease: None,
@@ -626,6 +642,25 @@ fn local_feature_selection(manifest: &toml::Value, requested: &[String]) -> Resu
         }
     }
     Ok((enabled, activated))
+}
+
+/// Expand a root declaration through the producer's existing feature rules, including an authored default.
+pub(crate) fn native_required_features(
+    manifest: &toml::Value,
+    requested: &[String],
+    default_features: bool,
+) -> Result<BTreeSet<String>, Error> {
+    let mut requested = requested.to_vec();
+    if default_features
+        && manifest
+            .get("project")
+            .and_then(|project| project.get("features"))
+            .and_then(|features| features.get("default"))
+            .is_some()
+    {
+        requested.push("default".to_string());
+    }
+    Ok(local_feature_selection(manifest, &requested)?.0)
 }
 
 #[cfg(test)]
