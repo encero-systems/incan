@@ -9172,6 +9172,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_rustc/src/native_loaf/prepared/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Ordinary rooted native reuse verifies current source/compiler/lock/facts, records actual work, refuses corrupted authority and bypasses empty declarations.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_rustc/src/native_loaf/tests.rs": {
       "disposition": "unaffected",
       "notes": "Ordinary native record and forward physical closure admission: original leases, declared aliases, installed read-only handoff, source and edge substitution refusal, current local source restoration, feature and origin authority, and authenticated empty closures. Independent of generated Rust and SDK inventories.",
@@ -9463,6 +9471,14 @@
     "loaves/oven/oven_rustc/src/sdk_closure/physical_edges/tests.rs": {
       "disposition": "unaffected",
       "notes": "Actual native preparation records retain exact renamed dependency owners and canonical reproduced recipes; malformed bindings, substituted owners and missing recipe facts refuse, while real local and registry preparation preserve identities and zero-compilation reuse.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/sdk_closure/staging_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Actual native Store publication cleans successful private staging and retains failed-publication receipts and sourced diagnostics.",
       "owner": 1698,
       "split_required": false,
       "split_target": "",
