@@ -193,6 +193,19 @@ impl LibraryManifestIndex {
     ) -> Result<(), LibraryManifestLoadFailure> {
         let manifest = LibraryManifest::read_from_path(manifest_path)
             .map_err(|source| LibraryManifestLoadFailure::from_manifest_error(manifest_path.to_path_buf(), source))?;
+        self.add_admitted_standard_vocab_provider(&manifest, manifest_path, crate_root)
+    }
+
+    /// Index standard vocabulary from an already admitted complete manifest, without reparsing source or metadata.
+    ///
+    /// The caller must hold the checked package owner and its exact reserved namespace grant. This syntax index
+    /// does not itself grant module ownership or execution authority.
+    pub fn add_admitted_standard_vocab_provider(
+        &mut self,
+        manifest: &LibraryManifest,
+        manifest_path: &Path,
+        crate_root: &Path,
+    ) -> Result<(), LibraryManifestLoadFailure> {
         let Some(vocab) = manifest.vocab.as_ref() else {
             return Ok(());
         };
@@ -595,7 +608,8 @@ fn load_library_manifest_entry_from_crate_root(dependency_key: &str, crate_root:
     }
 }
 
-fn dependency_crate_root(dependency_root: &Path) -> PathBuf {
+/// Project a dependency package root into the canonical published library artifact coordinate.
+pub fn dependency_crate_root(dependency_root: &Path) -> PathBuf {
     dependency_root.join(LIBRARY_ARTIFACT_DIR)
 }
 

@@ -583,6 +583,17 @@ impl ProviderPlan {
         Ok((target, export, route))
     }
 
+    /// Project module use through this same admitted catalog without loading or selecting provider artifacts again.
+    ///
+    /// Only use changes. Canonical records, namespace grants, checked dependency routes and persistent semantic
+    /// authority remain identical; the projection receives its own command-local semantic identity.
+    pub fn project_module_usage(&self, used_module_paths: BTreeSet<Vec<String>>) -> Self {
+        let mut projected = self.clone();
+        projected.used_module_paths = used_module_paths;
+        projected.semantic_projection_identity = next_provider_semantic_projection_identity();
+        projected
+    }
+
     /// Return the consumer-side dependency manifest index normalized into this plan.
     pub fn library_manifest_index(&self) -> &LibraryManifestIndex {
         &self.library_manifest_index
@@ -1037,6 +1048,24 @@ impl ProviderPlan {
         if let Some(inventory) = sdk_inventory {
             records.extend(sdk_provider_records(inventory, sdk_components)?);
         }
+        Self::new(library_manifest_index, records, used_module_paths)
+    }
+
+    /// Construct one catalog from admitted ordinary library metadata and independently retained namespace grants.
+    ///
+    /// The preparing caller retains exact checked owners, validates current features and all artifact coordinates,
+    /// and separately admits execution profiles. This method preserves selected grants and traverses the physical
+    /// provider graph once; it neither discovers an SDK nor grants namespaces from package names.
+    pub fn from_admitted_libraries<I>(
+        library_manifest_index: LibraryManifestIndex,
+        namespaces: &[super::namespaces::SelectedProviderNamespace],
+        used_module_paths: I,
+    ) -> Result<Self, ProviderPlanError>
+    where
+        I: IntoIterator<Item = Vec<String>>,
+    {
+        let mut records = project_dependency_records(&library_manifest_index, None)?;
+        records.extend(namespaces.iter().map(|namespace| namespace.record().clone()));
         Self::new(library_manifest_index, records, used_module_paths)
     }
 
@@ -2119,7 +2148,10 @@ fn retained_sdk_manifest_digest(manifest: &Arc<LibraryManifest>) -> Option<Strin
 }
 
 /// Return active provider-local module claims, falling back to checked API metadata for pre-RFC-114 artifacts.
-fn active_provider_claims(manifest: &LibraryManifest, active_features: &BTreeSet<String>) -> BTreeSet<Vec<String>> {
+pub(super) fn active_provider_claims(
+    manifest: &LibraryManifest,
+    active_features: &BTreeSet<String>,
+) -> BTreeSet<Vec<String>> {
     let provider = &manifest.contract_metadata.provider;
     if !provider.namespace_claims.is_empty() {
         return provider
