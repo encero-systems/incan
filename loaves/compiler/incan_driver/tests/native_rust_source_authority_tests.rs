@@ -573,3 +573,108 @@ fn unsealed_provider_reuse_retains_conservative_artifact_authority() -> TestResu
     assert_ne!(digest_baked_project_source_authority(&consumer)?, initial);
     Ok(())
 }
+
+/// One edited leaf propagates identity while unchanged Rust source members contribute retained hashes.
+#[cfg(unix)]
+#[test]
+fn rust_loaf_incremental_source_hashing_reads_only_changed_leaf_bytes() -> TestResult {
+    const CHILD: &str = "INCAN_TEST_INCREMENTAL_SOURCE_CHILD";
+    const CASE: &str = "rust_loaf_incremental_source_hashing_reads_only_changed_leaf_bytes";
+    if let Some(project) = std::env::var_os(CHILD) {
+        println!("source-authority={}", authority(Path::new(&project))?);
+        return Ok(());
+    }
+    let temporary = tempfile::tempdir()?;
+    let project = temporary.path().join("project");
+    let left = project.join("left");
+    let right = project.join("right");
+    write_loaf(&left, "incremental_left", "")?;
+    write_loaf(&right, "incremental_right", "")?;
+    write_loaf(
+        &project,
+        "incremental_root",
+        "[dependencies]\nleft = { loaf='incremental_left', path='left' }\nright = { loaf='incremental_right', path='right' }\n",
+    )?;
+    let probe = || {
+        std::process::Command::new(std::env::current_exe()?)
+            .args(["--exact", CASE, "--nocapture"])
+            .env(CHILD, &project)
+            .env("INCAN_HOME", temporary.path().join("home"))
+            .env("INCAN_OVEN_TRACE_FILE_DIGESTS", "1")
+            .output()
+    };
+    let observation =
+        |output: &std::process::Output| -> Result<(String, BTreeMap<String, u64>), Box<dyn std::error::Error>> {
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let digest = stdout
+                .lines()
+                .find_map(|line| line.strip_prefix("source-authority="))
+                .ok_or("missing source identity")?
+                .to_string();
+            let mut reads = BTreeMap::new();
+            for line in String::from_utf8_lossy(&output.stderr)
+                .lines()
+                .filter_map(|line| line.strip_prefix("Oven file digest: "))
+            {
+                let value: serde_json::Value = serde_json::from_str(line)?;
+                let path = value["path"].as_str().ok_or("missing source path")?.to_string();
+                let bytes = value["input_bytes_read"].as_u64().ok_or("missing input-byte count")?;
+                *reads.entry(path).or_insert(0) += bytes;
+            }
+            Ok((digest, reads))
+        };
+    let source = fs::canonicalize(left.join("src/lib.rs"))?;
+    let source_key = source.to_str().ok_or("source path is not UTF-8")?.to_string();
+    let initial = observation(&probe()?)?;
+    assert!(
+        initial.1.values().sum::<u64>() > 0,
+        "cold identity must read actual source bytes"
+    );
+    let warm = observation(&probe()?)?;
+    assert_eq!(warm.0, initial.0);
+    assert_eq!(warm.1.values().sum::<u64>(), 0);
+    let original = fs::read(&source)?;
+    let modified = fs::metadata(&source)?.modified()?;
+    let changed = b"pub fn value() -> u8 { 2 }\n";
+    fs::write(&source, changed)?;
+    fs::File::options()
+        .write(true)
+        .open(&source)?
+        .set_times(fs::FileTimes::new().set_modified(modified))?;
+    let edited = observation(&probe()?)?;
+    assert_ne!(edited.0, initial.0);
+    assert_eq!(edited.1.get(&source_key), Some(&(changed.len() as u64)));
+    assert_eq!(
+        edited.1.values().sum::<u64>(),
+        changed.len() as u64,
+        "unchanged branch and root source bytes must not be reread"
+    );
+    let repeated = observation(&probe()?)?;
+    assert_eq!(repeated.0, edited.0);
+    assert_eq!(repeated.1.values().sum::<u64>(), 0);
+    fs::write(project.join("README.md"), "unrelated documentation")?;
+    let unrelated = observation(&probe()?)?;
+    assert_eq!(unrelated.0, edited.0);
+    assert_eq!(unrelated.1.values().sum::<u64>(), 0);
+    fs::write(&source, &original)?;
+    let restored = observation(&probe()?)?;
+    assert_eq!(restored.0, initial.0);
+    assert_eq!(restored.1.values().sum::<u64>(), original.len() as u64);
+    let added = left.join("src/extra.txt");
+    fs::write(&added, b"added")?;
+    let addition = observation(&probe()?)?;
+    assert_ne!(addition.0, initial.0);
+    assert_eq!(addition.1.values().sum::<u64>(), 5);
+    fs::remove_file(&added)?;
+    let removal = observation(&probe()?)?;
+    assert_eq!(removal.0, initial.0);
+    assert_eq!(removal.1.values().sum::<u64>(), 0);
+    println!(
+        "incremental source bytes: cold={}, warm=0, edited={}, repeat=0, unrelated=0, restored={}, addition=5, removal=0",
+        initial.1.values().sum::<u64>(),
+        changed.len(),
+        original.len()
+    );
+    Ok(())
+}

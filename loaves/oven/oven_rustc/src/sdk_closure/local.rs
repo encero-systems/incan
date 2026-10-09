@@ -96,12 +96,44 @@ pub fn compile_local_sdk_facets(
 }
 
 /// Recompute a local facet's portable source snapshot identity for source-current consumer admission.
-pub fn local_sdk_facet_source_digest(project: &Path, output: &Path) -> Result<String, Error> {
-    std::fs::create_dir_all(output)?;
-    let snapshot = tempfile::Builder::new().prefix("sdk-local-check-").tempdir_in(output)?;
+pub fn local_sdk_facet_source_digest(project: &Path, _output: &Path) -> Result<String, Error> {
+    local_sdk_facet_source_digest_with(project, |path| Ok(oven_store::digest_bytes(&std::fs::read(path)?)))
+}
+
+/// Reproduce the publisher's portable source-tree identity from its exact mapping and observed file digests.
+///
+/// The supplied digester owns regular-file byte observation and freshness validation. This boundary owns source
+/// enumeration, embedded input geometry and synthetic declarations; it neither copies a snapshot nor changes the
+/// identity scheme used by the actual publisher. Callers can retain individual hashes when another file changes.
+pub fn local_sdk_facet_source_digest_with(
+    project: &Path,
+    mut digest_source: impl FnMut(&Path) -> Result<String, Error>,
+) -> Result<String, Error> {
     let sources = local_facet_sources(project)?;
-    write_local_facet_snapshot(&sources, snapshot.path())?;
-    Ok(oven_store::digest_source_tree(snapshot.path())?)
+    let mut records = BTreeMap::from([
+        (
+            ".oven-authored-loaf.toml".to_string(),
+            oven_store::digest_bytes(sources.declaration.as_bytes()),
+        ),
+        (
+            "loaf.toml".to_string(),
+            oven_store::digest_bytes(toml::to_string(&sources.manifest)?.as_bytes()),
+        ),
+    ]);
+    for (source, relative) in &sources.files {
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        let digest = digest_source(source)?;
+        if !digest
+            .strip_prefix("sha256:")
+            .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        {
+            return Err("local source digester returned an invalid content identity".into());
+        }
+        if records.insert(relative, digest).is_some() {
+            return Err("local facet repeats a portable source coordinate".into());
+        }
+    }
+    Ok(oven_store::digest_bytes(&serde_json::to_vec(&records)?))
 }
 
 /// Enumerate the publisher's exact authored source inputs without copying or hashing their contents.

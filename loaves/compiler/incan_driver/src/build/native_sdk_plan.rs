@@ -22,6 +22,10 @@ pub(crate) fn project_dependencies_without_sdk_registry_inputs(
     dependencies: &[DependencySpec],
     receipt: Option<&oven_store::OvenReceipt>,
 ) -> CliResult<Vec<DependencySpec>> {
+    // An empty dependency list grants no SDK capability and needs no native owner selection.
+    if dependencies.is_empty() {
+        return Ok(Vec::new());
+    }
     let Some(expected) = receipt.and_then(|receipt| receipt.sources.build_unit_inputs.get("sdk-native-closure")) else {
         return Ok(dependencies.to_vec());
     };
