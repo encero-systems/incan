@@ -604,10 +604,10 @@ mod tests {
     /// Domain-scoped reuse refuses missing admitted SDK owners while preserving canonical caller-owned selection.
     #[test]
     fn dev7_native_admission_preserves_other_plan_domains() -> Result<(), Box<dyn std::error::Error>> {
-        let f = fixture()?;
-        let consumer_receipt = oven_store::receipt_with_build_unit_input(&f.receipt, "consumer", "control")?;
         let empty = OvenSharedNativeOwners::default();
         for domain in ["caller-owned-plan", "sdk-native-consumer-plan"] {
+            let f = fixture()?;
+            let consumer_receipt = oven_store::receipt_with_build_unit_input(&f.receipt, "consumer", "control")?;
             f.store.publish(&OvenArtifactPublishRequest {
                 receipt: consumer_receipt.clone(),
                 domain: domain.to_string(),
