@@ -1,8 +1,20 @@
 //! Real Store publication/admission controls; fixture outputs are data and require no native compiler.
 
-use super::*;
-use oven_store::store::{OvenArtifactMaterializedFile, OvenStoreLimits};
-use oven_store::{OvenGeneratedProjectRequest, receipt_generated_project};
+use super::{
+    DOMAIN, EDGES_INPUT, NativeLoafClosure, NativeLoafDependency, NativeLoafError, NativeLoafGraph, NativeLoafOrigin,
+    NativeLoafPhysicalBinding, NativeLoafPredicate, NativeLoafRecord, NativeLoafReference, NativeLoafRoot,
+    NativeLoafSource, ORIGIN_INPUT, Result, SOURCE_INPUT, Store, physical_edges_input, prepare_resolved_native_loafs,
+    record_receipt, retain_forward, select_owner, source_binding_input, verify_children, verify_native, verify_record,
+};
+use crate::plan::shared::OvenSharedNativeOwners;
+use oven_store::store::{
+    OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, OvenStoreLimits,
+    PublishedOvenStore,
+};
+use oven_store::{OvenGeneratedProjectRequest, OvenReceipt, digest_bytes, receipt_generated_project};
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -259,7 +271,7 @@ fn dev7_native_loaf_declaration_local_aliases_features_and_source_restoration() 
     let roots = graph.select_dependency_roots(&[declaration.clone(), second], temp.path(), "target")?;
     assert_eq!(
         roots.iter().map(|root| root.alias.as_str()).collect::<Vec<_>>(),
-        ["renamed_local", "another_alias"]
+        ["another_alias", "renamed_local"]
     );
     assert!(
         roots
@@ -410,9 +422,9 @@ fn dev7_native_loaf_declaration_requires_defaults_and_admitted_manifest() -> Tes
         1
     );
     let unit = graph.units.values().next().ok_or("fixture missing")?;
-    std::fs::write(
-        unit.native_owner.artifact_root.join("source/loaf.toml"),
-        "[project]\nname='substituted'\n",
+    replace_owned_fixture(
+        &unit.native_owner.artifact_root.join("source/loaf.toml"),
+        b"[project]\nname='substituted'\n",
     )?;
     assert!(
         graph
@@ -462,6 +474,33 @@ fn refuses<T>(result: Result<T>, family: &str) -> TestResult {
         matches!(&error, NativeLoafError::Refused(message) if message.contains(family)),
         "expected refusal {family:?}, got {error}"
     );
+    Ok(())
+}
+
+/// Mutate only a test-owned immutable member, retaining its permissions and modified time for integrity controls.
+pub(super) fn replace_owned_fixture(path: &Path, bytes: &[u8]) -> TestResult {
+    let metadata = std::fs::metadata(path)?;
+    let original = metadata.permissions();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(original.mode() | 0o200))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let mut writable = original.clone();
+        writable.set_readonly(false);
+        std::fs::set_permissions(path, writable)?;
+    }
+    let result = (|| -> std::io::Result<()> {
+        std::fs::write(path, bytes)?;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)?
+            .set_times(std::fs::FileTimes::new().set_modified(metadata.modified()?))
+    })();
+    std::fs::set_permissions(path, original)?;
+    result?;
     Ok(())
 }
 
@@ -677,15 +716,55 @@ fn dev7_native_loaf_missing_and_corrupt_owners_refuse_without_fallback() -> Test
         .parent()
         .ok_or("record entry missing")?
         .join("payload");
-    let original = std::fs::read(&record_payload)?;
-    std::fs::write(&record_payload, b"corrupt ordinary record")?;
-    assert!(unit.output().is_err());
-    std::fs::write(&record_payload, original)?;
-    assert!(unit.output()?.is_file());
-    let output = unit.output()?;
-    std::fs::write(&output, b"corrupted native output")?;
-    assert!(unit.output().is_err());
-    assert!(selected.shared_owners().is_err());
+    let published = NativeLoafClosure::admit_published(
+        &PublishedOvenStore::new(native.root()),
+        &[root(&graph, &identity, "fixture")?],
+    )?;
+    let published_unit = published.graph.units.get(&identity).ok_or("published unit missing")?;
+    let native_payload = unit
+        .native_owner
+        .artifact_root
+        .parent()
+        .ok_or("native entry missing")?
+        .join("payload");
+    for path in [&record_payload, &native_payload, &unit.output()?] {
+        let original = std::fs::read(path)?;
+        let mut changed = original.clone();
+        *changed.first_mut().ok_or("fixture bytes missing")? ^= 1;
+        replace_owned_fixture(path, &changed)?;
+        for held in [unit, published_unit] {
+            assert!(
+                held.output().is_err(),
+                "changed held bytes accepted: {}",
+                path.display()
+            );
+        }
+        assert!(selected.shared_owners().is_err());
+        assert!(published.shared_owners().is_err());
+        replace_owned_fixture(path, &original)?;
+        assert!(unit.output()?.is_file());
+        assert!(published_unit.output()?.is_file());
+    }
+    for path in [&record_payload, &native_payload] {
+        let moved = temp.path().join("removed-payload");
+        std::fs::rename(path, &moved)?;
+        assert!(unit.output().is_err());
+        assert!(published_unit.output().is_err());
+        std::fs::rename(&moved, path)?;
+        assert!(unit.output()?.is_file());
+        assert!(published_unit.output()?.is_file());
+        #[cfg(unix)]
+        {
+            std::fs::rename(path, &moved)?;
+            std::os::unix::fs::symlink(&moved, path)?;
+            assert!(unit.output().is_err(), "matching foreign payload symlink accepted");
+            assert!(published_unit.output().is_err());
+            std::fs::remove_file(path)?;
+            std::fs::rename(&moved, path)?;
+            assert!(unit.output()?.is_file());
+            assert!(published_unit.output()?.is_file());
+        }
+    }
     Ok(())
 }
 

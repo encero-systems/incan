@@ -5,6 +5,7 @@ use super::{
     prepare_declared_native_loafs, prepare_with, write_hint,
 };
 use crate::native_loaf::preparation::NativeLoafPreparationReport;
+use crate::native_loaf::tests::replace_owned_fixture;
 use crate::native_loaf::{
     EDGES_INPUT, NativeLoafDependency, NativeLoafPhysicalBinding, NativeLoafReference, NativeLoafSource, ORIGIN_INPUT,
     SOURCE_INPUT, Store, physical_edges_input, select_owner, source_binding_input,
@@ -278,7 +279,7 @@ fn dev7_native_loaf_prepared_repeat_skips_preparation_and_unrelated_owners() -> 
         &original,
         first.closure.graph.units.get(&identity).ok_or("selected missing")?
     ));
-    std::fs::write(unrelated_path, b"corrupt unrelated owner must not be observed")?;
+    replace_owned_fixture(&unrelated_path, b"corrupt unrelated owner must not be observed")?;
     let repeat = prepare_with(&fixture.request(), || Err(refused("unexpected full preparation")))?;
     assert!(repeat.report.prepared_reuse);
     assert_eq!(repeat.report.preparation_calls, 0);
@@ -751,7 +752,7 @@ fn dev7_native_loaf_prepared_registry_edges_features_and_corrupt_owner_refuse() 
         );
     }
     std::fs::write(&fixture.graph, original_graph)?;
-    std::fs::write(corrupt_path, b"corrupt selected native owner")?;
+    replace_owned_fixture(&corrupt_path, b"corrupt selected native owner")?;
     let reached = std::cell::Cell::new(false);
     assert!(
         prepare_with(&fixture.request(), || {
