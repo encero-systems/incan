@@ -2473,7 +2473,7 @@ def coerce_numeric_operand(
     target: PlanType,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Materialize a checker-admitted destination carrier at calls and returns, never guess binary promotions."""
+    """Materialize a checker-admitted destination carrier at typed boundaries, never guess binary promotions."""
     if not numeric_carrier(target):
         return Ok(operand)
     source = operand_type(builder, operand)?
@@ -2591,7 +2591,7 @@ def model_field_operands(
     elements: &list[RustArgumentElement],
     span: SourceSpan,
 ) -> Result[list[Operand], str]:
-    """Materialize the frontend's canonical field order, preserving string and model ownership facts."""
+    """Materialize canonical fields with their checked concrete types, preserving string and model ownership facts."""
     declaration = builder.nominals[index]
     mut operands: list[Operand] = []
     for slot in range(len(elements)):
@@ -2608,7 +2608,9 @@ def model_field_operands(
                     text = display_operand(builder, value, span)?
                     operands.append(read_place(text, true, span))
                 else:
-                    operands.append(typed_carrier_operand(builder, value, field_type, span)?)
+                    operand = typed_carrier_operand(builder, value, field_type, span)?
+                    # Generic inference has already selected this field's carrier; retain its widening just as a call slot does.
+                    operands.append(coerce_numeric_operand(builder, operand, field_type, span)?)
             None => return Err("unsupported Body IR spread model field")
     return Ok(operands)
 
