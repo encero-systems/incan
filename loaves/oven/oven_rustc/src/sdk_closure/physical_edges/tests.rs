@@ -401,6 +401,7 @@ fn dev7_physical_edges_registry_first_and_repeat_preserve_work_and_identity() ->
         output: root.path(),
         store: &native,
         compiler_digest: compiler_closure_digest(&rustc, &target)?,
+        compiler_executable: oven_store::store::digest_regular_file(&rustc.canonicalize()?)?.1,
         profile: "debug",
         unit_codegen: &[],
     };
@@ -411,6 +412,13 @@ fn dev7_physical_edges_registry_first_and_repeat_preserve_work_and_identity() ->
     repeat.require_complete()?;
     assert!(repeat.report.compiled.is_empty());
     assert_eq!(repeat.report.reused.len(), 2);
+    for entry in std::fs::read_dir(root.path())? {
+        let name = entry?.file_name().to_string_lossy().into_owned();
+        assert!(
+            !name.starts_with("native-unit-") && !name.starts_with("sha256-"),
+            "successful native publication retained raw staging: {name}"
+        );
+    }
     let parent = first.units.get(1).ok_or("registry parent missing")?;
     let repeated = repeat.units.get(1).ok_or("repeat registry parent missing")?;
     assert_eq!(parent.physical_edges()[0].alias(), "renamed");

@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 type Error = Box<dyn std::error::Error>;
 const INDEX_COMMIT: &str = "6ec35e0d7e2d202496e2f7a108bb5111b6a9ff87";
 
+pub(crate) mod current_inputs;
 mod environment;
 mod local;
 mod native;
@@ -41,6 +42,7 @@ struct CompileContext<'a> {
     output: &'a Path,
     store: &'a OvenStore,
     compiler_digest: String,
+    compiler_executable: String,
     profile: &'a str,
     unit_codegen: &'a [UnitCodegenSelection],
 }
@@ -130,25 +132,28 @@ pub struct SdkLockedPredicate {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Seed {
-    schema: String,
-    units: Vec<SdkLockedUnit>,
+pub(crate) struct Seed {
+    /// Existing resolution wire version, validated before either preparation or current-input replay.
+    pub(crate) schema: String,
+    /// Complete selected registry bindings; rooted admission reads only the entries it actually needs.
+    pub(crate) units: Vec<SdkLockedUnit>,
+    /// Existing exact per-unit physical codegen policy.
     #[serde(default)]
-    unit_codegen: Vec<UnitCodegenSelection>,
+    pub(crate) unit_codegen: Vec<UnitCodegenSelection>,
 }
 
 /// Exact selector and typed options projected by Incan; this adapter does not infer a profile or resolve a unit.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct UnitCodegenSelection {
+pub(crate) struct UnitCodegenSelection {
     /// Registry-qualified Loaf supplied by the declaration.
-    loaf: String,
+    pub(crate) loaf: String,
     /// Exact resolved version supplied by the declaration.
-    version: String,
+    pub(crate) version: String,
     /// Host or target domain supplied by the declaration.
-    domain: String,
+    pub(crate) domain: String,
     /// Explicit compiler arguments, retained in the selected unit receipt.
-    options: crate::rustc::OvenRustcCodegenOptions,
+    pub(crate) options: crate::rustc::OvenRustcCodegenOptions,
 }
 
 /// Measured compile outcomes, including refused units and their dependent units.
@@ -229,7 +234,33 @@ pub fn prepare_closure(request: &ClosureCompileRequest<'_>) -> Result<SdkCompile
         ..
     } = *request;
     let started = std::time::Instant::now();
-    let seed: Seed = serde_json::from_slice(&std::fs::read(lock)?)?;
+    let seed = current_inputs::read_resolution(lock)?;
+    std::fs::create_dir_all(output)?;
+    let toolchain = rustc_identity(rustc)?;
+    let scratch = tempfile::Builder::new().prefix("sdk-source-").tempdir_in(output)?;
+    let units = prepare_units(seed.units, scratch.path(), request, &toolchain)?;
+    let store = OvenStore::new(
+        output.join("store"),
+        OvenStoreLimits::new(4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024),
+    );
+    let context = CompileContext {
+        rustc,
+        target,
+        toolchain: &toolchain,
+        output,
+        store: &store,
+        compiler_digest: compiler_closure_digest(rustc, target)?,
+        compiler_executable: oven_store::store::digest_regular_file(&rustc.canonicalize()?)?.1,
+        profile,
+        unit_codegen: &seed.unit_codegen,
+    };
+    let mut closure = compile_units(&units, &context)?;
+    closure.report.seconds = started.elapsed().as_secs_f64();
+    Ok(closure)
+}
+
+/// Validate the existing resolution wire contract without preparing or admitting any native unit.
+fn validate_seed(seed: &Seed) -> Result<(), Error> {
     if !matches!(
         seed.schema.as_str(),
         "incan.oven.loaf-resolution/1" | "incan.oven.loaf-resolution/2"
@@ -258,27 +289,7 @@ pub fn prepare_closure(request: &ClosureCompileRequest<'_>) -> Result<SdkCompile
             return Err("codegen selection must uniquely name one resolved SDK unit".into());
         }
     }
-    std::fs::create_dir_all(output)?;
-    let toolchain = rustc_identity(rustc)?;
-    let scratch = tempfile::Builder::new().prefix("sdk-source-").tempdir_in(output)?;
-    let units = prepare_units(seed.units, scratch.path(), request, &toolchain)?;
-    let store = OvenStore::new(
-        output.join("store"),
-        OvenStoreLimits::new(4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024),
-    );
-    let context = CompileContext {
-        rustc,
-        target,
-        toolchain: &toolchain,
-        output,
-        store: &store,
-        compiler_digest: compiler_closure_digest(rustc, target)?,
-        profile,
-        unit_codegen: &seed.unit_codegen,
-    };
-    let mut closure = compile_units(&units, &context)?;
-    closure.report.seconds = started.elapsed().as_secs_f64();
-    Ok(closure)
+    Ok(())
 }
 
 /// Compile independent branches in dependency order, retaining every unavailable binding in the report.
@@ -635,9 +646,13 @@ fn active_edges(unit: &PreparedUnit, units: &[PreparedUnit]) -> Result<Vec<(Stri
 /// library name (its `[rust] name`, e.g. `debug_unreachable` for the `new_debug_unreachable` package). A key that
 /// differs from the package name is a rename and is used as written. Hyphens become underscores either way.
 fn extern_alias(dependency_key: &str, target: &PreparedUnit) -> String {
-    let package = target.binding.loaf.rsplit('/').next().unwrap_or(&target.binding.loaf);
-    let library = target
-        .manifest
+    native_extern_alias(dependency_key, &target.binding.loaf, &target.manifest)
+}
+
+/// Share the actual native producer's alias contract with source-current physical edge validation.
+pub(crate) fn native_extern_alias(dependency_key: &str, loaf: &str, manifest: &toml::Value) -> String {
+    let package = loaf.rsplit('/').next().unwrap_or(loaf);
+    let library = manifest
         .get("rust")
         .and_then(|rust| rust.get("name"))
         .and_then(toml::Value::as_str);
@@ -767,24 +782,20 @@ fn compile_unit(
     for (name, digest) in &plan.caller_owned_library_digests {
         receipt = oven_store::receipt_with_build_unit_input(&receipt, format!("extern:{name}"), digest)?;
     }
-    let key = receipt.identity.clone();
-    let directory = output.join(key.replace(':', "-"));
-    std::fs::create_dir_all(&directory)?;
     let proc_macro = facet.get("type").and_then(toml::Value::as_str) == Some("proc-macro");
-    let path = directory.join(if proc_macro {
+    let relative = if proc_macro {
         crate::rustc::linking::proc_macro_file_name(name, &rustc_host_target(context.rustc)?)
     } else {
         format!("lib{name}.rlib")
-    });
-    let relative = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or("invalid output name")?
-        .to_string();
+    };
     let domain = format!("sdk-source-unit-{}", unit.binding.domain);
     if let Some(owner) = select_native_unit(store, &receipt, &domain)? {
         return Ok((owner.artifact_root.join(&relative), true, owner, receipt));
     }
+    // Successful raw outputs have no lifetime beyond durable publication. Concurrent producers get independent
+    // staging directories; the canonical Store remains the single retained byte cache.
+    let directory = tempfile::Builder::new().prefix("native-unit-").tempdir_in(output)?;
+    let path = directory.path().join(&relative);
     let request = OvenTrustedDirectRustcTargetRequest {
         receipt: &receipt,
         artifacts: &artifacts,
@@ -804,8 +815,43 @@ fn compile_unit(
     } else {
         bake_trusted_direct_rustc_library(&request)?
     };
-    let owner = publish_unit(unit, store, receipt.clone(), domain, result.output, &relative)?;
+    let owner = publish_staged_unit(unit, store, &receipt, domain, result.output, &relative, directory)?;
     Ok((owner.artifact_root.join(relative), result.reused, owner, receipt))
+}
+
+/// A failed durable publication keeps its task-private output and original sourced error for inspection.
+#[derive(Debug, thiserror::Error)]
+#[error("native publication failed; retained staging at {path}: {source}")]
+struct NativePublicationFailure {
+    /// Explicit failed producer coordinate; successful staging never survives publication.
+    path: PathBuf,
+    /// Original Store/source failure, without flattening its diagnostic chain.
+    #[source]
+    source: Error,
+}
+
+/// Publish from private staging, dropping successful raw files and explicitly retaining failed-publication evidence.
+fn publish_staged_unit(
+    unit: &PreparedUnit,
+    store: &OvenStore,
+    receipt: &oven_store::OvenReceipt,
+    domain: String,
+    output: PathBuf,
+    relative: &str,
+    staging: tempfile::TempDir,
+) -> Result<OvenStoreExecutionPayload, Error> {
+    match publish_unit(unit, store, receipt.clone(), domain, output, relative) {
+        Ok(owner) => Ok(owner),
+        Err(source) => {
+            let path = staging.keep();
+            let evidence = serde_json::json!({"receipt": receipt, "error": source.to_string(),
+                "state": "failed-durable-native-publication"});
+            if let Ok(bytes) = serde_json::to_vec_pretty(&evidence) {
+                let _ = std::fs::write(path.join("publication-failure.json"), bytes);
+            }
+            Err(Box::new(NativePublicationFailure { path, source }))
+        }
+    }
 }
 
 /// Reuse an exact native unit locally or import its verified receipt-bound bytes from configured mirrors.
@@ -874,6 +920,11 @@ fn unit_receipt(
             crate::rustc::rustc_commit_hash(context.rustc).ok_or("compiler has no commit hash")?,
         )
         .with_build_unit_input("compiler-binary", &context.compiler_digest),
+    )?;
+    receipt = oven_store::receipt_with_build_unit_input(
+        &receipt,
+        "native-compiler-executable",
+        &context.compiler_executable,
     )?;
     if let Some(selection) = context.unit_codegen.iter().find(|selection| {
         selection.loaf == unit.binding.loaf
@@ -1133,12 +1184,21 @@ fn apply_fact(unit: &PreparedUnit, plan: &mut OvenRustcArtifactPlan) -> Result<(
         std::fs::create_dir_all(destination.parent().ok_or("generated fact has no parent")?)?;
         std::fs::write(destination, &file.bytes)?;
     }
+    apply_fact_environment(&unit.root, fact, &mut plan.compile_environment)
+}
+
+/// Apply the exact fact environment projection without materializing generated files or preparing a native plan.
+fn apply_fact_environment(
+    root: &Path,
+    fact: &oven_model::manifest::RustFactRecord,
+    environment: &mut BTreeMap<String, String>,
+) -> Result<(), Error> {
+    let out = root.join(".oven-out");
     if !fact.out.is_empty() {
-        plan.compile_environment
-            .insert("OUT_DIR".to_string(), out.to_string_lossy().into_owned());
+        environment.insert("OUT_DIR".to_string(), out.to_string_lossy().into_owned());
     }
-    for environment in &fact.environment {
-        let value = match (&environment.literal, &environment.out) {
+    for entry in &fact.environment {
+        let value = match (&entry.literal, &entry.out) {
             (Some(literal), None) => literal.clone(),
             (None, Some(relative)) if relative == "." => out.to_string_lossy().into_owned(),
             (None, Some(relative))
@@ -1150,7 +1210,7 @@ fn apply_fact(unit: &PreparedUnit, plan: &mut OvenRustcArtifactPlan) -> Result<(
             }
             _ => return Err("invalid fact environment".into()),
         };
-        plan.compile_environment.insert(environment.name.clone(), value);
+        environment.insert(entry.name.clone(), value);
     }
     Ok(())
 }
@@ -1510,7 +1570,7 @@ fn selected_native_bindings(
 /// libraries beside std), so walking the directory would make a unit's identity depend on which components a machine
 /// happens to have. The `rust-std-<target>` manifest names the std set every install of the release shares; each
 /// listed file is hashed by its sysroot-relative path and bytes, and a missing or escaping entry refuses.
-fn compiler_closure_digest(rustc: &Path, target: &str) -> Result<String, Error> {
+pub(crate) fn compiler_closure_digest(rustc: &Path, target: &str) -> Result<String, Error> {
     let rustc = std::fs::canonicalize(rustc)?;
     let root = rustc.parent().and_then(Path::parent).ok_or("compiler has no sysroot")?;
     let manifest = root.join("lib/rustlib").join(format!("manifest-rust-std-{target}"));
@@ -1541,11 +1601,14 @@ fn std_library_digest(root: &Path, relative: &str) -> Result<String, Error> {
     if !resolved.starts_with(root) || !std::fs::metadata(&resolved)?.is_file() {
         return Err(format!("rust-std manifest entry is not a sysroot file: {relative}").into());
     }
-    Ok(digest_bytes(&std::fs::read(resolved)?))
+    Ok(oven_store::store::digest_regular_file(&resolved)?.1)
 }
 
 #[cfg(all(test, unix))]
 pub(crate) mod digest_reuse_tests;
+
+#[cfg(test)]
+mod staging_tests;
 
 #[cfg(test)]
 mod tests {

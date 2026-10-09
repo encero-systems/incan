@@ -137,15 +137,13 @@ pub(super) fn stable_sources(
     primary: bool,
     fact: Option<&oven_model::manifest::RustFactRecord>,
 ) -> Result<(PathBuf, std::fs::File), Error> {
-    let key = oven_store::digest_bytes(&serde_json::to_vec(&(
-        binding.identity_binding(),
-        about,
-        primary,
-        fact,
-    ))?);
-    let base = stable_source_base();
-    std::fs::create_dir_all(&base)?;
-    let key = key.replace(':', "-");
+    let root = stable_source_root(binding, about, primary, fact)?;
+    let base = root.parent().ok_or("stable source has no owner")?;
+    std::fs::create_dir_all(base)?;
+    let key = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("stable source key is not UTF-8")?;
     let lease = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -153,9 +151,8 @@ pub(super) fn stable_sources(
         .write(true)
         .open(base.join(format!("{key}.lock")))?;
     lease.lock()?;
-    let root = base.join(&key);
     if !root.exists() {
-        let staging = tempfile::Builder::new().prefix("source-").tempdir_in(&base)?;
+        let staging = tempfile::Builder::new().prefix("source-").tempdir_in(base)?;
         copy_sources(snapshot, staging.path())?;
         std::fs::rename(staging.path(), &root)?;
     } else {
@@ -163,6 +160,22 @@ pub(super) fn stable_sources(
     }
     lease.unlock()?;
     Ok((root, lease))
+}
+
+/// Reproduce the portable compile-time coordinate without creating, locking or preparing a source workspace.
+pub(super) fn stable_source_root(
+    binding: &SdkLockedUnit,
+    about: &serde_json::Value,
+    primary: bool,
+    fact: Option<&oven_model::manifest::RustFactRecord>,
+) -> Result<PathBuf, Error> {
+    let key = oven_store::digest_bytes(&serde_json::to_vec(&(
+        binding.identity_binding(),
+        about,
+        primary,
+        fact,
+    ))?);
+    Ok(stable_source_base().join(key.replace(':', "-")))
 }
 
 /// Exclusive compilation lease released on success, refusal or an early error.

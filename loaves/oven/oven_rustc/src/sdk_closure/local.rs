@@ -261,6 +261,7 @@ pub fn compile_local_sdk_facet_for_target(
         output,
         store: &store,
         compiler_digest: compiler_closure_digest(rustc, target)?,
+        compiler_executable: oven_store::store::digest_regular_file(&rustc.canonicalize()?)?.1,
         profile: "debug",
         unit_codegen: &[],
     };

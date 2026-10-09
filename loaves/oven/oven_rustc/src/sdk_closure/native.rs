@@ -13,6 +13,43 @@ use oven_store::{OvenReceipt, receipt_with_build_unit_input};
 use super::{CompileContext, Error, PreparedUnit};
 use crate::rustc::direct_compiler::{OvenPublisherLinkBakeRequest, bake_publisher_link, publisher_archive_format};
 
+/// Command-local native tool-owner checks, retaining exact input identity without a process-global admission cache.
+pub(crate) struct NativeToolOwners {
+    roots: Vec<PathBuf>,
+    checked: std::collections::BTreeSet<String>,
+    /// Actual complete-owner selections performed at this command boundary.
+    pub(crate) checks: usize,
+}
+
+impl Default for NativeToolOwners {
+    /// Freeze the original producer's explicit owner-root selection for this command only.
+    fn default() -> Self {
+        Self {
+            roots: std::env::var_os("INCAN_OVEN_LINK_OWNERS")
+                .map(|value| std::env::split_paths(&value).collect())
+                .unwrap_or_default(),
+            checked: Default::default(),
+            checks: 0,
+        }
+    }
+}
+
+impl NativeToolOwners {
+    /// Recheck each demanded executable-owner/path set through the publisher's canonical selection boundary.
+    pub(crate) fn verify(&mut self, fact: &oven_model::manifest::RustFactRecord) -> Result<(), Error> {
+        for link in &fact.link {
+            validate_source_catalog(link)?;
+            let key = serde_json::to_string(&(&link.executable.owner, owner_paths(link)))?;
+            if !self.checked.contains(&key) {
+                select_owner(link, &self.roots)?;
+                self.checks += 1;
+                self.checked.insert(key);
+            }
+        }
+        Ok(())
+    }
+}
+
 /// A store-owned native archive retained while the consuming compiler runs.
 pub(super) struct NativeProduct {
     pub(super) name: String,
@@ -176,14 +213,7 @@ fn validate_source_catalog(link: &RustFactLink) -> Result<(), Error> {
 
 /// Select exactly one supplied tool owner whose complete declared closure matches the fact identity.
 fn select_owner(link: &RustFactLink, roots: &[PathBuf]) -> Result<PathBuf, Error> {
-    let paths: std::collections::BTreeSet<_> = std::iter::once(link.executable.path.as_str())
-        .chain(link.objects.iter().flat_map(|object| {
-            object.arguments.iter().filter_map(|argument| match argument {
-                RustFactArgument::Owner { owner } => Some(owner.as_str()),
-                _ => None,
-            })
-        }))
-        .collect();
+    let paths = owner_paths(link);
     let mut selected = Vec::new();
     for root in roots {
         if publisher_owner_identity(root, paths.iter().copied())? == link.executable.owner {
@@ -201,10 +231,72 @@ fn select_owner(link: &RustFactLink, roots: &[PathBuf]) -> Result<PathBuf, Error
     }
 }
 
+/// Project the exact owner-relative path set shared by native preparation and current-owner revalidation.
+fn owner_paths(link: &RustFactLink) -> std::collections::BTreeSet<&str> {
+    std::iter::once(link.executable.path.as_str())
+        .chain(link.objects.iter().flat_map(|object| {
+            object.arguments.iter().filter_map(|argument| match argument {
+                RustFactArgument::Owner { owner } => Some(owner.as_str()),
+                _ => None,
+            })
+        }))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{select_owner, validate_source_catalog};
     use oven_model::manifest::RustFactLink;
+
+    /// Repeated facts check one exact owner per command; a new command detects preserved-mtime tool edits.
+    #[test]
+    fn dev7_prepared_native_tools_are_command_local_and_source_current() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        std::fs::create_dir_all(root.path().join("bin"))?;
+        let executable = root.path().join("bin/cc");
+        std::fs::write(&executable, b"tool one")?;
+        let owner = super::publisher_owner_identity(root.path(), ["bin/cc"])?;
+        let fact: oven_model::manifest::RustFactRecord = serde_json::from_value(serde_json::json!({
+            "toolchain":"fixture", "target":"fixture", "profile":"debug", "link":[{
+                "name":"shim", "target":"fixture", "executable":{"name":"cc", "owner":owner,
+                    "path":"bin/cc", "digest":oven_store::digest_bytes(b"tool one")},
+                "library":{"name":"shim", "kind":"static"}}]}))?;
+        let mut command = super::NativeToolOwners {
+            roots: vec![root.path().to_path_buf()],
+            checked: Default::default(),
+            checks: 0,
+        };
+        command.verify(&fact)?;
+        command.verify(&fact)?;
+        assert_eq!(command.checks, 1);
+        let modified = std::fs::metadata(&executable)?.modified()?;
+        std::fs::write(&executable, b"tool two")?;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&executable)?
+            .set_times(std::fs::FileTimes::new().set_modified(modified))?;
+        let mut next = super::NativeToolOwners {
+            roots: vec![root.path().to_path_buf()],
+            checked: Default::default(),
+            checks: 0,
+        };
+        assert!(next.verify(&fact).is_err());
+        std::fs::write(&executable, b"tool one")?;
+        let mut restored = super::NativeToolOwners {
+            roots: vec![root.path().to_path_buf()],
+            checked: Default::default(),
+            checks: 0,
+        };
+        restored.verify(&fact)?;
+        assert_eq!(restored.checks, 1);
+        let mut missing = super::NativeToolOwners {
+            roots: Vec::new(),
+            checked: Default::default(),
+            checks: 0,
+        };
+        assert!(missing.verify(&fact).is_err());
+        Ok(())
+    }
 
     /// Native fact admission refuses inert manifest reads before trying to resolve or invoke the compiler.
     #[test]
