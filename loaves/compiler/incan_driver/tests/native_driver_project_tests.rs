@@ -3,6 +3,9 @@
 #[path = "native_driver_project_tests/corpus.rs"]
 mod corpus;
 
+#[path = "native_driver_project_tests/enum_alias_admission.rs"]
+mod enum_alias_admission;
+
 use incan_test_support as support;
 use std::fs;
 use std::path::{Path, PathBuf};
