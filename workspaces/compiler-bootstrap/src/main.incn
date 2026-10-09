@@ -119,9 +119,7 @@ def build(arguments: list[str]) -> Result[None, str]:
         RustPath.new(native_bootstrap_input("INCAN_NATIVE_INDEX", "INCAN_SDK_NATIVE_INDEX")?),
         RustPath.new(native_bootstrap_input("INCAN_NATIVE_BLOBS", "INCAN_SDK_NATIVE_BLOBS")?),
         RustPath.new(checkout.joinpath("target/compiler-development/native-loafs").0),
-    ).map_err(
-        (error) => str(error),
-    )?
+    ).map_err((error) => str(error))?
     receipt: OvenReceipt = selected.0
     selection: OvenDirectRustcPlanSelection = selected.1
     native_preparation = JsonValue.parse(selected.2).map_err((error) => error.message())?
