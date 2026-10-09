@@ -12,6 +12,7 @@ pub mod caller_owned;
 mod file_freshness;
 pub mod inline_command;
 pub mod library_exports;
+pub mod library_metadata;
 pub mod library_outputs;
 pub mod library_project;
 pub mod library_publication;
