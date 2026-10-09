@@ -63,7 +63,7 @@ sysroot_dependencies = ["rustc_driver", "rustc_interface"]
     success(&output, "nested carrier admission controls");
     assert_eq!(
         output.stdout,
-        b"nested carrier admission: 5 positive, 15 Body IR negative, and 8 native plan negative controls passed\n"
+        b"nested carrier admission: 6 positive, 23 Body IR negative, and 8 native plan negative controls passed\n"
     );
     Ok(())
 }

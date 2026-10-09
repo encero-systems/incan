@@ -16,8 +16,8 @@ use incan_mir_lowering::caller::incan::lower_module;
 use incan_semantics_core::{
     CompilerNodeId, IncanPrimitiveType, IncanType, SymbolOrigin,
     body_ir::{
-        Block, BodyIrModule, CallableTarget, Callee, NamedCallableTarget, Operand, Place, PlaceElem, Rvalue,
-        StatementKind,
+        Block, BodyIrModule, CallableTarget, Callee, NamedCallableTarget, Operand, OwnershipFact, Place, PlaceElem,
+        PlaceOperand, Rvalue, StatementKind,
     },
     canonical_module_identity,
     executable_representation::{SurfaceReader, build_surface},
@@ -230,6 +230,192 @@ const INDEXED_SOURCE: &str = r#"def first(values: Option[List[Result[str, str]]]
 def main() -> None:
     first(Some([Ok("retained")]))
 "#;
+
+const PROJECTED_BORROW_SOURCE: &str = r#"@derive(Clone)
+type Kind = newtype str
+type Choice = Kind | str
+
+model Holder:
+    value: Option[Choice]
+
+model Envelope:
+    holder: Holder
+
+def take(value: Option[Choice]) -> Option[Choice]:
+    return value
+
+def payload(value: Option[Choice]) -> Choice:
+    if value is not None:
+        return value
+    return "missing"
+
+def main() -> None:
+    mut holder = Holder(value=Some(Kind("retained")))
+    first = take(holder.value)
+    second = take(holder.value)
+    holder.value = None
+    take(holder.value)
+    payload(first)
+    payload(second)
+    mut nested = Envelope(holder=Holder(value=Some("nested")))
+    take(nested.holder.value)
+    nested.holder.value = Some("replacement")
+    take(nested.holder.value)
+"#;
+
+/// Require an actual borrowed projected call argument, rather than manufacture the positive ownership fact.
+fn projected_enum_read(module: &mut BodyIrModule, depth: usize) -> TestResult<&mut PlaceOperand> {
+    let body = module
+        .bodies
+        .iter_mut()
+        .find(|body| body.name == "main")
+        .ok_or("missing projected carrier caller")?;
+    for statement in &mut body.block.stmts {
+        if let StatementKind::Call { args, .. } = &mut statement.kind {
+            for argument in args {
+                if let incan_semantics_core::body_ir::ArgumentElement::One(Operand::Place(read)) = argument {
+                    if read.fact == OwnershipFact::Borrow && read.place.projection.len() == depth {
+                        return Ok(read);
+                    }
+                }
+            }
+        }
+    }
+    Err(format!("missing checked projected Borrow with {depth} steps").into())
+}
+
+/// Check genuine model-field enum clones, retained parents and independently malformed projection/ownership facts.
+fn projected_enum_borrow_controls() -> TestResult<()> {
+    let mut baseline = checked_source(PROJECTED_BORROW_SOURCE, "dev7_projected_carrier_borrow")?;
+    let _ = projected_enum_read(&mut baseline, 1)?;
+    let _ = projected_enum_read(&mut baseline, 2)?;
+    let plan = lower_module(
+        &baseline,
+        PROJECTED_BORROW_SOURCE.to_owned(),
+        "dev7_projected_carrier_borrow.incn".to_owned(),
+    )?;
+    validation::validate(&plan)?;
+    let mut field = false;
+    let mut fields = false;
+    let mut clones = 0;
+    for function in &plan.functions {
+        for block in &function.blocks {
+            if matches!(&block.terminator.kind, plan::TerminatorKind::Call(callee, ..) if matches!(&callee.kind, plan::CalleeKind::CloneEnum(..)))
+            {
+                clones += 1;
+            }
+            for statement in &block.statements {
+                if let plan::StatementKind::Assign(_, rvalue) = &statement.kind {
+                    if let plan::RvalueKind::Borrow(place) = &rvalue.kind {
+                        match &place.projection {
+                            plan::Projection::Field(_, plan::PlanType::Enum(..)) => field = true,
+                            plan::Projection::Fields(path)
+                                if matches!(path.last().map(|field| &field.ty), Some(plan::PlanType::Enum(..))) =>
+                            {
+                                fields = true
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if !field || !fields || clones < 5 {
+        return Err("projected enum reads did not retain actual field borrows and CloneEnum calls".into());
+    }
+
+    for (label, fact, family) in [
+        (
+            "mutable projected enum",
+            OwnershipFact::MutBorrow,
+            "unsupported Body IR ownership MutBorrow",
+        ),
+        (
+            "unknown projected enum",
+            OwnershipFact::Unknown,
+            "unsupported Body IR ownership Unknown",
+        ),
+    ] {
+        let mut module = baseline.clone();
+        projected_enum_read(&mut module, 1)?.fact = fact;
+        rejected_projected_borrow(&module, label, family)?;
+    }
+    let mut module = baseline.clone();
+    let bare = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .and_then(|body| body.locals.iter().find(|local| local.name.as_deref() == Some("first")))
+        .ok_or("missing bare enum carrier local")?
+        .id;
+    projected_enum_read(&mut module, 1)?.place = Place::from_local(bare);
+    rejected_projected_borrow(
+        &module,
+        "bare borrowed carrier",
+        "unsupported Body IR ownership Borrow outside formatting",
+    )?;
+
+    for corruption in ["missing authority", "foreign owner", "wrong member", "structural field"] {
+        let mut module = baseline.clone();
+        let read = projected_enum_read(&mut module, 1)?;
+        let PlaceElem::Field {
+            name,
+            canonical,
+            structural,
+        } = &mut read.place.projection[0]
+        else {
+            return Err("expected canonical Holder.value projection".into());
+        };
+        match corruption {
+            "missing authority" => *canonical = None,
+            "foreign owner" => {
+                canonical.as_mut().ok_or("missing field authority")?.origin =
+                    SymbolOrigin::Module(vec!["foreign_owner".into()])
+            }
+            "wrong member" => *name = "unretained".into(),
+            "structural field" => *structural = true,
+            _ => return Err("unknown projected carrier corruption".into()),
+        }
+        let family = if corruption == "structural field" {
+            "unsupported Body IR structural model projection"
+        } else {
+            "unsupported Body IR unproven model field"
+        };
+        rejected_projected_borrow(&module, corruption, family)?;
+    }
+    let mut module = baseline.clone();
+    projected_enum_read(&mut module, 2)?.place.projection.swap(0, 1);
+    rejected_projected_borrow(
+        &module,
+        "reordered canonical fields",
+        "unsupported Body IR unproven model field",
+    )?;
+    Ok(())
+}
+
+/// Reject through the actual lowerer with stable families while retaining diagnostic source context.
+fn rejected_projected_borrow(module: &BodyIrModule, label: &str, family: &str) -> TestResult<()> {
+    match lower_module(
+        module,
+        PROJECTED_BORROW_SOURCE.to_owned(),
+        "dev7_projected_carrier_borrow.incn".to_owned(),
+    ) {
+        Err(reason) if reason.starts_with(family) => {
+            if family == "unsupported Body IR ownership Borrow outside formatting"
+                && (!reason.contains("dev7_projected_carrier_borrow.incn:")
+                    || !reason.contains(" in ")
+                    || !reason.contains("projection ")
+                    || !reason.contains("selected type "))
+            {
+                return Err(format!("{label}: missing retained refusal context: {reason}").into());
+            }
+            Ok(())
+        }
+        Err(reason) => Err(format!("{label}: expected {family}, got {reason}").into()),
+        Ok(_) => Err(format!("{label}: malformed projected Borrow was admitted").into()),
+    }
+}
 
 /// Locate the checked optional payload followed by a list index in the actual enum match scrutinee.
 fn indexed_match(block: &mut Block) -> Option<&mut Place> {
@@ -591,6 +777,7 @@ fn main() -> TestResult<()> {
     plan_controls(&plan)?;
     callable_controls()?;
     indexed_carrier_control()?;
-    println!("nested carrier admission: 5 positive, 15 Body IR negative, and 8 native plan negative controls passed");
+    projected_enum_borrow_controls()?;
+    println!("nested carrier admission: 6 positive, 23 Body IR negative, and 8 native plan negative controls passed");
     Ok(())
 }

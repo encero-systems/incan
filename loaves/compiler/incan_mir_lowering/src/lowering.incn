@@ -424,9 +424,19 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
                 return Ok(read_place(target, false, span))
             if is_tuple_type(place_type(builder.locals, target)):
                 return clone_tuple_operand(builder, target, span)
+            # A checked projected read borrows its parent. Materialize only the selected enum through its real
+            # Clone implementation; copying or moving that field would invalidate the still-owned parent.
+            match place_type(builder.locals, target):
+                PlanType.Enum(_owner, _name) =>
+                    match target.projection:
+                        Projection.Field(_slot, _ty) => return clone_nominal_operand(builder, target, span)
+                        Projection.VariantField(_variant, _slot, _ty) => return clone_nominal_operand(builder, target, span)
+                        Projection.Fields(_fields) => return clone_nominal_operand(builder, target, span)
+                        _ => pass
+                _ => pass
             match target.projection:
                 Projection.VariantField(_variant, _slot, _ty) => return enum_payload_read(builder, target, fact, span)
-                _ => return Err("unsupported Body IR ownership Borrow outside formatting")
+                _ => return Err(f"unsupported Body IR ownership Borrow outside formatting at {builder.file}:{span.line}:{span.column} in {builder.name}; projection {target.projection}; selected type {place_type(builder.locals, target)}")
         OwnershipFact.MutBorrow => return Err("unsupported Body IR ownership MutBorrow")
         OwnershipFact.Unknown => return Err("unsupported Body IR ownership Unknown")
 
