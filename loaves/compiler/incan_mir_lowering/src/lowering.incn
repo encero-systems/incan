@@ -127,7 +127,7 @@ from nominal_instances import specialize_nominals
 from traits import method_index, specialize_traits, validate_static_receiver
 from decls import lower_model_declarations, static_slot, static_accessors
 from model_lists import model_list_read
-from models import field_path
+from models import field_projection
 from models import model_type, model_place, constructor_index, field_slot
 from model_values import (
     debug_model_operand,
@@ -3775,12 +3775,12 @@ def read_element_field(
     span: SourceSpan,
 ) -> Result[Place, str]:
     """Read one field of a model element already copied out of a list, copying scalars and cloning owned values."""
-    fields = field_path(
-        builder.nominals, place_type(builder.locals, place), [projection.clone()], 1,
+    selected = field_projection(
+        builder.nominals, place_type(builder.locals, place), projection,
         builder.enums, builder.unions, builder.intrinsics,
     )?
-    field = appended_field(place, fields[0], span)?
-    ty = fields[0].ty
+    field = appended_field(place, selected, span)?
+    ty = selected.ty
     if ty == PlanType.String:
         return clone_text(builder, field, span)
     if is_nominal_type(ty):

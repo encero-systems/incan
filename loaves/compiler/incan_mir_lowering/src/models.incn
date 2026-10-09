@@ -120,7 +120,7 @@ pub def model_prefix(
 pub def field_path(
     declarations: list[NominalDeclaration],
     root: PlanType,
-    projections: &list[RustPlaceElem],
+    projections: list[RustPlaceElem],
     count: int,
     enums: list[RustEnumDeclaration],
     unions: list[RustType],
@@ -130,44 +130,53 @@ pub def field_path(
     mut ty = root
     mut fields: list[FieldProjection] = []
     for position in range(count):
-        projection = projections[position]
-        mut slot = 0
-        mut variant = -1
-        match projection:
-            RustPlaceElem.OptionPayload(option_type=container, payload_type=payload) =>
-                if retained_type(declarations, enums, unions, container, intrinsics)? != ty:
-                    return Err("invalid Body IR optional projection owner")
-                match ty:
-                    PlanType.Enum(owner, _name) =>
-                        if owner < len(enums) or owner >= len(enums) + len(intrinsics):
-                            return Err("invalid Body IR optional projection carrier")
-                        carrier = intrinsics[owner - len(enums)]
-                        ty = retained_type(declarations, enums, unions, payload, intrinsics)?
-                        if carrier.carrier != "Option" or len(carrier.variants) != 2 or len(carrier.variants[1].fields) != 1 or carrier.variants[1].fields[0] != ty:
-                            return Err("invalid Body IR optional projection payload")
-                        fields.append(FieldProjection(slot=0, ty=ty, variant=1))
-                        continue
-                    _ => return Err("invalid Body IR optional projection carrier")
-            RustPlaceElem.UnionMember(ty=member) =>
-                match ty:
-                    PlanType.Enum(owner, _name) =>
-                        ty = retained_type(declarations, enums, unions, member, intrinsics)?
-                        variant = union_slot(declarations, enums, unions, owner, ty, intrinsics)?
-                        fields.append(FieldProjection(slot=0, ty=ty, variant=variant))
-                        continue
-                    _ => return Err("invalid Body IR union projection carrier")
-            _ => pass
-        match ty:
-            PlanType.Model(owner, _name) =>
-                declaration = declarations[owner]
-                slot = field_slot(projection, declaration)?
-                ty = retained_type(declarations, enums, unions, declaration.field_types[slot], intrinsics)?
-            PlanType.Tuple(elements) =>
-                slot = tuple_slot(projection, len(elements))?
-                ty = tuple_element_type(elements[slot])
-            _ => return Err("unsupported Body IR model index or slice projection")
-        fields.append(FieldProjection(slot=slot, ty=ty, variant=variant))
+        field = field_projection(declarations, ty, projections[position], enums, unions, intrinsics)?
+        fields.append(field)
+        ty = field.ty
     return Ok(fields)
+
+
+pub def field_projection(
+    declarations: list[NominalDeclaration],
+    root: PlanType,
+    projection: &RustPlaceElem,
+    enums: list[RustEnumDeclaration],
+    unions: list[RustType],
+    intrinsics: list[EnumDeclaration],
+) -> Result[FieldProjection, str]:
+    """Validate one ordered payload or canonical field through the typed Rust enum boundary required by #459."""
+    match projection:
+        RustPlaceElem.OptionPayload(option_type=container, payload_type=payload) =>
+            if retained_type(declarations, enums, unions, container, intrinsics)? != root:
+                return Err("invalid Body IR optional projection owner")
+            match root:
+                PlanType.Enum(owner, _name) =>
+                    if owner < len(enums) or owner >= len(enums) + len(intrinsics):
+                        return Err("invalid Body IR optional projection carrier")
+                    carrier = intrinsics[owner - len(enums)]
+                    ty = retained_type(declarations, enums, unions, payload, intrinsics)?
+                    if carrier.carrier != "Option" or len(carrier.variants) != 2 or len(carrier.variants[1].fields) != 1 or carrier.variants[1].fields[0] != ty:
+                        return Err("invalid Body IR optional projection payload")
+                    return Ok(FieldProjection(slot=0, ty=ty, variant=1))
+                _ => return Err("invalid Body IR optional projection carrier")
+        RustPlaceElem.UnionMember(ty=member) =>
+            match root:
+                PlanType.Enum(owner, _name) =>
+                    ty = retained_type(declarations, enums, unions, member, intrinsics)?
+                    variant = union_slot(declarations, enums, unions, owner, ty, intrinsics)?
+                    return Ok(FieldProjection(slot=0, ty=ty, variant=variant))
+                _ => return Err("invalid Body IR union projection carrier")
+        _ => pass
+    match root:
+        PlanType.Model(owner, _name) =>
+            declaration = declarations[owner]
+            slot = field_slot(projection, declaration)?
+            ty = retained_type(declarations, enums, unions, declaration.field_types[slot], intrinsics)?
+            return Ok(FieldProjection(slot=slot, ty=ty))
+        PlanType.Tuple(elements) =>
+            slot = tuple_slot(projection, len(elements))?
+            return Ok(FieldProjection(slot=slot, ty=tuple_element_type(elements[slot])))
+        _ => return Err("unsupported Body IR model index or slice projection")
 
 
 pub def field_slot(value: &RustPlaceElem, declaration: &NominalDeclaration) -> Result[int, str]:
