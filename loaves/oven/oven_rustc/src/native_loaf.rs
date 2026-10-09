@@ -29,6 +29,7 @@ pub(crate) const ORIGIN_INPUT: &str = "native-source-origin";
 
 mod preparation;
 mod prepared;
+mod producer;
 mod selection;
 pub use preparation::{
     NativeLoafFacet, NativeLoafPreparation, NativeLoafPreparationReport, NativeLoafPreparationRequest,
@@ -37,6 +38,8 @@ pub use preparation::{
 pub use prepared::{
     NativeLoafConsumerPreparation, NativeLoafConsumerReport, NativeLoafConsumerRequest, prepare_declared_native_loafs,
 };
+
+pub use producer::{NativeLoafInspectionInputs, NativeLoafInspectionUnit};
 
 /// Independently established producer boundary for a native source generation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -278,6 +281,11 @@ pub struct NativeLoafClosure {
 }
 
 impl NativeLoafGraph {
+    /// Retain and validate inspection sources for exactly this admitted set, without claiming semantic completeness.
+    pub fn inspection_inputs(&self) -> Result<NativeLoafInspectionInputs> {
+        producer::from_graph(self)
+    }
+
     /// Project already active declaration requirements onto exact prepared source/version/feature/domain roots.
     ///
     /// The caller owns optional/cfg/test activation through its existing resolver. This helper does not activate or
@@ -394,6 +402,11 @@ impl NativeLoafGraph {
 }
 
 impl NativeLoafClosure {
+    /// Retain the selected physical set as source inputs; callers still own complete semantic-world selection.
+    pub fn inspection_inputs(&self) -> Result<NativeLoafInspectionInputs> {
+        self.graph.inspection_inputs()
+    }
+
     /// Admit installed or prepared ordinary records through the canonical writable Store selector.
     ///
     /// Missing exact authority is an explicit error; this path never compiles, resolves, or invokes a fallback baker.
@@ -601,10 +614,20 @@ fn retain_forward(
 /// Check sealed child coordinates against the exact admitted child records, never just equal native digests.
 fn verify_children(record: &NativeLoafRecord, units: &BTreeMap<String, Arc<SelectedNativeLoaf>>) -> Result<()> {
     for edge in &record.dependencies {
+        units
+            .get(&edge.record_identity)
+            .ok_or_else(|| refused("physical native dependency record is missing"))?
+            .verify()?;
+    }
+    verify_child_bindings(record, units)
+}
+
+/// Compare exact physical destinations after the caller verifies each selected owner for its handoff.
+fn verify_child_bindings(record: &NativeLoafRecord, units: &BTreeMap<String, Arc<SelectedNativeLoaf>>) -> Result<()> {
+    for edge in &record.dependencies {
         let child = units
             .get(&edge.record_identity)
             .ok_or_else(|| refused("physical native dependency record is missing"))?;
-        child.verify()?;
         if child.record.native != edge.native || child.record.source != edge.source {
             return Err(refused("physical native dependency owner was substituted"));
         }

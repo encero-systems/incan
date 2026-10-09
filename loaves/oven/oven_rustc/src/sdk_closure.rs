@@ -411,22 +411,40 @@ fn inspection_unit(
     source: &Path,
     dependencies: Vec<serde_json::Value>,
 ) -> Result<serde_json::Value, Error> {
-    let facet = unit.manifest.get("rust").ok_or("compiled unit has no Rust facet")?;
+    inspection_source_unit(
+        &unit.manifest,
+        &unit.binding.features,
+        environment::package_environment(unit)?,
+        unit.fact.as_ref(),
+        source,
+        dependencies,
+    )
+}
+
+/// Project the exact selected source/fact inspection JSON for live and durably admitted native producers.
+///
+/// This grants only the supplied source set. It does not certify semantic-world completeness or execute macros.
+pub(crate) fn inspection_source_unit(
+    manifest: &toml::Value,
+    features: &[String],
+    mut environment: BTreeMap<String, String>,
+    fact: Option<&oven_model::manifest::RustFactRecord>,
+    source: &Path,
+    dependencies: Vec<serde_json::Value>,
+) -> Result<serde_json::Value, Error> {
+    let facet = manifest.get("rust").ok_or("compiled unit has no Rust facet")?;
     let root = facet
         .get("source")
         .and_then(|source| source.get("root"))
         .and_then(toml::Value::as_str)
         .unwrap_or("src/lib.rs");
-    let mut environment = environment::package_environment(unit)?;
-    // Macro queries inspect the retained source owner, not the publisher's temporary/stable staging projection.
+    // Keep the live projector's precise environment strings, including arbitrary literal values.
     environment.insert("CARGO_MANIFEST_DIR".to_string(), source.to_string_lossy().into_owned());
-    let mut cfg = unit
-        .binding
-        .features
+    let mut cfg = features
         .iter()
         .map(|feature| format!("feature=\"{feature}\""))
         .collect::<Vec<_>>();
-    if let Some(fact) = &unit.fact {
+    if let Some(fact) = fact {
         cfg.extend(fact.cfg.iter().cloned());
         let out = source.join(".oven-out");
         if !fact.out.is_empty() {
@@ -1898,12 +1916,16 @@ mod tests {
             Path::new("/sealed/source"),
             vec![serde_json::json!({"crate": 3, "name": "renamed"})],
         )?;
-        assert_eq!(graph["root_module"], "/sealed/source/src/macro.rs");
-        assert_eq!(graph["is_proc_macro"], true);
-        assert_eq!(graph["deps"][0]["crate"], 3);
-        assert_eq!(graph["deps"][0]["name"], "renamed");
-        assert_eq!(graph["cfg"][0], "feature=\"selected\"");
-        assert_eq!(graph["env"]["CARGO_PKG_VERSION"], "1.0.0");
+        let mut expected_environment = super::environment::package_environment(&unit)?;
+        expected_environment.insert("CARGO_MANIFEST_DIR".to_string(), "/sealed/source".to_string());
+        assert_eq!(
+            graph,
+            serde_json::json!({
+                "display_name":"example_macro", "root_module":"/sealed/source/src/macro.rs", "edition":"2021",
+                "deps":[{"crate":3,"name":"renamed"}], "cfg":["feature=\"selected\""], "env":expected_environment,
+                "is_workspace_member":false, "is_proc_macro":true
+            })
+        );
         Ok(())
     }
 }

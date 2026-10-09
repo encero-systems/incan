@@ -117,6 +117,11 @@ pub(super) fn read_resolved_native_graph(graph: &Path) -> Result<(PathBuf, Resol
 }
 
 impl NativeLoafPreparation {
+    /// Project the already retained ordinary set, using the same durable source authority as installed admission.
+    pub fn inspection_inputs(&self) -> Result<super::NativeLoafInspectionInputs> {
+        self.graph.inspection_inputs()
+    }
+
     /// Borrow complete producer-authenticated ordinary records and original native leases.
     pub fn graph(&self) -> &NativeLoafGraph {
         &self.graph
