@@ -45,6 +45,15 @@ fn node(
     for (alias, dependency) in selected {
         request = request.with_build_unit_input(format!("extern:{alias}"), dependency.native_artifact()?.digest);
     }
+    request = request
+        .with_build_unit_input(
+            crate::native_loaf::SOURCE_INPUT,
+            crate::native_loaf::source_binding_input(&super::super::ordinary_native_source(&binding))?,
+        )
+        .with_build_unit_input(
+            crate::native_loaf::EDGES_INPUT,
+            crate::native_loaf::physical_edges_input(&super::super::selected_native_bindings(selected)?)?,
+        );
     let receipt = receipt_generated_project(&request)?;
     let output = project.join("libsame.rlib");
     std::fs::write(&output, b"byte-identical fixture native output")?;
@@ -413,6 +422,56 @@ fn dev7_physical_edges_registry_first_and_repeat_preserve_work_and_identity() ->
     assert_eq!(
         serde_json::to_value(parent.physical_edges())?,
         serde_json::to_value(repeated.physical_edges())?
+    );
+    Ok(())
+}
+
+/// Producer-captured aliases become installed ordinary records; unauthenticated catalog edges never select nodes.
+#[test]
+fn dev7_native_loaf_producer_bridge_seals_exact_physical_generation() -> Result<(), Error> {
+    use crate::native_loaf::{NativeLoafClosure, NativeLoafRoot};
+    use oven_store::store::PublishedOvenStore;
+    let root = tempfile::tempdir()?;
+    let native = store(&root.path().join("store"));
+    let child = node(root.path(), &native, "child", &["test_support"], &[])?;
+    let child_native = child.entry_identity().to_string();
+    let mut parent = node(root.path(), &native, "parent", &[], &[("actual_renamed_child", &child)])?;
+    // Catalog-only edges are deliberately contradicted without changing the real producer-owned edge capability.
+    parent.binding.edges = Some(vec![super::super::SdkLockedEdge {
+        dependency_key: "catalog_injection".to_string(),
+        loaf: "unrelated".to_string(),
+        version: "99.0.0".to_string(),
+        domain: "host".to_string(),
+    }]);
+    let unrelated = node(root.path(), &native, "unrelated", &[], &[])?;
+    let parent_native = parent.entry_identity().to_string();
+    let closure = SdkCompiledClosure {
+        report: SdkClosureReport::default(),
+        units: vec![child, parent, unrelated],
+        auxiliary_targets: BTreeMap::new(),
+    };
+    let graph = closure.into_native_loafs(&native)?;
+    let parent = graph
+        .units()
+        .values()
+        .find(|unit| unit.record().native.identity == parent_native)
+        .ok_or("parent record missing")?;
+    let selected_root = NativeLoafRoot {
+        alias: "authored_parent".to_string(),
+        record_identity: parent.identity().to_string(),
+        source: parent.record().source.clone(),
+        intent: parent.record().recipe.intent.clone(),
+    };
+    let selected = graph.select(&[selected_root.clone()])?;
+    assert_eq!(selected.graph().units().len(), 2);
+    assert_eq!(parent.record().dependencies.len(), 1);
+    assert_eq!(parent.record().dependencies[0].alias, "actual_renamed_child");
+    assert_eq!(parent.record().dependencies[0].native.identity, child_native);
+    drop(graph);
+    let installed = NativeLoafClosure::admit_published(&PublishedOvenStore::new(native.root()), &[selected_root])?;
+    assert_eq!(
+        installed.graph().units().keys().collect::<Vec<_>>(),
+        selected.graph().units().keys().collect::<Vec<_>>()
     );
     Ok(())
 }

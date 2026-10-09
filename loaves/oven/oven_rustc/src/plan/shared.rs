@@ -39,20 +39,50 @@ pub struct OvenSharedNativePlan {
 /// Command-owned index of native owners already admitted by the canonical store selector.
 ///
 /// This shares original execution leases, not manifests copied from an ambient catalog. Each physical handoff
-/// revalidates the held payload and witness before using its paths. No dependency graph or provider facts enter Oven.
+/// revalidates the held payload and any original witness before using its paths. Ordinary physical records can bind
+/// exact native domains; no language semantic or provider facts enter this execution handoff.
 #[derive(Default)]
 pub struct OvenSharedNativeOwners {
     owners: BTreeMap<(PathBuf, String), Arc<OvenStoreExecutionPayload>>,
+    read_only: bool,
+    record_bound_domains: BTreeMap<(PathBuf, String), String>,
 }
 
 impl OvenSharedNativeOwners {
     /// Index already retained native owners by their exact canonical store coordinate.
     pub fn from_selected(owners: &[Arc<OvenStoreExecutionPayload>]) -> OvenPlanResult<Self> {
+        Self::from_selected_with_policy(owners, false, false)
+    }
+
+    /// Retain canonical selections from an immutable Store without writing closure proofs during handoff.
+    ///
+    /// Full admitted-payload verification replaces writable proof persistence. This builder alone grants no ordinary
+    /// native domain authority; legacy SDK domain restrictions remain in force.
+    pub fn from_selected_read_only(owners: &[Arc<OvenStoreExecutionPayload>]) -> OvenPlanResult<Self> {
+        Self::from_selected_with_policy(owners, true, false)
+    }
+
+    /// Retain only owners already authenticated by ordinary native records, including their exact native domains.
+    ///
+    /// The native-Loaf admission boundary must first verify complete producer recipe, source, intent, native member,
+    /// and physical extern authority. This capability does not bless arbitrary Engine entries supplied by callers.
+    pub(crate) fn from_record_bound(
+        owners: &[Arc<OvenStoreExecutionPayload>],
+        read_only: bool,
+    ) -> OvenPlanResult<Self> {
+        Self::from_selected_with_policy(owners, read_only, true)
+    }
+
+    /// Index original held owners once while retaining the caller's integrity and domain-admission policy.
+    fn from_selected_with_policy(
+        owners: &[Arc<OvenStoreExecutionPayload>],
+        read_only: bool,
+        record_bound: bool,
+    ) -> OvenPlanResult<Self> {
         let mut indexed = BTreeMap::new();
+        let mut domains = BTreeMap::new();
         for owner in owners {
-            owner
-                .verify_proven_native_payload()
-                .map_err(|error| OvenPlanError::selection(error.to_string()))?;
+            verify_retained_owner(owner, read_only)?;
             let store = owner
                 .artifact_root
                 .parent()
@@ -60,11 +90,17 @@ impl OvenSharedNativeOwners {
                 .and_then(Path::parent)
                 .ok_or_else(|| OvenPlanError::selection("retained native owner has no store root"))?
                 .to_path_buf();
-            indexed
-                .entry((store, owner.manifest.identity.clone()))
-                .or_insert_with(|| Arc::clone(owner));
+            let key = (store, owner.manifest.identity.clone());
+            if record_bound {
+                domains.insert(key.clone(), owner.manifest.domain.clone());
+            }
+            indexed.entry(key).or_insert_with(|| Arc::clone(owner));
         }
-        Ok(Self { owners: indexed })
+        Ok(Self {
+            owners: indexed,
+            read_only,
+            record_bound_domains: domains,
+        })
     }
 
     /// Borrow only the explicitly supplied owner set, refusing missing coordinates rather than reacquiring them.
@@ -82,13 +118,28 @@ impl OvenSharedNativeOwners {
                 .owners
                 .get(&key)
                 .ok_or_else(|| OvenPlanError::selection("shared native owner was not admitted by this command"))?;
-            owner
-                .verify_proven_native_payload()
-                .map_err(|error| OvenPlanError::selection(error.to_string()))?;
+            verify_retained_owner(owner, self.read_only)?;
             selected.insert(key, Arc::clone(owner));
         }
         Ok(selected)
     }
+
+    /// Admit an exact ordinary domain only through the already checked physical record capability.
+    fn permits_record_bound_domain(&self, reference: &OvenSharedNativeRoot, owner: &OvenStoreExecutionPayload) -> bool {
+        self.record_bound_domains
+            .get(&(reference.store.clone(), reference.identity.clone()))
+            == Some(&owner.manifest.domain)
+    }
+}
+
+/// Revalidate original held owners with full read-only verification or the existing writable native proof path.
+fn verify_retained_owner(owner: &OvenStoreExecutionPayload, read_only: bool) -> OvenPlanResult<()> {
+    let result = if read_only {
+        owner.verify_admitted_payload()
+    } else {
+        owner.verify_proven_native_payload()
+    };
+    result.map_err(|error| OvenPlanError::selection(error.to_string()))
 }
 
 /// Refuse unsafe logical coordinates before joining any owner-controlled physical root.
@@ -165,7 +216,16 @@ pub(super) fn materialize_with_owners(
         let owner = owners
             .get(&(reference.store.clone(), reference.identity.clone()))
             .ok_or_else(|| OvenPlanError::selection("shared native unit is unavailable"))?;
-        bind_shared_owner(reference, owner, artifacts, &expected, &mut locations, &mut directories)?;
+        let record_bound = admitted.is_some_and(|admitted| admitted.permits_record_bound_domain(reference, owner));
+        bind_shared_owner(
+            reference,
+            owner,
+            artifacts,
+            &expected,
+            &mut locations,
+            &mut directories,
+            record_bound,
+        )?;
     }
     bind_local_members(&expected, artifact_root, &mut locations)?;
     for directory in artifacts
@@ -227,12 +287,13 @@ fn bind_shared_owner(
     expected: &BTreeMap<String, String>,
     locations: &mut BTreeMap<String, PathBuf>,
     directories: &mut BTreeMap<String, PathBuf>,
+    record_bound: bool,
 ) -> OvenPlanResult<()> {
     safe_relative(&reference.prefix)?;
     if owner.manifest.receipt_identity != reference.receipt_identity
         || owner.manifest.intent.target != artifacts.intent.target
         || owner.manifest.intent.toolchain != artifacts.intent.toolchain
-        || !owner.manifest.domain.starts_with("sdk-source-unit-")
+        || (!record_bound && !owner.manifest.domain.starts_with("sdk-source-unit-"))
     {
         return Err(OvenPlanError::selection(
             "shared native unit receipt or compiler differs from consumer",
@@ -550,6 +611,45 @@ mod tests {
         drop(held);
         bounded.prune()?;
         assert!(!path.exists());
+        Ok(())
+    }
+
+    /// Immutable-store handoff revalidates held payloads and original witnesses without creating proof files.
+    #[test]
+    fn dev7_native_admission_read_only_retains_witness_checks_without_proof_writes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let f = fixture()?;
+        let proof_root = f.store.root().join(oven_store::closure_proof::CLOSURE_PROOF_DIRECTORY);
+        assert!(!proof_root.exists());
+        let admitted = OvenSharedNativeOwners::from_selected_read_only(&[Arc::clone(&f.owner)])?;
+        let (_, held, _) = materialize_with_owners(
+            &f.payload,
+            &f.artifacts,
+            f.root.path(),
+            &f.receipt.intent,
+            Some(&admitted),
+        )?
+        .ok_or("read-only shared materialization missing")?;
+        assert!(Arc::ptr_eq(&f.owner, held.first().ok_or("read-only owner missing")?));
+        assert!(!proof_root.exists());
+        let witness = f
+            .owner
+            .artifact_root
+            .parent()
+            .ok_or("owner entry missing")?
+            .join("native-receipt.json");
+        fs::write(witness, b"changed original receipt witness")?;
+        assert!(
+            materialize_with_owners(
+                &f.payload,
+                &f.artifacts,
+                f.root.path(),
+                &f.receipt.intent,
+                Some(&admitted)
+            )
+            .is_err()
+        );
+        assert!(!proof_root.exists());
         Ok(())
     }
 

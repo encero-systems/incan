@@ -7,6 +7,7 @@
 pub mod loaf;
 pub mod loaf_mirror;
 pub mod native_contract;
+pub mod native_loaf;
 pub mod native_test;
 pub mod plan;
 pub mod rustc;

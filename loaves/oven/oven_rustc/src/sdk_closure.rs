@@ -333,18 +333,19 @@ fn compile_units(units: &[PreparedUnit], context: &CompileContext<'_>) -> Result
                         .map(Path::to_path_buf)
                 })
                 .collect();
-            match compile_unit(unit, context, externs, searches) {
+            let selected_dependencies = edges
+                .iter()
+                .map(|(name, dependency)| {
+                    inspection_indices
+                        .get(dependency)
+                        .and_then(|index| selected_units.get(*index))
+                        .map(|selected| (name.as_str(), selected))
+                        .ok_or("compiled dependency has no producer selection")
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let physical_bindings = selected_native_bindings(&selected_dependencies)?;
+            match compile_unit(unit, context, externs, searches, &physical_bindings) {
                 Ok((path, reused, owner, reproduced_receipt)) => {
-                    let selected_dependencies = edges
-                        .iter()
-                        .map(|(alias, dependency)| {
-                            let selected = inspection_indices
-                                .get(dependency)
-                                .and_then(|index| selected_units.get(*index))
-                                .ok_or("compiled dependency has no retained native owner")?;
-                            Ok((alias.as_str(), selected))
-                        })
-                        .collect::<Result<Vec<_>, Error>>()?;
                     let physical_edges = physical_edges::capture(&owner, &reproduced_receipt, &selected_dependencies)?;
                     let dependencies = edges
                         .iter()
@@ -694,6 +695,7 @@ fn compile_unit(
     context: &CompileContext<'_>,
     externs: Vec<(String, PathBuf)>,
     searches: Vec<PathBuf>,
+    physical_bindings: &[crate::native_loaf::NativeLoafPhysicalBinding],
 ) -> Result<(PathBuf, bool, OvenStoreExecutionPayload, oven_store::OvenReceipt), Error> {
     let _source_lease = unit
         ._source_lease
@@ -725,6 +727,16 @@ fn compile_unit(
     }
     let source = unit.root.join(relative);
     let mut receipt = unit_receipt(unit, context, &source)?;
+    receipt = oven_store::receipt_with_build_unit_input(
+        &receipt,
+        crate::native_loaf::SOURCE_INPUT,
+        crate::native_loaf::source_binding_input(&ordinary_native_source(&unit.binding))?,
+    )?;
+    receipt = oven_store::receipt_with_build_unit_input(
+        &receipt,
+        crate::native_loaf::EDGES_INPUT,
+        crate::native_loaf::physical_edges_input(physical_bindings)?,
+    )?;
     let (mut plan, artifacts) = unit_plan(unit, &receipt.intent, externs, searches)?;
     receipt = environment::bind_environment(&receipt, &plan.compile_environment)?;
     let native = native::prepare(unit, context, &receipt)?;
@@ -1304,6 +1316,18 @@ impl SdkCompiledUnit {
 }
 
 impl SdkCompiledClosure {
+    /// Publish ordinary per-unit physical records and transfer original native leases without an SDK inventory.
+    ///
+    /// This migration bridge consumes only a complete native producer graph. Exact captured physical edges, not
+    /// catalog edges, select child records. Records retain each original native recipe and source binding; they
+    /// grant no semantic or macro completeness. Auxiliary target closures remain distinct through their identities.
+    pub fn into_native_loafs(self, store: &OvenStore) -> Result<crate::native_loaf::NativeLoafGraph, Error> {
+        self.require_complete()?;
+        let mut graph = crate::native_loaf::NativeLoafGraph::default();
+        publish_native_loaf_units(self, store, &mut graph)?;
+        Ok(graph)
+    }
+
     /// Project the successfully compiled subgraph while retaining its source leases in this closure.
     ///
     /// The graph includes the exact resolved host/target edges. Refused units are absent, and callers must retain and
@@ -1348,6 +1372,127 @@ impl SdkCompiledClosure {
         )
         .into())
     }
+}
+
+/// Transfer authoritative producer units into ordinary durable records in physical dependency order.
+fn publish_native_loaf_units(
+    closure: SdkCompiledClosure,
+    store: &OvenStore,
+    graph: &mut crate::native_loaf::NativeLoafGraph,
+) -> Result<(), Error> {
+    use crate::native_loaf::{NativeLoafDependency, NativeLoafReference};
+    closure.require_complete()?;
+    for unit in closure.units {
+        let artifact = unit.native_artifact()?;
+        let mut dependencies = Vec::new();
+        for edge in &unit.physical_edges {
+            let source = ordinary_native_source(&edge.destination().binding);
+            let child = graph
+                .units()
+                .values()
+                .find(|child| {
+                    child.record().native.identity == edge.destination().store_identity
+                        && child.record().native.receipt_identity == edge.destination().receipt_identity
+                        && child.record().native.relative_path == edge.destination().relative_path
+                        && child.record().native.digest == edge.destination().digest
+                        && child.record().source == source
+                })
+                .ok_or("ordinary native record is missing its exact producer-selected dependency")?;
+            let child_owner_store = child
+                .output()?
+                .parent()
+                .and_then(Path::parent)
+                .and_then(Path::parent)
+                .and_then(Path::parent)
+                .ok_or("ordinary native child has no Store coordinate")?
+                .to_path_buf();
+            if child_owner_store != edge.store() {
+                return Err("ordinary native dependency Store differs from its producer-selected destination".into());
+            }
+            dependencies.push(NativeLoafDependency {
+                alias: edge.alias().to_string(),
+                record_identity: child.identity().to_string(),
+                native: child.record().native.clone(),
+                source: child.record().source.clone(),
+            });
+        }
+        // The native owner's payload carries the exact source selection. Do not promote mutable catalog edges.
+        let admitted: SdkLockedUnit = serde_json::from_slice(&unit.owner.payload)?;
+        if serde_json::to_value(admitted.identity_binding())? != serde_json::to_value(unit.binding.identity_binding())?
+            || unit
+                .reproduced_receipt
+                .sources
+                .build_unit_inputs
+                .get("sdk-source-archive")
+                != Some(&unit.binding.archive_digest)
+            || unit.reproduced_receipt.sources.build_unit_inputs.get("domain") != Some(&unit.binding.domain)
+        {
+            return Err("ordinary native source differs from its actual producer binding".into());
+        }
+        let native = NativeLoafReference {
+            identity: artifact.store_identity,
+            receipt_identity: artifact.receipt_identity,
+            domain: unit.owner.manifest.domain.clone(),
+            relative_path: artifact.relative_path,
+            digest: artifact.digest,
+        };
+        graph.publish(
+            store,
+            ordinary_native_source(&unit.binding),
+            native,
+            unit.reproduced_receipt,
+            std::sync::Arc::new(unit.owner),
+            dependencies,
+        )?;
+    }
+    for (_, auxiliary) in closure.auxiliary_targets {
+        publish_native_loaf_units(auxiliary, store, graph)?;
+    }
+    Ok(())
+}
+
+/// Preserve the producer's complete source and evaluated predicates while dropping unauthenticated catalog edges.
+fn ordinary_native_source(binding: &SdkLockedUnit) -> crate::native_loaf::NativeLoafSource {
+    crate::native_loaf::NativeLoafSource {
+        loaf: binding.loaf.clone(),
+        version: binding.version.clone(),
+        archive_digest: binding.archive_digest.clone(),
+        domain: binding.domain.clone(),
+        features: binding.features.clone(),
+        target_predicates: binding
+            .target_predicates
+            .iter()
+            .map(|predicate| crate::native_loaf::NativeLoafPredicate {
+                declaration: predicate.declaration,
+                target: predicate.target.clone(),
+                matches: predicate.matches,
+            })
+            .collect(),
+    }
+}
+
+/// Capture complete selected child coordinates before their parent's native recipe is published.
+fn selected_native_bindings(
+    selected: &[(&str, &SdkCompiledUnit)],
+) -> Result<Vec<crate::native_loaf::NativeLoafPhysicalBinding>, Error> {
+    selected
+        .iter()
+        .map(|(alias, unit)| {
+            let edge = physical_edges::record(alias, unit)?;
+            let artifact = edge.destination();
+            Ok(crate::native_loaf::NativeLoafPhysicalBinding {
+                alias: alias.to_string(),
+                source: ordinary_native_source(&artifact.binding),
+                native: crate::native_loaf::NativeLoafReference {
+                    identity: artifact.store_identity.clone(),
+                    receipt_identity: artifact.receipt_identity.clone(),
+                    domain: unit.owner.manifest.domain.clone(),
+                    relative_path: artifact.relative_path.clone(),
+                    digest: artifact.digest.clone(),
+                },
+            })
+        })
+        .collect()
 }
 
 /// Hash exactly the target standard library a unit links: the files the `rust-std` component manifest lists.
