@@ -644,6 +644,19 @@ fn dev7_native_loaf_prepared_registry_edges_features_and_corrupt_owner_refuse() 
     assert!(repeat.report.prepared_reuse);
     assert_eq!(repeat.report.preparation_calls, 0);
     assert_eq!(repeat.report.current_registry_bindings, 2);
+    // Actual current-recipe replay reads four distinct pinned blobs, independent of duplicate physical aliases.
+    for report in [first.report(), repeat.report()] {
+        assert_eq!(report.index_file_requests, 4);
+        assert_eq!(report.index_blob_reads, 4);
+        assert_eq!(report.index_blob_cache_hits, 0);
+        assert!(report.index_blob_bytes > 0);
+        if report.index_batch_requests > 0 {
+            assert_eq!(report.index_batch_requests, 5); // Commit plus four raw files.
+            assert_eq!(report.index_git_processes, 3); // Capability, persistent child, event listing.
+        } else {
+            assert_eq!(report.index_git_processes, 11); // Capability, admission, eight file processes, listing.
+        }
+    }
     for change in ["edges", "features"] {
         let mut changed = lock.clone();
         if change == "edges" {
