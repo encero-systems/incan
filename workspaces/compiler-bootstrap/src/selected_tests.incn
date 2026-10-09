@@ -1,0 +1,134 @@
+"""Keep receipt-checked native test binaries while retaining separate evidence for each invocation."""
+
+from rust::std::env import var
+from rust::std::path import Path as RustPath
+from rust::std::process import Command
+from std.fs import Path
+from std.json import JsonValue
+from std.tempfile import TemporaryDirectory
+
+
+pub def run_selected_tests(root: Path, compiler: Path, source_text: str, exact: str, rustc: str) -> Result[None, str]:
+    """Execute the existing native runner with worktree-owned prepared outputs and independently retained reports."""
+    source = root.joinpath(source_text).resolve().map_err((error) => error.message())?
+    root_path = RustPath.new(root.0)
+    source_path = RustPath.new(source.0)
+    relative = source_path.strip_prefix(root_path).map_err((error) => str(error))?
+    cache = root.joinpath("target/compiler-development")
+    prepared_text = cache.joinpath("test-roots").joinpath(relative.to_string_lossy().into_owned()).0
+    prepared = Path(prepared_text)
+    evidence_parent = cache.joinpath("test-runs")
+    evidence_parent.mkdir(true, true).map_err((error) => error.message())?
+    directory = TemporaryDirectory.try_new_with("run-", "", Some(evidence_parent)).map_err((error) => error.message())?
+    evidence = directory.persist().map_err((error) => error.message())?
+    for name in ["compiler-suite-report.json", "native-test.log"]:
+        previous = prepared.joinpath(name)
+        if previous.exists():
+            previous.rename(evidence.joinpath("previous-" + name)).map_err((error) => error.message())?
+    prepare_declared_helpers(root, compiler, relative.to_string_lossy().into_owned(), evidence)?
+    mut command = Command.new(compiler.0)
+    command.arg("oven").arg("compiler-native-tests")
+    command.arg("--compiler-root").arg(root.0)
+    command.arg("--rustc").arg(rustc)
+    command.arg("--explicit-bake-workspace").arg(cache.joinpath("fixtures").0)
+    command.arg("--target").arg(source.0)
+    command.arg("--output").arg(prepared_text)
+    if exact != "":
+        command.arg("--exact").arg(exact)
+    output = command.output().map_err((error) => str(error))?
+    evidence.joinpath("command.stdout").write_bytes(output.stdout).map_err((error) => error.message())?
+    evidence.joinpath("command.stderr").write_bytes(output.stderr).map_err((error) => error.message())?
+    for name in ["compiler-suite-report.json", "native-test.log"]:
+        retained = prepared.joinpath(name)
+        if retained.exists():
+            bytes = retained.read_bytes().map_err((error) => error.message())?
+            evidence.joinpath(name).write_bytes(bytes).map_err((error) => error.message())?
+    publish_requested_report(compiler, evidence, output.status.success())?
+    println("Selected-test evidence: " + evidence.0)
+    if not output.status.success():
+        return Err("selected native tests failed; command output and available reports are retained")
+    report_text = evidence
+        .joinpath("compiler-suite-report.json")
+        .read_text("utf-8", "strict")
+        .map_err((error) => error.message())?
+    report = JsonValue.parse(report_text).map_err((error) => error.message())?
+    succeeded = report.require("success").map_err((error) => error.message())?
+    if not succeeded.expect_bool().map_err((error) => error.message())?:
+        return Err("selected native report did not establish successful execution")
+    println(report_text)
+    return Ok(None)
+
+
+def prepare_declared_helpers(root: Path, compiler: Path, source: str, evidence: Path) -> Result[None, str]:
+    """Prepare only helpers declared for the selected root, under the exact compiler that will run that root."""
+    declaration = root.joinpath("workspaces/compiler-bootstrap/fixture-preparers.json")
+    text = declaration.read_text("utf-8", "strict").map_err((error) => error.message())?
+    manifest = JsonValue.parse(text).map_err((error) => error.message())?
+    schema = manifest.require("schema").map_err((error) => error.message())?
+    if schema.expect_str().map_err((error) => error.message())? != "incan.compiler-fixture-preparers/1":
+        return Err("unsupported compiler fixture preparer declaration")
+    roots = manifest.require("roots").map_err((error) => error.message())?
+    if source not in roots.keys():
+        return Ok(None)
+    projects = roots.require(source).map_err((error) => error.message())?
+    home_variable: str = "INCAN_TEST_OVEN_FIXTURE_HOME"
+    mut index = 0
+    for value in projects.expect_array().map_err((error) => error.message())?:
+        relative = value.expect_str().map_err((error) => error.message())?
+        project = root.joinpath(relative).resolve().map_err((error) => error.message())?
+        project_text = project.0
+        RustPath.new(project_text).strip_prefix(RustPath.new(root.0)).map_err((error) => str(error))?
+        if not project.joinpath("loaf.toml").exists():
+            return Err("declared fixture preparer has no Loaf manifest")
+        fixture_home = var(home_variable).map_err((error) => str(error))?
+        if fixture_home == "":
+            return Err("declared fixture preparers require the selected fixture store")
+        mut command = Command.new(compiler.0)
+        command.env("INCAN_HOME", fixture_home).env("INCAN_OVEN_BAKE_PROFILES", "debug")
+        command.arg("oven").arg("bake").arg("--project").arg(project_text).arg("--format").arg("json")
+        result = command.output().map_err((error) => str(error))?
+        name = "helper-" + str(index)
+        evidence.joinpath(name + ".stdout").write_bytes(result.stdout).map_err((error) => error.message())?
+        evidence.joinpath(name + ".stderr").write_bytes(result.stderr).map_err((error) => error.message())?
+        if not result.status.success():
+            return Err("declared fixture preparer failed; selected-test evidence retains its diagnostics")
+        index += 1
+    return Ok(None)
+
+
+def publish_requested_report(compiler: Path, evidence: Path, succeeded: bool) -> Result[None, str]:
+    """Publish a requested archive from disposable evidence while retaining prepared binaries and invocation records."""
+    report_variable: str = "INCAN_TEST_OVEN_TEST_ONE_REPORT"
+    match var(report_variable):
+        Err(_) => return Ok(None)
+        Ok(report) =>
+            if report == "":
+                return Ok(None)
+            directory = TemporaryDirectory
+                .try_new_with("publication-", "", Some(evidence))
+                .map_err((error) => error.message())?
+            publication = directory.persist().map_err((error) => error.message())?
+            scratch = publication.joinpath("scratch")
+            scratch.mkdir(true, true).map_err((error) => error.message())?
+            for name in ["compiler-suite-report.json", "native-test.log"]:
+                source = evidence.joinpath(name)
+                if source.exists():
+                    mut destination = name
+                    if name == "native-test.log":
+                        destination = "selected-root.libtest-output.txt"
+                    bytes = source.read_bytes().map_err((error) => error.message())?
+                    publication.joinpath(destination).write_bytes(bytes).map_err((error) => error.message())?
+            mut status = "1"
+            mut success = "false"
+            if succeeded:
+                status = "0"
+                success = "true"
+            mut command = Command.new(compiler.0)
+            command.arg("oven").arg("retain-suite-output")
+            command.arg(publication.0).arg(scratch.0).arg(success).arg(report).arg(status)
+            output = command.output().map_err((error) => str(error))?
+            evidence.joinpath("publication.stdout").write_bytes(output.stdout).map_err((error) => error.message())?
+            evidence.joinpath("publication.stderr").write_bytes(output.stderr).map_err((error) => error.message())?
+            if succeeded and not output.status.success():
+                return Err("requested report publication failed; retained invocation evidence contains the diagnostics")
+            return Ok(None)

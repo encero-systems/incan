@@ -789,7 +789,7 @@ struct ArtifactEntry {
 fn artifact_directory_entries(
     root: &Path,
     directory: &Path,
-    skip_root_cargo_lock: bool,
+    skip_root_generated_lock_state: bool,
     exclude_nested_targets: bool,
 ) -> Result<Vec<ArtifactEntry>, ProviderArtifactDigestError> {
     let mut entries = fs::read_dir(directory)
@@ -817,8 +817,11 @@ fn artifact_directory_entries(
         // The generated provider-root Cargo.lock is a projection of the canonical Incan lock, not an independent
         // provider input. Including it here creates a two-pass identity cycle: artifact-only preparation has no
         // Cargo.lock, while the first locked build materializes one from oven.lock and would otherwise change the
-        // provider's semantic identity. Nested Cargo.lock files remain part of the artifact content projection.
-        if skip_root_cargo_lock && relative == Path::new("Cargo.lock") {
+        // provider's semantic identity. Its manifest witness is the same generated bookkeeping and can remain stale
+        // after a direct build. Both still participate in physical integrity; nested files remain semantic inputs.
+        if skip_root_generated_lock_state
+            && matches!(relative.to_str(), Some("Cargo.lock" | ".incan-cargo-lock-manifest"))
+        {
             continue;
         }
         let file_name = path.file_name().and_then(|name| name.to_str());

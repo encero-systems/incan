@@ -140,6 +140,50 @@ fn output_paths(root: &Path, unit: &str, profile: &str) -> CliResult<(PathBuf, P
     ))
 }
 
+/// Replace a stale or read-only caller binary through a private staged file, preserving immutable aliases.
+///
+/// Matching writable regular files remain untouched. Store permissions never make the caller projection read-only;
+/// the copy completes before publication, so an ordinary copy failure leaves the previous generation selected.
+fn materialize_rust_caller_output(stored: &Path, output: &Path) -> CliResult<()> {
+    let expected = file_digest(stored)?;
+    let current = fs::symlink_metadata(output).is_ok_and(|metadata| {
+        metadata.is_file() && !metadata.file_type().is_symlink() && !metadata.permissions().readonly()
+    }) && file_digest(output).ok().as_ref() == Some(&expected);
+    if current {
+        return Ok(());
+    }
+    let parent = output
+        .parent()
+        .ok_or_else(|| CliError::failure("Rust output has no parent"))?;
+    fs::create_dir_all(parent).map_err(|error| CliError::failure(error.to_string()))?;
+    let mut source = fs::File::open(stored).map_err(|error| CliError::failure(error.to_string()))?;
+    let mut temporary =
+        tempfile::NamedTempFile::new_in(parent).map_err(|error| CliError::failure(error.to_string()))?;
+    std::io::copy(&mut source, temporary.as_file_mut()).map_err(|error| CliError::failure(error.to_string()))?;
+    #[cfg(unix)]
+    let permissions = {
+        use std::os::unix::fs::PermissionsExt;
+        fs::Permissions::from_mode(0o755)
+    };
+    #[cfg(not(unix))]
+    let permissions = {
+        let mut permissions = source
+            .metadata()
+            .map_err(|error| CliError::failure(error.to_string()))?
+            .permissions();
+        permissions.set_readonly(false);
+        permissions
+    };
+    temporary
+        .as_file()
+        .set_permissions(permissions)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    temporary
+        .persist(output)
+        .map_err(|error| CliError::failure(error.error.to_string()))?;
+    Ok(())
+}
+
 /// Select every unit/profile before restoring any caller output; incomplete sets are ordinary cache misses.
 pub(super) fn try_reuse_rust_bake(
     root: &Path,
@@ -185,17 +229,13 @@ pub(super) fn try_reuse_rust_bake(
     for (unit, profile, candidate, payload) in selected {
         let (output, receipt_path) = output_paths(root, &unit, profile)?;
         let stored = candidate.artifact_root.join("binary");
-        let expected = file_digest(&stored)?;
-        if file_digest(&output).ok().as_ref() != Some(&expected) {
-            fs::create_dir_all(
-                output
-                    .parent()
-                    .ok_or_else(|| CliError::failure("Rust output has no parent"))?,
-            )
-            .map_err(|error| CliError::failure(error.to_string()))?;
-            fs::copy(&stored, &output).map_err(|error| CliError::failure(error.to_string()))?;
+        materialize_rust_caller_output(&stored, &output)?;
+        let mut expected_receipt =
+            serde_json::to_vec_pretty(&payload.receipt).map_err(|error| CliError::failure(error.to_string()))?;
+        expected_receipt.push(b'\n');
+        if !fs::read(&receipt_path).is_ok_and(|bytes| bytes == expected_receipt) {
+            write_receipt(&payload.receipt, &receipt_path).map_err(|error| CliError::failure(error.to_string()))?;
         }
-        write_receipt(&payload.receipt, &receipt_path).map_err(|error| CliError::failure(error.to_string()))?;
         profiles.push(OvenProjectBakeProfileReport {
             project_target: format!("rust:{unit}"),
             profile: profile.into(),

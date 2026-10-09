@@ -1,22 +1,18 @@
-//! Receipt-bound generated libraries retained across caller-owned output directories.
+//! Receipt-bound generated native outputs retained across caller-owned directories.
 
 use super::{
-    Command, OVEN_DIRECT_RUSTC_OUTPUT_RECEIPT_SCHEMA_VERSION, OvenDirectRustcBake, OvenDirectRustcOutputReceipt,
-    OvenDirectRustcOutputRecord, OvenRustcError, OvenTrustedDirectRustcTargetRequest,
-    bake_trusted_direct_rustc_library, caller_output_path, caller_output_receipt_path, digest_bytes,
-    digest_regular_file, fs, validate_edition, validate_rust_identifier, verify_rustc_identity,
-    write_caller_output_record,
+    OvenDirectRustcBake, OvenDirectRustcOutputKind, OvenDirectRustcOutputReceipt, OvenDirectRustcOutputRecord,
+    OvenRustcError, OvenTrustedDirectRustcTargetRequest, bake_trusted_direct_rustc_library,
+    bake_trusted_direct_rustc_run, bake_trusted_direct_rustc_test, caller_output_path, caller_output_receipt_path,
+    caller_output_reusable_digest, digest_regular_file, direct_rustc_output_recipe, fs, write_caller_output_record,
 };
 use oven_store::store::{OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-const DOMAIN: &str = "generated-rust-library-v2";
-const OUTPUT: &str = "library.rlib";
-
 /// Native output evidence plus the declared environment that accompanies its selected physical plan.
 #[derive(Serialize, Deserialize)]
-struct StoredLibraryOutput {
+struct StoredNativeOutput {
     /// Existing input/output binding, including exact caller-owned dependency bytes.
     record: OvenDirectRustcOutputRecord,
     /// Portable declaration values; source-relative tokens retain the executor's relocation contract.
@@ -32,41 +28,89 @@ pub fn bake_trusted_direct_rustc_library_in_store(
     request: &OvenTrustedDirectRustcTargetRequest<'_>,
     store: &OvenStore,
 ) -> Result<OvenDirectRustcBake, OvenRustcError> {
-    let expected = library_recipe(request)?;
+    bake_native_in_store(request, store, OvenDirectRustcOutputKind::Library, false)
+}
+
+/// Reuse or compile one admitted executable in the bounded store, retaining its lease through execution.
+///
+/// Uses the ordinary direct executor's recipe, including its pinned linker closure and caller-owned library bytes.
+/// Projections are writable executables; compatible callers share immutable bytes without sharing mutable outputs.
+pub fn bake_trusted_direct_rustc_run_in_store(
+    request: &OvenTrustedDirectRustcTargetRequest<'_>,
+    store: &OvenStore,
+) -> Result<OvenDirectRustcBake, OvenRustcError> {
+    bake_native_in_store(request, store, OvenDirectRustcOutputKind::Binary, false)
+}
+
+/// Retain receipt-qualified libtest binaries across edits, restored sources and compatible caller projections.
+///
+/// Harness identity is part of the ordinary executor recipe and a separate store domain. A normal executable with
+/// identical source and enclosing receipt cannot be substituted for the native test runner.
+pub fn bake_trusted_direct_rustc_test_in_store(
+    request: &OvenTrustedDirectRustcTargetRequest<'_>,
+    store: &OvenStore,
+) -> Result<OvenDirectRustcBake, OvenRustcError> {
+    bake_native_in_store(request, store, OvenDirectRustcOutputKind::Binary, true)
+}
+
+/// Keep publication, selection and projection identical for libraries and executables.
+fn bake_native_in_store(
+    request: &OvenTrustedDirectRustcTargetRequest<'_>,
+    store: &OvenStore,
+    kind: OvenDirectRustcOutputKind,
+    test_harness: bool,
+) -> Result<OvenDirectRustcBake, OvenRustcError> {
+    let (domain, filename) = match (kind, test_harness) {
+        (OvenDirectRustcOutputKind::Library, false) => ("generated-rust-library-v2", "library.rlib"),
+        (OvenDirectRustcOutputKind::Binary, false) => ("generated-rust-binary-v2", "program"),
+        (OvenDirectRustcOutputKind::Binary, true) => ("generated-rust-test-v2", "native-libtest"),
+        _ => return Err(recipe_error("unsupported shared native output kind")),
+    };
+    let expected = direct_rustc_output_recipe(request, request.source_evidence_key, test_harness, kind)?;
     let environment = request
         .artifact_plan
         .map_or(&request.artifacts.compile_environment, |plan| &plan.compile_environment);
-    if let Some(bake) = reuse_library(request, store, &expected, environment)? {
+    if let Some(bake) = reuse_native(request, store, &expected, environment, domain, filename)? {
         return Ok(bake);
+    }
+    if std::env::var_os("INCAN_TEST_REQUIRE_STORED_NATIVE_REUSE").is_some() {
+        return Err(recipe_error(
+            "required stored native output reuse missed before compilation",
+        ));
     }
     let output = caller_output_path(request.output, request.artifact_root)?;
     let parent = output
         .parent()
-        .ok_or_else(|| recipe_error("library output has no parent"))?;
+        .ok_or_else(|| recipe_error("native output has no parent"))?;
     fs::create_dir_all(parent).map_err(|source| OvenRustcError::Io {
         path: parent.to_path_buf(),
         source,
     })?;
     let temporary = tempfile::Builder::new()
-        .prefix("oven-library-")
+        .prefix("oven-native-")
         .tempdir_in(parent)
         .map_err(|source| OvenRustcError::Io {
             path: parent.to_path_buf(),
             source,
         })?;
-    let staged = temporary.path().join(OUTPUT);
+    let staged = temporary.path().join(filename);
     // A caller-local sidecar predates environment-qualified store reuse. On a store miss, compile into a fresh
     // projection so that weaker evidence cannot accidentally turn an environment change into a warm native hit.
     let staged_request = OvenTrustedDirectRustcTargetRequest {
         output: &staged,
         ..*request
     };
-    let mut bake = bake_trusted_direct_rustc_library(&staged_request)?;
+    let mut bake = match (kind, test_harness) {
+        (OvenDirectRustcOutputKind::Library, false) => bake_trusted_direct_rustc_library(&staged_request)?,
+        (OvenDirectRustcOutputKind::Binary, false) => bake_trusted_direct_rustc_run(&staged_request)?,
+        (OvenDirectRustcOutputKind::Binary, true) => bake_trusted_direct_rustc_test(&staged_request)?,
+        _ => return Err(recipe_error("unsupported shared native output kind")),
+    };
     let published = store.publish(&OvenArtifactPublishRequest {
         receipt: request.receipt.clone(),
-        domain: DOMAIN.to_string(),
+        domain: domain.to_string(),
         kind: OvenArtifactKind::Engine,
-        payload: serde_json::to_vec(&StoredLibraryOutput {
+        payload: serde_json::to_vec(&StoredNativeOutput {
             record: OvenDirectRustcOutputRecord {
                 inputs: expected,
                 output_digest: bake.output_digest.clone(),
@@ -76,7 +120,7 @@ pub fn bake_trusted_direct_rustc_library_in_store(
         .map_err(recipe_error)?,
         materialized_files: vec![OvenArtifactMaterializedFile {
             source_path: bake.output.clone(),
-            relative_path: OUTPUT.to_string(),
+            relative_path: filename.to_string(),
         }],
         materialized_directories: Vec::new(),
     })?;
@@ -93,112 +137,84 @@ pub fn bake_trusted_direct_rustc_library_in_store(
     Ok(bake)
 }
 
-/// Validate the source and compiler before projecting the existing native sidecar contract into a portable recipe.
-fn library_recipe(
-    request: &OvenTrustedDirectRustcTargetRequest<'_>,
-) -> Result<OvenDirectRustcOutputReceipt, OvenRustcError> {
-    request.receipt.verify_identity().map_err(recipe_error)?;
-    verify_rustc_identity(request.rustc, &request.receipt.intent.toolchain)?;
-    validate_rust_identifier(request.crate_name)?;
-    validate_edition(request.edition)?;
-    super::super::driver_grant::apply_driver_grant(
-        &mut Command::new(request.rustc),
-        request.receipt,
-        request.crate_name,
-    )?;
-    let digest = digest_regular_file(request.source, "source")?;
-    let expected = request
-        .receipt
-        .sources
-        .supplemental_digests
-        .get(request.source_evidence_key)
-        .ok_or_else(|| recipe_error("receipt has no generated library source evidence"))?;
-    if *expected != digest {
-        return Err(OvenRustcError::SourceEvidenceMismatch {
-            key: request.source_evidence_key.to_string(),
-            expected: expected.clone(),
-            actual: digest,
-        });
-    }
-    let artifacts = request.artifacts.for_source_evidence(request.source_evidence_key)?;
-    Ok(OvenDirectRustcOutputReceipt {
-        schema_version: OVEN_DIRECT_RUSTC_OUTPUT_RECEIPT_SCHEMA_VERSION,
-        receipt_identity: request.receipt.identity.clone(),
-        link_closure_identity: None,
-        artifact_manifest_digest: digest_bytes(&serde_json::to_vec(&artifacts).map_err(recipe_error)?),
-        source_digest: digest,
-        crate_name: request.crate_name.to_string(),
-        edition: request.edition.to_string(),
-        features: request.features.to_vec(),
-        test_harness: false,
-        prefer_dynamic: request.prefer_dynamic,
-        output_kind: "library".to_string(),
-        caller_owned_library_digests: request
-            .artifact_plan
-            .map(|plan| plan.caller_owned_library_digests.clone())
-            .unwrap_or_default(),
-    })
-}
-
 /// Select matching compiled bytes under lease and write a caller-local sidecar with the current receipt identity.
-fn reuse_library(
+fn reuse_native(
     request: &OvenTrustedDirectRustcTargetRequest<'_>,
     store: &OvenStore,
     expected: &OvenDirectRustcOutputReceipt,
     environment: &BTreeMap<String, String>,
+    domain: &str,
+    filename: &str,
 ) -> Result<Option<OvenDirectRustcBake>, OvenRustcError> {
     let candidates = store.select_payloads_matching_for_execution(|manifest| {
         manifest.kind == OvenArtifactKind::Engine
-            && manifest.domain == DOMAIN
+            && manifest.domain == domain
             && manifest.receipt_identity == request.receipt.identity
             && manifest.build_unit_identity == request.receipt.build_unit_identity
             && manifest.intent == request.receipt.intent
     })?;
     for candidate in candidates {
-        let stored: StoredLibraryOutput = serde_json::from_slice(&candidate.payload).map_err(recipe_error)?;
+        let stored: StoredNativeOutput = serde_json::from_slice(&candidate.payload).map_err(recipe_error)?;
         if stored.record.inputs != *expected || stored.environment != *environment {
             continue;
         }
         let record = stored.record;
         let (_, root, _, lease) = candidate.into_parts();
-        let source = root.join(OUTPUT);
-        if digest_regular_file(&source, "stored library")? != record.output_digest {
-            return Err(recipe_error("stored generated library differs from its native recipe"));
+        let source = root.join(filename);
+        if digest_regular_file(&source, "stored native output")? != record.output_digest {
+            return Err(recipe_error(
+                "stored generated native output differs from its native recipe",
+            ));
         }
         let output = caller_output_path(request.output, request.artifact_root)?;
         let parent = output
             .parent()
-            .ok_or_else(|| recipe_error("library output has no parent"))?;
+            .ok_or_else(|| recipe_error("native output has no parent"))?;
         fs::create_dir_all(parent).map_err(|source| OvenRustcError::Io {
             path: parent.to_path_buf(),
             source,
         })?;
-        let mut source_file = fs::File::open(&source).map_err(|source_error| OvenRustcError::Io {
-            path: source.clone(),
-            source: source_error,
-        })?;
-        let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|source| OvenRustcError::Io {
-            path: parent.to_path_buf(),
-            source,
-        })?;
-        // Store files remain immutable; caller projections remain writable and are replaced atomically.
-        std::io::copy(&mut source_file, temporary.as_file_mut()).map_err(|source| OvenRustcError::Io {
-            path: output.clone(),
-            source,
-        })?;
-        temporary.persist(&output).map_err(|error| OvenRustcError::Io {
-            path: output.clone(),
-            source: error.error,
-        })?;
-        let mut inputs = expected.clone();
-        inputs.receipt_identity = request.receipt.identity.clone();
-        write_caller_output_record(
-            &output,
-            &OvenDirectRustcOutputRecord {
-                inputs,
-                output_digest: record.output_digest.clone(),
-            },
-        )?;
+        let permissions = writable_projection_permissions(&source, expected.output_kind == "binary")?;
+        let current = fs::symlink_metadata(&output).is_ok_and(|metadata| {
+            metadata.is_file()
+                && !metadata.file_type().is_symlink()
+                && !metadata.permissions().readonly()
+                && executable_projection(&metadata, expected.output_kind == "binary")
+        }) && caller_output_reusable_digest(&output, expected).as_deref()
+            == Some(record.output_digest.as_str());
+        if !current {
+            let mut source_file = fs::File::open(&source).map_err(|error| OvenRustcError::Io {
+                path: source.clone(),
+                source: error,
+            })?;
+            let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|source| OvenRustcError::Io {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+            // Store files remain immutable; replace caller projections atomically without inheriting read-only state.
+            std::io::copy(&mut source_file, temporary.as_file_mut()).map_err(|source| OvenRustcError::Io {
+                path: output.clone(),
+                source,
+            })?;
+            temporary
+                .as_file()
+                .set_permissions(permissions)
+                .map_err(|source| OvenRustcError::Io {
+                    path: output.clone(),
+                    source,
+                })?;
+            temporary.persist(&output).map_err(|error| OvenRustcError::Io {
+                path: output.clone(),
+                source: error.error,
+            })?;
+            write_caller_output_record(
+                &output,
+                &OvenDirectRustcOutputRecord {
+                    inputs: expected.clone(),
+                    output_digest: record.output_digest.clone(),
+                },
+            )?;
+        }
         return Ok(Some(OvenDirectRustcBake {
             source_digest: expected.source_digest.clone(),
             output,
@@ -211,10 +227,47 @@ fn reuse_library(
     Ok(None)
 }
 
+/// Copy native executable bits while granting only the caller projection owner write access.
+fn writable_projection_permissions(
+    source: &std::path::Path,
+    executable: bool,
+) -> Result<fs::Permissions, OvenRustcError> {
+    let metadata = fs::metadata(source).map_err(|error| OvenRustcError::Io {
+        path: source.to_path_buf(),
+        source: error,
+    })?;
+    if !executable_projection(&metadata, executable) {
+        return Err(recipe_error("stored native executable has no execute permission"));
+    }
+    let mut permissions = metadata.permissions();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(permissions.mode() | 0o200);
+    }
+    #[cfg(not(unix))]
+    permissions.set_readonly(false);
+    Ok(permissions)
+}
+
+/// Native Unix executables must remain executable; other platforms use their native process admission rules.
+fn executable_projection(metadata: &fs::Metadata, executable: bool) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        !executable || metadata.permissions().mode() & 0o100 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (metadata, executable);
+        true
+    }
+}
+
 /// Keep native recipe and stored-payload failures at the existing executor input-error boundary.
 fn recipe_error(error: impl std::fmt::Display) -> OvenRustcError {
     OvenRustcError::InvalidInput {
-        field: "generated library recipe",
+        field: "generated native recipe",
         message: error.to_string(),
     }
 }

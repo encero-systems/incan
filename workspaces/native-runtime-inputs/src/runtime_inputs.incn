@@ -1,0 +1,147 @@
+"""Project native runtime identities from verified receipt bindings, without Cargo source or lock inputs."""
+
+from std.collections import OrdinalKey
+from std.encoding.hex import hexlify
+from std.hash import sha256
+from std.json import JsonValue
+
+
+def canonical_bytes[T with OrdinalKey](value: T) -> bytes:
+    """Use the established public UTF-8 byte projection through its generic trait boundary."""
+    return value.ordinal_bytes()
+
+
+def digest(value: str) -> str:
+    """Hash an explicitly encoded exchange field, never an ambient source directory."""
+    return "sha256:" + hexlify(sha256.digest(canonical_bytes(value)))
+
+
+def text(value: JsonValue, key: str) -> Result[str, str]:
+    """Read a required string without coercing another JSON kind."""
+    field = value.require(key).map_err((error) => error.message())?
+    return field.expect_str().map_err((error) => error.message())
+
+
+def strings(value: JsonValue, key: str) -> Result[list[str], str]:
+    """Retain the caller's normalized ordered records and reject embedded separators."""
+    field = value.require(key).map_err((error) => error.message())?
+    entries = field.expect_array().map_err((error) => error.message())?
+    mut result: list[str] = []
+    for entry in entries:
+        item = entry.expect_str().map_err((error) => error.message())?
+        if "\n" in item or "\r" in item:
+            return Err("runtime identity record contains a line separator")
+        result.append(item)
+    return Ok(result)
+
+
+def sha_identity(value: str) -> Result[None, str]:
+    """Require the public SHA-256 wire spelling before treating a field as retained identity."""
+    if len(value) != 71 or not value.startswith("sha256:"):
+        return Err("native catalog contains an invalid receipt identity")
+    for character in value[7:]:
+        if character not in "0123456789abcdef":
+            return Err("native catalog contains an invalid receipt identity")
+    return Ok(None)
+
+
+pub def project(source: str) -> Result[str, str]:
+    """Bind compiler, providers, features and dependency identity to the complete canonical native catalog."""
+    request = JsonValue.parse(source).map_err((error) => error.message())?
+    expected = ["schema", "operation", "compiler_version", "sdk_codegen_revision", "native_catalog", "provider_records", "stdlib_facets", "dependency_records", "runtime_units"]
+    if len(request.keys()) != len(expected):
+        return Err("native runtime request has missing or unknown fields")
+    for key in request.keys():
+        if key not in expected:
+            return Err("unknown native runtime request field: " + key)
+    if text(request, "schema")? != "incan.native-runtime-inputs.request/1":
+        return Err("unsupported native runtime request")
+    compiler = text(request, "compiler_version")?
+    revision = text(request, "sdk_codegen_revision")?
+    if compiler == "" or revision == "":
+        return Err("native runtime request has no compiler identity")
+    operation = text(request, "operation")?
+    if operation not in ["runtime", "dependency-roots"]:
+        return Err("unsupported native runtime operation")
+    dependencies = dependency_identity(request)?
+    catalog_source = text(request, "native_catalog")?
+    catalog = JsonValue.parse(catalog_source).map_err((error) => error.message())?
+    if len(catalog.keys()) == 0:
+        return Err("native runtime catalog is empty")
+    mut bindings: list[JsonValue] = []
+    for key in catalog.keys():
+        receipt = text(catalog, key)?
+        sha_identity(receipt)?
+        binding = JsonValue.parse(key).map_err((error) => error.message())?
+        loaf = text(binding, "loaf")?
+        if loaf == "":
+            return Err("native runtime binding has no Loaf identity")
+        bindings.append(JsonValue.object({"loaf": JsonValue.string(loaf), "receipt": JsonValue.string(receipt)}))
+    catalog_digest = digest(catalog_source)
+    providers = strings(request, "provider_records")?
+    facets = strings(request, "stdlib_facets")?
+    mut inputs: Dict[str, JsonValue] = {"compiler-version": JsonValue.string(compiler), "sdk-provider-codegen-revision": JsonValue.string(
+        revision,
+    ), "runtime-identity-domain": JsonValue.string("native-receipts/1"), "runtime-lock": JsonValue.string(catalog_digest), "sdk-native-closure": JsonValue.string(
+        catalog_digest,
+    ), "sdk-native-consumer-plan": JsonValue.string("v1"), "provider-plan": JsonValue.string(
+        digest("\n".join(providers)),
+    ), "stdlib-facets": JsonValue.string(digest(",".join(facets))), "rust-dependencies": JsonValue.string(dependencies)}
+    if len(providers) > 0:
+        inputs["providers"] = JsonValue.string("\n".join(providers))
+    required = strings(request, "runtime_units")?
+    if operation == "runtime" and len(required) == 0:
+        return Err("native runtime request has no required units")
+    for name in required:
+        mut records: list[str] = []
+        for binding in bindings:
+            if text(binding, "loaf")? == name:
+                records.append(text(binding, "receipt")?)
+        if len(records) == 0:
+            return Err("native runtime catalog has no required unit: " + name)
+        inputs["runtime-source-" + name.replace("_", "-")] = JsonValue.string(digest("\n".join(records)))
+    response = JsonValue.object(
+        {"schema": JsonValue.string("incan.native-runtime-inputs.response/1"), "request_digest": JsonValue.string(
+            digest(source),
+        ), "inputs": JsonValue.object(inputs)},
+    )
+    return response.to_json().map_err((error) => error.message())
+
+
+def dependency_identity(request: JsonValue) -> Result[str, str]:
+    """Bind portable declarations; admitted native units separately prove local content and supported features."""
+    field = request.require("dependency_records").map_err((error) => error.message())?
+    records = field.expect_array().map_err((error) => error.message())?
+    mut declarations: Dict[str, JsonValue] = {}
+    for record in records:
+        expected = ["alias", "package", "version", "features", "default_features", "optional", "source"]
+        if len(record.keys()) != len(expected):
+            return Err("native dependency has missing or unknown fields")
+        for key in record.keys():
+            if key not in expected:
+                return Err("unknown native dependency field: " + key)
+        if text(record, "alias")? == "":
+            return Err("native dependency has no alias")
+        for key in ["package", "version"]:
+            value = record.require(key).map_err((error) => error.message())?
+            if not value.is_null():
+                value.expect_str().map_err((error) => error.message())?
+        strings(record, "features")?
+        for key in ["default_features", "optional"]:
+            value = record.require(key).map_err((error) => error.message())?
+            value.expect_bool().map_err((error) => error.message())?
+        source = record.require("source").map_err((error) => error.message())?
+        kind = text(source, "kind")?
+        if kind not in ["path", "registry", "git"]:
+            return Err("unknown native dependency source")
+        if kind in ["path", "registry"] and len(source.keys()) != 1:
+            return Err("portable native dependency source contains ambient metadata")
+        if kind == "git":
+            if len(source.keys()) != 3:
+                return Err("native git declaration is incomplete")
+            text(source, "url")?
+            text(source, "reference")?
+        canonical = record.to_json().map_err((error) => error.message())?
+        declarations[canonical] = record
+    normalized = JsonValue.object(declarations).to_json().map_err((error) => error.message())?
+    return Ok(digest(normalized))

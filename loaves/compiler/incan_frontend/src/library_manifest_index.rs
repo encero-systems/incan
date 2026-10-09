@@ -690,7 +690,11 @@ fn resolve_manifest_path(crate_root: &Path, dependency_key: &str) -> Result<Path
     Ok(candidates.remove(0))
 }
 
-/// Validate a generated or receipt-described native provider without mixing its metadata authority.
+/// Validate provider catalog shape without authorizing native execution.
+///
+/// A package-Loaf handoff supplies native authority through the driver's seal and receipt validators. Catalog loading
+/// only requires the named manifest and facade in that layout; it must not introduce generated Cargo metadata as an
+/// additional native input. Legacy generated providers retain their Cargo contract checks.
 fn validate_artifact_contract(
     dependency_key: &str,
     manifest: &LibraryManifest,
@@ -704,6 +708,7 @@ fn validate_artifact_contract(
             message: error.to_string(),
         })?
         .is_some()
+        || crate::library_manifest::published_layout::packaged_library_loaf_manifest_path(crate_root).is_file()
     {
         let expected = format!("{}.incnlib", manifest.name);
         if manifest_path.file_name().and_then(|name| name.to_str()) != Some(expected.as_str())

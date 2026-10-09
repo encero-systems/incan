@@ -47,8 +47,8 @@ INCAN_TEST_OVEN_BAKE_REPORT ?=
 # Optional caller-owned location for the compiler-suite JSON report. The default test target removes its one-use
 # caller output; setting this retains the report, transcript archive and outer wrapper timing record.
 INCAN_TEST_OVEN_COMPILER_SUITE_REPORT ?=
-# Optional caller-owned location for `test-one` evidence, using the same report/archive/timing retention as replay.
-# Successful focused commands reclaim disposable output; failures retain their available diagnostic evidence.
+# Optional caller-owned selected-root report and transcript archive. Invocation evidence and receipt-bound binaries
+# are retained separately; archive publication reclaims only its disposable evidence copy.
 INCAN_TEST_OVEN_TEST_ONE_REPORT ?=
 # The pinned publisher Cargo supplies the unstable unit graph and the package-qualified Rust-inspection tests that
 # exercise Cargo's nightly-only metadata flags. Loaf receipts and direct-rustc suite execution use the selected
@@ -75,6 +75,8 @@ INCAN_TEST_LOAF_REGISTRY_COMMIT ?=
 # Directory the release bake writes incan.pub harvest proposals into from its own runtime-foundation capture.
 INCAN_TEST_HARVEST_DIR ?=
 INCAN_TEST_SUITE_TOOLCHAIN ?= 1.98.0
+# Stage zero runs the Incan bootstrap; that program binds and builds the current source compiler before tests.
+INCAN_TEST_BOOTSTRAP_COMPILER ?= incan
 # Directories whose executables own the C toolchain a recorded native-link fact names (the macOS Command Line Tools).
 INCAN_OVEN_LINK_OWNERS ?= $(if $(filter Darwin,$(shell uname -s)),/Library/Developer/CommandLineTools,)
 TEST_ENV = CARGO_BUILD_JOBS=$(INCAN_TEST_CARGO_BUILD_JOBS) \
@@ -856,47 +858,45 @@ test-timings:
 	@cargo test --all --no-run --timings
 	@echo "\033[32m✓ Timing report generated in target/cargo-timings\033[0m"
 
-# Keep single-root diagnostics on the same short, invocation-owned scratch policy as full suite replay.
+# Incan owns selected-test preparation and retained binaries. Make supplies command inputs and the outer Cargo guard.
 .PHONY: test-one  ## test - Run one receipt-bound compiler-suite source root (optional TEST_EXACT=module::case)
-test-one: test-prewarm-sdk
+test-one:
 	@test -n "$(TEST_ROOT)" || { echo "usage: make test-one TEST_ROOT=loaves/toolchain/incan-cli/tests/cli_provider_boundary_tests.rs" >&2; exit 2; }
 	@echo "\033[1mRunning $(TEST_ROOT)$(if $(TEST_EXACT), ($(TEST_EXACT)),) through Oven...\033[0m"
 	@set -e; \
-		root_started="$$($(TARGET_DIR)/debug/incan oven retain-suite-output --clock)"; \
-		command_started=0; \
-		mkdir -p "$(INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT)" "$(INCAN_TEST_TMP_ROOT)"; \
-		root_output="$$(mktemp -d "$(INCAN_TEST_OVEN_COMPILER_SUITE_OUTPUT_ROOT)/oven-test-one.XXXXXX")"; \
-		root_tmp="$$(mktemp -d "$(INCAN_TEST_TMP_ROOT)/incan-oven-root.XXXXXX")"; \
-		root_succeeded=false; \
-		cleanup_root_output() { \
-			root_status=$$?; \
-			"$(TARGET_DIR)/debug/incan" oven retain-suite-output "$$root_output" "$$root_tmp" \
-				"$$root_succeeded" "$(abspath $(INCAN_TEST_OVEN_TEST_ONE_REPORT))" "$$root_status" \
-				"$$root_started" "$$command_started"; \
-			exit $$?; \
+		mkdir -p "$(TARGET_DIR)/compiler-development/command-evidence"; \
+		command_evidence="$$(mktemp -d "$(TARGET_DIR)/compiler-development/command-evidence/test-one.XXXXXX")"; \
+		cp "$(CURDIR)/scripts/cargo-guard/cargo" "$$command_evidence/cargo"; \
+		: > "$$command_evidence/cargo-invocations.log"; \
+		finish_selected_command() { \
+			command_status=$$?; \
+			if [ -s "$$command_evidence/cargo-invocations.log" ]; then \
+				echo "Selected tests reached the Cargo guard; evidence: $$command_evidence" >&2; \
+				command_status=1; \
+			fi; \
+			exit $$command_status; \
 		}; \
-		trap cleanup_root_output EXIT; \
+		trap finish_selected_command EXIT; \
+		export PATH="$$command_evidence:$$PATH"; \
+		export CARGO="$$command_evidence/cargo"; \
+		export INCAN_OVEN_CARGO_GUARD_LOG="$$command_evidence/cargo-invocations.log"; \
 		rustc_path="$$(rustup which --toolchain "$(INCAN_TEST_SUITE_TOOLCHAIN)" rustc)"; \
-		mkdir -p "$$root_output/cargo-guard"; \
-		cp "$(CURDIR)/scripts/cargo-guard/cargo" "$$root_output/cargo-guard/cargo"; \
-		: > "$$root_output/cargo-guard/invocations.log"; \
-		command_started="$$($(TARGET_DIR)/debug/incan oven retain-suite-output --clock)"; \
-		PATH="$$root_output/cargo-guard:$$PATH" INCAN_OVEN_CARGO_GUARD_LOG="$$root_output/cargo-guard/invocations.log" \
-			TMPDIR="$$root_tmp" $(TEST_RUNTIME_ENV) RUSTUP_TOOLCHAIN="$(INCAN_TEST_SUITE_TOOLCHAIN)" \
-			CARGO_NET_OFFLINE=true INCAN_NO_BANNER=1 INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT="$(TARGET_DIR)" \
-			"$(TARGET_DIR)/debug/incan" oven compiler-native-tests \
-				--compiler-root "$(CURDIR)" --rustc "$$rustc_path" \
-				--explicit-bake-workspace "$(INCAN_TEST_OVEN_EXPLICIT_BAKE_WORKSPACE)" \
-				--target "$(TEST_ROOT)" $(if $(TEST_EXACT),--exact "$(TEST_EXACT)") \
-				--output "$$root_output"; \
-		if [ -s "$$root_output/cargo-guard/invocations.log" ]; then \
-			echo "\033[31mThe Oven suite must run without Cargo, and these invocations reached the guard:\033[0m" >&2; \
-			sed "s/^/  /" "$$root_output/cargo-guard/invocations.log" >&2; \
-			exit 1; \
+		if [ -z "$${INCAN_SDK_INVENTORY:-}" ]; then \
+			$(TEST_ENV) RUSTC="$$rustc_path" RUSTUP_TOOLCHAIN="$(INCAN_TEST_SUITE_TOOLCHAIN)" \
+				INCAN_INTERNAL_SDK_PROVIDER_PATH_FILE="$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)" \
+				"$(INCAN_TEST_BOOTSTRAP_COMPILER)" prepare-sdk; \
+			export INCAN_SDK_INVENTORY="$$(cat "$(INCAN_TEST_SDK_PROVIDER_PATH_FILE)")/sdk-inventory.json"; \
 		fi; \
-		cp "$$root_output/cargo-guard/invocations.log" "$(TARGET_DIR)/native-test-cargo-guard.log"; \
-		cp "$$root_output/compiler-suite-report.json" "$(TARGET_DIR)/native-test-report.json"; \
-		root_succeeded=true
+		cd "$(CURDIR)/workspaces/compiler-bootstrap"; \
+		$(TEST_ENV) RUSTC="$$rustc_path" RUSTUP_TOOLCHAIN="$(INCAN_TEST_SUITE_TOOLCHAIN)" INCAN_NO_BANNER=1 \
+			"$(INCAN_TEST_BOOTSTRAP_COMPILER)" oven bake --project "$(CURDIR)/workspaces/compiler-bootstrap" --format json \
+			> "$$command_evidence/bootstrap-preparation.json" 2> "$$command_evidence/bootstrap-preparation.stderr"; \
+		$(TEST_ENV) RUSTC="$$rustc_path" RUSTUP_TOOLCHAIN="$(INCAN_TEST_SUITE_TOOLCHAIN)" INCAN_NO_BANNER=1 \
+			INCAN_COMPILER_STAGE_ZERO="$(INCAN_TEST_BOOTSTRAP_COMPILER)" \
+			INCAN_TEST_OVEN_TEST_ONE_REPORT="$(abspath $(INCAN_TEST_OVEN_TEST_ONE_REPORT))" \
+			"$(INCAN_TEST_BOOTSTRAP_COMPILER)" run "$(CURDIR)/workspaces/compiler-bootstrap/src/main.incn" -- \
+				--test "$(CURDIR)" "$(TEST_ROOT)" "$(TEST_EXACT)" "$$rustc_path" \
+				"$(INCAN_TEST_OVEN_COMPILER_SUITE_STORE)"
 
 # =============================================================================
 # Tooling

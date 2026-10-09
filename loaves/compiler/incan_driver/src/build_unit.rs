@@ -12,8 +12,6 @@ use incan_provider::dependency_resolver::ResolvedDependencies;
 use incan_provider::lock_semantics::{CheckedProviderSemanticIdentities, provider_semantic_identities};
 use incan_provider::requirements::{ProjectRequirements, semantic_sdk_path_dependencies};
 use oven_model::manifest::DependencySpec;
-use oven_rustc::loaf::runtime_build_unit_inputs;
-use oven_store::digest_dependency_specs;
 
 /// Prepare an executable for Oven Alpha without launching Cargo, inspecting a Cargo target, or auto-publishing SDK
 /// providers.
@@ -57,27 +55,17 @@ fn oven_build_unit_inputs_with_provider_records(
 ) -> CliResult<BTreeMap<String, String>> {
     let mut dependencies = resolved.dependencies.clone();
     dependencies.extend(resolved.dev_dependencies.clone());
-    let dependency_digest = digest_dependency_specs(&dependencies, incan_oven_facet::provider_hooks().as_ref())
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    let mut inputs = runtime_build_unit_inputs(
-        &incan_oven_facet::compiler_identity(),
-        provider_records,
+    let inventory = incan_provider::inventory::discover_or_reuse_published_sdk_inventory()?
+        .ok_or_else(|| CliError::failure("native runtime identity requires a prepared native SDK"))?;
+    let catalog = inventory.root.join(".sealed-native-receipts.json");
+    let bytes = std::fs::read(&catalog)
+        .map_err(|error| CliError::failure(format!("native runtime catalog {}: {error}", catalog.display())))?;
+    crate::build::native_runtime_inputs::runtime_inputs(
+        &bytes,
+        &provider_records,
         &requirements.stdlib_facets,
-        dependency_digest,
+        &dependencies,
     )
-    .map_err(CliError::failure)?;
-    if let Some(inventory) = incan_provider::inventory::discover_or_reuse_published_sdk_inventory()? {
-        let catalog = inventory.root.join(".sealed-native-receipts.json");
-        if catalog.is_file() {
-            let bytes = std::fs::read(catalog).map_err(|error| CliError::failure(error.to_string()))?;
-            let receipts: BTreeMap<String, String> =
-                serde_json::from_slice(&bytes).map_err(|error| CliError::failure(error.to_string()))?;
-            let bytes = serde_json::to_vec(&receipts).map_err(|error| CliError::failure(error.to_string()))?;
-            inputs.insert("sdk-native-closure".to_string(), oven_store::digest_bytes(&bytes));
-            inputs.insert("sdk-native-consumer-plan".to_string(), "v1".to_string());
-        }
-    }
-    Ok(inputs)
 }
 
 /// Encode only the compiler-owned SDK capabilities a generated native crate can exercise.

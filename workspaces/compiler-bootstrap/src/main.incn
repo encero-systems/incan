@@ -1,0 +1,326 @@
+"""Build the source compiler CLI from prepared, leased Oven units without Cargo."""
+
+from rust::std::env import args, var
+from rust::std::process import exit, Command
+from rust::std::path import Path as RustPath
+from rust::std::time import Instant
+from rust::oven_model::manifest import ProjectManifest
+from rust::oven_store import (
+    OvenGeneratedProjectRequest,
+    OvenReceipt,
+    receipt_generated_project,
+    write_receipt,
+    DEFAULT_OVEN_MAX_PHYSICAL_BYTES,
+    DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES,
+    DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES,
+)
+from rust::oven_store::store import OvenStore, OvenStoreLimits
+from rust::oven_rustc::plan import OvenDirectRustcPlanSelection
+from rust::oven_rustc::rustc import (
+    OvenTrustedDirectRustcTargetRequest,
+    bake_trusted_direct_rustc_run_in_store,
+    rustc_identity,
+    rustc_host_target,
+)
+from rust::incan_driver::build::native_sdk import select_prepared_native_sdk_plan_with_engine
+from rust::incan_driver::build::source_authority import (
+    digest_baked_project_source_authority,
+    digest_project_development_dependencies,
+)
+from rust::incan_driver::build import OvenBakeProjectTarget
+from rust::incan_driver::build::native_runtime_inputs import matching_project_outputs_for_incan
+from rust::incan_driver::build::output_materialization import (
+    digest_project_output_projection_file,
+    verify_stored_project_output_native,
+)
+from rust::incan_frontend::library_manifest import digest_provider_artifact
+from std.fs import Path
+from std import toml
+from std.json import JsonValue
+from std.tempfile import TemporaryDirectory
+from selected_tests import run_selected_tests
+
+
+def seconds_since(started: Instant) -> Result[JsonValue, str]:
+    """Represent one measured phase without rounding or turning elapsed time into a reuse decision."""
+    elapsed = started.elapsed()
+    return JsonValue.float(elapsed.as_secs_f64()).map_err((error) => error.message())
+
+
+def inspect_authority(root_text: str) -> Result[None, str]:
+    """Observe each fixture node independently so reuse-key changes can be attributed without compilation."""
+    root = Path(root_text).resolve().map_err((error) => error.message())?
+    mut nodes: list[JsonValue] = []
+    for name in ["library", "lowering", "driver"]:
+        project = root.joinpath(name)
+        project_path = RustPath.new(project.0)
+        source = digest_baked_project_source_authority(project_path).map_err((error) => str(error))?
+        dependencies = digest_project_development_dependencies(project_path).map_err((error) => str(error))?
+        mut artifact = JsonValue.null()
+        if name != "driver":
+            provider = project.joinpath("target/lib")
+            provider_path = RustPath.new(provider.0)
+            provider_digest = digest_provider_artifact(provider_path).map_err((error) => str(error))?
+            artifact = JsonValue.string(provider_digest)
+        nodes.append(
+            JsonValue.object(
+                {"node": JsonValue.string(name), "source_authority": JsonValue.string(source), "dependency_authority": JsonValue.string(
+                    dependencies,
+                ), "provider_artifact": artifact},
+            ),
+        )
+    report = JsonValue.object(
+        {"schema": JsonValue.string("incan.compiler-bootstrap.authority-observation/1"), "nodes": JsonValue.array(nodes)},
+    )
+    println(report.to_json().map_err((error) => error.message())?)
+    return Ok(None)
+
+
+def build(arguments: list[str]) -> Result[None, str]:
+    """Bind the CLI source, select its declared prepared inputs, and retain all owners through execution."""
+    started = Instant.now()
+    checkout = Path(arguments[1]).resolve().map_err((error) => error.message())?
+    cli = checkout.joinpath("loaves/toolchain/incan-cli")
+    source = cli.joinpath("src/main.rs")
+    output = Path(arguments[2]).absolute().map_err((error) => error.message())?
+    output.parent().mkdir(true, true).map_err((error) => error.message())?
+    engine = prepare_runtime_engine(checkout, output.parent(), arguments[3], arguments[4])?
+    rustc_text = arguments[3]
+    rustc = RustPath.new(rustc_text)
+    store = OvenStore.new(
+        arguments[4],
+        OvenStoreLimits.new(
+            DEFAULT_OVEN_MAX_PHYSICAL_BYTES,
+            DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES,
+            DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES,
+        ),
+    )
+    manifest_source = cli.joinpath("loaf.toml").read_text("utf-8", "strict").map_err((error) => error.message())?
+    manifest = toml.parse(manifest_source).map_err((error) => error.message())?
+    name = manifest.get[str]("project.name").map_err((error) => error.message())?
+    version = manifest.get[str]("project.version").map_err((error) => error.message())?
+    toolchain = rustc_identity(rustc).map_err((error) => str(error))?
+    target = rustc_host_target(rustc).map_err((error) => str(error))?
+    mut features: list[str] = []
+    request = OvenGeneratedProjectRequest.new(cli.0, name, version, target, toolchain, "debug", features)
+    source_path = RustPath.new(source.0)
+    root_request = request.with_generated_source("compiler-main", source_path)
+    tree_request = root_request.with_generated_source_tree("compiler-cli-tree", cli.joinpath("src").0)
+    engine_request = tree_request.with_generated_source("native-runtime-engine", RustPath.new(engine.0))
+    source_receipt = receipt_generated_project(engine_request).map_err((error) => str(error))?
+    dependencies_path = checkout.joinpath("workspaces/compiler-bootstrap/loaf.toml")
+    dependency_manifest = ProjectManifest.load(RustPath.new(dependencies_path.0)).map_err((error) => str(error))?
+    dependencies = dependency_manifest.rust_dependency_values()
+    input_seconds = seconds_since(started)?
+    selection_started = Instant.now()
+    selected = select_prepared_native_sdk_plan_with_engine(store, source_receipt, dependencies, RustPath.new(engine.0)).map_err(
+        (error) => str(error),
+    )?
+    receipt: OvenReceipt = selected.0
+    selection: OvenDirectRustcPlanSelection = selected.1
+    plan = selection.source_artifact_plan("compiler-main").map_err((error) => str(error))?
+    artifacts = selection.artifacts()
+    guard_root = selection.output_guard_root()
+    output_path = RustPath.new(output.0)
+    compile_request = OvenTrustedDirectRustcTargetRequest.new(
+        receipt,
+        artifacts,
+        guard_root,
+        plan,
+        rustc,
+        source_path,
+        output_path,
+        "incan",
+        "2024",
+        "compiler-main",
+        false,
+    )
+    selection_seconds = seconds_since(selection_started)?
+    execution_started = Instant.now()
+    result = bake_trusted_direct_rustc_run_in_store(compile_request, store).map_err((error) => str(error))?
+    execution_seconds = seconds_since(execution_started)?
+    if result.cargo_process_started:
+        return Err("compiler bootstrap unexpectedly started Cargo")
+    write_receipt(receipt, output.0 + ".receipt.json").map_err((error) => str(error))?
+    elapsed = seconds_since(started)?
+    mut compiler_executions = 1
+    mut decision = "output_requires_compilation"
+    if result.reused:
+        compiler_executions = 0
+        decision = "receipt_bound_output_reused"
+    report = JsonValue.object(
+        {"schema": JsonValue.string("incan.compiler-bootstrap/1"), "output": JsonValue.string(output.0), "output_digest": JsonValue.string(
+            result.output_digest,
+        ), "source_digest": JsonValue.string(result.source_digest), "receipt_identity": JsonValue.string(
+            receipt.identity,
+        ), "build_unit_identity": JsonValue.string(receipt.build_unit_identity), "reused": JsonValue.bool(result.reused), "cargo_process_started": JsonValue.bool(
+            result.cargo_process_started,
+        ), "work": JsonValue.object(
+            {"compiler_rustc_executions": JsonValue.int(compiler_executions), "native_sdk_compile_executions": JsonValue.int(
+                0,
+            ), "decision": JsonValue.string(decision)},
+        ), "phases_seconds": JsonValue.object(
+            {"source_and_request": input_seconds, "prepared_sdk_selection": selection_seconds, "compiler_execution_or_reuse": execution_seconds},
+        ), "elapsed_seconds": elapsed},
+    )
+    println(report.to_json().map_err((error) => error.message())?)
+    return Ok(None)
+
+
+def select_runtime_engine(
+    project: Path,
+    destination: Path,
+    stage_zero: str,
+    rustc_text: str,
+    store_text: str,
+) -> Result[Option[Path], str]:
+    """Select exact canonical source and dependency authority, retaining the lease through verified projection."""
+    project_path = RustPath.new(project.0)
+    entrypoint = project.joinpath("src/main.incn")
+    source = digest_baked_project_source_authority(project_path).map_err((error) => str(error))?
+    dependencies = digest_project_development_dependencies(project_path).map_err((error) => str(error))?
+    compiler = digest_project_output_projection_file(RustPath.new(stage_zero)).map_err((error) => str(error))?
+    rustc = RustPath.new(rustc_text)
+    target = rustc_host_target(rustc).map_err((error) => str(error))?
+    toolchain = rustc_identity(rustc).map_err((error) => str(error))?
+    store = OvenStore.new(
+        store_text,
+        OvenStoreLimits.new(
+            DEFAULT_OVEN_MAX_PHYSICAL_BYTES,
+            DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES,
+            DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES,
+        ),
+    )
+    candidates = matching_project_outputs_for_incan(
+        store,
+        project_path,
+        RustPath.new(entrypoint.0),
+        OvenBakeProjectTarget.Executable,
+        "debug",
+        source,
+    ).map_err((error) => str(error))?
+    for candidate in candidates:
+        if candidate.intent.target != target or candidate.intent.toolchain != toolchain:
+            continue
+        if candidate.payload.compiler_identity_digest != Some(compiler.1):
+            continue
+        if candidate.payload.dependency_authority_digest != Some(dependencies):
+            continue
+        verify_stored_project_output_native(candidate).map_err((error) => str(error))?
+        prepared = Path(candidate.native_output.to_string_lossy().into_owned())
+        installed = destination.joinpath("native-runtime-inputs")
+        bytes = prepared.read_bytes().map_err((error) => error.message())?
+        mut copy_required = true
+        if installed.exists() and installed.is_file() and not installed.is_symlink():
+            retained = installed.read_bytes().map_err((error) => error.message())?
+            metadata = installed.stat().map_err((error) => error.message())?
+            readonly = metadata.readonly().map_err((error) => error.message())?
+            copy_required = bytes != retained or readonly
+        if copy_required:
+            staging = TemporaryDirectory
+                .try_new_with("engine-", "", Some(destination))
+                .map_err((error) => error.message())?
+            staged = staging.path().joinpath("native-runtime-inputs")
+            prepared.copy(staged, false, true).map_err((error) => error.message())?
+            staged.chmod(false).map_err((error) => error.message())?
+            staged.replace(installed).map_err((error) => error.message())?
+        report = JsonValue.object(
+            {"schema": JsonValue.string("incan.native-runtime-preparation/1"), "decision": JsonValue.string(
+                "shared_output_selected",
+            ), "output_identity": JsonValue.string(candidate.identity), "receipt_identity": JsonValue.string(
+                candidate.payload.receipt_identity,
+            ), "source_authority": JsonValue.string(source), "dependency_authority": JsonValue.string(dependencies), "compiler_identity": JsonValue.string(
+                compiler.1,
+            ), "executable": JsonValue.string(prepared.0)},
+        )
+        destination
+            .joinpath("native-runtime-engine-selection.json")
+            .write_text(report.to_json().map_err((error) => error.message())?, "utf-8", "strict", None)
+            .map_err((error) => error.message())?
+        return Ok(Some(installed))
+    return Ok(None)
+
+
+def prepare_runtime_engine(checkout: Path, destination: Path, rustc: str, store: str) -> Result[Path, str]:
+    """Reuse a shared engine before preparing missing inputs, then admit the completed output under its exact authority."""
+    variable: str = "INCAN_COMPILER_STAGE_ZERO"
+    stage_zero = var(variable).map_err((error) => str(error))?
+    project_text = checkout.joinpath("workspaces/native-runtime-inputs").0
+    project = Path(project_text)
+    match select_runtime_engine(project, destination, stage_zero, rustc, store)?:
+        Some(engine) => return Ok(engine)
+        None => pass
+    mut command = Command.new(stage_zero)
+    command.arg("oven").arg("bake").arg("--project").arg(project_text).arg("--format").arg("json")
+    result = command.output().map_err((error) => str(error))?
+    destination
+        .joinpath("native-runtime-engine-preparation.json")
+        .write_bytes(result.stdout)
+        .map_err((error) => error.message())?
+    destination
+        .joinpath("native-runtime-engine-preparation.stderr")
+        .write_bytes(result.stderr)
+        .map_err((error) => error.message())?
+    if not result.status.success():
+        return Err("native-runtime engine preparation failed; compiler output directory retains its diagnostics")
+    match select_runtime_engine(project, destination, stage_zero, rustc, store)?:
+        Some(engine) => return Ok(engine)
+        None => return Err("prepared native-runtime engine has no source-current receipt-bound shared output")
+
+
+def inspect_runtime_engine(arguments: list[str]) -> Result[None, str]:
+    """Observe selection and projection controls without authorizing a preparation miss to compile anything."""
+    project = Path(arguments[2]).joinpath("workspaces/native-runtime-inputs")
+    destination = Path(arguments[3])
+    destination.mkdir(true, true).map_err((error) => error.message())?
+    match select_runtime_engine(project, destination, arguments[6], arguments[4], arguments[5])?:
+        Some(_) =>
+            report = destination
+                .joinpath("native-runtime-engine-selection.json")
+                .read_text("utf-8", "strict")
+                .map_err((error) => error.message())?
+            println(report)
+        None => println("{\"decision\":\"no_matching_shared_output\"}")
+    return Ok(None)
+
+
+def main() -> None:
+    """Accept explicit compiler-development inputs and fail closed on any preparation or execution refusal."""
+    mut arguments: list[str] = []
+    for argument in args():
+        arguments.append(argument)
+    if len(arguments) == 7 and arguments[1] == "--select-runtime-engine":
+        match inspect_runtime_engine(arguments):
+            Ok(_) => return
+            Err(error) =>
+                println(error)
+                exit(1)
+    if len(arguments) == 7 and arguments[1] == "--test":
+        match test(arguments):
+            Ok(_) => return
+            Err(error) =>
+                println(error)
+                exit(1)
+    if len(arguments) == 3 and arguments[1] == "--inspect-authority":
+        match inspect_authority(arguments[2]):
+            Ok(_) => return
+            Err(error) =>
+                println(error)
+                exit(1)
+    if len(arguments) != 5:
+        println("usage: compiler_bootstrap SOURCE_ROOT OUTPUT RUSTC STORE")
+        println("       compiler_bootstrap --inspect-authority FIXTURE_ROOT")
+        exit(2)
+    match build(arguments):
+        Ok(_) => return
+        Err(error) =>
+            println(error)
+            exit(1)
+
+
+def test(arguments: list[str]) -> Result[None, str]:
+    """Build the current compiler through its source receipt before executing any requested test root."""
+    root = Path(arguments[2]).resolve().map_err((error) => error.message())?
+    compiler = root.joinpath("target/compiler-development/bin/incan")
+    build([arguments[0], root.0, compiler.0, arguments[5], arguments[6]])?
+    return run_selected_tests(root, compiler, arguments[3], arguments[4], arguments[5])

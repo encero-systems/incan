@@ -1,0 +1,7 @@
+[project]
+name = "optional_tuple_api_gap"
+private = true
+
+[dependencies]
+incan_driver = { loaf = "incan_driver", path = "../../../../loaves/compiler/incan_driver", default-features = false, features = ["cli", "rust_inspect", "std_async", "std_decorators", "std_testing"] }
+oven_store = { loaf = "oven_store", path = "../../../../loaves/oven/oven_store" }

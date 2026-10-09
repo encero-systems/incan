@@ -137,6 +137,26 @@
       "project": "../../loaves/compiler/incan_test_support",
       "domain": "target",
       "features": []
+    },
+    {
+      "project": "../../loaves/toolchain/oven-cli",
+      "domain": "target",
+      "features": [
+        "rust_inspect",
+        "std_async",
+        "std_decorators",
+        "std_testing"
+      ]
+    },
+    {
+      "project": "../../loaves/toolchain/incan-cli",
+      "domain": "target",
+      "features": [
+        "rust_inspect",
+        "std_async",
+        "std_decorators",
+        "std_testing"
+      ]
     }
   ]
 }

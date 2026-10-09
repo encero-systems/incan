@@ -5,7 +5,10 @@ use std::path::{Path, PathBuf};
 use std::{fs, io};
 
 use crate::build::bake::discover_oven_executable_entrypoints;
-use crate::build::package_loafs::read_packaged_library_loaf_manifest;
+use crate::build::output_paths::validate_packaged_library_metadata_files;
+use crate::build::package_loafs::{
+    decode_packaged_library_loaf_manifest, read_packaged_library_loaf_manifest, validated_packaged_library_loaf_profile,
+};
 use crate::build::{
     OvenBakeProjectTarget, OvenProjectPlanMode, ProjectSourceAuthorityDigester, oven_bake_project_target_identity,
 };
@@ -22,7 +25,7 @@ use oven_interop::{
 use oven_model::lock::{IncanLock, LOCK_FILENAME};
 use oven_model::manifest::{DependencySource, GitReference, LOAF_MANIFEST_FILENAME, ProjectManifest};
 use oven_model::oven_interop::locked_oven_interop_targets;
-use oven_store::{digest_bytes, digest_project_source_tree};
+use oven_store::{digest_bytes, digest_project_source_tree, digest_source_tree};
 
 /// Bind exact compiler bytes independently of release compatibility and source authority.
 pub(super) fn current_compiler_identity_digest() -> CliResult<String> {
@@ -99,11 +102,24 @@ impl ProjectSourceAuthorityDigester {
     #[cfg(not(test))]
     pub fn record_project_scan(&mut self, _canonical_root: &Path) {}
 
-    /// Digest one local Rust package together with only the Cargo-workspace facts that it actually inherits.
+    /// Bind a Loaf's declared Rust source closure, or retain conservative authority for a legacy Cargo-only package.
+    ///
+    /// A neighboring Cargo manifest never contributes to a Loaf. The SDK publisher owns Rust source geometry,
+    /// including compiler-embedded inputs; this boundary adds named normal path edges without resolving versions.
     pub fn digest_rust_path_crate_authority(
         package_root: &Path,
         memo: &mut BTreeMap<PathBuf, String>,
     ) -> CliResult<String> {
+        let declaration = package_root.join(LOAF_MANIFEST_FILENAME);
+        match fs::symlink_metadata(&declaration) {
+            Ok(_) => {
+                return super::rust_source_freshness::digest_loaf(package_root, memo, |nodes| {
+                    digest_rust_loaf_node(package_root, nodes, &mut HashSet::new())
+                });
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(CliError::failure(error.to_string())),
+        }
         super::rust_source_freshness::digest(package_root, memo, |rust_source_closure_digests| {
             let source_tree = digest_cargo_path_source_tree_with_cache(package_root, rust_source_closure_digests)
                 .map_err(|error| {
@@ -258,11 +274,76 @@ impl ProjectSourceAuthorityDigester {
     }
 }
 
-/// Bind a materialized provider's stable package content into its consumer's completed-output authority.
+/// Recursively bind every authored normal Rust path alternative, retaining alias and target identity.
 ///
-/// Authored source remains independently bound above. This additional record ensures a genuinely different sealed
-/// native provider invalidates warm consumer reuse, while the provider digest itself excludes package-store access
-/// bookkeeping that cannot affect execution.
+/// Development source trees of dependencies do not affect their library facet. Their declarations remain bound by
+/// the publisher snapshot. Inherited selection metadata is bound separately after the existing workspace projection.
+fn digest_rust_loaf_node(
+    root: &Path,
+    memo: &mut BTreeMap<PathBuf, String>,
+    visiting: &mut HashSet<PathBuf>,
+) -> CliResult<String> {
+    let root = fs::canonicalize(root).map_err(|error| CliError::failure(error.to_string()))?;
+    if let Some(digest) = memo.get(&root) {
+        return Ok(digest.clone());
+    }
+    if !visiting.insert(root.clone()) {
+        return Err(CliError::failure(format!(
+            "Rust Loaf source authority contains a cyclic path dependency at {}",
+            root.display()
+        )));
+    }
+    let manifest = effective_project_manifest_for_exact_root(&root)?;
+    let source = oven_rustc::sdk_closure::local_sdk_facet_source_digest(&root, &std::env::temp_dir())
+        .map_err(|error| CliError::failure(format!("cannot bind Rust Loaf source at {}: {error}", root.display())))?;
+    let mut records = BTreeMap::from([
+        ("loaf-rust-source-v1".to_string(), source),
+        (
+            "effective-selections".to_string(),
+            digest_baked_project_dependency_selections(&manifest)?,
+        ),
+    ]);
+    let mut edges = BTreeMap::new();
+    for (alias, dependency) in manifest.rust_dependencies() {
+        if !manifest.loaf_dependencies.contains_key(alias)
+            && let DependencySource::Path { path } = &dependency.source
+        {
+            edges.insert(format!("normal:{alias}"), path);
+        }
+    }
+    for (alias, alternatives) in &manifest.loaf_dependencies {
+        for dependency in alternatives {
+            if let DependencySource::Path { path } = &dependency.spec.source {
+                let key = serde_json::to_string(&(alias, &dependency.loaf, &dependency.target))
+                    .map_err(|error| CliError::failure(error.to_string()))?;
+                if edges.insert(key, path).is_some() {
+                    return Err(CliError::failure("duplicate Rust Loaf source-authority edge"));
+                }
+            }
+        }
+    }
+    for (edge, path) in edges {
+        let digest = match fs::symlink_metadata(path.join(LOAF_MANIFEST_FILENAME)) {
+            Ok(_) => digest_rust_loaf_node(path, memo, visiting)?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                ProjectSourceAuthorityDigester::digest_rust_path_crate_authority(path, memo)?
+            }
+            Err(error) => return Err(CliError::failure(error.to_string())),
+        };
+        records.insert(format!("rust-edge:{edge}"), digest);
+    }
+    let payload = serde_json::to_vec(&records).map_err(|error| CliError::failure(error.to_string()))?;
+    let digest = digest_bytes(&payload);
+    visiting.remove(&root);
+    memo.insert(root, digest.clone());
+    Ok(digest)
+}
+
+/// Bind a materialized provider's execution inputs into its consumer's completed-output authority.
+///
+/// Authored source remains independently bound above. A sealed native handoff binds its checked metadata, generated
+/// source, receipts and native bytes; generated Cargo projections and store bookkeeping are outside that contract.
+/// Older handoffs without complete generated-source evidence retain conservative physical artifact authority.
 fn append_provider_artifact_authority(
     dependency_name: &str,
     dependency_root: &Path,
@@ -272,14 +353,90 @@ fn append_provider_artifact_authority(
     if !artifact_root.is_dir() {
         return Ok(());
     }
-    let artifact_digest = digest_provider_artifact(&artifact_root).map_err(|error| {
-        CliError::failure(format!(
-            "Oven Alpha cannot digest the packaged provider for pub::{dependency_name} at {}: {error}",
-            artifact_root.display()
-        ))
-    })?;
+    let artifact_digest = match sealed_provider_artifact_authority(dependency_name, &artifact_root)? {
+        Some(digest) => digest,
+        None => digest_provider_artifact(&artifact_root).map_err(|error| {
+            CliError::failure(format!(
+                "Oven Alpha cannot digest the packaged provider for pub::{dependency_name} at {}: {error}",
+                artifact_root.display()
+            ))
+        })?,
+    };
     records.insert(format!("incan-provider-artifact:{dependency_name}"), artifact_digest);
     Ok(())
+}
+
+/// Validate an existing native package seal before using it as the additional provider authority.
+///
+/// This does not resolve dependencies or authorize execution: the normal package importer still owns receipt selection
+/// and leases. The caller separately binds authored dependency sources, so this check does not recurse back into the
+/// consumer graph. Incomplete legacy evidence falls back to the physical digest; present but invalid evidence always
+/// refuses.
+fn sealed_provider_artifact_authority(dependency_name: &str, artifact_root: &Path) -> CliResult<Option<String>> {
+    if !incan_frontend::library_manifest::published_layout::packaged_library_loaf_manifest_path(artifact_root).is_file()
+    {
+        return Ok(None);
+    }
+    let artifact = match load_provider_dependency_artifact(dependency_name, artifact_root) {
+        LibraryManifestIndexEntry::Loaded { metadata, .. } if metadata.kind == LibraryArtifactKind::Materialized => {
+            metadata
+        }
+        LibraryManifestIndexEntry::Loaded { .. } => {
+            return Err(CliError::failure(format!(
+                "Oven Alpha cannot bind pub::{dependency_name}: its sealed provider artifact is not materialized"
+            )));
+        }
+        LibraryManifestIndexEntry::Failed(failure) => {
+            return Err(CliError::failure(format!(
+                "Oven Alpha cannot bind pub::{dependency_name} at {}: {failure}",
+                artifact_root.display()
+            )));
+        }
+    };
+    let Some((_, _, package)) = decode_packaged_library_loaf_manifest(&artifact)? else {
+        return Ok(None);
+    };
+    validate_packaged_library_metadata_files(&artifact, &package)?;
+    let generated_root =
+        digest_bytes(&fs::read(&artifact.crate_lib_path).map_err(|error| CliError::failure(error.to_string()))?);
+    let generated_tree =
+        digest_source_tree(&artifact_root.join("src")).map_err(|error| CliError::failure(error.to_string()))?;
+    let mut complete_source_evidence = !package.profiles.is_empty();
+    for (profile, candidate) in &package.profiles {
+        if validated_packaged_library_loaf_profile(
+            &artifact,
+            &package,
+            profile,
+            &candidate.receipt.intent.target,
+            &candidate.receipt.intent.toolchain,
+        )?
+        .is_none()
+        {
+            return Err(CliError::failure(format!(
+                "Oven Alpha refuses pub::{dependency_name}: its sealed profile `{profile}` has inconsistent intent"
+            )));
+        }
+        for (key, actual) in [
+            ("generated-root", &generated_root),
+            ("generated-source-tree", &generated_tree),
+        ] {
+            match candidate.receipt.sources.supplemental_digests.get(key) {
+                Some(sealed) if sealed != actual => {
+                    return Err(CliError::failure(format!(
+                        "Oven Alpha refuses pub::{dependency_name}: `{profile}` {key} changed after its package Loaf was baked"
+                    )));
+                }
+                Some(_) => {}
+                None => complete_source_evidence = false,
+            }
+        }
+    }
+    if !complete_source_evidence {
+        return Ok(None);
+    }
+    let payload = serde_json::to_vec(&("incan-sealed-provider-authority/1", package))
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    Ok(Some(digest_bytes(&payload)))
 }
 
 /// Digest the exact build-input graph for a completed project output without observing generated or unrelated files.

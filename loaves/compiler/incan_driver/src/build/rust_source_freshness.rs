@@ -1,4 +1,4 @@
-//! Stat-guarded acceleration of the existing recursive Rust source authority, without changing its digest scheme.
+//! Stat-guarded observations of publisher-owned Loaf sources and conservative legacy Cargo source closures.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -22,39 +22,49 @@ struct ClosureRecord {
     digest: String,
 }
 
-/// Bind every regular file in the visited packages and their ancestor workspace manifests.
+/// Observe the owning source boundary and ancestor workspace declarations without reading source bytes.
 ///
-/// Coverage is deliberately conservative. Only the generated directories excluded by the owning Cargo source
-/// authority are skipped; extra source files may cause a miss but cannot hide a semantic change. Symlinks refuse
-/// acceleration rather than pretending their targets belong to this observed closure.
-fn closure_stamp(roots: &[PathBuf], workspace_manifests: &[PathBuf]) -> CliResult<String> {
+/// Loaf coverage comes from the SDK publisher, including its embedded compiler inputs. Legacy Cargo coverage remains
+/// conservative across the whole package. Symlinks refuse acceleration instead of blessing unobserved targets.
+fn closure_stamp(roots: &[PathBuf], workspace_manifests: &[PathBuf], loaf: bool) -> CliResult<String> {
     let mut files = BTreeMap::<PathBuf, FileStamp>::new();
     for root in roots {
-        let mut pending = vec![root.clone()];
-        while let Some(directory) = pending.pop() {
-            for entry in fs::read_dir(&directory).map_err(|error| CliError::failure(error.to_string()))? {
-                let entry = entry.map_err(|error| CliError::failure(error.to_string()))?;
-                let path = entry.path();
-                let kind = entry
-                    .file_type()
-                    .map_err(|error| CliError::failure(error.to_string()))?;
-                if kind.is_dir() {
-                    if !matches!(
-                        entry.file_name().to_str(),
-                        Some(".git" | ".incan" | ".ralph-cache" | "target")
-                    ) {
-                        pending.push(path);
+        if loaf {
+            for input in oven_rustc::sdk_closure::local_sdk_facet_source_inputs(root)
+                .map_err(|error| CliError::failure(error.to_string()))?
+            {
+                files.insert(
+                    input.clone(),
+                    stat_file(&input).map_err(|error| CliError::failure(error.to_string()))?,
+                );
+            }
+        } else {
+            let mut pending = vec![root.clone()];
+            while let Some(directory) = pending.pop() {
+                for entry in fs::read_dir(&directory).map_err(|error| CliError::failure(error.to_string()))? {
+                    let entry = entry.map_err(|error| CliError::failure(error.to_string()))?;
+                    let path = entry.path();
+                    let kind = entry
+                        .file_type()
+                        .map_err(|error| CliError::failure(error.to_string()))?;
+                    if kind.is_dir() {
+                        if !matches!(
+                            entry.file_name().to_str(),
+                            Some(".git" | ".incan" | ".ralph-cache" | "target")
+                        ) {
+                            pending.push(path);
+                        }
+                    } else {
+                        files.insert(
+                            path.clone(),
+                            stat_file(&path).map_err(|error| CliError::failure(error.to_string()))?,
+                        );
                     }
-                } else {
-                    files.insert(
-                        path.clone(),
-                        stat_file(&path).map_err(|error| CliError::failure(error.to_string()))?,
-                    );
                 }
             }
         }
         for ancestor in root.ancestors().skip(1) {
-            let manifest = ancestor.join("Cargo.toml");
+            let manifest = ancestor.join(if loaf { "loaf.toml" } else { "Cargo.toml" });
             if manifest
                 .try_exists()
                 .map_err(|error| CliError::failure(error.to_string()))?
@@ -100,6 +110,25 @@ fn explicit_workspace_manifests(roots: &[PathBuf]) -> CliResult<Vec<PathBuf>> {
 pub(super) fn digest(
     root: &Path,
     memo: &mut BTreeMap<PathBuf, String>,
+    compute: impl FnMut(&mut BTreeMap<PathBuf, String>) -> CliResult<String>,
+) -> CliResult<String> {
+    digest_observed(root, memo, false, compute)
+}
+
+/// Observe only the publisher's declared source mapping, never adjacent Cargo metadata or unrelated package files.
+pub(super) fn digest_loaf(
+    root: &Path,
+    memo: &mut BTreeMap<PathBuf, String>,
+    compute: impl FnMut(&mut BTreeMap<PathBuf, String>) -> CliResult<String>,
+) -> CliResult<String> {
+    digest_observed(root, memo, true, compute)
+}
+
+/// Reuse a scheme-qualified closure observation only after every owning input is still current.
+fn digest_observed(
+    root: &Path,
+    memo: &mut BTreeMap<PathBuf, String>,
+    loaf: bool,
     mut compute: impl FnMut(&mut BTreeMap<PathBuf, String>) -> CliResult<String>,
 ) -> CliResult<String> {
     if !cfg!(unix) {
@@ -109,6 +138,11 @@ pub(super) fn digest(
     if memo.contains_key(&root) {
         return compute(memo);
     }
+    let schema = if loaf {
+        "loaf-rust-authority-stat/1"
+    } else {
+        "cargo-path-authority-stat/3"
+    };
     let cache = std::env::var_os("INCAN_HOME")
         .filter(|home| !home.is_empty())
         .map(|home| {
@@ -121,14 +155,17 @@ pub(super) fn digest(
         .as_ref()
         .and_then(|path| fs::read(path).ok())
         .and_then(|bytes| serde_json::from_slice::<ClosureRecord>(&bytes).ok())
-        && record.schema == "cargo-path-authority-stat/3"
+        && record.schema == schema
         && record.roots.contains(&root)
         && record.nodes.keys().eq(record.roots.iter())
         && record
             .digest
             .strip_prefix("sha256:")
             .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
-        && closure_stamp(&record.roots, &record.workspace_manifests).ok().as_ref() == Some(&record.stamp)
+        && closure_stamp(&record.roots, &record.workspace_manifests, loaf)
+            .ok()
+            .as_ref()
+            == Some(&record.stamp)
     {
         memo.extend(record.nodes);
         return Ok(record.digest);
@@ -136,14 +173,24 @@ pub(super) fn digest(
     let mut visited = BTreeMap::new();
     let initial = compute(&mut visited)?;
     let roots = visited.keys().cloned().collect::<Vec<_>>();
-    let workspace_manifests = explicit_workspace_manifests(&roots)?;
-    let before = match closure_stamp(&roots, &workspace_manifests) {
+    if loaf && roots.iter().any(|root| !root.join("loaf.toml").is_file()) {
+        // A mixed legacy graph still computes exact authority; it cannot borrow the narrower Loaf observation.
+        memo.extend(visited);
+        return Ok(initial);
+    }
+    let workspace_manifests = if loaf {
+        Vec::new()
+    } else {
+        explicit_workspace_manifests(&roots)?
+    };
+    let before = match closure_stamp(&roots, &workspace_manifests, loaf) {
         Ok(stamp) if roots.contains(&root) => stamp,
         _ => return Ok(initial),
     };
     let mut confirmed = BTreeMap::new();
     let digest = compute(&mut confirmed)?;
-    if confirmed.keys().ne(visited.keys()) || closure_stamp(&roots, &workspace_manifests).ok().as_ref() != Some(&before)
+    if confirmed.keys().ne(visited.keys())
+        || closure_stamp(&roots, &workspace_manifests, loaf).ok().as_ref() != Some(&before)
     {
         return Err(CliError::failure(
             "Rust source authority changed while observing its freshness",
@@ -151,7 +198,7 @@ pub(super) fn digest(
     }
     if let Some(cache) = cache {
         let record = ClosureRecord {
-            schema: "cargo-path-authority-stat/3".into(),
+            schema: schema.into(),
             roots,
             nodes: confirmed.clone(),
             workspace_manifests,

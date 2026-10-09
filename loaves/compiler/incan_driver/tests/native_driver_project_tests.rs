@@ -44,7 +44,422 @@ fn bake(project: &Path, home: &Path) -> Result<(), Box<dyn std::error::Error>> {
     bake_with_reuse_requirement(project, home, false)
 }
 
-/// A warm diagnostic refuses a completed-output miss before any frontend, inspection, or publisher fallback.
+/// Shared Rust caller generations replace read-only projections without modifying aliases or invoking compilation.
+#[cfg(unix)]
+#[test]
+fn completed_rust_caller_reuse_replaces_read_only_generation() -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let project = tempfile::tempdir()?;
+    let root = fs::canonicalize(project.path())?;
+    let producer = root.join("producer");
+    let consumer = root.join("consumer");
+    let provider = root.join("provider");
+    let home = support::oven_fixture_home()?;
+    fs::create_dir_all(provider.join("src"))?;
+    fs::write(
+        provider.join("loaf.toml"),
+        "[project]\nname = \"recovery_provider\"\nversion = \"0.1.0\"\n",
+    )?;
+    fs::write(
+        provider.join("src/lib.incn"),
+        "pub def value() -> int:\n    return 42\n",
+    )?;
+    bake(&provider, &home)?;
+    let original = "use recovery_provider::caller::incan::value;\nfn main() { println!(\"{}\", value()); }\n";
+    let changed = "use recovery_provider::caller::incan::value;\nfn main() { println!(\"{}\", value() + 1); }\n";
+    for owner in [&producer, &consumer] {
+        fs::create_dir_all(owner.join("src"))?;
+        fs::write(
+            owner.join("loaf.toml"),
+            "[project]\nname = \"rust_generation_recovery\"\nversion = \"0.1.0\"\n[dependencies]\nrecovery_provider = { loaf = \"recovery_provider\", path = \"../provider\" }\n[[rust.bin]]\nname = \"rust_generation_recovery\"\npath = \"src/main.rs\"\n",
+        )?;
+        fs::write(owner.join("src/main.rs"), original)?;
+    }
+    bake(&producer, &home)?;
+    bake_with_reuse_requirement(&consumer, &home, true)?;
+    let relative = "target/rust/debug/rust_generation_recovery";
+    let native = consumer.join(relative);
+    let receipt = consumer.join("target/rust/receipts/rust_generation_recovery-debug.json");
+    let original_native = fs::read(&native)?;
+    let original_receipt = fs::read(&receipt)?;
+    fs::set_permissions(&native, fs::Permissions::from_mode(0o555))?;
+    let alias = root.join("prior-generation-alias");
+    fs::hard_link(&native, &alias)?;
+    for owner in [&producer, &consumer] {
+        fs::write(owner.join("src/main.rs"), changed)?;
+    }
+    bake(&producer, &home)?;
+    bake_with_reuse_requirement(&consumer, &home, true)?;
+    assert_eq!(fs::read(&native)?, fs::read(producer.join(relative))?);
+    let output = Command::new(&native).output()?;
+    success(&output, "reused Rust caller generation");
+    assert_eq!(output.stdout, b"43\n");
+    assert_eq!(fs::read(&alias)?, original_native);
+    assert_eq!(fs::metadata(&alias)?.permissions().mode() & 0o777, 0o555);
+    assert_eq!(fs::metadata(&native)?.permissions().mode() & 0o777, 0o755);
+    let modified = fs::metadata(&native)?.modified()?;
+    let receipt_modified = fs::metadata(&receipt)?.modified()?;
+    bake_with_reuse_requirement(&consumer, &home, true)?;
+    assert_eq!(fs::metadata(&native)?.modified()?, modified);
+    assert_eq!(fs::metadata(&receipt)?.modified()?, receipt_modified);
+    fs::write(consumer.join("src/main.rs"), original)?;
+    bake_with_reuse_requirement(&consumer, &home, true)?;
+    assert_eq!(fs::read(&native)?, original_native);
+    assert_eq!(fs::read(&receipt)?, original_receipt);
+    Ok(())
+}
+
+/// Standalone builds retain native results in the bounded store even when their caller projection is removed.
+#[test]
+fn standalone_file_build_reuses_stored_native_output_after_projection_loss() -> Result<(), Box<dyn std::error::Error>> {
+    let project = tempfile::tempdir()?;
+    let root = fs::canonicalize(project.path())?;
+    let home = root.join("home");
+    let output = root.join("output");
+    let source = root.join("program.incn");
+    let original = "def main() -> None:\n    print(42)\n";
+    fs::write(&source, original)?;
+    let rustc = pinned_driver_rustc()?;
+    let compile = |require_reuse: bool| -> Result<Output, Box<dyn std::error::Error>> {
+        let mut command = support::repo_command();
+        command
+            .env("INCAN_HOME", &home)
+            .env("RUSTC", &rustc)
+            .arg("build")
+            .arg(&source)
+            .arg(&output);
+        if require_reuse {
+            command.env("INCAN_TEST_REQUIRE_STORED_NATIVE_REUSE", "1");
+        }
+        Ok(command.output()?)
+    };
+    success(&compile(false)?, "initial standalone build");
+    let native = output.join("oven/release/program");
+    let original_native = fs::read(&native)?;
+    let store = oven_store::store::OvenStore::new(
+        oven_store::store::store_root_for_home(&home),
+        oven_store::store::OvenStoreLimits::new(
+            oven_store::DEFAULT_OVEN_MAX_PHYSICAL_BYTES,
+            oven_store::DEFAULT_OVEN_MAX_DOMAIN_PHYSICAL_BYTES,
+            oven_store::DEFAULT_OVEN_MAX_DOMAIN_LOGICAL_BYTES,
+        ),
+    );
+    assert_eq!(
+        store
+            .manifests_for_selection()?
+            .iter()
+            .filter(|entry| entry.domain == "generated-rust-binary-v2")
+            .count(),
+        1,
+        "standalone native output must be admitted in the bounded store",
+    );
+    fs::remove_dir_all(&output)?;
+    success(&compile(true)?, "standalone replay after projection loss");
+    assert_eq!(fs::read(&native)?, original_native);
+    let restored = Command::new(&native).output()?;
+    success(&restored, "replayed standalone execution");
+    assert_eq!(restored.stdout, b"42\n");
+    let modified = fs::metadata(&native)?.modified()?;
+    success(&compile(true)?, "warm standalone replay");
+    assert_eq!(fs::metadata(&native)?.modified()?, modified);
+    fs::write(&source, "def main() -> None:\n    print(43)\n")?;
+    assert!(
+        !compile(true)?.status.success(),
+        "changed source must not reuse the previous unit"
+    );
+    assert_eq!(fs::read(&native)?, original_native);
+    success(&compile(false)?, "changed standalone build");
+    let changed = Command::new(&native).output()?;
+    success(&changed, "changed standalone execution");
+    assert_eq!(changed.stdout, b"43\n");
+    fs::write(&source, original)?;
+    success(&compile(true)?, "original standalone generation recovery");
+    assert_eq!(fs::read(&native)?, original_native);
+    Ok(())
+}
+
+/// Restoring exact library inputs selects the original native generation and its immutable producer receipt.
+#[test]
+fn completed_library_source_roundtrip_reuses_original_admitted_generation() -> Result<(), Box<dyn std::error::Error>> {
+    let project = tempfile::tempdir()?;
+    let root = fs::canonicalize(project.path())?;
+    let home = support::oven_fixture_home()?;
+    fs::create_dir_all(root.join("src"))?;
+    fs::write(
+        root.join("loaf.toml"),
+        "[project]\nname = \"recovery_roundtrip\"\nversion = \"0.1.0\"\n",
+    )?;
+    let source = root.join("src/lib.incn");
+    let original = "pub def value() -> int:\n    return 42\n";
+    fs::write(&source, original)?;
+    bake(&root, &home)?;
+    let native = root.join("target/lib/oven/debug/librecovery_roundtrip.rlib");
+    let receipt = root.join(".incan/oven/library-debug-receipt.json");
+    let metadata = root.join("target/lib/recovery_roundtrip.incnlib");
+    let native_before = fs::read(&native)?;
+    let receipt_before = fs::read(&receipt)?;
+    let metadata_before = fs::read(&metadata)?;
+    fs::write(&source, "pub def value() -> int:\n    return 43\n")?;
+    bake(&root, &home)?;
+    assert_ne!(fs::read(&native)?, native_before);
+    assert_ne!(fs::read(&receipt)?, receipt_before);
+    fs::write(&source, original)?;
+    bake_with_reuse_requirement(&root, &home, true)?;
+    assert_eq!(fs::read(&native)?, native_before);
+    assert_eq!(fs::read(&receipt)?, receipt_before);
+    assert_eq!(fs::read(&metadata)?, metadata_before);
+    let receipt_modified = fs::metadata(&receipt)?.modified()?;
+    bake_with_reuse_requirement(&root, &home, true)?;
+    assert_eq!(fs::metadata(&receipt)?.modified()?, receipt_modified);
+    Ok(())
+}
+
+/// Exact executable source restoration must recover its original admitted native bytes and producer receipt.
+#[test]
+fn completed_executable_source_roundtrip_reuses_original_admitted_generation() -> Result<(), Box<dyn std::error::Error>>
+{
+    let project = tempfile::tempdir()?;
+    let root = fs::canonicalize(project.path())?;
+    let home = support::oven_fixture_home()?;
+    fs::create_dir_all(root.join("src"))?;
+    fs::write(
+        root.join("loaf.toml"),
+        "[project]\nname = \"executable_generation_recovery\"\nversion = \"0.1.0\"\n",
+    )?;
+    let source = root.join("src/main.incn");
+    let original = "def main() -> None:\n    print(42)\n";
+    fs::write(&source, original)?;
+    bake(&root, &home)?;
+    let native = root.join("target/incan/executable_generation_recovery/oven/debug/executable_generation_recovery");
+    let receipt = root.join(".incan/oven/executable-debug-receipt.json");
+    let native_before = fs::read(&native)?;
+    let receipt_before = fs::read(&receipt)?;
+    let first = Command::new(&native).output()?;
+    success(&first, "original executable generation");
+    assert_eq!(String::from_utf8(first.stdout)?, "42\n");
+    fs::write(&source, "def main() -> None:\n    print(43)\n")?;
+    bake(&root, &home)?;
+    assert_ne!(fs::read(&native)?, native_before);
+    assert_ne!(fs::read(&receipt)?, receipt_before);
+    let changed = Command::new(&native).output()?;
+    success(&changed, "changed executable generation");
+    assert_eq!(String::from_utf8(changed.stdout)?, "43\n");
+    fs::write(&source, original)?;
+    bake_with_reuse_requirement(&root, &home, true)?;
+    assert_eq!(fs::read(&native)?, native_before);
+    assert_eq!(fs::read(&receipt)?, receipt_before);
+    let restored = Command::new(&native).output()?;
+    success(&restored, "restored executable generation");
+    assert_eq!(String::from_utf8(restored.stdout)?, "42\n");
+    let modified = fs::metadata(&receipt)?.modified()?;
+    bake_with_reuse_requirement(&root, &home, true)?;
+    assert_eq!(fs::metadata(receipt)?.modified()?, modified);
+    Ok(())
+}
+
+/// Restoring a provider refreshes its consumer's resolved lock before recovering the original executable generation.
+#[test]
+fn completed_consumer_reuse_refreshes_restored_provider_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let project = tempfile::tempdir()?;
+    let root = fs::canonicalize(project.path())?;
+    let provider = root.join("provider");
+    let consumer = root.join("consumer");
+    let home = support::oven_fixture_home()?;
+    fs::create_dir_all(provider.join("src"))?;
+    fs::create_dir_all(consumer.join("src"))?;
+    fs::write(
+        provider.join("loaf.toml"),
+        "[project]\nname = \"recovery_provider\"\nversion = \"0.1.0\"\n",
+    )?;
+    fs::write(
+        consumer.join("loaf.toml"),
+        "[project]\nname = \"recovery_consumer\"\nversion = \"0.1.0\"\n[dependencies]\nrecovery_provider = { path = \"../provider\" }\n",
+    )?;
+    let consumer_source = consumer.join("src/main.incn");
+    let consumer_original = "from pub::recovery_provider import value\n\ndef main() -> None:\n    print(value())\n";
+    fs::write(&consumer_source, consumer_original)?;
+    let source = provider.join("src/lib.incn");
+    let original = "pub def value() -> int:\n    return 42\n";
+    fs::write(&source, original)?;
+    bake(&provider, &home)?;
+    bake(&consumer, &home)?;
+    let native = consumer.join("target/incan/recovery_consumer/oven/debug/recovery_consumer");
+    let receipt = consumer.join(".incan/oven/executable-debug-receipt.json");
+    let lock_path = consumer.join("oven.lock");
+    let native_before = fs::read(&native)?;
+    let receipt_before = fs::read(&receipt)?;
+    let lock_before = oven_model::lock::IncanLock::load(&lock_path)?;
+    let first = Command::new(&native).output()?;
+    success(&first, "original provider consumer execution");
+    assert_eq!(first.stdout, b"42\n");
+    fs::write(&source, "pub def value() -> int:\n    return 43\n")?;
+    bake(&provider, &home)?;
+    bake(&consumer, &home)?;
+    assert_ne!(fs::read(&native)?, native_before);
+    let changed_lock = oven_model::lock::IncanLock::load(&lock_path)?;
+    assert_ne!(changed_lock.semantic.providers, lock_before.semantic.providers);
+    let changed = Command::new(&native).output()?;
+    success(&changed, "changed provider consumer execution");
+    assert_eq!(changed.stdout, b"43\n");
+
+    fs::write(&source, original)?;
+    bake_with_reuse_requirement(&provider, &home, true)?;
+    let stale_lock = fs::read(&lock_path)?;
+    let changed_native = fs::read(&native)?;
+    let changed_receipt = fs::read(&receipt)?;
+    fs::write(
+        &consumer_source,
+        "from pub::recovery_provider import value\n\ndef main() -> None:\n    print(value() + 1)\n",
+    )?;
+    refuse_completed_bake(&consumer, &home)?;
+    assert_eq!(
+        fs::read(&lock_path)?,
+        stale_lock,
+        "a late reuse miss must roll back the resolved lock"
+    );
+    assert_eq!(fs::read(&native)?, changed_native);
+    assert_eq!(fs::read(&receipt)?, changed_receipt);
+    fs::write(&consumer_source, consumer_original)?;
+    fs::write(&source, "pub def value() -> int:\n    return 99\n")?;
+    refuse_completed_bake(&consumer, &home)?;
+    assert_eq!(
+        fs::read(&lock_path)?,
+        stale_lock,
+        "unbaked provider sources cannot authorize a lock refresh"
+    );
+    assert_eq!(fs::read(&native)?, changed_native);
+    fs::write(&source, original)?;
+    bake_with_reuse_requirement(&consumer, &home, true)?;
+    assert_eq!(fs::read(&native)?, native_before);
+    assert_eq!(fs::read(&receipt)?, receipt_before);
+    assert_eq!(
+        oven_model::lock::IncanLock::load(&lock_path)?.semantic.providers,
+        lock_before.semantic.providers
+    );
+    let restored = Command::new(&native).output()?;
+    success(&restored, "restored provider consumer execution");
+    assert_eq!(restored.stdout, b"42\n");
+    let receipt_modified = fs::metadata(&receipt)?.modified()?;
+    let lock_modified = fs::metadata(&lock_path)?.modified()?;
+    bake_with_reuse_requirement(&consumer, &home, true)?;
+    assert_eq!(fs::metadata(&receipt)?.modified()?, receipt_modified);
+    assert_eq!(fs::metadata(&lock_path)?.modified()?, lock_modified);
+    let restored_lock = fs::read(&lock_path)?;
+    for mutation in [
+        "cargo-features",
+        "coordinate",
+        "features",
+        "participation",
+        "cargo-payload",
+    ] {
+        let mut lock = oven_model::lock::IncanLock::load(&lock_path)?;
+        let provider = lock
+            .semantic
+            .providers
+            .iter_mut()
+            .find(|provider| provider.identity.starts_with("recovery_provider@"))
+            .ok_or("consumer lock lost its custom provider")?;
+        match mutation {
+            "cargo-features" => lock.cargo_features.cargo_features.push("changed-selection".to_string()),
+            "coordinate" => provider.identity = provider.identity.replace("@0.1.0#", "@0.2.0#"),
+            "features" => provider.identity = provider.identity.replace("[]", "[changed-selection]"),
+            "participation" => provider.participation = "disabled".to_string(),
+            "cargo-payload" => lock.cargo_lock_payload.push_str("\n# changed resolution authority\n"),
+            _ => return Err("unknown lock mutation".into()),
+        }
+        lock.write(&lock_path)?;
+        let changed = fs::read(&lock_path)?;
+        refuse_completed_bake(&consumer, &home)?;
+        assert_eq!(fs::read(&lock_path)?, changed, "refusal must retain {mutation}");
+        assert_eq!(fs::read(&native)?, native_before);
+        assert_eq!(fs::read(&receipt)?, receipt_before);
+        fs::write(&lock_path, &restored_lock)?;
+    }
+    bake_with_reuse_requirement(&consumer, &home, true)?;
+    Ok(())
+}
+
+/// Refuse a completed-output miss under the explicit guard without compiling a replacement generation.
+fn refuse_completed_bake(project: &Path, home: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let mut command = support::repo_command();
+    support::configure_explicit_oven_bake_command(&mut command)?;
+    let output = command
+        .env("INCAN_TEST_REQUIRE_COMPLETED_BAKE_REUSE", "1")
+        .env("RUSTC", pinned_driver_rustc()?)
+        .env("INCAN_HOME", home)
+        .args(["oven", "bake", "--project"])
+        .arg(project)
+        .output()?;
+    assert!(
+        !output.status.success(),
+        "changed authority must refuse completed reuse"
+    );
+    if std::env::var_os("INCAN_OVEN_TRACE_REUSE").is_some() {
+        eprintln!("completed reuse refusal:\n{}", String::from_utf8_lossy(&output.stderr));
+    }
+    Ok(())
+}
+
+/// Derived SDK fingerprints cannot veto exact executable reuse; authored lock changes still refuse it.
+#[test]
+fn completed_project_reuse_binds_canonical_lock_instead_of_derived_fingerprint()
+-> Result<(), Box<dyn std::error::Error>> {
+    let project = tempfile::tempdir()?;
+    let root = fs::canonicalize(project.path())?;
+    let home = support::oven_fixture_home()?;
+    fs::create_dir_all(root.join("src"))?;
+    fs::write(
+        root.join("loaf.toml"),
+        "[project]\nname = \"canonical_lock_recovery\"\nversion = \"0.1.0\"\n",
+    )?;
+    fs::write(root.join("src/main.incn"), "def main() -> None:\n    print(42)\n")?;
+    bake(&root, &home)?;
+    let receipt = root.join(".incan/oven/executable-debug-receipt.json");
+    let original_receipt = fs::read(&receipt)?;
+    let lock_path = root.join("oven.lock");
+    let original_lock = fs::read(&lock_path)?;
+    let original_source = incan_driver::build::source_authority::digest_baked_project_source_authority(&root)?;
+    let mut lock = oven_model::lock::IncanLock::load(&lock_path)?;
+    lock.deps_fingerprint = "sha256:derived-cohort-refresh".to_string();
+    lock.write(&lock_path)?;
+    assert_eq!(
+        original_source,
+        incan_driver::build::source_authority::digest_baked_project_source_authority(&root)?
+    );
+    bake_with_reuse_requirement(&root, &home, true)?;
+    assert_eq!(fs::read(&receipt)?, original_receipt);
+
+    lock.cargo_features.cargo_features.push("changed-selection".to_string());
+    lock.write(&lock_path)?;
+    assert_ne!(
+        original_source,
+        incan_driver::build::source_authority::digest_baked_project_source_authority(&root)?
+    );
+    let mut command = support::repo_command();
+    support::configure_explicit_oven_bake_command(&mut command)?;
+    let output = command
+        .env("INCAN_TEST_REQUIRE_COMPLETED_BAKE_REUSE", "1")
+        .env("RUSTC", pinned_driver_rustc()?)
+        .env("INCAN_HOME", &home)
+        .args(["oven", "bake", "--project"])
+        .arg(&root)
+        .output()?;
+    assert!(
+        !output.status.success(),
+        "changed canonical lock must refuse completed reuse"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("completed project reuse missed before frontend preparation")
+    );
+    assert_eq!(fs::read(&receipt)?, original_receipt);
+    fs::write(lock_path, original_lock)?;
+    bake_with_reuse_requirement(&root, &home, true)?;
+    assert_eq!(fs::read(&receipt)?, original_receipt);
+    Ok(())
+}
+
+/// A warm diagnostic permits checked lock resolution but refuses fresh compilation after a completed-output miss.
 fn bake_with_reuse_requirement(
     project: &Path,
     home: &Path,
@@ -223,7 +638,26 @@ fn check_startup_refusals(
     Ok(())
 }
 
-/// Prepare one source-only driver graph whose plan and lowering share the same semantics-core declaration.
+/// Preserve dependency coordinates across compatible checkout layouts without changing their selected source roots.
+fn fixture_dependency_path(owner: &Path, dependency: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    let owner = owner.canonicalize()?;
+    let dependency = dependency.canonicalize()?;
+    let common = owner
+        .ancestors()
+        .find(|ancestor| dependency.starts_with(ancestor))
+        .ok_or("fixture dependency and owner have no common filesystem root")?;
+    let mut relative = PathBuf::new();
+    for _ in owner.strip_prefix(common)?.components() {
+        relative.push("..");
+    }
+    relative.push(dependency.strip_prefix(common)?);
+    Ok(relative
+        .to_str()
+        .ok_or("fixture dependency path is not UTF-8")?
+        .replace('\\', "/"))
+}
+
+/// Prepare one source-only driver graph using portable paths to the selected checkout's own compiler sources.
 fn prepare_source_driver(root: &Path, repo: &Path) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
     let driver_source = repo.join("loaves/toolchain/incan-rustc-driver");
     let driver = root.join("driver");
@@ -237,19 +671,14 @@ fn prepare_source_driver(root: &Path, repo: &Path) -> Result<std::path::PathBuf,
         library.join("loaf.toml"),
     )?;
     copy_tree(&repo.join("loaves/compiler/incan_mir_plan/src"), &library.join("src"))?;
-    let core = repo.join("loaves/kernel/incan_semantics_core");
-    let frontend = repo.join("loaves/compiler/incan_frontend");
-    let core = core.to_str().ok_or("semantics-core path is not UTF-8")?;
-    let frontend = frontend.to_str().ok_or("frontend path is not UTF-8")?;
+    let core = fixture_dependency_path(&lowering, &repo.join("loaves/kernel/incan_semantics_core"))?;
+    let frontend = fixture_dependency_path(&driver, &repo.join("loaves/compiler/incan_frontend"))?;
+    let language = fixture_dependency_path(&lowering, &repo.join("loaves/kernel/incan_lang"))?;
+    let compiler = fixture_dependency_path(&driver, &repo.join("loaves/compiler/incan_driver"))?;
     let manifest = fs::read_to_string(repo.join("loaves/compiler/incan_mir_lowering/loaf.toml"))?
         .replace("../incan_mir_plan", "../library")
-        .replace("../../kernel/incan_semantics_core", core)
-        .replace(
-            "../../kernel/incan_lang",
-            oven_model::toolchain_layout::resolve_toolchain_crate_path("incan_lang")
-                .to_str()
-                .ok_or("language registry path is not UTF-8")?,
-        );
+        .replace("../../kernel/incan_semantics_core", &core)
+        .replace("../../kernel/incan_lang", &language);
     fs::write(lowering.join("loaf.toml"), manifest)?;
     copy_tree(
         &repo.join("loaves/compiler/incan_mir_lowering/src"),
@@ -258,14 +687,9 @@ fn prepare_source_driver(root: &Path, repo: &Path) -> Result<std::path::PathBuf,
     let manifest = fs::read_to_string(driver_source.join("loaf.toml"))?
         .replace("../../compiler/incan_mir_plan", "../library")
         .replace("../../compiler/incan_mir_lowering", "../lowering")
-        .replace("../../kernel/incan_semantics_core", core)
-        .replace("../../compiler/incan_frontend", frontend)
-        .replace(
-            "../../compiler/incan_driver",
-            repo.join("loaves/compiler/incan_driver")
-                .to_str()
-                .ok_or("driver path is not UTF-8")?,
-        );
+        .replace("../../kernel/incan_semantics_core", &core)
+        .replace("../../compiler/incan_frontend", &frontend)
+        .replace("../../compiler/incan_driver", &compiler);
     fs::write(driver.join("loaf.toml"), manifest)?;
     Ok(driver)
 }
@@ -476,30 +900,49 @@ fn bake_driver_fixture() -> Result<DriverFixture, Box<dyn std::error::Error>> {
     })
 }
 
-/// Materialize the authored Incan runtime through a real caller dependency, retaining its native closure.
+/// Transport runtime preparation to Incan until the native test kernel has an Incan fixture hook (#1698).
+///
+/// The returned root owns the library and receipt; preparation no longer depends on a generated Rust caller.
 fn prepare_formatting_runtime(root: &Path, repo: &Path, home: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let runtime = root.join("formatting-runtime");
-    let original = repo.join("loaves/compiler/incan_native_runtime");
-    copy_tree(&original.join("src"), &runtime.join("src"))?;
-    // Retain the math dependency in the caller's explicit native closure instead of discovering ambient artifacts.
-    fs::write(
-        runtime.join("loaf.toml"),
-        format!(
-            "{}\n[rust-dependencies]\nlibm = \"0.2\"\n",
-            fs::read_to_string(original.join("loaf.toml"))?
-        ),
-    )?;
-    let caller = root.join("formatting-caller");
-    fs::create_dir_all(caller.join("src"))?;
-    fs::write(
-        caller.join("loaf.toml"),
-        "[project]\nname = \"formatting-caller\"\n[dependencies]\nincan_native_runtime = { loaf = \"incan_native_runtime\", path = \"../formatting-runtime\" }\n[[rust.bin]]\nname = \"formatting-caller\"\npath = \"src/main.rs\"\n",
-    )?;
-    fs::write(
-        caller.join("src/main.rs"),
-        "/// Link the selected runtime without printing during fixture setup.\nfn main() { let _function: fn(String) = incan_native_runtime::caller::incan::println_text; }\n",
-    )?;
-    bake(&caller, home)?;
+    let mut command = support::repo_command();
+    support::configure_explicit_oven_bake_command(&mut command)?;
+    let compiler = PathBuf::from(command.get_program());
+    let timing = support::command_timing_started();
+    let output = command
+        .env("RUSTC", pinned_driver_rustc()?)
+        .env("INCAN_NO_BANNER", "1")
+        .arg("run")
+        .arg(repo.join("workspaces/compiler-fixture-preparation/src/main.incn"))
+        .arg("--")
+        .arg(&compiler)
+        .arg(root)
+        .arg(repo)
+        .arg(home)
+        .output()?;
+    support::report_command_timing("fixture prepare formatting-runtime", timing);
+    fs::write(root.join("formatting-helper.stdout"), &output.stdout)?;
+    fs::write(root.join("formatting-helper.stderr"), &output.stderr)?;
+    if !output.status.success() {
+        return Err(format!(
+            "Incan runtime preparation failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    if response.get("schema").and_then(serde_json::Value::as_str) != Some("incan.compiler-fixture-preparation/1") {
+        return Err("Incan runtime preparation returned an unsupported response".into());
+    }
+    let runtime = PathBuf::from(
+        response
+            .get("runtime_root")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("Incan runtime preparation returned no root")?,
+    );
+    if runtime.canonicalize()? != root.join("formatting-runtime").canonicalize()? {
+        return Err("Incan runtime preparation returned a different fixture root".into());
+    }
     Ok(runtime)
 }
 

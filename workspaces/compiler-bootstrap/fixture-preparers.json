@@ -1,0 +1,8 @@
+{
+  "schema": "incan.compiler-fixture-preparers/1",
+  "roots": {
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests.rs": [
+      "workspaces/compiler-fixture-preparation"
+    ]
+  }
+}

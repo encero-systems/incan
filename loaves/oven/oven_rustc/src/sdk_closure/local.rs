@@ -99,9 +99,22 @@ pub fn compile_local_sdk_facets(
 pub fn local_sdk_facet_source_digest(project: &Path, output: &Path) -> Result<String, Error> {
     std::fs::create_dir_all(output)?;
     let snapshot = tempfile::Builder::new().prefix("sdk-local-check-").tempdir_in(output)?;
-    Ok(prepare_local_unit(project, snapshot.path(), &[], "target")?
-        .binding
-        .archive_digest)
+    let sources = local_facet_sources(project)?;
+    write_local_facet_snapshot(&sources, snapshot.path())?;
+    Ok(oven_store::digest_source_tree(snapshot.path())?)
+}
+
+/// Enumerate the publisher's exact authored source inputs without copying or hashing their contents.
+///
+/// Freshness observers must enumerate again on every check so additions, removals and links invalidate their old
+/// observation. Embedded compiler inputs share the publisher's mapping; neighboring Cargo files are never read.
+pub fn local_sdk_facet_source_inputs(project: &Path) -> Result<Vec<std::path::PathBuf>, Error> {
+    let sources = local_facet_sources(project)?;
+    let mut inputs = vec![project.canonicalize()?.join("loaf.toml")];
+    inputs.extend(sources.files.into_iter().map(|(source, _)| source));
+    inputs.sort();
+    inputs.dedup();
+    Ok(inputs)
 }
 
 /// Compile one local Loaf's Rust facet and append its exact source/alias graph to the retained SDK closure.
@@ -192,6 +205,7 @@ pub fn compile_local_sdk_facet_for_target(
         store: &store,
         compiler_digest: compiler_closure_digest(rustc, target)?,
         profile: "debug",
+        unit_codegen: &[],
     };
     let (path, reused, owner) = compile_unit(&unit, &context, externs, searches)?;
     let dependencies = edges
@@ -222,68 +236,22 @@ fn prepare_local_unit(
     features: &[String],
     domain: &str,
 ) -> Result<PreparedUnit, Error> {
-    let declaration = std::fs::read_to_string(project.join("loaf.toml"))?;
-    let mut manifest: toml::Value = toml::from_str(&declaration)?;
+    let sources = local_facet_sources(project)?;
+    write_local_facet_snapshot(&sources, snapshot)?;
+    let manifest = sources.manifest;
     let project_section = manifest.get("project").ok_or("local Loaf has no project section")?;
     let version = project_section
         .get("version")
         .and_then(toml::Value::as_str)
         .ok_or("local Loaf has no project version")?
         .to_string();
-    let facet = manifest
-        .get_mut("rust")
-        .and_then(toml::Value::as_table_mut)
-        .ok_or("local Loaf has no Rust facet")?;
-    let name = facet
-        .get("name")
-        .and_then(toml::Value::as_str)
-        .ok_or("local Loaf has no Rust crate name")?
-        .to_string();
-    if facet.get("build").is_some() || facet.get("build-script").and_then(toml::Value::as_bool) == Some(true) {
-        return Err("local SDK facets cannot declare a build script".into());
-    }
-    let source_root = facet
-        .get("source")
-        .and_then(|value| value.get("root"))
-        .and_then(toml::Value::as_str)
-        .unwrap_or("");
-    let mut relative = Path::new(source_root).join("src");
-    if relative
-        .components()
-        .any(|part| !matches!(part, std::path::Component::Normal(_) | std::path::Component::CurDir))
-    {
-        return Err("local SDK Rust source must stay inside its Loaf".into());
-    }
-    let project = project.canonicalize()?;
-    let source = project.join(&relative).canonicalize()?;
-    if !source.starts_with(&project) {
-        return Err("local SDK Rust source escapes its Loaf".into());
-    }
-    if name == "incan_lang" {
-        snapshot_language_catalog(&project, snapshot)?;
-        relative = Path::new("loaves/kernel/incan_lang").join(relative);
-    }
-    if name == "incan_emit" {
-        snapshot_emitter_text(&project, snapshot)?;
-        relative = Path::new("loaves/compiler/incan_emit").join(relative);
-    }
-    copy_local_sources(&source, &snapshot.join(&relative))?;
-    facet.insert(
-        "source".to_string(),
-        toml::Value::Table(toml::map::Map::from_iter([(
-            "root".to_string(),
-            toml::Value::String(relative.join("lib.rs").to_string_lossy().into_owned()),
-        )])),
-    );
-    std::fs::write(snapshot.join(".oven-authored-loaf.toml"), declaration)?;
-    std::fs::write(snapshot.join("loaf.toml"), toml::to_string(&manifest)?)?;
     let (features, _) = local_feature_selection(&manifest, features)?;
     Ok(PreparedUnit {
         about: serde_json::Value::Null,
         primary: true,
         _source_lease: None,
         binding: SdkLockedUnit {
-            loaf: name,
+            loaf: sources.name,
             version,
             archive_digest: oven_store::digest_source_tree(snapshot)?,
             domain: domain.to_string(),
@@ -299,8 +267,106 @@ fn prepare_local_unit(
     })
 }
 
+/// One source mapping shared by SDK publication and consumer freshness observations.
+struct LocalFacetSources {
+    declaration: String,
+    manifest: toml::Value,
+    name: String,
+    files: Vec<(std::path::PathBuf, std::path::PathBuf)>,
+}
+
+/// Admit a declared or conventional Rust source tree and its compiler-owned embedded inputs.
+fn local_facet_sources(project: &Path) -> Result<LocalFacetSources, Error> {
+    let project = project.canonicalize()?;
+    let manifest_path = project.join("loaf.toml");
+    if !std::fs::symlink_metadata(&manifest_path)?.is_file() {
+        return Err("local Loaf declaration is not a plain file".into());
+    }
+    let declaration = std::fs::read_to_string(&manifest_path)?;
+    let mut manifest: toml::Value = toml::from_str(&declaration)?;
+    let name = manifest
+        .get("rust")
+        .and_then(|rust| rust.get("name"))
+        .and_then(toml::Value::as_str)
+        .or_else(|| {
+            manifest
+                .get("project")
+                .and_then(|project| project.get("name"))
+                .and_then(toml::Value::as_str)
+        })
+        .ok_or("local Loaf has no Rust or project name")?
+        .replace('-', "_");
+    let table = manifest
+        .as_table_mut()
+        .ok_or("local Loaf declaration must be a table")?;
+    let facet = table
+        .entry("rust")
+        .or_insert_with(|| toml::Value::Table(Default::default()))
+        .as_table_mut()
+        .ok_or("local Loaf Rust facet must be a table")?;
+    facet.entry("name").or_insert_with(|| toml::Value::String(name.clone()));
+    if facet.get("build").is_some() || facet.get("build-script").and_then(toml::Value::as_bool) == Some(true) {
+        return Err("local SDK facets cannot declare a build script".into());
+    }
+    let source_root = facet
+        .get("source")
+        .and_then(|value| value.get("root"))
+        .and_then(toml::Value::as_str)
+        .unwrap_or("");
+    let mut relative = Path::new(source_root).join("src");
+    if relative
+        .components()
+        .any(|part| !matches!(part, std::path::Component::Normal(_) | std::path::Component::CurDir))
+    {
+        return Err("local SDK Rust source must stay inside its Loaf".into());
+    }
+    let source = project.join(&relative);
+    let mut directory = project.clone();
+    for component in relative.components() {
+        directory.push(component);
+        if !std::fs::symlink_metadata(&directory)?.is_dir() {
+            return Err("local SDK Rust source root is not a plain directory".into());
+        }
+    }
+    let mut files = Vec::new();
+    if name == "incan_lang" {
+        files.extend(language_catalog_sources(&project)?);
+        relative = Path::new("loaves/kernel/incan_lang").join(relative);
+    }
+    if name == "incan_emit" {
+        files.push(emitter_text_source(&project)?);
+        relative = Path::new("loaves/compiler/incan_emit").join(relative);
+    }
+    collect_local_sources(&source, &relative, &mut files)?;
+    facet.insert(
+        "source".to_string(),
+        toml::Value::Table(toml::map::Map::from_iter([(
+            "root".to_string(),
+            toml::Value::String(relative.join("lib.rs").to_string_lossy().into_owned()),
+        )])),
+    );
+    Ok(LocalFacetSources {
+        declaration,
+        manifest,
+        name,
+        files,
+    })
+}
+
+/// Publish the admitted mapping at the same portable geometry used by rustc and inspection.
+fn write_local_facet_snapshot(sources: &LocalFacetSources, snapshot: &Path) -> Result<(), Error> {
+    for (source, relative) in &sources.files {
+        let destination = snapshot.join(relative);
+        std::fs::create_dir_all(destination.parent().ok_or("local source has no snapshot parent")?)?;
+        std::fs::copy(source, destination)?;
+    }
+    std::fs::write(snapshot.join(".oven-authored-loaf.toml"), &sources.declaration)?;
+    std::fs::write(snapshot.join("loaf.toml"), toml::to_string(&sources.manifest)?)?;
+    Ok(())
+}
+
 /// Preserve the emitter's embedded standard-library text at its authored include geometry.
-fn snapshot_emitter_text(project: &Path, snapshot: &Path) -> Result<(), Error> {
+fn emitter_text_source(project: &Path) -> Result<(std::path::PathBuf, std::path::PathBuf), Error> {
     let loaves = project
         .parent()
         .and_then(Path::parent)
@@ -309,21 +375,19 @@ fn snapshot_emitter_text(project: &Path, snapshot: &Path) -> Result<(), Error> {
     if !std::fs::symlink_metadata(&source)?.is_file() {
         return Err("embedded emitter text is not a plain file".into());
     }
-    let destination = snapshot.join("loaves/stdlib/zen.txt");
-    std::fs::create_dir_all(destination.parent().ok_or("embedded emitter text has no parent")?)?;
-    std::fs::copy(source, destination)?;
-    Ok(())
+    Ok((source, "loaves/stdlib/zen.txt".into()))
 }
 
 /// Retain the language registry's embedded Loaf declarations with their authored relative include geometry.
 ///
 /// `incan_lang/src/lang/stdlib.rs` embeds these ten files. They are explicit compile inputs, and preserving their
 /// layout keeps both rustc and inspection inside the immutable snapshot without rewriting source text.
-fn snapshot_language_catalog(project: &Path, snapshot: &Path) -> Result<(), Error> {
+fn language_catalog_sources(project: &Path) -> Result<Vec<(std::path::PathBuf, std::path::PathBuf)>, Error> {
     let loaves = project
         .parent()
         .and_then(Path::parent)
         .ok_or("language Loaf has no owning loaves directory")?;
+    let mut files = Vec::new();
     for component in [
         "async",
         "codecs",
@@ -340,26 +404,27 @@ fn snapshot_language_catalog(project: &Path, snapshot: &Path) -> Result<(), Erro
         if !std::fs::symlink_metadata(&source)?.is_file() {
             return Err("embedded stdlib declaration is not a plain file".into());
         }
-        let destination = snapshot.join("loaves/stdlib").join(component).join("loaf.toml");
-        std::fs::create_dir_all(destination.parent().ok_or("embedded declaration has no parent")?)?;
-        std::fs::copy(source, destination)?;
+        files.push((source, Path::new("loaves/stdlib").join(component).join("loaf.toml")));
     }
-    Ok(())
+    Ok(files)
 }
 
-/// Copy only Rust sources, refusing links and special files before hashing or publication.
-fn copy_local_sources(source: &Path, destination: &Path) -> Result<(), Error> {
+/// Enumerate the declared Rust source directory, refusing links and forbidden build inputs before publication.
+fn collect_local_sources(
+    source: &Path,
+    relative: &Path,
+    files: &mut Vec<(std::path::PathBuf, std::path::PathBuf)>,
+) -> Result<(), Error> {
     if !std::fs::symlink_metadata(source)?.is_dir() {
         return Err("local Rust source root is not a plain directory".into());
     }
-    std::fs::create_dir_all(destination)?;
     for entry in std::fs::read_dir(source)? {
         let entry = entry?;
         let kind = entry.file_type()?;
         let path = entry.path();
-        let destination = destination.join(entry.file_name());
+        let destination = relative.join(entry.file_name());
         if kind.is_dir() {
-            copy_local_sources(&path, &destination)?;
+            collect_local_sources(&path, &destination, files)?;
         } else if kind.is_file() {
             if matches!(
                 entry.file_name().to_str(),
@@ -367,7 +432,7 @@ fn copy_local_sources(source: &Path, destination: &Path) -> Result<(), Error> {
             ) {
                 return Err("local SDK source tree contains forbidden Cargo metadata or a build script".into());
             }
-            std::fs::copy(path, destination)?;
+            files.push((path, destination));
         } else {
             return Err("local SDK source tree contains a link or special file".into());
         }

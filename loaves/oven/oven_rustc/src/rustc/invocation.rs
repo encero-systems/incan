@@ -1,7 +1,10 @@
 //! Invoking direct rustc and rustdoc consumers against admitted artifacts.
 
 mod library_store;
-pub use library_store::bake_trusted_direct_rustc_library_in_store;
+pub use library_store::{
+    bake_trusted_direct_rustc_library_in_store, bake_trusted_direct_rustc_run_in_store,
+    bake_trusted_direct_rustc_test_in_store,
+};
 
 use super::{
     BTreeSet, Command, Duration, Instant, OVEN_DIRECT_RUSTC_OUTPUT_RECEIPT_SCHEMA_VERSION, OvenDirectRustcBake,
@@ -232,6 +235,94 @@ pub(super) fn join_rustdoc_output_reader(
             path: rustdoc.to_path_buf(),
             source,
         })
+}
+
+/// Derive the same validated native input recipe for local and shared-store consumers.
+fn direct_rustc_output_recipe(
+    request: &OvenTrustedDirectRustcTargetRequest<'_>,
+    artifact_role: &str,
+    test_harness: bool,
+    output_kind: OvenDirectRustcOutputKind,
+) -> Result<OvenDirectRustcOutputReceipt, OvenRustcError> {
+    let OvenTrustedDirectRustcTargetRequest {
+        receipt,
+        artifacts,
+        rustc,
+        source,
+        crate_name,
+        edition,
+        source_evidence_key,
+        features,
+        prefer_dynamic,
+        artifact_plan: trusted_artifact_plan,
+        ..
+    } = *request;
+    receipt
+        .verify_identity()
+        .map_err(|error| OvenRustcError::InvalidInput {
+            field: "receipt",
+            message: error.to_string(),
+        })?;
+    verify_rustc_identity(rustc, &receipt.intent.toolchain)?;
+    validate_rust_identifier(crate_name)?;
+    super::driver_grant::apply_driver_grant(&mut Command::new(rustc), receipt, crate_name)?;
+    validate_edition(edition)?;
+    let source = verified_regular_file(source, "source")?;
+    let source_bytes = fs::read(&source).map_err(|source_error| OvenRustcError::Io {
+        path: source.clone(),
+        source: source_error,
+    })?;
+    let source_digest = digest_bytes(&source_bytes);
+    let expected_source_digest = receipt
+        .sources
+        .supplemental_digests
+        .get(source_evidence_key.trim())
+        .ok_or_else(|| OvenRustcError::InvalidInput {
+            field: "source evidence",
+            message: format!("receipt does not declare `{source_evidence_key}`"),
+        })?;
+    if expected_source_digest != &source_digest {
+        return Err(OvenRustcError::SourceEvidenceMismatch {
+            key: source_evidence_key.to_string(),
+            expected: expected_source_digest.clone(),
+            actual: source_digest,
+        });
+    }
+    let selected_artifacts = artifacts.for_source_evidence(artifact_role)?;
+    Ok(OvenDirectRustcOutputReceipt {
+        schema_version: OVEN_DIRECT_RUSTC_OUTPUT_RECEIPT_SCHEMA_VERSION,
+        receipt_identity: receipt.identity.clone(),
+        link_closure_identity: if matches!(output_kind, OvenDirectRustcOutputKind::Library) && !test_harness {
+            None
+        } else {
+            let identity = super::linking::pinned_receipt_link(rustc, receipt)?.map(|link| link.identity);
+            if let Some(bound) = receipt.sources.build_unit_inputs.get("link-closure")
+                && identity.as_deref() != Some(bound.as_str())
+            {
+                return Err(OvenRustcError::InvalidInput {
+                    field: "link closure",
+                    message: "receipt does not bind the active linker and native input bytes".to_string(),
+                });
+            }
+            identity
+        },
+        artifact_manifest_digest: digest_bytes(&serde_json::to_vec(&selected_artifacts).map_err(|error| {
+            OvenRustcError::InvalidInput {
+                field: "artifact manifest",
+                message: format!("cannot serialize verified manifest identity: {error}"),
+            }
+        })?),
+        source_digest: source_digest.clone(),
+        crate_name: crate_name.to_string(),
+        edition: edition.to_string(),
+        features: features.to_vec(),
+        test_harness,
+        prefer_dynamic,
+        output_kind: output_kind.receipt_value().to_string(),
+        caller_owned_library_digests: trusted_artifact_plan
+            .map(|plan| plan.caller_owned_library_digests.clone())
+            .unwrap_or_default(),
+    })
 }
 
 /// Compile one receipt-bound generated Rust test target without a Cargo consumer process.
@@ -582,38 +673,28 @@ pub(super) fn bake_direct_rustc(
     prefer_dynamic: bool,
     features: &[String],
 ) -> Result<OvenDirectRustcBake, OvenRustcError> {
-    receipt
-        .verify_identity()
-        .map_err(|error| OvenRustcError::InvalidInput {
-            field: "receipt",
-            message: error.to_string(),
-        })?;
-    verify_rustc_identity(rustc, &receipt.intent.toolchain)?;
-    validate_rust_identifier(crate_name)?;
-    super::driver_grant::apply_driver_grant(&mut Command::new(rustc), receipt, crate_name)?;
-    validate_edition(edition)?;
     let source = verified_regular_file(source, "source")?;
     let output = caller_output_path(output, artifact_root)?;
-    let source_bytes = fs::read(&source).map_err(|source_error| OvenRustcError::Io {
-        path: source.clone(),
-        source: source_error,
-    })?;
-    let source_digest = digest_bytes(&source_bytes);
-    let expected_source_digest = receipt
-        .sources
-        .supplemental_digests
-        .get(source_evidence_key.trim())
-        .ok_or_else(|| OvenRustcError::InvalidInput {
-            field: "source evidence",
-            message: format!("receipt does not declare `{source_evidence_key}`"),
-        })?;
-    if expected_source_digest != &source_digest {
-        return Err(OvenRustcError::SourceEvidenceMismatch {
-            key: source_evidence_key.to_string(),
-            expected: expected_source_digest.clone(),
-            actual: source_digest,
-        });
-    }
+    let output_receipt = direct_rustc_output_recipe(
+        &OvenTrustedDirectRustcTargetRequest {
+            receipt,
+            artifacts,
+            artifact_root,
+            artifact_plan: trusted_artifact_plan,
+            rustc,
+            source: &source,
+            output: &output,
+            crate_name,
+            edition,
+            source_evidence_key,
+            features,
+            prefer_dynamic,
+        },
+        artifact_role,
+        test_harness,
+        output_kind,
+    )?;
+    let source_digest = output_receipt.source_digest.clone();
     let selected_artifacts = artifacts.for_source_evidence(artifact_role)?;
     let parent = output.parent().ok_or_else(|| OvenRustcError::InvalidInput {
         field: "output",
@@ -623,40 +704,6 @@ pub(super) fn bake_direct_rustc(
         path: parent.to_path_buf(),
         source: source_error,
     })?;
-    let output_receipt = OvenDirectRustcOutputReceipt {
-        schema_version: OVEN_DIRECT_RUSTC_OUTPUT_RECEIPT_SCHEMA_VERSION,
-        receipt_identity: receipt.identity.clone(),
-        link_closure_identity: if matches!(output_kind, OvenDirectRustcOutputKind::Library) && !test_harness {
-            None
-        } else {
-            let identity = super::linking::pinned_receipt_link(rustc, receipt)?.map(|link| link.identity);
-            if let Some(bound) = receipt.sources.build_unit_inputs.get("link-closure")
-                && identity.as_deref() != Some(bound.as_str())
-            {
-                return Err(OvenRustcError::InvalidInput {
-                    field: "link closure",
-                    message: "receipt does not bind the active linker and native input bytes".to_string(),
-                });
-            }
-            identity
-        },
-        artifact_manifest_digest: digest_bytes(&serde_json::to_vec(&selected_artifacts).map_err(|error| {
-            OvenRustcError::InvalidInput {
-                field: "artifact manifest",
-                message: format!("cannot serialize verified manifest identity: {error}"),
-            }
-        })?),
-        source_digest: source_digest.clone(),
-        crate_name: crate_name.to_string(),
-        edition: edition.to_string(),
-        features: features.to_vec(),
-        test_harness,
-        prefer_dynamic,
-        output_kind: output_kind.receipt_value().to_string(),
-        caller_owned_library_digests: trusted_artifact_plan
-            .map(|plan| plan.caller_owned_library_digests.clone())
-            .unwrap_or_default(),
-    };
     if let Some(output_digest) = caller_output_reusable_digest(&output, &output_receipt) {
         return Ok(OvenDirectRustcBake {
             source_digest,
@@ -668,6 +715,21 @@ pub(super) fn bake_direct_rustc(
         });
     }
 
+    // A completed projection can share a read-only inode with immutable storage. Compile into a fresh sibling
+    // instead of changing its permissions or allowing rustc to truncate admitted bytes on a failed rebuild.
+    let staging = tempfile::Builder::new()
+        .prefix("oven-direct-")
+        .tempdir_in(parent)
+        .map_err(|source| OvenRustcError::Io {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    let staged_output = staging
+        .path()
+        .join(output.file_name().ok_or_else(|| OvenRustcError::InvalidInput {
+            field: "output",
+            message: "must have a file name".to_string(),
+        })?);
     let output_digest = compile_direct_rustc_output(
         receipt,
         artifacts,
@@ -675,7 +737,7 @@ pub(super) fn bake_direct_rustc(
         artifact_root,
         rustc,
         &source,
-        &output,
+        &staged_output,
         crate_name,
         edition,
         artifact_role,
@@ -687,6 +749,13 @@ pub(super) fn bake_direct_rustc(
         features,
         output_receipt,
     )?;
+    let staged_sidecar = caller_output_receipt_path(&staged_output)?;
+    let sidecar = caller_output_receipt_path(&output)?;
+    fs::rename(&staged_output, &output).map_err(|source| OvenRustcError::Io {
+        path: output.clone(),
+        source,
+    })?;
+    fs::rename(staged_sidecar, &sidecar).map_err(|source| OvenRustcError::Io { path: sidecar, source })?;
     Ok(OvenDirectRustcBake {
         source_digest,
         output,
@@ -1031,6 +1100,14 @@ fn apply_portable_source_paths(
 /// Apply receipt-bound SDK adoption policy and exact build-fact cfg values to the normal direct executor.
 fn apply_sdk_compilation_policy(command: &mut Command, receipt: &OvenReceipt) -> Result<(), OvenRustcError> {
     if receipt.sources.build_unit_inputs.contains_key("sdk-source-archive") {
+        if let Some(encoded) = receipt.sources.build_unit_inputs.get("sdk-codegen-options") {
+            let options: super::OvenRustcCodegenOptions =
+                serde_json::from_str(encoded).map_err(|error| OvenRustcError::InvalidInput {
+                    field: "SDK codegen options",
+                    message: error.to_string(),
+                })?;
+            options.apply(command)?;
+        }
         // Adopted sources retain upstream warning policy, but a newer pinned compiler must not turn a newly added
         // warning into a dependency failure. Separate locked versions/domains also need distinct Rust metadata.
         command.args(["--cap-lints", "allow", "-C"]);
