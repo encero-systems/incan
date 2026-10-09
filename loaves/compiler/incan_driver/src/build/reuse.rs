@@ -5,6 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::build::library_metadata::{LibraryMetadataReference, select_optional_library_metadata_reference};
 use crate::build::library_outputs::packaged_library_loaf_store_root;
 use crate::build::output_materialization::{
     caller_project_output_path, executable_projection_publication_paths, library_projection_publication_receipts,
@@ -22,8 +23,9 @@ use crate::build::source_authority::{digest_baked_project_source_authority, proj
 use crate::build::{
     MemoizedPackagedProviderAuthority, OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION, OVEN_PROJECT_OUTPUT_ARTIFACT_PATH,
     OvenBakeProjectTarget, OvenPackagedLibraryLoafManifest, OvenPackagedLibraryLoafProfile,
-    OvenProjectBakeAuthorityContext, OvenProjectBakeOutputReport, OvenProjectBakeProfileReport, OvenProjectBakeReport,
-    OvenStoredProjectOutput, ProjectSourceAuthorityDigester, library_publication,
+    OvenPackagedLibraryMetadataFile, OvenProjectBakeAuthorityContext, OvenProjectBakeOutputReport,
+    OvenProjectBakeProfileReport, OvenProjectBakeReport, OvenStoredProjectOutput, ProjectSourceAuthorityDigester,
+    library_publication,
 };
 use crate::error::{CliError, CliResult};
 use incan_frontend::library_manifest::published_layout::packaged_library_loaf_manifest_path;
@@ -135,6 +137,14 @@ fn restore_reused_library_package(
         return Ok(false);
     }
     let package_store = OvenStore::new(packaged_library_loaf_store_root(&artifact_root), *store.limits());
+    if !restore_reused_library_metadata(
+        store,
+        &package_store,
+        manifest.checked_metadata.as_ref(),
+        &manifest.metadata_files,
+    )? {
+        return Ok(false);
+    }
     for output in outputs {
         let Some(candidate) = manifest.profiles.get(&output.profile) else {
             return Ok(false);
@@ -234,6 +244,42 @@ fn restore_reused_library_package(
                 }
                 Ok(_) | Err(_) => return Ok(false),
             }
+        }
+    }
+    Ok(true)
+}
+
+/// Restore a package's exact checked owner, declining reuse only when both original Store coordinates lost it.
+fn restore_reused_library_metadata(
+    store: &OvenStore,
+    package_store: &OvenStore,
+    reference: Option<&LibraryMetadataReference>,
+    metadata_files: &[OvenPackagedLibraryMetadataFile],
+) -> CliResult<bool> {
+    let Some(reference) = reference else {
+        return Ok(true);
+    };
+    let (owner, needs_export) = match select_optional_library_metadata_reference(package_store, reference)? {
+        Some(owner) => (owner, false),
+        None => match select_optional_library_metadata_reference(store, reference)? {
+            Some(owner) => (owner, true),
+            None => return Ok(false),
+        },
+    };
+    if owner.checked_files() != metadata_files {
+        return Err(CliError::failure(
+            "completed library package metadata disagrees with its original checked owner",
+        ));
+    }
+    if needs_export {
+        let exported = owner.export_into(package_store)?;
+        if exported.schema_version != reference.schema_version
+            || exported.owner_identity != reference.owner_identity
+            || exported.receipt != reference.receipt
+        {
+            return Err(CliError::failure(
+                "completed library package changed its checked owner during restoration",
+            ));
         }
     }
     Ok(true)
@@ -1051,6 +1097,140 @@ mod tests {
         assert!(
             release_loaf_constituents_available(std::slice::from_ref(&stored_only))?,
             "an authority without release Loafs has nothing to be unavailable"
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod checked_metadata_restoration_tests {
+    use super::restore_reused_library_metadata;
+    use crate::build::library_metadata::{
+        LibraryMetadataRecipe, SelectedLibraryMetadata, publish_library_metadata, select_library_metadata_reference,
+    };
+    use incan_frontend::library_manifest::LibraryManifest;
+    use oven_store::digest_bytes;
+    use oven_store::store::{OvenStore, OvenStoreLimits};
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::fs;
+    use std::sync::Arc;
+
+    /// Publish a real checked owner through the ordinary Store boundary without a fabricated admission payload.
+    fn publish_owner(store: &OvenStore) -> Result<Arc<SelectedLibraryMetadata>, Box<dyn std::error::Error>> {
+        let source = tempfile::tempdir()?;
+        let output = tempfile::tempdir()?;
+        fs::write(
+            source.path().join("loaf.toml"),
+            "[project]\nname='restored'\nversion='1.0.0'\n",
+        )?;
+        fs::create_dir(output.path().join("src"))?;
+        fs::write(output.path().join("src/lib.rs"), "pub fn answer() -> i64 { 42 }\n")?;
+        let manifest_path = output.path().join("restored.incnlib");
+        LibraryManifest::new("restored", "1.0.0").write_to_path(&manifest_path)?;
+        let recipe = LibraryMetadataRecipe {
+            name: "restored".into(),
+            version: "1.0.0".into(),
+            source_digest: digest_bytes(b"source"),
+            producer_digest: digest_bytes(b"producer"),
+            semantic_authority_digest: digest_bytes(b"semantic"),
+            dependencies: BTreeMap::new(),
+            policy_digest: digest_bytes(b"policy"),
+            target: "x86_64-unknown-linux-gnu".into(),
+            toolchain: "exact restoration test compiler".into(),
+            features: Vec::new(),
+        };
+        Ok(publish_library_metadata(
+            store,
+            &recipe,
+            &recipe.receipt(source.path())?,
+            output.path(),
+            &manifest_path,
+            BTreeSet::new(),
+        )?)
+    }
+
+    /// A completed-output handoff restores the exact original checked owner and supports unchanged package admission.
+    #[test]
+    fn completed_library_restores_original_checked_metadata_owner() -> Result<(), Box<dyn std::error::Error>> {
+        let original = tempfile::tempdir()?;
+        let package = tempfile::tempdir()?;
+        let limits = OvenStoreLimits::new(16 * 1024 * 1024, 16 * 1024 * 1024, 16 * 1024 * 1024);
+        let store = OvenStore::new(original.path(), limits);
+        let package_store = OvenStore::new(package.path(), limits);
+        let owner = publish_owner(&store)?;
+        let reference = owner.reference();
+        assert!(restore_reused_library_metadata(
+            &store,
+            &package_store,
+            Some(&reference),
+            owner.checked_files()
+        )?);
+        let restored = select_library_metadata_reference(&package_store, &reference)?;
+        assert_eq!(restored.reference().owner_identity, reference.owner_identity);
+        assert_eq!(restored.reference().receipt, reference.receipt);
+        assert!(restore_reused_library_metadata(
+            &store,
+            &package_store,
+            Some(&reference),
+            owner.checked_files()
+        )?);
+        // Once copied, the package owner is self-contained even when the preparation Store is absent.
+        let absent = tempfile::tempdir()?;
+        let absent_store = OvenStore::new(absent.path(), limits);
+        assert!(restore_reused_library_metadata(
+            &absent_store,
+            &package_store,
+            Some(&reference),
+            owner.checked_files()
+        )?);
+        restored.replay(tempfile::tempdir()?.path())?;
+        Ok(())
+    }
+
+    /// Whole-owner absence declines reuse; a wrong receipt, changed handoff or damaged existing owner refuses.
+    #[test]
+    fn completed_library_metadata_restoration_refuses_substitution_and_damage() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let original = tempfile::tempdir()?;
+        let package = tempfile::tempdir()?;
+        let absent = tempfile::tempdir()?;
+        let limits = OvenStoreLimits::new(16 * 1024 * 1024, 16 * 1024 * 1024, 16 * 1024 * 1024);
+        let store = OvenStore::new(original.path(), limits);
+        let package_store = OvenStore::new(package.path(), limits);
+        let absent_store = OvenStore::new(absent.path(), limits);
+        let owner = publish_owner(&store)?;
+        let reference = owner.reference();
+        assert!(!restore_reused_library_metadata(
+            &absent_store,
+            &package_store,
+            Some(&reference),
+            owner.checked_files()
+        )?);
+        assert!(restore_reused_library_metadata(
+            &absent_store,
+            &package_store,
+            None,
+            &[]
+        )?);
+        let mut malformed = reference.clone();
+        malformed.owner_identity = "not-a-canonical-owner".into();
+        assert!(
+            restore_reused_library_metadata(&absent_store, &package_store, Some(&malformed), owner.checked_files())
+                .is_err()
+        );
+        let mut wrong = reference.clone();
+        let mut wrong_recipe = owner.recipe().clone();
+        wrong_recipe.target = "aarch64-apple-darwin".into();
+        wrong.receipt = wrong_recipe.receipt(package.path())?;
+        assert!(restore_reused_library_metadata(&store, &package_store, Some(&wrong), owner.checked_files()).is_err());
+        let mut changed = owner.checked_files().to_vec();
+        changed.first_mut().ok_or("missing actual checked file")?.digest = digest_bytes(b"changed handoff");
+        assert!(restore_reused_library_metadata(&store, &package_store, Some(&reference), &changed).is_err());
+        owner.export_into(&package_store)?;
+        let (_, root, _, _lease) = package_store.select_payload_for_execution(&reference.owner_identity)?;
+        fs::write(root.join("src/lib.rs"), "pub fn answer() -> i64 { 99 }\n")?;
+        assert!(
+            restore_reused_library_metadata(&store, &package_store, Some(&reference), owner.checked_files()).is_err()
         );
         Ok(())
     }

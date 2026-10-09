@@ -377,32 +377,46 @@ pub fn select_library_metadata_reference(
     store: &OvenStore,
     reference: &LibraryMetadataReference,
 ) -> CliResult<Arc<SelectedLibraryMetadata>> {
+    select_optional_library_metadata_reference(store, reference)?
+        .ok_or_else(|| CliError::failure("missing checked library reference owner"))
+}
+
+/// Allow absence alone to decline restoration; an existing claimed owner must satisfy the entire exact reference.
+pub(crate) fn select_optional_library_metadata_reference(
+    store: &OvenStore,
+    reference: &LibraryMetadataReference,
+) -> CliResult<Option<Arc<SelectedLibraryMetadata>>> {
     if reference.schema_version != LIBRARY_METADATA_SCHEMA_VERSION {
         return Err(CliError::failure("unsupported checked library reference version"));
     }
+    validate_digest(&reference.owner_identity)?;
     reference
         .receipt
         .verify_identity()
         .map_err(|error| CliError::failure(error.to_string()))?;
     let mut candidates = store
-        .select_payloads_matching_for_execution(|manifest| {
-            manifest.identity == reference.owner_identity
-                && manifest.kind == OvenArtifactKind::Engine
-                && manifest.domain == LIBRARY_METADATA_DOMAIN
-                && manifest.receipt_identity == reference.receipt.identity
-                && manifest.build_unit_identity == reference.receipt.build_unit_identity
-                && manifest.intent == reference.receipt.intent
-        })
+        .select_payloads_matching_for_execution(|manifest| manifest.identity == reference.owner_identity)
         .map_err(|error| CliError::failure(error.to_string()))?;
+    if candidates.is_empty() {
+        return Ok(None);
+    }
     if candidates.len() != 1 {
-        return Err(CliError::failure(
-            "missing or competing checked library reference owner",
-        ));
+        return Err(CliError::failure("competing checked library reference owners"));
     }
     let owner = candidates.remove(0);
+    if owner.manifest.kind != OvenArtifactKind::Engine
+        || owner.manifest.domain != LIBRARY_METADATA_DOMAIN
+        || owner.manifest.receipt_identity != reference.receipt.identity
+        || owner.manifest.build_unit_identity != reference.receipt.build_unit_identity
+        || owner.manifest.intent != reference.receipt.intent
+    {
+        return Err(CliError::failure(
+            "checked library reference disagrees with its original owner",
+        ));
+    }
     let payload: LibraryMetadataPayload =
         serde_json::from_slice(&owner.payload).map_err(|error| CliError::failure(error.to_string()))?;
-    admit(owner, &payload.recipe, &reference.receipt).map(Arc::new)
+    admit(owner, &payload.recipe, &reference.receipt).map(|selected| Some(Arc::new(selected)))
 }
 
 /// Publish finalized checked metadata and generated facade files through ordinary immutable Engine admission.
