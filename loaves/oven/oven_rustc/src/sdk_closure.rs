@@ -1136,7 +1136,7 @@ fn unit_plan(
     };
     for (name, path) in &plan.externs {
         plan.caller_owned_library_digests
-            .insert(name.clone(), digest_bytes(&std::fs::read(path)?));
+            .insert(name.clone(), oven_store::store::digest_regular_file(path)?.1);
         if let Some(parent) = path.parent() {
             plan.dependency_search_paths.push(parent.to_path_buf());
         }
@@ -1361,6 +1361,9 @@ fn std_library_digest(root: &Path, relative: &str) -> Result<String, Error> {
     }
     Ok(digest_bytes(&std::fs::read(resolved)?))
 }
+
+#[cfg(all(test, unix))]
+pub(crate) mod digest_reuse_tests;
 
 #[cfg(test)]
 mod tests {

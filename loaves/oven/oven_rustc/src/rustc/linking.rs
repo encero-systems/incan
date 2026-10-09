@@ -97,16 +97,9 @@ fn pinned_unit_link(rustc: &Path, target: &str, declared_driver: bool) -> Result
         let bytes = fs::read(&path).map_err(|source| OvenRustcError::Io { path, source })?;
         members.insert(relative, bytes);
     }
-    let linker_bytes = fs::read(&linker).map_err(|source| OvenRustcError::Io {
-        path: linker.clone(),
-        source,
-    })?;
-    let mut identities = BTreeMap::new();
-    identities.insert("rust-lld", digest_bytes(&linker_bytes));
     // The normalized sysroot always places LLD's LLVM runtime (from the `rustc` component), so it is always bound.
     let llvm = host_root.join("lib/libLLVM.dylib");
-    let bytes = fs::read(&llvm).map_err(|source| OvenRustcError::Io { path: llvm, source })?;
-    identities.insert("lld-libLLVM", digest_bytes(&bytes));
+    let mut identities = apple_linker_identities(&linker, &llvm)?;
     for (relative, bytes) in &members {
         identities.insert(relative, digest_bytes(bytes));
     }
@@ -131,6 +124,14 @@ fn pinned_unit_link(rustc: &Path, target: &str, declared_driver: bool) -> Result
         linux: None,
         identity,
     }))
+}
+
+/// Observe both native linker inputs, following normalized LLVM links without changing content identities.
+fn apple_linker_identities(linker: &Path, llvm: &Path) -> Result<BTreeMap<&'static str, String>, OvenRustcError> {
+    Ok(BTreeMap::from([
+        ("rust-lld", oven_store::store::digest_regular_file(linker)?.1),
+        ("lld-libLLVM", oven_store::store::digest_regular_file(llvm)?.1),
+    ]))
 }
 
 /// Revalidate staged bytes and atomically restore each admitted SDK member at its original relative path.
@@ -467,11 +468,10 @@ fn linux_link(linker: &Path, root: &Path, target: &str) -> Result<PinnedLink, Ov
         &mut members,
     )?;
     let mut identities = BTreeMap::new();
-    let bytes = fs::read(linker).map_err(|source| OvenRustcError::Io {
-        path: linker.to_path_buf(),
-        source,
-    })?;
-    identities.insert("rust-lld".to_string(), digest_bytes(&bytes));
+    identities.insert(
+        "rust-lld".to_string(),
+        oven_store::store::digest_regular_file(linker)?.1,
+    );
     identities.insert(
         "platform-policy".to_string(),
         format!("{target}:ld.lld:dynamic-pie:crt-v1:loader={}", policy.loader),
@@ -519,6 +519,22 @@ fn linux_link(linker: &Path, root: &Path, target: &str) -> Result<PinnedLink, Ov
 #[cfg(test)]
 mod tests {
     use super::{fs, pinned_link, rustc_host_target};
+
+    /// Warm native inputs read no artifact bytes; normalized symlinks and preserved-mtime edits remain observed.
+    #[cfg(unix)]
+    #[test]
+    fn dev7_linker_input_observation_preserves_identity_and_freshness() -> Result<(), Box<dyn std::error::Error>> {
+        crate::sdk_closure::digest_reuse_tests::assert_file_observation(
+            "rustc::linking::tests::dev7_linker_input_observation_preserves_identity_and_freshness",
+            ["rust-lld", "lld-libLLVM"],
+            |linker, llvm| {
+                Ok(super::apple_linker_identities(linker, llvm)?
+                    .into_iter()
+                    .map(|(name, digest)| (name.to_string(), digest))
+                    .collect())
+            },
+        )
+    }
 
     /// A declared rustc-dev driver links and starts against its content-bound SDK while ordinary units keep their
     /// closure.
