@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3493 | 237 | 431 |
+| keep | 3495 | 237 | 431 |
 | re-point | 1487 | 91 | 1058 |
 | retire | 1506 | 153 | 0 |
-| unaffected | 1797 | 183 | 5 |
+| unaffected | 1809 | 185 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8283** | **664** | **1494** |
+| **Total** | **8297** | **666** | **1494** |
 
 - Retire-class tests: 1506, of which twinned 1022, dies 294, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -127,7 +127,7 @@ The collector counts these in the text of each test function and of the file-loc
 
 `Lines` is the file length; `Test lines` is the test region the split threshold applies to: the `#[cfg(test)]` modules when the file has any, otherwise the whole file. `Twins` is `twinned/retire-class` and `Dies` the number recorded `dies`, for files with retire-class tests. Per-test rows follow a file only when it carries per-test overrides.
 
-### `loaves/compiler/incan_driver` (562 tests in 78 files: keep 259, re-point 19, retire 103, unaffected 181)
+### `loaves/compiler/incan_driver` (566 tests in 78 files: keep 261, re-point 19, retire 103, unaffected 183)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -149,7 +149,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/build/library_metadata/requirements/tests.rs` | 2 | 94 | 94 | keep | - | - | - | #1698 | checker 2, parser 2 | Portable checked requirement replay preserves exports and current bindings and refuses incomplete planning authority. |
 | `loaves/compiler/incan_driver/src/build/library_metadata/tests.rs` | 12 | 415 | 415 | keep | - | - | - | #1698 | checker 12 | Ordinary checked-library metadata ownership: exact recipe and intent binding, sealed sidecars, promised ABI completeness, original owner retention and conflicting native output refusal. These controls remain required after SDK removal. |
 | `loaves/compiler/incan_driver/src/build/library_outputs.rs` | 3 | 273 | 59 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
-| `loaves/compiler/incan_driver/src/build/library_project/metadata_replay/tests.rs` | 3 | 105 | 105 | keep | - | - | - | #1698 | - | Source-current metadata preflight binds raw source, declarations and external Rust without entering the Incan frontend. |
+| `loaves/compiler/incan_driver/src/build/library_project/metadata_replay/tests.rs` | 5 | 205 | 205 | keep | - | - | - | #1698 | checker 1 | Source-current metadata preflight binds raw source, declarations and external Rust without entering the Incan frontend. |
 | `loaves/compiler/incan_driver/src/build/library_publication.rs` | 7 | 661 | 254 | unaffected | - | - | - | #1561 | checker 7 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/mod.rs` | 3 | 949 | 79 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/native_sdk.rs` | 2 | 584 | 64 | unaffected | - | - | - | #1698 | - | Native SDK facet version/feature selection and canonical receipt catalog binding; no Cargo resolution. |
@@ -165,7 +165,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/build/provider_compilation.rs` | 7 | 1044 | 546 | unaffected | - | - | - | #1561 | checker 2 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/provider_metadata.rs` | 5 | 1101 | 266 | keep | - | - | - | #1561 | checker 3, parser 3 | provider operation metadata projected from checked declaration facts. |
 | `loaves/compiler/incan_driver/src/build/publication.rs` | 1 | 1042 | 63 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
-| `loaves/compiler/incan_driver/src/build/reuse.rs` | 3 | 1058 | 99 | unaffected | - | - | - | #1561 | - | Build orchestration over Oven; evicted inspection constituents decline explicit-bake cache reuse while damaged entries fail closed. |
+| `loaves/compiler/incan_driver/src/build/reuse.rs` | 5 | 1238 | 232 | unaffected | - | - | - | #1561 | checker 2 | Build orchestration over Oven; evicted inspection constituents decline explicit-bake cache reuse while damaged entries fail closed. |
 | `loaves/compiler/incan_driver/src/build/rust_bake_reuse.rs` | 2 | 405 | 95 | unaffected | - | - | - | #1337 | - | Receipt-bound Oven bake reuse for Rust caller projects; shared build infrastructure. |
 | `loaves/compiler/incan_driver/src/build/source_authority.rs` | 26 | 2400 | 1454 | unaffected | - | - | - | #1561 | codegen 1, checker 1, parser 21 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build_unit.rs` | 1 | 239 | 27 | unaffected | - | - | - | #1561 | checker 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
@@ -2581,12 +2581,13 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/kernel/incan_syntax/src/parser/tests/types_and_bounds.rs` | 23 | 463 | 463 | keep | - | - | - | #1561 | checker 14, parser 23 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/parser/tests/vocab_scoped_symbols.rs` | 14 | 824 | 824 | keep | - | - | - | #1561 | parser 14 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 
-### `loaves/oven/oven_rustc` (403 tests in 40 files: keep 9, unaffected 394)
+### `loaves/oven/oven_rustc` (413 tests in 42 files: keep 9, unaffected 404)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
 | `loaves/oven/oven_rustc/src/loaf.rs` | 30 | 4835 | 1424 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 | `loaves/oven/oven_rustc/src/loaf_mirror.rs` | 9 | 758 | 429 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
+| `loaves/oven/oven_rustc/src/native_loaf/prepared/tests.rs` | 6 | 753 | 753 | unaffected | - | - | - | #1698 | - | Ordinary rooted native reuse verifies current source/compiler/lock/facts, records actual work, refuses corrupted authority and bypasses empty declarations. |
 | `loaves/oven/oven_rustc/src/native_loaf/tests.rs` | 15 | 964 | 964 | unaffected | - | - | - | #1698 | - | Ordinary native record and forward physical closure admission: original leases, declared aliases, installed read-only handoff, source and edge substitution refusal, current local source restoration, feature and origin authority, and authenticated empty closures. Independent of generated Rust and SDK inventories. |
 | `loaves/oven/oven_rustc/src/native_test.rs` | 34 | 2883 | 1419 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). A source module (the native test runner) with a `#[cfg(test)]` region, measured by that region. Reviewed at crate level. |
 | `loaves/oven/oven_rustc/src/native_test/case_slice.rs` | 5 | 174 | 87 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
@@ -2618,12 +2619,13 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/oven/oven_rustc/src/rustc/tests/registry_and_toolchain.rs` | 25 | 1222 | 1222 | unaffected | - | - | - | #1561 | run 1 | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 | `loaves/oven/oven_rustc/src/rustc/tests/source_roles.rs` | 11 | 1201 | 1201 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 | `loaves/oven/oven_rustc/src/rustc/toolchain.rs` | 5 | 860 | 73 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-| `loaves/oven/oven_rustc/src/sdk_closure.rs` | 8 | 1775 | 225 | unaffected | - | - | - | #1698 | - | Oven-native locked closure edges, domain selection and exact-fact refusal; no generated Cargo project behavior. |
-| `loaves/oven/oven_rustc/src/sdk_closure/digest_reuse_tests.rs` | 1 | 129 | 129 | unaffected | - | - | - | #1698 | - | Oven native input freshness: actual linker and extern planners retain raw content identities, zero-byte warm observations, preserved-mtime edits, symlink retargets and missing-input refusal; child-local cache and tracing prevent environment races. |
-| `loaves/oven/oven_rustc/src/sdk_closure/environment.rs` | 3 | 322 | 87 | unaffected | - | - | - | #1698 | - | Oven ring; closure units receive Cargo's package environment from the locked binding and pinned adoption metadata, bound into the receipt. |
-| `loaves/oven/oven_rustc/src/sdk_closure/local.rs` | 5 | 859 | 193 | unaffected | - | - | - | #1698 | - | Oven-native local source snapshots bind Rust source bytes without consulting adjacent Cargo metadata. |
-| `loaves/oven/oven_rustc/src/sdk_closure/native.rs` | 2 | 249 | 45 | unaffected | - | - | - | #1698 | - | Oven-native link fact source-catalog and executable-owner refusal boundaries. |
-| `loaves/oven/oven_rustc/src/sdk_closure/physical_edges/tests.rs` | 9 | 479 | 479 | unaffected | - | - | - | #1698 | - | Actual native preparation records retain exact renamed dependency owners and canonical reproduced recipes; malformed bindings, substituted owners and missing recipe facts refuse, while real local and registry preparation preserve identities and zero-compilation reuse. |
+| `loaves/oven/oven_rustc/src/sdk_closure.rs` | 8 | 1838 | 225 | unaffected | - | - | - | #1698 | - | Oven-native locked closure edges, domain selection and exact-fact refusal; no generated Cargo project behavior. |
+| `loaves/oven/oven_rustc/src/sdk_closure/digest_reuse_tests.rs` | 2 | 209 | 209 | unaffected | - | - | - | #1698 | - | Oven native input freshness: actual linker and extern planners retain raw content identities, zero-byte warm observations, preserved-mtime edits, symlink retargets and missing-input refusal; child-local cache and tracing prevent environment races. |
+| `loaves/oven/oven_rustc/src/sdk_closure/environment.rs` | 3 | 335 | 87 | unaffected | - | - | - | #1698 | - | Oven ring; closure units receive Cargo's package environment from the locked binding and pinned adoption metadata, bound into the receipt. |
+| `loaves/oven/oven_rustc/src/sdk_closure/local.rs` | 5 | 927 | 193 | unaffected | - | - | - | #1698 | - | Oven-native local source snapshots bind Rust source bytes without consulting adjacent Cargo metadata. |
+| `loaves/oven/oven_rustc/src/sdk_closure/native.rs` | 3 | 341 | 95 | unaffected | - | - | - | #1698 | - | Oven-native link fact source-catalog and executable-owner refusal boundaries. |
+| `loaves/oven/oven_rustc/src/sdk_closure/physical_edges/tests.rs` | 9 | 487 | 487 | unaffected | - | - | - | #1698 | - | Actual native preparation records retain exact renamed dependency owners and canonical reproduced recipes; malformed bindings, substituted owners and missing recipe facts refuse, while real local and registry preparation preserve identities and zero-compilation reuse. |
+| `loaves/oven/oven_rustc/src/sdk_closure/staging_tests.rs` | 2 | 118 | 118 | unaffected | - | - | - | #1698 | - | Actual native Store publication cleans successful private staging and retains failed-publication receipts and sourced diagnostics. |
 | `loaves/oven/oven_rustc/tests/native_generated_output_store_tests.rs` | 5 | 37 | 37 | keep | - | - | - | #1698 | - | Public generated native library, binary and test-store reuse, restored source selection and atomic read-only output replacement with failure preservation. |
 
 ### `loaves/toolchain/incan-cli` (1758 tests in 108 files: keep 130, re-point 1468, retire 34, unaffected 126)
@@ -3095,7 +3097,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 | `loaves/toolchain/oven-cli/src/commands/oven/harvest.rs` | 4 | 457 | 79 | unaffected | - | - | - | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |
 | `loaves/toolchain/oven-cli/src/commands/oven/inventory.rs` | 4 | 515 | 183 | unaffected | - | - | - | #1561 | - | Oven CLI; validates typed harvest closure evidence, no compiler semantics. Reviewed at crate level. |
 | `loaves/toolchain/oven-cli/src/commands/oven/loaf_bake.rs` | 8 | 3363 | 436 | unaffected | - | - | - | #1561 | - | Oven publisher configuration and owner-identity enforcement; no compiler semantics. Reviewed at crate level. |
-| `loaves/toolchain/oven-cli/src/commands/oven/native_compiler_tests.rs` | 2 | 406 | 46 | unaffected | - | - | - | #2090 | - | Native selected-root source containment and complete module-tree receipt coverage; no Cargo graph or generated Cargo project. |
+| `loaves/toolchain/oven-cli/src/commands/oven/native_compiler_tests.rs` | 2 | 402 | 46 | unaffected | - | - | - | #2090 | - | Native selected-root source containment and complete module-tree receipt coverage; no Cargo graph or generated Cargo project. |
 | `loaves/toolchain/oven-cli/src/commands/oven/partition_reconciliation.rs` | 2 | 354 | 111 | unaffected | - | - | - | #1561 | - | Oven CI evidence reconciliation; no compiler semantics. |
 | `loaves/toolchain/oven-cli/src/commands/oven/sdk_handoff.rs` | 11 | 725 | 265 | unaffected | - | - | - | #1965 | - | CI transport of one compiler-selected SDK provider; no compiler semantics. |
 | `loaves/toolchain/oven-cli/src/commands/oven/suite_environment.rs` | 2 | 912 | 32 | unaffected | - | - | - | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |
