@@ -108,6 +108,12 @@ fn dev7_nested_carrier_ownership() -> CaseResult {
     assert_fixture_holds(AREA, "dev7_nested_carrier_ownership")
 }
 
+/// Runs the fixture `dev7_projected_carrier_borrow`.
+#[test]
+fn dev7_projected_carrier_borrow() -> CaseResult {
+    assert_fixture_holds(AREA, "dev7_projected_carrier_borrow")
+}
+
 /// Runs the fixture `fallible_iterator_chain_without_trait_import`.
 #[test]
 fn fallible_iterator_chain_without_trait_import() -> CaseResult {
