@@ -34,7 +34,7 @@ mod request_observation;
 mod selection;
 pub use preparation::{
     NativeLoafFacet, NativeLoafPreparation, NativeLoafPreparationReport, NativeLoafPreparationRequest,
-    prepare_native_loafs, prepare_resolved_native_loafs,
+    prepare_native_loafs, prepare_resolved_native_loafs, prepare_resolved_native_loafs_in_store,
 };
 pub use prepared::{
     NativeLoafConsumerPreparation, NativeLoafConsumerReport, NativeLoafConsumerRequest, prepare_declared_native_loafs,

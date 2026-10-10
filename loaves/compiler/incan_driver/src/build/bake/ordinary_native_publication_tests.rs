@@ -362,6 +362,7 @@ fn publication(variant: Publication) -> TestResult {
         PROFILES.into()
     );
     let requests = native.metadata().observations().clone();
+    assert!(!native_output.path().join("store").exists());
     let mut digests = BTreeMap::new();
     for (profile, request) in &requests {
         let report = native
@@ -369,6 +370,9 @@ fn publication(variant: Publication) -> TestResult {
             .get(profile)
             .ok_or("actual native preparation report missing")?;
         assert!(!request.graph().units().is_empty());
+        for unit in request.graph().units().values() {
+            assert!(!unit.output()?.starts_with(native_output.path()));
+        }
         assert_eq!(
             report.compiled.len() + report.reused.len(),
             request.graph().units().len()
@@ -404,6 +408,42 @@ fn publication(variant: Publication) -> TestResult {
         );
     }
     drop(repeated);
+    // Relocation preserves physical owners; the full producer request still observes its changed output path.
+    let relocated_output = tempfile::tempdir()?;
+    let relocated = OrdinaryLibraryNativeProfiles::prepare(OrdinaryLibraryNativeRequest {
+        support: Arc::clone(&support),
+        graph: &graph,
+        index: &index,
+        blobs: &blobs,
+        output: relocated_output.path(),
+        rustc: &rustc,
+        target: &target,
+        profiles: &PROFILES,
+    })?;
+    assert!(!relocated_output.path().join("store").exists());
+    for (profile, report) in relocated.reports() {
+        assert!(report.compiled.is_empty());
+        let request = relocated
+            .metadata()
+            .observations()
+            .get(profile)
+            .ok_or("relocated full request missing")?;
+        request.verify()?;
+        assert_eq!(report.reused.len(), request.graph().units().len());
+        for (identity, unit) in request.graph().units() {
+            let original = requests
+                .get(profile)
+                .and_then(|request| request.graph().units().get(identity))
+                .ok_or("relocated original native record missing")?;
+            assert_eq!(unit.output()?, original.output()?);
+        }
+        println!(
+            "ordinary-publication-evidence {}",
+            serde_json::json!({"phase": "native-relocated", "profile": profile,
+                "compiled": report.compiled.len(), "reused": report.reused.len(), "seconds": report.seconds})
+        );
+    }
+    drop(relocated);
     let debug = requests.get("debug").ok_or("debug request missing")?;
     let intent = OvenBuildIntent {
         target: target.clone(),
