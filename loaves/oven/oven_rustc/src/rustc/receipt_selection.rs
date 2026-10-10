@@ -375,7 +375,7 @@ fn select_project_inspection_constituents(
 }
 
 /// Revalidate every selected constituent against its sealed receipt, kind, and release base.
-fn validate_selected_project_inspection_constituents(
+pub(super) fn validate_selected_project_inspection_constituents(
     payload: &OvenProjectInspectionAuthorityPayload,
     stored_constituents: &[OvenStoreExecutionPayload],
 ) -> Result<(), OvenRustcError> {

@@ -88,14 +88,25 @@ pub(super) fn prepare_oven_test_command_context(
     let has_conventional_target =
         project_root.join("src/lib.incn").is_file() || project_root.join("src/main.incn").is_file();
     let project_source_authorities = if session.manifest.is_some() && has_conventional_target {
-        incan_driver::build::output_selection::load_current_project_registry_source_authorities(&store, &project_root)?
-            .map(|authority| {
-                incan_driver::lock::registry_sources::prepare_project_registry_source_authorities_with_native_sdk(
+        match incan_driver::build::output_selection::load_current_project_registry_source_authorities(
+            &store,
+            &project_root,
+        )? {
+            Some(authority) => {
+                use incan_driver::lock::registry_sources::{
+                    ProjectRegistrySourceAuthoritySelection,
+                    prepare_optional_project_registry_source_authorities_with_native_sdk,
+                };
+                match prepare_optional_project_registry_source_authorities_with_native_sdk(
                     authority,
                     native_sdk_context.clone(),
-                )
-            })
-            .transpose()?
+                )? {
+                    ProjectRegistrySourceAuthoritySelection::Prepared(prepared) => Some(prepared),
+                    ProjectRegistrySourceAuthoritySelection::StaleNativeGeneration => None,
+                }
+            }
+            None => None,
+        }
     } else {
         None
     };

@@ -105,15 +105,44 @@ impl NativeSdkCommandContext {
 
     /// Require a receipt's portable catalog binding to name this exact command-admitted publication.
     fn verify_receipt(&self, receipt: &oven_store::OvenReceipt) -> CliResult<()> {
-        self.verify()?;
-        if let Some(expected) = receipt.sources.build_unit_inputs.get("sdk-native-closure")
-            && *expected != oven_store::digest_bytes(self.selection.receipt_catalog())
-        {
+        if !self.receipts_match_admission(&[receipt])? {
             return Err(CliError::failure(
                 "receipt-selected native SDK differs from command admission",
             ));
         }
         Ok(())
+    }
+
+    /// Compare genuine receipt generations after one revalidation of this command's original native owners.
+    ///
+    /// A differing catalog is useful only to optional lineage selection. Strict execution still calls
+    /// `verify_receipt`; malformed receipts and changed current admission are errors in both paths. Every receipt
+    /// is checked even after a mismatch, so a stale generation cannot hide a later malformed binding.
+    pub(crate) fn receipts_match_admission(&self, receipts: &[&oven_store::OvenReceipt]) -> CliResult<bool> {
+        self.verify()?;
+        let current = oven_store::digest_bytes(self.selection.receipt_catalog());
+        let mut matches = true;
+        for receipt in receipts {
+            receipt
+                .verify_identity()
+                .map_err(|error| CliError::failure(format!("invalid native consumer receipt: {error}")))?;
+            if let Some(expected) = receipt.sources.build_unit_inputs.get("sdk-native-closure") {
+                if !expected.strip_prefix("sha256:").is_some_and(|hex| {
+                    hex.len() == 64
+                        && hex
+                            .bytes()
+                            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                }) {
+                    return Err(CliError::failure(
+                        "native consumer receipt has an invalid catalog identity",
+                    ));
+                }
+                if *expected != current {
+                    matches = false;
+                }
+            }
+        }
+        Ok(matches)
     }
 
     /// Borrow the exact retained owner index after checking the caller's catalog binding and current witnesses.
