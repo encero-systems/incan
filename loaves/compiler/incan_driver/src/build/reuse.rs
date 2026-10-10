@@ -12,7 +12,9 @@ use crate::build::output_materialization::{
     materialize_project_output, project_output_projection_is_current,
 };
 use crate::build::output_paths::{validate_packaged_library_metadata_files, validated_project_output_relative_path};
-use crate::build::output_selection::matching_baked_project_outputs_with_source_authority;
+use crate::build::output_selection::{
+    located_project_output, matching_baked_project_outputs_with_source_authority, remember_project_output,
+};
 use crate::build::package_loafs::{
     copy_receipted_oven_store_entry, decode_packaged_library_loaf_manifest, validated_packaged_library_loaf_profile,
 };
@@ -44,70 +46,6 @@ use oven_store::store::{OvenArtifactKind, OvenStore, OvenStoreError};
 fn trace_reuse_timing(started: std::time::Instant, phase: &str) {
     if std::env::var_os("INCAN_OVEN_TRACE_REUSE").is_some() {
         eprintln!("Oven reuse {phase}: {:.3} ms", started.elapsed().as_secs_f64() * 1000.0);
-    }
-}
-
-/// Resolve an optional local locator through the store's verified payload and active-lease boundary.
-///
-/// The locator is only a search hint. Its payload must still match the local receipt here and all current source,
-/// compiler, lock, target and inspection facts at the caller. Missing, malformed or reclaimed hints fall back to
-/// normal store selection; they never authorize execution by themselves.
-#[track_caller]
-fn located_project_output(
-    store: &OvenStore,
-    receipt_path: &Path,
-    receipt: &oven_store::OvenReceipt,
-) -> CliResult<Option<OvenStoredProjectOutput>> {
-    let caller = std::panic::Location::caller();
-    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::located_project_output", input = %receipt.identity, caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
-    let Some(identity) = fs::read(receipt_path.with_extension("output.json"))
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<String>(&bytes).ok())
-        .filter(|identity| {
-            identity
-                .strip_prefix("sha256:")
-                .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
-        })
-    else {
-        return Ok(None);
-    };
-    let Ok((manifest, root, bytes, lease)) = store.select_payload_for_execution(&identity) else {
-        return Ok(None);
-    };
-    if manifest.kind != OvenArtifactKind::ProjectOutput
-        || manifest.receipt_identity != receipt.identity
-        || manifest.build_unit_identity != receipt.build_unit_identity
-        || manifest.intent != receipt.intent
-    {
-        return Ok(None);
-    }
-    let Ok(payload) = serde_json::from_slice::<super::OvenProjectOutputPayload>(&bytes) else {
-        return Ok(None);
-    };
-    if payload.schema_version != super::OVEN_PROJECT_OUTPUT_PAYLOAD_SCHEMA_VERSION {
-        return Ok(None);
-    }
-    crate::build::publication::stored_project_output_from_parts(manifest, root, payload, lease).map(Some)
-}
-
-/// Atomically retain a verified output's address as a replaceable local selection hint.
-fn remember_project_output(receipt_path: &Path, identity: &str) {
-    let locator = receipt_path.with_extension("output.json");
-    if fs::read(&locator)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<String>(&bytes).ok())
-        .as_deref()
-        == Some(identity)
-    {
-        return;
-    }
-    let staged = locator.with_extension(format!("{}.tmp", std::process::id()));
-    let result = serde_json::to_vec(identity)
-        .map_err(std::io::Error::other)
-        .and_then(|bytes| fs::write(&staged, bytes))
-        .and_then(|()| fs::rename(&staged, &locator));
-    if result.is_err() {
-        let _removed = fs::remove_file(staged);
     }
 }
 
@@ -396,7 +334,7 @@ fn locate_expected_project_outputs(
 ) -> CliResult<Option<Vec<Option<OvenStoredProjectOutput>>>> {
     let located = expected_outputs
         .iter()
-        .map(|(_, _, _, path, receipt)| located_project_output(store, path, receipt))
+        .map(|(_, _, _, path, receipt)| located_project_output(store, path, Some(receipt), |_, _| true))
         .collect::<CliResult<Vec<_>>>()?;
     let headers = if located.iter().all(Option::is_some) {
         Vec::new()
@@ -1038,17 +976,18 @@ mod tests {
             crate::build::test_support::fixture_project_output_publication(project.path(), "debug", "locator")?;
         let output = crate::build::publication::publish_project_output_loaf(&store, &receipt, &payload, &files)?;
         let receipt_path = project.path().join("locator-receipt.json");
-        assert!(located_project_output(&store, &receipt_path, &receipt)?.is_none());
+        assert!(located_project_output(&store, &receipt_path, Some(&receipt), |_, _| true)?.is_none());
         remember_project_output(&receipt_path, &output.identity);
-        let selected = located_project_output(&store, &receipt_path, &receipt)?.ok_or("exact locator missed")?;
+        let selected = located_project_output(&store, &receipt_path, Some(&receipt), |_, _| true)?
+            .ok_or("exact locator missed")?;
         assert_eq!(selected.identity, output.identity);
         let (foreign, _, _) =
             crate::build::test_support::fixture_project_output_publication(project.path(), "release", "foreign")?;
-        assert!(located_project_output(&store, &receipt_path, &foreign)?.is_none());
+        assert!(located_project_output(&store, &receipt_path, Some(&foreign), |_, _| true)?.is_none());
         fs::write(receipt_path.with_extension("output.json"), b"\"../../not-an-identity\"")?;
-        assert!(located_project_output(&store, &receipt_path, &receipt)?.is_none());
+        assert!(located_project_output(&store, &receipt_path, Some(&receipt), |_, _| true)?.is_none());
         remember_project_output(&receipt_path, &format!("sha256:{}", "0".repeat(64)));
-        assert!(located_project_output(&store, &receipt_path, &receipt)?.is_none());
+        assert!(located_project_output(&store, &receipt_path, Some(&receipt), |_, _| true)?.is_none());
         Ok(())
     }
 
@@ -1084,7 +1023,7 @@ mod tests {
         })?;
         let receipt_path = project.path().join("old-locator-receipt.json");
         remember_project_output(&receipt_path, &old.identity);
-        assert!(located_project_output(&store, &receipt_path, &receipt)?.is_none());
+        assert!(located_project_output(&store, &receipt_path, Some(&receipt), |_, _| true)?.is_none());
         assert!(
             store.select_payload_for_execution(&old.identity).is_ok(),
             "old immutable output must remain available to its original consumer"
