@@ -1,0 +1,55 @@
+# behavior: forwarded generic methods and functions compare closed string carriers through shared equality and inequality, retain their input strings, and preserve numeric and boolean comparisons
+# expect-stdout:
+#   true
+#   true
+#   false
+#   true
+#   true
+#   false
+#   猫
+#   猫
+#   true
+#   true
+#   true
+#   false
+
+model Comparator:
+    def same[T](self, left: T, right: T) -> bool:
+        return left == right
+
+    def different[T](self, left: T, right: T) -> bool:
+        return left != right
+
+
+def same[T](left: T, right: T) -> bool:
+    return left == right
+
+
+def different[T](left: T, right: T) -> bool:
+    return left != right
+
+
+def method_same[T](comparator: Comparator, left: T, right: T) -> bool:
+    return comparator.same(left, right)
+
+
+def method_different[T](comparator: Comparator, left: T, right: T) -> bool:
+    return comparator.different(left, right)
+
+
+def main() -> None:
+    left = "猫"
+    right = "猫"
+    comparator = Comparator()
+    println(method_same(comparator, left, right))
+    println(same(left, right))
+    println(method_different(comparator, left, right))
+    println(different(left, "é"))
+    println(same("", ""))
+    println(method_same(comparator, "", "猫"))
+    println(left)
+    println(right)
+    println(method_same(comparator, 3, 3))
+    println(different(3, 4))
+    println(same(true, true))
+    println(method_different(comparator, false, false))

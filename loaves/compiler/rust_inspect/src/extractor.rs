@@ -1,6 +1,7 @@
 //! Map rust-analyzer `hir` definitions into [`incan_lang::interop::RustItemMetadata`].
 
 use std::collections::{BTreeMap, HashSet};
+use std::time::{Duration, Instant};
 
 use incan_lang::interop::{
     RustAssociatedTypeBinding, RustAssociatedTypeRequirement, RustExpandedDeriveTrait, RustFieldInfo, RustFunctionSig,
@@ -879,14 +880,59 @@ fn expanded_adt_derived_traits_with_probe_predicates(
 ///
 /// The generated inspection root invokes each requested derive on a distinct top-level probe using the exact
 /// canonical macro path. Matching that compiler-authored attribute supplies provenance without assuming that a macro
-/// and any trait it implements share a name or module. Dependency crates cannot contribute evidence because their
-/// crates have reverse dependencies and therefore are not graph heads.
+/// and any trait it implements share a name or module. Crates with reverse dependencies cannot contribute probe
+/// evidence because the traversal admits only graph heads.
 fn macro_derive_probe_outputs(canonical_path: &str, db: &RootDatabase) -> Vec<RustExpandedDeriveTrait> {
+    let mut work = MacroDeriveProbeWork {
+        requests: 1,
+        head_scope_visits: 0,
+    };
+    let outputs = macro_derive_probe_outputs_inner(canonical_path, db, &mut work);
+    tracing::debug!(
+        canonical_path,
+        requests = work.requests,
+        head_scope_visits = work.head_scope_visits,
+        expanded_traits = outputs.len(),
+        "derive probe work completed"
+    );
+    #[cfg(test)]
+    MACRO_DERIVE_PROBE_WORK.with(|counts| {
+        let previous = counts.get();
+        counts.set(MacroDeriveProbeWork {
+            requests: previous.requests + work.requests,
+            head_scope_visits: previous.head_scope_visits + work.head_scope_visits,
+        });
+    });
+    outputs
+}
+
+/// Count actual probe requests and HIR graph-head scope visits, rather than cache-map observations.
+#[derive(Clone, Copy, Default)]
+struct MacroDeriveProbeWork {
+    requests: usize,
+    head_scope_visits: usize,
+}
+
+#[cfg(test)]
+std::thread_local! {
+    /// Isolate synchronous extraction work from concurrently running native tests.
+    static MACRO_DERIVE_PROBE_WORK: std::cell::Cell<MacroDeriveProbeWork> = const {
+        std::cell::Cell::new(MacroDeriveProbeWork { requests: 0, head_scope_visits: 0 })
+    };
+}
+
+/// Gather matching probe expansions while counting each actual HIR graph-head scope visit.
+fn macro_derive_probe_outputs_inner(
+    canonical_path: &str,
+    db: &RootDatabase,
+    work: &mut MacroDeriveProbeWork,
+) -> Vec<RustExpandedDeriveTrait> {
     let expected_attribute = format!("#[derive({canonical_path})]");
     for krate in Crate::all(db) {
         if krate.is_builtin(db) || !krate.reverse_dependencies(db).is_empty() {
             continue;
         }
+        work.head_scope_visits += 1;
         for (_, definition) in krate.root_module(db).scope(db, None) {
             let ScopeDef::ModuleDef(ModuleDef::Adt(adt)) = definition else {
                 continue;
@@ -1444,6 +1490,35 @@ fn crate_dependency_closure(surface_crate: Crate, db: &RootDatabase) -> HashSet<
     closure
 }
 
+/// Time one existing type-metadata operation only when extractor debug evidence is enabled.
+///
+/// The closure runs exactly once and returns its original value. Nested candidate/solver measurements describe
+/// subphases of the surrounding trait phase and must not be added to that aggregate a second time.
+fn trace_type_metadata_phase<T>(phase: &'static str, collect: impl FnOnce() -> T) -> T {
+    if !tracing::enabled!(tracing::Level::DEBUG) {
+        return collect();
+    }
+    let started = Instant::now();
+    let value = collect();
+    tracing::debug!(
+        phase,
+        elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+        "type metadata phase completed"
+    );
+    value
+}
+
+/// Actual candidate and solver work for one unchanged receiver/environment and its authorized trait surface.
+#[derive(Default)]
+struct TraitImplementationWork {
+    trait_candidates: usize,
+    authorized_candidates: usize,
+    unique_authorized_traits: HashSet<Trait>,
+    solver_calls: usize,
+    solver_elapsed: Duration,
+    accepted_candidates: usize,
+}
+
 /// Collect non-blanket trait impls whose traits belong to the queried Rust surface dependency closure.
 ///
 /// `Impl::all_for_type` scans the entire loaded rust-analyzer graph. Rust's orphan rules allow a downstream crate to
@@ -1456,16 +1531,51 @@ fn collect_implemented_traits(
     mutable_reference: bool,
     db: &RootDatabase,
 ) -> Vec<RustImplementedTrait> {
+    let observe = tracing::enabled!(tracing::Level::DEBUG);
+    let _span = tracing::debug_span!(
+        "rust_trait_implementation_collection",
+        mutable_reference,
+        authorized_trait_crates = authorized_trait_crates.len()
+    )
+    .entered();
+    let collection_started = observe.then(Instant::now);
+    let candidates_started = observe.then(Instant::now);
+    let candidates = Impl::all_for_type(db, ty.clone());
+    if let Some(started) = candidates_started {
+        tracing::debug!(
+            candidate_acquisitions = 1,
+            candidates = candidates.len(),
+            elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+            "trait implementation candidates acquired"
+        );
+    }
+    let mut work = TraitImplementationWork::default();
     let mut traits = BTreeMap::new();
-    for impl_def in Impl::all_for_type(db, ty.clone()) {
+    for impl_def in candidates {
         let Some(trait_def) = impl_def.trait_(db) else {
             continue;
         };
+        if observe {
+            work.trait_candidates += 1;
+        }
         if !authorized_trait_crates.contains(&trait_def.module(db).krate(db)) {
             continue;
         }
-        if !ty.clone().impls_trait(db, trait_def, &[]) {
+        if observe {
+            work.authorized_candidates += 1;
+            work.unique_authorized_traits.insert(trait_def);
+            work.solver_calls += 1;
+        }
+        let solver_started = observe.then(Instant::now);
+        let implements = ty.clone().impls_trait(db, trait_def, &[]);
+        if let Some(started) = solver_started {
+            work.solver_elapsed += started.elapsed();
+        }
+        if !implements {
             continue;
+        }
+        if observe {
+            work.accepted_candidates += 1;
         }
         let path = canonical_module_def_path(ModuleDef::Trait(trait_def), db)
             .unwrap_or_else(|| trait_def.name(db).as_str().to_owned());
@@ -1475,6 +1585,19 @@ fn collect_implemented_traits(
                 path,
                 mutable_reference,
             },
+        );
+    }
+    if let Some(started) = collection_started {
+        tracing::debug!(
+            trait_candidates = work.trait_candidates,
+            authorized_candidates = work.authorized_candidates,
+            unique_authorized_traits = work.unique_authorized_traits.len(),
+            solver_calls = work.solver_calls,
+            solver_elapsed_ms = work.solver_elapsed.as_secs_f64() * 1000.0,
+            accepted_candidates = work.accepted_candidates,
+            accepted_trait_paths = traits.len(),
+            elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+            "trait implementation collection completed"
         );
     }
     traits.into_values().collect()
@@ -1627,9 +1750,10 @@ fn module_children(module: Module, db: &RootDatabase) -> RustModuleInfo {
 
 /// Extract a trait's public associated items and any same-path derive-macro expansion contract.
 ///
-/// `derive_path` is the consumer-visible import path rather than the trait definition path because Rust keeps traits
-/// and derive macros in separate namespaces and a facade may re-export them from different crates.
-fn trait_info(tr: Trait, derive_path: &str, db: &RootDatabase, dt: DisplayTarget) -> RustTraitInfo {
+/// `derive_path` is present only when that exact consumer-visible path resolves to a derive macro in the macro
+/// namespace. A facade may re-export the trait and macro from different crates, so the trait's definition path or
+/// final name cannot establish this fact. Ordinary traits need no graph-wide derive-probe search.
+fn trait_info(tr: Trait, derive_path: Option<&str>, db: &RootDatabase, dt: DisplayTarget) -> RustTraitInfo {
     let mut items = Vec::new();
     for item in tr.items(db) {
         match item {
@@ -1666,8 +1790,8 @@ fn trait_info(tr: Trait, derive_path: &str, db: &RootDatabase, dt: DisplayTarget
     // Traits and derive macros live in separate Rust namespaces. A public facade can therefore re-export a trait
     // from its defining crate and a same-spelling derive macro from another crate. Probe the path the consumer
     // actually imported, not the trait's definition path, because only the former preserves that macro namespace.
-    let derive_macro = (!derive_path.is_empty())
-        .then(|| macro_derive_probe_outputs(derive_path, db))
+    let derive_macro = derive_path
+        .map(|path| macro_derive_probe_outputs(path, db))
         .filter(|outputs| !outputs.is_empty())
         .map(|expanded_traits| RustMacroInfo { expanded_traits });
     RustTraitInfo { items, derive_macro }
@@ -1686,11 +1810,48 @@ fn find_crate(workspace: &RustWorkspace, crate_name: &str) -> Option<Crate> {
 /// rust-analyzer's direct path resolver is preferred. The scope walk is the compatibility fallback needed for facade
 /// paths whose final spelling occupies more than one Rust namespace.
 fn resolve_module_def(db: &RootDatabase, krate: Crate, segments: &[Name]) -> Result<ModuleDef, RustMetadataError> {
+    resolve_rust_path(db, krate, segments).map(|resolved| resolved.definition)
+}
+
+/// Retain the selected definition and a same-path derive macro from one canonical namespace resolution.
+struct ResolvedRustPath {
+    definition: ModuleDef,
+    derive_macro: Option<ra_ap_hir::Macro>,
+}
+
+/// Select a real derive macro from resolved namespaces without inferring it from a trait name or source attribute.
+fn resolved_derive_macro(
+    mut definitions: impl Iterator<Item = ModuleDef>,
+    db: &RootDatabase,
+) -> Option<ra_ap_hir::Macro> {
+    definitions.find_map(|definition| match definition {
+        ModuleDef::Macro(macro_) if macro_.is_derive(db) => Some(macro_),
+        _ => None,
+    })
+}
+
+/// Resolve all final namespaces through the existing HIR resolver and facade compatibility scope walk.
+///
+/// Preserve the first selected definition while retaining any derive macro under that exact imported path. This
+/// avoids scanning unrelated graph heads to prove that a plain trait has no associated derive contract.
+fn resolve_rust_path(
+    db: &RootDatabase,
+    krate: Crate,
+    segments: &[Name],
+) -> Result<ResolvedRustPath, RustMetadataError> {
     let root = krate.root_module(db);
     if let Some(mut it) = root.resolve_mod_path(db, segments.iter().cloned())
         && let Some(first) = it.next()
     {
-        return Ok(first.into_module_def());
+        let definition = first.into_module_def();
+        let derive_macro = resolved_derive_macro(
+            std::iter::once(definition).chain(it.map(|item| item.into_module_def())),
+            db,
+        );
+        return Ok(ResolvedRustPath {
+            definition,
+            derive_macro,
+        });
     }
 
     let mut module = root;
@@ -1705,10 +1866,20 @@ fn resolve_module_def(db: &RootDatabase, krate: Crate, segments: &[Name]) -> Res
             let Some((_, scope_def)) = matches.next() else {
                 return Err(RustMetadataError::PathNotResolved(segments_display(segments)));
             };
-            return match scope_def {
-                ScopeDef::ModuleDef(def) => Ok(def),
-                _ => Err(RustMetadataError::PathNotResolved(segments_display(segments))),
+            let ScopeDef::ModuleDef(definition) = scope_def else {
+                return Err(RustMetadataError::PathNotResolved(segments_display(segments)));
             };
+            let derive_macro = resolved_derive_macro(
+                std::iter::once(definition).chain(matches.filter_map(|(_, scope_def)| match scope_def {
+                    ScopeDef::ModuleDef(definition) => Some(definition),
+                    _ => None,
+                })),
+                db,
+            );
+            return Ok(ResolvedRustPath {
+                definition,
+                derive_macro,
+            });
         }
 
         let next_module = matches.find_map(|(_, scope_def)| match scope_def {
@@ -1872,35 +2043,49 @@ fn extract_rust_item_inner(
     db: &RootDatabase,
     canonical_path: &str,
 ) -> Result<RustItemMetadata, RustMetadataError> {
+    let _span = tracing::debug_span!("rust_metadata_extraction", canonical_path).entered();
     let (crate_name, segments) = split_canonical_path(canonical_path)?;
     let krate =
         find_crate(workspace, crate_name).ok_or_else(|| RustMetadataError::CrateNotFound(crate_name.to_owned()))?;
     let dt = DisplayTarget::from_crate(db, krate.base());
-    let authorized_trait_crates = crate_dependency_closure(krate, db);
-    let def = resolve_module_def(db, krate, &segments)?;
+    let authorized_trait_crates =
+        trace_type_metadata_phase("authorized_trait_crates", || crate_dependency_closure(krate, db));
+    let resolved = trace_type_metadata_phase("resolve_path", || resolve_rust_path(db, krate, &segments))?;
+    let def = resolved.definition;
     let vis = map_visibility(def.visibility(db));
     let kind = match def {
         ModuleDef::Module(m) => RustItemKind::Module(module_children(m, db)),
         ModuleDef::Function(f) => RustItemKind::Function(extract_function_sig(f, db, dt)),
         ModuleDef::Adt(adt) => {
-            let ty = adt.ty(db);
-            let generics = source_adt_generics(adt, db);
-            let type_param_defaults = canonical_type_param_defaults(&generics, adt.module(db), db);
+            let (ty, generics, type_param_defaults) = trace_type_metadata_phase("adt_owner_and_generics", || {
+                let ty = adt.ty(db);
+                let generics = source_adt_generics(adt, db);
+                let defaults = canonical_type_param_defaults(&generics, adt.module(db), db);
+                (ty, generics, defaults)
+            });
             RustItemKind::Type(RustTypeInfo {
                 type_params: generics.type_params,
                 type_param_defaults,
-                mutable_reference_type_params: adt_mutable_reference_type_params(adt, db),
-                expanded_derive_traits: expanded_adt_derived_traits(adt, db),
+                mutable_reference_type_params: trace_type_metadata_phase("mutable_reference_projection", || {
+                    adt_mutable_reference_type_params(adt, db)
+                }),
+                expanded_derive_traits: trace_type_metadata_phase("expanded_derives", || {
+                    expanded_adt_derived_traits(adt, db)
+                }),
                 has_const_params: generics.has_const_params,
                 alias_target: None,
                 metadata_completeness: Default::default(),
-                methods: collect_inherent_methods(ty.clone(), db, dt),
-                implemented_traits: collect_type_implemented_traits(ty.clone(), &authorized_trait_crates, db),
-                fields: collect_public_fields(ty.clone(), db, dt, crate_name),
-                variants: match adt {
+                methods: trace_type_metadata_phase("inherent_methods", || collect_inherent_methods(ty.clone(), db, dt)),
+                implemented_traits: trace_type_metadata_phase("implemented_traits", || {
+                    collect_type_implemented_traits(ty.clone(), &authorized_trait_crates, db)
+                }),
+                fields: trace_type_metadata_phase("public_fields", || {
+                    collect_public_fields(ty.clone(), db, dt, crate_name)
+                }),
+                variants: trace_type_metadata_phase("enum_variants", || match adt {
                     Adt::Enum(enum_) => collect_enum_variant_payloads(enum_, ty, db, dt, crate_name),
                     _ => Vec::new(),
-                },
+                }),
             })
         }
         ModuleDef::BuiltinType(b) => {
@@ -1913,9 +2098,11 @@ fn extract_rust_item_inner(
                 has_const_params: false,
                 alias_target: None,
                 metadata_completeness: Default::default(),
-                methods: collect_inherent_methods(ty.clone(), db, dt),
-                implemented_traits: collect_type_implemented_traits(ty.clone(), &authorized_trait_crates, db),
-                fields: collect_public_fields(ty, db, dt, crate_name),
+                methods: trace_type_metadata_phase("inherent_methods", || collect_inherent_methods(ty.clone(), db, dt)),
+                implemented_traits: trace_type_metadata_phase("implemented_traits", || {
+                    collect_type_implemented_traits(ty.clone(), &authorized_trait_crates, db)
+                }),
+                fields: trace_type_metadata_phase("public_fields", || collect_public_fields(ty, db, dt, crate_name)),
                 variants: Vec::new(),
             })
         }
@@ -1925,7 +2112,15 @@ fn extract_rust_item_inner(
         ModuleDef::Static(s) => RustItemKind::Constant {
             type_display: source_static_type_identity_display(s, db).unwrap_or_else(|| format_ty(&s.ty(db), db, dt)),
         },
-        ModuleDef::Trait(t) => RustItemKind::Trait(trait_info(t, canonical_path, db, dt)),
+        ModuleDef::Trait(t) => {
+            let derive_path = resolved.derive_macro.map(|_| canonical_path);
+            tracing::debug!(
+                canonical_path,
+                has_derive_macro = derive_path.is_some(),
+                "trait derive namespace resolved"
+            );
+            RustItemKind::Trait(trait_info(t, derive_path, db, dt))
+        }
         ModuleDef::TypeAlias(a) => {
             let ty = a.ty(db);
             let generics = source_type_alias_generics(a, db);
@@ -1940,9 +2135,11 @@ fn extract_rust_item_inner(
                     .and_then(|target| source_type_alias_identity_display(a, target.as_str(), db).or(Some(target)))
                     .or_else(|| Some(format_ty(&ty, db, dt))),
                 metadata_completeness: Default::default(),
-                methods: collect_inherent_methods(ty.clone(), db, dt),
-                implemented_traits: collect_type_implemented_traits(ty.clone(), &authorized_trait_crates, db),
-                fields: collect_public_fields(ty, db, dt, crate_name),
+                methods: trace_type_metadata_phase("inherent_methods", || collect_inherent_methods(ty.clone(), db, dt)),
+                implemented_traits: trace_type_metadata_phase("implemented_traits", || {
+                    collect_type_implemented_traits(ty.clone(), &authorized_trait_crates, db)
+                }),
+                fields: trace_type_metadata_phase("public_fields", || collect_public_fields(ty, db, dt, crate_name)),
                 variants: Vec::new(),
             })
         }
@@ -1969,7 +2166,179 @@ mod tests {
 
     use super::{RustWorkspace, exact_numeric_boundary_display, extract_rust_item};
     use crate::cache::RustMetadataCache;
-    use crate::loader::{OVEN_CARGO_BOOTSTRAP_INSPECTION_MARKER, OVEN_DIRECT_INSPECTION_MARKER};
+    use crate::loader::OVEN_DIRECT_INSPECTION_MARKER;
+
+    /// Prepare real macro output through the receipt-bound native executor, retaining it in the fixture store.
+    ///
+    /// Source snapshots and output receipts use the same production SDK path. A subsequent fixture can reuse its
+    /// identical output across temporary source directories; the inspector independently reacquires its own lease.
+    fn prepare_native_macro_fixture(
+        root: &std::path::Path,
+        driver: &std::path::Path,
+        provider: &std::path::Path,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use oven_rustc::sdk_closure::{ClosureCompileRequest, compile_local_sdk_facet, prepare_closure};
+        let rustc = std::env::var_os("RUSTC")
+            .map(std::path::PathBuf::from)
+            .ok_or("native macro fixture requires its selected Rust compiler")?;
+        let prepared = std::env::var_os("INCAN_INTERNAL_OVEN_EXPLICIT_BAKE_WORKSPACE")
+            .map(std::path::PathBuf::from)
+            .ok_or("native macro fixture requires its managed fixture store")?
+            .join("rust-inspect-native-macros");
+        fs::create_dir_all(&prepared)?;
+        let lock = root.join("native-macro-seed.json");
+        fs::write(&lock, b"{\"schema\":\"incan.oven.loaf-resolution/2\",\"units\":[]}")?;
+        let target = oven_rustc::rustc::rustc_host_target(&rustc)?;
+        let mut closure = prepare_closure(&ClosureCompileRequest {
+            primary: &[],
+            lock: &lock,
+            blobs: root,
+            output: &prepared,
+            rustc: &rustc,
+            index: root,
+            index_commit: "ee71d3e50de10d4fd7d8f817e0b1df04885bddb0",
+            target: &target,
+            profile: "debug",
+        })?;
+        for (project, domain) in [(driver, "host"), (provider, "target"), (root, "target")] {
+            compile_local_sdk_facet(&mut closure, project, &[], domain, &prepared, &rustc)?;
+        }
+        closure.require_complete()?;
+        let graph = closure.inspection_project();
+        let crates = graph["crates"]
+            .as_array()
+            .ok_or("native macro fixture has no source graph")?;
+        let mut sources = Vec::new();
+        let mut macros = Vec::new();
+        for (unit, record) in closure.units().iter().zip(crates) {
+            let source_root = unit.source_root();
+            assert_eq!(
+                record["env"]["CARGO_MANIFEST_DIR"].as_str(),
+                source_root.to_str(),
+                "macro queries must use the retained source owner instead of a publisher staging directory"
+            );
+            let source_digest = crate::loader::digest_oven_source_tree(&source_root)?;
+            sources.push(crate::loader::OvenInspectionRegistrySource {
+                package: unit.binding().loaf.clone(),
+                version: unit.binding().version.clone(),
+                registry: "registry+https://example.invalid/native-fixtures".to_string(),
+                checksum: source_digest.clone(),
+                features: unit.binding().features.clone(),
+                source_root,
+                source_digest,
+            });
+            if record["is_proc_macro"].as_bool() == Some(true) {
+                let artifact = unit.native_artifact()?;
+                macros.push(crate::loader::OvenInspectionProcMacro {
+                    root_module: record["root_module"]
+                        .as_str()
+                        .map(std::path::PathBuf::from)
+                        .ok_or("native macro fixture omitted its source module")?,
+                    store: prepared.join("store"),
+                    identity: artifact.store_identity,
+                    receipt_identity: artifact.receipt_identity,
+                    relative_path: artifact.relative_path,
+                    digest: artifact.digest,
+                });
+            }
+        }
+        crate::loader::write_oven_inspection_source_authority(root, sources)?;
+        crate::loader::write_oven_inspection_proc_macro_authority(root, macros)?;
+        fs::write(
+            root.join(crate::loader::OVEN_DIRECT_LOAF_PROJECT_FILE),
+            serde_json::to_vec_pretty(&graph)?,
+        )?;
+        Ok(())
+    }
+
+    /// Keep admission failures distinct from ordinary missing expansion: no unowned library reaches a server.
+    fn assert_native_macro_authority_rejections(root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+        let path = root.join(crate::loader::OVEN_DIRECT_PROC_MACRO_AUTHORITY_FILE);
+        let bytes = fs::read(&path)?;
+        let authority: serde_json::Value = serde_json::from_slice(&bytes)?;
+        for (field, replacement, expected) in [
+            (
+                "digest",
+                "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "coordinates disagree",
+            ),
+            (
+                "receipt_identity",
+                "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "coordinates disagree",
+            ),
+            ("relative_path", "missing_macro.dylib", "coordinates disagree"),
+            ("relative_path", "../unowned_macro.dylib", "owner-relative"),
+            ("root_module", "src/lib.rs", ""),
+        ] {
+            let mut invalid = authority.clone();
+            // The source-owner mismatch uses the existing consumer source, not a nonexistent path.
+            invalid["macros"][0][field] = if field == "root_module" {
+                serde_json::json!(root.join(replacement).canonicalize()?)
+            } else {
+                serde_json::json!(replacement)
+            };
+            fs::write(&path, serde_json::to_vec_pretty(&invalid)?)?;
+            let rejected = RustWorkspace::load(root, &|_| ());
+            assert!(
+                matches!(rejected, Err(crate::error::RustMetadataError::LoadWorkspace { message, .. })
+                if message.contains(if expected.is_empty() { "coordinates disagree" } else { expected })),
+                "native macro admission must reject changed {field} before workspace loading"
+            );
+        }
+        fs::write(&path, bytes)?;
+        let entry = &authority["macros"][0];
+        let store = oven_store::store::OvenStore::new(
+            entry["store"].as_str().ok_or("fixture macro has no store")?,
+            oven_store::store::OvenStoreLimits::new(4 << 30, 4 << 30, 4 << 30),
+        );
+        let owners = store.select_payloads_for_execution(&[entry["identity"]
+            .as_str()
+            .ok_or("fixture macro has no identity")?
+            .to_string()])?;
+        let owner = owners.first().ok_or("fixture macro has no admitted owner")?;
+        let graph: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join(crate::loader::OVEN_DIRECT_LOAF_PROJECT_FILE))?)?;
+        for (compiler, host) in [
+            (
+                "rustc incompatible-fixture-compiler",
+                owner.manifest.intent.target.as_str(),
+            ),
+            (owner.manifest.intent.toolchain.as_str(), "incompatible-fixture-host"),
+        ] {
+            let mut selected_graph = graph.clone();
+            let rejected =
+                crate::loader::select_native_macros_for_test_compiler(root, &mut selected_graph, compiler, host);
+            assert!(
+                matches!(rejected, Err(crate::error::RustMetadataError::LoadWorkspace { message, .. })
+                if message.contains("coordinates disagree")),
+                "an admitted macro from another compiler or host must never reach the macro server"
+            );
+            assert_eq!(
+                selected_graph, graph,
+                "rejected admission must leave executable paths absent"
+            );
+        }
+        Ok(())
+    }
+
+    /// A live inspector independently protects its macro output even after the fixture publisher releases it.
+    fn assert_inspector_holds_macro_lease(root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+        let authority: serde_json::Value = serde_json::from_slice(&fs::read(
+            root.join(crate::loader::OVEN_DIRECT_PROC_MACRO_AUTHORITY_FILE),
+        )?)?;
+        let entry = &authority["macros"][0];
+        let identity = entry["identity"].as_str().ok_or("fixture macro has no identity")?;
+        let bounded = oven_store::store::OvenStore::new(
+            entry["store"].as_str().ok_or("fixture macro has no store")?,
+            oven_store::store::OvenStoreLimits::new(0, 0, 0),
+        );
+        let preview = bounded.preview_prune()?;
+        assert!(preview.dry_run);
+        assert!(preview.skipped_active_entries.iter().any(|held| held == identity));
+        assert!(!preview.removed_entries.iter().any(|removed| removed == identity));
+        Ok(())
+    }
 
     #[test]
     fn exact_numeric_boundary_display_preserves_widths() {
@@ -1983,12 +2352,22 @@ mod tests {
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "canonical_identity_probe"
 version = "0.1.0"
+
+[rust]
+name = "canonical_identity_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -2016,7 +2395,7 @@ impl Codec {
                 .find(|method| method.name == name)
                 .map(|method| method.signature.return_type.as_str())
         };
-        assert_eq!(return_type("bytes"), Some("std::vec::Vec<u8>"));
+        assert_eq!(return_type("bytes"), Some("alloc::vec::Vec<u8>"));
         assert_eq!(return_type("signed"), Some("Vec<i32>"));
         assert_eq!(
             return_type("payload"),
@@ -2031,6 +2410,68 @@ impl Codec {
         Ok(())
     }
 
+    /// Drain work observed by this test thread at the real derive-probe traversal boundaries.
+    fn take_macro_derive_probe_work() -> super::MacroDeriveProbeWork {
+        super::MACRO_DERIVE_PROBE_WORK.with(std::cell::Cell::take)
+    }
+
+    /// Ordinary traits and function-like macro names must not demand derive-probe graph-head scopes.
+    #[test]
+    fn dev7_trait_derive_namespace_gate_avoids_unrelated_head_scopes() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        fs::create_dir_all(tmp.path().join("src"))?;
+        fs::write(
+            tmp.path().join("loaf.toml"),
+            "[project]\nname='plain-trait-probe'\nversion='0.1.0'\n[rust]\nname='plain_trait_probe'\ntype='lib'\nedition='2024'\n",
+        )?;
+        fs::write(tmp.path().join(OVEN_DIRECT_INSPECTION_MARKER), b"direct\n")?;
+        fs::write(
+            tmp.path().join("src/lib.rs"),
+            r#"pub trait Plain { fn encode(&self) -> u8; }
+#[macro_export]
+macro_rules! Plain { () => {}; }
+pub struct __IncanDeriveProbeUnrelated;
+"#,
+        )?;
+        let workspace = RustWorkspace::load(tmp.path(), &|_| ())?;
+        take_macro_derive_probe_work();
+        let std_trait = extract_rust_item(&workspace, "std::io::Read")?;
+        let RustItemKind::Trait(info) = std_trait.kind else {
+            return Err(std::io::Error::other("expected std Read trait metadata").into());
+        };
+        assert!(info.derive_macro.is_none());
+        assert!(
+            info.items.iter().any(|item| matches!(
+                item,
+                incan_lang::interop::RustTraitAssoc::Function { name, .. } if name == "read"
+            )),
+            "ordinary trait methods must remain complete"
+        );
+        let work = take_macro_derive_probe_work();
+        assert_eq!(work.requests, 0);
+        assert_eq!(
+            work.head_scope_visits, 0,
+            "a std trait must not inspect the unrelated project head"
+        );
+
+        let plain = extract_rust_item(&workspace, "plain_trait_probe::Plain")?;
+        let RustItemKind::Trait(info) = plain.kind else {
+            return Err(std::io::Error::other("expected same-path plain trait metadata").into());
+        };
+        assert!(
+            info.derive_macro.is_none(),
+            "a function-like macro is not a derive macro"
+        );
+        assert!(info.items.iter().any(|item| matches!(
+            item,
+            incan_lang::interop::RustTraitAssoc::Function { name, .. } if name == "encode"
+        )));
+        let work = take_macro_derive_probe_work();
+        assert_eq!(work.requests, 0);
+        assert_eq!(work.head_scope_visits, 0);
+        Ok(())
+    }
+
     #[test]
     fn expanded_tuple_contract_flows_through_metadata_and_disk_cache() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
@@ -2040,15 +2481,22 @@ impl Codec {
         fs::create_dir_all(driver.join("src"))?;
         fs::create_dir_all(provider.join("src"))?;
         fs::write(
-            driver.join("Cargo.toml"),
-            r#"[package]
+            driver.join("loaf.toml"),
+            r#"[project]
 name = "tuple-driver"
 version = "0.1.0"
-edition = "2021"
 
-[lib]
-proc-macro = true
+[rust]
+name = "tuple_driver"
+edition = "2021"
+type = "proc-macro"
 "#,
+        )?;
+        fs::write(
+            driver
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             driver.join("src/lib.rs"),
@@ -2105,15 +2553,25 @@ pub fn derive_misleading(input: TokenStream) -> TokenStream {
 "#,
         )?;
         fs::write(
-            provider.join("Cargo.toml"),
-            r#"[package]
+            provider.join("loaf.toml"),
+            r#"[project]
 name = "tuple-provider-probe"
 version = "0.1.0"
+
+[rust]
+name = "tuple_provider_probe"
 edition = "2021"
+type = "lib"
 
 [dependencies]
-tuple-driver = { path = "../tuple-driver" }
+"tuple-driver" = { "loaf" = "tuple-driver", "path" = "../tuple-driver" }
 "#,
+        )?;
+        fs::write(
+            provider
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             provider.join("src/lib.rs"),
@@ -2157,20 +2615,38 @@ tuple_range!(impl_tuple_query_data, 9, 10, F);
 "#,
         )?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "tuple-consumer-probe"
 version = "0.1.0"
+
+[rust]
+name = "tuple_consumer_probe"
 edition = "2021"
+type = "lib"
 
 [dependencies]
-tuple-provider-probe = { path = "tuple-provider" }
-tuple-driver = { path = "tuple-driver" }
+"tuple-provider-probe" = { "loaf" = "tuple-provider-probe", "path" = "tuple-provider" }
+"tuple-driver" = { "loaf" = "tuple-driver", "path" = "tuple-driver" }
 "#,
         )?;
         fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
+        )?;
+        fs::write(
             tmp.path().join("src/lib.rs"),
-            r#"pub use tuple_provider_probe::*;
+            r#"extern crate self as tuple_consumer_probe;
+pub use tuple_provider_probe::*;
+pub mod facade {
+    pub use tuple_provider_probe::component::Component;
+    pub use tuple_driver::Component;
+}
+
+#[derive(tuple_consumer_probe::facade::Component)]
+struct __IncanDeriveProbeFacade;
 
 #[derive(tuple_provider_probe::Component)]
 struct __IncanDeriveProbe0;
@@ -2186,7 +2662,10 @@ struct __IncanDeriveProbe3;
 "#,
         )?;
 
+        prepare_native_macro_fixture(tmp.path(), &driver, &provider)?;
+        assert_native_macro_authority_rejections(tmp.path())?;
         let expanded_workspace = RustWorkspace::load_with_options(tmp.path(), &|_| {}, true)?;
+        assert_inspector_holds_macro_lease(tmp.path())?;
         let generated = extract_rust_item(&expanded_workspace, "tuple_provider_probe::GeneratedByDriver")?;
         assert!(matches!(generated.kind, RustItemKind::Type(_)));
         let widget = extract_rust_item(&expanded_workspace, "tuple_provider_probe::Widget")?;
@@ -2253,6 +2732,34 @@ struct __IncanDeriveProbe3;
             other_info.derive_macro.is_none(),
             "an implemented trait must not acquire macro identity from another spelling"
         );
+        take_macro_derive_probe_work();
+        let facade = extract_rust_item(&expanded_workspace, "tuple_consumer_probe::facade::Component")?;
+        assert_eq!(
+            facade.definition_path.as_deref(),
+            Some("tuple_provider_probe::component::Component")
+        );
+        let RustItemKind::Trait(facade_info) = facade.kind else {
+            return Err(std::io::Error::other("expected reexported facade trait metadata").into());
+        };
+        let facade_derive = facade_info
+            .derive_macro
+            .as_ref()
+            .and_then(|macro_info| macro_info.expanded_traits.first())
+            .ok_or_else(|| std::io::Error::other("expected exact facade derive-macro output"))?;
+        assert_eq!(facade_derive.path, "tuple_provider_probe::component::Component");
+        assert_eq!(
+            facade_derive
+                .associated_type_bindings
+                .first()
+                .map(|binding| binding.value_path.as_str()),
+            Some("tuple_provider_probe::Mutable")
+        );
+        let work = take_macro_derive_probe_work();
+        assert_eq!(work.requests, 1);
+        assert!(
+            work.head_scope_visits > 0,
+            "a genuine derive must retain checked probe traversal"
+        );
         let component_macro = extract_rust_item(&expanded_workspace, "tuple_driver::Component")?;
         let RustItemKind::Macro(component_macro_info) = component_macro.kind else {
             return Err(std::io::Error::other("expected Component derive macro metadata").into());
@@ -2298,7 +2805,7 @@ struct __IncanDeriveProbe3;
         assert_eq!(
             expanded_info.mutable_reference_type_params[0].tuple_composition_arities,
             [2, 3],
-            "Cargo-authorized proc-macro expansion must expose the generated tuple impls through HIR"
+            "receipt-owned native proc-macro expansion must expose the generated tuple impls through HIR"
         );
         let defaulted = extract_rust_item(&expanded_workspace, "tuple_provider_probe::Defaulted")?;
         let RustItemKind::Type(defaulted_info) = &defaulted.kind else {
@@ -2309,10 +2816,6 @@ struct __IncanDeriveProbe3;
             [Some("tuple_provider_probe::Mutable".to_string())],
             "HIR metadata must retain canonical declared default type arguments"
         );
-        fs::write(
-            tmp.path().join(OVEN_CARGO_BOOTSTRAP_INSPECTION_MARKER),
-            b"test Cargo semantic bootstrap\n",
-        )?;
 
         let assert_contract = |metadata: &incan_lang::interop::RustItemMetadata| -> Result<(), std::io::Error> {
             let RustItemKind::Type(info) = &metadata.kind else {
@@ -2351,13 +2854,13 @@ struct __IncanDeriveProbe3;
             };
 
         let cache = RustMetadataCache::new();
-        let metadata = cache.get_or_extract(tmp.path(), "tuple_provider_probe::FooBar", &|_| ())?;
+        let metadata = cache.get_or_extract_complete(tmp.path(), "tuple_provider_probe::FooBar", &|_| ())?;
         assert_contract(metadata.as_ref())?;
-        let widget = cache.get_or_extract(tmp.path(), "tuple_provider_probe::Widget", &|_| ())?;
+        let widget = cache.get_or_extract_complete(tmp.path(), "tuple_provider_probe::Widget", &|_| ())?;
         assert_widget_contract(widget.as_ref())?;
-        let defaulted = cache.get_or_extract(tmp.path(), "tuple_provider_probe::Defaulted", &|_| ())?;
+        let defaulted = cache.get_or_extract_complete(tmp.path(), "tuple_provider_probe::Defaulted", &|_| ())?;
         assert_defaulted_contract(defaulted.as_ref())?;
-        let component = cache.get_or_extract(tmp.path(), "tuple_provider_probe::Component", &|_| ())?;
+        let component = cache.get_or_extract_complete(tmp.path(), "tuple_provider_probe::Component", &|_| ())?;
         let RustItemKind::Trait(component_info) = &component.kind else {
             return Err(std::io::Error::other("expected cached Component trait metadata").into());
         };
@@ -2369,7 +2872,8 @@ struct __IncanDeriveProbe3;
                 .map(|implementation| implementation.path.as_str()),
             Some("tuple_provider_probe::component::Component")
         );
-        let misleading_trait = cache.get_or_extract(tmp.path(), "tuple_provider_probe::Misleading", &|_| ())?;
+        let misleading_trait =
+            cache.get_or_extract_complete(tmp.path(), "tuple_provider_probe::Misleading", &|_| ())?;
         let RustItemKind::Trait(misleading_trait_info) = &misleading_trait.kind else {
             return Err(std::io::Error::other("expected cached same-spelling Misleading trait metadata").into());
         };
@@ -2381,7 +2885,7 @@ struct __IncanDeriveProbe3;
                 .map(|implementation| implementation.path.as_str()),
             Some("tuple_provider_probe::Other")
         );
-        let component_macro = cache.get_or_extract(tmp.path(), "tuple_driver::Component", &|_| ())?;
+        let component_macro = cache.get_or_extract_complete(tmp.path(), "tuple_driver::Component", &|_| ())?;
         let RustItemKind::Macro(component_macro_info) = &component_macro.kind else {
             return Err(std::io::Error::other("expected cached Component macro metadata").into());
         };
@@ -2427,7 +2931,6 @@ struct __IncanDeriveProbe3;
         );
 
         drop(expanded_workspace);
-        fs::remove_file(tmp.path().join(OVEN_CARGO_BOOTSTRAP_INSPECTION_MARKER))?;
         fs::write(
             tmp.path().join(OVEN_DIRECT_INSPECTION_MARKER),
             b"test completed direct inspection\n",
@@ -2483,12 +2986,22 @@ struct __IncanDeriveProbe3;
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_trait_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_trait_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -2530,34 +3043,117 @@ impl Labeled for Thing {}
         }
 
         fs::write(
-            trait_api.join("Cargo.toml"),
-            "[package]\nname = \"trait_api\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            trait_api.join("loaf.toml"),
+            r#"[project]
+name = "trait_api"
+version = "0.1.0"
+
+[rust]
+name = "trait_api"
+edition = "2021"
+type = "lib"
+"#,
+        )?;
+        fs::write(
+            trait_api
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(trait_api.join("src/lib.rs"), "pub trait Intrinsic {}\n")?;
         fs::write(
-            surface_api.join("Cargo.toml"),
-            "[package]\nname = \"surface_api\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ntrait_api = { path = \"../trait-api\" }\n",
+            surface_api.join("loaf.toml"),
+            r#"[project]
+name = "surface_api"
+version = "0.1.0"
+
+[rust]
+name = "surface_api"
+edition = "2021"
+type = "lib"
+
+[dependencies]
+"trait_api" = { "loaf" = "trait_api", "path" = "../trait-api" }
+"#,
+        )?;
+        fs::write(
+            surface_api
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             surface_api.join("src/lib.rs"),
             "pub struct Thing;\npub type ThingAlias = Thing;\n\nimpl trait_api::Intrinsic for Thing {}\n",
         )?;
         fs::write(
-            downstream_api.join("Cargo.toml"),
-            "[package]\nname = \"downstream_api\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nsurface_api = { path = \"../surface-api\" }\n",
+            downstream_api.join("loaf.toml"),
+            r#"[project]
+name = "downstream_api"
+version = "0.1.0"
+
+[rust]
+name = "downstream_api"
+edition = "2021"
+type = "lib"
+
+[dependencies]
+"surface_api" = { "loaf" = "surface_api", "path" = "../surface-api" }
+"#,
+        )?;
+        fs::write(
+            downstream_api
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             downstream_api.join("src/lib.rs"),
             "pub trait Ambient {}\n\nimpl Ambient for surface_api::Thing {}\n",
         )?;
         fs::write(
-            clean_probe.join("Cargo.toml"),
-            "[package]\nname = \"clean_probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nsurface_api = { path = \"../surface-api\" }\n",
+            clean_probe.join("loaf.toml"),
+            r#"[project]
+name = "clean_probe"
+version = "0.1.0"
+
+[rust]
+name = "clean_probe"
+edition = "2021"
+type = "lib"
+
+[dependencies]
+"surface_api" = { "loaf" = "surface_api", "path" = "../surface-api" }
+"#,
+        )?;
+        fs::write(
+            clean_probe
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(clean_probe.join("src/lib.rs"), "pub fn load_surface() {}\n")?;
         fs::write(
-            polluted_probe.join("Cargo.toml"),
-            "[package]\nname = \"polluted_probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nsurface_api = { path = \"../surface-api\" }\ndownstream_api = { path = \"../downstream-api\" }\n",
+            polluted_probe.join("loaf.toml"),
+            r#"[project]
+name = "polluted_probe"
+version = "0.1.0"
+
+[rust]
+name = "polluted_probe"
+edition = "2021"
+type = "lib"
+
+[dependencies]
+"surface_api" = { "loaf" = "surface_api", "path" = "../surface-api" }
+"downstream_api" = { "loaf" = "downstream_api", "path" = "../downstream-api" }
+"#,
+        )?;
+        fs::write(
+            polluted_probe
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(polluted_probe.join("src/lib.rs"), "pub fn load_graph() {}\n")?;
 
@@ -2604,12 +3200,22 @@ impl Labeled for Thing {}
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_field_order_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_field_order_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -2636,12 +3242,22 @@ edition = "2021"
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_raw_field_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_raw_field_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -2668,12 +3284,22 @@ edition = "2021"
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_tuple_struct_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_tuple_struct_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -2699,12 +3325,22 @@ pub struct Color;
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_field_identity_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_field_identity_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -2743,12 +3379,22 @@ pub struct Envelope {
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_module_alias_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_module_alias_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -2792,8 +3438,22 @@ pub fn consume(payload: backend::Payload) {
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            "[package]\nname = \"demo_constant_probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            tmp.path().join("loaf.toml"),
+            r#"[project]
+name = "demo_constant_probe"
+version = "0.1.0"
+
+[rust]
+name = "demo_constant_probe"
+edition = "2021"
+type = "lib"
+"#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -2817,37 +3477,92 @@ pub fn consume(payload: backend::Payload) {
             fs::create_dir_all(tmp.path().join(path))?;
         }
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "duplicate_root"
 version = "0.1.0"
+
+[rust]
+name = "duplicate_root"
 edition = "2021"
+type = "lib"
 
 [dependencies]
-shared = { path = "selected", version = "2" }
-bridge = { path = "bridge" }
+"shared" = { "loaf" = "shared", "path" = "selected", "version" = "2" }
+"bridge" = { "loaf" = "bridge", "path" = "bridge" }
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(tmp.path().join("src/lib.rs"), "pub fn root() {}\n")?;
         fs::write(
-            tmp.path().join("selected/Cargo.toml"),
-            "[package]\nname = \"shared\"\nversion = \"2.0.0\"\nedition = \"2021\"\n",
+            tmp.path().join("selected/loaf.toml"),
+            r#"[project]
+name = "shared"
+version = "2.0.0"
+
+[rust]
+name = "shared"
+edition = "2021"
+type = "lib"
+"#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("selected/loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("selected/src/lib.rs"),
             "pub struct Marker { pub selected: u32 }\n",
         )?;
         fs::write(
-            tmp.path().join("transitive/Cargo.toml"),
-            "[package]\nname = \"shared\"\nversion = \"1.0.0\"\nedition = \"2021\"\n",
+            tmp.path().join("transitive/loaf.toml"),
+            r#"[project]
+name = "shared"
+version = "1.0.0"
+
+[rust]
+name = "shared"
+edition = "2021"
+type = "lib"
+"#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("transitive/loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("transitive/src/lib.rs"),
             "pub struct Marker { pub transitive: u32 }\n",
         )?;
         fs::write(
-            tmp.path().join("bridge/Cargo.toml"),
-            "[package]\nname = \"bridge\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nshared = { path = \"../transitive\", version = \"1\" }\n",
+            tmp.path().join("bridge/loaf.toml"),
+            r#"[project]
+name = "bridge"
+version = "0.1.0"
+
+[rust]
+name = "bridge"
+edition = "2021"
+type = "lib"
+
+[dependencies]
+"shared" = { "loaf" = "shared", "path" = "../transitive", "version" = "1" }
+"#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("bridge/loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("bridge/src/lib.rs"),
@@ -2872,12 +3587,22 @@ bridge = { path = "bridge" }
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_alias_identity_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_alias_identity_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -2895,7 +3620,7 @@ pub type ArrayRef = Arc<dyn Array>;
         };
         assert_eq!(
             info.alias_target.as_deref(),
-            Some("std::sync::Arc<dyn demo_alias_identity_probe::Array>")
+            Some("alloc::sync::Arc<dyn demo_alias_identity_probe::Array>")
         );
         Ok(())
     }
@@ -2905,12 +3630,22 @@ pub type ArrayRef = Arc<dyn Array>;
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_alias_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_alias_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -2942,12 +3677,22 @@ pub type SliceCallback =
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_borrow_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_borrow_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -2994,12 +3739,22 @@ impl Codec {
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_owner_generic_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_owner_generic_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -3033,12 +3788,22 @@ impl<'a, T, const N: usize, U> Factory<'a, T, N, U> {
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_structural_mut_ref_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_structural_mut_ref_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -3106,12 +3871,22 @@ impl<T: MutableComponent<Mutability = Mutable>> MutableData for &mut T {}
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_trait_solver_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_trait_solver_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -3174,12 +3949,22 @@ impl QueryData for Entity {}
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_callback_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_callback_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
@@ -3210,12 +3995,22 @@ pub fn run_inline<D: FnMut(&mut Data, &OutputCallbackInfo) + Send + 'static>(cal
         let tmp = tempfile::tempdir()?;
         fs::create_dir_all(tmp.path().join("src"))?;
         fs::write(
-            tmp.path().join("Cargo.toml"),
-            r#"[package]
+            tmp.path().join("loaf.toml"),
+            r#"[project]
 name = "demo_slice_callback_probe"
 version = "0.1.0"
+
+[rust]
+name = "demo_slice_callback_probe"
 edition = "2021"
+type = "lib"
 "#,
+        )?;
+        fs::write(
+            tmp.path()
+                .join("loaf.toml")
+                .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+            b"direct\n",
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),

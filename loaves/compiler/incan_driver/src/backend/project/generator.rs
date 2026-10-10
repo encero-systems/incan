@@ -276,6 +276,8 @@ pub struct ProjectGenerator {
     pub(crate) package_license: Option<String>,
     /// Whether this is a binary (true) or library (false)
     pub(crate) is_binary: bool,
+    /// Native SDK publication emits Rust source without compatibility Cargo manifests or locks.
+    pub(crate) native_sdk_publication: bool,
     /// Whether this binary's generated Cargo manifest also needs a publisher-only library target at `src/main.rs`.
     pub(crate) companion_library_target: bool,
     /// The standard library facets this program reaches beyond the ones every generated project links (see
@@ -333,6 +335,11 @@ pub enum RunProfile {
 }
 
 impl ProjectGenerator {
+    /// Select source-only generation for a checked native SDK publisher.
+    pub(crate) fn set_native_sdk_publication(&mut self) {
+        self.native_sdk_publication = true;
+    }
+
     /// Create a project generator for an Incan build target.
     pub fn new(output_dir: impl AsRef<Path>, name: &str, is_binary: bool) -> Self {
         Self {
@@ -342,6 +349,7 @@ impl ProjectGenerator {
             package_version: None,
             package_license: None,
             is_binary,
+            native_sdk_publication: false,
             companion_library_target: false,
             stdlib_facets: Vec::new(),
             dependencies: Vec::new(),
@@ -1412,16 +1420,21 @@ impl ProjectGenerator {
         self.remember_generated_source_identity(vec![("main.rs".to_string(), rust_code)]);
 
         // Write Cargo.toml
-        let cargo_toml = self.generate_cargo_toml()?;
-        changed |= Self::write_file_if_changed(&self.output_dir.join("Cargo.toml"), &cargo_toml)?;
-        changed |= self.write_cargo_lock_if_needed(&cargo_toml)?;
+        if !self.native_sdk_publication {
+            let cargo_toml = self.generate_cargo_toml()?;
+            changed |= Self::write_file_if_changed(&self.output_dir.join("Cargo.toml"), &cargo_toml)?;
+            changed |= self.write_cargo_lock_if_needed(&cargo_toml)?;
+        }
 
         // Single-file consumers need the same artifact-backed compatibility namespace as nested projects. Compiler
         // bridges still use `crate::__incan_std` while they are migrated to canonical artifact paths; re-exporting
         // the artifact's facade keeps those bridges out of a regenerated source stdlib tree.
         let mut full_main = rust_code.to_string();
-        self.add_sdk_provider_crate_lints(&mut full_main, is_sdk_provider_build());
-        if self.links_compiled_sdk_provider() && !is_sdk_provider_build() && !full_main.contains("mod __incan_std") {
+        self.add_sdk_provider_crate_lints(&mut full_main, self.native_sdk_publication || is_sdk_provider_build());
+        if self.links_compiled_sdk_provider()
+            && !(self.native_sdk_publication || is_sdk_provider_build())
+            && !full_main.contains("mod __incan_std")
+        {
             let facade = self.compiled_provider_facade(&[]);
             if let Some(marker_pos) = full_main.find(MOD_INSERT_MARKER) {
                 let line_end = full_main[marker_pos..]
@@ -1475,9 +1488,11 @@ impl ProjectGenerator {
         }
 
         // Write Cargo.toml
-        let cargo_toml = self.generate_cargo_toml()?;
-        changed |= Self::write_file_if_changed(&self.output_dir.join("Cargo.toml"), &cargo_toml)?;
-        changed |= self.write_cargo_lock_if_needed(&cargo_toml)?;
+        if !self.native_sdk_publication {
+            let cargo_toml = self.generate_cargo_toml()?;
+            changed |= Self::write_file_if_changed(&self.output_dir.join("Cargo.toml"), &cargo_toml)?;
+            changed |= self.write_cargo_lock_if_needed(&cargo_toml)?;
+        }
 
         // Write each module file
         for (module_name, module_code) in modules {
@@ -1490,7 +1505,7 @@ impl ProjectGenerator {
         // after any crate attributes.
         let mut full_main = String::new();
         full_main.push_str(main_code);
-        self.add_sdk_provider_crate_lints(&mut full_main, is_sdk_provider_build());
+        self.add_sdk_provider_crate_lints(&mut full_main, self.native_sdk_publication || is_sdk_provider_build());
 
         if !modules.is_empty() {
             // Add mod declarations for each module (sorted for deterministic output)
@@ -1559,9 +1574,11 @@ impl ProjectGenerator {
         self.remember_generated_source_identity(identity_sources);
 
         // Write Cargo.toml
-        let cargo_toml = self.generate_cargo_toml()?;
-        changed |= Self::write_file_if_changed(&self.output_dir.join("Cargo.toml"), &cargo_toml)?;
-        changed |= self.write_cargo_lock_if_needed(&cargo_toml)?;
+        if !self.native_sdk_publication {
+            let cargo_toml = self.generate_cargo_toml()?;
+            changed |= Self::write_file_if_changed(&self.output_dir.join("Cargo.toml"), &cargo_toml)?;
+            changed |= self.write_cargo_lock_if_needed(&cargo_toml)?;
+        }
 
         // ---- RFC 023: Transform stdlib paths to __incan_std ----
         let mut transformed_modules: HashMap<Vec<String>, String> = HashMap::new();
@@ -1747,12 +1764,12 @@ impl ProjectGenerator {
         // declarations at the backend marker after any crate attributes.
         let mut full_main = String::new();
         full_main.push_str(main_code);
-        self.add_sdk_provider_crate_lints(&mut full_main, is_sdk_provider_build());
+        self.add_sdk_provider_crate_lints(&mut full_main, self.native_sdk_publication || is_sdk_provider_build());
 
         let mut sorted_top: Vec<_> = top_level_modules.into_iter().collect();
         sorted_top.sort();
         let consumer_stdlib_facade = self.links_compiled_sdk_provider()
-            && !is_sdk_provider_build()
+            && !(self.native_sdk_publication || is_sdk_provider_build())
             && !sorted_top.iter().any(|module| module == "__incan_std");
         if !sorted_top.is_empty() || consumer_stdlib_facade {
             let visibility = if self.is_binary { "" } else { "pub " };
@@ -1773,7 +1790,7 @@ impl ProjectGenerator {
                 mods.push('\n');
             }
 
-            if !self.is_binary && is_sdk_provider_build() {
+            if !self.is_binary && (self.native_sdk_publication || is_sdk_provider_build()) {
                 mods.push('\n');
                 mods.push_str(&self.compiled_provider_facade(&sorted_top));
             } else if consumer_stdlib_facade {

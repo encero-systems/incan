@@ -27,7 +27,7 @@ use crate::library_manifest::{
 };
 use crate::library_manifest_index::{LibraryManifestFailureKind, LibraryManifestIndexEntry};
 use crate::module::{ExportedSymbol, canonicalize_source_module_segments};
-use crate::provider::{ProviderModuleResolution, ProviderProvenance, PublicProviderArtifact};
+use crate::provider::{ProviderModuleResolution, ProviderProvenance, PublicProviderMetadata};
 use crate::symbols::*;
 use crate::testing_markers::{
     TestingMarkerLoadError, TestingMarkerSemantics, load_testing_marker_semantics,
@@ -2299,7 +2299,7 @@ impl TypeChecker {
         seeds: BTreeMap<String, NominalTypeOriginExport>,
     ) -> (
         HashMap<String, String>,
-        BTreeMap<String, (PublicProviderArtifact, String)>,
+        BTreeMap<String, (PublicProviderMetadata, String)>,
     ) {
         let mut pending = std::collections::VecDeque::from_iter(seeds.into_values());
         let mut seen = HashSet::new();
@@ -2313,7 +2313,7 @@ impl TypeChecker {
             }
             let (artifact, export, dependency_route) = match self
                 .provider_plan
-                .public_nominal_projection(library, &origin)
+                .public_nominal_metadata_projection(library, &origin)
             {
                 Ok(projection) => projection,
                 Err(message) => {
@@ -2361,7 +2361,7 @@ impl TypeChecker {
         &mut self,
         library: &str,
         remapping: &HashMap<String, String>,
-        artifacts: &BTreeMap<String, (PublicProviderArtifact, String)>,
+        artifacts: &BTreeMap<String, (PublicProviderMetadata, String)>,
     ) {
         for (artifact, owner_route) in artifacts.values() {
             let local_remapping = self.register_artifact_type_names(library, artifact, owner_route, remapping);
@@ -2379,7 +2379,7 @@ impl TypeChecker {
     fn register_artifact_type_names(
         &mut self,
         library: &str,
-        artifact: &PublicProviderArtifact,
+        artifact: &PublicProviderMetadata,
         owner_route: &str,
         remapping: &HashMap<String, String>,
     ) -> HashMap<String, String> {
@@ -2442,7 +2442,7 @@ impl TypeChecker {
     /// names the declaration its own module names whether the root republishes it or not.
     fn rebuild_artifact_symbol_layouts(
         &mut self,
-        artifact: &PublicProviderArtifact,
+        artifact: &PublicProviderMetadata,
         owner_route: &str,
         local_remapping: &HashMap<String, String>,
     ) {
@@ -2479,7 +2479,9 @@ impl TypeChecker {
                 &mut kind,
             );
             self.remap_symbol_kind_with_import_aliases(&mut kind, local_remapping);
-            Self::mark_compiled_class_field_provider(&mut kind, owner_route);
+            if artifact.materialized {
+                Self::mark_compiled_class_field_provider(&mut kind, owner_route);
+            }
             if let SymbolKind::Type(info) = kind {
                 self.transitive_pub_types.entry(qualified).or_default().push(info);
             }
@@ -3113,7 +3115,7 @@ impl TypeChecker {
         else {
             return None;
         };
-        let (artifact, identity) = self.provider_plan.public_nominal_declaration(origin).ok()?;
+        let (artifact, identity) = self.provider_plan.public_nominal_metadata(origin).ok()?;
         if identity.public_path.len() == 2 {
             self.manifest_nominal_type_info(&artifact.manifest, &identity.public_name)
                 .map(SymbolKind::Type)

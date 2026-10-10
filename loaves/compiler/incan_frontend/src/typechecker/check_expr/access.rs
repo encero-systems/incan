@@ -2092,7 +2092,7 @@ impl TypeChecker {
         Some(Self::compiler_builtin_member_identity(owner, member))
     }
 
-    /// Typecheck built-in numeric resize helpers using the expected result type as the target.
+    /// Typecheck built-in numeric resize helpers and retain their concrete target for downstream call lowering.
     fn check_numeric_resize_method(
         &mut self,
         base_ty: &ResolvedType,
@@ -2201,7 +2201,8 @@ impl TypeChecker {
                 NumericFamily::SignedInteger | NumericFamily::UnsignedInteger
             )
         );
-        match policy {
+        let monomorph_target = target_ty.clone();
+        let result = match policy {
             NumericResizeMethodPolicy::Lossless => {
                 if !incan_lang::numeric_values::numeric_type_losslessly_widens_to(source, target) {
                     self.errors.push(
@@ -2230,7 +2231,12 @@ impl TypeChecker {
                     _ => Some(target_ty),
                 }
             }
-        }
+        };
+        self.type_info
+            .calls
+            .call_site_monomorph_type_args
+            .insert((span.start, span.end), vec![monomorph_target]);
+        result
     }
 
     /// Typecheck RFC 009 integer overflow helpers from the language-owned numeric registry.

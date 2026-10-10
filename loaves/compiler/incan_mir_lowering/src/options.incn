@@ -23,6 +23,7 @@ from pub::incan_mir_plan import (
     RvalueKind,
     SourceSpan,
     TerminatorKind,
+    Unwind,
 )
 from pub::incan_mir_plan import assign as plan_assign, place as plan_place
 from frame import (
@@ -32,13 +33,15 @@ from frame import (
     forget_owned,
     drop_owned,
     drop_all_owned,
+    cleanup_exit,
     track_rvalue_moves,
     terminate_call,
     place_type as frame_place_type,
 )
-from enums import native_source_type, validate_payload_patterns
+from enums import validate_payload_patterns
+from layout_types import native_source_type
 from numerics import numeric_carrier
-from unions import lower_union_declarations
+from unions import lower_union_declaration
 
 
 pub def variant_condition(mut builder: Builder, source: Place, slot: int, span: SourceSpan) -> Operand:
@@ -73,7 +76,7 @@ pub def propagate_result(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Move the selected payload once; error returns drop every other initialized owner before returning."""
-    _owner, input = result_layout(builder, builder.locals[source.local].ty)?
+    _owner, input = result_layout(builder, frame_place_type(builder.locals, source))?
     output_owner, output = result_layout(builder, builder.locals[0].ty)?
     if input.variants[1].fields != output.variants[1].fields:
         return Err("unsupported Body IR TryPropagate error conversion")
@@ -95,7 +98,7 @@ pub def propagate_result(
     builder.owned = owners
     value = Place(local=source.local, projection=Projection.VariantField(0, 0, input.variants[0].fields[0]), span=span)
     builder.emit(plan_assign(destination, RvalueKind.Use(read_place(value, true, span)), span))
-    match builder.locals[destination.local].ty:
+    match frame_place_type(builder.locals, destination):
         PlanType.String => builder.owned.append(destination.local)
         PlanType.Enum(_owner, _name) => builder.owned.append(destination.local)
         PlanType.Model(_owner, _name) => builder.owned.append(destination.local)
@@ -138,7 +141,14 @@ pub def intrinsic_pattern(declaration: EnumDeclaration, pattern: &RustPattern) -
 
 pub def intrinsic_declarations(module: &BodyIrModule, file: str) -> Result[list[EnumDeclaration], str]:
     """Collect concrete non-template carriers; checked function instances add their closed layouts when scheduled."""
-    mut declarations: list[EnumDeclaration] = lower_union_declarations(module, file)?
+    mut declarations: list[EnumDeclaration] = []
+    for declaration in module.nominal_declarations:
+        for ty in declaration.field_types:
+            retain_carrier(module, declarations, ty, file)?
+    for declaration in module.enum_declarations:
+        for variant in declaration.variants:
+            for ty in variant.fields:
+                retain_carrier(module, declarations, ty, file)?
     for body in module.bodies:
         if len(body.type_parameters) != 0:
             continue
@@ -168,18 +178,22 @@ def retain_carrier(
     """Retain one concrete standard layout once; nested carriers precede their containing carrier."""
     match ty:
         RustType.Generic(base=base, args=arguments) =>
-            if base != "Option" and base != "Result":
+            for argument in arguments:
+                retain_carrier(module, declarations, argument, file)?
+            if base != "Option" and base != "Result" and base != "Union":
                 return Ok(None)
             for retained in declarations:
                 if retained.source_type == str(ty):
                     return Ok(None)
+            if base == "Union":
+                declarations.append(lower_union_declaration(module, ty, file, declarations)?)
+                return Ok(None)
             if (base == "Option" and len(arguments) != 1) or (base == "Result" and len(arguments) != 2):
                 return Err(f"unsupported Body IR type {ty}")
             mut fields: list[PlanType] = []
             for argument in arguments:
-                retain_carrier(module, declarations, argument, file)?
                 fields.append(
-                    native_source_type(module.nominal_declarations, module.enum_declarations, argument, declarations)?,
+                    native_source_type(module.nominal_declarations, module.enum_declarations, [], argument, declarations)?,
                 )
             mut variants = [EnumVariant(name="None", fields=[]), EnumVariant(name="Some", fields=[fields[0]])]
             if base == "Result":
@@ -195,6 +209,15 @@ def retain_carrier(
                     source_type=str(ty),
                 ),
             )
+        RustType.Function(params=parameters, return_type=result) =>
+            for parameter in parameters:
+                retain_carrier(module, declarations, parameter.ty, file)?
+            retain_carrier(module, declarations, result, file)?
+        RustType.Tuple(elements) =>
+            for element in elements:
+                retain_carrier(module, declarations, element, file)?
+        RustType.Ref(inner) => retain_carrier(module, declarations, inner, file)?
+        RustType.RefMut(inner) => retain_carrier(module, declarations, inner, file)?
         _ => pass
     return Ok(None)
 
@@ -218,11 +241,27 @@ pub def assign_carrier(
     span: SourceSpan,
 ) -> None:
     """Transfer active payload owners before replacing and tracking one concrete carrier destination."""
-    operation = RvalueKind.Enum(owner, slot, operands)
+    replace_owned_destination(builder, target, RvalueKind.Enum(owner, slot, operands), span)
+
+
+pub def replace_owned_destination(mut builder: Builder, target: Place, operation: RvalueKind, span: SourceSpan) -> None:
+    """Evaluate an owned replacement before dropping its old field, keeping the enclosing owner initialized."""
+    if target.projection == Projection.Whole:
+        track_rvalue_moves(builder, operation)
+        drop_owned(builder, target.local, span)
+        builder.emit(plan_assign(target, operation, span))
+        builder.owned.append(target.local)
+        return
+    replacement = temporary(builder, frame_place_type(builder.locals, target), span)
     track_rvalue_moves(builder, operation)
-    drop_owned(builder, target.local, span)
-    builder.emit(plan_assign(target, operation, span))
-    builder.owned.append(target.local)
+    builder.emit(plan_assign(replacement, operation, span))
+    builder.owned.append(replacement.local)
+    continuation = builder.new_block(span)
+    cleanup = cleanup_exit(builder, span)
+    builder.finish(TerminatorKind.Drop(target, continuation, Unwind.Cleanup(cleanup)), span)
+    builder.current = continuation
+    forget_owned(builder, replacement.local)
+    builder.emit(plan_assign(target, RvalueKind.Use(read_place(replacement, true, span)), span))
 
 
 pub def none_operand(mut builder: Builder, ty: PlanType, span: SourceSpan) -> Result[Operand, str]:

@@ -61,7 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     identity::verify(Path::new(&args[3]))?;
     let plan = scalar_example(
         args[0].clone(),
-        "native_output::caller::incan::print_int".into(),
+        "native_output::print_int".into(),
         mode == "overflow",
         mode == "dangling",
     );

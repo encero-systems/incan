@@ -1,0 +1,166 @@
+"""Select local compiler Loaf features and project their registry requests through the shared activation policy."""
+
+from std import toml
+from std.toml import TomlValue, TomlKind
+from std.fs import Path
+from std.json import JsonValue
+from rust_source import RustDependencyCatalog, RustDependencyDeclaration, RustDependencyRole, RustDependencySource, RustRegistryRequest
+from rust_activation import ActivationContext, ActivationPurpose, DependencyDomain, SlotActivation, TargetConfiguration, activate_unit, version_matches
+
+
+@derive(Eq)
+pub model LocalDemand:
+    """Explicit local path, compilation domain, and monotonic incoming feature selection."""
+
+    pub project: str
+    pub domain: DependencyDomain
+    pub features: list[str]
+    pub defaults: bool
+
+
+def unique(values: list[str]) -> list[str]:
+    """Canonicalize feature requests without changing activation semantics."""
+    mut result: list[str] = []
+    for value in values:
+        if value not in result:
+            result.append(value)
+    return sorted(result)
+
+
+def optional_bool(value: TomlValue, key: str, fallback: bool) -> Result[bool, str]:
+    """Use an omitted flag's documented default while preserving malformed-input failures."""
+    match value.get_optional[bool](key).map_err((e) => e.message())?:
+        Some(selected) => return Ok(selected)
+        None => return Ok(fallback)
+
+
+def declaration(alias: str, value: TomlValue, index: int) -> Result[RustDependencyDeclaration, str]:
+    """Decode one Loaf edge without reading Cargo declarations or losing its target and optional policy."""
+    package = value.get[str]("loaf").map_err((e) => e.message())?
+    mut source = RustDependencySource.Registry(RustRegistryRequest.Default)
+    if let Some(path) = value.get_optional[str]("path").map_err((e) => e.message())?:
+        source = RustDependencySource.Path(path, RustRegistryRequest.Default)
+    mut features: list[str] = []
+    if let Some(selected) = value.get_optional[list[str]]("features").map_err((e) => e.message())?:
+        features = selected
+    return Ok(RustDependencyDeclaration(
+        index=index, field=["dependencies", alias], role=RustDependencyRole.Normal,
+        target_condition=value.get_optional[str]("target").map_err((e) => e.message())?,
+        alias=alias, package=package,
+        version_requirement=value.get_optional[str]("version").map_err((e) => e.message())?,
+        features=features, default_features=Some(optional_bool(value, "default-features", true)?),
+        optional=Some(optional_bool(value, "optional", false)?), source=source,
+    ))
+
+
+def catalog(document: TomlValue) -> Result[RustDependencyCatalog, str]:
+    """Build the existing activation catalog from converted Loaf declarations, including target alternatives."""
+    root = document.as_table().map_err((e) => e.message())?
+    mut dependencies: list[RustDependencyDeclaration] = []
+    if "dependencies" in root:
+        table = root["dependencies"].as_table().map_err((e) => e.message())?
+        for alias in sorted([key for key in table.keys()]):
+            value = table[alias]
+            if value.kind() == TomlKind.Array:
+                for alternative in value.as_array().map_err((e) => e.message())?:
+                    dependencies.append(declaration(alias, alternative, len(dependencies))?)
+            else:
+                dependencies.append(declaration(alias, value, len(dependencies))?)
+    mut features: Dict[str, list[str]] = {}
+    if let Some(selected) = document.get_optional[Dict[str, list[str]]]("project.features").map_err((e) => e.message())?:
+        features = selected
+    return Ok(RustDependencyCatalog(document=document, dependencies=dependencies, features=features, library_name=None))
+
+
+def key(demand: LocalDemand) -> str:
+    """Keep host and target requests separate even when both triples are native."""
+    return f"{demand.project}@{demand.domain.value()}"
+
+
+def add(demands: Dict[str, LocalDemand], demand: LocalDemand) -> Dict[str, LocalDemand]:
+    """Merge incoming local features and defaults monotonically; the caller observes whether another round is needed."""
+    mut result = demands
+    identity = key(demand)
+    mut selected = demand
+    if identity in result:
+        previous = result[identity]
+        selected = LocalDemand(project=demand.project, domain=demand.domain, features=unique(previous.features + demand.features), defaults=previous.defaults or demand.defaults)
+    result[identity] = selected
+    return result
+
+
+def child(parent: LocalDemand, declaration: RustDependencyDeclaration, features: list[str], defaults: bool) -> Result[LocalDemand, str]:
+    """Resolve an explicitly declared local path, checking its version and procedural-macro domain before selection."""
+    mut relative = ""
+    match declaration.source:
+        RustDependencySource.Path(path, _) => relative = path
+        _ => return Err("local child requires a path declaration")
+    path = Path(parent.project).joinpath(relative).resolve().map_err((e) => e.message())?
+    source = path.joinpath("loaf.toml").read_text("utf-8", "strict").map_err((e) => e.message())?
+    document = toml.parse(source).map_err((e) => e.message())?
+    if document.get[str]("project.name").map_err((e) => e.message())? != declaration.package:
+        return Err(f"local dependency {declaration.alias} has a different Loaf identity")
+    if let Some(requirement) = declaration.version_requirement:
+        version = document.get[str]("project.version").map_err((e) => e.message())?
+        if not version_matches(requirement, version, declaration.alias).map_err((e) => e.message())?:
+            return Err(f"local dependency {declaration.alias} does not satisfy {requirement}")
+    mut domain = parent.domain
+    if document.get[str]("rust.type").map_err((e) => e.message())? == "proc-macro":
+        domain = DependencyDomain.Host
+    return Ok(LocalDemand(project=path.0, domain=domain, features=features, defaults=defaults))
+
+
+def request(declaration: RustDependencyDeclaration, features: list[str], defaults: bool, name: str) -> Result[JsonValue, str]:
+    """Project an active registry requirement using the resolver's public root exchange grammar."""
+    mut version = ""
+    match declaration.version_requirement:
+        Some(selected) => version = selected
+        None => return Err(f"registry dependency {declaration.alias} has no version requirement")
+    return Ok(JsonValue.object({
+        "name": JsonValue.string(name), "loaf": JsonValue.string(declaration.package), "req": JsonValue.string(version),
+        "features": JsonValue.array([JsonValue.string(feature) for feature in features]),
+        "default-features": JsonValue.bool(defaults), "optional": JsonValue.bool(false),
+    }))
+
+
+pub def select(root: LocalDemand, configuration: TargetConfiguration) -> Result[JsonValue, str]:
+    """Reach a local feature fixed point, then emit native facet selections and active registry roots."""
+    mut demands: Dict[str, LocalDemand] = {}
+    demands = add(demands, root)
+    mut previous: Dict[str, LocalDemand] = {}
+    mut facets: list[JsonValue] = []
+    mut roots: list[JsonValue] = []
+    mut host_roots: list[JsonValue] = []
+    while demands != previous:
+        previous = demands
+        facets = []
+        roots = []
+        host_roots = []
+        for identity in sorted([name for name in previous.keys()]):
+            demand = previous[identity]
+            path = Path(demand.project).joinpath("loaf.toml")
+            source = path.read_text("utf-8", "strict").map_err((e) => e.message())?
+            document = toml.parse(source).map_err((e) => e.message())?
+            inputs = catalog(document)?
+            context = ActivationContext(host=configuration, target=configuration, purpose=ActivationPurpose.Normal,
+                domain=demand.domain, requested_features=demand.features, default_features=demand.defaults, build_unit_present=false)
+            activation = activate_unit(inputs, context, demand.project).map_err((e) => e.message())?
+            facets.append(JsonValue.object({
+                "project": JsonValue.string(demand.project), "domain": JsonValue.string(demand.domain.value()),
+                "features": JsonValue.array([JsonValue.string(feature) for feature in activation.effective_features]),
+            }))
+            for slot in activation.slots:
+                match slot.activation:
+                    SlotActivation.Inactive(_) => pass
+                    SlotActivation.Active(features, defaults, _) =>
+                        edge = inputs.dependencies[slot.index]
+                        match edge.source:
+                            RustDependencySource.Path(_, _) => demands = add(demands, child(demand, edge, features, defaults)?)
+                            RustDependencySource.Registry(_) =>
+                                selected = request(edge, features, defaults, f"{len(roots) + len(host_roots)}-{edge.alias}")?
+                                if demand.domain == DependencyDomain.Host:
+                                    host_roots.append(selected)
+                                else:
+                                    roots.append(selected)
+                            _ => return Err(f"unsupported native local source for {edge.alias}")
+    return Ok(JsonValue.object({"facets": JsonValue.array(facets), "roots": JsonValue.array(roots), "host-roots": JsonValue.array(host_roots)}))

@@ -1127,7 +1127,7 @@ where
         manifest.project_root(),
         project_name.as_str(),
         &cargo_package_name,
-        manifest.build.as_ref().and_then(|build| build.rust_edition.clone()),
+        manifest.rust_edition().map(str::to_string),
         &resolved,
         &project_requirements,
         cargo_lock_inputs.payload,

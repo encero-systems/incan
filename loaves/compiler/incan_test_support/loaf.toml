@@ -1,0 +1,25 @@
+[dependencies]
+incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
+incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
+libc = { loaf = "crates-io/libc", version = "0.2" }
+oven_model = { loaf = "oven_model", path = "../../oven/oven_model", version = "0.6.0-dev.5" }
+prettyplease = { loaf = "crates-io/prettyplease", version = "0.2" }
+proc-macro2 = { loaf = "crates-io/proc-macro2", version = "1.0" }
+rustc-demangle = { loaf = "crates-io/rustc-demangle", version = "0.1.27" }
+serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
+sha2 = { loaf = "crates-io/sha2", version = "0.10" }
+syn = { features = ["full", "parsing", "printing"], loaf = "crates-io/syn", version = "2.0" }
+tempfile = { loaf = "crates-io/tempfile", version = "3" }
+toml = { loaf = "crates-io/toml", version = "0.9" }
+
+[project]
+description = "The integration-test harness the compiler's roots share: checkout anchors, the compiler subprocess, fixture builders and artifact readers"
+license = "Apache-2.0"
+name = "incan_test_support"
+private = true
+version = "0.6.0-dev.6"
+
+[rust]
+edition = "2024"
+name = "incan_test_support"
+type = "lib"

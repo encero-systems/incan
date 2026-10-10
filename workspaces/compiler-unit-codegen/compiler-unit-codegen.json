@@ -1,0 +1,17 @@
+{
+  "schema": "incan.compiler-unit-codegen/1",
+  "profiles": {
+    "debug": [
+      {
+        "loaf": "crates-io/sha2",
+        "version": "0.10.9",
+        "domain": "target",
+        "options": {
+          "opt_level": "3",
+          "debug_assertions": true,
+          "overflow_checks": true
+        }
+      }
+    ]
+  }
+}

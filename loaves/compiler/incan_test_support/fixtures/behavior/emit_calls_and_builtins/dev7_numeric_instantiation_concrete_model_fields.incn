@@ -1,0 +1,20 @@
+# behavior: a checked concrete numeric model field widens its input without changing a same-carrier field
+# expect-stdout:
+#   3
+#   1.5
+#   4
+
+model Numbers:
+    wide: int
+    floating: float
+    small: i8
+
+
+def main() -> None:
+    narrow: i8 = 3
+    single: f32 = 1.5
+    unchanged: i8 = 4
+    numbers = Numbers(wide=narrow, floating=single, small=unchanged)
+    println(numbers.wide)
+    println(numbers.floating)
+    println(numbers.small)

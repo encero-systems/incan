@@ -4,7 +4,7 @@
 //! test dependencies -- as recorded for one schema version.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::artifact::OvenRustcRegistrySourcePackage;
 use super::{OvenRustcError, validate_project_inspection_authority_payload};
@@ -206,6 +206,7 @@ pub struct OvenLoadedProjectInspectionAuthority {
     source_owner: OvenStoreExecutionPayload,
     pub payload: OvenProjectInspectionAuthorityPayload,
     pub stored_constituents: Vec<OvenStoreExecutionPayload>,
+    stored_constituent_roots: Vec<PathBuf>,
     pub(crate) lineage_leases: Vec<OvenStoreLease>,
 }
 
@@ -216,10 +217,15 @@ impl OvenLoadedProjectInspectionAuthority {
         payload: OvenProjectInspectionAuthorityPayload,
         stored_constituents: Vec<OvenStoreExecutionPayload>,
     ) -> Self {
+        let stored_constituent_roots = stored_constituents
+            .iter()
+            .map(|selected| selected.artifact_root.clone())
+            .collect();
         Self {
             source_owner,
             payload,
             stored_constituents,
+            stored_constituent_roots,
             lineage_leases: Vec::new(),
         }
     }
@@ -232,6 +238,48 @@ impl OvenLoadedProjectInspectionAuthority {
     /// Return the materialized root derived from the retained authority owner.
     pub fn artifact_root(&self) -> &Path {
         &self.source_owner.artifact_root
+    }
+
+    /// Revalidate the original authority and every exact retained constituent without acquiring new owners.
+    ///
+    /// Public decoded fields cannot substitute another generation beneath this capability. Optional consumers use
+    /// this before classifying an incompatible native generation as a cache miss, so damage to an admitted owner
+    /// or mutation of the decoded authority remains an error rather than becoming a recoverable stale result.
+    pub fn verify(&self) -> Result<(), OvenRustcError> {
+        self.source_owner.verify_admitted_payload()?;
+        let original =
+            super::receipt_selection::decode_project_inspection_authority(self.identity(), &self.source_owner.payload)?;
+        if original != self.payload {
+            return Err(OvenRustcError::InvalidStoredPlan {
+                identity: self.identity().to_string(),
+                message: "project inspection authority differs from its original admitted payload".to_string(),
+            });
+        }
+        validate_project_inspection_authority_payload(&original)?;
+        let stored_count = original
+            .constituents
+            .iter()
+            .filter(|constituent| matches!(constituent, OvenProjectInspectionConstituent::Stored { .. }))
+            .count();
+        if stored_count != self.stored_constituents.len() || stored_count != self.stored_constituent_roots.len() {
+            return Err(OvenRustcError::InvalidStoredPlan {
+                identity: self.identity().to_string(),
+                message: "project inspection authority has different retained constituents".to_string(),
+            });
+        }
+        for (selected, original_root) in self.stored_constituents.iter().zip(&self.stored_constituent_roots) {
+            selected.verify_admitted_payload()?;
+            if selected.artifact_root != *original_root {
+                return Err(OvenRustcError::InvalidStoredPlan {
+                    identity: self.identity().to_string(),
+                    message: "project inspection constituent differs from its original admitted coordinate".to_string(),
+                });
+            }
+        }
+        super::receipt_selection::validate_selected_project_inspection_constituents(
+            &original,
+            &self.stored_constituents,
+        )
     }
 
     /// Retain completed-output leases for the complete inspection command.

@@ -68,13 +68,40 @@ pub fn materialize_completed_executable_output(
     output: &OvenStoredProjectOutput,
     backend_receipt: &BackendExecutionReceipt,
 ) -> CliResult<()> {
+    materialize_completed_executable_output_with_completion(project_root, output, backend_receipt, || Ok(()))
+}
+
+/// Replay one executable and its backend receipt, restoring the prior caller files if completion returns an error.
+///
+/// A verified warm projection and receipt are left untouched. Callers retain the selected output lease through
+/// completion; this boundary provides ordinary-error rollback, not concurrent-reader or crash atomicity.
+pub fn materialize_completed_executable_output_with_completion<T>(
+    project_root: &Path,
+    output: &OvenStoredProjectOutput,
+    backend_receipt: &BackendExecutionReceipt,
+    complete: impl FnOnce() -> CliResult<T>,
+) -> CliResult<T> {
     if completed_output_default_backend_receipt(output).as_ref() != Some(backend_receipt) {
         return Err(CliError::failure(
             "completed Oven executable output does not carry the backend receipt selected for reuse",
         ));
     }
-    materialize_project_output(project_root, output)?;
-    write_backend_receipt(backend_receipt, &default_backend_receipt_path(project_root))
+    let receipt_path = default_backend_receipt_path(project_root);
+    let mut expected =
+        serde_json::to_vec_pretty(backend_receipt).map_err(|error| CliError::failure(error.to_string()))?;
+    expected.push(b'\n');
+    let current = project_output_projection_is_current(project_root, output)?;
+    if current && fs::read(&receipt_path).is_ok_and(|bytes| bytes == expected) {
+        return complete();
+    }
+    let (artifacts, mut metadata) = executable_projection_publication_paths(project_root, std::iter::once(output))?;
+    metadata.push(receipt_path.clone());
+    let publication = crate::build::output_publication::OutputPublication::begin(project_root, artifacts, metadata)?;
+    publication.finish((|| {
+        materialize_project_output(project_root, output)?;
+        write_backend_receipt(backend_receipt, &receipt_path)?;
+        complete()
+    })())
 }
 
 /// Restore and validate one bake-time executable report without reconstructing frontend-owned facts.
@@ -287,6 +314,34 @@ fn project_output_projection_marker_path(project_root: &Path, output: &OvenStore
     Ok(project_root
         .join(".incan/oven/project-output-projections")
         .join(format!("{}.json", digest_bytes(&key).trim_start_matches("sha256:"))))
+}
+
+/// Enumerate the exact executable caller files and projection markers replaced by replay, excluding shared stores.
+pub(super) fn executable_projection_publication_paths<'a>(
+    project_root: &Path,
+    outputs: impl IntoIterator<Item = &'a OvenStoredProjectOutput>,
+) -> CliResult<(Vec<PathBuf>, Vec<PathBuf>)> {
+    let mut artifacts = Vec::new();
+    let mut metadata = Vec::new();
+    for output in outputs {
+        for file in &output.payload.files {
+            artifacts.push(caller_project_output_path(project_root, &file.caller_relative_path)?);
+        }
+        metadata.push(project_output_projection_marker_path(project_root, output)?);
+    }
+    Ok((artifacts, metadata))
+}
+
+/// Capture the markers a library replay can replace alongside its artifact and receipt pointers.
+pub(super) fn library_projection_publication_receipts<'a>(
+    project_root: &Path,
+    outputs: impl IntoIterator<Item = &'a OvenStoredProjectOutput>,
+) -> CliResult<Vec<PathBuf>> {
+    let mut receipts = library_publication_receipts(project_root)?;
+    for output in outputs {
+        receipts.push(project_output_projection_marker_path(project_root, output)?);
+    }
+    Ok(receipts)
 }
 
 /// Return the stable small projection descriptor expected beside one caller-owned native output.
@@ -834,7 +889,7 @@ pub fn materialize_completed_library_outputs<T>(
         library_publication::LibraryPublication::begin(
             project_root,
             &project_root.join("target/lib"),
-            library_publication_receipts(project_root)?,
+            library_projection_publication_receipts(project_root, outputs)?,
         )?
         .retaining_package_cache()
     };
@@ -1150,6 +1205,7 @@ mod tests {
             target_identity: OvenBakeProjectTarget::Library.as_str().to_string(),
             project_identity: baked_project_owner_identity(project.path())?,
             source_authority_digest: digest_baked_project_source_authority(project.path())?,
+            dependency_authority_digest: None,
             lock_dependencies_fingerprint: baked_project_lock_dependencies_fingerprint(project.path())?,
             compiler_identity_digest: None,
             compiler_version: INCAN_VERSION.to_string(),
@@ -1250,6 +1306,7 @@ mod tests {
         fs::write(&generated_source, "previous generated Rust")?;
         fs::write(&native_output, "previous native artifact")?;
         let marker = project_output_projection_marker_path(project.path(), &selected)?;
+        fs::write(&marker, "previous projection marker")?;
         let previous_marker = fs::read(&marker)?;
         let backend_receipt = selected.payload.backend_receipt.clone();
         let failed = materialize_completed_library_outputs(
@@ -1264,6 +1321,17 @@ mod tests {
         assert_eq!(fs::read(&marker)?, previous_marker);
         assert_eq!(fs::read_to_string(&receipt_path)?, "previous backend receipt");
         assert_eq!(fs::read_to_string(&cache_object)?, "immutable package cache");
+
+        fs::remove_file(&marker)?;
+        let failed = materialize_completed_library_outputs(
+            project.path(),
+            std::slice::from_ref(&selected),
+            &backend_receipt,
+            || -> CliResult<()> { Err(CliError::failure("first projection publication failed")) },
+        );
+        assert!(failed.is_err());
+        assert!(!marker.exists(), "rollback must remove a newly created external marker");
+        fs::write(&marker, &previous_marker)?;
 
         let original_digest = selected.payload.files[1].digest.clone();
         selected.payload.files[1].digest = format!("sha256:{}", "0".repeat(64));

@@ -1,6 +1,6 @@
 """Identity-checked value-enum construction and generated scalar getter admission."""
 
-from rust::incan_semantics_core import SymbolNamespace, SemanticSourceTargetKind
+from rust::incan_semantics_core import SymbolNamespace, SemanticSourceTargetKind, IncanType as RustType
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
     EnumDeclaration,
@@ -10,7 +10,7 @@ from rust::incan_semantics_core::body_ir import (
     ArgumentElement,
     Operand as RustOperand,
 )
-from pub::incan_mir_plan import Local, PlanType, SourceSpan
+from pub::incan_mir_plan import Local, PlanType, SourceSpan, EnumDeclaration as NativeEnumDeclaration
 from models import model_place, place_type
 
 
@@ -61,9 +61,11 @@ pub def value_method_owner(
     locals: list[Local],
     argument: &ArgumentElement,
     span: SourceSpan,
+    unions: list[RustType],
+    intrinsics: list[NativeEnumDeclaration],
 ) -> Result[Option[int], str]:
     """Admit the checker-generated value getter only for its exact retained receiver owner."""
-    index = receiver_layout(module, locals, argument, span)?
+    index = receiver_layout(module, locals, argument, span, unions, intrinsics)?
     if index < 0 or index >= len(module.enum_declarations):
         return Ok(None)
     for owner in range(len(module.value_enum_declarations)):
@@ -81,11 +83,13 @@ def receiver_layout(
     locals: list[Local],
     argument: &ArgumentElement,
     span: SourceSpan,
+    unions: list[RustType],
+    intrinsics: list[NativeEnumDeclaration],
 ) -> Result[int, str]:
     """Read the enum carrier from the receiver place; other carriers keep their ordinary method path."""
     match argument.as_one():
         Some(RustOperand.Place(read)) =>
-            source = model_place(module.nominal_declarations, locals, read.place, span)?
+            source = model_place(module.nominal_declarations, locals, read.place, span, module.enum_declarations, unions, intrinsics)?
             match place_type(locals, source):
                 PlanType.Enum(index, _name) => return Ok(index)
                 _ => pass

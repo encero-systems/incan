@@ -5,9 +5,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::build::library_outputs::{library_publication_receipts, packaged_library_loaf_store_root};
+use crate::build::library_metadata::{LibraryMetadataReference, select_optional_library_metadata_reference};
+use crate::build::library_outputs::packaged_library_loaf_store_root;
 use crate::build::output_materialization::{
-    caller_project_output_path, materialize_project_output, project_output_projection_is_current,
+    caller_project_output_path, executable_projection_publication_paths, library_projection_publication_receipts,
+    materialize_project_output, project_output_projection_is_current,
 };
 use crate::build::output_paths::{validate_packaged_library_metadata_files, validated_project_output_relative_path};
 use crate::build::output_selection::{
@@ -17,14 +19,13 @@ use crate::build::package_loafs::{
     copy_receipted_oven_store_entry, decode_packaged_library_loaf_manifest, validated_packaged_library_loaf_profile,
 };
 use crate::build::plan_authority::explicit_bake_profiles;
-use crate::build::source_authority::{
-    baked_project_lock_dependencies_fingerprint, digest_baked_project_source_authority, project_bake_receipt_path,
-};
+use crate::build::source_authority::{digest_baked_project_source_authority, project_bake_receipt_path};
 use crate::build::{
     MemoizedPackagedProviderAuthority, OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION, OVEN_PROJECT_OUTPUT_ARTIFACT_PATH,
     OvenBakeProjectTarget, OvenPackagedLibraryLoafManifest, OvenPackagedLibraryLoafProfile,
-    OvenProjectBakeAuthorityContext, OvenProjectBakeOutputReport, OvenProjectBakeProfileReport, OvenProjectBakeReport,
-    OvenStoredProjectOutput, ProjectSourceAuthorityDigester, library_publication,
+    OvenPackagedLibraryMetadataFile, OvenProjectBakeAuthorityContext, OvenProjectBakeOutputReport,
+    OvenProjectBakeProfileReport, OvenProjectBakeReport, OvenStoredProjectOutput, ProjectSourceAuthorityDigester,
+    library_publication,
 };
 use crate::error::{CliError, CliResult};
 use incan_frontend::library_manifest::published_layout::packaged_library_loaf_manifest_path;
@@ -36,10 +37,10 @@ use oven_rustc::loaf::{
     resolve_compiler_owned_loaf_by_identity, resolve_compiler_owned_loaf_for_registry_dependencies,
 };
 use oven_rustc::rustc::{
-    OvenLoadedProjectInspectionAuthority, OvenProjectInspectionConstituent, load_project_inspection_authority,
-    resolve_active_rustc, rustc_host_target, rustc_identity,
+    OvenLoadedProjectInspectionAuthority, OvenProjectInspectionConstituent, OvenRustcError,
+    load_project_inspection_authority, resolve_active_rustc, rustc_host_target, rustc_identity,
 };
-use oven_store::store::{OvenArtifactKind, OvenStore};
+use oven_store::store::{OvenArtifactKind, OvenStore, OvenStoreError};
 
 /// Emit cumulative warm-reuse timing only when the caller requests diagnostic output.
 fn trace_reuse_timing(started: std::time::Instant, phase: &str) {
@@ -88,6 +89,14 @@ fn located_project_output(
 /// Atomically retain a verified output's address as a replaceable local selection hint.
 fn remember_project_output(receipt_path: &Path, identity: &str) {
     let locator = receipt_path.with_extension("output.json");
+    if fs::read(&locator)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<String>(&bytes).ok())
+        .as_deref()
+        == Some(identity)
+    {
+        return;
+    }
     let staged = locator.with_extension(format!("{}.tmp", std::process::id()));
     let result = serde_json::to_vec(identity)
         .map_err(std::io::Error::other)
@@ -128,6 +137,14 @@ fn restore_reused_library_package(
         return Ok(false);
     }
     let package_store = OvenStore::new(packaged_library_loaf_store_root(&artifact_root), *store.limits());
+    if !restore_reused_library_metadata(
+        store,
+        &package_store,
+        manifest.checked_metadata.as_ref(),
+        &manifest.metadata_files,
+    )? {
+        return Ok(false);
+    }
     for output in outputs {
         let Some(candidate) = manifest.profiles.get(&output.profile) else {
             return Ok(false);
@@ -232,6 +249,42 @@ fn restore_reused_library_package(
     Ok(true)
 }
 
+/// Restore a package's exact checked owner, declining reuse only when both original Store coordinates lost it.
+fn restore_reused_library_metadata(
+    store: &OvenStore,
+    package_store: &OvenStore,
+    reference: Option<&LibraryMetadataReference>,
+    metadata_files: &[OvenPackagedLibraryMetadataFile],
+) -> CliResult<bool> {
+    let Some(reference) = reference else {
+        return Ok(true);
+    };
+    let (owner, needs_export) = match select_optional_library_metadata_reference(package_store, reference)? {
+        Some(owner) => (owner, false),
+        None => match select_optional_library_metadata_reference(store, reference)? {
+            Some(owner) => (owner, true),
+            None => return Ok(false),
+        },
+    };
+    if owner.checked_files() != metadata_files {
+        return Err(CliError::failure(
+            "completed library package metadata disagrees with its original checked owner",
+        ));
+    }
+    if needs_export {
+        let exported = owner.export_into(package_store)?;
+        if exported.schema_version != reference.schema_version
+            || exported.owner_identity != reference.owner_identity
+            || exported.receipt != reference.receipt
+        {
+            return Err(CliError::failure(
+                "completed library package changed its checked owner during restoration",
+            ));
+        }
+    }
+    Ok(true)
+}
+
 /// Return whether every compiler-shipped release Loaf a project inspection authority names is provided by the
 /// active toolchain.
 ///
@@ -259,10 +312,20 @@ fn release_loaf_constituents_available(constituents: &[OvenProjectInspectionCons
     Ok(true)
 }
 
+/// Treat a missing whole store entry as a cache miss while preserving missing files and all integrity failures.
+///
+/// Inspection authorities outlive inactive constituents under bounded-store pruning. An explicit bake may republish
+/// an evicted constituent; it must not use that recovery path for damaged contents of an entry that still exists.
+fn inspection_constituent_was_evicted(store: &OvenStore, error: &OvenRustcError) -> bool {
+    matches!(error, OvenRustcError::Store(OvenStoreError::Io { path, source })
+        if source.kind() == std::io::ErrorKind::NotFound
+            && path.parent() == Some(store.root().join("entries").as_path()))
+}
+
 /// One requested target/profile and its verified local publication receipt.
 type ExpectedReuseOutput = (OvenBakeProjectTarget, PathBuf, String, PathBuf, oven_store::OvenReceipt);
 
-/// One leased output paired with the local receipt it must continue to satisfy.
+/// One leased output paired with its verified producer receipt and the local path to select it.
 type SelectedReuseOutput = (
     OvenBakeProjectTarget,
     OvenStoredProjectOutput,
@@ -274,7 +337,7 @@ type SelectedReuseOutput = (
 struct CurrentReuseAuthority<'a> {
     source_digest: &'a str,
     compiler_digest: &'a str,
-    lock_fingerprint: &'a Option<String>,
+    dependency_digest: &'a str,
     target: &'a str,
     toolchain: &'a str,
 }
@@ -361,7 +424,9 @@ fn select_current_project_output(
 ) -> CliResult<Option<SelectedReuseOutput>> {
     let (project_target, entrypoint, profile, receipt_path, receipt) = expected;
     // Source-equivalent publications from older compiler generations may sort before the current generation.
-    // Select the exact compiler and lock authority before choosing a candidate.
+    // Select the exact compiler and dependency authority before choosing a candidate. Source authority already binds
+    // the canonical authored lock projection. Its derived fingerprint can change with a compiler-owned SDK refresh
+    // without changing that projection, so it remains diagnostic metadata rather than an additional reuse veto.
     let target_identity = crate::build::oven_bake_project_target_identity(project_root, project_target, &entrypoint)?;
     let relative_entrypoint = crate::build::output_paths::project_relative_entrypoint(project_root, &entrypoint);
     let located = located.filter(|output| {
@@ -371,7 +436,7 @@ fn select_current_project_output(
             && output.payload.source_authority_digest == authority.source_digest
             && output.profile == profile
             && output.payload.compiler_identity_digest.as_deref() == Some(authority.compiler_digest)
-            && output.payload.lock_dependencies_fingerprint == *authority.lock_fingerprint
+            && output.payload.dependency_authority_digest.as_deref() == Some(authority.dependency_digest)
     });
     let output = match located {
         Some(output) => Some(output),
@@ -387,7 +452,7 @@ fn select_current_project_output(
         .into_iter()
         .find(|output| {
             output.payload.compiler_identity_digest.as_deref() == Some(authority.compiler_digest)
-                && output.payload.lock_dependencies_fingerprint == *authority.lock_fingerprint
+                && output.payload.dependency_authority_digest.as_deref() == Some(authority.dependency_digest)
         }),
     };
     let Some(output) = output else {
@@ -402,13 +467,58 @@ fn select_current_project_output(
                 && output.payload.required_project_loafs.is_empty() => {}
         OvenBakeProjectTarget::Executable => return Ok(None),
     }
-    if receipt.identity != output.payload.receipt_identity
+    let receipt = if receipt.identity != output.payload.receipt_identity
         || receipt.build_unit_identity != output.payload.build_unit_identity
         || receipt.intent != output.intent
     {
+        let Some(original) = recovered_project_output_receipt(store, &output, &receipt)? else {
+            return Ok(None);
+        };
+        original
+    } else {
+        receipt
+    };
+    Ok(Some((project_target, output, receipt_path, receipt)))
+}
+
+/// Recover an older project generation's receipt only from its verified immutable store witness.
+///
+/// The caller has already checked exact source, compiler, dependency, lock and target authority. A newer local receipt
+/// is a lineage hint, not a veto on restoring those older inputs. The retained producer witness must match the selected
+/// output and the requested project, compatibility and intent. Legacy entries without that witness remain cache misses.
+fn recovered_project_output_receipt(
+    store: &OvenStore,
+    output: &OvenStoredProjectOutput,
+    local: &oven_store::OvenReceipt,
+) -> CliResult<Option<oven_store::OvenReceipt>> {
+    let selected = store
+        .select_payloads_for_execution(std::slice::from_ref(&output.identity))
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let Some(receipt) = selected.first().and_then(|entry| entry.original_native_receipt()) else {
+        return Ok(None);
+    };
+    receipt
+        .verify_identity()
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    if receipt.identity != output.payload.receipt_identity
+        || receipt.build_unit_identity != output.payload.build_unit_identity
+        || receipt.intent != output.intent
+        || receipt.intent != local.intent
+        || receipt.project != local.project
+        || receipt.compatibility != local.compatibility
+    {
         return Ok(None);
     }
-    Ok(Some((project_target, output, receipt_path, receipt)))
+    Ok(Some(receipt.clone()))
+}
+
+/// Compare a local publication pointer with its already verified selected receipt without touching warm files.
+fn selected_receipt_is_current(path: &Path, receipt: &oven_store::OvenReceipt) -> bool {
+    fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<oven_store::OvenReceipt>(&bytes).ok())
+        .as_ref()
+        == Some(receipt)
 }
 
 /// Build the reused report and repair projections transactionally only after all selection authorities agree.
@@ -480,14 +590,60 @@ fn restore_reused_outputs(
     trace_reuse_timing(started, "caller projection");
     // A verified warm hit leaves the artifact in place. Repairing a stale projection captures the whole prior
     // library before any profile is copied; a later handoff cache miss must roll back before starting a fresh bake.
-    let publication = if library_current {
+    let library_receipts_current = selected_outputs
+        .iter()
+        .filter(|(target, _, _, _)| *target == OvenBakeProjectTarget::Library)
+        .all(|(_, _, path, receipt)| selected_receipt_is_current(path, receipt));
+    let executable_outputs = selected_outputs
+        .iter()
+        .filter(|(target, _, _, _)| *target == OvenBakeProjectTarget::Executable)
+        .collect::<Vec<_>>();
+    let executable_current = executable_outputs
+        .iter()
+        .try_fold(true, |current, (_, output, path, receipt)| {
+            Ok::<_, CliError>(
+                project_output_projection_is_current(project_root, output)?
+                    && selected_receipt_is_current(path, receipt)
+                    && current,
+            )
+        })?;
+    let executable_paths = if executable_current {
         None
     } else {
-        Some(library_publication::LibraryPublication::begin(
+        let (artifacts, mut metadata) = executable_projection_publication_paths(
             project_root,
-            &project_root.join("target/lib"),
-            library_publication_receipts(project_root)?,
-        )?)
+            executable_outputs.iter().map(|(_, output, _, _)| output),
+        )?;
+        for (_, _, path, _) in &executable_outputs {
+            metadata.push((*path).clone());
+            metadata.push(path.with_extension("output.json"));
+        }
+        Some((artifacts, metadata))
+    };
+    let publication = if library_current && library_receipts_current {
+        None
+    } else {
+        Some(
+            library_publication::LibraryPublication::begin(
+                project_root,
+                &project_root.join("target/lib"),
+                library_projection_publication_receipts(project_root, library_outputs.iter().copied())?,
+            )?
+            .retaining_package_cache(),
+        )
+    };
+    let executable_publication = if let Some((artifacts, metadata)) = executable_paths {
+        match crate::build::output_publication::OutputPublication::begin(project_root, artifacts, metadata) {
+            Ok(publication) => Some(publication),
+            Err(error) => {
+                return match publication {
+                    Some(publication) => publication.finish_reuse(Err(error)),
+                    None => Err(error),
+                };
+            }
+        }
+    } else {
+        None
     };
     let result = (|| {
         if !library_current {
@@ -504,12 +660,20 @@ fn restore_reused_outputs(
                 materialize_project_output(project_root, output)?;
             }
         }
-        for (_, output, receipt_path, _) in selected_outputs {
+        for (_, output, receipt_path, receipt) in selected_outputs {
+            if !selected_receipt_is_current(receipt_path, receipt) {
+                oven_store::write_receipt(receipt, receipt_path)
+                    .map_err(|error| CliError::failure(error.to_string()))?;
+            }
             remember_project_output(receipt_path, &output.identity);
         }
         Ok(Some(report))
     })();
-    match publication {
+    let result = match publication {
+        Some(publication) => publication.finish_reuse(result),
+        None => result,
+    };
+    match executable_publication {
         Some(publication) => publication.finish_reuse(result),
         None => result,
     }
@@ -540,7 +704,6 @@ pub fn try_reuse_baked_project(
         Ok,
     )?;
     let toolchain = rustc_identity(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
-    let lock_dependencies_fingerprint = baked_project_lock_dependencies_fingerprint(project_root)?;
     let Some(expected_outputs) = expected_reuse_outputs(project_root, targets, &target, &toolchain)? else {
         return Ok(None);
     };
@@ -557,12 +720,13 @@ pub fn try_reuse_baked_project(
     trace_reuse_timing(started, "store headers");
     let source_authority_digest = authority_context.cache_probe_source_authority(project_root)?;
     let compiler_identity_digest = super::source_authority::current_compiler_identity_digest()?;
+    let dependency_authority_digest = super::source_authority::digest_project_development_dependencies(project_root)?;
     trace_reuse_timing(started, "source and compiler authority");
     let mut selected_outputs = Vec::new();
     let current = CurrentReuseAuthority {
         source_digest: &source_authority_digest,
         compiler_digest: &compiler_identity_digest,
-        lock_fingerprint: &lock_dependencies_fingerprint,
+        dependency_digest: &dependency_authority_digest,
         target: &target,
         toolchain: &toolchain,
     };
@@ -584,21 +748,29 @@ pub fn try_reuse_baked_project(
     {
         return Ok(None);
     }
-    let authority = load_project_inspection_authority(
+    let authority = match load_project_inspection_authority(
         store,
         &authority_ref,
         &baked_project_owner_identity(project_root)?,
         &source_authority_digest,
         INCAN_VERSION,
-    )
-    .map_err(|error| CliError::failure(error.to_string()))?;
+    ) {
+        Ok(authority) => authority,
+        Err(error) if inspection_constituent_was_evicted(store, &error) => return Ok(None),
+        Err(error) => return Err(CliError::failure(error.to_string())),
+    };
     // A cache candidate whose release Loaf the active toolchain no longer ships is a miss, not a fault: the
     // installed family changed underneath a still-valid local receipt (#1444), and an explicit bake exists to
     // refresh exactly that. Corrupt or mismatched authority still fails below, where the candidate is validated.
     if !project_authority_release_loafs_available(&authority)? {
         return Ok(None);
     }
-    let _validated_authority = crate::lock::registry_sources::prepare_project_registry_source_authorities(authority)?;
+    let native_sdk_context = authority_context.native_sdk_context()?;
+    let _validated_authority =
+        crate::lock::registry_sources::prepare_project_registry_source_authorities_with_native_sdk(
+            authority,
+            native_sdk_context,
+        )?;
     trace_reuse_timing(started, "inspection authority validation");
 
     restore_reused_outputs(
@@ -866,6 +1038,40 @@ mod tests {
         Ok(())
     }
 
+    /// Policy-evicted constituents decline reuse; a missing file inside an admitted entry still fails closed.
+    #[test]
+    fn evicted_inspection_constituent_declines_cache_reuse() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            directory.path(),
+            oven_store::store::OvenStoreLimits::new(1024, 1024, 1024),
+        );
+        let identity = format!("sha256:{}", "0".repeat(64));
+        let error = store
+            .select_payloads_for_execution(std::slice::from_ref(&identity))
+            .err()
+            .ok_or("missing constituent unexpectedly selected")?;
+        assert!(inspection_constituent_was_evicted(
+            &store,
+            &OvenRustcError::Store(error)
+        ));
+        let damaged = OvenRustcError::Store(OvenStoreError::Io {
+            path: directory
+                .path()
+                .join("entries")
+                .join("sha256-missing")
+                .join("manifest.json"),
+            source: std::io::Error::from(std::io::ErrorKind::NotFound),
+        });
+        assert!(!inspection_constituent_was_evicted(&store, &damaged));
+        let denied = OvenRustcError::Store(OvenStoreError::Io {
+            path: directory.path().join("entries").join("sha256-missing"),
+            source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        });
+        assert!(!inspection_constituent_was_evicted(&store, &denied));
+        Ok(())
+    }
+
     /// A release Loaf the active toolchain does not provide reads as unavailable, while an authority made only of
     /// stored outputs has no release Loaf to be unavailable in the first place.
     #[test]
@@ -891,6 +1097,178 @@ mod tests {
         assert!(
             release_loaf_constituents_available(std::slice::from_ref(&stored_only))?,
             "an authority without release Loafs has nothing to be unavailable"
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod checked_metadata_restoration_tests {
+    use super::restore_reused_library_metadata;
+    use crate::build::library_metadata::{
+        LibraryMetadataRecipe, SelectedLibraryMetadata, publish_library_metadata, select_library_metadata_reference,
+    };
+    use incan_frontend::library_manifest::LibraryManifest;
+    use oven_store::digest_bytes;
+    use oven_store::store::{OvenStore, OvenStoreLimits};
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::fs;
+    use std::sync::Arc;
+
+    /// Publish a real checked owner and retain its authored declaration for later receipt-authentication controls.
+    fn publish_owner(
+        store: &OvenStore,
+    ) -> Result<(tempfile::TempDir, Arc<SelectedLibraryMetadata>), Box<dyn std::error::Error>> {
+        let source = tempfile::tempdir()?;
+        let output = tempfile::tempdir()?;
+        fs::write(
+            source.path().join("loaf.toml"),
+            "[project]\nname='restored'\nversion='1.0.0'\n",
+        )?;
+        fs::create_dir(output.path().join("src"))?;
+        fs::write(output.path().join("src/lib.rs"), "pub fn answer() -> i64 { 42 }\n")?;
+        let manifest_path = output.path().join("restored.incnlib");
+        LibraryManifest::new("restored", "1.0.0").write_to_path(&manifest_path)?;
+        let recipe = LibraryMetadataRecipe {
+            name: "restored".into(),
+            version: "1.0.0".into(),
+            source_digest: digest_bytes(b"source"),
+            producer_digest: digest_bytes(b"producer"),
+            semantic_authority_digest: digest_bytes(b"semantic"),
+            dependencies: BTreeMap::new(),
+            policy_digest: digest_bytes(b"policy"),
+            target: "x86_64-unknown-linux-gnu".into(),
+            toolchain: "exact restoration test compiler".into(),
+            features: Vec::new(),
+        };
+        let owner = publish_library_metadata(
+            store,
+            &recipe,
+            &recipe.receipt(source.path())?,
+            output.path(),
+            &manifest_path,
+            BTreeSet::new(),
+        )?;
+        Ok((source, owner))
+    }
+
+    /// A completed-output handoff restores the exact original checked owner and supports unchanged package admission.
+    #[test]
+    fn completed_library_restores_original_checked_metadata_owner() -> Result<(), Box<dyn std::error::Error>> {
+        let original = tempfile::tempdir()?;
+        let package = tempfile::tempdir()?;
+        let limits = OvenStoreLimits::new(16 * 1024 * 1024, 16 * 1024 * 1024, 16 * 1024 * 1024);
+        let store = OvenStore::new(original.path(), limits);
+        let package_store = OvenStore::new(package.path(), limits);
+        let (_source, owner) = publish_owner(&store)?;
+        let reference = owner.reference();
+        assert!(restore_reused_library_metadata(
+            &store,
+            &package_store,
+            Some(&reference),
+            owner.checked_files()
+        )?);
+        let restored = select_library_metadata_reference(&package_store, &reference)?;
+        assert_eq!(restored.reference().owner_identity, reference.owner_identity);
+        assert_eq!(restored.reference().receipt, reference.receipt);
+        assert!(restore_reused_library_metadata(
+            &store,
+            &package_store,
+            Some(&reference),
+            owner.checked_files()
+        )?);
+        // Once copied, the package owner is self-contained even when the preparation Store is absent.
+        let absent = tempfile::tempdir()?;
+        let absent_store = OvenStore::new(absent.path(), limits);
+        assert!(restore_reused_library_metadata(
+            &absent_store,
+            &package_store,
+            Some(&reference),
+            owner.checked_files()
+        )?);
+        restored.replay(tempfile::tempdir()?.path())?;
+        Ok(())
+    }
+
+    /// Whole-owner absence declines reuse; a wrong receipt, changed handoff or damaged existing owner refuses.
+    #[test]
+    fn completed_library_metadata_restoration_refuses_substitution_and_damage() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let original = tempfile::tempdir()?;
+        let package = tempfile::tempdir()?;
+        let absent = tempfile::tempdir()?;
+        let limits = OvenStoreLimits::new(16 * 1024 * 1024, 16 * 1024 * 1024, 16 * 1024 * 1024);
+        let store = OvenStore::new(original.path(), limits);
+        let package_store = OvenStore::new(package.path(), limits);
+        let absent_store = OvenStore::new(absent.path(), limits);
+        let (source, owner) = publish_owner(&store)?;
+        let reference = owner.reference();
+        assert!(!restore_reused_library_metadata(
+            &absent_store,
+            &package_store,
+            Some(&reference),
+            owner.checked_files()
+        )?);
+        assert!(restore_reused_library_metadata(
+            &absent_store,
+            &package_store,
+            None,
+            &[]
+        )?);
+        let mut malformed = reference.clone();
+        malformed.owner_identity = "not-a-canonical-owner".into();
+        assert!(
+            restore_reused_library_metadata(&absent_store, &package_store, Some(&malformed), owner.checked_files())
+                .is_err()
+        );
+        let mut wrong = reference.clone();
+        let mut wrong_recipe = owner.recipe().clone();
+        wrong_recipe.target = "aarch64-apple-darwin".into();
+        assert!(source.path().join("loaf.toml").is_file());
+        wrong.receipt = wrong_recipe.receipt(source.path())?;
+        wrong.receipt.verify_identity()?;
+        assert_ne!(wrong.receipt.identity, reference.receipt.identity);
+        assert!(restore_reused_library_metadata(&store, &package_store, Some(&wrong), owner.checked_files()).is_err());
+        let mut changed = owner.checked_files().to_vec();
+        changed.first_mut().ok_or("missing actual checked file")?.digest = digest_bytes(b"changed handoff");
+        assert!(restore_reused_library_metadata(&store, &package_store, Some(&reference), &changed).is_err());
+        owner.export_into(&package_store)?;
+        let (_, root, _, _lease) = package_store.select_payload_for_execution(&reference.owner_identity)?;
+        let materialized = root.join("src/lib.rs");
+        let original_metadata = fs::metadata(&materialized)?;
+        let original_permissions = original_metadata.permissions();
+        let original_modified = original_metadata.modified()?;
+        assert!(original_permissions.readonly());
+        // Corrupt only this temporary package owner, preserving its seal before restoration revalidates it.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(
+                &materialized,
+                fs::Permissions::from_mode(original_permissions.mode() | 0o200),
+            )?;
+        }
+        #[cfg(not(unix))]
+        {
+            let mut writable = original_permissions.clone();
+            writable.set_readonly(false);
+            fs::set_permissions(&materialized, writable)?;
+        }
+        let corruption = (|| -> std::io::Result<()> {
+            fs::write(&materialized, "pub fn answer() -> i64 { 99 }\n")?;
+            fs::File::options()
+                .write(true)
+                .open(&materialized)?
+                .set_modified(original_modified)
+        })();
+        fs::set_permissions(&materialized, original_permissions)?;
+        corruption?;
+        assert!(fs::metadata(&materialized)?.permissions().readonly());
+        assert_eq!(fs::metadata(&materialized)?.modified()?, original_modified);
+        assert_eq!(fs::metadata(&materialized)?.len(), original_metadata.len());
+        assert_eq!(fs::read(&materialized)?, b"pub fn answer() -> i64 { 99 }\n");
+        assert!(
+            restore_reused_library_metadata(&store, &package_store, Some(&reference), owner.checked_files()).is_err()
         );
         Ok(())
     }

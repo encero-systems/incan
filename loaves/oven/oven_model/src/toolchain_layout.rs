@@ -8,6 +8,15 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod file_observation;
+mod installed_data;
+mod source_layout;
+pub use installed_data::{
+    COMPILER_OWNED_PACKAGE_DESCRIPTOR, CompilerOwnedInstalledData, CompilerOwnedInstalledDataError,
+    CompilerOwnedInstalledDataView,
+};
+pub use source_layout::{CompilerOwnedSourceLayout, CompilerOwnedSourceLayoutError, CompilerOwnedSourceMember};
+
 /// Internal scheduler handoff for compiler-owned immutable data when a direct-rustc child is baked outside the
 /// installed toolchain layout.
 const INTERNAL_TOOLCHAIN_DATA_ROOT_ENV: &str = "INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT";
@@ -80,6 +89,7 @@ pub fn resolve_toolchain_crate_path(crate_name: &str) -> PathBuf {
 /// Resolve one toolchain-relative path through the same layout policy used by generated Cargo and lock semantics.
 pub fn resolve_toolchain_relative_path(relative_path: &Path) -> PathBuf {
     let sealed_sdk_runtime_root = sealed_sdk_runtime_root();
+    let source_root = support_source_root(find_stdlib_root().as_deref(), development_root());
     resolve_toolchain_relative_path_in(
         relative_path,
         &ToolchainPathSearchPaths {
@@ -91,10 +101,22 @@ pub fn resolve_toolchain_relative_path(relative_path: &Path) -> PathBuf {
                 sealed_sdk_runtime_root.is_some(),
             ),
             sealed_sdk_runtime_crates: sealed_sdk_runtime_root.map(|root| root.join("crates")),
-            development_root: development_root(),
+            development_root: source_root,
             executable_bases: current_executable_search_bases(),
         },
     )
+}
+
+/// Recover checkout support-crate geometry from the selected source catalog when native compilation remaps manifest
+/// coordinates. Installed catalogs do not establish checkout geometry and retain the compiled fallback.
+fn support_source_root(stdlib: Option<&Path>, compiled_root: PathBuf) -> PathBuf {
+    stdlib
+        .and_then(|stdlib| stdlib.parent().and_then(Path::parent).map(Path::to_path_buf))
+        .filter(|root| {
+            stdlib == Some(root.join("loaves/stdlib").as_path())
+                && root.join("loaves/stdlib/sdk-components.toml").is_file()
+        })
+        .unwrap_or(compiled_root)
 }
 
 /// Return the external support-crate override only when no sealed runtime closure is authoritative.
@@ -870,5 +892,25 @@ mod tests {
     #[cfg(windows)]
     fn symlink_file(original: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
         std::os::windows::fs::symlink_file(original, link)
+    }
+    /// Native manifest coordinates need not retain the checkout prefix needed by support-crate paths.
+    #[test]
+    fn support_sources_use_selected_checkout_catalog() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let stdlib = root.path().join("loaves/stdlib");
+        fs::create_dir_all(&stdlib)?;
+        fs::write(stdlib.join("sdk-components.toml"), "")?;
+        let compiled = PathBuf::from("/");
+        let selected = super::support_source_root(Some(&stdlib), compiled.clone());
+        assert_eq!(selected, root.path());
+        assert_eq!(
+            super::development_toolchain_relative_path(&selected, Path::new("crates/incan_derive")),
+            root.path().join("loaves/stdlib/derive/incan_derive")
+        );
+        assert_eq!(
+            super::support_source_root(Some(&root.path().join("installed/stdlib")), compiled.clone()),
+            compiled
+        );
+        Ok(())
     }
 }

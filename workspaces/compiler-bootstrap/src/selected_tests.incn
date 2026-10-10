@@ -1,0 +1,232 @@
+"""Keep receipt-checked native test binaries while retaining separate evidence for each invocation."""
+
+from rust::std::env import var
+from rust::std::path import Path as RustPath
+from rust::std::process import Command
+from std.fs import Path
+from std.json import JsonValue
+from std.tempfile import TemporaryDirectory
+
+
+pub def run_selected_tests(root: Path, compiler: Path, source_text: str, exact: str, rustc: str) -> Result[None, str]:
+    """Execute the existing native runner with worktree-owned prepared outputs and independently retained reports."""
+    source = root.joinpath(source_text).resolve().map_err((error) => error.message())?
+    root_path = RustPath.new(root.0)
+    source_path = RustPath.new(source.0)
+    relative = source_path.strip_prefix(root_path).map_err((error) => str(error))?
+    cache = root.joinpath("target/compiler-development")
+    prepared_text = cache.joinpath("test-roots").joinpath(relative.to_string_lossy().into_owned()).0
+    prepared = Path(prepared_text)
+    evidence_parent = cache.joinpath("test-runs")
+    evidence_parent.mkdir(true, true).map_err((error) => error.message())?
+    directory = TemporaryDirectory.try_new_with("run-", "", Some(evidence_parent)).map_err((error) => error.message())?
+    evidence = directory.persist().map_err((error) => error.message())?
+    for name in ["compiler-suite-report.json", "native-test.log", "native-loaf-preparation.json"]:
+        previous = prepared.joinpath(name)
+        if previous.exists():
+            previous.rename(evidence.joinpath("previous-" + name)).map_err((error) => error.message())?
+    prepare_declared_helpers(root, compiler, relative.to_string_lossy().into_owned(), evidence)?
+    configuration = prepare_declared_native_root(root, relative.to_string_lossy().into_owned(), cache)?
+    mut command = Command.new(compiler.0)
+    command.arg("oven").arg("compiler-native-tests")
+    if "declaration" in configuration.keys():
+        declaration = configuration.require("declaration").map_err((error) => error.message())?
+        command.arg("--declaration").arg(root.joinpath(declaration.expect_str().map_err((error) => error.message())?).0)
+    if "inputs" in configuration.keys():
+        inputs = configuration.require("inputs").map_err((error) => error.message())?
+        for input in inputs.expect_array().map_err((error) => error.message())?:
+            command.arg("--input").arg(root.joinpath(input.expect_str().map_err((error) => error.message())?).0)
+    graph = configuration.require("native_graph").map_err((error) => error.message())?
+    command.arg("--native-graph").arg(graph.expect_str().map_err((error) => error.message())?)
+    command.arg("--native-index").arg(native_input("INCAN_NATIVE_INDEX", "INCAN_SDK_NATIVE_INDEX")?)
+    command.arg("--native-blobs").arg(native_input("INCAN_NATIVE_BLOBS", "INCAN_SDK_NATIVE_BLOBS")?)
+    command.arg("--compiler-root").arg(root.0)
+    command.arg("--rustc").arg(rustc)
+    command.arg("--explicit-bake-workspace").arg(cache.joinpath("fixtures").0)
+    command.arg("--target").arg(source.0)
+    command.arg("--output").arg(prepared_text)
+    for name in exact.split(" "):
+        if name != "":
+            command.arg("--exact").arg(name)
+    output = command.output().map_err((error) => str(error))?
+    evidence.joinpath("command.stdout").write_bytes(output.stdout).map_err((error) => error.message())?
+    evidence.joinpath("command.stderr").write_bytes(output.stderr).map_err((error) => error.message())?
+    for name in ["compiler-suite-report.json", "native-test.log", "native-loaf-preparation.json"]:
+        retained = prepared.joinpath(name)
+        if retained.exists():
+            bytes = retained.read_bytes().map_err((error) => error.message())?
+            evidence.joinpath(name).write_bytes(bytes).map_err((error) => error.message())?
+    publish_requested_report(compiler, evidence, output.status.success())?
+    println("Selected-test evidence: " + evidence.0)
+    if not output.status.success():
+        return Err("selected native tests failed; command output and available reports are retained")
+    report_text = evidence
+        .joinpath("compiler-suite-report.json")
+        .read_text("utf-8", "strict")
+        .map_err((error) => error.message())?
+    report = JsonValue.parse(report_text).map_err((error) => error.message())?
+    succeeded = report.require("success").map_err((error) => error.message())?
+    if not succeeded.expect_bool().map_err((error) => error.message())?:
+        return Err("selected native report did not establish successful execution")
+    println(report_text)
+    return Ok(None)
+
+
+def native_input(name: str, previous: str) -> Result[str, str]:
+    """Accept explicit native input configuration while the source bootstrap migrates its old variable spellings."""
+    match var(name):
+        Ok(value) => return Ok(value)
+        Err(_) => return var(previous).map_err((error) => str(error))
+
+
+def prepare_declared_native_root(root: Path, source: str, cache: Path) -> Result[JsonValue, str]:
+    """Select the authored native graph; the native runner prepares Loafs without publishing the standard library."""
+    text = root
+        .joinpath("workspaces/compiler-bootstrap/fixture-preparers.json")
+        .read_text("utf-8", "strict")
+        .map_err((error) => error.message())?
+    declaration = JsonValue.parse(text).map_err((error) => error.message())?
+    schema = declaration.require("schema").map_err((error) => error.message())?
+    if schema.expect_str().map_err((error) => error.message())? != "incan.compiler-fixture-preparers/1":
+        return Err("unsupported compiler fixture preparer declaration")
+    mut configuration = JsonValue.object({})
+    if "native_roots" in declaration.keys():
+        roots = declaration.require("native_roots").map_err((error) => error.message())?
+        if source in roots.keys():
+            configuration = roots.require(source).map_err((error) => error.message())?
+    mut graph_text = native_input("INCAN_NATIVE_COMPILER_GRAPH", "INCAN_SDK_NATIVE_COMPILER_GRAPH")?
+    if "dependency_graph" in configuration.keys():
+        graph_value = configuration.require("dependency_graph").map_err((error) => error.message())?
+        graph = root
+            .joinpath(graph_value.expect_str().map_err((error) => error.message())?)
+            .resolve()
+            .map_err((error) => error.message())?
+        RustPath.new(graph.0).strip_prefix(RustPath.new(root.0)).map_err((error) => str(error))?
+        graph_text = graph.0
+        if "use_compiler_resolution" in configuration.keys():
+            use_resolution = configuration.require("use_compiler_resolution").map_err((error) => error.message())?
+            if use_resolution.expect_bool().map_err((error) => error.message())?:
+                graph_text = project_test_dependency_graph(graph, cache, source)?
+    configuration.set("native_graph", JsonValue.string(graph_text)).map_err((error) => error.message())?
+    return Ok(configuration)
+
+
+def project_test_dependency_graph(authored: Path, cache: Path, source: str) -> Result[str, str]:
+    """Retain the compiler's resolved registry units and codegen while selecting the root's authored local variants."""
+    compiler_graph = Path(native_input("INCAN_NATIVE_COMPILER_GRAPH", "INCAN_SDK_NATIVE_COMPILER_GRAPH")?)
+        .resolve()
+        .map_err((error) => error.message())?
+    compiler_text = compiler_graph.read_text("utf-8", "strict").map_err((error) => error.message())?
+    compiler_selection = JsonValue.parse(compiler_text).map_err((error) => error.message())?
+    original_text = authored.read_text("utf-8", "strict").map_err((error) => error.message())?
+    mut projection = JsonValue.parse(original_text).map_err((error) => error.message())?
+    compiler_index = compiler_selection.require("index_commit").map_err((error) => error.message())?
+    test_index = projection.require("index_commit").map_err((error) => error.message())?
+    compiler_pin = compiler_index.expect_str().map_err((error) => error.message())?
+    test_pin = test_index.expect_str().map_err((error) => error.message())?
+    if compiler_pin != test_pin:
+        return Err("test dependency graph and compiler resolution use different registry revisions")
+    lock = compiler_selection.require("registry_lock").map_err((error) => error.message())?
+    lock_path = compiler_graph
+        .parent()
+        .joinpath(lock.expect_str().map_err((error) => error.message())?)
+        .resolve()
+        .map_err((error) => error.message())?
+    projection.set("registry_lock", JsonValue.string(lock_path.0)).map_err((error) => error.message())?
+    original_facets = projection.require("facets").map_err((error) => error.message())?
+    mut facets: list[JsonValue] = []
+    for facet in original_facets.expect_array().map_err((error) => error.message())?:
+        mut selected = facet.clone()
+        project = selected.require("project").map_err((error) => error.message())?
+        path = authored
+            .parent()
+            .joinpath(project.expect_str().map_err((error) => error.message())?)
+            .resolve()
+            .map_err((error) => error.message())?
+        selected.set("project", JsonValue.string(path.0)).map_err((error) => error.message())?
+        facets.append(selected)
+    projection.set("facets", JsonValue.array(facets)).map_err((error) => error.message())?
+    text = projection.to_pretty_json().map_err((error) => error.message())?
+    output = cache.joinpath("test-native-graphs").joinpath(source + ".graph.json")
+    output.parent().mkdir(true, true).map_err((error) => error.message())?
+    if output.exists():
+        previous = output.read_text("utf-8", "strict").map_err((error) => error.message())?
+        if previous == text:
+            return Ok(output.0)
+    output.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
+    return Ok(output.0)
+
+
+def prepare_declared_helpers(root: Path, compiler: Path, source: str, evidence: Path) -> Result[None, str]:
+    """Prepare only helpers declared for the selected root, under the exact compiler that will run that root."""
+    declaration = root.joinpath("workspaces/compiler-bootstrap/fixture-preparers.json")
+    text = declaration.read_text("utf-8", "strict").map_err((error) => error.message())?
+    manifest = JsonValue.parse(text).map_err((error) => error.message())?
+    schema = manifest.require("schema").map_err((error) => error.message())?
+    if schema.expect_str().map_err((error) => error.message())? != "incan.compiler-fixture-preparers/1":
+        return Err("unsupported compiler fixture preparer declaration")
+    roots = manifest.require("roots").map_err((error) => error.message())?
+    if source not in roots.keys():
+        return Ok(None)
+    projects = roots.require(source).map_err((error) => error.message())?
+    home_variable: str = "INCAN_TEST_OVEN_FIXTURE_HOME"
+    mut index = 0
+    for value in projects.expect_array().map_err((error) => error.message())?:
+        relative = value.expect_str().map_err((error) => error.message())?
+        project = root.joinpath(relative).resolve().map_err((error) => error.message())?
+        project_text = project.0
+        RustPath.new(project_text).strip_prefix(RustPath.new(root.0)).map_err((error) => str(error))?
+        if not project.joinpath("loaf.toml").exists():
+            return Err("declared fixture preparer has no Loaf manifest")
+        fixture_home = var(home_variable).map_err((error) => str(error))?
+        if fixture_home == "":
+            return Err("declared fixture preparers require the selected fixture store")
+        mut command = Command.new(compiler.0)
+        command.env("INCAN_HOME", fixture_home).env("INCAN_OVEN_BAKE_PROFILES", "debug")
+        command.arg("oven").arg("bake").arg("--project").arg(project_text).arg("--format").arg("json")
+        result = command.output().map_err((error) => str(error))?
+        name = "helper-" + str(index)
+        evidence.joinpath(name + ".stdout").write_bytes(result.stdout).map_err((error) => error.message())?
+        evidence.joinpath(name + ".stderr").write_bytes(result.stderr).map_err((error) => error.message())?
+        if not result.status.success():
+            return Err("declared fixture preparer failed; selected-test evidence retains its diagnostics")
+        index += 1
+    return Ok(None)
+
+
+def publish_requested_report(compiler: Path, evidence: Path, succeeded: bool) -> Result[None, str]:
+    """Publish a requested archive from disposable evidence while retaining prepared binaries and invocation records."""
+    report_variable: str = "INCAN_TEST_OVEN_TEST_ONE_REPORT"
+    match var(report_variable):
+        Err(_) => return Ok(None)
+        Ok(report) =>
+            if report == "":
+                return Ok(None)
+            directory = TemporaryDirectory
+                .try_new_with("publication-", "", Some(evidence))
+                .map_err((error) => error.message())?
+            publication = directory.persist().map_err((error) => error.message())?
+            scratch = publication.joinpath("scratch")
+            scratch.mkdir(true, true).map_err((error) => error.message())?
+            for name in ["compiler-suite-report.json", "native-test.log", "native-loaf-preparation.json"]:
+                source = evidence.joinpath(name)
+                if source.exists():
+                    mut destination = name
+                    if name == "native-test.log":
+                        destination = "selected-root.libtest-output.txt"
+                    bytes = source.read_bytes().map_err((error) => error.message())?
+                    publication.joinpath(destination).write_bytes(bytes).map_err((error) => error.message())?
+            mut status = "1"
+            mut success = "false"
+            if succeeded:
+                status = "0"
+                success = "true"
+            mut command = Command.new(compiler.0)
+            command.arg("oven").arg("retain-suite-output")
+            command.arg(publication.0).arg(scratch.0).arg(success).arg(report).arg(status)
+            output = command.output().map_err((error) => str(error))?
+            evidence.joinpath("publication.stdout").write_bytes(output.stdout).map_err((error) => error.message())?
+            evidence.joinpath("publication.stderr").write_bytes(output.stderr).map_err((error) => error.message())?
+            if succeeded and not output.status.success():
+                return Err("requested report publication failed; retained invocation evidence contains the diagnostics")
+            return Ok(None)

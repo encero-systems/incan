@@ -1,0 +1,23 @@
+{
+  "index_commit": "ee71d3e50de10d4fd7d8f817e0b1df04885bddb0",
+  "registry_lock": "compiler-suite-native-lock.json",
+  "facets": [
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/oven/oven_model"
+    },
+    {
+      "domain": "target",
+      "features": [
+        "test_support"
+      ],
+      "project": "../../loaves/oven/oven_store"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/oven/oven_rustc"
+    }
+  ]
+}

@@ -6,6 +6,49 @@ use incan_lang::interop::{
     RustFunctionSig, RustItemKind, RustParam, RustTraitAssoc, RustTypeInfo, RustTypeShape, RustVisibility,
 };
 
+/// Publish the retained source graph for a fixture whose dependencies form a root-to-leaf chain.
+///
+/// Keep the root's retained source separate from mutable projection and cache files so its full-tree digest remains
+/// verifiable after metadata is persisted. Standalone fixtures use byte verification, never a simulated Oven receipt.
+fn publish_dependency_fixture(root: &Path, dependencies: &[(&str, &Path)]) -> Result<(), Box<dyn std::error::Error>> {
+    let retained_root = root.with_file_name("retained-root");
+    fs::create_dir_all(retained_root.join("src"))?;
+    fs::copy(root.join("loaf.toml"), retained_root.join("loaf.toml"))?;
+    fs::copy(root.join("src/lib.rs"), retained_root.join("src/lib.rs"))?;
+    let mut sources = vec![("root", retained_root.as_path())];
+    sources.extend_from_slice(dependencies);
+    let mut authority = Vec::new();
+    let mut crates = Vec::new();
+    for (index, (package, source)) in sources.iter().enumerate() {
+        let digest = crate::loader::digest_oven_source_tree(source)?;
+        authority.push(crate::loader::OvenInspectionRegistrySource {
+            package: (*package).to_string(),
+            version: "0.1.0".to_string(),
+            registry: "registry+https://example.invalid/native-fixtures".to_string(),
+            checksum: digest.clone(),
+            features: Vec::new(),
+            source_root: source.canonicalize()?,
+            source_digest: digest,
+        });
+        let edges = match sources.get(index + 1) {
+            Some((name, _)) => vec![serde_json::json!({"crate": index + 1, "name": name.replace('-', "_")})],
+            None => Vec::new(),
+        };
+        crates.push(serde_json::json!({
+            "display_name": package.replace('-', "_"),
+            "root_module": source.join("src/lib.rs").canonicalize()?,
+            "edition": "2021", "deps": edges, "is_workspace_member": true,
+            "is_proc_macro": false, "cfg": [], "env": {}
+        }));
+    }
+    crate::loader::write_oven_inspection_source_authority(root, authority)?;
+    fs::write(
+        root.join(crate::loader::OVEN_DIRECT_LOAF_PROJECT_FILE),
+        serde_json::to_vec_pretty(&serde_json::json!({"crates": crates}))?,
+    )?;
+    Ok(())
+}
+
 /// Build minimal public Rust type metadata for cache round-trip tests.
 fn dummy_type_metadata(path: &str) -> RustItemMetadata {
     RustItemMetadata {
@@ -369,8 +412,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
         dirs.insert((name, version), dir);
     }
 
-    let resolved = dependency_manifest_dir_from_lock_with_search_roots(&root, "substrait", std::slice::from_ref(&registry_src_root))
-        .ok_or_else(|| std::io::Error::other("expected the lock fallback to resolve substrait"))?;
+    let resolved = dependency_manifest_dir_from_lock_with_search_roots(
+        &root,
+        "substrait",
+        std::slice::from_ref(&registry_src_root),
+    )
+    .ok_or_else(|| std::io::Error::other("expected the lock fallback to resolve substrait"))?;
     assert_eq!(
         resolved,
         dirs[&("substrait", "0.63.0")],
@@ -572,9 +619,17 @@ fn direct_workspace_reads_the_sealed_build_unit_of_the_inspected_version() -> Re
     let incan_lang::interop::RustItemKind::Type(info) = &hit.metadata.kind else {
         return Err(std::io::Error::other("expected a type item").into());
     };
-    let mut names = info.variants.iter().map(|variant| variant.name.as_str()).collect::<Vec<_>>();
+    let mut names = info
+        .variants
+        .iter()
+        .map(|variant| variant.name.as_str())
+        .collect::<Vec<_>>();
     names.sort_unstable();
-    assert_eq!(names, vec!["Empty", "Node"], "the 0.1.0 unit defines the inspected enum: {names:?}");
+    assert_eq!(
+        names,
+        vec!["Empty", "Node"],
+        "the 0.1.0 unit defines the inspected enum: {names:?}"
+    );
     Ok(())
 }
 
@@ -798,35 +853,69 @@ fn complete_metadata_excludes_root_only_cross_crate_implementations() -> Result<
         fs::create_dir_all(root.join("src"))?;
     }
     fs::write(
-        tmp.path().join("Cargo.toml"),
-        r#"[package]
+        tmp.path().join("loaf.toml"),
+        r#"[project]
 name = "solver_root"
 version = "0.1.0"
+
+[rust]
+name = "solver_root"
 edition = "2021"
+type = "lib"
 
 [dependencies]
-trait-owner = { path = "trait-owner" }
+"trait-owner" = { "loaf" = "trait-owner", "path" = "trait-owner" }
 "#,
+    )?;
+    fs::write(
+        tmp.path()
+            .join("loaf.toml")
+            .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+        b"direct\n",
     )?;
     fs::write(tmp.path().join("src/lib.rs"), "pub fn load_root() {}\n")?;
     fs::write(
-        trait_owner.join("Cargo.toml"),
-        r#"[package]
+        trait_owner.join("loaf.toml"),
+        r#"[project]
 name = "trait-owner"
 version = "0.1.0"
+
+[rust]
+name = "trait_owner"
 edition = "2021"
+type = "lib"
 
 [dependencies]
-type-owner = { path = "../type-owner" }
+"type-owner" = { "loaf" = "type-owner", "path" = "../type-owner" }
 "#,
+    )?;
+    fs::write(
+        trait_owner
+            .join("loaf.toml")
+            .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+        b"direct\n",
     )?;
     fs::write(
         trait_owner.join("src/lib.rs"),
         "pub trait Marker {}\nimpl Marker for type_owner::Thing {}\n",
     )?;
     fs::write(
-        type_owner.join("Cargo.toml"),
-        "[package]\nname = \"type-owner\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        type_owner.join("loaf.toml"),
+        r#"[project]
+name = "type-owner"
+version = "0.1.0"
+
+[rust]
+name = "type_owner"
+edition = "2021"
+type = "lib"
+"#,
+    )?;
+    fs::write(
+        type_owner
+            .join("loaf.toml")
+            .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+        b"direct\n",
     )?;
     fs::write(type_owner.join("src/lib.rs"), "pub struct Thing;\n")?;
 
@@ -930,8 +1019,22 @@ fn deferred_complete_function_extraction_flushes_without_reopening_workspace() -
     let tmp = tempfile::tempdir()?;
     fs::create_dir_all(tmp.path().join("src"))?;
     fs::write(
-        tmp.path().join("Cargo.toml"),
-        "[package]\nname = \"probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        tmp.path().join("loaf.toml"),
+        r#"[project]
+name = "probe"
+version = "0.1.0"
+
+[rust]
+name = "probe"
+edition = "2021"
+type = "lib"
+"#,
+    )?;
+    fs::write(
+        tmp.path()
+            .join("loaf.toml")
+            .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+        b"direct\n",
     )?;
     fs::write(
         tmp.path().join("src/lib.rs"),
@@ -970,8 +1073,22 @@ fn complete_negative_extraction_round_trips_without_reopening_workspace() -> Res
     let tmp = tempfile::tempdir()?;
     fs::create_dir_all(tmp.path().join("src"))?;
     fs::write(
-        tmp.path().join("Cargo.toml"),
-        "[package]\nname = \"probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        tmp.path().join("loaf.toml"),
+        r#"[project]
+name = "probe"
+version = "0.1.0"
+
+[rust]
+name = "probe"
+edition = "2021"
+type = "lib"
+"#,
+    )?;
+    fs::write(
+        tmp.path()
+            .join("loaf.toml")
+            .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+        b"direct\n",
     )?;
     fs::write(tmp.path().join("src/lib.rs"), "pub fn present() {}\n")?;
     let root = tmp.path().canonicalize()?;
@@ -1119,6 +1236,45 @@ fn workspace_fingerprint_ignores_compiler_owned_path_dependencies() -> Result<()
         before, after,
         "editing a compiler-owned incan_* path dependency must not change the workspace fingerprint"
     );
+    Ok(())
+}
+
+/// Editable Loaf cache identity follows Rust source and local dependencies while ignoring neighboring Cargo files.
+#[test]
+fn editable_loaf_fingerprint_binds_source_and_dependency_without_cargo() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let dependency = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("rust/src"))?;
+    fs::create_dir_all(dependency.path().join("src"))?;
+    fs::write(root.path().join("rust/src/lib.rs"), "pub struct Local;\n")?;
+    fs::write(dependency.path().join("src/lib.rs"), "pub struct Foreign;\n")?;
+    fs::write(
+        dependency.path().join("loaf.toml"),
+        "[project]\nname='dependency'\nversion='1.0.0'\n[rust]\nname='dependency_crate'\ntype='lib'\nedition='2024'\n",
+    )?;
+    fs::write(
+        root.path().join("loaf.toml"),
+        format!(
+            "[project]\nname='root'\nversion='1.0.0'\n[rust]\nname='root'\ntype='lib'\nedition='2024'\n[rust.source]\nroot='rust'\n[dependencies]\nrenamed={{loaf='dependency',path={}}}\n",
+            serde_json::to_string(dependency.path())?,
+        ),
+    )?;
+    let original = workspace_fingerprint(root.path())?;
+    fs::write(root.path().join("Cargo.toml"), "invalid compatibility declaration")?;
+    fs::write(root.path().join("Cargo.lock"), "invalid compatibility lock")?;
+    assert_eq!(workspace_fingerprint(root.path())?, original);
+    assert_eq!(
+        dependency_manifest_dir_from_manifest(root.path(), "dependency_crate"),
+        Some(dependency.path().canonicalize()?)
+    );
+    fs::write(root.path().join("rust/src/lib.rs"), "pub struct Changed;\n")?;
+    assert_ne!(workspace_fingerprint(root.path())?, original);
+    fs::write(root.path().join("rust/src/lib.rs"), "pub struct Local;\n")?;
+    assert_eq!(workspace_fingerprint(root.path())?, original);
+    fs::write(dependency.path().join("src/lib.rs"), "pub struct ChangedForeign;\n")?;
+    assert_ne!(workspace_fingerprint(root.path())?, original);
+    fs::write(dependency.path().join("src/lib.rs"), "pub struct Foreign;\n")?;
+    assert_eq!(workspace_fingerprint(root.path())?, original);
     Ok(())
 }
 
@@ -1286,14 +1442,28 @@ fn definition_path_alias_hits_existing_cached_reexport() -> Result<(), Box<dyn s
 fn repeated_missing_lookup_hits_negative_cache_without_new_workspace_load() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     fs::write(
-        tmp.path().join("Cargo.toml"),
-        "[package]\nname = \"probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        tmp.path().join("loaf.toml"),
+        r#"[project]
+name = "probe"
+version = "0.1.0"
+
+[rust]
+name = "probe"
+edition = "2021"
+type = "lib"
+"#,
+    )?;
+    fs::write(
+        tmp.path()
+            .join("loaf.toml")
+            .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+        b"direct\n",
     )?;
     fs::create_dir_all(tmp.path().join("src"))?;
     fs::write(tmp.path().join("src/lib.rs"), "pub fn keep() {}\n")?;
 
     let cache = RustMetadataCache::new();
-    let query = "std::fs::read_to_string";
+    let query = "std::fs::__incan_missing_negative_cache_probe";
 
     let first = cache.get_or_extract(tmp.path(), query, &|_| ());
     assert!(matches!(
@@ -1398,8 +1568,22 @@ fn dependency_manifest_resolution_cache_normalizes_crate_spelling() -> Result<()
 fn root_out_dir_workspace_is_skipped_for_non_root_crate_misses() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     fs::write(
-        tmp.path().join("Cargo.toml"),
-        "[package]\nname = \"root-probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        tmp.path().join("loaf.toml"),
+        r#"[project]
+name = "root-probe"
+version = "0.1.0"
+
+[rust]
+name = "root_probe"
+edition = "2021"
+type = "lib"
+"#,
+    )?;
+    fs::write(
+        tmp.path()
+            .join("loaf.toml")
+            .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+        b"direct\n",
     )?;
     fs::create_dir_all(tmp.path().join("src"))?;
     fs::write(tmp.path().join("src/lib.rs"), "pub fn keep() {}\n")?;
@@ -2024,13 +2208,42 @@ fn complete_dependency_metadata_preserves_mutable_reference_parameters() -> Resu
     fs::create_dir_all(root.join("src"))?;
     fs::create_dir_all(dep.join("src"))?;
     fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"root\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nsource-dep = { path = \"../source-dep\" }\n",
+        root.join("loaf.toml"),
+        r#"[project]
+name = "root"
+version = "0.1.0"
+
+[rust]
+name = "root"
+edition = "2021"
+type = "lib"
+
+[dependencies]
+"source-dep" = { "loaf" = "source-dep", "path" = "../source-dep" }
+"#,
+    )?;
+    fs::write(
+        root.join("loaf.toml")
+            .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+        b"direct\n",
     )?;
     fs::write(root.join("src").join("lib.rs"), "pub fn keep() {}\n")?;
     fs::write(
-        dep.join("Cargo.toml"),
-        "[package]\nname = \"source-dep\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\nname = \"source_dep\"\n",
+        dep.join("loaf.toml"),
+        r#"[project]
+name = "source-dep"
+version = "0.1.0"
+
+[rust]
+name = "source_dep"
+edition = "2021"
+type = "lib"
+"#,
+    )?;
+    fs::write(
+        dep.join("loaf.toml")
+            .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+        b"direct\n",
     )?;
     fs::write(
         dep.join("src").join("lib.rs"),
@@ -2066,6 +2279,7 @@ pub use writer::Sink;
 "#,
     )?;
 
+    publish_dependency_fixture(&root, &[("source-dep", &dep)])?;
     let source_cache = RustMetadataCache::new();
     let source_metadata = source_cache.get_or_extract(&root, "source_dep::Builder", &|_| ())?;
     let RustItemKind::Type(source_type_info) = &source_metadata.kind else {
@@ -2299,8 +2513,7 @@ fn dependency_source_metadata_resolves_public_globs_through_local_aliases_withou
     Ok(())
 }
 
-/// Dependency items generated into `OUT_DIR` should resolve through the root workspace that checked those build
-/// scripts.
+/// Dependency items retained in their declared `OUT_DIR` should resolve through the prepared root source graph.
 #[test]
 fn dependency_generated_out_dir_items_resolve_through_root_workspace() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
@@ -2311,8 +2524,24 @@ fn dependency_generated_out_dir_items_resolve_through_root_workspace() -> Result
     fs::create_dir_all(dep.join("src"))?;
     fs::create_dir_all(helper.join("src"))?;
     fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"root\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ngenerated-dep = { path = \"../generated-dep\" }\n",
+        root.join("loaf.toml"),
+        r#"[project]
+name = "root"
+version = "0.1.0"
+
+[rust]
+name = "root"
+edition = "2021"
+type = "lib"
+
+[dependencies]
+"generated-dep" = { "loaf" = "generated-dep", "path" = "../generated-dep" }
+"#,
+    )?;
+    fs::write(
+        root.join("loaf.toml")
+            .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+        b"direct\n",
     )?;
     fs::write(root.join("src").join("lib.rs"), "pub fn keep() {}\n")?;
     fs::create_dir_all(root.join(".cargo"))?;
@@ -2324,12 +2553,42 @@ fn dependency_generated_out_dir_items_resolve_through_root_workspace() -> Result
         ),
     )?;
     fs::write(
-        dep.join("Cargo.toml"),
-        "[package]\nname = \"generated-dep\"\nversion = \"0.1.0\"\nedition = \"2021\"\nbuild = \"build.rs\"\n\n[lib]\nname = \"generated_dep\"\n\n[dependencies]\nhelper-crate = { path = \"../helper-crate\" }\n",
+        dep.join("loaf.toml"),
+        r#"[project]
+name = "generated-dep"
+version = "0.1.0"
+
+[rust]
+name = "generated_dep"
+edition = "2021"
+type = "lib"
+
+[dependencies]
+"helper-crate" = { "loaf" = "helper-crate", "path" = "../helper-crate" }
+"#,
     )?;
     fs::write(
-        helper.join("Cargo.toml"),
-        "[package]\nname = \"helper-crate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\nname = \"helper_crate\"\n",
+        dep.join("loaf.toml")
+            .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+        b"direct\n",
+    )?;
+    fs::write(
+        helper.join("loaf.toml"),
+        r#"[project]
+name = "helper-crate"
+version = "0.1.0"
+
+[rust]
+name = "helper_crate"
+edition = "2021"
+type = "lib"
+"#,
+    )?;
+    fs::write(
+        helper
+            .join("loaf.toml")
+            .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+        b"direct\n",
     )?;
     fs::write(
         helper.join("src").join("lib.rs"),
@@ -2376,6 +2635,7 @@ pub mod nested {
     )?;
 
     let cache = RustMetadataCache::new();
+    publish_dependency_fixture(&root, &[("generated-dep", &dep), ("helper-crate", &helper)])?;
     let metadata = cache.get_or_extract(&root, "generated_dep::generated::GeneratedThing", &|_| ())?;
     {
         let inner = cache
@@ -2503,18 +2763,65 @@ fn dependency_reexport_alias_miss_skips_wrapper_workspace() -> Result<(), Box<dy
     fs::create_dir_all(wrapper_root.join("src"))?;
     fs::create_dir_all(inner_root.join("src"))?;
     fs::write(
-        root.join("Cargo.toml"),
-        "[package]\nname = \"root\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nwrapper-crate = { path = \"../wrapper-crate\" }\n",
+        root.join("loaf.toml"),
+        r#"[project]
+name = "root"
+version = "0.1.0"
+
+[rust]
+name = "root"
+edition = "2021"
+type = "lib"
+
+[dependencies]
+"wrapper-crate" = { "loaf" = "wrapper-crate", "path" = "../wrapper-crate" }
+"#,
+    )?;
+    fs::write(
+        root.join("loaf.toml")
+            .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+        b"direct\n",
     )?;
     fs::write(root.join("src").join("lib.rs"), "pub fn keep() {}\n")?;
     fs::write(
-        wrapper_root.join("Cargo.toml"),
-        "[package]\nname = \"wrapper-crate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\nname = \"wrapper_crate\"\n\n[dependencies]\ninner-crate = { path = \"../inner-crate\" }\n",
+        wrapper_root.join("loaf.toml"),
+        r#"[project]
+name = "wrapper-crate"
+version = "0.1.0"
+
+[rust]
+name = "wrapper_crate"
+edition = "2021"
+type = "lib"
+
+[dependencies]
+"inner-crate" = { "loaf" = "inner-crate", "path" = "../inner-crate" }
+"#,
+    )?;
+    fs::write(
+        wrapper_root
+            .join("loaf.toml")
+            .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+        b"direct\n",
     )?;
     fs::write(wrapper_root.join("src").join("lib.rs"), "pub use inner_crate;\n")?;
     fs::write(
-        inner_root.join("Cargo.toml"),
-        "[package]\nname = \"inner-crate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\nname = \"inner_crate\"\n",
+        inner_root.join("loaf.toml"),
+        r#"[project]
+name = "inner-crate"
+version = "0.1.0"
+
+[rust]
+name = "inner_crate"
+edition = "2021"
+type = "lib"
+"#,
+    )?;
+    fs::write(
+        inner_root
+            .join("loaf.toml")
+            .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
+        b"direct\n",
     )?;
     fs::write(inner_root.join("src").join("lib.rs"), "pub struct Present;\n")?;
 

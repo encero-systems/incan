@@ -128,6 +128,22 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/build/bake/admitted_publication_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Actual admitted ordinary publication with both profiles, metadata replay, changed source, canonical lock and original generation owners; temporary native SDK context remains explicit.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/build/bake/ordinary_native_publication_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Actual ordinary native library publication, metadata replay and source edit with real debug/release producer requests and compiler-bound identity; legacy SDK discovery is hostile and no generated Cargo invocation is admitted.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/build/caller_facet.rs": {
       "disposition": "keep",
       "notes": "checked, usage-derived caller export selection and refusal at the Rust-hosted Incan boundary.",
@@ -160,6 +176,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/build/library_dependencies/tests.rs": {
+      "disposition": "keep",
+      "notes": "Ordinary checked dependency admission preserves original metadata and generation owners, exact aliases, features, namespace issuers and complete checked dependency closure.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/build/library_exports.rs": {
       "disposition": "keep",
       "notes": "library re-export resolution and Rust ABI query paths from checked declarations.",
@@ -168,10 +192,66 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/build/library_metadata/requirements/native_demands/tests.rs": {
+      "disposition": "keep",
+      "notes": "Actual checked source native-demand coverage, explicit unknown old metadata and conservative parsed AST refusals; no generated Rust assertion.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/build/library_metadata/requirements/tests.rs": {
+      "disposition": "keep",
+      "notes": "Portable checked requirement replay preserves exports and current bindings and refuses incomplete planning authority.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/build/library_metadata/tests.rs": {
+      "disposition": "keep",
+      "notes": "Ordinary checked-library metadata ownership: exact recipe and intent binding, sealed sidecars, promised ABI completeness, original owner retention and conflicting native output refusal. These controls remain required after SDK removal.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/build/library_metadata/tests/published.rs": {
+      "disposition": "unaffected",
+      "notes": "Read-only admission of original ordinary checked metadata/generation owners, transitive lease retention, relocation, payload corruption and shared-DAG verification; independent of generated Rust.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/build/library_outputs.rs": {
       "disposition": "unaffected",
       "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/build/library_project/admitted_preparation_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Original admitted ordinary dependency/session retention and refusal of project, feature and provider substitution; independent of generated Rust.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/build/library_project/metadata_replay/lock_transition/tests.rs": {
+      "disposition": "keep",
+      "notes": "Exact canonical lock publication re-seals unchanged checked outputs while preserving source, feature, Rust and writer authority, including workspace locks outside member source trees.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/build/library_project/metadata_replay/tests.rs": {
+      "disposition": "keep",
+      "notes": "Source-current metadata preflight binds raw source, declarations and external Rust without entering the Incan frontend.",
+      "owner": 1698,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -188,6 +268,38 @@
       "disposition": "unaffected",
       "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/build/native_runtime_inputs/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Actual receipt-bound ordinary Incan identity exchange retains original producer native owners, checks roots/records/intent/compiler and refuses missing original bytes; physical identity does not grant semantic, macro or namespace authority.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/build/native_sdk.rs": {
+      "disposition": "unaffected",
+      "notes": "Native SDK facet version/feature selection and canonical receipt catalog binding; no Cargo resolution.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/build/native_sdk_plan.rs": {
+      "disposition": "unaffected",
+      "notes": "Receipt-bound native SDK plans and the actual covered test-envelope path retain original command owners; store-backed controls verify member bindings, compiler mismatch refusal and owner lifetime without generated Cargo metadata.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/build/ordinary_support/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Actual executable-relative mandatory native declaration selection and original source member refusals; independent of generated Rust. Migrate this authority contract if its caller moves.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -283,7 +395,7 @@
     },
     "loaves/compiler/incan_driver/src/build/reuse.rs": {
       "disposition": "unaffected",
-      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend.",
+      "notes": "Build orchestration over Oven; evicted inspection constituents decline explicit-bake cache reuse while damaged entries fail closed.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -315,7 +427,7 @@
     },
     "loaves/compiler/incan_driver/src/cargo_policy.rs": {
       "disposition": "retire",
-      "notes": "Two tests die with the Cargo command line (arg ordering, `INCAN_CARGO_ARGS`); the `INCAN_LOCKED/FROZEN/OFFLINE` env defaults, the `--no-locked/--no-offline/--no-frozen` negations and frozen ⇒ locked+offline survive as Oven lock-policy inputs (maintainer ruling, 2026-09-20) and are twinned by re-point CLI tests.",
+      "notes": "Two tests die with the Cargo command line (arg ordering, `INCAN_CARGO_ARGS`); the `INCAN_LOCKED/FROZEN/OFFLINE` env defaults, the `--no-locked/--no-offline/--no-frozen` negations and frozen \u21d2 locked+offline survive as Oven lock-policy inputs (maintainer ruling, 2026-09-20) and are twinned by re-point CLI tests.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -330,7 +442,7 @@
         },
         "cargo_policy_resolves_env_defaults_and_frozen_implication": {
           "twin": "loaves/toolchain/incan-cli/tests/cli_lock_policy_tests.rs::build_lock_policy_env_defaults_refuse_a_missing_lock",
-          "notes": "`INCAN_LOCKED=1` and `INCAN_FROZEN=1` (frozen ⇒ locked) refuse a project without `oven.lock` and create none; the `INCAN_CARGO_ARGS` half dies with the Cargo command line."
+          "notes": "`INCAN_LOCKED=1` and `INCAN_FROZEN=1` (frozen \u21d2 locked) refuse a project without `oven.lock` and create none; the `INCAN_CARGO_ARGS` half dies with the Cargo command line."
         },
         "cargo_policy_uses_cli_extra_args_before_env_extra_args": {
           "twin": "dies",
@@ -380,6 +492,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/lock/registry_sources/optional_lineage_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Original completed-project inspection owner integrity and typed optional native-generation invalidation; tests canonical Store lineage and admission rather than generated Rust.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/lock/resolution.rs": {
       "disposition": "unaffected",
       "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend.",
@@ -388,10 +508,26 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/lock/resolution/admitted_session_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Canonical ordinary lock writer retains the original admitted session and exact writer evidence, refusing other projects and unadmitted workspace siblings.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/lock/rust_inspect.rs": {
       "disposition": "unaffected",
       "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/lock/rust_inspect/ordinary/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Ordinary Rust inspection retains complete original producer and native owners through the actual cached database; genuine metadata and unchanged database reuse, unselected source freshness, missing original source and unowned macro/serialized reload refusals.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -436,6 +572,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/sdk_closure.rs": {
+      "disposition": "unaffected",
+      "notes": "A locally compiled SDK facet seals its native source identity and loads a frozen inspection graph without Cargo metadata.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/session.rs": {
       "disposition": "keep",
       "notes": "CompilationSession analysis (provider plan reuse, feature projection); one test builds a consumer's generated Rust with the standard library mounted from source.",
@@ -449,6 +593,22 @@
           "notes": "twinned by the module fixture that runs the same program and `codec` module: typed `BinaryWrite`/`BinaryRead` calls, `chunks` and `File`/`Path` reads and writes print the same three lines; the generated `std.io`/`std.fs` mount and the rustc build die with the Rust-source backend (#1561)."
         }
       },
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/session/source_publication_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Genuine standard-source capability retention in ordinary sessions and refusal of copied projects, foreign namespaces, mixed authority and stale declarations.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/source_authority_stage_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Layering controls carry genuine original source context through stage setters, cache clones, lowering and emission; hostile ambient and stale owners refuse. Temporary emission APIs require corresponding authority controls when backend callers migrate.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
       "twin": ""
     },
     "loaves/compiler/incan_driver/src/testing/discovery.rs": {
@@ -527,7 +687,7 @@
       "tests": {
         "explicitly_baked_project_reuses_release_json_authority_without_cargo": {
           "twin": "dies",
-          "dies": "the `sealed project output … no longer matches this source tree` warning after an edit dies (maintainer ruling, 2026-09-20: a stale bake is re-baked transparently, no explicit rebake — the DX requirement is recorded on #1142, slice 8, with its re-point CLI test). The other observables are carried: `reused sealed project Loaf` on `build --locked` after a bake by `rfc031_pub_import_integration_tests.rs`; `oven.lock is out of date` after a manifest edit by `cli_workspace_and_lock_tests.rs` and `cli_interop_target_tests.rs`; `incan test tests --fail-on-empty` on a baked `std.json` project (#1056) by no other test — folded into the #1142 requirement as well."
+          "dies": "the `sealed project output \u2026 no longer matches this source tree` warning after an edit dies (maintainer ruling, 2026-09-20: a stale bake is re-baked transparently, no explicit rebake \u2014 the DX requirement is recorded on #1142, slice 8, with its re-point CLI test). The other observables are carried: `reused sealed project Loaf` on `build --locked` after a bake by `rfc031_pub_import_integration_tests.rs`; `oven.lock is out of date` after a manifest edit by `cli_workspace_and_lock_tests.rs` and `cli_interop_target_tests.rs`; `incan test tests --fail-on-empty` on a baked `std.json` project (#1056) by no other test \u2014 folded into the #1142 requirement as well."
         }
       },
       "twin": "dies"
@@ -541,7 +701,7 @@
       "tests": {
         "a_package_projects_a_call_into_its_own_sibling_module": {
           "twin": "dies",
-          "dies": "asserts the RFC 120 `__incan_v1_` projected wrapper name, not the source spelling `c.bumped()`, in a package's generated `lib.rs` (#1174 emitted-name recoverability); the emitted-name projection and the legacy `incan_ir` lowering that required it die with generated Rust. The package-calls-its-own-sibling behavior is reachable only through a `--lib`/SDK component build, which is not a run the fixture format can express. The surviving observable — a package whose library calls a sibling module's method builds — is carried by the SDK provider prewarm every suite root performs."
+          "dies": "asserts the RFC 120 `__incan_v1_` projected wrapper name, not the source spelling `c.bumped()`, in a package's generated `lib.rs` (#1174 emitted-name recoverability); the emitted-name projection and the legacy `incan_ir` lowering that required it die with generated Rust. The package-calls-its-own-sibling behavior is reachable only through a `--lib`/SDK component build, which is not a run the fixture format can express. The surviving observable \u2014 a package whose library calls a sibling module's method builds \u2014 is carried by the SDK provider prewarm every suite root performs."
         },
         "generated_application_artifact_matches_baseline": {
           "twin": "dies",
@@ -614,10 +774,42 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/dev7_carrier_admission.rs": {
+      "disposition": "keep",
+      "notes": "Real frontend and Incan lower_module accept nested carrier layouts; actual native validation rejects independent malformed payload paths, layouts, collection identities and by-value recursion.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/enum_alias_admission.rs": {
+      "disposition": "keep",
+      "notes": "Actual Incan lower_module accepts checked aliases and rejects independently corrupted canonical enum targets, payloads and bindings.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/tests/native_driver_project_tests/tail.rs": {
       "disposition": "keep",
       "notes": "Direct-route small statements, operators and places compared byte for byte with legacy output",
       "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/tests/native_library_projection_publication_tests.rs": {
+      "disposition": "keep",
+      "notes": "Completed library publication rollback restores changed and absent local projection markers without losing retained package caches.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/tests/native_rust_source_authority_tests.rs": {
+      "disposition": "keep",
+      "notes": "Cargo-independent Loaf source authority, sealed provider integrity and generated-root semantic lock bookkeeping; authored, transitive, target and nested inputs remain bound.",
+      "owner": 1698,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -3589,8 +3781,7 @@
       "owner": 1561,
       "split_required": false,
       "split_target": "",
-      "tests": {
-      },
+      "tests": {},
       "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/trait_default_nested_module_identity"
     },
     "loaves/compiler/incan_emit/src/tests/trait_parameters_and_element_bounds.rs": {
@@ -5545,7 +5736,7 @@
         },
         "std_root_prelude_trait_import_is_refused": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_refusals/refused_prelude_trait_imported_from_the_std_root.incn",
-          "notes": "twinned by the test's program as a refusal: the std root exports only its submodules, so `from std import Debug, Eq, Clone, …` is refused at check time (INCAN-I0001) rather than emitting re-exports no standard-library facade defines (E0432) (#1767)."
+          "notes": "twinned by the test's program as a refusal: the std root exports only its submodules, so `from std import Debug, Eq, Clone, \u2026` is refused at check time (INCAN-I0001) rather than emitting re-exports no standard-library facade defines (E0432) (#1767)."
         },
         "std_serde_prelude_import_snapshot": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/codegen_models_and_collections/std_serde_prelude_surface.incn",
@@ -5593,7 +5784,7 @@
         },
         "string_len_spelling_emit_shared_runtime_semantics": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/codegen_models_and_collections/string_length_counts_scalars.incn",
-          "notes": "twinned by a program counting the scalars of `héllo` through `len()` and `.len()`; the `str_len` helper spelling dies."
+          "notes": "twinned by a program counting the scalars of `h\u00e9llo` through `len()` and `.len()`; the `str_len` helper spelling dies."
         }
       },
       "twin": ""
@@ -5888,6 +6079,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/library_manifest/checked_replay/tests.rs": {
+      "disposition": "keep",
+      "notes": "Checked export replay preserves canonical identities, defaults, mutability, members, bounds and partial bindings; unsupported or lossy nested facts refuse instead of fabricating checked authority.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/library_manifest/published_layout.rs": {
       "disposition": "keep",
       "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics.",
@@ -5976,10 +6175,26 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/provider/plan/checked_routes_tests.rs": {
+      "disposition": "keep",
+      "notes": "Checked nominal semantic routes across fresh source and ordinary materialized dependencies preserve original owners, exact directed aliases and namespace/native exposure boundaries.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/provider/sdk.rs": {
       "disposition": "keep",
       "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/provider/source_policy/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Compiler-pinned ordinary source namespace policy and real executable-relative source selection; distinct from installed grants and generated Rust.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -6060,6 +6275,14 @@
       "disposition": "keep",
       "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/stdlib_loader/source_context_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Actual compiler-owned source cache and ordinary checked-only controls reject hostile ambient fallback, missing/symlink/replaced members and preserve recursive metadata reuse.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -6460,7 +6683,7 @@
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route.",
       "owner": 1561,
-      "split_required": false,
+      "split_required": true,
       "split_target": "",
       "twin": ""
     },
@@ -8257,8 +8480,16 @@
     },
     "loaves/compiler/incan_provider/src/sdk_build.rs": {
       "disposition": "unaffected",
-      "notes": "SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level.",
-      "owner": 1561,
+      "notes": "Native SDK transaction uses real direct-rustc fixtures to verify publication, receipt reuse, discovery-hint repair, and failed-generation rollback with poisoned Cargo metadata. Legacy command-transport fixtures remain test-only.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_provider/src/sdk_native.rs": {
+      "disposition": "unaffected",
+      "notes": "Canonical native SDK admission revalidates original payloads, witnesses and publication catalogs; store-backed controls refuse changed receipt/output catalogs and post-admission edge injection without granting edges authority.",
+      "owner": 1698,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -8333,6 +8564,14 @@
       },
       "twin": ""
     },
+    "loaves/compiler/incan_test_support/src/lib.rs": {
+      "disposition": "unaffected",
+      "notes": "Test-harness helpers; native checkout anchors are validated exactly, and fixture bakes retain consumer authority without Cargo.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/rust_inspect/src/cache_tests.rs": {
       "disposition": "unaffected",
       "notes": "Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level.",
@@ -8353,7 +8592,7 @@
       "disposition": "unaffected",
       "notes": "Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level.",
       "owner": 1561,
-      "split_required": false,
+      "split_required": true,
       "split_target": "",
       "twin": ""
     },
@@ -8369,6 +8608,22 @@
       "disposition": "unaffected",
       "notes": "Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/rust_inspect/src/loader/loaf_manifest.rs": {
+      "disposition": "unaffected",
+      "notes": "Loaf source and frozen graph inspection without Cargo metadata; validates source containment, alias edges and selected facts.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/rust_inspect/src/loader/native_macros.rs": {
+      "disposition": "unaffected",
+      "notes": "Native macro ownership admission rejects executable macro paths without retained store authority, including nested graphs.",
+      "owner": 1698,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -9013,10 +9268,34 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_model/src/target_condition.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven manifest grammar; canonical target admission independent of compiler emission.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_model/src/toolchain_layout.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_model/src/toolchain_layout/installed_data/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Executable-relative opaque installed descriptor discovery and exact original-file observation, including relocation, read-only discovery, tamper, aliases and competing roots; no namespace authority or generated backend.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_model/src/toolchain_layout/source_layout/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Original executable-relative source directory/member ownership, freshness, read-only access and ambient path refusal.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -9041,6 +9320,46 @@
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/native_loaf/preparation.rs": {
+      "disposition": "unaffected",
+      "notes": "Ordinary native producer debug/release profiles, real local library and host macro behavior, and unchanged per-profile reuse; tests the native toolchain rather than Incan generated Rust.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/native_loaf/prepared/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Ordinary rooted native reuse verifies current source/compiler/lock/facts, records actual work, refuses corrupted authority and bypasses empty declarations.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/native_loaf/producer/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Ordinary retained native source and fact projection verifies original owners, exact physical aliases, generated inputs and read-only installed admission; it grants no macro execution or semantic-world completeness.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/native_loaf/request_observation/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Actual complete producer request, original native owners, facts, graph and source freshness; semantic observation refusals are distinct from physical preparation.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/native_loaf/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Ordinary native record and forward physical closure admission: original leases, declared aliases, installed read-only handoff, source and edge substitution refusal, current local source restoration, feature and origin authority, and authenticated empty closures. Independent of generated Rust and SDK inventories.",
+      "owner": 1698,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -9085,10 +9404,34 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_rustc/src/plan/shared.rs": {
+      "disposition": "unaffected",
+      "notes": "Command-held native owners retain exact original leases through pruning, refuse missing/substituted owners and changed witnesses, and preserve independent acquisition for other plan domains. Controls use real store publication without Cargo.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/rustc/compile_environment.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven ring; the validated compile environment envelope accepts Cargo's package metadata values for closure units.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_rustc/src/rustc/compiled_unit.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/rustc/diagnostic_parsing.rs": {
+      "disposition": "keep",
+      "notes": "Actual direct rustc error stream retains structured codes, spans and full rendering, preserves wrapped-message compatibility and keeps raw tool output. No Cargo execution.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -9117,11 +9460,35 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_rustc/src/rustc/foundations.rs": {
+      "disposition": "unaffected",
+      "notes": "Observed file digest entry preserves absolute, normalized and symlink-free artifact path admission.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_rustc/src/rustc/inspection.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
       "owner": 1561,
       "split_required": true,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/rustc/inspection_toolchain.rs": {
+      "disposition": "unaffected",
+      "notes": "Compiler-bound Rust library source Store ownership, original receipt evidence and complete inventory refusals; native orchestration rather than the Rust backend.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/rustc/linking.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven ring; the pinned linker binds the SDK closure, platform inputs and explicit arguments into link identities on macOS and Linux.",
+      "owner": 1698,
+      "split_required": false,
       "split_target": "",
       "twin": ""
     },
@@ -9193,7 +9560,7 @@
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
       "owner": 1561,
-      "split_required": false,
+      "split_required": true,
       "split_target": "",
       "twin": ""
     },
@@ -9253,6 +9620,78 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_rustc/src/sdk_closure.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven-native locked closure edges, domain selection and exact-fact refusal; no generated Cargo project behavior.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/sdk_closure/digest_reuse_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven native input freshness: actual linker and extern planners retain raw content identities, zero-byte warm observations, preserved-mtime edits, symlink retargets and missing-input refusal; child-local cache and tracing prevent environment races.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/sdk_closure/environment.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven ring; closure units receive Cargo's package environment from the locked binding and pinned adoption metadata, bound into the receipt.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/sdk_closure/index_batch/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Pinned registry-index transport preserves exact blob bytes and pin/path authority, bounds Git subprocess work, and reaps command-owned children. These controls remain required for ordinary native preparation.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/sdk_closure/local.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven-native local source snapshots bind Rust source bytes without consulting adjacent Cargo metadata.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/sdk_closure/native.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven-native link fact source-catalog and executable-owner refusal boundaries.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/sdk_closure/physical_edges/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Actual native preparation records retain exact renamed dependency owners and canonical reproduced recipes; malformed bindings, substituted owners and missing recipe facts refuse, while real local and registry preparation preserve identities and zero-compilation reuse.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/sdk_closure/staging_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Actual native Store publication cleans successful private staging and retains failed-publication receipts and sourced diagnostics.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/tests/native_generated_output_store_tests.rs": {
+      "disposition": "keep",
+      "notes": "Public generated native library, binary and test-store reuse, restored source selection and atomic read-only output replacement with failure preservation.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_store/src/closure_proof.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
@@ -9301,11 +9740,27 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_store/src/source_archive.rs": {
+      "disposition": "unaffected",
+      "notes": "Digest-first adopted archive admission and source-only materialization; inert Cargo metadata is omitted.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_store/src/store.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
       "owner": 1561,
       "split_required": true,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_store/src/store/published_identity_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Exact original immutable-owner read-only selection preserves byte integrity, batch leases and complete bookkeeping while avoiding unrelated Store entries.",
+      "owner": 1337,
+      "split_required": false,
       "split_target": "",
       "twin": ""
     },
@@ -9525,7 +9980,7 @@
       "split_target": "",
       "twin": ""
     },
-    "loaves/toolchain/incan-cli/src/commands/build.rs": {
+    "loaves/toolchain/incan-cli/src/commands/build/mod.rs": {
       "disposition": "keep",
       "notes": "build command over checked facts (contract step, library publication); the rustc-failure classification tests belong to the generated build.",
       "owner": 1561,
@@ -9565,6 +10020,14 @@
       "disposition": "unaffected",
       "notes": "CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/src/commands/diagnostics.rs": {
+      "disposition": "keep",
+      "notes": "Check-only public dependency metadata, source and graph invalidation, exact feature selection, nominal authority and missing-metadata refusal; no native execution authority.",
+      "owner": 1698,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -9652,13 +10115,13 @@
           "disposition": "retire",
           "twin": "dies",
           "notes": "libtest harness of the generated test crate",
-          "dies": "merges `[dependencies]` and `[dev-dependencies]` into the generated test-runner crate's Cargo dependency set (`promoted_oven_test_dependencies`); the generated crate dies with #654. Its user-visible half — a test file using a `[rust-dev-dependencies]` crate through `incan test` — is untwinned: no CLI test uses `rust-dev-dependencies`; it goes with #1337's interop spec (slice 7)."
+          "dies": "merges `[dependencies]` and `[dev-dependencies]` into the generated test-runner crate's Cargo dependency set (`promoted_oven_test_dependencies`); the generated crate dies with #654. Its user-visible half \u2014 a test file using a `[rust-dev-dependencies]` crate through `incan test` \u2014 is untwinned: no CLI test uses `rust-dev-dependencies`; it goes with #1337's interop spec (slice 7)."
         },
         "merge_test_runner_dependencies_unifies_normal_and_dev_features": {
           "disposition": "retire",
           "twin": "dies",
           "notes": "libtest harness of the generated test crate",
-          "dies": "unions Cargo feature lists and refuses a version conflict inside the generated test-runner crate's Cargo dependency set; the generated crate dies with #654. Its user-visible half — a normal/dev version conflict surfacing as an `incan test` failure naming the crate — is untwinned and goes with #1337's interop spec (slice 7)."
+          "dies": "unions Cargo feature lists and refuses a version conflict inside the generated test-runner crate's Cargo dependency set; the generated crate dies with #654. Its user-visible half \u2014 a normal/dev version conflict surfacing as an `incan test` failure naming the crate \u2014 is untwinned and goes with #1337's interop spec (slice 7)."
         },
         "native_test_outputs_do_not_alias_distinct_execution_groups": {
           "disposition": "retire",
@@ -11310,6 +11773,22 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/toolchain/oven-cli/src/commands/oven/compile_closure.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven-native closure root feature demands and normalized extern alias collision tests.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/oven-cli/src/commands/oven/convert_cargo.rs": {
+      "disposition": "keep",
+      "notes": "Explicit one-time Cargo adoption preserves Loaf dependency declarations and refuses unsupported inputs before writing; it runs no Cargo process.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/toolchain/oven-cli/src/commands/oven/equivalence.rs": {
       "disposition": "unaffected",
       "notes": "Oven CLI; validates literal artifact-equivalence evidence, no compiler semantics. Reviewed at crate level.",
@@ -11346,6 +11825,14 @@
       "disposition": "unaffected",
       "notes": "Oven publisher configuration and owner-identity enforcement; no compiler semantics. Reviewed at crate level.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/oven-cli/src/commands/oven/native_compiler_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Native selected-root source containment and complete module-tree receipt coverage; no Cargo graph or generated Cargo project.",
+      "owner": 2090,
       "split_required": false,
       "split_target": "",
       "twin": ""

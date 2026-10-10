@@ -62,6 +62,7 @@ pub struct PendingDesugarerArtifact {
 enum VocabExtractionMode {
     PackageArtifacts,
     ParserOnly,
+    CacheOnly,
 }
 
 #[derive(Debug, Clone)]
@@ -93,6 +94,173 @@ struct CachedDesugarerArtifact {
     file_name: String,
 }
 
+/// Extract a native SDK vocabulary companion against its retained host closure without any Cargo reader.
+///
+/// The enclosing Loaf declaration owns source layout and version. A desugarer is built only from the cross-target
+/// closure SDK preparation attached for its declared target; host SDK units cannot masquerade as Wasm artifacts or
+/// reopen the compatibility publisher. The built module lands below `desugarer_scratch`, which must outlive packaging.
+pub fn collect_native_sdk_vocab_metadata(
+    manifest: &ProjectManifest,
+    project_root: &Path,
+    closure: &oven_rustc::sdk_closure::SdkCompiledClosure,
+    rustc: &Path,
+    desugarer_scratch: &Path,
+) -> ProviderResult<Option<LibraryVocabExtraction>> {
+    let Some(vocab) = manifest.vocab() else {
+        return Ok(None);
+    };
+    let crate_path = vocab
+        .crate_path
+        .as_deref()
+        .filter(|path| !path.is_empty())
+        .ok_or_else(|| ProviderError::failure("native SDK vocabulary has no source path"))?;
+    let companion = resolve_companion_crate_root(project_root, crate_path);
+    let project = manifest
+        .project
+        .as_ref()
+        .ok_or_else(|| ProviderError::failure("native vocabulary has no project identity"))?;
+    let name = project
+        .name
+        .as_deref()
+        .ok_or_else(|| ProviderError::failure("native vocabulary has no package name"))?;
+    let version = project
+        .version
+        .as_deref()
+        .ok_or_else(|| ProviderError::failure("native vocabulary has no package version"))?;
+    let package_name = format!("{name}_vocab");
+    let mut externs = BTreeMap::new();
+    let mut dependency_search_paths = Vec::new();
+    for unit in closure.units() {
+        let output = unit.output();
+        let crate_name = output
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.strip_prefix("lib"))
+            .ok_or_else(|| ProviderError::failure("native vocabulary input has no crate name"))?;
+        // The helper imports only these two crates. Other retained versions stay available as transitive search inputs,
+        // but cannot create unused direct-extern ambiguity.
+        if matches!(crate_name, "incan_vocab" | "serde_json")
+            && unit.binding().domain == "target"
+            && externs.insert(crate_name.to_string(), output.to_path_buf()).is_some()
+        {
+            return Err(ProviderError::failure(format!(
+                "native vocabulary has ambiguous input {crate_name}"
+            )));
+        }
+        if let Some(parent) = output.parent() {
+            dependency_search_paths.push(parent.to_path_buf());
+        }
+    }
+    for required in ["incan_vocab", "serde_json"] {
+        if !externs.contains_key(required) {
+            return Err(ProviderError::failure(format!(
+                "native SDK vocabulary requires retained target input `{required}`"
+            )));
+        }
+    }
+    dependency_search_paths.sort();
+    dependency_search_paths.dedup();
+    let context = OvenVocabDirectRustcContext {
+        rustc: rustc.to_path_buf(),
+        dependency_search_paths,
+        externs,
+        auxiliary_targets: BTreeMap::new(),
+    };
+    let metadata = extract_vocab_metadata_with_direct_rustc_inputs(
+        &context,
+        &companion,
+        &package_name,
+        &companion.join("src/lib.rs"),
+        "2024",
+        version,
+    )?;
+    ensure_supported_vocab_metadata_version(&metadata, &companion)?;
+    let pending_desugarer_artifact = match metadata.desugarer.as_ref() {
+        Some(desugarer) => {
+            let auxiliary = closure.auxiliary_targets().get(&desugarer.target).ok_or_else(|| {
+                ProviderError::failure(format!(
+                    "native SDK vocabulary {name} requires an admitted {} desugarer closure, and SDK preparation retained none",
+                    desugarer.target
+                ))
+            })?;
+            let mut auxiliary_targets = BTreeMap::new();
+            auxiliary_targets.insert(desugarer.target.clone(), native_auxiliary_target_context(auxiliary)?);
+            let desugarer_context = OvenVocabDirectRustcContext {
+                auxiliary_targets,
+                ..context
+            };
+            build_pending_desugarer_artifact_with_direct_rustc(
+                &desugarer_context,
+                &companion,
+                &companion.join("Cargo.toml"),
+                desugarer_scratch,
+                &package_name,
+                desugarer,
+            )?
+        }
+        None => None,
+    };
+    Ok(Some(LibraryVocabExtraction {
+        compatibility_activations: project_soft_keyword_activations(&metadata.keyword_registrations),
+        payload: VocabExports {
+            crate_path: crate_path.to_string(),
+            package_name,
+            keyword_registrations: metadata.keyword_registrations,
+            dsl_surfaces: metadata.dsl_surfaces,
+            provider_manifest: metadata.library_manifest,
+            desugarer_artifact: pending_desugarer_artifact
+                .as_ref()
+                .map(|artifact| artifact.metadata.clone()),
+        },
+        pending_desugarer_artifact,
+    }))
+}
+
+/// Select the desugarer's direct inputs from a retained cross-target SDK closure.
+///
+/// Only `incan_vocab` and `serde_json` become direct externs, exactly as on the host; every other unit of the closure
+/// is reachable only through its search path, so no unrelated crate can shadow the helper's imports.
+fn native_auxiliary_target_context(
+    closure: &oven_rustc::sdk_closure::SdkCompiledClosure,
+) -> ProviderResult<OvenVocabAuxiliaryTargetContext> {
+    let mut externs = BTreeMap::new();
+    let mut dependency_search_paths = Vec::new();
+    for unit in closure.units() {
+        let output = unit.output();
+        if let Some(parent) = output.parent() {
+            dependency_search_paths.push(parent.to_path_buf());
+        }
+        let Some(crate_name) = output
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.strip_prefix("lib"))
+        else {
+            continue;
+        };
+        if matches!(crate_name, "incan_vocab" | "serde_json")
+            && unit.binding().domain == "target"
+            && externs.insert(crate_name.to_string(), output.to_path_buf()).is_some()
+        {
+            return Err(ProviderError::failure(format!(
+                "native vocabulary desugarer closure has ambiguous input {crate_name}"
+            )));
+        }
+    }
+    dependency_search_paths.sort();
+    dependency_search_paths.dedup();
+    for required in ["incan_vocab", "serde_json"] {
+        if !externs.contains_key(required) {
+            return Err(ProviderError::failure(format!(
+                "native vocabulary desugarer closure lacks required `{required}`"
+            )));
+        }
+    }
+    Ok(OvenVocabAuxiliaryTargetContext {
+        dependency_search_paths,
+        externs,
+    })
+}
+
 /// Collect full vocab companion metadata for packaging a library artifact.
 pub fn collect_library_vocab_metadata(
     manifest: &ProjectManifest,
@@ -120,6 +288,21 @@ pub fn collect_library_vocab_metadata_for_parser(
         project_root,
         generated_cargo_target_dir,
         VocabExtractionMode::ParserOnly,
+        None,
+    )
+}
+
+/// Read compatible prepared parser metadata without compiling a companion or writing cache entries.
+pub fn collect_library_vocab_metadata_for_check(
+    manifest: &ProjectManifest,
+    project_root: &Path,
+    generated_cargo_target_dir: Option<&Path>,
+) -> ProviderResult<Option<LibraryVocabExtraction>> {
+    collect_library_vocab_metadata_with_mode(
+        manifest,
+        project_root,
+        generated_cargo_target_dir,
+        VocabExtractionMode::CacheOnly,
         None,
     )
 }
@@ -156,6 +339,13 @@ fn collect_library_vocab_metadata_with_mode(
         generated_cargo_target_dir,
     )?;
     let cached = read_cached_vocab_companion(&cache_context)?;
+    if mode == VocabExtractionMode::CacheOnly && cached.is_none() {
+        return Err(ProviderError::failure(format!(
+            "check requires compatible prepared vocabulary metadata for {} at {}; preparation authority is missing and check cannot compile the companion",
+            companion_crate_root.display(),
+            cache_context.cache_dir.display()
+        )));
+    }
     let cache_hit = cached.is_some();
     let cached_had_desugarer_artifact = cached
         .as_ref()
@@ -215,7 +405,7 @@ fn collect_library_vocab_metadata_with_mode(
     let compatibility_activations = project_soft_keyword_activations(&metadata.keyword_registrations);
     let pending_desugarer_artifact = match mode {
         VocabExtractionMode::PackageArtifacts => pending_desugarer_artifact,
-        VocabExtractionMode::ParserOnly => None,
+        VocabExtractionMode::ParserOnly | VocabExtractionMode::CacheOnly => None,
     };
 
     Ok(Some(LibraryVocabExtraction {
@@ -876,19 +1066,38 @@ fn extract_vocab_metadata_with_direct_rustc(
     companion_crate_root: &Path,
     package_name: &str,
 ) -> ProviderResult<incan_vocab::VocabMetadata> {
+    let (source, edition, version) = vocab_companion_rustc_inputs(companion_crate_root)?;
+    extract_vocab_metadata_with_direct_rustc_inputs(
+        context,
+        companion_crate_root,
+        package_name,
+        &source,
+        &edition,
+        &version,
+    )
+}
+
+/// Extract metadata from explicit native source inputs without interpreting a Cargo companion declaration.
+fn extract_vocab_metadata_with_direct_rustc_inputs(
+    context: &OvenVocabDirectRustcContext,
+    companion_crate_root: &Path,
+    package_name: &str,
+    companion_source: &Path,
+    edition: &str,
+    version: &str,
+) -> ProviderResult<incan_vocab::VocabMetadata> {
     let extraction_dir = create_extraction_workspace_dir()?;
     let result = (|| {
-        let (companion_source, edition, version) = vocab_companion_rustc_inputs(companion_crate_root)?;
         let companion_output = extraction_dir.join("libcompanion.rlib");
         run_vocab_direct_rustc(
             context,
             companion_crate_root,
-            &companion_source,
+            companion_source,
             "companion",
             "rlib",
-            &edition,
+            edition,
             package_name,
-            &version,
+            version,
             &companion_output,
             None,
             None,
@@ -1641,6 +1850,63 @@ mod tests {
                 keyword: "await".to_string(),
             }]
         );
+        Ok(())
+    }
+
+    /// Cache-only check reuses a compatible prepared payload and refuses after authored companion inputs change.
+    #[test]
+    fn dev7_checked_provider_metadata_vocab_cache_hit_and_edit() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root)?;
+        let companion =
+            write_vocab_companion_crate(&root, "companion", "dev7_checked_provider_metadata_companion_cached")?;
+        let path = root.join("loaf.toml");
+        fs::write(&path, "[project]\nname='widgets'\n[vocab]\ncrate='companion'\n")?;
+        let manifest = ProjectManifest::from_str(&fs::read_to_string(&path)?, &path)?;
+        let target = temp.path().join("cache");
+        let context = vocab_companion_cache_context(
+            &root,
+            &companion,
+            "dev7_checked_provider_metadata_companion_cached",
+            Some(&target),
+        )?;
+        let metadata = incan_vocab::VocabMetadata {
+            keyword_registrations: vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "widgets.dsl".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec::new(
+                    "await",
+                    incan_vocab::KeywordSurfaceKind::ControlFlow,
+                )],
+                valid_decorators: Vec::new(),
+            }],
+            ..Default::default()
+        };
+        write_cached_vocab_companion(&context, &metadata, None)?;
+        let before = fs::read(context.cache_dir.join(VOCAB_COMPANION_CACHE_FILE))?;
+        let payload = collect_library_vocab_metadata_for_check(&manifest, &root, Some(&target))?
+            .ok_or("cached payload missing")?;
+        assert_eq!(payload.payload.keyword_registrations.len(), 1);
+        assert_eq!(payload.compatibility_activations.len(), 1);
+        assert_eq!(fs::read(context.cache_dir.join(VOCAB_COMPANION_CACHE_FILE))?, before);
+        assert!(!context.cache_dir.join("target").exists());
+        let source = fs::read_to_string(companion.join("src/lib.rs"))?;
+        fs::write(
+            companion.join("src/lib.rs"),
+            format!("{source}\n// edited authored companion input\n"),
+        )?;
+        let error = collect_library_vocab_metadata_for_check(&manifest, &root, Some(&target))
+            .err()
+            .ok_or("changed inputs reused stale vocab metadata")?;
+        assert!(
+            error.to_string().contains("preparation authority is missing"),
+            "{error}"
+        );
+        fs::write(companion.join("src/lib.rs"), source)?;
+        assert!(collect_library_vocab_metadata_for_check(&manifest, &root, Some(&target))?.is_some());
+        assert!(!context.cache_dir.join("target").exists());
         Ok(())
     }
 

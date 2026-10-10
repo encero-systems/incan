@@ -1,0 +1,12 @@
+"""Minimal borrowed-container capability repro for the #872 bridge matrix."""
+from rust::std::path import Path as RustPath
+from rust::oven_model::manifest import ProjectManifest
+
+
+def main() -> None:
+    """Read declared dependency values through the owning manifest API."""
+    match ProjectManifest.load(RustPath.new("loaf.toml")):
+        Ok(manifest) =>
+            for dependency in manifest.rust_dependencies().values():
+                println(dependency.loaf)
+        Err(error) => println(str(error))

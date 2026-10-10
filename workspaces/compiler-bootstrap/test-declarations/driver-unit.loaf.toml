@@ -1,0 +1,49 @@
+# Driver unit-root dependency contract; dependency variants are prepared through the registered native test graph.
+[project]
+name = "incan-driver-native-unit-tests"
+version = "0.6.0-dev.6"
+private = true
+
+[project.features]
+default = ["cli", "rust_inspect", "std_testing", "std_async", "std_decorators", "test_support"]
+cli = []
+rust_inspect = []
+std_testing = []
+std_async = []
+std_decorators = []
+test_support = []
+
+[dependencies]
+clap = { features = ["derive"], loaf = "crates-io/clap", version = "4.4" }
+hex = { loaf = "crates-io/hex", version = "0.4.3" }
+incan_codegraph = { loaf = "incan_codegraph", path = "../../../loaves/kernel/incan_codegraph" }
+incan_emit = { default-features = false, loaf = "incan_emit", path = "../../../loaves/compiler/incan_emit", features = ["rust_inspect", "std_testing", "std_async", "std_decorators", "test_support"] }
+incan_frontend = { default-features = false, loaf = "incan_frontend", path = "../../../loaves/compiler/incan_frontend", features = ["rust_inspect", "std_testing", "std_async", "std_decorators", "test_support"] }
+incan_ir = { default-features = false, loaf = "incan_ir", path = "../../../loaves/compiler/incan_ir", features = ["rust_inspect", "std_testing", "std_async", "std_decorators"] }
+incan_lang = { loaf = "incan_lang", path = "../../../loaves/kernel/incan_lang" }
+incan_oven_facet = { loaf = "incan_oven_facet", path = "../../../loaves/compiler/incan_oven_facet" }
+incan_provider = { default-features = false, loaf = "incan_provider", path = "../../../loaves/compiler/incan_provider", features = ["rust_inspect", "std_testing", "std_async", "std_decorators", "test_support"] }
+incan_semantics_core = { loaf = "incan_semantics_core", path = "../../../loaves/kernel/incan_semantics_core" }
+incan_vocab = { loaf = "incan_vocab", path = "../../../loaves/kernel/incan_vocab", version = "0.3.0" }
+oven_cargo_compat = { loaf = "oven_cargo_compat", path = "../../../loaves/oven/oven_cargo_compat", version = "0.6.0-dev.5" }
+oven_interop = { loaf = "oven_interop", path = "../../../loaves/oven/oven_interop", version = "0.6.0-dev.5" }
+oven_model = { loaf = "oven_model", path = "../../../loaves/oven/oven_model", version = "0.6.0-dev.5" }
+oven_rustc = { loaf = "oven_rustc", path = "../../../loaves/oven/oven_rustc", version = "0.6.0-dev.5", features = ["test_support"] }
+oven_store = { loaf = "oven_store", path = "../../../loaves/oven/oven_store", version = "0.6.0-dev.5", features = ["test_support"] }
+proc-macro2 = { loaf = "crates-io/proc-macro2", version = "1.0" }
+rust_inspect = { default-features = false, loaf = "rust_inspect", path = "../../../loaves/compiler/rust_inspect", features = ["inspector", "test_fixtures"] }
+rustix = { features = ["fs"], loaf = "crates-io/rustix", version = "1.1.4" }
+semver = { loaf = "crates-io/semver", version = "1.0.27" }
+serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
+serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
+sha2 = { loaf = "crates-io/sha2", version = "0.10.9" }
+tempfile = { loaf = "crates-io/tempfile", version = "3" }
+thiserror = { loaf = "crates-io/thiserror", version = "2.0" }
+toml = { loaf = "crates-io/toml", version = "0.9" }
+toml_edit = { features = ["parse", "serde"], loaf = "crates-io/toml_edit", version = "0.25" }
+tracing = { loaf = "crates-io/tracing", version = "0.1" }
+incan_test_support = { loaf = "incan_test_support", path = "../../../loaves/compiler/incan_test_support" }
+syn = { loaf = "crates-io/syn", version = "2.0", features = ["printing"] }
+byteorder = { loaf = "crates-io/byteorder", version = "1" }
+encoding_rs = { loaf = "crates-io/encoding_rs", version = "0.8" }
+incan_std_core = { loaf = "incan_std_core", path = "../../../loaves/stdlib/core" }

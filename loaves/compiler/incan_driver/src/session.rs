@@ -7,13 +7,14 @@
 
 #[cfg(test)]
 use std::cell::Cell;
-use std::collections::HashSet;
 use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use incan_lang::lang::stdlib;
 
+use crate::build::library_dependencies::PreparedLibraryDependencies;
 use crate::diagnostics::CliDiagnosticFailure;
 use crate::error::{CliError, CliResult};
 use crate::project::{discover_effective_project_manifest, resolve_project_root, resolve_source_root};
@@ -23,7 +24,9 @@ use incan_frontend::contract_metadata::{
     CanonicalModelBundle, materialize_contract_models, read_project_model_bundles,
 };
 use incan_frontend::hir::build_semantic_module_snapshot_v0;
-use incan_frontend::library_manifest_index::LibraryManifestIndex;
+use incan_frontend::library_manifest_index::{
+    LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
+};
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::testing_markers::{
     TestingMarkerSemantics, load_testing_marker_semantics, testing_marker_semantics_from_manifest,
@@ -32,12 +35,12 @@ use incan_frontend::typechecker::TypeCheckInfo;
 use incan_frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_frontend::{diagnostics, lexer, parser, vocab_desugar_pass};
 use incan_provider::inventory::{
-    discover_or_reuse_published_sdk_inventory, prepare_or_discover_sdk_inventory, provider_used_module_paths,
+    discover_or_reuse_published_sdk_inventory, provider_source_used_module_paths, provider_used_module_paths,
     resolve_sdk_component_selection, sdk_provider_bootstrap_namespace_roots, validate_component_inventory_selection,
 };
 use incan_provider::requirements::{
-    DependencyManifestMode, SdkInventorySource, parser_only_library_manifest_index,
-    prepare_library_dependency_artifacts,
+    DependencyManifestMode, SdkInventorySource, checked_source_library_manifest_index,
+    parser_only_library_manifest_index, prepare_library_dependency_artifacts,
 };
 use incan_provider::{
     FeatureSelection, PackageFeatureGraph, PackageFeaturePlan, ProviderModuleResolution, ProviderPlan,
@@ -226,6 +229,10 @@ pub struct CompilationSession {
     /// Collection, requirement discovery, and semantic analysis all need the same projection. Rebuilding it makes
     /// every command rehash provider source roots and, worse, lets a mutable local cache dominate the warm path.
     provider_plans_by_modules: ProviderPlanCache,
+    /// Original ordinary checked package capabilities retained throughout analysis and current plan preparation.
+    admitted_library_dependencies: Option<Arc<PreparedLibraryDependencies>>,
+    /// Original provider plan issued with the private admitted dependencies, before public session fields can change.
+    admitted_provider_plan: Option<Arc<ProviderPlan>>,
     /// Semantic provider identities reused only within this checked compilation context.
     provider_semantic_identities: Arc<incan_provider::lock_semantics::ProviderSemanticIdentitySession>,
     /// Integrity-checked active SDK catalog, when this toolchain is component-aware.
@@ -244,6 +251,147 @@ pub struct CompilationSession {
 }
 
 impl CompilationSession {
+    /// Check local provider sources against their public package contract without granting execution authority.
+    pub fn discover_for_check(
+        entry_path: &Path,
+        feature_selection: &FeatureSelection,
+        sdk_profile_override: Option<&str>,
+    ) -> CliResult<Self> {
+        let mut session = Self::discover_with_dependency_mode_and_sdk_source(
+            entry_path,
+            DependencyManifestMode::CheckMetadata,
+            SdkInventorySource::DiscoverOnly,
+            feature_selection,
+            sdk_profile_override,
+        )?;
+        let Some(features) = session.package_feature_plan.clone() else {
+            return Ok(session);
+        };
+        session.check_source_dependencies(
+            &features,
+            sdk_profile_override,
+            &mut BTreeMap::new(),
+            &mut BTreeSet::new(),
+        )?;
+        Ok(session)
+    }
+
+    /// Materialize only command-local checked metadata, sharing exact feature instances across a dependency graph.
+    fn check_source_dependencies(
+        &mut self,
+        features: &PackageFeaturePlan,
+        sdk_profile_override: Option<&str>,
+        completed: &mut BTreeMap<
+            (PathBuf, BTreeSet<String>),
+            (incan_frontend::library_manifest::LibraryManifest, Arc<ProviderPlan>),
+        >,
+        visiting: &mut BTreeSet<PathBuf>,
+    ) -> CliResult<()> {
+        let Some(manifest) = self.manifest.as_ref() else {
+            return Ok(());
+        };
+        let mut entries = HashMap::new();
+        let mut checked_dependencies = Vec::new();
+        let active = self
+            .package_feature_plan
+            .as_ref()
+            .and_then(|plan| plan.root_package())
+            .map(|root| root.active_dependencies.clone())
+            .unwrap_or_default();
+        for key in active {
+            let Some(dependency) = manifest.library_dependencies().get(&key) else {
+                continue;
+            };
+            if !dependency
+                .path
+                .join(oven_model::manifest::LOAF_MANIFEST_FILENAME)
+                .is_file()
+            {
+                if let Some(entry) = self.library_manifest_index.get(&key) {
+                    entries.insert(key, entry.clone());
+                }
+                continue;
+            }
+            let root = dependency
+                .path
+                .canonicalize()
+                .map_err(|error| CliError::failure(error.to_string()))?;
+            let selected = features
+                .package(&root)
+                .map(|state| state.features.active_features.clone())
+                .unwrap_or_default();
+            let identity = (root.clone(), selected.clone());
+            let checked = if let Some(checked) = completed.get(&identity) {
+                checked.clone()
+            } else {
+                if !visiting.insert(root.clone()) {
+                    return Err(CliError::failure(format!(
+                        "checked source provider dependency cycle at {}",
+                        root.display()
+                    )));
+                }
+                let child_manifest = discover_effective_project_manifest(&root)?
+                    .ok_or_else(|| CliError::failure("source dependency manifest disappeared during checking"))?;
+                let child_entry = crate::build::library_exports::validate_library_entrypoint(&child_manifest)?;
+                let selection = FeatureSelection {
+                    requested: selected,
+                    no_default_features: true,
+                    all_features: false,
+                };
+                let mut child = Self::discover_with_dependency_mode_and_sdk_source(
+                    &child_entry,
+                    DependencyManifestMode::CheckMetadata,
+                    SdkInventorySource::DiscoverOnly,
+                    &selection,
+                    sdk_profile_override,
+                )?;
+                child.check_source_dependencies(features, sdk_profile_override, completed, visiting)?;
+                let checked = crate::build::library_project::checked_source_library_manifest(&child, &child_entry)?;
+                visiting.remove(&root);
+                let checked = (checked, Arc::clone(&child.provider_plan));
+                completed.insert(identity, checked.clone());
+                checked
+            };
+            let (checked, child_plan) = checked;
+            checked_dependencies.push((key.clone(), child_plan));
+            let metadata = LibraryArtifactMetadata::for_checked_source(&key, &checked.name, root);
+            entries.insert(
+                key,
+                LibraryManifestIndexEntry::Loaded {
+                    manifest: Box::new(checked),
+                    metadata,
+                },
+            );
+        }
+        self.library_manifest_index = LibraryManifestIndex::from_entries(entries);
+        add_selected_standard_vocab_providers(
+            &mut self.library_manifest_index,
+            self.sdk_inventory.as_deref(),
+            self.sdk_components.as_ref(),
+        )?;
+        self.library_imported_vocab = self.library_manifest_index.library_imported_vocab();
+        self.library_imported_dsl_surfaces = self.library_manifest_index.library_imported_dsl_surfaces();
+        let mut plan = ProviderPlan::from_resolved_inputs(
+            self.library_manifest_index.clone(),
+            self.package_feature_plan.as_ref(),
+            self.sdk_inventory.as_deref(),
+            self.sdk_components.as_ref(),
+            std::iter::empty(),
+        )
+        .map_err(|error| CliError::failure(error.to_string()))?
+        .with_bootstrap_sdk_namespace_roots(self.provider_plan.bootstrap_sdk_namespace_roots().cloned());
+        for (dependency, child) in checked_dependencies {
+            plan.retain_checked_source_dependencies(&dependency, &child)
+                .map_err(CliError::failure)?;
+        }
+        self.provider_plan = Arc::new(plan);
+        self.provider_plans_by_modules = Arc::new(Mutex::new(BTreeMap::from([(
+            BTreeSet::new(),
+            Arc::clone(&self.provider_plan),
+        )])));
+        Ok(())
+    }
+
     /// Prepare the CLI check path's Rust metadata context from this session's manifest and selected providers.
     /// Both diagnostics and native Body IR consumers must use this boundary before analysis so Rust signatures and
     /// derives are checked under the same defaults. The returned lease must remain alive through checking; programs
@@ -280,7 +428,7 @@ impl CompilationSession {
             rust_edition: self
                 .manifest
                 .as_ref()
-                .and_then(|manifest| manifest.build.as_ref().and_then(|build| build.rust_edition.clone())),
+                .and_then(|manifest| manifest.rust_edition().map(str::to_string)),
             provider_plan: &provider_plan,
         })
     }
@@ -299,7 +447,7 @@ impl CompilationSession {
         Self::discover_with_dependency_mode_and_sdk_source(
             entry_path,
             DependencyManifestMode::FullArtifacts,
-            SdkInventorySource::PrepareLegacyCargoIfAbsent,
+            SdkInventorySource::PrepareNativeIfAbsent,
             feature_selection,
             sdk_profile_override,
         )
@@ -354,6 +502,124 @@ impl CompilationSession {
         )
     }
 
+    /// Construct an ordinary session from explicitly selected checked package owners, without SDK discovery.
+    ///
+    /// The caller must prepare every current root dependency and any reserved namespace grant before entering.
+    /// Installed and source-backed packages use the same checked catalog. Missing component adapters refuse;
+    /// native execution still requires separately selected current profiles and native plans.
+    pub fn discover_with_admitted_library_dependencies(
+        entry_path: &Path,
+        feature_selection: &FeatureSelection,
+        dependencies: Arc<PreparedLibraryDependencies>,
+    ) -> CliResult<Self> {
+        let inferred_root = resolve_project_root(entry_path);
+        let manifest = discover_effective_project_manifest(&inferred_root)?
+            .ok_or_else(|| CliError::failure("ordinary admitted session requires a project manifest"))?;
+        let project_root = manifest.project_root().to_path_buf();
+        let package_feature_plan = PackageFeaturePlan::resolve(&manifest, feature_selection)
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        dependencies.validate_feature_plan(&package_feature_plan)?;
+        let active_features = package_feature_plan
+            .root_package()
+            .ok_or_else(|| CliError::failure("ordinary admitted session has no root feature state"))?
+            .features
+            .active_features
+            .clone();
+        let declared_features = PackageFeatureGraph::from_manifest(&manifest)
+            .map_err(|error| CliError::failure(error.to_string()))?
+            .declared_features()
+            .map(str::to_string)
+            .collect();
+        let provider_plan = Arc::clone(dependencies.provider_plan());
+        let library_manifest_index = provider_plan.library_manifest_index().clone();
+        let contract_model_bundles = read_project_model_bundles(&project_root, &manifest.contract_model_bundle_paths())
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        Ok(Self {
+            source_root: resolve_source_root(&project_root, Some(&manifest)),
+            manifest: Some(manifest),
+            library_imported_vocab: library_manifest_index.library_imported_vocab(),
+            library_imported_dsl_surfaces: library_manifest_index.library_imported_dsl_surfaces(),
+            library_manifest_index,
+            provider_plans_by_modules: Arc::new(Mutex::new(BTreeMap::from([(
+                BTreeSet::new(),
+                Arc::clone(&provider_plan),
+            )]))),
+            admitted_provider_plan: Some(Arc::clone(&provider_plan)),
+            provider_plan,
+            admitted_library_dependencies: Some(dependencies),
+            provider_semantic_identities: Arc::new(
+                incan_provider::lock_semantics::ProviderSemanticIdentitySession::default(),
+            ),
+            sdk_inventory: None,
+            sdk_components: None,
+            package_feature_plan: Some(package_feature_plan),
+            active_features,
+            declared_features,
+            contract_model_bundles,
+        })
+    }
+
+    /// Construct an ordinary standard-source publisher session with original dependency and own-source admissions.
+    /// Own namespaces remain source authority only; dependency metadata/native routes are never fabricated.
+    pub(crate) fn discover_with_admitted_standard_source(
+        entry_path: &Path,
+        feature_selection: &FeatureSelection,
+        dependencies: Arc<PreparedLibraryDependencies>,
+        source: Arc<incan_frontend::provider::source_policy::TrustedStandardSourcePublication>,
+    ) -> CliResult<Self> {
+        let mut session =
+            Self::discover_with_admitted_library_dependencies(entry_path, feature_selection, dependencies)?;
+        let manifest = session
+            .manifest
+            .as_ref()
+            .ok_or_else(|| CliError::failure("standard source publication has no project manifest"))?;
+        let project = manifest
+            .project
+            .as_ref()
+            .ok_or_else(|| CliError::failure("standard source publication has no package identity"))?;
+        let name = project
+            .name
+            .as_deref()
+            .ok_or_else(|| CliError::failure("standard source package has no name"))?;
+        let version = project
+            .version
+            .as_deref()
+            .ok_or_else(|| CliError::failure("standard source package has no version"))?;
+        let plan = session
+            .provider_plan
+            .as_ref()
+            .clone()
+            .with_standard_source_publication(source, manifest.project_root(), name, version)
+            .map_err(CliError::failure)?;
+        session.provider_plan = Arc::new(plan);
+        session.admitted_provider_plan = Some(Arc::clone(&session.provider_plan));
+        session.provider_plans_by_modules = Arc::new(Mutex::new(BTreeMap::from([(
+            BTreeSet::new(),
+            Arc::clone(&session.provider_plan),
+        )])));
+        Ok(session)
+    }
+
+    /// Construct a publisher session from the partial inventory and explicit reserved namespace grants.
+    ///
+    /// The caller retains native receipts and frozen inspection authority. Discovery never prepares another SDK
+    /// generation or relies on a process-global bootstrap marker while checking this component.
+    pub fn discover_for_native_sdk_component(
+        entry_path: &Path,
+        inventory: &SdkInventory,
+        namespace_roots: &BTreeSet<String>,
+        native_facets: &BTreeSet<String>,
+    ) -> CliResult<Self> {
+        Self::discover_with_inputs(
+            entry_path,
+            DependencyManifestMode::ParserOnly,
+            SdkInventorySource::DiscoverOnly,
+            &FeatureSelection::default(),
+            None,
+            Some((inventory, namespace_roots, native_facets)),
+        )
+    }
+
     /// Discover project context with either full dependency artifacts or parser-only dependency metadata.
     fn discover_with_dependency_mode_and_sdk_source(
         entry_path: &Path,
@@ -362,18 +628,63 @@ impl CompilationSession {
         feature_selection: &FeatureSelection,
         sdk_profile_override: Option<&str>,
     ) -> CliResult<Self> {
+        Self::discover_with_inputs(
+            entry_path,
+            dependency_mode,
+            sdk_source,
+            feature_selection,
+            sdk_profile_override,
+            None,
+        )
+    }
+
+    /// Resolve ordinary session inputs or consume the publisher's explicit component context.
+    fn discover_with_inputs(
+        entry_path: &Path,
+        dependency_mode: DependencyManifestMode,
+        sdk_source: SdkInventorySource,
+        feature_selection: &FeatureSelection,
+        sdk_profile_override: Option<&str>,
+        native_sdk: Option<(&SdkInventory, &BTreeSet<String>, &BTreeSet<String>)>,
+    ) -> CliResult<Self> {
         let inferred_project_root = resolve_project_root(entry_path);
         let manifest = discover_effective_project_manifest(&inferred_project_root)?;
+        let manifest = match (manifest, native_sdk) {
+            (Some(manifest), Some((_, _, facets))) => Some(
+                manifest.with_effective_dependencies(
+                    manifest
+                        .library_dependencies()
+                        .iter()
+                        .filter(|(name, _)| !facets.contains(name.as_str()))
+                        .map(|(name, spec)| (name.clone(), spec.clone())),
+                    manifest
+                        .rust_dependencies()
+                        .iter()
+                        .map(|(name, spec)| (name.clone(), spec.clone())),
+                    manifest
+                        .rust_dev_dependencies()
+                        .iter()
+                        .map(|(name, spec)| (name.clone(), spec.clone())),
+                ),
+            ),
+            (manifest, _) => manifest,
+        };
         let project_root = manifest
             .as_ref()
             .map(|manifest| manifest.project_root().to_path_buf())
             .unwrap_or(inferred_project_root);
         let source_root = resolve_source_root(&project_root, manifest.as_ref());
-        let sdk_inventory = match sdk_source {
-            SdkInventorySource::PrepareLegacyCargoIfAbsent => prepare_or_discover_sdk_inventory()?,
-            // An Oven command never builds the providers, but it reuses the inventory `incan check` published for a
-            // source checkout, so both parse a file with the same standard-library vocabulary (#1774).
-            SdkInventorySource::DiscoverOnly => discover_or_reuse_published_sdk_inventory()?,
+        let sdk_inventory = if let Some((inventory, _, _)) = native_sdk {
+            Some(Arc::new(inventory.clone()))
+        } else {
+            match sdk_source {
+                SdkInventorySource::PrepareNativeIfAbsent => {
+                    crate::build::native_sdk::prepare_or_discover_sdk_inventory()?
+                }
+                // An Oven command never builds the providers, but it reuses the inventory `incan check` published for a
+                // source checkout, so both parse a file with the same standard-library vocabulary (#1774).
+                SdkInventorySource::DiscoverOnly => discover_or_reuse_published_sdk_inventory()?,
+            }
         };
         let package_feature_plan = manifest
             .as_ref()
@@ -415,6 +726,9 @@ impl CompilationSession {
                     active_dependencies.iter().map(String::as_str),
                 )
             }
+            (Some(manifest), DependencyManifestMode::CheckMetadata) if !active_dependencies.is_empty() => {
+                checked_source_library_manifest_index(manifest, &active_dependencies)?
+            }
             (Some(manifest), DependencyManifestMode::ParserOnly) if !active_dependencies.is_empty() => {
                 parser_only_library_manifest_index(manifest, &active_dependencies)?
             }
@@ -455,7 +769,10 @@ impl CompilationSession {
         )?;
         let library_imported_vocab = library_manifest_index.library_imported_vocab();
         let library_imported_dsl_surfaces = library_manifest_index.library_imported_dsl_surfaces();
-        let bootstrap_sdk_namespace_roots = sdk_provider_bootstrap_namespace_roots(&project_root)?;
+        let bootstrap_sdk_namespace_roots = match native_sdk {
+            Some((_, roots, _)) => roots.clone(),
+            None => sdk_provider_bootstrap_namespace_roots(&project_root)?,
+        };
         let provider_plan = Arc::new(
             ProviderPlan::from_resolved_inputs(
                 library_manifest_index.clone(),
@@ -478,6 +795,8 @@ impl CompilationSession {
             library_manifest_index,
             provider_plan,
             provider_plans_by_modules,
+            admitted_library_dependencies: None,
+            admitted_provider_plan: None,
             provider_semantic_identities: Arc::new(
                 incan_provider::lock_semantics::ProviderSemanticIdentitySession::default(),
             ),
@@ -490,6 +809,35 @@ impl CompilationSession {
             library_imported_dsl_surfaces,
             contract_model_bundles,
         })
+    }
+
+    /// Borrow the ordinary original-owner capability retained by an explicitly admitted dependency session.
+    ///
+    /// Compatibility discovery sessions return none. Publication and planning callers must not fabricate a checked
+    /// owner for those sessions or infer that absent authority means an authenticated empty dependency closure.
+    pub fn admitted_library_dependencies(&self) -> Option<&Arc<PreparedLibraryDependencies>> {
+        self.admitted_library_dependencies.as_ref()
+    }
+
+    /// Borrow the original ordinary provider plan, refusing a public replacement or mixed SDK discovery state.
+    pub(crate) fn original_admitted_provider_plan(&self) -> CliResult<&Arc<ProviderPlan>> {
+        let original = self
+            .admitted_provider_plan
+            .as_ref()
+            .ok_or_else(|| CliError::failure("explicit ordinary session has no original provider authority"))?;
+        if self.admitted_library_dependencies.is_none()
+            || self.sdk_inventory.is_some()
+            || self.sdk_components.is_some()
+            || !Arc::ptr_eq(&self.provider_plan, original)
+        {
+            return Err(CliError::failure(
+                "explicit ordinary session contains competing provider authority",
+            ));
+        }
+        original
+            .verify_standard_source_publication()
+            .map_err(CliError::failure)?;
+        Ok(original)
     }
 
     /// Return provider semantic identities after revalidating their exact physical and dependency context.
@@ -505,7 +853,19 @@ impl CompilationSession {
 
     /// Resolve module participation from this session's immutable provider, feature, and SDK inputs.
     pub fn provider_plan_for_modules(&self, modules: &[ParsedModule]) -> CliResult<Arc<ProviderPlan>> {
-        self.provider_plan_for_used_module_paths(provider_used_module_paths(modules))
+        self.provider_plan_for_used_module_paths(self.provider_module_paths(modules))
+    }
+
+    /// Collect this session's module-use facts without confusing ordinary namespace use with legacy core linkage.
+    ///
+    /// Admitted ordinary dependencies require exact source use. Discovered legacy sessions retain their existing
+    /// synthetic prelude link requirement. Explicit prelude imports are preserved by both routes.
+    pub(crate) fn provider_module_paths(&self, modules: &[ParsedModule]) -> BTreeSet<Vec<String>> {
+        if self.admitted_library_dependencies.is_some() {
+            provider_source_used_module_paths(modules)
+        } else {
+            provider_used_module_paths(modules)
+        }
     }
 
     /// Resolve one provider projection from canonical module paths while retaining the session's authority snapshot.
@@ -516,6 +876,22 @@ impl CompilationSession {
         &self,
         used_module_paths: BTreeSet<Vec<String>>,
     ) -> CliResult<Arc<ProviderPlan>> {
+        self.provider_plan
+            .verify_standard_source_publication()
+            .map_err(CliError::failure)?;
+        if let Some(dependencies) = &self.admitted_library_dependencies {
+            self.original_admitted_provider_plan()?;
+            dependencies.verify()?;
+            let dependency_modules = used_module_paths
+                .iter()
+                .filter(|module| {
+                    self.provider_plan.standard_source_publication().is_none()
+                        || !self.provider_plan.bootstrap_owns_sdk_module(module)
+                })
+                .cloned()
+                .collect();
+            dependencies.validate_module_usage(&dependency_modules)?;
+        }
         if let Some(plan) = self
             .provider_plans_by_modules
             .lock()
@@ -525,18 +901,23 @@ impl CompilationSession {
         {
             return Ok(plan);
         }
-        let plan = ProviderPlan::from_resolved_inputs(
-            self.provider_plan.library_manifest_index().clone(),
-            self.package_feature_plan.as_ref(),
-            self.sdk_inventory.as_deref(),
-            self.sdk_components.as_ref(),
-            used_module_paths.clone(),
-        )
-        .map(|plan| {
-            plan.with_bootstrap_sdk_namespace_roots(self.provider_plan.bootstrap_sdk_namespace_roots().cloned())
-        })
-        .map(Arc::new)
-        .map_err(|error| CliError::failure(error.to_string()))?;
+        let plan = if self.admitted_library_dependencies.is_some() {
+            Arc::new(self.provider_plan.project_module_usage(used_module_paths.clone()))
+        } else {
+            ProviderPlan::from_resolved_inputs(
+                self.provider_plan.library_manifest_index().clone(),
+                self.package_feature_plan.as_ref(),
+                self.sdk_inventory.as_deref(),
+                self.sdk_components.as_ref(),
+                used_module_paths.clone(),
+            )
+            .map(|plan| {
+                plan.with_checked_source_graph(&self.provider_plan)
+                    .with_bootstrap_sdk_namespace_roots(self.provider_plan.bootstrap_sdk_namespace_roots().cloned())
+            })
+            .map(Arc::new)
+            .map_err(|error| CliError::failure(error.to_string()))?
+        };
         let mut cached = self
             .provider_plans_by_modules
             .lock()
@@ -779,6 +1160,9 @@ impl CompilationSession {
 }
 
 #[cfg(test)]
+mod source_publication_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use incan_frontend::library_manifest::{LibraryManifest, VocabExports};
@@ -798,6 +1182,8 @@ mod tests {
                 BTreeSet::new(),
                 Arc::clone(&provider_plan),
             )]))),
+            admitted_library_dependencies: None,
+            admitted_provider_plan: None,
             provider_semantic_identities: Arc::new(
                 incan_provider::lock_semantics::ProviderSemanticIdentitySession::default(),
             ),
@@ -955,7 +1341,7 @@ mod tests {
 
     /// The Oven session reuses the SDK inventory the check session published for a source checkout (#1774).
     ///
-    /// `incan check` builds its session with [`SdkInventorySource::PrepareLegacyCargoIfAbsent`] and publishes the
+    /// `incan check` builds its session with [`SdkInventorySource::PrepareNativeIfAbsent`] and publishes the
     /// checkout's component providers; `incan run`, `build` and `oven bake` build theirs with
     /// [`SdkInventorySource::DiscoverOnly`] and never build providers. Before #1774 the Oven session found no
     /// inventory in a checkout and parsed without the standard library's vocabulary. The suite exports
@@ -995,17 +1381,13 @@ mod tests {
             return Ok(());
         }
 
-        // ---- A synthetic compiler checkout whose component catalog publishes without building anything ----
+        // ---- A synthetic checkout with native companions and an empty component catalog ----
         let tmp = tempfile::tempdir()?;
         let checkout = tmp.path().join("checkout");
         let stdlib_root = checkout.join("loaves/stdlib");
         std::fs::create_dir_all(checkout.join("loaves/compiler/incan_emit/src"))?;
         std::fs::create_dir_all(&stdlib_root)?;
-        std::fs::write(checkout.join("Cargo.toml"), "[workspace]\nmembers = []\n")?;
-        std::fs::write(
-            checkout.join("loaves/compiler/incan_emit/Cargo.toml"),
-            "[package]\nname = \"incan_emit\"\n",
-        )?;
+        write_session_native_sdk_fixture(&checkout)?;
         std::fs::write(
             stdlib_root.join(incan_provider::SDK_SOURCE_CATALOG_FILE),
             format!(
@@ -1032,7 +1414,9 @@ mod tests {
             .env("INCAN_STDLIB_DIR", &stdlib_root)
             .env("INCAN_SOURCE_ROOT", &checkout)
             .env(incan_provider::sdk_store::INTERNAL_SDK_PROVIDER_STORE_ENV, &store)
-            // Publication needs a builder executable to name; an empty catalog never launches it.
+            .env("INCAN_SDK_NATIVE_BLOBS", &checkout)
+            .env("INCAN_SDK_NATIVE_INDEX", &checkout)
+            // The fixture executable contributes identity; native preparation never launches it.
             .env("CARGO_BIN_EXE_incan", &current_exe)
             .env_remove(incan_provider::inventory::SDK_INVENTORY_OVERRIDE_ENV)
             .env_remove(incan_provider::sdk_store::INTERNAL_SDK_PROVIDER_PATH_FILE_ENV)
@@ -1052,6 +1436,45 @@ mod tests {
         Ok(())
     }
 
+    /// Supply receipt-bound native companions for the discovery regression without registry resolution.
+    fn write_session_native_sdk_fixture(checkout: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        std::fs::write(
+            checkout.join("loaves/stdlib/sdk-lock.json"),
+            r#"{"schema":"incan.oven.loaf-resolution/1","units":[]}"#,
+        )?;
+        for (relative, name, kind) in [
+            ("loaves/kernel/incan_lang", "fixture_lang", "lib"),
+            ("loaves/kernel/incan_vocab", "fixture_vocab", "lib"),
+            ("loaves/stdlib/derive/incan_derive", "fixture_derive", "proc-macro"),
+            (
+                "loaves/stdlib/derive/incan_web_macros",
+                "fixture_web_macros",
+                "proc-macro",
+            ),
+        ] {
+            let root = checkout.join(relative);
+            std::fs::create_dir_all(root.join("src"))?;
+            std::fs::write(
+                root.join("loaf.toml"),
+                format!(
+                    "[project]\nname='{name}'\nversion='1.0.0'\n[rust]\nname='{name}'\ntype='{kind}'\nedition='2024'\n"
+                ),
+            )?;
+            std::fs::write(
+                root.join("src/lib.rs"),
+                if kind == "proc-macro" {
+                    "extern crate proc_macro; #[proc_macro] pub fn identity(input: proc_macro::TokenStream) -> proc_macro::TokenStream { input }"
+                } else {
+                    "pub fn value() -> u8 { 1 }"
+                },
+            )?;
+            std::fs::write(root.join("Cargo.toml"), "poisoned metadata")?;
+            std::fs::write(root.join("Cargo.lock"), "poisoned lock")?;
+            std::fs::write(root.join("build.rs"), "compile_error!(\"must remain inert\");")?;
+        }
+        Ok(())
+    }
+
     /// A session with no SDK inventory, as a consumer on a fresh home has: every `std` module is collected from its
     /// source under the generated `__incan_std` namespace and checked with the consumer's modules.
     fn session_without_sdk_inventory(project: &Path) -> CompilationSession {
@@ -1067,6 +1490,8 @@ mod tests {
                 BTreeSet::new(),
                 Arc::clone(&provider_plan),
             )]))),
+            admitted_library_dependencies: None,
+            admitted_provider_plan: None,
             provider_semantic_identities: Arc::new(
                 incan_provider::lock_semantics::ProviderSemanticIdentitySession::default(),
             ),

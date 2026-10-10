@@ -14,28 +14,36 @@ use crate::build::library_exports::resolve_library_project_root;
 use crate::build::library_outputs::{
     library_publication_receipts, packaged_library_loaf_store_root, write_library_manifest_artifacts,
 };
-use crate::build::library_project::{prepare_library_project, prepare_library_project_with_caller_facet};
+use crate::build::library_project::metadata_replay::MetadataPreparation;
+use crate::build::library_project::metadata_replay::lock_transition::{
+    MetadataLockTransition, MetadataTransitionContext,
+};
+use crate::build::library_project::{
+    AdmittedLibraryPreparation, PreparedAdmittedLibrary, current_admitted_library_session,
+    prepare_admitted_library_project, prepare_library_project, prepare_library_project_with_caller_facet,
+};
 use crate::build::output_materialization::{
     completed_output_default_backend_receipt, select_default_project_output,
     warn_for_completed_output_lock_fingerprint_drift,
 };
 use crate::build::output_paths::{
-    library_project_output_sidecars, normalized_project_entrypoint, oven_binary_path, packaged_library_metadata_files,
-    project_locked_registry_packages, project_output_bake_files, project_root_for_completed_output,
+    canonical_output_file_relative_to_root, library_project_output_sidecars, normalized_project_entrypoint,
+    oven_binary_path, project_locked_registry_packages, project_output_bake_files, project_root_for_completed_output,
     validated_project_output_relative_path,
 };
 use crate::build::output_selection::project_output_report_snapshot;
 use crate::build::oven_project::{prepare_oven_project, remove_completed_generated_cargo_lock};
-use crate::build::package_loafs::{export_selected_package_loaf, write_packaged_library_loaf_manifest};
+use crate::build::package_loafs::{
+    ExportedPackageLoafs, export_selected_package_loaf, publish_checked_library_package,
+};
 use crate::build::plan_authority::{
     collect_caller_owned_provider_registry_leaf_authority, explicit_bake_profiles,
     rematerialize_caller_owned_libraries_with_authority_context, replace_caller_owned_package_libraries,
     replace_selected_package_library_externs,
 };
 use crate::build::plan_selection::{
-    caller_owned_provider_registry_conflict, canonical_project_inspection_dependencies, oven_native_closure_refusal,
-    prepare_oven_test_dependency_envelope, provider_registry_conflict_reason,
-    registry_leaf_authority_for_plan_selection,
+    caller_owned_provider_registry_conflict, oven_native_closure_refusal, prepare_oven_test_dependency_envelope,
+    provider_registry_conflict_reason, registry_leaf_authority_for_plan_selection,
 };
 use crate::build::publication::{
     ProjectInspectionDependencyAuthority, project_output_payload_for_bake, publish_project_inspection_authority,
@@ -46,8 +54,7 @@ use crate::build::source_authority::{
     baked_project_lock_dependencies_fingerprint, canonical_baked_project_lock_path, project_bake_receipt_path,
 };
 use crate::build::{
-    BuildCommandOptions, CompletedOutputPolicy, LibraryInspectionConstituent,
-    OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION, OvenBakeProjectTarget, OvenPackagedLibraryLoafManifest,
+    BuildCommandOptions, CompletedOutputPolicy, LibraryInspectionConstituent, OvenBakeProjectTarget,
     OvenPackagedLibraryLoafProfile, OvenPreparedLibrary, OvenPreparedProject, OvenProjectBakeAuthorityContext,
     OvenProjectBakeOutputReport, OvenProjectBakeProfileReport, OvenProjectBakeReport, OvenProjectOutputBakeRequest,
     OvenProjectPlanMode, OvenStoredProjectOutput, PendingOvenProjectOutput, PreparedLibraryProject,
@@ -57,21 +64,20 @@ use crate::build_report::artifact_report;
 use crate::cargo_policy::{CargoPolicy, enforce_project_toolchain_constraint};
 use crate::error::{CliError, CliResult, oven_rustc_error};
 use crate::lock::PublishedOvenProjectLock;
-use crate::lock::resolution::publish_oven_project_lock;
+use crate::lock::resolution::{publish_oven_project_lock, publish_oven_project_lock_with_admitted_session};
 use crate::oven_store::open_default_oven_store;
 use crate::project::discover_effective_project_manifest;
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect_workspace::mark_oven_direct_rust_inspection;
 use incan_frontend::library_manifest::published_layout::packaged_library_loaf_manifest_path;
-use incan_lang::version::INCAN_VERSION;
 use incan_provider::FeatureSelection;
 use oven_cargo_compat::direct_rustc_compile_environment;
 use oven_model::manifest::ProjectManifest;
 use oven_rustc::plan::OvenDirectRustcPlanSelection;
 use oven_rustc::rustc::{
     OvenCallerOwnedRustcLibrary, OvenRustcError, OvenTrustedDirectRustcTargetRequest,
-    attach_caller_owned_rustc_libraries, bake_trusted_direct_rustc_library, bake_trusted_direct_rustc_run,
-    bake_trusted_direct_rustc_run_with_artifact_role,
+    attach_caller_owned_rustc_libraries, bake_trusted_direct_rustc_library_in_store,
+    bake_trusted_direct_rustc_run_in_store, bake_trusted_direct_rustc_run_with_artifact_role,
 };
 use oven_store::store::OvenArtifactKind;
 use oven_store::{
@@ -167,20 +173,23 @@ pub fn bake_oven_project(
     for directory in &extra_dependency_search_paths {
         artifact_plan.retain_caller_dependency_search_path(directory.clone());
     }
-    let direct = bake_trusted_direct_rustc_run(&OvenTrustedDirectRustcTargetRequest {
-        receipt: &prepared.receipt,
-        artifacts: prepared.plan_selection.artifacts(),
-        artifact_root: prepared.plan_selection.output_guard_root(),
-        artifact_plan: Some(&artifact_plan),
-        rustc: &prepared.rustc,
-        source: &prepared.generator.crate_root_path(),
-        output: &oven_binary_path(prepared, profile),
-        crate_name: &prepared.crate_name,
-        edition: &prepared.rust_edition,
-        source_evidence_key: "generated-root",
-        features: &prepared.receipt.intent.features,
-        prefer_dynamic: false,
-    });
+    let direct = bake_trusted_direct_rustc_run_in_store(
+        &OvenTrustedDirectRustcTargetRequest {
+            receipt: &prepared.receipt,
+            artifacts: prepared.plan_selection.artifacts(),
+            artifact_root: prepared.plan_selection.output_guard_root(),
+            artifact_plan: Some(&artifact_plan),
+            rustc: &prepared.rustc,
+            source: &prepared.generator.crate_root_path(),
+            output: &oven_binary_path(prepared, profile),
+            crate_name: &prepared.crate_name,
+            edition: &prepared.rust_edition,
+            source_evidence_key: "generated-root",
+            features: &prepared.receipt.intent.features,
+            prefer_dynamic: false,
+        },
+        &open_default_oven_store()?,
+    );
     classify_direct_rustc_bake(&prepared.crate_name, direct)
 }
 
@@ -226,6 +235,9 @@ fn bake_oven_library_with_dependencies(
             "normal Oven library build has no prepared `{profile}` direct-rustc selection"
         ))
     })?;
+    if let Some(native) = &selected.ordinary_native {
+        native.verify()?;
+    }
     let mut caller_owned_libraries = selected.caller_owned_libraries.clone();
     let mut re_materialized_package_library_names = BTreeSet::new();
     let mut registry_authority = registry_leaf_authority_for_plan_selection(&selected.plan_selection)?;
@@ -309,22 +321,47 @@ fn bake_oven_library_with_dependencies(
     } else {
         selected.receipt.clone()
     };
-    let direct = bake_trusted_direct_rustc_library(&OvenTrustedDirectRustcTargetRequest {
-        receipt: &coherent_receipt,
-        artifacts: selected.plan_selection.artifacts(),
-        artifact_root: selected.plan_selection.output_guard_root(),
-        artifact_plan: Some(&artifact_plan),
-        rustc: &oven.rustc,
-        source: &prepared.generator.crate_root_path(),
-        output: &oven_library_path(prepared, oven, profile),
-        crate_name: &oven.crate_name,
-        edition: &oven.rust_edition,
-        source_evidence_key: "generated-root",
-        features: &selected.receipt.intent.features,
-        prefer_dynamic: false,
-    });
+    let store = open_default_oven_store()?;
+    let direct = bake_trusted_direct_rustc_library_in_store(
+        &OvenTrustedDirectRustcTargetRequest {
+            receipt: &coherent_receipt,
+            artifacts: selected.plan_selection.artifacts(),
+            artifact_root: selected.plan_selection.output_guard_root(),
+            artifact_plan: Some(&artifact_plan),
+            rustc: &oven.rustc,
+            source: &prepared.generator.crate_root_path(),
+            output: &oven_library_path(prepared, oven, profile),
+            crate_name: &oven.crate_name,
+            edition: &oven.rust_edition,
+            source_evidence_key: "generated-root",
+            features: &selected.receipt.intent.features,
+            prefer_dynamic: false,
+        },
+        &store,
+    );
 
-    classify_direct_rustc_bake(&oven.crate_name, direct).map(|bake| (bake, artifact_plan))
+    let bake = classify_direct_rustc_bake(&oven.crate_name, direct)?;
+    #[cfg(test)]
+    LIBRARY_NATIVE_OUTPUT_WORK.with(|work| {
+        let (compiled, reused) = work.get();
+        work.set((compiled + usize::from(!bake.reused), reused + usize::from(bake.reused)));
+    });
+    if let Some(native) = &selected.ordinary_native {
+        native.verify()?;
+    }
+    Ok((bake, artifact_plan))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Actual library executor outcomes for this test thread, independent of native plan materialization reports.
+    static LIBRARY_NATIVE_OUTPUT_WORK: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+/// Take actual successful native library compile/reuse work without changing executor policy or environment.
+#[cfg(test)]
+fn take_library_native_output_work() -> (usize, usize) {
+    LIBRARY_NATIVE_OUTPUT_WORK.with(|work| work.replace((0, 0)))
 }
 
 /// Recompile a source-owned Body IR caller against the host's exact compiled semantics-core instance.
@@ -604,8 +641,124 @@ fn publish_project_lock_after_provider_bake(
     project_root: &Path,
     entrypoint: &Path,
     package_features: &FeatureSelection,
+    admitted: Option<&AdmittedLibraryPreparation>,
 ) -> CliResult<PublishedOvenProjectLock> {
-    publish_oven_project_lock(project_root, entrypoint, package_features)
+    match admitted {
+        Some(input) if input.ordinary_native().is_some() => {
+            let native = input
+                .ordinary_native()
+                .ok_or_else(|| CliError::failure("ordinary native authority lost"))?;
+            crate::lock::resolution::publish_oven_project_lock_with_ordinary_native(
+                project_root,
+                entrypoint,
+                package_features,
+                input.session(),
+                native,
+            )
+        }
+        Some(input) => {
+            publish_oven_project_lock_with_admitted_session(project_root, entrypoint, package_features, input.session())
+        }
+        None => publish_oven_project_lock(project_root, entrypoint, package_features),
+    }
+}
+
+/// Reconstruct source-current session facts without replacing an explicitly admitted dependency capability.
+fn library_metadata_publication_session(
+    prepared: &PreparedLibraryProject,
+    features: &FeatureSelection,
+    admitted: Option<&AdmittedLibraryPreparation>,
+) -> CliResult<crate::session::CompilationSession> {
+    match admitted {
+        Some(input) => current_admitted_library_session(input.session(), &prepared.entrypoint, features),
+        None => crate::session::CompilationSession::discover_for_oven(&prepared.entrypoint, features, None),
+    }
+}
+
+/// Retain complete ordinary metadata authority before the producer publishes its canonical lock.
+fn capture_library_metadata_lock_transition(
+    prepared: &PreparedLibraryProject,
+    features: &FeatureSelection,
+    authority: &mut OvenProjectBakeAuthorityContext,
+    admitted: Option<&AdmittedLibraryPreparation>,
+) -> CliResult<Option<MetadataLockTransition>> {
+    let Some(metadata) = &prepared.metadata_owner else {
+        return Ok(None);
+    };
+    let project = crate::project::effective_project_manifest_for_exact_root(&prepared.project_root)?;
+    let session = library_metadata_publication_session(prepared, features, admitted)?;
+    let preparation = observe_admitted_library_metadata(&project, &session, &prepared.out_dir, authority, admitted)?
+        .ok_or_else(|| CliError::failure("ordinary metadata lost preparation authority before lock publication"))?;
+    MetadataLockTransition::capture(
+        preparation,
+        &MetadataTransitionContext {
+            project: &project,
+            session: &session,
+            out_dir: &prepared.out_dir,
+            manifest_path: &prepared.manifest_path,
+            native_sdk: None,
+        },
+        std::sync::Arc::clone(metadata),
+    )
+    .map(Some)
+}
+
+/// Reobserve current authority and finalize checked metadata after the exact producer-owned lock write.
+fn finalize_library_metadata_lock_transition(
+    prepared: &mut PreparedLibraryProject,
+    transition: Option<MetadataLockTransition>,
+    published: &PublishedOvenProjectLock,
+    features: &FeatureSelection,
+    authority: &mut OvenProjectBakeAuthorityContext,
+    admitted: Option<&AdmittedLibraryPreparation>,
+) -> CliResult<()> {
+    let Some(transition) = transition else {
+        return Ok(());
+    };
+    let project = crate::project::effective_project_manifest_for_exact_root(&prepared.project_root)?;
+    let session = library_metadata_publication_session(prepared, features, admitted)?;
+    let candidate = observe_admitted_library_metadata(&project, &session, &prepared.out_dir, authority, admitted)?
+        .ok_or_else(|| CliError::failure("ordinary metadata lost preparation authority after lock publication"))?;
+    prepared.metadata_owner = Some(transition.finalize(
+        candidate,
+        &MetadataTransitionContext {
+            project: &project,
+            session: &session,
+            out_dir: &prepared.out_dir,
+            manifest_path: &prepared.manifest_path,
+            native_sdk: None,
+        },
+        published,
+    )?);
+    Ok(())
+}
+
+/// Reobserve the original caller-selected native route on both sides of canonical lock publication.
+fn observe_admitted_library_metadata(
+    project: &ProjectManifest,
+    session: &crate::session::CompilationSession,
+    output: &Path,
+    authority: &mut OvenProjectBakeAuthorityContext,
+    admitted: Option<&AdmittedLibraryPreparation>,
+) -> CliResult<Option<MetadataPreparation>> {
+    if let Some(native) = admitted.and_then(AdmittedLibraryPreparation::ordinary_native) {
+        native.verify()?;
+        MetadataPreparation::observe_with_ordinary_native_authority(
+            project,
+            session,
+            output,
+            std::sync::Arc::clone(native.metadata()),
+        )
+    } else {
+        MetadataPreparation::observe_with_native_context(
+            project,
+            session,
+            output,
+            None,
+            Some(authority),
+            admitted.and_then(|input| input.temporary_native_sdk_context().cloned()),
+        )
+    }
 }
 
 /// Discover the conventional or explicitly declared binary roots of a project's Rust facet.
@@ -886,7 +1039,8 @@ struct ProjectRustBakeContext<'a> {
     project_version: &'a str,
 }
 
-/// Receipt one Rust source unit with the exact callee and caller-facet identities it consumes.
+/// Receipt one Rust source unit with the exact callee, caller-facet, and declared driver native-link identities it
+/// consumes.
 fn project_rust_unit_receipt(
     context: &ProjectRustBakeContext<'_>,
     unit_name: &str,
@@ -919,6 +1073,7 @@ fn project_rust_unit_receipt(
     .with_build_unit_input("callee-incan-unit", callee_identity)
     .with_build_unit_input("caller-facet", facet_id);
     let mut request = request;
+    let mut declared_driver = false;
     if let Some(role) = context
         .manifest
         .rust_binary_roles()
@@ -928,6 +1083,16 @@ fn project_rust_unit_receipt(
             oven_rustc::rustc::driver_grant::authorize_driver_grant(role, context.rustc).map_err(oven_rustc_error)?
     {
         request = request.with_build_unit_input(oven_rustc::rustc::driver_grant::DRIVER_GRANT_INPUT, grant);
+        declared_driver = true;
+    }
+    let link_identity = if declared_driver {
+        oven_rustc::rustc::pinned_driver_link_closure_identity(context.rustc, context.target)
+    } else {
+        oven_rustc::rustc::pinned_link_closure_identity(context.rustc, context.target)
+    }
+    .map_err(oven_rustc_error)?;
+    if let Some(identity) = link_identity {
+        request = request.with_build_unit_input("link-closure", identity);
     }
     let evidence = generated_project_source_evidence(&request).map_err(|error| CliError::failure(error.to_string()))?;
     let receipt = receipt_generated_project_with_source_evidence(&request, &evidence)
@@ -1346,6 +1511,65 @@ pub fn bake_oven_project_targets(
     package_features: &FeatureSelection,
     requested_target: Option<&str>,
 ) -> CliResult<OvenProjectBakeReport> {
+    bake_oven_project_targets_with_admission(project, package_features, requested_target, None)
+}
+
+/// Publish a standalone ordinary library from original command admissions through the existing bake engine.
+/// This migration caller deliberately exercises metadata preparation on repeats instead of completed-output reuse.
+/// The caller retains its explicit ordinary or temporary SDK route; no standard namespace grant is created here.
+pub(crate) fn bake_admitted_library(
+    input: &AdmittedLibraryPreparation,
+    package_features: &FeatureSelection,
+    requested_target: Option<&str>,
+) -> CliResult<OvenProjectBakeReport> {
+    let manifest = input
+        .session()
+        .manifest
+        .as_ref()
+        .ok_or_else(|| CliError::failure("admitted ordinary library has no project manifest"))?;
+    let root = manifest.project_root();
+    let targets = discover_oven_bake_project_targets(root)?;
+    if targets.len() != 1 || targets[0].0 != OvenBakeProjectTarget::Library {
+        return Err(CliError::failure(
+            "admitted ordinary publication requires one library target",
+        ));
+    }
+    if oven_model::workspace::WorkspaceGraph::discover(root)
+        .map_err(|error| CliError::failure(error.to_string()))?
+        .is_some()
+    {
+        return Err(CliError::failure(
+            "admitted ordinary publication lacks workspace sibling authority",
+        ));
+    }
+    current_admitted_library_session(input.session(), &targets[0].1, package_features)?;
+    input.verify_native()?;
+    bake_oven_project_targets_with_admission(root, package_features, requested_target, Some(input))
+}
+
+/// Keep genuine preparation products and their input owner leases alive through final publication or rollback.
+enum RetainedLibraryPreparation<'a> {
+    Discovered(PreparedLibraryProject),
+    Admitted(PreparedAdmittedLibrary<'a>),
+}
+
+impl RetainedLibraryPreparation<'_> {
+    /// Borrow the actual product without detaching the original admitted command inputs.
+    fn project_mut(&mut self) -> &mut PreparedLibraryProject {
+        match self {
+            Self::Discovered(project) => project,
+            Self::Admitted(project) => project.project_mut(),
+        }
+    }
+}
+
+/// Run the single existing target/profile/publication engine with optional original ordinary admissions.
+fn bake_oven_project_targets_with_admission(
+    project: &Path,
+    package_features: &FeatureSelection,
+    requested_target: Option<&str>,
+    admitted: Option<&AdmittedLibraryPreparation>,
+) -> CliResult<OvenProjectBakeReport> {
     if requested_target.is_some_and(|target| target.trim().is_empty()) {
         return Err(CliError::failure("explicit Oven bake target must not be empty"));
     }
@@ -1401,21 +1625,44 @@ pub fn bake_oven_project_targets(
     let store = open_default_oven_store()?;
     let mut authority_context = OvenProjectBakeAuthorityContext {
         requested_target: requested_target.map(str::to_owned),
+        native_sdk_context: admitted.and_then(|input| input.temporary_native_sdk_context().cloned()),
         ..OvenProjectBakeAuthorityContext::default()
     };
-    if canonical_baked_project_lock_path(&project_root)?.is_file()
-        && let Some(reused) = try_reuse_baked_project(
-            &project_root,
-            &targets,
-            &store,
+    if admitted.is_none() {
+        if canonical_baked_project_lock_path(&project_root)?.is_file()
+            && let Some(reused) = try_reuse_baked_project(
+                &project_root,
+                &targets,
+                &store,
+                package_features,
+                requested_target,
+                &mut authority_context,
+            )?
+        {
+            return Ok(reused);
+        }
+        let reconciled = crate::build::lock_reuse::try_reuse_with_resolved_provider_lock(
+            &manifest,
+            &dependency_surface_entrypoint,
             package_features,
-            requested_target,
-            &mut authority_context,
-        )?
-    {
-        return Ok(reused);
+            || {
+                authority_context.lock_published();
+                try_reuse_baked_project(
+                    &project_root,
+                    &targets,
+                    &store,
+                    package_features,
+                    requested_target,
+                    &mut authority_context,
+                )
+            },
+        )?;
+        if let Some(reused) = reconciled {
+            return Ok(reused);
+        }
     }
-    if std::env::var_os("INCAN_TEST_REQUIRE_COMPLETED_BAKE_REUSE").is_some() {
+    authority_context.lock_published();
+    if admitted.is_none() && std::env::var_os("INCAN_TEST_REQUIRE_COMPLETED_BAKE_REUSE").is_some() {
         return Err(CliError::failure(
             "completed project reuse missed before frontend preparation",
         ));
@@ -1433,7 +1680,9 @@ pub fn bake_oven_project_targets(
     // itself) prunes unleased entries when the domain policy is tight. A bake that succeeds must leave a loadable
     // closure, so its constituents stay leased until the authority is sealed; if the policy cannot hold them all,
     // admission fails loudly instead.
-    let mut retained_preparations: Vec<PreparedLibraryProject> = Vec::new();
+    let mut retained_preparations: Vec<RetainedLibraryPreparation<'_>> = Vec::new();
+    // Destination owners are independent of prepared source Store leases and survive finalization/rollback too.
+    let mut retained_package_loafs: Vec<ExportedPackageLoafs> = Vec::new();
     // The same holds for an executable target: its debug plan is published one profile before its release plan, and
     // the release publisher's staging reservation reclaims unleased entries oldest-first (#1230). Dropping the debug
     // preparation at the end of its loop arm handed that plan to the reclaimer.
@@ -1464,21 +1713,33 @@ pub fn bake_oven_project_targets(
         for (target, entrypoint) in targets {
             match target {
                 OvenBakeProjectTarget::Library => {
-                    let mut prepared = prepare_library_project(
-                        Some(project),
-                        None,
-                        CargoPolicy::default(),
-                        package_features,
-                        None,
-                        Vec::new(),
-                        false,
-                        false,
-                        None,
-                        true,
-                        false,
-                        OvenProjectPlanMode::ExplicitBake,
-                        Some(&mut authority_context),
-                    )?;
+                    let mut preparation = if let Some(input) = admitted {
+                        RetainedLibraryPreparation::Admitted(prepare_admitted_library_project(
+                            input,
+                            None,
+                            package_features,
+                            false,
+                            OvenProjectPlanMode::ExplicitBake,
+                            Some(&mut authority_context),
+                        )?)
+                    } else {
+                        RetainedLibraryPreparation::Discovered(prepare_library_project(
+                            Some(project),
+                            None,
+                            CargoPolicy::default(),
+                            package_features,
+                            None,
+                            Vec::new(),
+                            false,
+                            false,
+                            None,
+                            true,
+                            false,
+                            OvenProjectPlanMode::ExplicitBake,
+                            Some(&mut authority_context),
+                        )?)
+                    };
+                    let prepared = preparation.project_mut();
                     #[cfg(feature = "rust_inspect")]
                     if let Some(manifest_dir) = prepared.rust_inspect_manifest_dir.as_ref() {
                         rust_inspect_manifest_dirs.insert(manifest_dir.clone());
@@ -1538,24 +1799,16 @@ pub fn bake_oven_project_targets(
                             }
                         }
                         let bake = bake_oven_library(&prepared, selected, profile, Some(&mut authority_context))?;
-                        let library_relative_path = bake
-                            .output
-                            .strip_prefix(&prepared.out_dir)
-                            .map_err(|_| {
-                                CliError::failure(format!(
-                                    "baked public library output {} escaped its artifact root {}",
-                                    bake.output.display(),
-                                    prepared.out_dir.display()
-                                ))
-                            })?
-                            .to_string_lossy()
-                            .replace('\\', "/");
-                        let entries = export_selected_package_loaf(
+                        let (_, library_relative_path) =
+                            canonical_output_file_relative_to_root(&prepared.out_dir, &bake.output)?;
+                        let exported = export_selected_package_loaf(
                             &store,
                             &package_store_root,
                             &selected_profile.receipt,
                             &selected_profile.plan_selection,
                         )?;
+                        let entries = exported.entries().to_vec();
+                        retained_package_loafs.push(exported);
                         completed_outputs.push((
                             profile.clone(),
                             selected_profile.receipt.clone(),
@@ -1591,32 +1844,42 @@ pub fn bake_oven_project_targets(
                             action: selected_profile.materialization.as_str(),
                         });
                     }
-                    write_library_manifest_artifacts(&mut prepared)?;
+                    write_library_manifest_artifacts(prepared)?;
+                    let metadata_transition = capture_library_metadata_lock_transition(
+                        prepared,
+                        package_features,
+                        &mut authority_context,
+                        admitted,
+                    )?;
                     published_project_lock = Some(publish_project_lock_after_provider_bake(
                         &project_root,
                         &dependency_surface_entrypoint,
                         package_features,
+                        admitted,
                     )?);
                     authority_context.lock_published();
+                    finalize_library_metadata_lock_transition(
+                        prepared,
+                        metadata_transition,
+                        published_project_lock.as_ref().ok_or_else(|| {
+                            CliError::failure("ordinary library metadata lost its published lock proof")
+                        })?,
+                        package_features,
+                        &mut authority_context,
+                        admitted,
+                    )?;
                     source_authority_digest = Some(authority_context.project_source_authority(&project_root)?);
                     let source_authority_digest = source_authority_digest.as_deref().ok_or_else(|| {
                         CliError::failure("explicit Oven library bake lost its final source authority")
                     })?;
                     let library_sidecars =
                         library_project_output_sidecars(&prepared.library_manifest, &prepared.out_dir)?;
-                    let metadata_files = packaged_library_metadata_files(
-                        &prepared.manifest_path,
-                        &prepared.library_manifest,
-                        &prepared.out_dir,
+                    publish_checked_library_package(
+                        &prepared,
+                        source_authority_digest,
+                        package_profiles,
+                        *store.limits(),
                     )?;
-                    let published_manifest = OvenPackagedLibraryLoafManifest {
-                        schema_version: OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION,
-                        source_authority_digest: source_authority_digest.to_string(),
-                        compiler_version: INCAN_VERSION.to_string(),
-                        metadata_files,
-                        profiles: package_profiles,
-                    };
-                    write_packaged_library_loaf_manifest(&prepared.out_dir, &published_manifest)?;
                     let package_loaf_manifest = packaged_library_loaf_manifest_path(&prepared.out_dir);
                     let package_loaf_store_relative_path = package_store_root
                         .strip_prefix(&prepared.project_root)
@@ -1652,7 +1915,7 @@ pub fn bake_oven_project_targets(
                         });
                     }
                     remove_completed_generated_cargo_lock(prepared.generator.output_dir())?;
-                    retained_preparations.push(prepared);
+                    retained_preparations.push(preparation);
                 }
                 OvenBakeProjectTarget::Executable => {
                     if published_project_lock.is_none() {
@@ -1660,6 +1923,7 @@ pub fn bake_oven_project_targets(
                             &project_root,
                             &dependency_surface_entrypoint,
                             package_features,
+                            admitted,
                         )?);
                         authority_context.lock_published();
                         source_authority_digest = Some(authority_context.project_source_authority(&project_root)?);
@@ -1763,25 +2027,71 @@ pub fn bake_oven_project_targets(
             .as_ref()
             .ok_or_else(|| CliError::failure("explicit Oven bake did not retain its canonical project lock"))?
             .dependency_surface();
-        let test_dependency_envelope = prepare_oven_test_dependency_envelope(
-            &store,
-            &project_root,
-            dependency_surface,
-            &debug_target_receipts,
-            Some(&mut authority_context),
-        )?;
+        let ordinary_native = admitted.and_then(AdmittedLibraryPreparation::ordinary_native);
+        let test_dependency_envelope = if let Some(native) = ordinary_native {
+            native.support_only_test_envelope(
+                &store,
+                debug_target_receipts
+                    .first()
+                    .ok_or_else(|| CliError::failure("ordinary library publication requires its debug receipt"))?,
+                dependency_surface,
+                &project_root,
+            )?
+        } else {
+            prepare_oven_test_dependency_envelope(
+                &store,
+                &project_root,
+                dependency_surface,
+                &debug_target_receipts,
+                Some(&mut authority_context),
+            )?
+        };
+        let native_sdk_context = if ordinary_native.is_some() {
+            None
+        } else {
+            authority_context.native_sdk_context()?
+        };
         let (registry_dependencies, dev_registry_dependencies) =
-            canonical_project_inspection_dependencies(dependency_surface)?;
+            crate::build::plan_selection::canonical_project_inspection_dependencies_with_native_sdk(
+                dependency_surface,
+                debug_target_receipts.first(),
+                native_sdk_context.as_deref(),
+            )?;
+        if debug_target_receipts
+            .first()
+            .is_some_and(|receipt| receipt.sources.build_unit_inputs.contains_key("sdk-native-closure"))
+        {
+            let uncovered = registry_dependencies
+                .iter()
+                .chain(&dev_registry_dependencies)
+                .filter(|dependency| matches!(dependency.source, oven_model::manifest::DependencySource::Registry))
+                .map(|dependency| dependency.crate_name.as_str())
+                .collect::<Vec<_>>();
+            if !uncovered.is_empty() {
+                return Err(CliError::failure(format!(
+                    "native SDK inspection has no admitted source authority for registry dependencies: {}",
+                    uncovered.join(", ")
+                )));
+            }
+        }
         let source_authority_digest = authority_context.final_project_source_authority(&project_root)?;
         #[cfg(feature = "rust_inspect")]
-        let project_locked_registry_packages = project_locked_registry_packages(
-            rust_inspect_manifest_dirs
-                .iter()
-                .map(|manifest_dir| manifest_dir.join("Cargo.lock"))
-                .collect::<Vec<_>>()
-                .iter()
-                .map(PathBuf::as_path),
-        )?;
+        let project_locked_registry_packages = if registry_dependencies
+            .iter()
+            .chain(&dev_registry_dependencies)
+            .all(|dependency| !matches!(dependency.source, oven_model::manifest::DependencySource::Registry))
+        {
+            Vec::new()
+        } else {
+            project_locked_registry_packages(
+                rust_inspect_manifest_dirs
+                    .iter()
+                    .map(|manifest_dir| manifest_dir.join("Cargo.lock"))
+                    .collect::<Vec<_>>()
+                    .iter()
+                    .map(PathBuf::as_path),
+            )?
+        };
         #[cfg(not(feature = "rust_inspect"))]
         let project_locked_registry_packages = Vec::new();
         let inspection_authority = publish_project_inspection_authority(
@@ -1840,10 +2150,12 @@ pub fn bake_oven_project_targets(
             outputs,
         })
     })();
-    match publication {
+    let result = match publication {
         Some(publication) => publication.finish(result),
         None => result,
-    }
+    };
+    drop(retained_package_loafs);
+    result
 }
 
 #[cfg(test)]
@@ -2170,3 +2482,9 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod admitted_publication_tests;
+
+#[cfg(test)]
+mod ordinary_native_publication_tests;

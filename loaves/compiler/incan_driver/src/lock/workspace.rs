@@ -24,7 +24,7 @@ use incan_frontend::ParsedModule;
 use incan_frontend::ast::{Declaration, ImportKind};
 use incan_provider::FeatureSelection;
 use incan_provider::dependency_resolver::{ResolvedDependencies, resolve_reachable_dependencies};
-use incan_provider::inventory::{extend_requirements_with_provider_plan, provider_used_module_paths};
+use incan_provider::inventory::extend_requirements_with_provider_plan;
 use incan_provider::lock_semantics::semantic_lock_state;
 use incan_provider::requirements::{
     ProjectRequirements, collect_project_requirements, merge_project_requirement_dependencies,
@@ -355,8 +355,8 @@ fn merge_workspace_project_requirements(
 }
 
 /// Include provider imports scoped inside `module tests:` when building the project-wide lock context.
-fn lock_provider_used_module_paths(modules: &[ParsedModule]) -> BTreeSet<Vec<String>> {
-    let mut used = provider_used_module_paths(modules);
+fn lock_provider_used_module_paths(session: &CompilationSession, modules: &[ParsedModule]) -> BTreeSet<Vec<String>> {
+    let mut used = session.provider_module_paths(modules);
     for module in modules {
         for declaration in &module.ast.declarations {
             let Declaration::TestModule(test_module) = &declaration.node else {
@@ -425,6 +425,53 @@ pub fn collect_project_lock_context(
     sdk_profile_override: Option<&str>,
     workspace: Option<&WorkspaceGraph>,
     command_session: Option<&CompilationSession>,
+) -> CliResult<Option<ProjectLockContext>> {
+    collect_project_lock_context_impl(
+        manifest,
+        explicit_entry_file,
+        cargo_features,
+        package_features,
+        sdk_profile_override,
+        workspace,
+        command_session,
+        None,
+    )
+}
+
+/// Collect the same whole-project inputs under an explicitly retained ordinary native authority.
+pub(crate) fn collect_ordinary_project_lock_context(
+    manifest: &ProjectManifest,
+    entry: &Path,
+    features: &FeatureSelection,
+    session: &CompilationSession,
+    native: &crate::build::ordinary_library_native::OrdinaryLibraryNativeProfiles,
+) -> CliResult<Option<ProjectLockContext>> {
+    collect_project_lock_context_impl(
+        manifest,
+        Some(entry),
+        &CargoFeatureSelection::default(),
+        features,
+        None,
+        None,
+        Some(session),
+        Some(native),
+    )
+}
+
+/// Share source/test collection while keeping legacy and explicit ordinary native semantic authority distinct.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Preserves the canonical collector inputs with explicit native authority"
+)]
+fn collect_project_lock_context_impl(
+    manifest: &ProjectManifest,
+    explicit_entry_file: Option<&Path>,
+    cargo_features: &CargoFeatureSelection,
+    package_features: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
+    workspace: Option<&WorkspaceGraph>,
+    command_session: Option<&CompilationSession>,
+    ordinary_native: Option<&crate::build::ordinary_library_native::OrdinaryLibraryNativeProfiles>,
 ) -> CliResult<Option<ProjectLockContext>> {
     #[cfg(any(test, feature = "test_support"))]
     record_project_lock_context_collection();
@@ -523,10 +570,32 @@ pub fn collect_project_lock_context(
         collect_project_requirements(&project_requirement_modules, &session.library_manifest_index)?;
     #[cfg(any(test, feature = "test_support"))]
     record_project_lock_provider_plan_projection();
-    let provider_plan =
-        session.provider_plan_for_used_module_paths(lock_provider_used_module_paths(&project_requirement_modules))?;
+    let provider_plan = session
+        .provider_plan_for_used_module_paths(lock_provider_used_module_paths(session, &project_requirement_modules))?;
     extend_requirements_with_provider_plan(&mut project_requirements, &provider_plan)?;
-    let semantic_sdk_paths = semantic_sdk_path_dependencies(&project_requirements);
+    let semantic_sdk_paths = if let Some(native) = ordinary_native {
+        native.verify()?;
+        #[cfg(feature = "rust_inspect")]
+        let queries = crate::build::library_exports::collect_library_rust_abi_query_paths(
+            &project_requirement_modules,
+            &crate::build::rust_extern::collect_rust_extern_contexts(&project_requirement_modules),
+        )
+        .into_iter()
+        .collect();
+        #[cfg(not(feature = "rust_inspect"))]
+        let queries = BTreeSet::new();
+        crate::build::library_metadata::requirements::capture_checked_native_demands(
+            session_manifest,
+            &project_requirement_modules,
+            &project_requirements,
+            &provider_plan,
+            &queries,
+        )?
+        .require_source_inspection()?;
+        native.provider_semantic_dependencies(&provider_plan, &project_requirements)?
+    } else {
+        semantic_sdk_path_dependencies(&project_requirements)
+    };
     let semantic = semantic_lock_state(
         session_manifest.project_root(),
         session_manifest.interop_c(),

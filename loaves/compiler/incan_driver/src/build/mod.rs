@@ -11,12 +11,24 @@ pub mod caller_facet;
 pub mod caller_owned;
 mod file_freshness;
 pub mod inline_command;
+pub mod library_dependencies;
 pub mod library_exports;
+pub mod library_generation;
+pub mod library_metadata;
 pub mod library_outputs;
 pub mod library_project;
 pub mod library_publication;
+mod lock_reuse;
+pub mod native_loaf_plan;
+pub mod native_runtime_inputs;
+pub mod native_sdk;
+pub(crate) mod native_sdk_plan;
+pub use native_sdk_plan::NativeSdkCommandContext;
+pub(crate) mod ordinary_library_native;
+pub(crate) mod ordinary_support;
 pub mod output_materialization;
 pub mod output_paths;
+mod output_publication;
 pub mod output_selection;
 pub mod oven_project;
 pub mod package_loafs;
@@ -71,9 +83,9 @@ pub const OVEN_PACKAGED_LIBRARY_LOAF_STORE_RELATIVE_PATH: &str = "oven/loafs";
 
 /// Current wire schema for package-owned Oven Loaf handoff metadata.
 ///
-/// Version 6 seals the checked `.incnlib` manifest and every manifest-declared provider sidecar by relative path and
-/// digest, in addition to requiring release-cohort project-extension entries.
-pub const OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION: u32 = 6;
+/// Version 7 adds an immutable ordinary checked-metadata owner and its validated planning replay contract.
+/// Version 6 remains readable for native handoff, but has no checked metadata replay authority.
+pub const OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION: u32 = 7;
 
 /// Current wire schema for completed receipt-bound project-output Loafs.
 ///
@@ -104,6 +116,8 @@ pub const OVEN_PROJECT_OUTPUT_ARTIFACT_PATH: &str = "output/native";
 /// This deliberately contains no Cargo target path or command. Generated Rust and the final binary are caller-owned;
 /// the selected native closure retains its store lease until the direct-Rustc bake and any child execution complete.
 pub struct OvenPreparedProject {
+    /// Command-owned native admission retained through compilation and child execution.
+    pub native_sdk_context: Option<Arc<NativeSdkCommandContext>>,
     pub generator: ProjectGenerator,
     pub project_root: PathBuf,
     pub entrypoint: PathBuf,
@@ -177,6 +191,10 @@ pub struct PreparedLibraryProject {
     pub timings_ms: BTreeMap<String, u64>,
     pub report: BuildReportDraft,
     pub oven: Option<OvenPreparedLibrary>,
+    /// Original immutable checked metadata lease retained through publication and consumer use.
+    pub metadata_owner: Option<Arc<library_metadata::SelectedLibraryMetadata>>,
+    /// Source-current publication authority, consumed only after every checked sidecar is finalized.
+    pub(crate) pending_metadata: Option<library_project::metadata_replay::PendingMetadataPublication>,
     #[cfg(feature = "rust_inspect")]
     pub rust_inspect_manifest_dir: Option<PathBuf>,
 }
@@ -195,6 +213,10 @@ pub struct OvenPreparedLibrary {
 /// `incan build --lib` has historically produced a release artifact; retaining both avoids linking a library against
 /// a different profile's hashed Rust dependencies and never delegates that mismatch to Cargo.
 pub struct OvenPreparedLibraryProfile {
+    /// Shared admission used by all profiles of this library command.
+    pub native_sdk_context: Option<Arc<NativeSdkCommandContext>>,
+    /// Original complete ordinary requests retained through native compilation and output publication.
+    pub(crate) ordinary_native: Option<Arc<ordinary_library_native::OrdinaryLibraryNativeProfiles>>,
     pub receipt: oven_store::OvenReceipt,
     pub plan_selection: OvenDirectRustcPlanSelection,
     pub materialization: OvenToolchainMaterialization,
@@ -340,6 +362,12 @@ pub struct OvenPackagedLibraryLoafManifest {
     /// metadata to describe a different API, vocabulary surface, or desugarer than the explicit provider bake
     /// produced. These records bind that complete public handoff without copying it into each profile.
     pub metadata_files: Vec<OvenPackagedLibraryMetadataFile>,
+    /// Original immutable checked-metadata owner; absent legacy authority is a metadata preparation miss.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_metadata: Option<library_metadata::LibraryMetadataReference>,
+    /// Original immutable association of final package source authority and the exact checked generation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_generation: Option<library_generation::LibraryGenerationReference>,
     pub profiles: BTreeMap<String, OvenPackagedLibraryLoafProfile>,
 }
 
@@ -416,11 +444,25 @@ pub struct MemoizedPackagedProviderAuthority {
 /// invalidation, or representation outside this command invocation.
 #[derive(Default)]
 pub struct OvenProjectBakeAuthorityContext {
+    /// Native owners shared by all targets/profiles in this explicit bake invocation.
+    pub native_sdk_context: Option<Arc<NativeSdkCommandContext>>,
     pub source_digester: ProjectSourceAuthorityDigester,
     pub providers: HashMap<PathBuf, MemoizedPackagedProviderAuthority>,
     pub initial_project_source_authority: Option<String>,
     /// Caller-owned target override accepted only by explicit project bake.
     pub requested_target: Option<String>,
+}
+
+impl OvenProjectBakeAuthorityContext {
+    /// Admit the native SDK once for this bake and revalidate retained authority before another target borrows it.
+    pub fn native_sdk_context(&mut self) -> CliResult<Option<Arc<NativeSdkCommandContext>>> {
+        if let Some(context) = &self.native_sdk_context {
+            context.verify()?;
+        } else {
+            self.native_sdk_context = NativeSdkCommandContext::discover()?;
+        }
+        Ok(self.native_sdk_context.clone())
+    }
 }
 
 /// One manifest-backed Incan entrypoint admitted by `incan oven bake`.
@@ -523,6 +565,10 @@ pub struct OvenProjectOutputPayload {
     /// without putting an absolute worktree path into a portable Loaf.
     pub project_identity: String,
     pub source_authority_digest: String,
+    /// Authority of dependencies and non-Incan inputs, allowing development source edits without replaying stale
+    /// outputs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dependency_authority_digest: Option<String>,
     /// Derived semantic dependency fingerprint recorded by the canonical lock at bake time.
     ///
     /// The canonical lock projection remains part of `source_authority_digest`, but excludes this one derived field.
@@ -821,6 +867,8 @@ pub struct CompiledProviderMetadataInputs<'a> {
 /// stat-guarded cache, checked against observed inputs on every command. Final publication uses a fresh digester.
 #[derive(Default)]
 pub struct ProjectSourceAuthorityDigester {
+    /// Only this root may omit its own Incan sources when hashing development dependency authority.
+    pub development_root: Option<PathBuf>,
     pub project_digests: HashMap<PathBuf, String>,
     pub rust_crate_digests: HashMap<PathBuf, String>,
     pub rust_source_closure_digests: BTreeMap<PathBuf, String>,

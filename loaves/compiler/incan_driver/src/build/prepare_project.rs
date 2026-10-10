@@ -231,11 +231,7 @@ fn prepare_project_with_options(
     generator.set_cargo_target_dir_override(options.generated_cargo_target_dir.map(Path::to_path_buf));
     generator.set_stdlib_facets(project_requirements.stdlib_facets.clone());
     generator.set_include_dev_dependencies(false);
-    generator.set_rust_edition(
-        manifest
-            .as_ref()
-            .and_then(|m| m.build.as_ref().and_then(|b| b.rust_edition.clone())),
-    );
+    generator.set_rust_edition(manifest.as_ref().and_then(|m| m.rust_edition().map(str::to_string)));
 
     let mut inline_imports = collect_rust_dependency_uses(main_module, false);
     for module in &emitted_dep_modules {
@@ -328,9 +324,7 @@ fn prepare_project_with_options(
             project_root: &project_root,
             project_name: project_name.as_str(),
             cargo_package_name: &cargo_package_name,
-            rust_edition: manifest
-                .as_ref()
-                .and_then(|m| m.build.as_ref().and_then(|b| b.rust_edition.clone())),
+            rust_edition: manifest.as_ref().and_then(|m| m.rust_edition().map(str::to_string)),
             resolved: &resolved,
             project_requirements: &project_requirements,
             lock_payload: lock_payload.clone(),

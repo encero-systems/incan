@@ -936,11 +936,20 @@ fn retain_same_module_trait_signature_dependencies(
     }
 }
 
-/// Collect dependency-module declarations that must remain reachable from externally visible roots such as imports,
-/// ambient logging, and web route registration.
-pub fn collect_externally_reachable_items_by_module(
+/// Legacy compatibility for focused reachability tests; production uses its retained cache context below.
+#[cfg(test)]
+fn collect_externally_reachable_items_by_module(
     main: &Program,
     dependency_modules: &[(&str, &Program, Option<Vec<String>>)],
+) -> HashMap<Vec<String>, HashSet<String>> {
+    collect_externally_reachable_items_by_module_with_cache(main, dependency_modules, &mut StdlibAstCache::new())
+}
+
+/// Collect reachability using the command's retained metadata context, without ambient source rediscovery.
+pub(super) fn collect_externally_reachable_items_by_module_with_cache(
+    main: &Program,
+    dependency_modules: &[(&str, &Program, Option<Vec<String>>)],
+    stdlib_cache: &mut StdlibAstCache,
 ) -> HashMap<Vec<String>, HashSet<String>> {
     let module_paths: HashSet<Vec<String>> = dependency_modules
         .iter()
@@ -953,6 +962,7 @@ pub fn collect_externally_reachable_items_by_module(
         program: &Program,
         current_module_path: &[String],
         module_paths: &HashSet<Vec<String>>,
+        stdlib_cache: &mut StdlibAstCache,
     ) {
         record_generated_support_required_items(reachable, current_module_path);
         if incan_frontend::surface_semantics::uses_ambient_log_surface(program) {
@@ -1035,12 +1045,11 @@ pub fn collect_externally_reachable_items_by_module(
         }
         if module_paths.contains(current_module_path) {
             let aliases = decorator_resolution::collect_import_aliases(program);
-            let mut stdlib_cache = StdlibAstCache::new();
             for decl in &program.declarations {
                 let Declaration::Function(func) = &decl.node else {
                     continue;
                 };
-                if has_web_route_passthrough_decorator(func, &aliases, &mut stdlib_cache) {
+                if has_web_route_passthrough_decorator(func, &aliases, stdlib_cache) {
                     reachable
                         .entry(current_module_path.to_vec())
                         .or_default()
@@ -1052,10 +1061,16 @@ pub fn collect_externally_reachable_items_by_module(
 
     let mut reachable = HashMap::new();
     record_serde_json_trait_support_items(&mut reachable, main, dependency_modules);
-    record_imports(&mut reachable, main, &[String::from("main")], &module_paths);
+    record_imports(
+        &mut reachable,
+        main,
+        &[String::from("main")],
+        &module_paths,
+        stdlib_cache,
+    );
     for (name, program, path_segments) in dependency_modules {
         let module_path = path_segments.clone().unwrap_or_else(|| vec![(*name).to_string()]);
-        record_imports(&mut reachable, program, &module_path, &module_paths);
+        record_imports(&mut reachable, program, &module_path, &module_paths, stdlib_cache);
     }
     retain_same_module_trait_signature_dependencies(&mut reachable, dependency_modules);
     reachable

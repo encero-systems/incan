@@ -856,6 +856,9 @@ pub struct TypeChecker {
     /// Lossless numeric widening converts one value, so it applies only at depth zero; see
     /// [`TypeChecker::nested_types_compatible`].
     nested_type_compatibility_depth: Cell<usize>,
+    /// Actual complete-type lookup requests observed by this isolated checker in demand regression tests.
+    #[cfg(test)]
+    rust_complete_type_lookup_requests: Cell<usize>,
     /// Feature-gated cache for rust-inspect semantic metadata extraction (RFC 041).
     #[cfg(feature = "rust_inspect")]
     pub rust_inspect_cache: RustMetadataCache,
@@ -1013,6 +1016,8 @@ impl TypeChecker {
             pending_trait_supertraits: Vec::new(),
             type_compatibility_depth: Cell::new(0),
             nested_type_compatibility_depth: Cell::new(0),
+            #[cfg(test)]
+            rust_complete_type_lookup_requests: Cell::new(0),
             #[cfg(feature = "rust_inspect")]
             rust_inspect_cache: RustMetadataCache::new(),
             #[cfg(feature = "rust_inspect")]
@@ -1320,6 +1325,9 @@ impl TypeChecker {
     /// Fast source metadata can prove public inherent methods but not trait implementations. Escalate only when a
     /// consumer explicitly needs a full type record so ordinary method calls retain their source-only fast path.
     pub fn rust_item_metadata_for_complete_type(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+        #[cfg(test)]
+        self.rust_complete_type_lookup_requests
+            .set(self.rust_complete_type_lookup_requests.get() + 1);
         let metadata = self.rust_item_metadata_for_path(canonical_path)?;
         let RustItemKind::Type(type_info) = &metadata.kind else {
             return Some(metadata);
@@ -1406,6 +1414,9 @@ impl TypeChecker {
     #[cfg(not(feature = "rust_inspect"))]
     /// Return complete type metadata from shipped dependency ABI when rust-inspect support is not compiled in.
     pub fn rust_item_metadata_for_complete_type(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+        #[cfg(test)]
+        self.rust_complete_type_lookup_requests
+            .set(self.rust_complete_type_lookup_requests.get() + 1);
         self.rust_item_metadata_for_path(canonical_path)
     }
 
@@ -2642,16 +2653,21 @@ impl TypeChecker {
 
     /// Set the loaded dependency library manifests used for `pub::` import resolution.
     pub fn set_library_manifest_index(&mut self, index: LibraryManifestIndex) {
-        self.provider_plan = Arc::new(ProviderPlan::for_library_index(index));
+        let plan = Arc::new(ProviderPlan::for_library_index(index));
+        self.stdlib_cache.bind_provider_plan(&plan);
+        self.provider_plan = plan;
     }
 
     /// Set shared dependency library manifests used for `pub::` import resolution.
     pub fn set_library_manifest_index_shared(&mut self, index: Arc<LibraryManifestIndex>) {
-        self.provider_plan = Arc::new(ProviderPlan::for_library_index((*index).clone()));
+        let plan = Arc::new(ProviderPlan::for_library_index((*index).clone()));
+        self.stdlib_cache.bind_provider_plan(&plan);
+        self.provider_plan = plan;
     }
 
     /// Set the immutable provider plan consumed by import resolution and semantic checking.
     pub fn set_provider_plan(&mut self, plan: Arc<ProviderPlan>) {
+        self.stdlib_cache.bind_provider_plan(&plan);
         self.provider_plan = plan;
         self.seed_sdk_provider_symbols();
     }
@@ -5643,7 +5659,6 @@ impl TypeChecker {
             &|arg| self.canonicalize_public_library_nominals(arg),
             &|segments| self.qualified_type_annotation_resolved_type(segments),
         );
-        self.record_mutable_rust_type_argument_projection(ty);
         let resolved = self.normalize_union_member_identity(resolved);
         let resolved = self.expand_type_aliases(resolved);
         // Only the checking pass sees every declaration's derives; collection may resolve a name declared further on.
@@ -5661,6 +5676,16 @@ impl TypeChecker {
         self.type_info
             .qualified_type_reference(&segments.join("."))
             .map(|reference| self.qualified_reference_member_spelling(reference.resolved.clone(), &reference.identity))
+    }
+
+    /// Demand foreign generic ownership projection only for an explicitly mutable source parameter (#1698).
+    ///
+    /// Direct Rust handles keep an owned outer ABI, so their CallableParam mut marker can be false even when this
+    /// source marker requires mutable-reference arguments. Non-parameter annotations have no projection consumer.
+    fn record_mutable_rust_parameter_projection(&mut self, param: &Param) {
+        if param.is_mut {
+            self.record_mutable_rust_type_argument_projection(&param.ty);
+        }
     }
 
     /// Preserve a metadata-directed mutable-reference projection for one imported Rust generic annotation.
@@ -5681,6 +5706,11 @@ impl TypeChecker {
         if matches!(info.binding, RustImportBindingKind::CrateRoot) {
             return;
         }
+        tracing::debug!(
+            query = %info.path,
+            mutable_parameter_complete_metadata_requests = 1,
+            "source mutable Rust generic projection demanded metadata"
+        );
         let Some(metadata) = self.rust_item_metadata_for_complete_type(&info.path) else {
             return;
         };
@@ -7019,6 +7049,12 @@ impl TypeChecker {
         self.type_info = TypeCheckInfo::default();
         self.warnings.clear();
         self.errors.clear();
+        if let Err(error) = self.stdlib_cache.verify_retained_sources() {
+            return Err(vec![CompileError::new(
+                format!("retained standard source metadata refused: {error}"),
+                Span::default(),
+            )]);
+        }
         self.pending_uncopyable_dict_lookups.clear();
         self.mutable_bindings.clear();
         self.static_alias_bindings.clear();
@@ -7137,6 +7173,12 @@ impl TypeChecker {
                     ));
                 }
             }
+        }
+        if let Err(error) = self.stdlib_cache.verify_retained_sources() {
+            self.errors.push(CompileError::new(
+                format!("retained standard source metadata refused: {error}"),
+                Span::default(),
+            ));
         }
         // Split fatal errors from non-fatal diagnostics.
         let all = std::mem::take(&mut self.errors);

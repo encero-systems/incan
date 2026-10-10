@@ -12,8 +12,66 @@ use incan_provider::dependency_resolver::ResolvedDependencies;
 use incan_provider::lock_semantics::{CheckedProviderSemanticIdentities, provider_semantic_identities};
 use incan_provider::requirements::{ProjectRequirements, semantic_sdk_path_dependencies};
 use oven_model::manifest::DependencySpec;
-use oven_rustc::loaf::runtime_build_unit_inputs;
-use oven_store::digest_dependency_specs;
+
+/// Checked logical inputs and original native producer requests retained until every profile is planned.
+pub(crate) struct OrdinaryLibraryRuntimeInputs {
+    native: std::sync::Arc<crate::build::ordinary_library_native::OrdinaryLibraryNativeProfiles>,
+    provider_records: Vec<String>,
+    facets: Vec<String>,
+    dependencies: Vec<DependencySpec>,
+    owner: std::path::PathBuf,
+}
+
+impl OrdinaryLibraryRuntimeInputs {
+    /// Bind already checked provider semantics and resolved declarations without selecting or discovering an SDK.
+    pub(crate) fn from_checked(
+        native: std::sync::Arc<crate::build::ordinary_library_native::OrdinaryLibraryNativeProfiles>,
+        owner: &std::path::Path,
+        provider_plan: &ProviderPlan,
+        requirements: &ProjectRequirements,
+        resolved: &ResolvedDependencies,
+        semantic_identities: &CheckedProviderSemanticIdentities,
+    ) -> CliResult<Self> {
+        native.verify()?;
+        let provider_records = oven_native_provider_records_with_checked_identities(
+            provider_plan,
+            &native.provider_semantic_dependencies(provider_plan, requirements)?,
+            semantic_identities,
+        )?;
+        let mut dependencies = resolved.dependencies.clone();
+        dependencies.extend(resolved.dev_dependencies.clone());
+        Ok(Self {
+            native,
+            provider_records,
+            facets: requirements.stdlib_facets.clone(),
+            dependencies,
+            owner: owner.to_path_buf(),
+        })
+    }
+
+    /// Borrow original ordinary requests for the current planner and the final compilation handoff.
+    pub(crate) fn native(
+        &self,
+    ) -> &std::sync::Arc<crate::build::ordinary_library_native::OrdinaryLibraryNativeProfiles> {
+        &self.native
+    }
+
+    /// Project exact profile physical identities while retaining all logical dependency records.
+    pub(crate) fn for_profile(
+        &self,
+        intent: &oven_store::OvenBuildIntent,
+        physical_dependencies: &[DependencySpec],
+    ) -> CliResult<BTreeMap<String, String>> {
+        self.native.runtime_inputs(
+            intent,
+            &self.provider_records,
+            &self.facets,
+            &self.dependencies,
+            physical_dependencies,
+            &self.owner,
+        )
+    }
+}
 
 /// Prepare an executable for Oven Alpha without launching Cargo, inspecting a Cargo target, or auto-publishing SDK
 /// providers.
@@ -47,22 +105,61 @@ pub fn oven_build_unit_inputs_with_provider_identities(
 }
 
 /// Finish build-unit identity projection from provider records checked by either supported identity path.
+///
+/// A published native SDK adds its canonical portable receipt catalog, so a plan cannot reuse different admitted
+/// native bytes merely because the generated root happens to request the same public provider surface.
 fn oven_build_unit_inputs_with_provider_records(
     requirements: &ProjectRequirements,
     resolved: &ResolvedDependencies,
     provider_records: Vec<String>,
 ) -> CliResult<BTreeMap<String, String>> {
+    let context = crate::build::NativeSdkCommandContext::discover()?;
+    oven_build_unit_inputs_with_provider_records_and_native_sdk(
+        requirements,
+        resolved,
+        provider_records,
+        context.as_deref(),
+    )
+}
+
+/// Build unit identity with the canonical provider records and a native admission retained by the whole command.
+pub fn oven_build_unit_inputs_with_native_sdk(
+    provider_plan: &ProviderPlan,
+    requirements: &ProjectRequirements,
+    resolved: &ResolvedDependencies,
+    context: Option<&crate::build::NativeSdkCommandContext>,
+) -> CliResult<BTreeMap<String, String>> {
+    let provider_records = oven_native_provider_records(provider_plan, &semantic_sdk_path_dependencies(requirements))?;
+    oven_build_unit_inputs_with_provider_records_and_native_sdk(requirements, resolved, provider_records, context)
+}
+
+/// Combine already checked provider identities with the same native admission used by plan selection.
+pub fn oven_build_unit_inputs_with_provider_identities_and_native_sdk(
+    provider_plan: &ProviderPlan,
+    requirements: &ProjectRequirements,
+    resolved: &ResolvedDependencies,
+    semantic_identities: &CheckedProviderSemanticIdentities,
+    context: Option<&crate::build::NativeSdkCommandContext>,
+) -> CliResult<BTreeMap<String, String>> {
+    let provider_records = oven_native_provider_records_with_checked_identities(
+        provider_plan,
+        &semantic_sdk_path_dependencies(requirements),
+        semantic_identities,
+    )?;
+    oven_build_unit_inputs_with_provider_records_and_native_sdk(requirements, resolved, provider_records, context)
+}
+
+/// Finish the canonical identity exchange without reacquiring command-admitted native owners.
+fn oven_build_unit_inputs_with_provider_records_and_native_sdk(
+    requirements: &ProjectRequirements,
+    resolved: &ResolvedDependencies,
+    provider_records: Vec<String>,
+    context: Option<&crate::build::NativeSdkCommandContext>,
+) -> CliResult<BTreeMap<String, String>> {
     let mut dependencies = resolved.dependencies.clone();
     dependencies.extend(resolved.dev_dependencies.clone());
-    let dependency_digest = digest_dependency_specs(&dependencies, incan_oven_facet::provider_hooks().as_ref())
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    runtime_build_unit_inputs(
-        &incan_oven_facet::compiler_identity(),
-        provider_records,
-        &requirements.stdlib_facets,
-        dependency_digest,
-    )
-    .map_err(CliError::failure)
+    let context = context.ok_or_else(|| CliError::failure("native runtime identity requires a prepared native SDK"))?;
+    context.runtime_inputs(&provider_records, &requirements.stdlib_facets, &dependencies)
 }
 
 /// Encode only the compiler-owned SDK capabilities a generated native crate can exercise.

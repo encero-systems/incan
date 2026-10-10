@@ -4,3 +4,8 @@ version = "0.6.0-dev.7"
 
 [build]
 rust-edition = "2024"
+
+# Planned model declarations use serde's derives at the native output boundary (#1337, #1698).
+# Retain their explicit extern in this runtime's receipt-selected closure.
+[dependencies]
+serde = { loaf = "crates-io/serde", version = "1.0", features = ["derive"] }

@@ -13,6 +13,7 @@ from rust::incan_semantics_core::body_ir import (
 )
 from pub::incan_mir_plan import EnumDeclaration, EnumVariant, PlanType, SourceSpan
 from models import model_type as plain_model_type
+from layout_types import native_source_type as retained_source_type
 
 
 pub def enum_type(declarations: list[RustEnumDeclaration], ty: &RustType) -> Option[PlanType]:
@@ -30,14 +31,14 @@ pub def variant_index(
     declarations: list[RustEnumDeclaration],
     target: &EnumVariantTarget,
 ) -> Result[tuple[int, int], str]:
-    """Resolve construction by variant identity and cross-check the retained owner facts."""
+    """Resolve construction by exact variant and owner identities; written owner aliases remain diagnostic spelling."""
     for owner in range(len(declarations)):
         declaration = declarations[owner]
         for slot in range(len(declaration.variants)):
             variant = declaration.variants[slot]
             if variant.canonical != target.variant_canonical:
                 continue
-            if target.enum_canonical != Some(declaration.canonical) or target.enum_name != declaration.name or target.variant_name != variant.name:
+            if target.enum_canonical != Some(declaration.canonical) or target.variant_name != variant.name:
                 return Err("invalid Body IR enum constructor identity")
             validate_binding(target.binding, len(variant.fields))?
             return Ok((owner, slot))
@@ -65,20 +66,17 @@ pub def unit_variant(
 
 
 pub def pattern_variant(declaration: &RustEnumDeclaration, pattern: &RustPattern) -> Result[int, str]:
-    """Admit only canonical variant patterns and irrefutable fallback patterns; payload recursion stays explicit."""
+    """Resolve exact variant identities while allowing checked owner aliases; payload layout and ownership stay explicit."""
     match pattern:
         RustPattern.Wildcard => return Ok(-1)
-        RustPattern.Enum(canonical=identity, name=name, variant=name_variant, fields=fields) =>
+        RustPattern.Enum(canonical=identity, name=_name, variant=name_variant, fields=fields) =>
             for slot in range(len(declaration.variants)):
                 variant = declaration.variants[slot]
                 if identity.clone() == Some(variant.canonical):
-                    # Constructor patterns retain the parser's qualified `Owner::Variant` spelling.
-                    spelling = str(name_variant)
-                    qualified = f"{declaration.name}::{variant.name}"
-                    if (str(name) != "" and str(name) != str(declaration.name)) or (
-                        spelling != str(variant.name)
-                        and spelling != qualified
-                    ) or len(fields) != len(variant.fields):
+                    # The exact variant identity above proves the owner; reexports can rename its written path.
+                    # Retain the member-spelling check without treating the source owner alias as a carrier name.
+                    components = str(name_variant).split("::")
+                    if components[len(components) - 1] != str(variant.name) or len(fields) != len(variant.fields):
                         return Err("invalid Body IR enum pattern layout")
                     validate_payload_patterns(fields)?
                     return Ok(slot)
@@ -140,7 +138,9 @@ pub def native_source_type(
         None => return plain_model_type(nominals, ty)
 
 
-pub def lower_enum_declarations(module: &RustBodyIrModule, file: str) -> Result[list[EnumDeclaration], str]:
+pub def lower_enum_declarations(
+    module: &RustBodyIrModule, file: str, intrinsics: list[EnumDeclaration] = [],
+) -> Result[list[EnumDeclaration], str]:
     """Copy checked source-order variants and derives into the native declaration plan."""
     mut declarations: list[EnumDeclaration] = []
     for declaration in module.enum_declarations:
@@ -148,7 +148,7 @@ pub def lower_enum_declarations(module: &RustBodyIrModule, file: str) -> Result[
         for variant in declaration.variants:
             mut fields: list[PlanType] = []
             for ty in variant.fields:
-                fields.append(native_source_type(module.nominal_declarations, module.enum_declarations, ty, [])?)
+                fields.append(retained_source_type(module.nominal_declarations, module.enum_declarations, [], ty, intrinsics)?)
             variants.append(EnumVariant(name=str(variant.name), fields=fields))
         declarations.append(
             EnumDeclaration(

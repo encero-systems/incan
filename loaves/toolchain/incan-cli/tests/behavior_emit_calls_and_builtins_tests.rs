@@ -66,6 +66,24 @@ fn constructor_arguments_take_the_type_arguments_the_call_infers() -> CaseResult
     assert_fixture_holds(AREA, "constructor_arguments_take_the_type_arguments_the_call_infers")
 }
 
+/// Runs the fixture `dev7_numeric_instantiation_concrete_model_fields`.
+#[test]
+fn dev7_numeric_instantiation_concrete_model_fields() -> CaseResult {
+    assert_fixture_holds(AREA, "dev7_numeric_instantiation_concrete_model_fields")
+}
+
+/// Runs the fixture `dev7_numeric_instantiation_generic_equality`.
+#[test]
+fn dev7_numeric_instantiation_generic_equality() -> CaseResult {
+    assert_fixture_holds(AREA, "dev7_numeric_instantiation_generic_equality")
+}
+
+/// Runs the fixture `dev7_numeric_instantiation_model_fields`.
+#[test]
+fn dev7_numeric_instantiation_model_fields() -> CaseResult {
+    assert_fixture_holds(AREA, "dev7_numeric_instantiation_model_fields")
+}
+
 /// Runs the fixture `dict_literal_into_optional_union_values`.
 #[test]
 fn dict_literal_into_optional_union_values() -> CaseResult {

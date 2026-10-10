@@ -9,14 +9,17 @@ from rust::incan_semantics_core::body_ir import (
     ArgumentBinding,
     Place as RustPlace,
     PlaceElem as RustPlaceElem,
+    EnumDeclaration as RustEnumDeclaration,
 )
-from pub::incan_mir_plan import ListLeaf, PlanType, Local, Place, Projection, SourceSpan, FieldProjection
+from pub::incan_mir_plan import ListLeaf, PlanType, Local, Place, Projection, SourceSpan, FieldProjection, EnumDeclaration
 from tuples import tuple_type, generic_tuple_type, type_name, tuple_slot
 from pub::incan_mir_plan import tuple_element_type
 from generators import generator_type
 from nominal_instances import nominal_symbol
 from types import primitive_type
 from closures import function_pointer_type
+from layout_types import native_source_type as retained_type
+from unions import union_slot
 
 
 pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Result[PlanType, str]:
@@ -69,9 +72,12 @@ pub def model_place(
     locals: list[Local],
     value: &RustPlace,
     span: SourceSpan,
+    enums: list[RustEnumDeclaration],
+    unions: list[RustType],
+    intrinsics: list[EnumDeclaration],
 ) -> Result[Place, str]:
     """Require every checker-selected field identity before projecting its retained canonical layout."""
-    return model_prefix(declarations, locals, value, len(value.projection), span)
+    return model_prefix(declarations, locals, value, len(value.projection), span, enums, unions, intrinsics)
 
 
 pub def model_prefix(
@@ -80,6 +86,9 @@ pub def model_prefix(
     value: &RustPlace,
     count: int,
     span: SourceSpan,
+    enums: list[RustEnumDeclaration],
+    unions: list[RustType],
+    intrinsics: list[EnumDeclaration],
 ) -> Result[Place, str]:
     """Project a checked leading field path without copying or changing the frontend place."""
     if count < 0 or count > len(value.projection):
@@ -94,41 +103,80 @@ pub def model_prefix(
                         return Ok(
                             Place(local=index, projection=Projection.Deref(PlanType.Model(owner, name)), span=span),
                         )
-                    return receiver_field(declarations, index, owner, value, count, span)
+                    return receiver_field(declarations, index, owner, value, count, span, enums, unions, intrinsics)
                 None => pass
             if count == 0:
                 return Ok(Place(local=index, projection=Projection.Whole, span=span))
-            fields = field_path(declarations, locals[index].ty, value, count)?
+            fields = field_path(declarations, locals[index].ty, value.projection, count, enums, unions, intrinsics)?
             if len(fields) == 1:
+                if fields[0].variant >= 0:
+                    return Ok(Place(local=index, projection=Projection.VariantField(fields[0].variant, fields[0].slot, fields[0].ty), span=span))
                 slot = fields[0].slot
                 ty = fields[0].ty
                 return Ok(Place(local=index, projection=Projection.Field(slot, ty), span=span))
             return Ok(Place(local=index, projection=Projection.Fields(fields), span=span))
 
 
-def field_path(
+pub def field_path(
     declarations: list[NominalDeclaration],
     root: PlanType,
-    value: &RustPlace,
+    projections: list[RustPlaceElem],
     count: int,
+    enums: list[RustEnumDeclaration],
+    unions: list[RustType],
+    intrinsics: list[EnumDeclaration],
 ) -> Result[list[FieldProjection], str]:
-    """Resolve each field against its actual nominal or tuple owner; indices and slices keep their refusal."""
+    """Resolve ordered checked carrier payloads and canonical fields; indices and slices keep their separate lowering."""
     mut ty = root
     mut fields: list[FieldProjection] = []
     for position in range(count):
-        projection = value.projection[position]
-        mut slot = 0
-        match ty:
-            PlanType.Model(owner, _name) =>
-                declaration = declarations[owner]
-                slot = field_slot(projection, declaration)?
-                ty = model_type(declarations, declaration.field_types[slot])?
-            PlanType.Tuple(elements) =>
-                slot = tuple_slot(projection, len(elements))?
-                ty = tuple_element_type(elements[slot])
-            _ => return Err("unsupported Body IR model index or slice projection")
-        fields.append(FieldProjection(slot=slot, ty=ty))
+        field = field_projection(declarations, ty, projections[position], enums, unions, intrinsics)?
+        fields.append(field)
+        ty = field.ty
     return Ok(fields)
+
+
+pub def field_projection(
+    declarations: list[NominalDeclaration],
+    root: PlanType,
+    projection: &RustPlaceElem,
+    enums: list[RustEnumDeclaration],
+    unions: list[RustType],
+    intrinsics: list[EnumDeclaration],
+) -> Result[FieldProjection, str]:
+    """Validate one ordered payload or canonical field through the typed Rust enum boundary required by #459."""
+    match projection:
+        RustPlaceElem.OptionPayload(option_type=container, payload_type=payload) =>
+            if retained_type(declarations, enums, unions, container, intrinsics)? != root:
+                return Err("invalid Body IR optional projection owner")
+            match root:
+                PlanType.Enum(owner, _name) =>
+                    if owner < len(enums) or owner >= len(enums) + len(intrinsics):
+                        return Err("invalid Body IR optional projection carrier")
+                    carrier = intrinsics[owner - len(enums)]
+                    ty = retained_type(declarations, enums, unions, payload, intrinsics)?
+                    if carrier.carrier != "Option" or len(carrier.variants) != 2 or len(carrier.variants[1].fields) != 1 or carrier.variants[1].fields[0] != ty:
+                        return Err("invalid Body IR optional projection payload")
+                    return Ok(FieldProjection(slot=0, ty=ty, variant=1))
+                _ => return Err("invalid Body IR optional projection carrier")
+        RustPlaceElem.UnionMember(ty=member) =>
+            match root:
+                PlanType.Enum(owner, _name) =>
+                    ty = retained_type(declarations, enums, unions, member, intrinsics)?
+                    variant = union_slot(declarations, enums, unions, owner, ty, intrinsics)?
+                    return Ok(FieldProjection(slot=0, ty=ty, variant=variant))
+                _ => return Err("invalid Body IR union projection carrier")
+        _ => pass
+    match root:
+        PlanType.Model(owner, _name) =>
+            declaration = declarations[owner]
+            slot = field_slot(projection, declaration)?
+            ty = retained_type(declarations, enums, unions, declaration.field_types[slot], intrinsics)?
+            return Ok(FieldProjection(slot=slot, ty=ty))
+        PlanType.Tuple(elements) =>
+            slot = tuple_slot(projection, len(elements))?
+            return Ok(FieldProjection(slot=slot, ty=tuple_element_type(elements[slot])))
+        _ => return Err("unsupported Body IR model index or slice projection")
 
 
 pub def field_slot(value: &RustPlaceElem, declaration: &NominalDeclaration) -> Result[int, str]:
@@ -206,9 +254,12 @@ def receiver_field(
     value: &RustPlace,
     count: int,
     span: SourceSpan,
+    enums: list[RustEnumDeclaration],
+    unions: list[RustType],
+    intrinsics: list[EnumDeclaration],
 ) -> Result[Place, str]:
     """Project a checked field path through a shared or mutable nominal receiver."""
-    fields = field_path(declarations, PlanType.Model(owner, declarations[owner].name), value, count)?
+    fields = field_path(declarations, PlanType.Model(owner, declarations[owner].name), value.projection, count, enums, unions, intrinsics)?
     if len(fields) == 1:
         slot = fields[0].slot
         ty = fields[0].ty

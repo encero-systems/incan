@@ -7,6 +7,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::build::native_sdk::prepare_or_discover_sdk_inventory;
 use crate::cargo_policy::{CargoPolicy, enforce_project_toolchain_constraint};
 use crate::error::{CliError, CliResult};
 use crate::lock::workspace::{
@@ -14,11 +15,11 @@ use crate::lock::workspace::{
 };
 use crate::lock::{
     CargoLockAuthority, INERT_CARGO_LOCK_PAYLOAD, LockResolution, LockResolutionRequest, OvenLockValidationRequest,
-    ProjectLockContext, ProviderBakeLockPublication, PublishedOvenProjectLock, WorkspaceLockResolutionRequest,
+    ProjectLockContext, ProviderBakeLockPublication, PublishedLockFile, PublishedOvenProjectLock,
+    WorkspaceLockResolutionRequest,
 };
 use crate::session::CompilationSession;
 use incan_provider::dependency_resolver::ResolvedDependencies;
-use incan_provider::inventory::prepare_or_discover_sdk_inventory;
 use incan_provider::requirements::{
     ProjectRequirements, merge_project_requirement_dependencies, semantic_sdk_path_dependencies,
 };
@@ -40,9 +41,51 @@ pub fn collect_and_publish_project_lock(
     package_features: &FeatureSelection,
     sdk_profile_override: Option<&str>,
 ) -> CliResult<ProjectLockContext> {
+    collect_and_publish_project_lock_with_evidence(
+        manifest,
+        entry_file,
+        cargo_features,
+        package_features,
+        sdk_profile_override,
+    )
+    .map(|(context, _)| context)
+}
+
+/// Retain the writer's exact publication proof alongside its collected project context.
+fn collect_and_publish_project_lock_with_evidence(
+    manifest: &ProjectManifest,
+    entry_file: Option<&Path>,
+    cargo_features: &CargoFeatureSelection,
+    package_features: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
+) -> CliResult<(ProjectLockContext, PublishedLockFile)> {
+    collect_and_publish_project_lock_with_session(
+        manifest,
+        entry_file,
+        cargo_features,
+        package_features,
+        sdk_profile_override,
+        None,
+    )
+}
+
+/// Use an original admitted command session in the canonical collector without discovering another session.
+fn collect_and_publish_project_lock_with_session(
+    manifest: &ProjectManifest,
+    entry_file: Option<&Path>,
+    cargo_features: &CargoFeatureSelection,
+    package_features: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
+    command_session: Option<&CompilationSession>,
+) -> CliResult<(ProjectLockContext, PublishedLockFile)> {
     if let Some(workspace) =
         WorkspaceGraph::discover(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?
     {
+        if command_session.is_some() {
+            return Err(CliError::failure(
+                "admitted ordinary lock publication requires standalone project authority",
+            ));
+        }
         let lock_path = workspace.root().join(LOCK_FILENAME);
         let publication_lock = oven_model::lock::acquire_publication_lock(&lock_path).map_err(|error| {
             CliError::failure(format!("failed to acquire workspace lock publication guard: {error}"))
@@ -55,7 +98,7 @@ pub fn collect_and_publish_project_lock(
             sdk_profile_override,
             None,
         )?;
-        generate_oven_lockfile(
+        let (_, publication) = generate_oven_lockfile_with_evidence(
             workspace.root(),
             &context.resolved,
             &context.project_requirements,
@@ -63,7 +106,7 @@ pub fn collect_and_publish_project_lock(
             &context.semantic,
             Some(&publication_lock),
         )?;
-        return Ok(context);
+        return Ok((context, publication));
     }
 
     let context = collect_project_lock_context(
@@ -73,10 +116,10 @@ pub fn collect_and_publish_project_lock(
         package_features,
         sdk_profile_override,
         None,
-        None,
+        command_session,
     )?
     .ok_or_else(|| CliError::failure("incan lock requires a FILE argument or at least one [project.scripts] entry"))?;
-    generate_oven_lockfile(
+    let (_, publication) = generate_oven_lockfile_with_evidence(
         manifest.project_root(),
         &context.resolved,
         &context.project_requirements,
@@ -84,7 +127,7 @@ pub fn collect_and_publish_project_lock(
         &context.semantic,
         None,
     )?;
-    Ok(context)
+    Ok((context, publication))
 }
 
 /// Prepare a component SDK inventory when this toolchain has a source catalog, then publish the canonical lock.
@@ -540,17 +583,116 @@ pub fn publish_oven_project_lock(
     entrypoint: &Path,
     package_features: &FeatureSelection,
 ) -> CliResult<PublishedOvenProjectLock> {
+    publish_oven_project_lock_with_context(project_root, entrypoint, package_features, None)
+}
+
+/// Publish through the original canonical writer using a genuine current ordinary command session.
+/// Workspace siblings require separate admitted authority and are deliberately refused by this migration entry.
+pub(crate) fn publish_oven_project_lock_with_admitted_session(
+    project_root: &Path,
+    entrypoint: &Path,
+    package_features: &FeatureSelection,
+    input: &CompilationSession,
+) -> CliResult<PublishedOvenProjectLock> {
+    publish_admitted_project_lock(project_root, entrypoint, package_features, input, None)
+}
+
+/// Publish through the canonical collector and writer without rediscovering a legacy SDK support catalog.
+pub(crate) fn publish_oven_project_lock_with_ordinary_native(
+    project_root: &Path,
+    entrypoint: &Path,
+    package_features: &FeatureSelection,
+    input: &CompilationSession,
+    native: &crate::build::ordinary_library_native::OrdinaryLibraryNativeProfiles,
+) -> CliResult<PublishedOvenProjectLock> {
+    publish_admitted_project_lock(project_root, entrypoint, package_features, input, Some(native))
+}
+
+/// Reconstruct source-current admitted session facts and retain the explicit native authority through publication.
+fn publish_admitted_project_lock(
+    project_root: &Path,
+    entrypoint: &Path,
+    package_features: &FeatureSelection,
+    input: &CompilationSession,
+    ordinary_native: Option<&crate::build::ordinary_library_native::OrdinaryLibraryNativeProfiles>,
+) -> CliResult<PublishedOvenProjectLock> {
+    let current = crate::build::library_project::current_admitted_library_session(input, entrypoint, package_features)?;
+    let current_root = current
+        .manifest
+        .as_ref()
+        .ok_or_else(|| CliError::failure("admitted ordinary lock session has no manifest"))?
+        .project_root();
+    if fs::canonicalize(current_root).map_err(|error| CliError::failure(error.to_string()))?
+        != fs::canonicalize(project_root).map_err(|error| CliError::failure(error.to_string()))?
+    {
+        return Err(CliError::failure(
+            "admitted ordinary lock publication names a different project",
+        ));
+    }
+    if let Some(native) = ordinary_native {
+        let manifest = current
+            .manifest
+            .as_ref()
+            .ok_or_else(|| CliError::failure("ordinary lock manifest is absent"))?;
+        if WorkspaceGraph::discover(project_root)
+            .map_err(|error| CliError::failure(error.to_string()))?
+            .is_some()
+        {
+            return Err(CliError::failure(
+                "admitted ordinary lock publication requires standalone project authority",
+            ));
+        }
+        enforce_project_toolchain_constraint(manifest)?;
+        let context = super::workspace::collect_ordinary_project_lock_context(
+            manifest,
+            entrypoint,
+            package_features,
+            &current,
+            native,
+        )?
+        .ok_or_else(|| CliError::failure("ordinary lock collection lost its source entrypoints"))?;
+        if !context.resolved.dependencies.is_empty() || !context.resolved.dev_dependencies.is_empty() {
+            return Err(CliError::failure(
+                "ordinary support-only lock cannot admit authored Rust dependencies",
+            ));
+        }
+        let (_, publication) = generate_oven_lockfile_with_semantic_paths(
+            project_root,
+            &context.resolved,
+            &[],
+            &CargoFeatureSelection::default(),
+            &context.semantic,
+            None,
+        )?;
+        native.verify()?;
+        return Ok(PublishedOvenProjectLock {
+            dependency_surface: context.resolved,
+            publication,
+        });
+    }
+    publish_oven_project_lock_with_context(project_root, entrypoint, package_features, Some(&current))
+}
+
+/// Share manifest validation, collection and exact writer-owned publication evidence across both caller routes.
+fn publish_oven_project_lock_with_context(
+    project_root: &Path,
+    entrypoint: &Path,
+    package_features: &FeatureSelection,
+    command_session: Option<&CompilationSession>,
+) -> CliResult<PublishedOvenProjectLock> {
     let manifest = ProjectManifest::discover(project_root)
         .map_err(|error| CliError::failure(error.to_string()))?
         .ok_or_else(|| CliError::failure("explicit Oven project bake requires a loaf.toml project"))?;
     enforce_project_toolchain_constraint(&manifest)?;
     let cargo_features = CargoFeatureSelection::default().normalized();
-    let project_dependency_surface = match collect_and_publish_project_lock_for_provider_bake(
+    let (outcome, publication) = collect_and_publish_project_lock_for_provider_bake(
         &manifest,
         entrypoint,
         &cargo_features,
         package_features,
-    )? {
+        command_session,
+    )?;
+    let project_dependency_surface = match outcome {
         ProviderBakeLockPublication::Published {
             project_dependency_surface,
         } => project_dependency_surface,
@@ -568,6 +710,7 @@ pub fn publish_oven_project_lock(
     };
     Ok(PublishedOvenProjectLock {
         dependency_surface: project_dependency_surface,
+        publication,
     })
 }
 
@@ -586,17 +729,32 @@ fn collect_and_publish_project_lock_for_provider_bake(
     entrypoint: &Path,
     cargo_features: &CargoFeatureSelection,
     package_features: &FeatureSelection,
-) -> CliResult<ProviderBakeLockPublication> {
+    command_session: Option<&CompilationSession>,
+) -> CliResult<(ProviderBakeLockPublication, PublishedLockFile)> {
     let Some(workspace) =
         WorkspaceGraph::discover(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?
     else {
-        let context =
-            collect_and_publish_project_lock(manifest, Some(entrypoint), cargo_features, package_features, None)?;
+        let (context, publication) = collect_and_publish_project_lock_with_session(
+            manifest,
+            Some(entrypoint),
+            cargo_features,
+            package_features,
+            None,
+            command_session,
+        )?;
         let project_dependency_surface = context.resolved.clone();
-        return Ok(ProviderBakeLockPublication::Published {
-            project_dependency_surface,
-        });
+        return Ok((
+            ProviderBakeLockPublication::Published {
+                project_dependency_surface,
+            },
+            publication,
+        ));
     };
+    if command_session.is_some() {
+        return Err(CliError::failure(
+            "admitted ordinary lock publication requires standalone project authority",
+        ));
+    }
     let lock_path = workspace.root().join(LOCK_FILENAME);
     let publication_lock = oven_model::lock::acquire_publication_lock(&lock_path)
         .map_err(|error| CliError::failure(format!("failed to acquire workspace lock publication guard: {error}")))?;
@@ -610,7 +768,7 @@ fn collect_and_publish_project_lock_for_provider_bake(
         true,
     )
     .map_err(|failure| failure.error)?;
-    generate_oven_lockfile(
+    let (_, publication) = generate_oven_lockfile_with_evidence(
         workspace.root(),
         &collection.context.resolved,
         &collection.context.project_requirements,
@@ -619,16 +777,17 @@ fn collect_and_publish_project_lock_for_provider_bake(
         Some(&publication_lock),
     )?;
     let mut unresolved = collection.unresolved.into_iter();
-    match unresolved.next() {
-        None => Ok(ProviderBakeLockPublication::Published {
+    let outcome = match unresolved.next() {
+        None => ProviderBakeLockPublication::Published {
             project_dependency_surface: collection.project_dependency_surface,
-        }),
-        Some((member, error)) => Ok(ProviderBakeLockPublication::Deferred {
+        },
+        Some((member, error)) => ProviderBakeLockPublication::Deferred {
             member,
             project_dependency_surface: collection.project_dependency_surface,
             reason: error.message,
-        }),
-    }
+        },
+    };
+    Ok((outcome, publication))
 }
 
 /// Generate an Oven-native `oven.lock` without constructing a generated Cargo project.
@@ -643,6 +802,46 @@ fn generate_oven_lockfile(
     semantic: &SemanticLockState,
     publication_lock: Option<&PublicationLock>,
 ) -> CliResult<IncanLock> {
+    generate_oven_lockfile_with_evidence(
+        project_root,
+        resolved,
+        project_requirements,
+        cargo_features,
+        semantic,
+        publication_lock,
+    )
+    .map(|(lock, _)| lock)
+}
+
+/// Publish and observe the exact canonical lock bytes before releasing the matching writer guard.
+fn generate_oven_lockfile_with_evidence(
+    project_root: &Path,
+    resolved: &ResolvedDependencies,
+    project_requirements: &ProjectRequirements,
+    cargo_features: &CargoFeatureSelection,
+    semantic: &SemanticLockState,
+    publication_lock: Option<&PublicationLock>,
+) -> CliResult<(IncanLock, PublishedLockFile)> {
+    let semantic_paths = semantic_sdk_path_dependencies(project_requirements);
+    generate_oven_lockfile_with_semantic_paths(
+        project_root,
+        resolved,
+        &semantic_paths,
+        cargo_features,
+        semantic,
+        publication_lock,
+    )
+}
+
+/// Publish through the same exact guarded writer using semantic dependencies already checked by its collector.
+fn generate_oven_lockfile_with_semantic_paths(
+    project_root: &Path,
+    resolved: &ResolvedDependencies,
+    semantic_paths: &[oven_model::manifest::DependencySpec],
+    cargo_features: &CargoFeatureSelection,
+    semantic: &SemanticLockState,
+    publication_lock: Option<&PublicationLock>,
+) -> CliResult<(IncanLock, PublishedLockFile)> {
     let lock_path = project_root.join(LOCK_FILENAME);
     let owned_publication_lock = if publication_lock.is_none() {
         Some(
@@ -653,14 +852,13 @@ fn generate_oven_lockfile(
         None
     };
     let publication_lock = publication_lock.or(owned_publication_lock.as_ref());
-    let semantic_sdk_paths = semantic_sdk_path_dependencies(project_requirements);
     let fingerprint = compute_resolved_fingerprint_with_sdk_paths(
         &resolved.dependencies,
         &resolved.dev_dependencies,
         cargo_features,
         Some(project_root),
         semantic,
-        &semantic_sdk_paths,
+        semantic_paths,
     );
     let lock = IncanLock::new_with_semantic(
         incan_lang::version::INCAN_VERSION,
@@ -673,7 +871,19 @@ fn generate_oven_lockfile(
         .ok_or_else(|| CliError::failure("internal error: lock generation lost its publication guard"))?;
     lock.write_while_locked(&lock_path, publication_lock)
         .map_err(|error| CliError::failure(format!("failed to write oven.lock: {error}")))?;
-    Ok(lock)
+    let metadata = fs::symlink_metadata(&lock_path).map_err(|error| CliError::failure(error.to_string()))?;
+    if !metadata.file_type().is_file() {
+        return Err(CliError::failure(
+            "canonical lock publisher did not produce a regular file",
+        ));
+    }
+    let canonical_path = fs::canonicalize(&lock_path).map_err(|error| CliError::failure(error.to_string()))?;
+    let bytes = fs::read(&lock_path).map_err(|error| CliError::failure(error.to_string()))?;
+    let publication = PublishedLockFile {
+        canonical_path,
+        content_digest: oven_store::digest_bytes(&bytes),
+    };
+    Ok((lock, publication))
 }
 
 /// Check whether any resolved dependency uses a git branch source, which is forbidden in strict (`--locked` /
@@ -693,9 +903,81 @@ fn strict_git_source_error(resolved: &ResolvedDependencies) -> Option<String> {
 }
 
 #[cfg(test)]
+/// Exercise the real lock writer and retain its private evidence for transition controls.
+pub(crate) fn publish_lock_evidence(root: &Path) -> CliResult<PublishedOvenProjectLock> {
+    use crate::lock::test_support::{empty_project_requirements, empty_resolved};
+    let (_, publication) = generate_oven_lockfile_with_evidence(
+        root,
+        &empty_resolved(),
+        &empty_project_requirements(),
+        &CargoFeatureSelection::default(),
+        &SemanticLockState::default(),
+        None,
+    )?;
+    Ok(PublishedOvenProjectLock {
+        dependency_surface: empty_resolved(),
+        publication,
+    })
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::lock::test_support::{empty_project_requirements, empty_resolved};
+
+    #[test]
+    fn published_lock_evidence_binds_writer_location_and_exact_bytes() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let published = publish_lock_evidence(root.path())?;
+        let path = root.path().join(LOCK_FILENAME);
+        assert_eq!(published.canonical_lock_path(), fs::canonicalize(&path)?);
+        assert_eq!(
+            published.published_content_digest(),
+            oven_store::digest_bytes(&fs::read(path)?)
+        );
+        published.verify_published_file()?;
+        Ok(())
+    }
+
+    #[test]
+    fn published_lock_evidence_refuses_preserved_mtime_change_and_removal() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let published = publish_lock_evidence(root.path())?;
+        let path = published.canonical_lock_path();
+        let bytes = fs::read(path)?;
+        let metadata = fs::metadata(path)?;
+        let mut changed = bytes.clone();
+        let first = changed.first_mut().ok_or("published lock is empty")?;
+        *first ^= 1;
+        fs::write(path, &changed)?;
+        fs::File::options()
+            .write(true)
+            .open(path)?
+            .set_times(fs::FileTimes::new().set_modified(metadata.modified()?))?;
+        assert_eq!(fs::metadata(path)?.len(), metadata.len());
+        assert_eq!(fs::metadata(path)?.modified()?, metadata.modified()?);
+        assert!(published.verify_published_file().is_err());
+        fs::write(path, bytes)?;
+        published.verify_published_file()?;
+        fs::remove_file(path)?;
+        assert!(published.verify_published_file().is_err());
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn published_lock_evidence_refuses_same_byte_symlink() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let published = publish_lock_evidence(root.path())?;
+        let path = published.canonical_lock_path();
+        let foreign = tempfile::tempdir()?;
+        let foreign_path = foreign.path().join(LOCK_FILENAME);
+        fs::write(&foreign_path, fs::read(path)?)?;
+        fs::remove_file(path)?;
+        std::os::unix::fs::symlink(foreign_path, path)?;
+        assert!(published.verify_published_file().is_err());
+        Ok(())
+    }
 
     #[test]
     fn cargo_lock_payload_override_normalizes_the_supplied_workspace_lock() -> Result<(), Box<dyn std::error::Error>> {
@@ -777,3 +1059,6 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod admitted_session_tests;

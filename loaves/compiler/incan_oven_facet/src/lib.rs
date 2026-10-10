@@ -365,7 +365,7 @@ mod tests {
             "the release and compiler-suite `stdlib` Loafs must declare one identical complete standard-library dependency surface"
         );
         let mut expected_packages = stdlib::extra_crate_deps()
-            .filter(|dependency| matches!(dependency.source, StdlibExtraCrateSource::Version(_)))
+            .filter(|dependency| matches!(dependency.source, StdlibExtraCrateSource::Declared))
             .map(|dependency| {
                 stdlib::extra_crate_package_alias(dependency.crate_name)
                     .unwrap_or(dependency.crate_name)
@@ -442,7 +442,7 @@ mod tests {
                         continue;
                     };
                     shared += 1;
-                    let registry = dependency_spec_from_stdlib_dep(registry);
+                    let registry = dependency_spec_from_stdlib_dep(registry)?;
                     let declared = declared.clone().normalized();
                     assert!(
                         dependency_specs_match(&declared, &registry),

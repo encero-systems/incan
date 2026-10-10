@@ -522,6 +522,7 @@ fn complete_link_observation(name: &str, source_path: &str) -> HarvestLinkObserv
             digest: selected_graph_sha256(b"clang"),
         }),
         objects: vec![RustFactLinkObject {
+            reads: Vec::new(),
             name: format!("{name}.o"),
             language: oven_model::manifest::RustFactLinkLanguage::C,
             arguments: vec![

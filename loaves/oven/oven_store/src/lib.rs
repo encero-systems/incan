@@ -26,6 +26,7 @@ pub mod process;
 pub mod progress;
 pub mod publisher_execution;
 pub mod publisher_owner;
+pub mod source_archive;
 pub mod store;
 pub mod store_mirror;
 #[cfg(any(test, feature = "test_support"))]
@@ -1484,6 +1485,48 @@ pub fn digest_source_tree(root: &Path) -> Result<String, OvenError> {
 /// Excluding them makes the identity stable across valid local reuse without overlooking any authored file outside
 /// those reserved output locations.
 pub fn digest_project_source_tree(root: &Path) -> Result<String, OvenError> {
+    project_source_tree_evidence(root)?.digest()
+}
+
+/// Opaque authored file evidence observed through the same canonical validator as project-source digests.
+#[derive(Debug, Clone)]
+pub struct OvenProjectSourceTreeEvidence {
+    records: BTreeMap<String, String>,
+}
+
+impl OvenProjectSourceTreeEvidence {
+    /// Return the unchanged canonical project-source digest, retaining the existing serialization contract.
+    pub fn digest(&self) -> Result<String, OvenError> {
+        let payload = serde_json::to_vec(&self.records).map_err(|error| OvenError::Serialize(error.to_string()))?;
+        Ok(digest_bytes(&payload))
+    }
+
+    /// Compare complete observed trees allowing only one explicit safe file coordinate to differ.
+    /// At least one snapshot must contain that file; missing knowledge never proves an authorized empty change.
+    pub fn unchanged_except_exact_file(&self, later: &Self, relative: &Path) -> Result<bool, OvenError> {
+        let key = source_evidence_relative_file(relative)?;
+        if !self.records.contains_key(&key) && !later.records.contains_key(&key) {
+            return Err(OvenError::InvalidProjectSource {
+                path: relative.to_path_buf(),
+                message: "excluded file is absent from both source observations".into(),
+            });
+        }
+        Ok(self
+            .records
+            .iter()
+            .filter(|(path, _)| *path != &key)
+            .eq(later.records.iter().filter(|(path, _)| *path != &key)))
+    }
+
+    /// Borrow exact observed file content evidence, without acquiring missing or substituted filesystem input.
+    pub fn file_digest(&self, relative: &Path) -> Result<Option<&str>, OvenError> {
+        let key = source_evidence_relative_file(relative)?;
+        Ok(self.records.get(&key).map(String::as_str))
+    }
+}
+
+/// Observe complete authored file evidence without changing the existing project-source identity or exclusions.
+pub fn project_source_tree_evidence(root: &Path) -> Result<OvenProjectSourceTreeEvidence, OvenError> {
     let metadata = fs::symlink_metadata(root).map_err(|error| OvenError::InvalidProjectSource {
         path: root.to_path_buf(),
         message: error.to_string(),
@@ -1502,8 +1545,30 @@ pub fn digest_project_source_tree(root: &Path) -> Result<String, OvenError> {
             message: "must contain at least one authored regular file".to_string(),
         });
     }
-    let payload = serde_json::to_vec(&records).map_err(|error| OvenError::Serialize(error.to_string()))?;
-    Ok(digest_bytes(&payload))
+    Ok(OvenProjectSourceTreeEvidence { records })
+}
+
+/// Require an exact portable relative file, rejecting traversal and normalization-dependent exclusions.
+fn source_evidence_relative_file(relative: &Path) -> Result<String, OvenError> {
+    let text = relative.to_str().ok_or_else(|| OvenError::InvalidProjectSource {
+        path: relative.to_path_buf(),
+        message: "source evidence file must be UTF-8".into(),
+    })?;
+    if text.is_empty()
+        || text.contains('\\')
+        || text
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+        || relative
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(OvenError::InvalidProjectSource {
+            path: relative.to_path_buf(),
+            message: "source evidence file must be an exact safe relative coordinate".into(),
+        });
+    }
+    Ok(text.into())
 }
 
 /// Whether a directory is compiler, VCS, or test-runner output rather than authored dependency source.
@@ -2305,5 +2370,62 @@ mod tests {
         fs::create_dir_all(root.join("src/nested"))?;
         fs::write(root.join("src/main.rs"), main)?;
         fs::write(root.join("src/nested/mod.rs"), "pub fn helper() {}\n")
+    }
+}
+
+#[cfg(test)]
+mod project_source_evidence_controls {
+    use super::{digest_bytes, digest_project_source_tree, project_source_tree_evidence};
+    use std::fs;
+    use std::path::Path;
+
+    /// A tool-owned first lock can be isolated without hiding any preserved-mtime authored source change.
+    #[test]
+    fn source_evidence_exact_lock_transition_preserves_other_inputs() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        fs::write(root.path().join("loaf.toml"), "[project]\nname='fixture'\n")?;
+        fs::write(root.path().join("source.incn"), "value = 1\n")?;
+        let first = project_source_tree_evidence(root.path())?;
+        assert_eq!(first.digest()?, digest_project_source_tree(root.path())?);
+        assert!(
+            first
+                .unchanged_except_exact_file(&first, Path::new("oven.lock"))
+                .is_err()
+        );
+        fs::write(root.path().join("oven.lock"), "published lock")?;
+        let later = project_source_tree_evidence(root.path())?;
+        assert_ne!(first.digest()?, later.digest()?);
+        assert!(first.unchanged_except_exact_file(&later, Path::new("oven.lock"))?);
+        assert_eq!(
+            later.file_digest(Path::new("oven.lock"))?,
+            Some(digest_bytes(b"published lock").as_str())
+        );
+        for unsafe_path in ["", "../oven.lock", "/oven.lock", "./oven.lock", "nested//oven.lock"] {
+            assert!(
+                first
+                    .unchanged_except_exact_file(&later, Path::new(unsafe_path))
+                    .is_err()
+            );
+        }
+        let source = root.path().join("source.incn");
+        let modified = fs::metadata(&source)?.modified()?;
+        fs::write(&source, "value = 2\n")?;
+        fs::File::options().write(true).open(&source)?.set_modified(modified)?;
+        let changed = project_source_tree_evidence(root.path())?;
+        assert!(!first.unchanged_except_exact_file(&changed, Path::new("oven.lock"))?);
+        Ok(())
+    }
+
+    /// A symlink cannot replace either an authored file or the one explicitly compared lock coordinate.
+    #[cfg(unix)]
+    #[test]
+    fn source_evidence_refuses_symlink_transition() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let external = tempfile::tempdir()?;
+        fs::write(root.path().join("loaf.toml"), "[project]\nname='fixture'\n")?;
+        fs::write(external.path().join("lock"), "external lock")?;
+        std::os::unix::fs::symlink(external.path().join("lock"), root.path().join("oven.lock"))?;
+        assert!(project_source_tree_evidence(root.path()).is_err());
+        Ok(())
     }
 }

@@ -6194,6 +6194,7 @@ impl TypeChecker {
             .iter()
             .map(|param| {
                 let param_ty = self.resolve_type_checked(&param.node.ty);
+                self.record_mutable_rust_parameter_projection(&param.node);
                 self.refuse_unbounded_nominal_type_arguments(&param_ty, param.node.ty.span);
                 self.refuse_trait_type_nested_in_annotation(&param_ty, param.node.ty.span);
                 if param.node.kind != ParamKind::Normal {

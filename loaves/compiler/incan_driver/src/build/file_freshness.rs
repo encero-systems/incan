@@ -144,10 +144,12 @@ fn digest_file_with_in(
         && record.stamp == before
         && valid_digest(&record.digest)
     {
+        trace_file_digest(&path, scheme, 0);
         return Ok(record.digest);
     }
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)?;
+    trace_file_digest(&path, scheme, bytes.len());
     let content_path = cache.filter(|_| scheme != "raw-sha256-v1").map(|root| {
         root.join("content").join(format!(
             "{:x}.json",
@@ -182,6 +184,20 @@ fn digest_file_with_in(
         let _published = publish_record(&cache_path, &record);
     }
     Ok(digest)
+}
+
+/// Report bytes actually read from the authoritative input, excluding acceleration records and metadata IO.
+fn trace_file_digest(path: &Path, scheme: &str, input_bytes_read: usize) {
+    if std::env::var_os("INCAN_OVEN_TRACE_FILE_DIGESTS").is_some() {
+        eprintln!(
+            "Oven file digest: {}",
+            serde_json::json!({
+                "path": path,
+                "scheme": scheme,
+                "input_bytes_read": input_bytes_read,
+            })
+        );
+    }
 }
 
 /// Publish a complete cache record atomically; concurrent commands may replace equivalent observations.
