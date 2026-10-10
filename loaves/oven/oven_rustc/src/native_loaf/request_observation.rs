@@ -366,7 +366,6 @@ fn verify_records(request: &ProducerRequest, graph: &NativeLoafGraph) -> Result<
         Some(index) => current_inputs::selected_about(&seed.units, index).map_err(super::NativeLoafError::Failed)?,
         None => BTreeMap::new(),
     };
-    let mut tools = current_inputs::NativeToolOwners::default();
     let mut link = None;
     let manifests = verify_original_records(graph)?;
     for (identity, unit) in &graph.units {
@@ -408,16 +407,8 @@ fn verify_records(request: &ProducerRequest, graph: &NativeLoafGraph) -> Result<
             .get(&unit.record.source.archive_digest)
             .cloned()
             .unwrap_or(serde_json::Value::Null);
-        if !current_inputs::matches_current_recipe(
-            &unit.record,
-            manifest,
-            origin,
-            &seed,
-            &metadata,
-            &mut tools,
-            index.as_mut(),
-        )
-        .map_err(super::NativeLoafError::Failed)?
+        if !current_inputs::matches_current_recipe(&unit.record, manifest, origin, &seed, &metadata, index.as_mut())
+            .map_err(super::NativeLoafError::Failed)?
         {
             return Err(refused("complete native producer fact or environment changed"));
         }

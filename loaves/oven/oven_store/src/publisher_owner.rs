@@ -6,6 +6,9 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::digest_bytes;
 
+mod virtual_toolchain;
+pub use virtual_toolchain::VirtualToolchainLoaf;
+
 /// One physical path admitted from an executable owner's identity-bearing closure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublisherOwnerClosurePath {
@@ -20,6 +23,9 @@ pub struct PublisherOwnerClosurePath {
 /// Why an executable-owner closure cannot be inventoried portably.
 #[derive(Debug, thiserror::Error)]
 pub enum PublisherOwnerIdentityError {
+    /// A virtual system installation has no bounded, portable version evidence.
+    #[error("invalid virtual toolchain: {0}")]
+    InvalidToolchain(String),
     /// A declared owner path was not a portable relative path.
     #[error("owner path `{0}` is not a portable relative path")]
     InvalidPath(String),
@@ -58,8 +64,8 @@ pub fn publisher_owner_identity<'a>(
 
 /// Resolve the exact identity-bearing closure used to confine one publisher executable.
 ///
-/// The returned list includes every recursively inventoried entry once. Callers admit data reads for these paths
-/// and metadata-only reads for their ancestors.
+/// The returned list contains the declared roots once, without enumerating directory contents. Callers admit data reads
+/// for these paths and directory descendants, and metadata-only reads for their ancestors.
 pub fn publisher_owner_closure<'a>(
     root: &Path,
     paths: impl IntoIterator<Item = &'a str>,

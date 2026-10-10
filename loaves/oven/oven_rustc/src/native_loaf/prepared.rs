@@ -72,7 +72,7 @@ pub struct NativeLoafConsumerReport {
     pub current_registry_bindings: usize,
     /// Current source candidates demanded by local dependency selection, without acquiring their native owners.
     pub current_local_dependency_candidates: usize,
-    /// Actual complete native executable-owner selections, deduplicated only within this command.
+    /// Native executable-owner selections during current-input replay; cached reuse requires none.
     pub native_tool_owner_checks: usize,
     /// Actual current compiler standard-library closure observations.
     pub compiler_closure_checks: usize,
@@ -144,7 +144,6 @@ struct Current {
     local: LocalSources,
     /// Authored declarations in graph facet order, shared only within this current-input snapshot.
     local_declarations: Option<Vec<toml::Value>>,
-    tools: current_inputs::NativeToolOwners,
     link: Option<Option<String>>,
     candidates: BTreeMap<String, Vec<CurrentCandidate>>,
     index: Option<current_inputs::PinnedIndexBatch>,
@@ -327,7 +326,6 @@ impl Current {
             compiler,
             local: LocalSources::default(),
             local_declarations: None,
-            tools: Default::default(),
             link: None,
             candidates: BTreeMap::new(),
             index: None,
@@ -482,7 +480,6 @@ impl Current {
                 origin,
                 &self.seed,
                 &metadata,
-                &mut self.tools,
                 self.index.as_mut(),
             )
             .map_err(NativeLoafError::Failed)?
@@ -801,7 +798,8 @@ fn finish_report(
         .collect::<BTreeSet<_>>()
         .len();
     report.current_local_sources = current.local.loads;
-    report.native_tool_owner_checks = current.tools.checks;
+    // Cached native products need no installed build tools.
+    report.native_tool_owner_checks = 0;
     report.current_local_dependency_candidates = current.candidates.values().map(Vec::len).sum();
     if let Some(index) = &current.index {
         let work = index.work();

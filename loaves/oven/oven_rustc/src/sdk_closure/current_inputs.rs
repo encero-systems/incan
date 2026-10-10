@@ -10,7 +10,6 @@ use crate::native_loaf::{NativeLoafOrigin, NativeLoafRecord};
 
 pub(crate) use super::index_batch::PinnedIndexBatch;
 pub(crate) use super::local::{LocalDependencyCandidate, local_dependency_demands, select_local_dependency};
-pub(crate) use super::native::NativeToolOwners;
 
 /// Read a genuinely unselected registry candidate's source manifest without acquiring its native owner.
 pub(crate) fn registry_source_manifest(blobs: &Path, binding: &SdkLockedUnit) -> Result<toml::Value, Error> {
@@ -70,7 +69,6 @@ pub(crate) fn matches_current_recipe(
     origin: NativeLoafOrigin,
     seed: &Seed,
     about: &serde_json::Value,
-    tools: &mut NativeToolOwners,
     mut reader: Option<&mut PinnedIndexBatch>,
 ) -> Result<bool, Error> {
     let binding: SdkLockedUnit = serde_json::from_value(serde_json::to_value(&record.source)?)?;
@@ -101,7 +99,9 @@ pub(crate) fn matches_current_recipe(
             .as_deref_mut()
             .ok_or("registry fact has no pinned index reader")?;
         let _ = fact_out_files_with_reader(&binding, fact, &mut |path| index.read(path))?;
-        tools.verify(fact)?;
+        for link in &fact.link {
+            super::native::validate_source_catalog(link)?;
+        }
     }
     let codegen = if origin == NativeLoafOrigin::Registry {
         seed.unit_codegen

@@ -15,9 +15,9 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | keep | 3567 | 245 | 431 |
 | re-point | 1487 | 91 | 1058 |
 | retire | 1507 | 153 | 0 |
-| unaffected | 1957 | 210 | 5 |
+| unaffected | 1960 | 211 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8518** | **699** | **1494** |
+| **Total** | **8521** | **700** | **1494** |
 
 - Retire-class tests: 1507, of which twinned 1022, dies 295, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -2635,7 +2635,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/oven/oven_rustc/src/rustc/runtime_executor.rs` | 16 | 2817 | 1612 | unaffected | - | - | required | #1561 | run 4 | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 | `loaves/oven/oven_rustc/src/rustc/runtime_foundation.rs` | 28 | 2333 | 1637 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 | `loaves/oven/oven_rustc/src/rustc/runtime_foundation/asset.rs` | 1 | 855 | 33 | unaffected | - | - | - | #1561 | - | Oven ring; runtime-foundation staging layout validation has no compiler-crate dependency. Reviewed at crate level. |
-| `loaves/oven/oven_rustc/src/rustc/selected_unit.rs` | 18 | 2390 | 949 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
+| `loaves/oven/oven_rustc/src/rustc/selected_unit.rs` | 18 | 2391 | 950 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 | `loaves/oven/oven_rustc/src/rustc/substitution.rs` | 10 | 702 | 335 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 | `loaves/oven/oven_rustc/src/rustc/tests/compiler_environment.rs` | 10 | 492 | 492 | unaffected | - | - | - | #1561 | run 1 | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 | `loaves/oven/oven_rustc/src/rustc/tests/direct_execution.rs` | 27 | 1537 | 1537 | unaffected | - | - | required | #1561 | run 1 | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
@@ -2652,7 +2652,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/oven/oven_rustc/src/sdk_closure/index_batch/tests.rs` | 5 | 212 | 212 | unaffected | - | - | - | #1698 | - | Pinned registry-index transport preserves exact blob bytes and pin/path authority, bounds Git subprocess work, and reaps command-owned children. These controls remain required for ordinary native preparation. |
 | `loaves/oven/oven_rustc/src/sdk_closure/local.rs` | 7 | 1105 | 303 | unaffected | - | - | - | #1698 | - | Oven-native local source snapshots bind Rust source bytes without consulting adjacent Cargo metadata. |
 | `loaves/oven/oven_rustc/src/sdk_closure/local/dependency_identity.rs` | 4 | 287 | 179 | unaffected | - | - | - | #1698 | - | Native producer source mapping, transitive authored path identity, relocation, embedded inputs and feature activation; no Cargo declaration is required. |
-| `loaves/oven/oven_rustc/src/sdk_closure/native.rs` | 3 | 344 | 95 | unaffected | - | - | - | #1698 | - | Oven-native link fact source-catalog and executable-owner refusal boundaries. |
+| `loaves/oven/oven_rustc/src/sdk_closure/native.rs` | 3 | 340 | 125 | unaffected | - | - | - | #1698 | - | Oven-native link fact source-catalog and executable-owner refusal boundaries. |
 | `loaves/oven/oven_rustc/src/sdk_closure/physical_edges/tests.rs` | 9 | 487 | 487 | unaffected | - | - | - | #1698 | - | Actual native preparation records retain exact renamed dependency owners and canonical reproduced recipes; malformed bindings, substituted owners and missing recipe facts refuse, while real local and registry preparation preserve identities and zero-compilation reuse. |
 | `loaves/oven/oven_rustc/src/sdk_closure/staging_tests.rs` | 2 | 118 | 118 | unaffected | - | - | - | #1698 | - | Actual native Store publication cleans successful private staging and retains failed-publication receipts and sourced diagnostics. |
 | `loaves/oven/oven_rustc/tests/native_generated_output_store_tests.rs` | 6 | 68 | 68 | keep | - | - | - | #1698 | - | Public generated native library, binary and test-store reuse, restored source selection and atomic read-only output replacement with failure preservation. |
@@ -3134,7 +3134,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 | `loaves/toolchain/oven-cli/src/commands/tools.rs` | 8 | 1869 | 414 | unaffected | - | - | - | #1561 | run 1 | Oven tools command; the build_run hit is a Cargo config hint, not an Incan build. |
 | `loaves/toolchain/oven-cli/src/invocation_trace.rs` | 6 | 399 | 193 | keep | - | - | - | #1337 | - | Opt-in compiler invocation diagnostics: disabled field laziness, nested identities, decision records, parent linkage, retained sinks and concurrent record integrity. No compiler semantics or legacy emitter dependence. |
 
-??? note "Unaffected crates (971 tests in 84 files)"
+??? note "Unaffected crates (974 tests in 85 files)"
 
     Every test in these crates is `unaffected`: the cutover does not touch them. They are listed so the summary reconciles to the whole tree.
 
@@ -3227,7 +3227,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     | `loaves/oven/oven_model/src/toolchain_layout/source_layout/tests.rs` | 9 | 284 | 284 | unaffected | - | - | - | #1337 | - | Original executable-relative source directory/member ownership, freshness, read-only access and ambient path refusal. |
     | `loaves/oven/oven_model/src/workspace.rs` | 19 | 2082 | 602 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 
-    #### `loaves/oven/oven_store` (136 tests in 11 files: unaffected 136)
+    #### `loaves/oven/oven_store` (139 tests in 12 files: unaffected 139)
 
     | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -3235,8 +3235,9 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     | `loaves/oven/oven_store/src/lib.rs` | 17 | 2559 | 722 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_store/src/process.rs` | 10 | 782 | 782 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_store/src/progress.rs` | 6 | 343 | 99 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-    | `loaves/oven/oven_store/src/publisher_execution.rs` | 8 | 2591 | 2591 | unaffected | - | - | required | #1561 | - | Oven ring; shared bounded publisher execution and receipt tests carry no compiler-crate dependency. Reviewed at crate level. |
-    | `loaves/oven/oven_store/src/publisher_owner.rs` | 3 | 438 | 192 | unaffected | - | - | - | #1561 | - | Oven ring; portable publisher-owner identity and closure tests carry no compiler-crate dependency. Reviewed at crate level. |
+    | `loaves/oven/oven_store/src/publisher_execution.rs` | 9 | 2674 | 2674 | unaffected | - | - | required | #1561 | - | Oven ring; shared bounded publisher execution and receipt tests carry no compiler-crate dependency. Reviewed at crate level. |
+    | `loaves/oven/oven_store/src/publisher_owner.rs` | 3 | 444 | 192 | unaffected | - | - | - | #1561 | - | Oven ring; portable publisher-owner identity and closure tests carry no compiler-crate dependency. Reviewed at crate level. |
+    | `loaves/oven/oven_store/src/publisher_owner/virtual_toolchain.rs` | 2 | 253 | 65 | unaffected | - | - | - | #1698 | - | Native toolchain virtual loaf: bounded version/compiler identity, relocation and refusal controls; system SDK descendants are trusted rather than recursively inventoried. |
     | `loaves/oven/oven_store/src/source_archive.rs` | 3 | 211 | 68 | unaffected | - | - | - | #1698 | - | Digest-first adopted archive admission and source-only materialization; inert Cargo metadata is omitted. |
     | `loaves/oven/oven_store/src/store.rs` | 68 | 7408 | 2632 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_store/src/store/published_identity_tests.rs` | 6 | 220 | 220 | unaffected | - | - | - | #1337 | - | Exact original immutable-owner read-only selection preserves byte integrity, batch leases and complete bookkeeping while avoiding unrelated Store entries. |
