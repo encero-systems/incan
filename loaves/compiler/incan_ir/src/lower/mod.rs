@@ -874,13 +874,23 @@ impl AstLowering {
     }
 
     /// Provide a warmed stdlib metadata cache for lowering stages that need stdlib-backed decorator or helper
-    /// metadata.
+    /// metadata. An already selected provider plan binds this cache's source policy regardless of setter order.
     pub fn set_stdlib_cache(&mut self, cache: StdlibAstCache) {
         self.stdlib_cache = cache;
+        if let Some(plan) = &self.provider_plan {
+            self.stdlib_cache.bind_provider_plan(plan);
+        }
     }
 
-    /// Provide the immutable provider plan for metadata-backed lowering.
+    /// Provide the immutable provider plan for metadata-backed lowering; `None` restores explicit legacy source mode.
+    ///
+    /// Source refusals are retained and propagated at the next `lower_program` handoff.
     pub fn set_provider_plan(&mut self, plan: Option<Arc<ProviderPlan>>) {
+        if let Some(plan) = &plan {
+            self.stdlib_cache.bind_provider_plan(plan);
+        } else {
+            self.stdlib_cache.bind_provider_plan(&ProviderPlan::default());
+        }
         self.provider_plan = plan;
     }
 
@@ -2589,6 +2599,7 @@ impl AstLowering {
     /// multiple errors to the user at once.
     #[tracing::instrument(skip_all, fields(decl_count = program.declarations.len()))]
     pub fn lower_program(&mut self, program: &ast::Program) -> Result<IrProgram, LoweringErrors> {
+        self.verify_retained_source_inputs()?;
         // A method decorator's declarations take a `self` receiver the way the method's wrapper passes it; plan that
         // before any signature is read (#1790).
         let planned = self.type_info.as_ref().and_then(|info| {
@@ -2597,7 +2608,19 @@ impl AstLowering {
                 &info.declarations.method_decorator_receiver_slots,
             )
         });
-        self.lower_receiver_planned_program(planned.as_ref().unwrap_or(program))
+        let result = self.lower_receiver_planned_program(planned.as_ref().unwrap_or(program))?;
+        self.verify_retained_source_inputs()?;
+        Ok(result)
+    }
+
+    /// Refuse stale original source metadata at a lowering handoff, including prechecked callers.
+    fn verify_retained_source_inputs(&self) -> Result<(), LoweringErrors> {
+        self.stdlib_cache.verify_retained_sources().map_err(|error| {
+            LoweringErrors::single(LoweringError {
+                message: format!("retained standard source metadata refused: {error}"),
+                span: super::IrSpan::default(),
+            })
+        })
     }
 
     /// Lower a program whose method-decorator receivers are already planned; see [`Self::lower_program`].

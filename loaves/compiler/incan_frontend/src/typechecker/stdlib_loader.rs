@@ -221,7 +221,8 @@ impl StdlibAstCache {
     /// Bind the plan's original source capability and revalidate retained files before reusing cached metadata.
     ///
     /// Ordinary symbol lookups reuse this checked command snapshot; checker/handoff boundaries verify it again.
-    pub(crate) fn bind_provider_plan(&mut self, plan: &crate::provider::ProviderPlan) {
+    /// A refusal is retained in this cache and reported by `verify_retained_sources`; binding grants no new authority.
+    pub fn bind_provider_plan(&mut self, plan: &crate::provider::ProviderPlan) {
         match self.source_inputs.bind(plan) {
             Ok(false) => {}
             Ok(true) | Err(_) => self.cache.clear(),
