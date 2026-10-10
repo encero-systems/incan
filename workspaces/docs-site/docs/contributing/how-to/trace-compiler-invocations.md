@@ -26,6 +26,8 @@ Subtract the union of covered, nested, same-thread child intervals to calculate 
 
 The initial lane instruments Store manifest traversal and verification, payload selection, project-output reuse, source-authority hashing, file-digest reuse, inspection-authority loading, public-provider lookup, native-loaf preparation and the bounded subprocess runner. Both compiler CLI entrypoints share the same collector.
 
+The pinned native driver also accepts `INCAN_TRACE_DIR`. Replay its existing receipt-selected `--source` command with the same explicit externs, search paths and sysroot. Its trace separates source compilation, module collection/checking, analysis, Incan lowering and native compilation. The source-compilation span follows work into the compiler-stack thread. An unchanged raw driver invocation currently enters these stages again; a successful output comparison does not establish completed-output reuse. Keep driver compilation and test-fixture preparation outside the workload measurement.
+
 Supported bounded subprocess launches pass `INCAN_TRACE_PARENT` so an instrumented child CLI can link its root to the launch invocation. External tools, native test executables and applications do not automatically gain internal instrumentation. Launches outside this helper, children that clear the environment, provider implementation internals, and compiler functions without explicit spans are coverage gaps. The lane is a trace of named boundaries, not an exhaustive function-call profiler. Add a span at the relevant existing boundary when a capture identifies a gap that prevents diagnosis.
 
 ## Check native SDK traversal

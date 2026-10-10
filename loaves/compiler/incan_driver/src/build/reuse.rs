@@ -81,9 +81,12 @@ fn located_project_output(
     {
         return Ok(None);
     }
-    let Ok(payload) = serde_json::from_slice(&bytes) else {
+    let Ok(payload) = serde_json::from_slice::<super::OvenProjectOutputPayload>(&bytes) else {
         return Ok(None);
     };
+    if payload.schema_version != super::OVEN_PROJECT_OUTPUT_PAYLOAD_SCHEMA_VERSION {
+        return Ok(None);
+    }
     crate::build::publication::stored_project_output_from_parts(manifest, root, payload, lease).map(Some)
 }
 
@@ -1046,6 +1049,46 @@ mod tests {
         assert!(located_project_output(&store, &receipt_path, &receipt)?.is_none());
         remember_project_output(&receipt_path, &format!("sha256:{}", "0".repeat(64)));
         assert!(located_project_output(&store, &receipt_path, &receipt)?.is_none());
+        Ok(())
+    }
+
+    /// A valid locator from a previous payload schema is a cache miss, permitting current publication without deleting
+    /// old entries.
+    #[test]
+    fn project_output_locator_declines_previous_payload_schema() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        fs::create_dir(project.path().join("src"))?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = \"fixture\"\n")?;
+        fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
+        let store_root = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            store_root.path(),
+            oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        let (receipt, mut payload, files) =
+            crate::build::test_support::fixture_project_output_publication(project.path(), "debug", "old-locator")?;
+        payload.schema_version = super::super::OVEN_PROJECT_OUTPUT_PAYLOAD_SCHEMA_VERSION - 1;
+        let old = store.publish(&oven_store::store::OvenArtifactPublishRequest {
+            receipt: receipt.clone(),
+            domain: format!("incan-release-{INCAN_VERSION}"),
+            kind: OvenArtifactKind::ProjectOutput,
+            payload: serde_json::to_vec(&payload)?,
+            materialized_files: files
+                .into_iter()
+                .map(|file| oven_store::store::OvenArtifactMaterializedFile {
+                    source_path: file.source_path,
+                    relative_path: file.output_relative_path,
+                })
+                .collect(),
+            materialized_directories: Vec::new(),
+        })?;
+        let receipt_path = project.path().join("old-locator-receipt.json");
+        remember_project_output(&receipt_path, &old.identity);
+        assert!(located_project_output(&store, &receipt_path, &receipt)?.is_none());
+        assert!(
+            store.select_payload_for_execution(&old.identity).is_ok(),
+            "old immutable output must remain available to its original consumer"
+        );
         Ok(())
     }
 

@@ -168,7 +168,11 @@ impl rustc_driver::Callbacks for Callbacks {
                 Ok(span) => span,
                 Err(error) => compiler.sess.dcx().fatal(error.to_string()),
             };
-            krate.items.extend(declarations::model_items(model, &compiler.sess.psess.attr_id_generator, span));
+            krate.items.extend(declarations::model_items(
+                model,
+                &compiler.sess.psess.attr_id_generator,
+                span,
+            ));
         }
         for function in &self.plan.functions {
             let span = match sources.span(&function.span) {
@@ -322,6 +326,7 @@ pub fn compile(
     externs: &[(String, PathBuf)],
     dependency_search_paths: &[PathBuf],
 ) -> Result<(), DriverError> {
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::native_compile", input = %output.display(), functions = plan.functions.len()).entered();
     validation::validate(&plan)?;
     let identity = identity::verify(sysroot)?;
     if crate_name.is_empty() || !crate_name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {

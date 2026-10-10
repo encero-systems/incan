@@ -18,6 +18,7 @@ struct CheckedProgram {
 /// Native-only declaration refusals follow analysis; provider activation, desugaring, and stdlib loading remain owned
 /// by the session.
 fn checked_modules(path: &Path) -> Result<CheckedProgram, String> {
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::checked_modules", input = %path.display()).entered();
     let path = path.canonicalize().map_err(|error| error.to_string())?;
     let session = CompilationSession::discover_with_feature_selection(&path, &Default::default())
         .map_err(|error| error.to_string())?;
@@ -26,9 +27,12 @@ fn checked_modules(path: &Path) -> Result<CheckedProgram, String> {
     let inspection = session
         .prepare_check_rust_inspection(&path, &modules)
         .map_err(|error| error.to_string())?;
-    let analysis = session
-        .analyze_modules(&modules, inspection.as_ref().map(|workspace| workspace.manifest_dir()))
-        .map_err(|failure| failure.render_human())?;
+    let analysis = {
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::analyze_modules", modules = modules.len()).entered();
+        session
+            .analyze_modules(&modules, inspection.as_ref().map(|workspace| workspace.manifest_dir()))
+            .map_err(|failure| failure.render_human())?
+    };
     let entry = modules
         .iter()
         .position(|module| module.file_path == path)
@@ -149,21 +153,36 @@ fn validate_declarations(
             }
             Declaration::Static(_) => continue,
             Declaration::Model(model) => {
-                if type_info.declarations.model_derives.get(&model.name).is_some_and(|names| names.iter().any(|name| name.starts_with("serde::")))
+                if type_info
+                    .declarations
+                    .model_derives
+                    .get(&model.name)
+                    .is_some_and(|names| names.iter().any(|name| name.starts_with("serde::")))
                     && model.fields.iter().any(|field| field.node.metadata.alias.is_some())
                 {
-                    return Err(format!("unsupported source Model serde field aliases on {} on the native route", model.name));
+                    return Err(format!(
+                        "unsupported source Model serde field aliases on {} on the native route",
+                        model.name
+                    ));
                 }
                 if !incan_frontend::body_ir::is_direct_replacement_checked_model(model, type_info) {
                     return Err(format!(
                         "unsupported source Model {} on {} on the native route",
-                        model_refusal_feature(model), model.name
+                        model_refusal_feature(model),
+                        model.name
                     ));
                 }
                 if model.fields.iter().any(|field| field.node.default.is_some())
-                    && type_info.declarations.model_derives.get(&model.name).is_some_and(|derives| derives.iter().any(|derive| derive == "Default"))
+                    && type_info
+                        .declarations
+                        .model_derives
+                        .get(&model.name)
+                        .is_some_and(|derives| derives.iter().any(|derive| derive == "Default"))
                 {
-                    return Err(format!("unsupported source Model derived Default over field defaults on {} on the native route", model.name));
+                    return Err(format!(
+                        "unsupported source Model derived Default over field defaults on {} on the native route",
+                        model.name
+                    ));
                 }
                 validate_generic_adoptions(&model.traits, program)?;
                 continue;
@@ -208,12 +227,16 @@ fn validate_declarations(
 
 /// Name the first unsupported model feature without relaxing the frontend's declaration admission predicate.
 fn model_refusal_feature(model: &incan_frontend::ast::ModelDecl) -> String {
-
     // ---- Structural declaration features ----
     let generic_model = !model.type_params.is_empty();
     let generic_adoption = model.traits.iter().any(|adoption| !adoption.node.type_args.is_empty());
     let aliases = !model.method_aliases.is_empty();
-    if [generic_model, generic_adoption, aliases].iter().filter(|present| **present).count() > 1 {
+    if [generic_model, generic_adoption, aliases]
+        .iter()
+        .filter(|present| **present)
+        .count()
+        > 1
+    {
         return "type parameters, generic trait adoption and method aliases combined".to_owned();
     }
 
@@ -231,16 +254,24 @@ fn model_refusal_feature(model: &incan_frontend::ast::ModelDecl) -> String {
     }
 
     // ---- Decorator expansion ----
-    if let Some(decorator) = model.decorators.iter().find(|decorator| !incan_frontend::body_ir::is_direct_replacement_model_derive(&decorator.node)) {
-        let arguments = decorator.node.args.iter().filter_map(|argument| {
-            match argument {
+    if let Some(decorator) = model
+        .decorators
+        .iter()
+        .find(|decorator| !incan_frontend::body_ir::is_direct_replacement_model_derive(&decorator.node))
+    {
+        let arguments = decorator
+            .node
+            .args
+            .iter()
+            .filter_map(|argument| match argument {
                 incan_frontend::ast::DecoratorArg::Positional(value) => match &value.node {
                     incan_frontend::ast::Expr::Ident(name) => Some(name.as_str()),
                     _ => None,
                 },
                 _ => None,
-            }
-        }).collect::<Vec<_>>().join(", ");
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
         return format!("decorator @{}({arguments})", decorator.node.name);
     }
     "unsupported declaration shape".to_owned()
@@ -251,7 +282,10 @@ fn model_refusal_feature(model: &incan_frontend::ast::ModelDecl) -> String {
 /// Type parameters and supertraits declared in this module are retained: Body IR records each adopter's checked
 /// instantiation and the supertrait slots it fills. A supertrait from elsewhere is an obligation whose implementation
 /// facts Body IR does not carry, so it stays refused.
-fn trait_refusal_feature(item: &incan_frontend::ast::TraitDecl, program: &incan_frontend::ast::Program) -> Option<&'static str> {
+fn trait_refusal_feature(
+    item: &incan_frontend::ast::TraitDecl,
+    program: &incan_frontend::ast::Program,
+) -> Option<&'static str> {
     if !item.decorators.is_empty() {
         return Some("decorators");
     }
@@ -270,7 +304,11 @@ fn trait_refusal_feature(item: &incan_frontend::ast::TraitDecl, program: &incan_
     if item.methods.iter().any(|method| !method.node.decorators.is_empty()) {
         return Some("decorated methods");
     }
-    if item.traits.iter().any(|supertrait| !declares_trait(program, &supertrait.node.name)) {
+    if item
+        .traits
+        .iter()
+        .any(|supertrait| !declares_trait(program, &supertrait.node.name))
+    {
         return Some("imported supertraits");
     }
     None
@@ -278,9 +316,9 @@ fn trait_refusal_feature(item: &incan_frontend::ast::TraitDecl, program: &incan_
 
 /// Whether this module declares a trait under `name`.
 fn declares_trait(program: &incan_frontend::ast::Program, name: &str) -> bool {
-    program.declarations.iter().any(|declaration| {
-        matches!(&declaration.node, incan_frontend::ast::Declaration::Trait(item) if item.name == name)
-    })
+    program.declarations.iter().any(
+        |declaration| matches!(&declaration.node, incan_frontend::ast::Declaration::Trait(item) if item.name == name),
+    )
 }
 
 /// Refuse a generic adoption of a trait this module does not declare.
@@ -333,13 +371,21 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 
     // ---- Checked source and Incan plan ----
     let source_path = PathBuf::from(&arguments[0]);
-    let program = incan_frontend::compiler_stack::run_on_compiler_stack(move || checked_modules(&source_path))?;
-    let plan = lower_program(
-        &program.modules,
-        program.sources,
-        program.files,
-        program.entry.try_into()?,
-    )?;
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::compile_source", input = %source_path.display()).entered();
+    let parent = tracing::Span::current();
+    let program = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
+        let _parent = parent.enter();
+        checked_modules(&source_path)
+    })?;
+    let plan = {
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::lower_program", modules = program.modules.len()).entered();
+        lower_program(
+            &program.modules,
+            program.sources,
+            program.files,
+            program.entry.try_into()?,
+        )?
+    };
 
     // ---- Explicit native dependencies ----
     let dependencies = dependencies(&arguments[4..])?;
