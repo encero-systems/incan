@@ -2150,6 +2150,50 @@ def main() -> None:
     )
 }
 
+/// Prove list-literal spreads byte-identical to legacy: a local, a nested literal, a tuple of scalars or text, a
+/// field and a `mut` parameter each splice at their written positions, and every source that is read again keeps
+/// its items.
+#[test]
+fn list_literal_spread_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("list-literal-spread")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"class Bag:
+    items: list[int]
+
+    def doubled(self) -> int:
+        more = [*self.items, *self.items]
+        return len(more) + len(self.items)
+
+def joined(items: list[int], mut extra: list[int]) -> int:
+    both = [*items, *extra, 9]
+    extra.append(5)
+    return len(both) + len(extra) + both[2]
+
+def main() -> None:
+    xs = [2, 3]
+    values = [1, *xs, 4]
+    println(len(values))
+    println(values[1] + values[2])
+    println(len(xs))
+    tail: tuple[int, int] = (5, 6)
+    spliced = [*[7, 8], *tail]
+    println(spliced[0] + spliced[3])
+    names: tuple[str, str] = ("a", "b")
+    letters = ["z", *names]
+    println(letters[2])
+    println(names[0])
+    mut extra = [7]
+    println(joined([1, 2], extra))
+    println(len(extra))
+    println(Bag(items=[1, 2]).doubled())
+"#,
+    )
+}
+
 /// Measure the actual unchanged graph with expensive fallback forbidden and retain numeric parity evidence.
 #[test]
 #[ignore = "machine-local diagnostic of the 50 ms completed fixture graph reuse budget"]
