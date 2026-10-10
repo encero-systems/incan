@@ -192,6 +192,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/build/library_metadata/tests/published.rs": {
+      "disposition": "unaffected",
+      "notes": "Read-only admission of original ordinary checked metadata/generation owners, transitive lease retention, relocation, payload corruption and shared-DAG verification; independent of generated Rust.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/build/library_outputs.rs": {
       "disposition": "unaffected",
       "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend.",
@@ -9160,6 +9168,14 @@
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_model/src/toolchain_layout/installed_data/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Executable-relative opaque installed descriptor discovery and exact original-file observation, including relocation, read-only discovery, tamper, aliases and competing roots; no namespace authority or generated backend.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
