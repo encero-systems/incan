@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 use super::preparation::{NativeLoafPreparation, ResolvedNativeGraph, read_resolved_native_graph};
 use super::selection::{LocalSources, select_roots_with_sources, source_manifest};
 use super::{
-    NativeLoafClosure, NativeLoafError, NativeLoafGraph, NativeLoafOrigin, NativeLoafRoot, Result, failed, refused,
+    NativeLoafClosure, NativeLoafError, NativeLoafGraph, NativeLoafOrigin, NativeLoafRoot, NativeLoafVerificationWork,
+    Result, failed, refused,
 };
 use crate::sdk_closure::{Seed, current_inputs};
 
@@ -47,6 +48,8 @@ pub struct NativeLoafConsumerRequest<'a> {
 /// Actual rooted work at the ordinary preparation/reuse boundary, without invented phase attribution.
 #[derive(Default, Debug, Serialize)]
 pub struct NativeLoafConsumerReport {
+    /// Complete record and edge checks during graph admission/selection, excluding subsequent current-input replay.
+    pub graph_verification: NativeLoafVerificationWork,
     /// Whether an optional coordinate hint survived complete current-input and per-unit admission checks.
     pub prepared_reuse: bool,
     /// Actual calls into complete native preparation; an unchanged admitted command reports zero.
@@ -215,7 +218,7 @@ fn prepare_with_store(
         .join("consumer-hints")
         .join(format!("{}.json", current.key.replace(':', "-")));
     if let Some(hint) = read_hint(&hint_path, &current.key)? {
-        let admitted = NativeLoafClosure::admit(store, &hint.roots);
+        let admitted = NativeLoafClosure::admit_with_work(store, &hint.roots, &mut report.graph_verification);
         match admitted {
             Ok(closure) => {
                 if current.matches(request, &closure, &hint.roots, &mut report)? {
@@ -241,7 +244,9 @@ fn prepare_with_store(
         request.domain,
         &mut current.local,
     )?;
-    let closure = prepared.graph.select(&roots)?;
+    let closure = prepared
+        .graph
+        .select_with_work(&roots, &mut report.graph_verification)?;
     // A source mutation during preparation must not publish a hint for a generation different from this snapshot.
     if !current.matches(request, &closure, &roots, &mut report)? {
         return Err(refused(

@@ -284,6 +284,18 @@ pub struct NativeLoafClosure {
     graph: NativeLoafGraph,
 }
 
+/// Actual graph verification attempts within a caller-owned admission or selection handoff.
+///
+/// Counts accumulate across calls, including work before refusal. They exclude canonical Store selection checks,
+/// internal file I/O and later independent handoffs; a retained lease does not grant permission to skip those checks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct NativeLoafVerificationWork {
+    /// Complete record/recipe/native-owner verification attempts, including repeated visits to shared records.
+    pub record_checks: usize,
+    /// Exact child source/native-coordinate comparisons attempted for sealed physical edges.
+    pub edge_checks: usize,
+}
+
 impl NativeLoafGraph {
     /// Retain and validate inspection sources for exactly this admitted set, without claiming semantic completeness.
     pub fn inspection_inputs(&self) -> Result<NativeLoafInspectionInputs> {
@@ -320,11 +332,20 @@ impl NativeLoafGraph {
 
     /// Select only declared roots and their authenticated forward physical dependencies, sharing original leases.
     pub fn select(&self, roots: &[NativeLoafRoot]) -> Result<NativeLoafClosure> {
+        self.select_with_work(roots, &mut NativeLoafVerificationWork::default())
+    }
+
+    /// Select the same authenticated closure while recording actual verification work for this handoff.
+    pub fn select_with_work(
+        &self,
+        roots: &[NativeLoafRoot],
+        work: &mut NativeLoafVerificationWork,
+    ) -> Result<NativeLoafClosure> {
         let root_map = validate_roots(roots, &self.units)?;
         let mut selected = BTreeMap::new();
         let mut visiting = BTreeSet::new();
         for identity in root_map.values() {
-            retain_forward(identity, &self.units, &mut selected, &mut visiting)?;
+            retain_forward(identity, &self.units, &mut selected, &mut visiting, work)?;
         }
         Ok(NativeLoafClosure {
             roots: root_map,
@@ -423,12 +444,30 @@ impl NativeLoafClosure {
     ///
     /// Missing exact authority is an explicit error; this path never compiles, resolves, or invokes a fallback baker.
     pub fn admit(store: &OvenStore, roots: &[NativeLoafRoot]) -> Result<Self> {
-        admit(Store::Writable(store), roots)
+        Self::admit_with_work(store, roots, &mut NativeLoafVerificationWork::default())
+    }
+
+    /// Admit the same writable Store closure with actual graph verification counts, without changing authority.
+    pub fn admit_with_work(
+        store: &OvenStore,
+        roots: &[NativeLoafRoot],
+        work: &mut NativeLoafVerificationWork,
+    ) -> Result<Self> {
+        admit(Store::Writable(store), roots, work)
     }
 
     /// Admit an immutable installed Store through its existing read-only selector, without writing package files.
     pub fn admit_published(store: &PublishedOvenStore, roots: &[NativeLoafRoot]) -> Result<Self> {
-        admit(Store::Published(store), roots)
+        Self::admit_published_with_work(store, roots, &mut NativeLoafVerificationWork::default())
+    }
+
+    /// Admit the same installed closure with actual graph verification counts and no installed-file writes.
+    pub fn admit_published_with_work(
+        store: &PublishedOvenStore,
+        roots: &[NativeLoafRoot],
+        work: &mut NativeLoafVerificationWork,
+    ) -> Result<Self> {
+        admit(Store::Published(store), roots, work)
     }
 
     /// Borrow the complete authenticated physical closure retained for this command.
@@ -487,15 +526,31 @@ enum Store<'a> {
     Published(&'a PublishedOvenStore),
 }
 
-/// Admit exactly reachable records and native owners, memoizing original leases for command-local repeated edges.
-fn admit(store: Store<'_>, roots: &[NativeLoafRoot]) -> Result<NativeLoafClosure> {
+/// Verify each reachable record once, checking every sealed edge while retaining original command-local leases.
+fn admit(
+    store: Store<'_>,
+    roots: &[NativeLoafRoot],
+    work: &mut NativeLoafVerificationWork,
+) -> Result<NativeLoafClosure> {
     let mut graph = NativeLoafGraph::default();
     let mut native = BTreeMap::new();
     let mut visiting = BTreeSet::new();
     for root in roots {
-        load_forward(store, &root.record_identity, &mut graph, &mut native, &mut visiting)?;
+        load_forward(
+            store,
+            &root.record_identity,
+            &mut graph,
+            &mut native,
+            &mut visiting,
+            work,
+        )?;
     }
-    graph.select(roots)
+    // Every retained vertex and edge was checked by load_forward during this handoff. Root aliases and declared
+    // source/intent still need validation, but another full graph selection would repeat all owner inventories.
+    Ok(NativeLoafClosure {
+        roots: validate_roots(roots, &graph.units)?,
+        graph,
+    })
 }
 
 /// Load one durable record and recursively admit its sealed forward destinations, refusing cycles and substitutions.
@@ -505,6 +560,7 @@ fn load_forward(
     graph: &mut NativeLoafGraph,
     native: &mut BTreeMap<String, Arc<OvenStoreExecutionPayload>>,
     visiting: &mut BTreeSet<String>,
+    work: &mut NativeLoafVerificationWork,
 ) -> Result<()> {
     if graph.units.contains_key(identity) {
         return Ok(());
@@ -522,11 +578,12 @@ fn load_forward(
         owner
     };
     let read_only = matches!(store, Store::Published(_));
+    work.record_checks += 1;
     verify_record(&record, &record_owner, &owner, read_only)?;
     for edge in &record.dependencies {
-        load_forward(store, &edge.record_identity, graph, native, visiting)?;
+        load_forward(store, &edge.record_identity, graph, native, visiting, work)?;
     }
-    verify_children(&record, &graph.units)?;
+    verify_child_bindings_with_work(&record, &graph.units, work)?;
     graph.units.insert(
         identity.to_string(),
         Arc::new(SelectedNativeLoaf {
@@ -570,7 +627,7 @@ fn select_owner(store: Store<'_>, identity: &str) -> Result<Arc<OvenStoreExecuti
     Ok(Arc::new(owner))
 }
 
-/// Check caller-provided source and complete intent, keeping distinct aliases to the same immutable provider.
+/// Check declared source/intent and aliases; the containing traversal independently verifies every root owner.
 fn validate_roots(
     roots: &[NativeLoafRoot],
     units: &BTreeMap<String, Arc<SelectedNativeLoaf>>,
@@ -580,7 +637,6 @@ fn validate_roots(
         let unit = units
             .get(&root.record_identity)
             .ok_or_else(|| refused("declared native root is not admitted"))?;
-        unit.verify()?;
         if root.alias.is_empty()
             || aliases
                 .insert(root.alias.clone(), root.record_identity.clone())
@@ -597,12 +653,13 @@ fn validate_roots(
     Ok(aliases)
 }
 
-/// Retain a forward graph subset while checking exact child references and original held payloads.
+/// Verify each selected vertex once in this handoff while comparing every exact sealed child reference.
 fn retain_forward(
     identity: &str,
     units: &BTreeMap<String, Arc<SelectedNativeLoaf>>,
     selected: &mut BTreeMap<String, Arc<SelectedNativeLoaf>>,
     visiting: &mut BTreeSet<String>,
+    work: &mut NativeLoafVerificationWork,
 ) -> Result<()> {
     if selected.contains_key(identity) {
         return Ok(());
@@ -613,10 +670,11 @@ fn retain_forward(
     let unit = units
         .get(identity)
         .ok_or_else(|| refused("physical native dependency record is missing"))?;
+    work.record_checks += 1;
     unit.verify()?;
-    verify_children(&unit.record, units)?;
+    verify_child_bindings_with_work(&unit.record, units, work)?;
     for edge in &unit.record.dependencies {
-        retain_forward(&edge.record_identity, units, selected, visiting)?;
+        retain_forward(&edge.record_identity, units, selected, visiting, work)?;
     }
     selected.insert(identity.to_string(), Arc::clone(unit));
     visiting.remove(identity);
@@ -636,7 +694,17 @@ fn verify_children(record: &NativeLoafRecord, units: &BTreeMap<String, Arc<Selec
 
 /// Compare exact physical destinations after the caller verifies each selected owner for its handoff.
 fn verify_child_bindings(record: &NativeLoafRecord, units: &BTreeMap<String, Arc<SelectedNativeLoaf>>) -> Result<()> {
+    verify_child_bindings_with_work(record, units, &mut NativeLoafVerificationWork::default())
+}
+
+/// Count attempted edge comparisons separately from complete original-owner verification.
+fn verify_child_bindings_with_work(
+    record: &NativeLoafRecord,
+    units: &BTreeMap<String, Arc<SelectedNativeLoaf>>,
+    work: &mut NativeLoafVerificationWork,
+) -> Result<()> {
     for edge in &record.dependencies {
+        work.edge_checks += 1;
         let child = units
             .get(&edge.record_identity)
             .ok_or_else(|| refused("physical native dependency record is missing"))?;
