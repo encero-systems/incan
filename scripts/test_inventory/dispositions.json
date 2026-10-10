@@ -208,6 +208,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/build/library_project/admitted_preparation_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Original admitted ordinary dependency/session retention and refusal of project, feature and provider substitution; independent of generated Rust.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/build/library_project/metadata_replay/lock_transition/tests.rs": {
       "disposition": "keep",
       "notes": "Exact canonical lock publication re-seals unchanged checked outputs while preserving source, feature, Rust and writer authority, including workspace locks outside member source trees.",
