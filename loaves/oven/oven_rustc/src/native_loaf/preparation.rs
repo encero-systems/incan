@@ -8,13 +8,14 @@ use std::time::Instant;
 use oven_store::store::{OvenStore, OvenStoreLimits};
 use serde::{Deserialize, Serialize};
 
+use super::request_observation::{NativeLoafRequestObservation, ProducerRequest, RequestFile};
 use super::{NativeLoafError, NativeLoafGraph, Result, failed, refused};
 use crate::sdk_closure::{
     ClosureCompileRequest, LocalFacetSelection, compile_local_native_facets_for_profile, prepare_closure,
 };
 
 /// One explicitly selected local Rust facet; dependency and feature resolution remain the caller's authority.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeLoafFacet {
     /// Loaf project directory relative to the request's facet owner.
@@ -64,6 +65,7 @@ pub struct NativeLoafPreparationReport {
 pub struct NativeLoafPreparation {
     pub(super) graph: NativeLoafGraph,
     pub(super) report: NativeLoafPreparationReport,
+    pub(super) observation: Option<NativeLoafRequestObservation>,
 }
 
 /// Explicit resolved graph wire format; parsing supplies paths, never a second dependency resolver.
@@ -91,34 +93,52 @@ pub fn prepare_resolved_native_loafs(
     target: &str,
     profile: &str,
 ) -> Result<NativeLoafPreparation> {
-    let (owner, selection, _) = read_resolved_native_graph(graph)?;
-    prepare_native_loafs(&NativeLoafPreparationRequest {
-        lock: &owner.join(selection.registry_lock),
-        blobs,
-        output,
-        rustc,
-        index,
-        index_commit: &selection.index_commit,
-        target,
-        profile,
-        facet_owner: &owner,
-        facets: &selection.facets,
-    })
+    let (document, owner, selection) = read_resolved_native_graph_inputs(graph)?;
+    prepare_native_loafs_with_document(
+        &NativeLoafPreparationRequest {
+            lock: &owner.join(selection.registry_lock),
+            blobs,
+            output,
+            rustc,
+            index,
+            index_commit: &selection.index_commit,
+            target,
+            profile,
+            facet_owner: &owner,
+            facets: &selection.facets,
+        },
+        Some(document),
+    )
 }
 
 /// Read one graph snapshot and its exact digest, retaining its canonical relative-path owner.
 pub(super) fn read_resolved_native_graph(graph: &Path) -> Result<(PathBuf, ResolvedNativeGraph, String)> {
-    let graph = graph.canonicalize().map_err(failed)?;
-    let owner = graph
-        .parent()
-        .ok_or_else(|| refused("resolved native graph has no owner"))?
-        .to_path_buf();
-    let bytes = std::fs::read(&graph).map_err(failed)?;
-    let selection = serde_json::from_slice(&bytes).map_err(failed)?;
-    Ok((owner, selection, oven_store::digest_bytes(&bytes)))
+    let (document, owner, selection) = read_resolved_native_graph_inputs(graph)?;
+    Ok((owner, selection, document.digest().to_string()))
+}
+
+/// Parse the retained actual graph bytes once, preserving its original relative-path owner for producer observation.
+fn read_resolved_native_graph_inputs(graph: &Path) -> Result<(RequestFile, PathBuf, ResolvedNativeGraph)> {
+    let document = RequestFile::read(graph)?;
+    let owner = document.owner()?.to_path_buf();
+    let selection = serde_json::from_slice(document.bytes()).map_err(failed)?;
+    Ok((document, owner, selection))
 }
 
 impl NativeLoafPreparation {
+    /// Retain the complete supplied producer request, including original units outside physical consumer roots.
+    ///
+    /// This does not establish that the request covers all compiler semantic demands. Synthetic preparations and
+    /// rooted consumer hints have no such producer association and refuse rather than manufacturing one.
+    pub fn request_observation(&self) -> Result<NativeLoafRequestObservation> {
+        let observation = self
+            .observation
+            .as_ref()
+            .ok_or_else(|| refused("complete native producer request observation is unavailable"))?;
+        observation.verify()?;
+        Ok(observation.clone())
+    }
+
     /// Project the already retained ordinary set, using the same durable source authority as installed admission.
     pub fn inspection_inputs(&self) -> Result<super::NativeLoafInspectionInputs> {
         self.graph.inspection_inputs()
@@ -141,6 +161,14 @@ impl NativeLoafPreparation {
 /// host target; unsupported targets refuse rather than silently using another triple. Cross-Store distribution and
 /// semantic/macro completeness remain separate.
 pub fn prepare_native_loafs(request: &NativeLoafPreparationRequest<'_>) -> Result<NativeLoafPreparation> {
+    prepare_native_loafs_with_document(request, None)
+}
+
+/// Preserve the optional original resolved document while running the same ordinary producer for either entrypoint.
+fn prepare_native_loafs_with_document(
+    request: &NativeLoafPreparationRequest<'_>,
+    document: Option<RequestFile>,
+) -> Result<NativeLoafPreparation> {
     let started = Instant::now();
     if !request.facets.is_empty() {
         if crate::rustc::rustc_host_target(request.rustc).map_err(failed)? != request.target {
@@ -149,6 +177,7 @@ pub fn prepare_native_loafs(request: &NativeLoafPreparationRequest<'_>) -> Resul
             ));
         }
     }
+    let actual_request = ProducerRequest::capture(request, document)?;
     let mut closure = prepare_closure(&ClosureCompileRequest {
         primary: &[],
         lock: request.lock,
@@ -187,8 +216,10 @@ pub fn prepare_native_loafs(request: &NativeLoafPreparationRequest<'_>) -> Resul
         OvenStoreLimits::new(4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024),
     );
     let graph = closure.into_native_loafs(&store).map_err(NativeLoafError::Failed)?;
+    let observation = NativeLoafRequestObservation::from_producer(actual_request, &graph)?;
     Ok(NativeLoafPreparation {
         graph,
+        observation: Some(observation),
         report: NativeLoafPreparationReport {
             compiled,
             reused,

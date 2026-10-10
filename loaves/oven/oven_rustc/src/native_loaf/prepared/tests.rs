@@ -234,6 +234,7 @@ fn publish_data(
 fn prepared(graph: NativeLoafGraph) -> NativeLoafPreparation {
     NativeLoafPreparation {
         graph,
+        observation: None,
         report: NativeLoafPreparationReport {
             compiled: Vec::new(),
             reused: Vec::new(),
