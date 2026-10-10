@@ -335,6 +335,75 @@ fn dev7_native_loaf_current_comparison_does_not_repeat_closure_validation() -> T
     Ok(())
 }
 
+/// Unit and candidate queries read each authored facet once per command; new commands observe edits and ambiguity.
+#[test]
+fn dev7_native_loaf_local_declaration_traversal_is_linear_and_command_local() -> TestResult {
+    let fixture = Fixture::new()?;
+    let mut facets = vec![serde_json::json!({"project":"current", "features":[], "domain":"target"})];
+    for number in 1..8 {
+        let name = format!("other{number}");
+        let path = fixture.root.path().join(&name);
+        std::fs::create_dir_all(&path)?;
+        std::fs::write(
+            path.join("loaf.toml"),
+            format!("[project]\nname='{name}'\nversion='1.0.0'\n[rust]\nname='{name}'\n"),
+        )?;
+        facets.push(serde_json::json!({"project":name, "features":[], "domain":"target"}));
+    }
+    let mut input = serde_json::json!({"index_commit":"0000000000000000000000000000000000000000", "registry_lock":"lock.json", "facets":facets});
+    std::fs::write(&fixture.graph, serde_json::to_vec(&input)?)?;
+    let mut current = Current::read(&fixture.request(), &mut NativeLoafConsumerReport::default())?;
+    let mut graph = NativeLoafGraph::default();
+    let identity = fixture.publish(&current, &mut graph, &[])?;
+    let unit = graph.units.get(&identity).ok_or("unit missing")?;
+    let manifest = crate::native_loaf::selection::source_manifest(unit)?;
+    let checks = crate::native_loaf::tests::InventoryChecks::default();
+    tracing::subscriber::with_default(checks.clone(), || -> TestResult {
+        for _ in 0..8 {
+            assert!(current.matches_local(&unit.record.source, &manifest)?);
+        }
+        for name in std::iter::once("current".to_string()).chain((1..8).map(|number| format!("other{number}"))) {
+            let candidates = current.current_candidates(&fixture.request(), &graph.select(&[])?, &name)?;
+            assert_eq!(candidates.len(), 1);
+            assert_eq!(candidates[0].loaf, name);
+        }
+        Ok(())
+    })?;
+    assert_eq!(
+        checks.declarations(),
+        8,
+        "one actual declaration read per graph facet, independent of query count"
+    );
+
+    let path = fixture.root.path().join("current/loaf.toml");
+    let original = std::fs::read_to_string(&path)?;
+    let modified = std::fs::metadata(&path)?.modified()?;
+    std::fs::write(&path, original.replace("1.0.0", "1.1.0"))?;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)?
+        .set_times(std::fs::FileTimes::new().set_modified(modified))?;
+    let mut next = Current::read(&fixture.request(), &mut NativeLoafConsumerReport::default())?;
+    assert!(!next.matches_local(&unit.record.source, &manifest)?);
+    assert_eq!(
+        next.current_candidates(&fixture.request(), &graph.select(&[])?, "current")?[0].version,
+        "1.1.0"
+    );
+    std::fs::write(&path, original)?;
+    let duplicate = input["facets"][0].clone();
+    input["facets"].as_array_mut().ok_or("facets missing")?.push(duplicate);
+    std::fs::write(&fixture.graph, serde_json::to_vec(&input)?)?;
+    let mut ambiguous = Current::read(&fixture.request(), &mut NativeLoafConsumerReport::default())?;
+    assert!(!ambiguous.matches_local(&unit.record.source, &manifest)?);
+    assert_eq!(
+        ambiguous
+            .current_candidates(&fixture.request(), &graph.select(&[])?, "current")?
+            .len(),
+        2
+    );
+    Ok(())
+}
+
 /// Preserved-mtime source/compiler edits invalidate the real reuse decision; restoration admits the old generation.
 #[test]
 fn dev7_native_loaf_prepared_source_compiler_edits_and_restoration() -> TestResult {

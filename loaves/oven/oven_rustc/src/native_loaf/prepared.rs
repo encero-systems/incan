@@ -142,6 +142,8 @@ struct Current {
     key: String,
     compiler: CompilerInputs,
     local: LocalSources,
+    /// Authored declarations in graph facet order, shared only within this current-input snapshot.
+    local_declarations: Option<Vec<toml::Value>>,
     tools: current_inputs::NativeToolOwners,
     link: Option<Option<String>>,
     candidates: BTreeMap<String, Vec<CurrentCandidate>>,
@@ -324,6 +326,7 @@ impl Current {
             key,
             compiler,
             local: LocalSources::default(),
+            local_declarations: None,
             tools: Default::default(),
             link: None,
             candidates: BTreeMap::new(),
@@ -585,6 +588,7 @@ impl Current {
         loaf: &str,
     ) -> Result<&[CurrentCandidate]> {
         if !self.candidates.contains_key(loaf) {
+            self.read_local_declarations()?;
             let mut candidates = Vec::new();
             for binding in self.seed.units.iter().filter(|binding| binding.loaf == loaf) {
                 let selected = closure.graph.units.values().find(|unit| {
@@ -612,11 +616,11 @@ impl Current {
                     origin: NativeLoafOrigin::Registry,
                 });
             }
-            for facet in &self.graph.facets {
-                let manifest: toml::Value = toml::from_str(
-                    &std::fs::read_to_string(self.owner.join(&facet.project).join("loaf.toml")).map_err(failed)?,
-                )
-                .map_err(failed)?;
+            for (facet, manifest) in self.graph.facets.iter().zip(
+                self.local_declarations
+                    .as_ref()
+                    .ok_or_else(|| refused("current local declarations missing"))?,
+            ) {
                 let project = manifest
                     .get("project")
                     .ok_or_else(|| refused("current local candidate has no project"))?;
@@ -631,7 +635,7 @@ impl Current {
                         .ok_or_else(|| refused("current local candidate has no version"))?
                         .to_string(),
                     domain: facet.domain.clone(),
-                    features: crate::sdk_closure::native_required_features(&manifest, &facet.features, false)
+                    features: crate::sdk_closure::native_required_features(manifest, &facet.features, false)
                         .map_err(NativeLoafError::Failed)?
                         .into_iter()
                         .collect(),
@@ -653,14 +657,17 @@ impl Current {
 
     /// Compare a selected local unit to its current explicit graph facet using the existing producer mapping.
     fn matches_local(&mut self, source: &super::NativeLoafSource, manifest: &toml::Value) -> Result<bool> {
+        self.read_local_declarations()?;
         let mut found = 0;
-        for facet in &self.graph.facets {
+        for (facet, declaration) in self.graph.facets.iter().zip(
+            self.local_declarations
+                .as_ref()
+                .ok_or_else(|| refused("current local declarations missing"))?,
+        ) {
             if facet.domain != source.domain {
                 continue;
             }
             let path = self.owner.join(&facet.project);
-            let declaration: toml::Value =
-                toml::from_str(&std::fs::read_to_string(path.join("loaf.toml")).map_err(failed)?).map_err(failed)?;
             if declaration
                 .get("project")
                 .and_then(|project| project.get("name"))
@@ -674,7 +681,7 @@ impl Current {
             {
                 continue;
             }
-            let features = crate::sdk_closure::native_required_features(&declaration, &facet.features, false)
+            let features = crate::sdk_closure::native_required_features(declaration, &facet.features, false)
                 .map_err(NativeLoafError::Failed)?;
             if features != source.features.iter().cloned().collect::<BTreeSet<_>>() {
                 continue;
@@ -686,6 +693,29 @@ impl Current {
         }
         Ok(found == 1)
     }
+
+    /// Read each graph facet declaration once for this command, retaining graph order and candidate multiplicity.
+    /// Full source mapping remains independently checked by LocalSources for selected units. A new Current always
+    /// rereads declarations; no persistent observation can hide edits or new compatible candidates.
+    fn read_local_declarations(&mut self) -> Result<()> {
+        if self.local_declarations.is_none() {
+            self.local_declarations = Some(
+                self.graph
+                    .facets
+                    .iter()
+                    .map(|facet| read_local_declaration(&self.owner.join(&facet.project)))
+                    .collect::<Result<Vec<_>>>()?,
+            );
+        }
+        Ok(())
+    }
+}
+
+/// Observe an authored facet declaration independently of its admitted native owner's sealed source manifest.
+fn read_local_declaration(project: &Path) -> Result<toml::Value> {
+    let path = project.join("loaf.toml");
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_rustc::read_current_local_declaration", input = %path.display()).entered();
+    toml::from_str(&std::fs::read_to_string(path).map_err(failed)?).map_err(failed)
 }
 
 /// Canonicalize the complete declaration set by normalized alias, independent of map traversal order.
