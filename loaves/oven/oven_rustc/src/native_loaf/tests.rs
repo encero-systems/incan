@@ -25,6 +25,7 @@ type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 #[derive(Clone, Default)]
 pub(super) struct InventoryChecks {
     calls: Arc<std::sync::atomic::AtomicUsize>,
+    declarations: Arc<std::sync::atomic::AtomicUsize>,
     sequence: Arc<std::sync::atomic::AtomicU64>,
 }
 
@@ -32,6 +33,11 @@ impl InventoryChecks {
     /// Return actual inventory invocations observed within this controlled thread's dispatch.
     pub(super) fn count(&self) -> usize {
         self.calls.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Return actual authored declaration reads observed within this controlled thread's dispatch.
+    pub(super) fn declarations(&self) -> usize {
+        self.declarations.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -46,6 +52,9 @@ impl tracing::Subscriber for InventoryChecks {
         use std::sync::atomic::Ordering;
         if attributes.metadata().name() == "oven_store::verify_materialized_inventory" {
             self.calls.fetch_add(1, Ordering::Relaxed);
+        }
+        if attributes.metadata().name() == "oven_rustc::read_current_local_declaration" {
+            self.declarations.fetch_add(1, Ordering::Relaxed);
         }
         tracing::span::Id::from_u64(self.sequence.fetch_add(1, Ordering::Relaxed) + 1)
     }
