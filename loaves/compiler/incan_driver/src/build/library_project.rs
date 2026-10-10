@@ -50,7 +50,7 @@ use crate::generated_cache::resolve_generated_cargo_target;
 use crate::lock::OvenRustInspectSourceAuthorityRequest;
 #[cfg(feature = "rust_inspect")]
 use crate::lock::RustInspectWorkspaceRequest;
-use crate::lock::resolution::{resolve_lock_context, validate_oven_lock_policy};
+use crate::lock::resolution::resolve_lock_context;
 use crate::lock::{LockResolution, LockResolutionRequest};
 use crate::modules::{
     build_source_map, collect_rust_dependency_uses, format_dependency_error,
@@ -482,10 +482,194 @@ pub fn prepare_library_project_with_caller_facet(
         authority_context,
         caller_facet,
         None,
+        None,
     )? {
         LibraryPreparation::Project(project) => Ok(*project),
         LibraryPreparation::Native { .. } => Err(CliError::failure("unexpected native library publication")),
     }
+}
+
+/// Explicit ordinary dependency/session inputs retained by the invoking publisher (#1337/#1698).
+///
+/// The existing native SDK capability is a temporary compatibility requirement of current identity, inspection
+/// and profile planners. This input grants no new namespace or macro authority and is not SDK-free preparation.
+pub(crate) struct AdmittedLibraryPreparation {
+    session: CompilationSession,
+    temporary_native_sdk_context: Arc<super::NativeSdkCommandContext>,
+}
+
+impl AdmittedLibraryPreparation {
+    /// Retain actual admitted dependencies and the original native admission without discovering an SDK.
+    pub(crate) fn new(
+        session: CompilationSession,
+        temporary_native_sdk_context: Arc<super::NativeSdkCommandContext>,
+    ) -> CliResult<Self> {
+        let dependencies = session
+            .admitted_library_dependencies()
+            .ok_or_else(|| CliError::failure("explicit ordinary preparation requires admitted library dependencies"))?;
+        dependencies.verify()?;
+        temporary_native_sdk_context.verify()?;
+        Ok(Self {
+            session,
+            temporary_native_sdk_context,
+        })
+    }
+
+    /// Borrow the original admitted session for the invoking publisher's source/lock finalization boundary.
+    pub(crate) fn session(&self) -> &CompilationSession {
+        &self.session
+    }
+
+    /// Borrow the explicitly temporary native SDK admission without reacquiring or discovering another owner set.
+    pub(crate) fn temporary_native_sdk_context(&self) -> &Arc<super::NativeSdkCommandContext> {
+        &self.temporary_native_sdk_context
+    }
+}
+
+/// A real prepared project borrowing the caller's original session/native leases until publication finishes.
+pub(crate) struct PreparedAdmittedLibrary<'a> {
+    project: PreparedLibraryProject,
+    _inputs: &'a AdmittedLibraryPreparation,
+}
+
+impl PreparedAdmittedLibrary<'_> {
+    /// Borrow the ordinary project produced by the shared generator and current-profile planners.
+    pub(crate) fn project(&self) -> &PreparedLibraryProject {
+        &self.project
+    }
+
+    /// Finalize ordinary publication without releasing the invoking command's original dependency owners.
+    pub(crate) fn project_mut(&mut self) -> &mut PreparedLibraryProject {
+        &mut self.project
+    }
+}
+
+/// Prepare an ordinary package from explicit original admissions without discovering package or SDK authority.
+///
+/// Legacy CLI callers retain their discovery route. Official standard-source publication additionally requires
+/// the genuine namespace issuer, which this entry point cannot manufacture.
+pub(crate) fn prepare_admitted_library_project<'a>(
+    inputs: &'a AdmittedLibraryPreparation,
+    output_dir: Option<&str>,
+    package_features: &FeatureSelection,
+    include_interop_execution: bool,
+    oven_plan_mode: OvenProjectPlanMode,
+    authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
+) -> CliResult<PreparedAdmittedLibrary<'a>> {
+    let manifest = inputs
+        .session
+        .manifest
+        .as_ref()
+        .ok_or_else(|| CliError::failure("explicit ordinary preparation has no project manifest"))?;
+    let entry = validate_library_entrypoint(manifest)?;
+    let entry = entry
+        .to_str()
+        .ok_or_else(|| CliError::failure("invalid ordinary library entry path"))?;
+    let project = match prepare_library_project_with_context(
+        Some(entry),
+        output_dir,
+        CargoPolicy::default(),
+        package_features,
+        None,
+        Vec::new(),
+        false,
+        false,
+        None,
+        true,
+        include_interop_execution,
+        oven_plan_mode,
+        authority_context,
+        None,
+        None,
+        Some(inputs),
+    )? {
+        LibraryPreparation::Project(project) => *project,
+        LibraryPreparation::Native { .. } => return Err(CliError::failure("unexpected native library publication")),
+    };
+    Ok(PreparedAdmittedLibrary {
+        project,
+        _inputs: inputs,
+    })
+}
+
+/// Reconstruct current ordinary parsing inputs from the original private dependency capability, refusing drift.
+fn current_admitted_library_session(
+    input: &CompilationSession,
+    entry: &Path,
+    package_features: &FeatureSelection,
+) -> CliResult<CompilationSession> {
+    let dependencies = input
+        .admitted_library_dependencies()
+        .ok_or_else(|| CliError::failure("explicit ordinary preparation requires admitted library dependencies"))?;
+    dependencies.verify()?;
+    if input.sdk_inventory.is_some()
+        || input.sdk_components.is_some()
+        || !Arc::ptr_eq(&input.provider_plan, dependencies.provider_plan())
+    {
+        return Err(CliError::failure(
+            "explicit ordinary session contains competing provider authority",
+        ));
+    }
+    let current = CompilationSession::discover_with_admitted_library_dependencies(
+        entry,
+        package_features,
+        Arc::clone(dependencies),
+    )?;
+    let input_manifest = input
+        .manifest
+        .as_ref()
+        .ok_or_else(|| CliError::failure("explicit ordinary session has no project manifest"))?;
+    let current_manifest = current
+        .manifest
+        .as_ref()
+        .ok_or_else(|| CliError::failure("current ordinary session has no project manifest"))?;
+    if std::fs::canonicalize(input_manifest.path()).map_err(|error| CliError::failure(error.to_string()))?
+        != std::fs::canonicalize(current_manifest.path()).map_err(|error| CliError::failure(error.to_string()))?
+        || input.source_root != current.source_root
+    {
+        return Err(CliError::failure(
+            "explicit ordinary session belongs to a different project",
+        ));
+    }
+    let input_features = input
+        .package_feature_plan
+        .as_ref()
+        .ok_or_else(|| CliError::failure("explicit ordinary session has no feature authority"))?;
+    let current_features = current
+        .package_feature_plan
+        .as_ref()
+        .ok_or_else(|| CliError::failure("current ordinary session has no feature authority"))?;
+    if input.active_features != current.active_features
+        || input.declared_features != current.declared_features
+        || admitted_feature_contract(input_features) != admitted_feature_contract(current_features)
+    {
+        return Err(CliError::failure(
+            "explicit ordinary session features differ from current selection",
+        ));
+    }
+    Ok(current)
+}
+
+/// Compare the complete resolved feature/edge selection without rereading source trees or activation explanations.
+/// Current authored source observation remains the metadata preparation's separate production responsibility.
+fn admitted_feature_contract(plan: &incan_provider::PackageFeaturePlan) -> serde_json::Value {
+    let packages = plan
+        .packages()
+        .map(|state| {
+            serde_json::json!({
+                "name": state.package_name, "root": state.project_root,
+                "manifest": state.feature_manifest_path,
+                "active_dependencies": state.active_dependencies,
+                "features": {
+                    "active": state.features.active_features,
+                    "optional": state.features.active_optional_dependencies,
+                    "dependency_features": state.features.dependency_features,
+                    "components": state.features.required_sdk_components,
+                },
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({ "packages": packages, "edges": plan.edges().collect::<Vec<_>>() })
 }
 
 /// Products of a library preparation, keeping native publication separate from project execution plans.
@@ -529,6 +713,7 @@ pub(crate) fn prepare_native_sdk_component(
         None,
         None,
         Some(context),
+        None,
     )
 }
 
@@ -550,8 +735,30 @@ fn prepare_library_project_with_context(
     authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
     caller_facet: Option<&CallerFacetRequest>,
     native_sdk: Option<&crate::build::native_sdk::NativeSdkPublicationContext<'_>>,
+    admitted: Option<&AdmittedLibraryPreparation>,
 ) -> CliResult<LibraryPreparation> {
     let mut authority_context = authority_context;
+    let explicit_native_context = admitted.map(|input| Arc::clone(&input.temporary_native_sdk_context));
+    if let Some(context) = &explicit_native_context {
+        if !normal_oven || native_sdk.is_some() {
+            return Err(CliError::failure(
+                "explicit ordinary admission requires the ordinary Oven route",
+            ));
+        }
+        context.verify()?;
+        if let Some(authority) = authority_context.as_deref_mut() {
+            if authority
+                .native_sdk_context
+                .as_ref()
+                .is_some_and(|selected| !Arc::ptr_eq(selected, context))
+            {
+                return Err(CliError::failure(
+                    "explicit ordinary preparation has competing native admission",
+                ));
+            }
+            authority.native_sdk_context = Some(Arc::clone(context));
+        }
+    }
     let prepare_start = Instant::now();
     let mut timings_ms = BTreeMap::new();
     let source_load_start = Instant::now();
@@ -573,7 +780,9 @@ fn prepare_library_project_with_context(
         .unwrap_or_else(|| "0.1.0".to_string());
 
     let lib_entry = validate_library_entrypoint(&manifest)?;
-    let compilation_session = if let Some(context) = native_sdk {
+    let compilation_session = if let Some(input) = admitted {
+        current_admitted_library_session(&input.session, &lib_entry, package_features)?
+    } else if let Some(context) = native_sdk {
         CompilationSession::discover_for_native_sdk_component(
             &lib_entry,
             context.inventory,
@@ -595,12 +804,13 @@ fn prepare_library_project_with_context(
         && !cargo_no_default_features
         && !cargo_all_features
     {
-        metadata_replay::MetadataPreparation::observe(
+        metadata_replay::MetadataPreparation::observe_with_native_context(
             &manifest,
             &compilation_session,
             &out_dir,
             native_sdk,
             authority_context.as_deref_mut(),
+            explicit_native_context.clone(),
         )?
     } else {
         None
@@ -748,14 +958,17 @@ fn prepare_library_project_with_context(
                 "Oven Alpha normal library builds do not accept Cargo feature controls; use Incan package features instead",
             ));
         }
-        validate_oven_lock_policy(
-            &project_root,
-            Some(&manifest),
-            &lib_entry,
-            &cargo_features,
-            &cargo_policy,
-            package_features,
-            sdk_profile_override,
+        crate::lock::resolution::validate_oven_lock_policy_with_session(
+            crate::lock::OvenLockValidationRequest {
+                project_root: &project_root,
+                manifest: Some(&manifest),
+                entry_file: &lib_entry,
+                cargo_features: &cargo_features,
+                cargo_policy: &cargo_policy,
+                package_features,
+                sdk_profile_override,
+            },
+            &compilation_session,
         )?;
     }
     let (
@@ -840,6 +1053,8 @@ fn prepare_library_project_with_context(
     let native_admission_start = Instant::now();
     let native_sdk_context = if let Some(preparation) = metadata_preparation.as_ref() {
         preparation.native_context.clone()
+    } else if let Some(context) = &explicit_native_context {
+        Some(Arc::clone(context))
     } else if normal_oven && native_sdk.is_none() {
         match authority_context.as_deref_mut() {
             Some(context) => context.native_sdk_context()?,
@@ -1690,3 +1905,6 @@ fn checked_requirement_contract(
         },
     )
 }
+
+#[cfg(test)]
+mod admitted_preparation_tests;
