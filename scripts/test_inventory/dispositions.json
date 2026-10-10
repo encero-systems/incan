@@ -11828,6 +11828,14 @@
       "split_required": false,
       "split_target": "",
       "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/native_loaf/request_observation/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Actual complete producer request, original native owners, facts, graph and source freshness; semantic observation refusals are distinct from physical preparation.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
     }
   },
   "fixture_roots": {
