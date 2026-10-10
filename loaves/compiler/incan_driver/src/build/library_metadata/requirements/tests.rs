@@ -39,6 +39,7 @@ fn contract(name: &str, root: &std::path::Path) -> Result<CheckedLibraryRequirem
         rust_abi_queries: BTreeSet::new(),
         rust_extern_paths: vec!["companion::scale".to_string()],
         backend: None,
+        native_demands: super::CheckedNativeDemands::default(),
     })?)
 }
 

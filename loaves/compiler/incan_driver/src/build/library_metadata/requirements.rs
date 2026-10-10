@@ -21,12 +21,19 @@ use serde::{Deserialize, Serialize};
 use crate::backend::selection::BackendExecutionReceipt;
 use crate::error::{CliError, CliResult};
 
+pub(crate) mod native_demands;
+pub use native_demands::CheckedNativeDemands;
+pub(crate) use native_demands::capture_checked_native_demands;
+
 /// Current preparation requirements captured by the same successful checked library compilation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CheckedLibraryRequirements {
     /// Independent planning contract version; old or incomplete knowledge is a miss, never an empty requirement set.
     pub schema_version: u32,
+    /// Explicit observed native demands; old payloads deserialize to unknown and cannot certify ordinary coverage.
+    #[serde(default)]
+    pub native_demands: CheckedNativeDemands,
     /// Exact modules used by checked source, projected through this command's admitted provider catalog on replay.
     pub used_module_paths: BTreeSet<Vec<String>>,
     /// Source-derived linking facets before current provider requirements are applied.
@@ -123,6 +130,8 @@ pub(crate) struct CheckedLibraryCapture<'a> {
     pub rust_abi_queries: BTreeSet<String>,
     pub rust_extern_paths: Vec<String>,
     pub backend: Option<BackendExecutionReceipt>,
+    /// Native demand observation captured from this same successfully checked module closure.
+    pub native_demands: CheckedNativeDemands,
 }
 
 impl CheckedLibraryRequirements {
@@ -141,6 +150,7 @@ impl CheckedLibraryRequirements {
             rust_abi_queries,
             rust_extern_paths,
             backend,
+            native_demands,
         } = inputs;
         let name = project
             .project
@@ -163,7 +173,8 @@ impl CheckedLibraryRequirements {
             })
             .collect::<CliResult<Vec<_>>>()?;
         let result = Self {
-            schema_version: 1,
+            schema_version: 2,
+            native_demands,
             used_module_paths,
             stdlib_facets: requirements.stdlib_facets.clone(),
             dependencies: requirements
@@ -202,9 +213,21 @@ impl CheckedLibraryRequirements {
 
     /// Validate the complete contract before using any requirement or checked export.
     pub fn validate(&self) -> CliResult<()> {
-        if self.schema_version != 1 || self.entry_module.is_empty() || self.source_modules.is_empty() {
+        if !matches!(self.schema_version, 1 | 2) || self.entry_module.is_empty() || self.source_modules.is_empty() {
             return Err(invalid("missing or unsupported checked library planning authority"));
         }
+        self.native_demands.validate_contract(
+            &self.source_modules,
+            &self.used_module_paths,
+            &self.rust_abi_queries,
+            &self
+                .dependencies
+                .iter()
+                .chain(&self.sdk_path_dependencies)
+                .map(|dependency| dependency.crate_name.clone())
+                .collect(),
+            &self.stdlib_facets.iter().cloned().collect(),
+        )?;
         for path in self
             .source_modules
             .keys()
@@ -233,6 +256,22 @@ impl CheckedLibraryRequirements {
             backend.verify_identity().map_err(|error| invalid(error.to_string()))?;
         }
         Ok(())
+    }
+
+    /// Require explicit current-version checked demand facts before ordinary support-only planning or replay.
+    pub(crate) fn require_support_only_native(&self) -> CliResult<()> {
+        self.validate()?;
+        if self.schema_version != 2
+            || !self.used_module_paths.is_empty()
+            || !self.imports.is_empty()
+            || !self.source_inline_crates.is_empty()
+            || !self.rust_extern_paths.is_empty()
+        {
+            return Err(invalid(
+                "ordinary native support-only planning lacks complete checked demand coverage",
+            ));
+        }
+        self.native_demands.require_support_only()
     }
 
     /// Restore current source-derived requirements, then let the existing provider planner add current coordinates.
