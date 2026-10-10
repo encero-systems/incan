@@ -4,6 +4,37 @@ use oven_rustc::rustc as native_rustc;
 #[path = "common/generated_output_store_cases.rs"]
 mod generated_output_store_cases;
 
+/// A missing inspection owner remains a typed cache miss; malformed coordinates remain hard failures.
+#[test]
+fn missing_project_inspection_owner_preserves_store_error() -> Result<(), Box<dyn std::error::Error>> {
+    use native_rustc::{OvenProjectInspectionAuthorityRef, OvenRustcError, load_project_inspection_authority};
+    use oven_store::store::{OvenStore, OvenStoreError, OvenStoreLimits};
+    let root = tempfile::tempdir()?;
+    let store = OvenStore::new(root.path(), OvenStoreLimits::new(1024, 1024, 1024));
+    let identity = oven_store::digest_bytes(b"missing inspection owner");
+    let reference = OvenProjectInspectionAuthorityRef {
+        identity,
+        receipt_identity: oven_store::digest_bytes(b"receipt"),
+        build_unit_identity: oven_store::digest_bytes(b"build unit"),
+    };
+    let missing = load_project_inspection_authority(&store, &reference, "project", "source", "compiler");
+    assert!(matches!(
+        missing,
+        Err(OvenRustcError::Store(OvenStoreError::Io { path, source }))
+            if source.kind() == std::io::ErrorKind::NotFound
+                && path.parent() == Some(root.path().join("entries").as_path())
+    ));
+    let malformed = OvenProjectInspectionAuthorityRef {
+        identity: "../../outside".into(),
+        ..reference
+    };
+    assert!(matches!(
+        load_project_inspection_authority(&store, &malformed, "project", "source", "compiler"),
+        Err(OvenRustcError::PlanSelection { .. })
+    ));
+    Ok(())
+}
+
 /// Direct rebuilds preserve immutable aliases and leave admitted outputs intact on compilation failure.
 #[test]
 fn direct_binary_rebuild_replaces_readonly_output_and_preserves_failed_build() -> Result<(), Box<dyn std::error::Error>>

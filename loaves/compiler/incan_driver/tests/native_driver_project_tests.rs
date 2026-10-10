@@ -1109,6 +1109,75 @@ fn assert_native_legacy_bytes(name: &str, program: &str, stdout: &[u8]) -> Resul
     Ok(())
 }
 
+/// An explicitly typed function pointer borrows its list input without consuming the caller's list.
+#[test]
+fn named_list_function_pointer_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    assert_native_legacy_bytes(
+        "named_list_function_pointer",
+        r#"def total(items: list[int]) -> int:
+    mut sum = 0
+    for item in items:
+        sum += item
+    return sum
+
+def main() -> None:
+    values = [1, 2, 3]
+    f: (list[int]) -> int = total
+    println(f(values))
+    println(len(values))
+"#,
+        b"6\n3\n",
+    )
+}
+
+/// A callable parameter receives a shared view and preserves its caller's list after invocation.
+#[test]
+fn list_callable_parameter_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    assert_native_legacy_bytes(
+        "list_callable_parameter",
+        r#"def total(items: list[int]) -> int:
+    mut sum = 0
+    for item in items:
+        sum += item
+    return sum
+
+def apply(f: (list[int]) -> int, items: list[int]) -> int:
+    return f(items)
+
+def main() -> None:
+    values = [1, 2, 3]
+    println(apply(total, values))
+    println(len(values))
+"#,
+        b"6\n3\n",
+    )
+}
+
+/// Local and returned closures borrow list inputs on each call while retaining their scalar captures.
+#[test]
+fn list_closure_inputs_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    assert_native_legacy_bytes(
+        "list_closure_inputs",
+        r#"def apply(f: (list[int]) -> int, items: list[int]) -> int:
+    return f(items)
+
+def counter(offset: int) -> (list[int]) -> int:
+    return (xs) => len(xs) + offset
+
+def main() -> None:
+    values = [1, 2, 3]
+    size: (list[int]) -> int = (xs) => len(xs)
+    println(size(values))
+    println(apply(size, [4, 5]))
+    count = counter(4)
+    println(count([6]))
+    println(count(values))
+    println(len(values))
+"#,
+        b"3\n2\n5\n7\n3\n",
+    )
+}
+
 /// Nested empty list literals retain checker-proven element types and match legacy bytes.
 #[test]
 fn direct_route_nested_empty_lists_match_legacy() -> Result<(), Box<dyn std::error::Error>> {

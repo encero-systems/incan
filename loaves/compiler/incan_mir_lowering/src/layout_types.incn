@@ -60,4 +60,5 @@ pub def collection_leaf(ty: PlanType) -> Result[ListLeaf, str]:
         PlanType.Tuple(elements) => return Ok(ListLeaf.Tuple(elements))
         PlanType.Model(owner, name) => return Ok(ListLeaf.Model(owner, name))
         PlanType.Enum(owner, name) => return Ok(ListLeaf.Enum(owner, name))
+        PlanType.FunctionPointer(signature) => return Ok(ListLeaf.FunctionPointer(signature))
         _ => return Err("unsupported Body IR collection element representation")

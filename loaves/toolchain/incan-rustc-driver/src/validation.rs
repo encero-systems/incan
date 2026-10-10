@@ -112,6 +112,7 @@ enum Scalar {
 /// Comparison mirror of scalar and tuple leaves; the public plan remains Incan-authored.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Leaf {
+    FunctionPointer(Vec<Scalar>),
     Int,
     Float,
     Bool,
@@ -145,6 +146,7 @@ impl Leaf {
             ListLeaf::Unit => Leaf::Unit,
             ListLeaf::Decimal => Leaf::Decimal,
             ListLeaf::FrozenStr => Leaf::FrozenStr,
+            ListLeaf::FunctionPointer(signature) => Leaf::FunctionPointer(signature.iter().map(scalar).collect()),
         }
     }
 }
@@ -180,6 +182,7 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::Dict(key, value) => Scalar::Dict(Leaf::of(key), Leaf::of(value)),
         PlanType::DictRef(key, value) => Scalar::DictRef(Leaf::of(key), Leaf::of(value)),
         PlanType::DictMutRef(key, value) => Scalar::DictMutRef(Leaf::of(key), Leaf::of(value)),
+        PlanType::CallableArguments(inputs) => Scalar::Tuple(inputs.iter().map(scalar).collect()),
         PlanType::Tuple(elements) => Scalar::Tuple(
             elements
                 .iter()
@@ -951,15 +954,27 @@ fn external_signature_type(ty: &Scalar) -> bool {
         )
 }
 
-/// A callable object's call packs its inputs into one flat tuple, so inputs and the result are scalars or owned text.
+/// Callable objects accept scalar/text inputs and shared collection views; their result remains scalar or owned text.
 fn callable_object_signature(signature: &[Scalar]) -> bool {
-    !signature.is_empty()
-        && signature.iter().all(|ty| {
-            matches!(
-                ty,
-                Scalar::Int | Scalar::Float | Scalar::Bool | Scalar::Unit | Scalar::String
-            )
-        })
+    let Some((result, inputs)) = signature.split_last() else {
+        return false;
+    };
+    matches!(
+        result,
+        Scalar::Int | Scalar::Float | Scalar::Bool | Scalar::Unit | Scalar::String
+    ) && inputs.iter().all(|ty| {
+        matches!(
+            ty,
+            Scalar::Int
+                | Scalar::Float
+                | Scalar::Bool
+                | Scalar::Unit
+                | Scalar::String
+                | Scalar::ListRef(_, _)
+                | Scalar::SetRef(_)
+                | Scalar::DictRef(_, _)
+        )
+    })
 }
 
 /// Pin a closure constructor to the one shape its native body implements: rustc builds that body from the injected
@@ -1196,7 +1211,7 @@ fn signature(plan: &Plan, function: &Function, callee: &Callee) -> Result<(Vec<S
             if !callable_object_signature(&signature) {
                 return Err(invalid(
                     function,
-                    "callable-object call requires flat inputs and a result",
+                    "callable-object call requires admitted inputs and a result",
                 ));
             }
             let (result, inputs) = signature
@@ -1419,6 +1434,19 @@ fn model(plan: &Plan, index: i64) -> Option<&crate::plan::ModelDeclaration> {
 /// Require flat scalar/text tuple layouts and consistent nominal declaration identities.
 fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
     match ty {
+        PlanType::CallableArguments(inputs) => {
+            let mut signature: Vec<_> = inputs.iter().map(scalar).collect();
+            signature.push(Scalar::Unit);
+            if !callable_object_signature(&signature) {
+                return Err(PlanError::Invalid {
+                    function: "callable arguments".into(),
+                    reason: "argument tuple contains an unsupported callable input".into(),
+                });
+            }
+            for input in inputs {
+                validate_model_type(plan, input)?;
+            }
+        }
         PlanType::List(leaf, _)
         | PlanType::ListRef(leaf, _)
         | PlanType::ListMutRef(leaf, _)
@@ -1484,8 +1512,13 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
     {
         return Err(PlanError::Invalid {
             function: "callable object".into(),
-            reason: "callable-object signature requires flat inputs and a final return type".into(),
+            reason: "callable-object signature requires admitted inputs and a final return type".into(),
         });
+    }
+    if let PlanType::Closure(signature) | PlanType::ClosureRef(signature) = ty {
+        for component in signature {
+            validate_model_type(plan, component)?;
+        }
     }
     if let PlanType::FunctionPointer(signature) = ty {
         if signature.is_empty() || !signature.iter().all(|ty| source_signature_type(&scalar(ty))) {

@@ -40,6 +40,7 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
         return ty;
     }
     let kind = match kind {
+        PlanType::CallableArguments(inputs) => ast::TyKind::Tup(inputs.iter().map(|input| ty(input, span)).collect()),
         PlanType::Tuple(elements) => ast::TyKind::Tup(
             elements
                 .iter()
@@ -48,19 +49,18 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
         ),
         PlanType::Decimal => {
             let mut path = ast::Path::from_ident(ident("incan_native_runtime", span));
-            path.segments.push(ast::PathSegment::from_ident(ident("DecimalCarrier", span)));
+            path.segments
+                .push(ast::PathSegment::from_ident(ident("DecimalCarrier", span)));
             ast::TyKind::Path(None, path)
         }
         PlanType::FrozenStr => {
             let mut path = ast::Path::from_ident(ident("incan_native_runtime", span));
-            path.segments.push(ast::PathSegment::from_ident(ident("FrozenCarrier", span)));
+            path.segments
+                .push(ast::PathSegment::from_ident(ident("FrozenCarrier", span)));
             ast::TyKind::Path(None, path)
         }
         PlanType::List(leaf, depth) => {
-            let mut element = ty(
-                &list_leaf_type((*leaf).clone()),
-                span,
-            );
+            let mut element = ty(&list_leaf_type((*leaf).clone()), span);
             for _ in 0..*depth {
                 let mut path = ast::Path::from_ident(ident("Vec", span));
                 path.segments[0].args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
@@ -402,13 +402,17 @@ pub(crate) fn model_items(
             ast::ModKind::Loaded(
                 thin_vec![declaration],
                 ast::Inline::Yes,
-                ast::ModSpans { inner_span: span, inject_use_span: span },
+                ast::ModSpans {
+                    inner_span: span,
+                    inject_use_span: span,
+                },
             ),
         ),
         span,
     );
     let mut path = ast::Path::from_ident(ident(&namespace, span));
-    path.segments.push(ast::PathSegment::from_ident(ident(&model.source_name, span)));
+    path.segments
+        .push(ast::PathSegment::from_ident(ident(&model.source_name, span)));
     let mut alias = item(
         ast::ItemKind::TyAlias(Box::new(ast::TyAlias {
             defaultness: ast::Defaultness::Implicit,
@@ -436,7 +440,11 @@ fn specialized_model(model: &crate::plan::ModelDeclaration) -> bool {
 
 /// Choose the validated source identifier only when a distinct concrete layout alias is retained.
 fn model_source_name(model: &crate::plan::ModelDeclaration) -> &str {
-    if specialized_model(model) { &model.source_name } else { &model.name }
+    if specialized_model(model) {
+        &model.source_name
+    } else {
+        &model.name
+    }
 }
 
 /// Inject the checked layout and field order; a specialized struct is public inside its private namespace.
@@ -609,7 +617,10 @@ pub fn derive_attribute(generator: &ast::attr::AttrIdGenerator, name: &str, span
     };
     let mut tokens = Vec::new();
     if name.starts_with("serde::") {
-        tokens.push(AttrTokenTree::Token(Token::new(TokenKind::PathSep, span), Spacing::Alone));
+        tokens.push(AttrTokenTree::Token(
+            Token::new(TokenKind::PathSep, span),
+            Spacing::Alone,
+        ));
     }
     if matches!(name, "FieldInfo" | "IncanClass") {
         tokens.push(AttrTokenTree::Token(
@@ -623,9 +634,15 @@ pub fn derive_attribute(generator: &ast::attr::AttrIdGenerator, name: &str, span
     }
     for (index, segment) in name.split("::").enumerate() {
         if index != 0 {
-            tokens.push(AttrTokenTree::Token(Token::new(TokenKind::PathSep, span), Spacing::Alone));
+            tokens.push(AttrTokenTree::Token(
+                Token::new(TokenKind::PathSep, span),
+                Spacing::Alone,
+            ));
         }
-        tokens.push(AttrTokenTree::Token(Token::from_ast_ident(ident(segment, span)), Spacing::Alone));
+        tokens.push(AttrTokenTree::Token(
+            Token::from_ast_ident(ident(segment, span)),
+            Spacing::Alone,
+        ));
     }
     let arguments = AttrTokenStream::new(tokens);
     let attribute_tokens = LazyAttrTokenStream::new_direct(AttrTokenStream::new(vec![
@@ -693,12 +710,7 @@ fn hashed_type(name: &str, leaves: &[&ListLeaf], span: Span) -> Box<ast::Ty> {
         span,
         args: leaves
             .iter()
-            .map(|leaf| {
-                ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(
-                    &list_leaf_type((*leaf).clone()),
-                    span,
-                )))
-            })
+            .map(|leaf| ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(&list_leaf_type((*leaf).clone()), span))))
             .collect(),
     })));
     path.segments.push(segment);
