@@ -59,9 +59,33 @@ fn collect_and_publish_project_lock_with_evidence(
     package_features: &FeatureSelection,
     sdk_profile_override: Option<&str>,
 ) -> CliResult<(ProjectLockContext, PublishedLockFile)> {
+    collect_and_publish_project_lock_with_session(
+        manifest,
+        entry_file,
+        cargo_features,
+        package_features,
+        sdk_profile_override,
+        None,
+    )
+}
+
+/// Use an original admitted command session in the canonical collector without discovering another session.
+fn collect_and_publish_project_lock_with_session(
+    manifest: &ProjectManifest,
+    entry_file: Option<&Path>,
+    cargo_features: &CargoFeatureSelection,
+    package_features: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
+    command_session: Option<&CompilationSession>,
+) -> CliResult<(ProjectLockContext, PublishedLockFile)> {
     if let Some(workspace) =
         WorkspaceGraph::discover(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?
     {
+        if command_session.is_some() {
+            return Err(CliError::failure(
+                "admitted ordinary lock publication requires standalone project authority",
+            ));
+        }
         let lock_path = workspace.root().join(LOCK_FILENAME);
         let publication_lock = oven_model::lock::acquire_publication_lock(&lock_path).map_err(|error| {
             CliError::failure(format!("failed to acquire workspace lock publication guard: {error}"))
@@ -92,7 +116,7 @@ fn collect_and_publish_project_lock_with_evidence(
         package_features,
         sdk_profile_override,
         None,
-        None,
+        command_session,
     )?
     .ok_or_else(|| CliError::failure("incan lock requires a FILE argument or at least one [project.scripts] entry"))?;
     let (_, publication) = generate_oven_lockfile_with_evidence(
@@ -559,13 +583,52 @@ pub fn publish_oven_project_lock(
     entrypoint: &Path,
     package_features: &FeatureSelection,
 ) -> CliResult<PublishedOvenProjectLock> {
+    publish_oven_project_lock_with_context(project_root, entrypoint, package_features, None)
+}
+
+/// Publish through the original canonical writer using a genuine current ordinary command session.
+/// Workspace siblings require separate admitted authority and are deliberately refused by this migration entry.
+pub(crate) fn publish_oven_project_lock_with_admitted_session(
+    project_root: &Path,
+    entrypoint: &Path,
+    package_features: &FeatureSelection,
+    input: &CompilationSession,
+) -> CliResult<PublishedOvenProjectLock> {
+    let current = crate::build::library_project::current_admitted_library_session(input, entrypoint, package_features)?;
+    let current_root = current
+        .manifest
+        .as_ref()
+        .ok_or_else(|| CliError::failure("admitted ordinary lock session has no manifest"))?
+        .project_root();
+    if fs::canonicalize(current_root).map_err(|error| CliError::failure(error.to_string()))?
+        != fs::canonicalize(project_root).map_err(|error| CliError::failure(error.to_string()))?
+    {
+        return Err(CliError::failure(
+            "admitted ordinary lock publication names a different project",
+        ));
+    }
+    publish_oven_project_lock_with_context(project_root, entrypoint, package_features, Some(&current))
+}
+
+/// Share manifest validation, collection and exact writer-owned publication evidence across both caller routes.
+fn publish_oven_project_lock_with_context(
+    project_root: &Path,
+    entrypoint: &Path,
+    package_features: &FeatureSelection,
+    command_session: Option<&CompilationSession>,
+) -> CliResult<PublishedOvenProjectLock> {
     let manifest = ProjectManifest::discover(project_root)
         .map_err(|error| CliError::failure(error.to_string()))?
         .ok_or_else(|| CliError::failure("explicit Oven project bake requires a loaf.toml project"))?;
     enforce_project_toolchain_constraint(&manifest)?;
     let cargo_features = CargoFeatureSelection::default().normalized();
-    let (outcome, publication) =
-        collect_and_publish_project_lock_for_provider_bake(&manifest, entrypoint, &cargo_features, package_features)?;
+    let (outcome, publication) = collect_and_publish_project_lock_for_provider_bake(
+        &manifest,
+        entrypoint,
+        &cargo_features,
+        package_features,
+        command_session,
+    )?;
     let project_dependency_surface = match outcome {
         ProviderBakeLockPublication::Published {
             project_dependency_surface,
@@ -603,16 +666,18 @@ fn collect_and_publish_project_lock_for_provider_bake(
     entrypoint: &Path,
     cargo_features: &CargoFeatureSelection,
     package_features: &FeatureSelection,
+    command_session: Option<&CompilationSession>,
 ) -> CliResult<(ProviderBakeLockPublication, PublishedLockFile)> {
     let Some(workspace) =
         WorkspaceGraph::discover(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?
     else {
-        let (context, publication) = collect_and_publish_project_lock_with_evidence(
+        let (context, publication) = collect_and_publish_project_lock_with_session(
             manifest,
             Some(entrypoint),
             cargo_features,
             package_features,
             None,
+            command_session,
         )?;
         let project_dependency_surface = context.resolved.clone();
         return Ok((
@@ -622,6 +687,11 @@ fn collect_and_publish_project_lock_for_provider_bake(
             publication,
         ));
     };
+    if command_session.is_some() {
+        return Err(CliError::failure(
+            "admitted ordinary lock publication requires standalone project authority",
+        ));
+    }
     let lock_path = workspace.root().join(LOCK_FILENAME);
     let publication_lock = oven_model::lock::acquire_publication_lock(&lock_path)
         .map_err(|error| CliError::failure(format!("failed to acquire workspace lock publication guard: {error}")))?;
@@ -907,3 +977,6 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod admitted_session_tests;

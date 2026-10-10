@@ -95,6 +95,32 @@ use oven_rustc::loaf::OVEN_SOURCE_COMPILER_VOCAB_SUPPORT_BUILD_INPUT;
 use oven_rustc::rustc::{resolve_active_rustc, rustc_host_target, rustc_identity};
 use sha2::Digest as _;
 
+#[cfg(test)]
+thread_local! {
+    static ORDINARY_LIBRARY_PREPARATION_BRANCHES: std::cell::Cell<(usize, usize)> = const {
+        std::cell::Cell::new((0, 0))
+    };
+}
+
+/// Reset actual ordinary preparation branch counts on the invoking test thread.
+#[cfg(test)]
+pub(crate) fn reset_ordinary_library_preparation_branches() {
+    ORDINARY_LIBRARY_PREPARATION_BRANCHES.set((0, 0));
+}
+
+/// Return source-loading and admitted-replay branch visits on the invoking test thread.
+#[cfg(test)]
+pub(crate) fn ordinary_library_preparation_branches() -> (usize, usize) {
+    ORDINARY_LIBRARY_PREPARATION_BRANCHES.get()
+}
+
+/// Count the actual pre-frontend decision, without timing or pretending that lock collection avoids source parsing.
+#[cfg(test)]
+fn record_ordinary_library_preparation_branch(replayed: bool) {
+    let (fresh, replay) = ORDINARY_LIBRARY_PREPARATION_BRANCHES.get();
+    ORDINARY_LIBRARY_PREPARATION_BRANCHES.set((fresh + usize::from(!replayed), replay + usize::from(replayed)));
+}
+
 /// Checked public metadata shared by source inspection and durable library publication.
 struct CheckedPublicLibraryMetadata {
     manifest: LibraryManifest,
@@ -593,7 +619,7 @@ pub(crate) fn prepare_admitted_library_project<'a>(
 }
 
 /// Reconstruct current ordinary parsing inputs from the original private dependency capability, refusing drift.
-fn current_admitted_library_session(
+pub(crate) fn current_admitted_library_session(
     input: &CompilationSession,
     entry: &Path,
     package_features: &FeatureSelection,
@@ -818,6 +844,8 @@ fn prepare_library_project_with_context(
     if let Some(preparation) = metadata_preparation.as_ref()
         && let Some(selected) = preparation.select()?
     {
+        #[cfg(test)]
+        record_ordinary_library_preparation_branch(true);
         return metadata_replay::prepare_replayed_library(metadata_replay::ReplayRequest {
             preparation,
             selected,
@@ -834,6 +862,8 @@ fn prepare_library_project_with_context(
             authority: authority_context,
         });
     }
+    #[cfg(test)]
+    record_ordinary_library_preparation_branch(false);
     let modules =
         crate::modules::collect_library_modules_detailed_with_session(lib_entry.clone(), &compilation_session)
             .map_err(|failure| CliError::failure(failure.render_human()))?;
