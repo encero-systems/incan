@@ -239,6 +239,62 @@ fn exact_integer_arithmetic_keeps_the_checked_body_ir_width() -> Result<(), Box<
     Ok(())
 }
 
+/// Mixed arithmetic with a float result reads each operand at the checked result carrier: `int / int`, `int` with
+/// `float`, and `f32` with `int` or `float` all retain their promotion in Body IR instead of leaving it to a backend.
+#[test]
+fn mixed_float_arithmetic_retains_the_checked_operand_promotion() -> Result<(), Box<dyn std::error::Error>> {
+    for (parameters, expression) in [
+        ("left: int, right: float", "left + right"),
+        ("left: float, right: int", "left - right"),
+        ("left: int, right: int", "left / right"),
+        ("left: f32, right: float", "left * right"),
+        ("left: f32, right: int", "left // right"),
+        ("left: int, right: float", "left % right"),
+    ] {
+        let source = format!("def f({parameters}) -> float:\n  return {expression}\n");
+        let module = build(&source, &["m", "mixed_float"])?;
+        let body = body_named(&module, "f")?;
+        let (result, operands) = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Assign {
+                    place,
+                    rvalue: bir::Rvalue::BinaryOp(_, left, right),
+                } => Some((place, [left, right])),
+                _ => None,
+            })
+            .ok_or_else(|| format!("`{expression}` must lower as a primitive binary op"))?;
+        let local_type = |place: &bir::Place| match &place.root {
+            bir::PlaceRoot::Local(local) => body
+                .locals
+                .iter()
+                .find(|declaration| declaration.id == *local)
+                .map(|declaration| declaration.ty.to_string())
+                .unwrap_or_default(),
+            bir::PlaceRoot::Global(_) => String::new(),
+        };
+        assert_eq!(
+            local_type(result),
+            "float",
+            "`{expression}` must keep its checked float result"
+        );
+        for operand in operands {
+            let bir::Operand::Place(read) = operand else {
+                return Err(format!("`{expression}` must read its promoted operands from locals").into());
+            };
+            assert_eq!(
+                local_type(&read.place),
+                "float",
+                "`{expression}` must promote each operand to the checked float carrier: {}",
+                body.render_snapshot()
+            );
+        }
+    }
+    Ok(())
+}
+
 /// RFC 009 suffixed literals lower as typed numeric constants without a destination annotation.
 #[test]
 fn suffixed_numeric_literals_keep_their_body_ir_types_numeric_contract() -> Result<(), Box<dyn std::error::Error>> {
