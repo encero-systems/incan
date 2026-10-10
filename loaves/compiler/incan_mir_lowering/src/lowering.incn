@@ -438,9 +438,9 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
                 Projection.VariantField(_variant, _slot, _ty) => return enum_payload_read(builder, target, fact, span)
                 _ =>
                     selected_type = place_type(builder.locals, target)
-                    location = f"{builder.file}:{span.line}:{span.column} in {builder.name}"
+                    site = f"{builder.file}:{span.line}:{span.column} in {builder.name}"
                     detail = f"projection {target.projection:?}; selected type {selected_type:?}"
-                    return Err(f"unsupported Body IR ownership Borrow outside formatting at {location}; {detail}")
+                    return Err(f"unsupported Body IR ownership Borrow outside formatting at {site}; {detail}")
         OwnershipFact.MutBorrow => return Err("unsupported Body IR ownership MutBorrow")
         OwnershipFact.Unknown => return Err("unsupported Body IR ownership Unknown")
 
