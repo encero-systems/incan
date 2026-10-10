@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub mod requirements;
@@ -23,6 +23,23 @@ use serde::{Deserialize, Serialize};
 use super::OvenPackagedLibraryMetadataFile;
 use super::output_paths::{packaged_library_metadata_files, validated_project_output_relative_path};
 use crate::error::{CliError, CliResult};
+
+/// Per-call actual byte observations, separating physical owners from the capabilities that retain children.
+#[derive(Default)]
+struct MetadataOwnerTraversal {
+    physical_owners: BTreeSet<(PathBuf, String)>,
+    capabilities: BTreeSet<*const SelectedLibraryMetadata>,
+    #[cfg(test)]
+    owner_checks: usize,
+}
+
+/// Per-call contract traversal; different capabilities for the same owner remain independently checked.
+#[derive(Default)]
+struct MetadataDependencyTraversal {
+    capabilities: BTreeSet<*const SelectedLibraryMetadata>,
+    #[cfg(test)]
+    contract_checks: usize,
+}
 
 /// Ordinary checked-library payload schema; absent older authority is a preparation miss.
 pub const LIBRARY_METADATA_SCHEMA_VERSION: u32 = 2;
@@ -186,14 +203,32 @@ impl SelectedLibraryMetadata {
         }
     }
 
-    /// Revalidate the same original owner and its sealed output closure without selecting a substitute.
+    /// Revalidate original owner bytes once per physical coordinate and identity within this call.
+    ///
+    /// Distinct retained capabilities are still traversed independently; equal owner IDs at different roots never
+    /// share a byte observation. No verification state survives the call or replaces current filesystem reads.
     pub fn verify(&self) -> CliResult<()> {
-        self.owner
-            .verify_admitted_payload()
-            .map_err(|error| CliError::failure(error.to_string()))?;
-        validate_output_contract(&self.owner.artifact_root, &self.payload)?;
+        self.verify_with_traversal(&mut MetadataOwnerTraversal::default())
+    }
+
+    /// Observe each exact physical owner once while visiting all distinct retained child capabilities.
+    fn verify_with_traversal(&self, traversal: &mut MetadataOwnerTraversal) -> CliResult<()> {
+        if !traversal.capabilities.insert(std::ptr::from_ref(self)) {
+            return Ok(());
+        }
+        let coordinate = (self.owner.artifact_root.clone(), self.owner.manifest.identity.clone());
+        if traversal.physical_owners.insert(coordinate) {
+            #[cfg(test)]
+            {
+                traversal.owner_checks += 1;
+            }
+            self.owner
+                .verify_admitted_payload()
+                .map_err(|error| CliError::failure(error.to_string()))?;
+            validate_output_contract(&self.owner.artifact_root, &self.payload)?;
+        }
         for dependency in &self._dependency_owners {
-            dependency.verify()?;
+            dependency.verify_with_traversal(traversal)?;
         }
         Ok(())
     }
@@ -279,8 +314,9 @@ impl SelectedLibraryMetadata {
 
     /// Retain the exact admitted dependency owners through the same original lease, without reacquiring coordinates.
     pub(crate) fn retaining_dependencies(&self, dependencies: &[Arc<SelectedLibraryMetadata>]) -> CliResult<Arc<Self>> {
+        let mut traversal = MetadataOwnerTraversal::default();
         for dependency in dependencies {
-            dependency.verify()?;
+            dependency.verify_with_traversal(&mut traversal)?;
         }
         self.validate_dependency_owners(dependencies)?;
         Ok(Arc::new(Self {
@@ -295,9 +331,21 @@ impl SelectedLibraryMetadata {
     ///
     /// Actual bytes are observed separately by `verify`; this structural pass refuses missing original owners.
     pub(crate) fn verify_dependency_closure(&self) -> CliResult<()> {
+        self.verify_dependency_closure_with_traversal(&mut MetadataDependencyTraversal::default())
+    }
+
+    /// Validate every distinct capability once, even when it shares a physical owner with another capability.
+    fn verify_dependency_closure_with_traversal(&self, traversal: &mut MetadataDependencyTraversal) -> CliResult<()> {
+        if !traversal.capabilities.insert(std::ptr::from_ref(self)) {
+            return Ok(());
+        }
+        #[cfg(test)]
+        {
+            traversal.contract_checks += 1;
+        }
         self.validate_dependency_owners(&self._dependency_owners)?;
         for dependency in &self._dependency_owners {
-            dependency.verify_dependency_closure()?;
+            dependency.verify_dependency_closure_with_traversal(traversal)?;
         }
         Ok(())
     }
@@ -451,10 +499,9 @@ pub fn select_published_library_metadata_reference(
         .map_err(|error| CliError::failure(error.to_string()))?;
     let selected = admit_metadata_reference(candidates, reference)?
         .ok_or_else(|| CliError::failure("missing checked library reference owner"))?;
-    for dependency in dependencies {
-        dependency.verify_dependency_closure()?;
-    }
-    selected.retaining_dependencies(dependencies)
+    let selected = selected.retaining_dependencies(dependencies)?;
+    selected.verify_dependency_closure()?;
+    Ok(selected)
 }
 
 /// Allow absence alone to decline restoration; an existing claimed owner must satisfy the entire exact reference.

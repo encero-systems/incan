@@ -7,14 +7,15 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use oven_store::digest_bytes;
-use oven_store::store::PublishedOvenStore;
+use oven_store::store::{OvenStore, OvenStoreLimits, PublishedOvenStore};
 
 use super::Package;
 use crate::build::library_generation::{
     SelectedLibraryGeneration, publish_library_generation, select_published_library_generation_reference,
 };
 use crate::build::library_metadata::{
-    LibraryMetadataDependency, SelectedLibraryMetadata, select_published_library_metadata_reference,
+    LibraryMetadataDependency, MetadataDependencyTraversal, MetadataOwnerTraversal, SelectedLibraryMetadata,
+    select_library_metadata_reference, select_published_library_metadata_reference,
 };
 use crate::build::library_project::metadata_replay::observe_library_source_digest;
 use crate::build::source_authority::digest_baked_project_source_authority;
@@ -522,6 +523,143 @@ fn published_ordinary_missing_original_owner_refuses_without_repair() -> Result<
             );
         }
         assert_eq!(inventory(fixture.package.store_root.path())?, before);
+    }
+    Ok(())
+}
+
+/// Publish a real metadata node retaining the supplied original dependencies under exact distinct aliases.
+fn dependency_package(
+    name: &str,
+    dependencies: &[Arc<SelectedLibraryMetadata>],
+) -> Result<(Package, Arc<SelectedLibraryMetadata>), Box<dyn std::error::Error>> {
+    let mut package = Package::new(name)?;
+    for (index, dependency) in dependencies.iter().enumerate() {
+        let reference = dependency.reference();
+        package.recipe.dependencies.insert(
+            format!("alias_{index}"),
+            LibraryMetadataDependency {
+                name: dependency.manifest().name.clone(),
+                version: dependency.manifest().version.clone(),
+                receipt_identity: reference.receipt.identity,
+                owner_identity: reference.owner_identity,
+                checked_digest: digest_bytes(&serde_json::to_vec(dependency.checked_files())?),
+            },
+        );
+    }
+    let selected = package.publish(BTreeSet::new())?.retaining_dependencies(dependencies)?;
+    Ok((package, selected))
+}
+
+/// Repeated diamonds observe physical owners once and inspect distinct capabilities without cross-call caching.
+#[test]
+fn published_ordinary_diamond_verification_observes_each_owner_once() -> Result<(), Box<dyn std::error::Error>> {
+    let (leaf_package, leaf) = dependency_package("diamond_leaf", &[])?;
+    let mut packages = vec![leaf_package];
+    let mut level = vec![Arc::clone(&leaf)];
+    for depth in 0..3 {
+        let mut next = Vec::new();
+        for side in ["left", "right"] {
+            let (package, owner) = dependency_package(&format!("diamond_{side}_{depth}"), &level)?;
+            packages.push(package);
+            next.push(owner);
+        }
+        level = next;
+    }
+    level.push(Arc::clone(&level[0]));
+    let (top_package, top) = dependency_package("diamond_top", &level)?;
+    packages.push(top_package);
+    let distinct_leaf_capability = leaf.retaining_dependencies(&[])?;
+    assert!(!Arc::ptr_eq(&leaf, &distinct_leaf_capability));
+    let (root_package, root) = dependency_package("diamond_root", &[top, distinct_leaf_capability])?;
+    packages.push(root_package);
+    assert_eq!(packages.len(), 9);
+    let mut bytes = MetadataOwnerTraversal::default();
+    root.verify_with_traversal(&mut bytes)?;
+    assert_eq!(bytes.owner_checks, 9);
+    assert_eq!(bytes.physical_owners.len(), 9);
+    assert_eq!(bytes.capabilities.len(), 10);
+    let mut contracts = MetadataDependencyTraversal::default();
+    root.verify_dependency_closure_with_traversal(&mut contracts)?;
+    assert_eq!(contracts.contract_checks, 10);
+    assert_eq!(contracts.capabilities.len(), 10);
+    root.verify()?;
+    root.verify_dependency_closure()?;
+    let path = leaf.owner.artifact_root.join("src/lib.rs");
+    let mut corrupt = fs::read(&path)?;
+    *corrupt.first_mut().ok_or("missing diamond leaf bytes")? ^= 1;
+    replace_preserving_metadata(&path, &corrupt)?;
+    assert!(
+        root.verify().is_err(),
+        "per-call observations must not survive into another verification"
+    );
+    Ok(())
+}
+
+/// Equal immutable IDs at separate physical roots require separate actual byte observations.
+#[test]
+fn published_ordinary_equal_owner_ids_at_distinct_roots_are_both_verified() -> Result<(), Box<dyn std::error::Error>> {
+    let (_leaf_package, leaf) = dependency_package("physical_leaf", &[])?;
+    let destination = tempfile::tempdir()?;
+    let store = OvenStore::new(
+        destination.path(),
+        OvenStoreLimits::new(16 * 1024 * 1024, 16 * 1024 * 1024, 16 * 1024 * 1024),
+    );
+    let reference = leaf.export_into(&store)?;
+    let published = PublishedOvenStore::new(destination.path());
+    let copied = select_published_library_metadata_reference(&published, &reference, &[])?;
+    assert_eq!(copied.reference().owner_identity, leaf.reference().owner_identity);
+    assert_ne!(copied.owner.artifact_root, leaf.owner.artifact_root);
+    let (_root_package, root) = dependency_package("physical_root", &[Arc::clone(&leaf), Arc::clone(&copied)])?;
+    let mut work = MetadataOwnerTraversal::default();
+    root.verify_with_traversal(&mut work)?;
+    assert_eq!(work.owner_checks, 3);
+    assert_eq!(work.physical_owners.len(), 3);
+    root.verify_dependency_closure()?;
+    let path = copied.owner.artifact_root.join("src/lib.rs");
+    let mut corrupt = fs::read(&path)?;
+    *corrupt.first_mut().ok_or("missing copied leaf bytes")? ^= 1;
+    replace_preserving_metadata(&path, &corrupt)?;
+    leaf.verify()?;
+    assert!(
+        root.verify().is_err(),
+        "a genuine same-ID owner at another root must not hide damage"
+    );
+    Ok(())
+}
+
+/// A complete capability cannot hide another same-owner capability whose original child authority is unattached.
+#[test]
+fn published_ordinary_shared_owner_does_not_hide_incomplete_capability() -> Result<(), Box<dyn std::error::Error>> {
+    let (_child_package, child) = dependency_package("retained_child", &[])?;
+    let (middle_package, complete) = dependency_package("retained_middle", &[child])?;
+    let incomplete = select_library_metadata_reference(&middle_package.store(), &complete.reference())?;
+    assert_eq!(
+        complete.reference().owner_identity,
+        incomplete.reference().owner_identity
+    );
+    assert_eq!(complete.owner.artifact_root, incomplete.owner.artifact_root);
+    assert!(!Arc::ptr_eq(&complete, &incomplete));
+    // Writable preparation may hold an intermediate original selection before attaching its children.
+    incomplete.verify()?;
+    assert!(incomplete.verify_dependency_closure().is_err());
+    for dependencies in [
+        [Arc::clone(&complete), Arc::clone(&incomplete)],
+        [Arc::clone(&incomplete), Arc::clone(&complete)],
+    ] {
+        let (package, root) = dependency_package("retained_root", &dependencies)?;
+        let mut bytes = MetadataOwnerTraversal::default();
+        root.verify_with_traversal(&mut bytes)?;
+        assert_eq!(bytes.owner_checks, 3);
+        assert_eq!(bytes.capabilities.len(), 4);
+        let mut contracts = MetadataDependencyTraversal::default();
+        assert!(root.verify_dependency_closure_with_traversal(&mut contracts).is_err());
+        assert!(
+            contracts
+                .capabilities
+                .contains(&std::ptr::from_ref(incomplete.as_ref()))
+        );
+        let published = PublishedOvenStore::new(package.store_root.path());
+        assert!(select_published_library_metadata_reference(&published, &root.reference(), &dependencies).is_err());
     }
     Ok(())
 }
