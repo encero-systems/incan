@@ -11820,6 +11820,14 @@
       "split_required": false,
       "split_target": "",
       "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/lock/registry_sources/optional_lineage_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Original completed-project inspection owner integrity and typed optional native-generation invalidation; tests canonical Store lineage and admission rather than generated Rust.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
     }
   },
   "fixture_roots": {
