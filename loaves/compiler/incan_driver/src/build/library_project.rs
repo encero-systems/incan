@@ -1315,38 +1315,53 @@ fn prepare_library_project_with_context(
         .transpose()?
         .map(|(rust_inspect_target_path, _rust_inspect_cache_lease)| {
             let rust_inspect_start = Instant::now();
-            let rust_inspect_manifest_dir = crate::lock::rust_inspect::prepare_rust_inspect_workspace_with_native_sdk(
-                RustInspectWorkspaceRequest {
-                    project_root: &project_root,
-                    project_name: project_name.as_str(),
-                    cargo_package_name: &lock_cargo_package_name,
-                    rust_edition: manifest.rust_edition().map(str::to_string),
-                    resolved: &resolved,
-                    project_requirements: &project_requirements,
-                    lock_payload: lock_payload_for_typecheck.clone(),
-                    cargo_lock_projection_root: cargo_lock_projection_root.as_deref(),
-                    clear_cargo_lock,
-                    cargo_policy_flags: cargo_flags.clone(),
-                    cargo_target_dir: &rust_inspect_target_path,
-                    rust_inspect_query_paths: &metadata_query_paths,
-                    rust_derive_probe_paths: &collect_rust_inspect_derive_probe_paths(&modules),
-                    prepare_when_empty: true,
-                    direct_oven_inspection: normal_oven,
-                    force_direct_prewarm: false,
-                    oven_source_authority: normal_oven.then(|| OvenRustInspectSourceAuthorityRequest {
-                        project_version: &project_version,
-                        target: oven_target.as_deref().unwrap_or_default(),
-                        toolchain: oven_toolchain.as_deref().unwrap_or_default(),
-                        profile: "debug",
-                        features: &cargo_features.cargo_features,
-                        build_unit_inputs: oven_build_inputs.as_ref().unwrap_or(&empty_oven_build_inputs),
-                        registry_dependencies: &inspection_dependencies,
-                    }),
-                    prepared_project_source_authorities: None,
-                    explicit_oven_bake: normal_oven && oven_plan_mode == OvenProjectPlanMode::ExplicitBake,
-                },
-                native_sdk_context.as_deref(),
-            )?
+            let derives = collect_rust_inspect_derive_probe_paths(&modules);
+            let request = RustInspectWorkspaceRequest {
+                project_root: &project_root,
+                project_name: project_name.as_str(),
+                cargo_package_name: &lock_cargo_package_name,
+                rust_edition: manifest.rust_edition().map(str::to_string),
+                resolved: &resolved,
+                project_requirements: &project_requirements,
+                lock_payload: lock_payload_for_typecheck.clone(),
+                cargo_lock_projection_root: cargo_lock_projection_root.as_deref(),
+                clear_cargo_lock,
+                cargo_policy_flags: cargo_flags.clone(),
+                cargo_target_dir: &rust_inspect_target_path,
+                rust_inspect_query_paths: &metadata_query_paths,
+                rust_derive_probe_paths: &derives,
+                prepare_when_empty: true,
+                direct_oven_inspection: normal_oven,
+                force_direct_prewarm: false,
+                oven_source_authority: normal_oven.then(|| OvenRustInspectSourceAuthorityRequest {
+                    project_version: &project_version,
+                    target: oven_target.as_deref().unwrap_or_default(),
+                    toolchain: oven_toolchain.as_deref().unwrap_or_default(),
+                    profile: "debug",
+                    features: &cargo_features.cargo_features,
+                    build_unit_inputs: oven_build_inputs.as_ref().unwrap_or(&empty_oven_build_inputs),
+                    registry_dependencies: &inspection_dependencies,
+                }),
+                prepared_project_source_authorities: None,
+                explicit_oven_bake: normal_oven && oven_plan_mode == OvenProjectPlanMode::ExplicitBake,
+            };
+            let rust_inspect_manifest_dir = match &ordinary_native {
+                Some(native) => {
+                    let metadata = native.metadata();
+                    let observation = metadata.observations().get("debug").ok_or_else(|| {
+                        CliError::failure("ordinary inspection lacks its original debug producer request")
+                    })?;
+                    crate::lock::rust_inspect::prepare_rust_inspect_workspace_with_ordinary_native(
+                        request,
+                        observation.clone(),
+                        metadata.rustc(),
+                    )?
+                }
+                None => crate::lock::rust_inspect::prepare_rust_inspect_workspace_with_native_sdk(
+                    request,
+                    native_sdk_context.as_deref(),
+                )?,
+            }
             .ok_or_else(|| {
                 CliError::failure("rust-inspect workspace preparation did not return a manifest directory")
             })?;
@@ -1356,6 +1371,10 @@ fn prepare_library_project_with_context(
         .transpose()?
     };
 
+    #[cfg(feature = "rust_inspect")]
+    if let Some(workspace) = rust_inspect_manifest_dir.as_ref() {
+        workspace.verify_ordinary_native()?;
+    }
     let public_metadata = checked_public_library_metadata(
         &manifest,
         &compilation_session,
@@ -1448,8 +1467,10 @@ fn prepare_library_project_with_context(
     })?;
     #[cfg(feature = "rust_inspect")]
     if let Some(rust_inspect_manifest_dir) = rust_inspect_manifest_dir.as_ref() {
+        rust_inspect_manifest_dir.verify_ordinary_native()?;
         library_manifest.rust_abi =
             collect_library_rust_abi(rust_inspect_manifest_dir.manifest_dir(), &metadata_query_paths)?;
+        rust_inspect_manifest_dir.verify_ordinary_native()?;
     }
     record_timing(&mut timings_ms, "library_build_manifest_metadata", manifest_start);
     if let Some(elapsed) = timings_ms.get_mut("library_build_manifest_metadata") {

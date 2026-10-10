@@ -39,6 +39,17 @@ use oven_rustc::rustc::rustc_identity;
 use oven_store::OvenGeneratedProjectRequest;
 use oven_store::receipt_generated_project;
 
+mod ordinary;
+
+/// Explicit native authority family; an ordinary request never falls through to SDK discovery.
+enum InspectionNativeAuthority<'a> {
+    Sdk(&'a crate::build::NativeSdkCommandContext),
+    Ordinary {
+        observation: oven_rustc::native_loaf::NativeLoafRequestObservation,
+        rustc: &'a Path,
+    },
+}
+
 /// Prepare and prewarm the generated Rust workspace used for rust-inspect metadata queries.
 pub fn prepare_rust_inspect_workspace(
     request: RustInspectWorkspaceRequest<'_>,
@@ -46,10 +57,33 @@ pub fn prepare_rust_inspect_workspace(
     prepare_rust_inspect_workspace_with_native_sdk(request, None)
 }
 
-/// Prepare the ordinary inspection workspace with native source owners already admitted by its command.
+/// Prepare inspection using the transitional SDK authority already admitted by its command.
 pub fn prepare_rust_inspect_workspace_with_native_sdk(
     request: RustInspectWorkspaceRequest<'_>,
     native_sdk: Option<&crate::build::NativeSdkCommandContext>,
+) -> CliResult<Option<PreparedRustInspectWorkspace>> {
+    prepare_workspace_with_native_authority(request, native_sdk.map(InspectionNativeAuthority::Sdk))
+}
+
+/// Prepare Rust metadata from the command's complete original ordinary producer request, with no SDK fallback.
+pub fn prepare_rust_inspect_workspace_with_ordinary_native(
+    request: RustInspectWorkspaceRequest<'_>,
+    observation: oven_rustc::native_loaf::NativeLoafRequestObservation,
+    rustc: &Path,
+) -> CliResult<Option<PreparedRustInspectWorkspace>> {
+    if !request.direct_oven_inspection {
+        return Err(CliError::failure("ordinary inspection requires the direct Oven loader"));
+    }
+    prepare_workspace_with_native_authority(
+        request,
+        Some(InspectionNativeAuthority::Ordinary { observation, rustc }),
+    )
+}
+
+/// Prepare the existing generated projection while preserving the caller's explicit native authority family.
+fn prepare_workspace_with_native_authority(
+    request: RustInspectWorkspaceRequest<'_>,
+    native: Option<InspectionNativeAuthority<'_>>,
 ) -> CliResult<Option<PreparedRustInspectWorkspace>> {
     let RustInspectWorkspaceRequest {
         project_root,
@@ -108,8 +142,24 @@ pub fn prepare_rust_inspect_workspace_with_native_sdk(
     let mut source_loaf = None;
     let mut project_source_authorities = None;
     let mut sdk_native = Vec::new();
+    let mut ordinary_native = None;
     if direct_oven_inspection {
-        if std::env::var_os(oven_rustc::loaf::OVEN_LOAF_ENV).is_some_and(|value| value == "1") {
+        if let Some(InspectionNativeAuthority::Ordinary { observation, rustc }) = native.as_ref() {
+            let authority = oven_source_authority
+                .as_ref()
+                .ok_or_else(|| CliError::failure("ordinary inspection lacks the requested compiler intent"))?;
+            ordinary::prepare(
+                &rust_inspect_manifest_dir,
+                cargo_target_dir,
+                project_root,
+                observation,
+                rustc,
+                authority,
+                rust_inspect_query_paths,
+                rust_derive_probe_paths,
+            )?;
+            ordinary_native = Some(observation.clone());
+        } else if std::env::var_os(oven_rustc::loaf::OVEN_LOAF_ENV).is_some_and(|value| value == "1") {
             let source = std::env::var_os(OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV)
                 .filter(|value| !value.is_empty())
                 .map(PathBuf::from)
@@ -125,7 +175,10 @@ pub fn prepare_rust_inspect_workspace_with_native_sdk(
                 authority_request,
                 prepared_project_source_authorities,
                 explicit_oven_bake,
-                native_sdk,
+                match native {
+                    Some(InspectionNativeAuthority::Sdk(context)) => Some(context),
+                    _ => None,
+                },
             )?;
             source_loaf = prepared._source_loaf;
             project_source_authorities = prepared._project_source_authorities;
@@ -144,6 +197,7 @@ pub fn prepare_rust_inspect_workspace_with_native_sdk(
         _source_loaf: source_loaf,
         _project_source_authorities: project_source_authorities,
         _sdk_native: sdk_native,
+        _ordinary_native: ordinary_native,
     }))
 }
 
@@ -201,6 +255,7 @@ fn prepare_oven_inspection_authority(
             _source_loaf: None,
             _project_source_authorities: None,
             _sdk_native: sdk_native,
+            _ordinary_native: None,
         });
     }
     let mut source_loaf = None;
@@ -282,6 +337,7 @@ fn prepare_oven_inspection_authority(
         _source_loaf: source_loaf,
         _project_source_authorities: project_source_authorities,
         _sdk_native: Vec::new(),
+        _ordinary_native: None,
     })
 }
 

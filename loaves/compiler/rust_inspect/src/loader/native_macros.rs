@@ -199,7 +199,7 @@ fn select_native_macros_with_probe(
 }
 
 /// A nested sysroot or auxiliary crate graph cannot smuggle an executable path into an admitted projection.
-fn contains_unowned_macro_path(value: &serde_json::Value) -> bool {
+pub(super) fn contains_unowned_macro_path(value: &serde_json::Value) -> bool {
     match value {
         serde_json::Value::Object(fields) => {
             fields.contains_key("proc_macro_dylib_path") || fields.values().any(contains_unowned_macro_path)

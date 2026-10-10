@@ -524,6 +524,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/lock/rust_inspect/ordinary/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Ordinary Rust inspection retains complete original producer and native owners through the actual cached database; genuine metadata and unchanged database reuse, unselected source freshness, missing original source and unowned macro/serialized reload refusals.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/lock/test_inputs.rs": {
       "disposition": "unaffected",
       "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend.",

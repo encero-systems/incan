@@ -24,6 +24,9 @@ use super::error::RustMetadataError;
 
 mod loaf_manifest;
 mod native_macros;
+mod retained;
+
+pub use retained::{OVEN_RETAINED_INSPECTION_MARKER, RetainedInspectionProject};
 
 #[cfg(test)]
 pub(crate) use native_macros::select_native_macros_for_test_compiler;
@@ -52,6 +55,9 @@ pub struct RustWorkspace {
     /// Lazy macro requests use the projection as their working directory, so it must outlive their client.
     #[allow(dead_code)]
     native_project: Option<OvenInspectionProject>,
+    /// Original ordinary producer capability, retained until its database and macro client have been dropped.
+    #[allow(dead_code)]
+    retained_project: Option<Box<dyn RetainedInspectionProject>>,
 }
 
 /// Remove only this load's unique project description once every database and macro client is gone.
@@ -1481,8 +1487,20 @@ impl RustWorkspace {
                 message: error.to_string(),
             })?;
         let native_macro_owners = native_macros::select_native_macros(&manifest_dir, &mut graph)?;
+        Self::load_oven_graph(&manifest_dir, target_dir, graph, native_macro_owners, None, progress)
+    }
+
+    /// Load one explicit graph, retaining its original source capability and any separately admitted macro owners.
+    fn load_oven_graph(
+        manifest_dir: &Path,
+        target_dir: &Path,
+        graph: serde_json::Value,
+        native_macro_owners: Vec<oven_store::store::OvenStoreExecutionPayload>,
+        retained_project: Option<Box<dyn RetainedInspectionProject>>,
+        progress: &(dyn Fn(String) + Sync),
+    ) -> Result<Self, RustMetadataError> {
         let payload = serde_json::to_vec(&graph).map_err(|error| RustMetadataError::LoadWorkspace {
-            path: manifest_dir.clone(),
+            path: manifest_dir.to_path_buf(),
             message: error.to_string(),
         })?;
         let sequence = OVEN_PROJECT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
@@ -1511,15 +1529,23 @@ impl RustWorkspace {
         let result =
             load_workspace_at(&project_path, &CargoConfig::default(), &load_config, progress).map_err(|error| {
                 RustMetadataError::LoadWorkspace {
-                    path: manifest_dir.clone(),
+                    path: manifest_dir.to_path_buf(),
                     message: error.to_string(),
                 }
             });
         let (db, vfs, pm) = result?;
         if !native_macro_owners.is_empty() && pm.is_none() {
             return Err(RustMetadataError::LoadWorkspace {
-                path: manifest_dir,
+                path: manifest_dir.to_path_buf(),
                 message: "direct inspection could not start the selected toolchain's proc-macro server".to_string(),
+            });
+        }
+        if let Some(project) = &retained_project
+            && project.verified_project()? != graph
+        {
+            return Err(RustMetadataError::LoadWorkspace {
+                path: manifest_dir.to_path_buf(),
+                message: "retained inspection project changed during database loading".to_string(),
             });
         }
         let crate_index = Self::build_crate_index(&db);
@@ -1530,6 +1556,7 @@ impl RustWorkspace {
             proc_macro_client: pm.map(|client| Box::new(client) as Box<dyn Any + Send + Sync>),
             native_macro_owners,
             native_project: Some(native_project),
+            retained_project,
         })
     }
 
@@ -1558,6 +1585,12 @@ impl RustWorkspace {
         progress: &(dyn Fn(String) + Sync),
         load_out_dirs_from_check: bool,
     ) -> Result<Self, RustMetadataError> {
+        if manifest_dir.join(OVEN_RETAINED_INSPECTION_MARKER).is_file() {
+            return Err(RustMetadataError::LoadWorkspace {
+                path: manifest_dir.to_path_buf(),
+                message: "ordinary inspection requires its original retained producer capability".to_string(),
+            });
+        }
         if Self::oven_direct_inspection_active(manifest_dir) {
             return Self::load_oven_project(manifest_dir, target_dir, progress, load_out_dirs_from_check);
         }
@@ -1608,6 +1641,7 @@ impl RustWorkspace {
             proc_macro_client: pm.map(|client| Box::new(client) as Box<dyn Any + Send + Sync>),
             native_macro_owners: Vec::new(),
             native_project: None,
+            retained_project: None,
         })
     }
 

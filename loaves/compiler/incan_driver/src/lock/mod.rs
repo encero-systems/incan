@@ -276,6 +276,8 @@ pub struct PreparedRustInspectWorkspace {
     _project_source_authorities: Option<Arc<PreparedOvenProjectRegistrySourceAuthorities>>,
     /// Native SDK leases protect the frozen graph's immutable source roots throughout inspection.
     _sdk_native: Vec<Arc<oven_store::store::OvenStoreExecutionPayload>>,
+    /// Complete original ordinary request retained across checked metadata preparation and final ABI extraction.
+    _ordinary_native: Option<oven_rustc::native_loaf::NativeLoafRequestObservation>,
 }
 
 /// Command-local source authority shared by every parallel native-test unit.
@@ -305,12 +307,21 @@ impl PreparedRustInspectWorkspace {
             _source_loaf: None,
             _project_source_authorities: None,
             _sdk_native: Vec::new(),
+            _ordinary_native: None,
         }
     }
 
     /// Return the compiler-authored manifest directory while this workspace retains its source Loaf.
     pub fn manifest_dir(&self) -> &Path {
         &self.manifest_dir
+    }
+
+    /// Revalidate complete original ordinary inputs at semantic handoffs without selecting new source owners.
+    pub(crate) fn verify_ordinary_native(&self) -> CliResult<()> {
+        if let Some(native) = &self._ordinary_native {
+            native.verify().map_err(|error| CliError::failure(error.to_string()))?;
+        }
+        Ok(())
     }
 }
 

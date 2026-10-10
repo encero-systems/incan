@@ -224,6 +224,7 @@ fn hash_workspace_fingerprint_inputs(hasher: &mut Sha256, root: &Path) -> Result
             crate::loader::OVEN_DIRECT_LOAF_PROJECT_FILE,
             crate::loader::OVEN_DIRECT_INSPECTION_AUTHORITY_FILE,
             crate::loader::OVEN_DIRECT_PROC_MACRO_AUTHORITY_FILE,
+            crate::loader::OVEN_RETAINED_INSPECTION_MARKER,
         ] {
             hasher.update(relative.as_bytes());
             hasher.update([0]);
@@ -449,6 +450,26 @@ fn load_disk_cache_into_memory(
 
 /// Ensure the workspace-local disk cache has been loaded once for this process.
 fn ensure_disk_cache_loaded(inner: &mut CacheInner, root: &Path) -> Result<DiskCacheLoadReport, RustMetadataError> {
+    let report = ensure_disk_cache_loaded_for_admission(inner, root)?;
+    if root.join(crate::loader::OVEN_RETAINED_INSPECTION_MARKER).is_file()
+        && !inner
+            .workspaces
+            .get(&(root.to_path_buf(), false))
+            .is_some_and(RustWorkspace::has_retained_project)
+    {
+        return Err(RustMetadataError::LoadWorkspace {
+            path: root.to_path_buf(),
+            message: "ordinary metadata requires its original retained producer capability".to_string(),
+        });
+    }
+    Ok(report)
+}
+
+/// Refresh persisted metadata before installing a freshly verified original producer database.
+fn ensure_disk_cache_loaded_for_admission(
+    inner: &mut CacheInner,
+    root: &Path,
+) -> Result<DiskCacheLoadReport, RustMetadataError> {
     if root.join(crate::loader::OVEN_LOAF_ONLY_INSPECTION_MARKER).is_file()
         && let Some(previous) = inner
             .disk_cache_state
@@ -4738,6 +4759,57 @@ impl RustMetadataCache {
         Self {
             inner: Self::shared_inner(),
         }
+    }
+
+    /// Admit one ordinary database under its generated root; return whether an unchanged retained database was reused.
+    ///
+    /// Existing fingerprint validation still invalidates metadata when the generated authority changes. Missing
+    /// databases under a retained root cannot fall back to serialized paths or SDK discovery in the loader.
+    pub fn prepare_retained_project(
+        &self,
+        manifest_dir: &Path,
+        target_dir: &Path,
+        project: Box<dyn crate::loader::RetainedInspectionProject>,
+        progress: &(dyn Fn(String) + Sync),
+    ) -> Result<bool, RustMetadataError> {
+        let root = manifest_dir.canonicalize()?;
+        if !root.join(crate::loader::OVEN_RETAINED_INSPECTION_MARKER).is_file()
+            || !root.join(crate::loader::OVEN_LOAF_ONLY_INSPECTION_MARKER).is_file()
+        {
+            return Err(RustMetadataError::LoadWorkspace {
+                path: root,
+                message: "ordinary inspection admission requires its retained Loaf projection markers".to_string(),
+            });
+        }
+        let graph = project.verified_project()?;
+        let fingerprint = workspace_fingerprint(&root)?;
+        {
+            let mut inner = self.inner.lock().map_err(|error| RustMetadataError::LoadWorkspace {
+                path: root.clone(),
+                message: format!("metadata cache lock poisoned: {error}"),
+            })?;
+            ensure_disk_cache_loaded_for_admission(&mut inner, &root)?;
+            if let Some(workspace) = inner.workspaces.get(&(root.clone(), false))
+                && workspace.matches_retained_project(&graph)?
+            {
+                return Ok(true);
+            }
+        }
+        let workspace = RustWorkspace::load_retained_oven_project(&root, target_dir, project, progress)?;
+        let mut inner = self.inner.lock().map_err(|error| RustMetadataError::LoadWorkspace {
+            path: root.clone(),
+            message: format!("metadata cache lock poisoned: {error}"),
+        })?;
+        if workspace_fingerprint(&root)? != fingerprint {
+            return Err(RustMetadataError::LoadWorkspace {
+                path: root,
+                message: "ordinary inspection projection changed during database loading".to_string(),
+            });
+        }
+        ensure_disk_cache_loaded_for_admission(&mut inner, &root)?;
+        inner.workspaces.retain(|(owner, _), _| owner != &root);
+        inner.workspaces.insert((root, false), workspace);
+        Ok(false)
     }
 
     /// Return metadata for `canonical_path`, loading/extracting on cache miss.
