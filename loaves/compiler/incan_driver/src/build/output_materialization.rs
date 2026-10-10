@@ -174,7 +174,7 @@ pub fn completed_executable_output_report(
         .and_then(serde_json::Value::as_array_mut)
         .ok_or_else(|| CliError::failure("completed Oven executable build report has no notes array"))?;
     notes.push(serde_json::Value::String(
-        "Reused a completed Oven project-output Loaf; detailed source, dependency, semantic, and interop facts were verified and sealed at explicit bake time.".to_string(),
+        "Reused a completed Oven project-output Loaf; detailed source, dependency, semantic, and interop facts were verified and sealed when the successful build published it.".to_string(),
     ));
     Ok(report)
 }
@@ -1208,6 +1208,7 @@ mod tests {
             dependency_authority_digest: None,
             lock_dependencies_fingerprint: baked_project_lock_dependencies_fingerprint(project.path())?,
             compiler_identity_digest: None,
+            preparation_identity_digest: None,
             compiler_version: INCAN_VERSION.to_string(),
             entrypoint_relative_path: "src/lib.incn".to_string(),
             build_unit_identity: receipt.build_unit_identity.clone(),

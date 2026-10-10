@@ -33,6 +33,41 @@ pub(super) fn current_compiler_identity_digest() -> CliResult<String> {
     super::file_freshness::digest_file(&executable).map_err(|error| CliError::failure(error.to_string()))
 }
 
+/// Bind ordinary preparation to the current compiler and explicit process configuration without entering a session.
+///
+/// Paths conservatively distinguish source/SDK selections. Named inventory and graph files additionally bind their
+/// bytes through the existing freshness store. Diagnostic and tracing switches are excluded because they do not
+/// affect generated code. No local observation is itself compiler authority.
+pub fn ordinary_preparation_identity_digest() -> CliResult<String> {
+    let mut records = BTreeMap::from([("compiler".to_string(), current_compiler_identity_digest()?)]);
+    for name in [
+        "INCAN_SOURCE_ROOT",
+        "INCAN_STDLIB",
+        "INCAN_STDLIB_DIR",
+        "INCAN_SDK_INVENTORY",
+        "INCAN_SDK_NATIVE_COMPILER_GRAPH",
+        "INCAN_SDK_NATIVE_INDEX",
+        "INCAN_SDK_NATIVE_BLOBS",
+        "INCAN_OVEN_MIRRORS",
+        "RUSTUP_TOOLCHAIN",
+        "RUSTFLAGS",
+        "RUSTC",
+        "INCAN_OVEN_LINK_OWNERS",
+    ] {
+        if let Some(value) = std::env::var_os(name) {
+            records.insert(name.to_string(), digest_bytes(value.as_os_str().as_encoded_bytes()));
+            if matches!(name, "INCAN_SDK_INVENTORY" | "INCAN_SDK_NATIVE_COMPILER_GRAPH") {
+                let digest = super::file_freshness::digest_file(Path::new(&value))
+                    .map_err(|error| CliError::failure(format!("cannot observe {name}: {error}")))?;
+                records.insert(format!("{name}:content"), digest);
+            }
+        }
+    }
+    serde_json::to_vec(&records)
+        .map(|bytes| digest_bytes(&bytes))
+        .map_err(|error| CliError::failure(error.to_string()))
+}
+
 /// Hash Incan token content without source positions, preserving literals and indentation.
 ///
 /// Comments do not affect generated code or the Rust query surface. Other authority files remain byte-exact,
@@ -625,13 +660,15 @@ fn digest_baked_project_build_tree(
                 path.display()
             )));
         }
-        let bytes = fs::read(path).map_err(|error| {
+        let digest = super::file_freshness::digest_file_with(path, "project-token-authority-v1", |bytes| {
+            digest_project_authority_file(path, bytes).map_err(|error| io::Error::other(error.to_string()))
+        })
+        .map_err(|error| {
             CliError::failure(format!(
                 "Oven Alpha cannot hash project build authority at {}: {error}",
                 path.display()
             ))
         })?;
-        let digest = digest_project_authority_file(path, &bytes)?;
         if records.insert(record_key.clone(), digest).is_some() {
             return Err(CliError::failure(format!(
                 "Oven Alpha project build authority contains duplicate path `{record_key}`"
@@ -663,23 +700,13 @@ fn digest_baked_project_build_tree(
         already_recorded: &HashSet<PathBuf>,
         omit_incan_sources: bool,
     ) -> CliResult<()> {
-        let mut entries = fs::read_dir(directory)
-            .map_err(|error| {
-                CliError::failure(format!(
-                    "Oven Alpha cannot read project build authority at {}: {error}",
-                    directory.display()
-                ))
-            })?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| {
-                CliError::failure(format!(
-                    "Oven Alpha cannot read project build authority at {}: {error}",
-                    directory.display()
-                ))
-            })?;
-        entries.sort_by_key(|entry| entry.file_name());
-        for entry in entries {
-            let path = entry.path();
+        let (entries, before) = super::file_freshness::directory_entries(directory).map_err(|error| {
+            CliError::failure(format!(
+                "Oven Alpha cannot reconcile project build authority at {}: {error}",
+                directory.display()
+            ))
+        })?;
+        for path in entries {
             let metadata = fs::symlink_metadata(&path).map_err(|error| {
                 CliError::failure(format!(
                     "Oven Alpha cannot read project build authority at {}: {error}",
@@ -709,6 +736,13 @@ fn digest_baked_project_build_tree(
             {
                 append_file(root, &path, records)?;
             }
+        }
+        if super::file_freshness::stat_directory(directory).map_err(|error| CliError::failure(error.to_string()))?
+            != before
+        {
+            return Err(CliError::failure(
+                "project source directory changed during authority reconciliation",
+            ));
         }
         Ok(())
     }
@@ -1317,13 +1351,20 @@ mod tests {
         fs::write(bookkeeping.join("last-used"), "200")?;
         assert_eq!(initial, digest_baked_project_source_authority(consumer.path())?);
 
-        fs::write(&artifact.crate_lib_path, "pub fn provider() -> i32 { 2 }\n")?;
-        let changed = digest_baked_project_source_authority(consumer.path())?;
+        let authored_source = provider.path().join("src/lib.incn");
+        let authored_initial = fs::read(&authored_source)?;
+        fs::write(&authored_source, "pub def provider() -> int:\n    return 2\n")?;
         assert_ne!(
-            initial, changed,
-            "changed provider content must invalidate consumer bake reuse"
+            initial,
+            digest_baked_project_source_authority(consumer.path())?,
+            "changed authored provider content must invalidate consumer bake reuse"
         );
+        fs::write(&authored_source, authored_initial)?;
+        assert_eq!(initial, digest_baked_project_source_authority(consumer.path())?);
 
+        fs::write(&artifact.crate_lib_path, "pub fn provider() -> i32 { 2 }\n")?;
+        let refused = digest_baked_project_source_authority(consumer.path());
+        assert!(refused.is_err(), "changed sealed provider output must refuse authority");
         fs::write(&artifact.crate_lib_path, initial_provider_bytes)?;
         assert_eq!(initial, digest_baked_project_source_authority(consumer.path())?);
         Ok(())

@@ -122,6 +122,14 @@ pub fn prepare_oven_project(
     oven_plan_mode: OvenProjectPlanMode,
     authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
 ) -> CliResult<OvenPreparedProject> {
+    let _invocation =
+        tracing::trace_span!(target: "incan::invocation", "incan_driver::prepare_oven_project", input = file_path)
+            .entered();
+    if std::env::var_os("INCAN_TEST_REQUIRE_COMPLETED_PROJECT_REUSE").is_some() {
+        return Err(CliError::failure(
+            "required completed project reuse missed before frontend preparation",
+        ));
+    }
     let mut authority_context = authority_context;
     if cargo_no_default_features || cargo_all_features || !cargo_features.is_empty() {
         return Err(CliError::failure(
