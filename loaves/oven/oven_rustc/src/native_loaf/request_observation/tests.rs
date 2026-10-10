@@ -246,6 +246,7 @@ fn dev7_native_request_observation_refuses_synthetic_preparation() -> TestResult
         graph: NativeLoafGraph::default(),
         observation: None,
         report: NativeLoafPreparationReport {
+            index_reads: Default::default(),
             compiled: Vec::new(),
             reused: Vec::new(),
             seconds: 0.0,

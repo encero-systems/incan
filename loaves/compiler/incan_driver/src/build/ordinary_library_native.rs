@@ -72,6 +72,7 @@ impl OrdinaryLibraryNativeProfiles {
             reports.insert(
                 (*profile).to_string(),
                 NativeLoafPreparationReport {
+                    index_reads: prepared.report().index_reads,
                     compiled: prepared.report().compiled.clone(),
                     reused: prepared.report().reused.clone(),
                     seconds: prepared.report().seconds,

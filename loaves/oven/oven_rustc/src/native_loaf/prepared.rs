@@ -48,6 +48,8 @@ pub struct NativeLoafConsumerRequest<'a> {
 /// Actual rooted work at the ordinary preparation/reuse boundary, without invented phase attribution.
 #[derive(Default, Debug, Serialize)]
 pub struct NativeLoafConsumerReport {
+    /// Actual registry preparation index work; zero on warm/empty requests and distinct from current-input replay.
+    pub preparation_index_reads: crate::sdk_closure::NativeIndexReadWork,
     /// Complete record and edge checks during graph admission/selection, excluding subsequent current-input replay.
     pub graph_verification: NativeLoafVerificationWork,
     /// Whether an optional coordinate hint survived complete current-input and per-unit admission checks.
@@ -237,6 +239,7 @@ fn prepare_with_store(
     report.prepared_units = prepared.graph.units.len();
     report.compiled = prepared.report.compiled.clone();
     report.reused = prepared.report.reused.clone();
+    report.preparation_index_reads = prepared.report.index_reads;
     let roots = select_roots_with_sources(
         &prepared.graph,
         request.dependencies,

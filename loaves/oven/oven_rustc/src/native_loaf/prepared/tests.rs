@@ -236,6 +236,7 @@ fn prepared(graph: NativeLoafGraph) -> NativeLoafPreparation {
         graph,
         observation: None,
         report: NativeLoafPreparationReport {
+            index_reads: Default::default(),
             compiled: Vec::new(),
             reused: Vec::new(),
             seconds: 0.0,
