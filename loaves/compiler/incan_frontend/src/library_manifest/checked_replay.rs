@@ -11,8 +11,8 @@ use super::{
     CanonicalIdentityExport, EnumValueExport, EnumValueTypeExport, ExportIdentityKind, ExportIdentityProjection,
     FieldExport, FieldVisibilityExport, FunctionExport, ImplementationTraitBoundOriginExport, LibraryManifest,
     LibraryManifestError, MethodExport, NewtypeConstraintExport, ParamDefaultExport, ParamExport, ParamKindExport,
-    PartialExport, PartialTargetKindExport, PresetValueExport, PropertyExport, ReceiverExport, TypeBoundExport,
-    TypeParamExport, TypeRef, VisitTypeRefs, params_from_checked, resolved_type_from_manifest_type_ref,
+    PartialTargetKindExport, PresetValueExport, PropertyExport, ReceiverExport, TypeBoundExport, TypeParamExport,
+    TypeRef, VisitTypeRefs, params_from_checked, resolved_type_from_manifest_type_ref,
 };
 use crate::library_exports::{
     CheckedAliasExport, CheckedClassExport, CheckedConstExport, CheckedEnumExport, CheckedEnumVariant,
@@ -252,7 +252,7 @@ impl CheckedExportReplay {
                         })
                         .collect::<Result<_, LibraryManifestError>>()?,
                     type_params: type_params(&value.type_params),
-                    params: partial_params(value),
+                    params: params(&value.params),
                     return_type: resolved_type_from_manifest_type_ref(&value.return_type),
                     is_async: value.is_async,
                 }),
@@ -264,6 +264,7 @@ impl CheckedExportReplay {
         if *kind != identity.kind || shape_name(shape) != identity.public_name {
             return Err(invalid("checked export replay shape and identity kinds disagree"));
         }
+        validate_replayable_shape(shape)?;
         let mut origins = BTreeMap::new();
         let mut projected = manifest.exports.clone();
         let mut competing = false;
@@ -345,14 +346,25 @@ fn validate_replayable_shape(kind: &CheckedExportKind) -> Result<(), LibraryMani
         }
         CheckedExportKind::Partial(value) => {
             for parameter in &value.params {
-                let name = parameter
-                    .name
-                    .as_ref()
-                    .ok_or_else(|| invalid("unnamed checked partial parameter"))?;
-                if parameter.is_partial_preset != value.presets.iter().any(|preset| preset.name == *name) {
+                if parameter.name.is_none()
+                    || parameter.is_partial_preset
+                    || parameter.kind != crate::ast::ParamKind::Normal
+                {
                     return Err(invalid(
-                        "checked partial preset facts disagree with the published contract",
+                        "checked partial parameter facts are not fully represented by the published contract",
                     ));
+                }
+            }
+            for preset in &value.presets {
+                let mut matching = value
+                    .params
+                    .iter()
+                    .filter(|parameter| parameter.name.as_deref() == Some(preset.name.as_str()));
+                let parameter = matching
+                    .next()
+                    .ok_or_else(|| invalid("checked partial preset has no matching parameter"))?;
+                if matching.next().is_some() || !parameter.has_default || parameter.ty != preset.ty {
+                    return Err(invalid("checked partial preset disagrees with its parameter"));
                 }
             }
         }
@@ -432,18 +444,6 @@ fn shape_name(value: &CheckedExportKind) -> &str {
         CheckedExportKind::Const(value) => &value.name,
         CheckedExportKind::Static(value) => &value.name,
     }
-}
-
-/// Recover partial preset flags from the explicit checked preset-to-parameter binding.
-fn partial_params(value: &PartialExport) -> Vec<CallableParam> {
-    let mut parameters = params(&value.params);
-    for parameter in &mut parameters {
-        parameter.is_partial_preset = parameter
-            .name
-            .as_ref()
-            .is_some_and(|name| value.presets.iter().any(|preset| preset.name == *name));
-    }
-    parameters
 }
 
 /// Reconstruct exact type parameters and compiler-inferred/declared generic obligations.

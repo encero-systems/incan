@@ -58,7 +58,7 @@ pub enum State:
     Ready
     Count(int)
 
-pub def label(size: int, text: str) -> str:
+pub def label(size: int, text: str, suffix: str = "!") -> str:
     return text
 
 pub small = partial label(size=3)
@@ -91,6 +91,66 @@ pub small = partial label(size=3)
             (CheckedExportKind::Function(_), CheckedExportKind::Function(_)) => {}
             _ => return Err("export classification changed".into()),
         }
+    }
+    Ok(())
+}
+
+/// Module partials keep their full positional signature and ordinary defaults; captured-slot flags belong only
+/// to local partial expressions. Neither checked input nor a forged published preset may change that contract.
+#[test]
+fn ordinary_checked_replay_refuses_inconsistent_partial_bindings() -> Result<(), String> {
+    let exports = checked(
+        "pub def label(size: int, text: str, suffix: str = \"!\") -> str:\n  return text\n\npub small = partial label(size=3)\n",
+    )?;
+    let original = exports
+        .iter()
+        .find(|export| export.name == "small")
+        .ok_or("missing small")?;
+    let valid = CheckedExportReplay::from_checked("ordinary", "1.0.0", original).map_err(|error| error.to_string())?;
+    for corruption in 0..7 {
+        let mut changed = original.clone();
+        let CheckedExportKind::Partial(partial) = &mut changed.kind else {
+            return Err("missing partial".into());
+        };
+        match corruption {
+            0 => partial.params[0].is_partial_preset = true,
+            1 => partial.params[0].name = None,
+            2 => partial.params[0].kind = crate::ast::ParamKind::RestPositional,
+            3 => partial.params[0].has_default = false,
+            4 => partial.presets[0].name = "missing".into(),
+            5 => partial.presets[0].ty = partial.params[1].ty.clone(),
+            _ => {
+                let trailing = partial.params.last_mut().ok_or("missing trailing parameter")?;
+                trailing.kind = crate::ast::ParamKind::RestPositional;
+                trailing.has_default = false;
+            }
+        }
+        assert!(CheckedExportReplay::from_checked("ordinary", "1.0.0", &changed).is_err());
+    }
+    for corruption in 0..4 {
+        let mut changed = valid.clone();
+        let partial = changed
+            .projection
+            .exports
+            .partials
+            .first_mut()
+            .ok_or("missing published partial")?;
+        match corruption {
+            0 => partial.params[0].has_default = false,
+            1 => partial.presets[0].name = "missing".into(),
+            2 => partial.presets[0].ty = partial.params[1].ty.clone(),
+            _ => {
+                let trailing = partial
+                    .params
+                    .last_mut()
+                    .ok_or("missing published trailing parameter")?;
+                trailing.kind = crate::library_manifest::ParamKindExport::RestPositional;
+                trailing.has_default = false;
+            }
+        }
+        let bytes = serde_json::to_vec(&changed).map_err(|error| error.to_string())?;
+        let decoded: CheckedExportReplay = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+        assert!(decoded.to_checked().is_err());
     }
     Ok(())
 }
