@@ -323,7 +323,7 @@ impl OvenStoreExecutionPayload {
     ///
     /// [`Self::verify_admitted_record`] proves everything but the closure; this adds the full artifact walk for a
     /// consumer that will not read those files itself. File digests may reuse this owner's previous observation,
-    /// but every current file still opens and verifies its replacement-sensitive metadata before and after reuse.
+    /// with fresh replacement-sensitive path metadata before and after reuse. Changed generations use held-file checks.
     pub fn verify_admitted_payload(&self) -> Result<(), OvenStoreError> {
         self.verify_admitted_record()?;
         let mut observations = self
@@ -3448,7 +3448,7 @@ fn verify_materialized_files(root: &Path, manifest: &OvenArtifactManifest) -> Re
 }
 
 /// Walk the complete current inventory, optionally retaining only byte observations under its admitted owner.
-/// Every file still opens and rechecks replacement-sensitive metadata; no cached inventory skips missing members.
+/// Every file rechecks replacement-sensitive metadata; no cached inventory skips missing members.
 fn verify_materialized_files_with_observations(
     root: &Path,
     manifest: &OvenArtifactManifest,
@@ -3517,7 +3517,7 @@ fn verify_materialized_files_with_observations(
         .fold(0_u64, |total, file| total.saturating_add(file.logical_bytes)))
 }
 
-/// Metadata for one exact open file, including replacement and preserved-mtime edits.
+/// Metadata for one regular-file generation, including replacement and preserved-mtime edits.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct MaterializedFileStamp {
     length: u64,
@@ -3535,7 +3535,11 @@ struct MaterializedFileDigest {
 
 /// Bind metadata to the held regular-file handle; unsupported platforms always hash bytes.
 fn materialized_file_stamp(file: &File) -> io::Result<MaterializedFileStamp> {
-    let metadata = file.metadata()?;
+    materialized_metadata_stamp(&file.metadata()?)
+}
+
+/// Use identical generation checks for held handles and non-following path observations.
+fn materialized_metadata_stamp(metadata: &fs::Metadata) -> io::Result<MaterializedFileStamp> {
     if !metadata.is_file() {
         return Err(io::Error::other("materialized artifact must be a regular file"));
     }
@@ -3630,11 +3634,12 @@ pub fn digest_regular_file(path: &Path) -> Result<(u64, String), OvenStoreError>
     Ok((observed.length, observed.digest))
 }
 
-/// Content identity and physical reads from one held-file observation; warm lookups read no artifact bytes.
+/// Content identity and physical work from one file observation; retained warm lookups need no file opens.
 struct ObservedFileDigest {
     length: u64,
     digest: String,
     input_bytes_read: u64,
+    file_opens: u64,
     stamp: MaterializedFileStamp,
 }
 
@@ -3645,11 +3650,51 @@ fn digest_materialized_file(path: &Path) -> Result<(u64, String), OvenStoreError
     Ok((observed.length, observed.digest))
 }
 
-/// Reuse this owner's observed bytes after fresh held-file checks, computing persistent cache coordinates on misses.
+/// Reconcile an owner's observed generation without reopening unchanged files or consulting persistent cache records.
 fn digest_retained_materialized_file(
     path: &Path,
     observations: &mut BTreeMap<PathBuf, MaterializedFileDigest>,
 ) -> Result<ObservedFileDigest, OvenStoreError> {
+    digest_retained_materialized_file_with_metadata(path, observations, |path| fs::symlink_metadata(path))
+}
+
+/// Reuse bytes only between matching non-following path observations; changed generations use held-file verification.
+///
+/// The existing owner map remains the only retained cache. Unsupported identities, changed stamps and unstable path
+/// observations fall through to the existing hashing/retry path. The callback exposes real metadata observations for
+/// deterministic replacement and edit controls without introducing another freshness policy.
+fn digest_retained_materialized_file_with_metadata(
+    path: &Path,
+    observations: &mut BTreeMap<PathBuf, MaterializedFileDigest>,
+    mut metadata: impl FnMut(&Path) -> io::Result<fs::Metadata>,
+) -> Result<ObservedFileDigest, OvenStoreError> {
+    if let Some(retained) = observations.get(path) {
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_store::reconcile_retained_file", input = %path.display()).entered();
+        let before = metadata(path)
+            .and_then(|metadata| materialized_metadata_stamp(&metadata))
+            .map_err(|source| OvenStoreError::Io {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        if file_digest_matches(retained, &before) {
+            let after = metadata(path)
+                .and_then(|metadata| materialized_metadata_stamp(&metadata))
+                .map_err(|source| OvenStoreError::Io {
+                    path: path.to_path_buf(),
+                    source,
+                })?;
+            if before == after {
+                return Ok(report_observed_file_digest(
+                    path,
+                    before.length,
+                    retained.digest.clone(),
+                    0,
+                    0,
+                    before,
+                ));
+            }
+        }
+    }
     let observed = digest_observed_file_with_retained(
         path,
         observations.get(path),
@@ -3736,6 +3781,7 @@ fn digest_observed_file_with_retained(
                     before.length,
                     record.digest.clone(),
                     input_bytes_read,
+                    1,
                     before,
                 ));
             }
@@ -3792,6 +3838,7 @@ fn digest_observed_file_with_retained(
             logical_bytes,
             digest,
             input_bytes_read,
+            1,
             before,
         ));
     }
@@ -3811,25 +3858,27 @@ fn file_digest_matches(record: &MaterializedFileDigest, current: &MaterializedFi
             .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
 }
 
-/// Report authoritative byte reads separately from stat observations and cache-record IO.
+/// Report artifact opens and authoritative byte reads separately from metadata observations and cache-record IO.
 fn report_observed_file_digest(
     path: &Path,
     length: u64,
     digest: String,
     input_bytes_read: u64,
+    file_opens: u64,
     stamp: MaterializedFileStamp,
 ) -> ObservedFileDigest {
-    tracing::trace!(target: "incan::invocation", input = %path.display(), input_bytes_read, logical_bytes = length, decision = if input_bytes_read == 0 { "stamp_reuse_or_empty_file" } else { "read_file" });
+    tracing::trace!(target: "incan::invocation", input = %path.display(), input_bytes_read, file_opens, logical_bytes = length, decision = if file_opens == 0 { "retained_metadata_reuse" } else if input_bytes_read == 0 { "stamp_reuse_or_empty_file" } else { "read_file" });
     let observed = ObservedFileDigest {
         length,
         digest,
         input_bytes_read,
+        file_opens,
         stamp,
     };
     if std::env::var_os("INCAN_OVEN_TRACE_FILE_DIGESTS").is_some() {
         eprintln!(
             "Oven file digest: {}",
-            serde_json::json!({"path":path, "scheme":"raw-sha256-v1", "input_bytes_read":observed.input_bytes_read})
+            serde_json::json!({"path":path, "scheme":"raw-sha256-v1", "input_bytes_read":observed.input_bytes_read, "file_opens":observed.file_opens})
         );
     }
     observed
@@ -4781,6 +4830,100 @@ pub(crate) mod tests {
     use std::collections::BTreeMap;
     use std::fs::{self, OpenOptions};
     use std::path::{Path, PathBuf};
+
+    /// Warm owner reconciliation avoids artifact opens; edits and replacements still observe new bytes.
+    #[cfg(unix)]
+    #[test]
+    fn retained_metadata_reconciliation_opens_only_changed_files() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("native");
+        let mut observations = BTreeMap::new();
+        fs::write(&source, b"native bytes")?;
+        let first = super::digest_retained_materialized_file(&source, &mut observations)?;
+        assert_eq!(first.file_opens, 1);
+        assert_eq!(first.input_bytes_read, 12);
+        let warm = super::digest_retained_materialized_file(&source, &mut observations)?;
+        assert_eq!(warm.digest, first.digest);
+        assert_eq!(warm.file_opens, 0);
+        assert_eq!(warm.input_bytes_read, 0);
+
+        let modified = fs::metadata(&source)?.modified()?;
+        fs::write(&source, b"edited bytes")?;
+        fs::File::options()
+            .write(true)
+            .open(&source)?
+            .set_times(fs::FileTimes::new().set_modified(modified))?;
+        let edited = super::digest_retained_materialized_file(&source, &mut observations)?;
+        assert_eq!(edited.digest, crate::digest_bytes(b"edited bytes"));
+        assert_eq!(edited.file_opens, 1);
+        assert_eq!(edited.input_bytes_read, 12);
+
+        let replacement = root.path().join("replacement");
+        fs::write(&replacement, b"other bytes!")?;
+        fs::File::options()
+            .write(true)
+            .open(&replacement)?
+            .set_times(fs::FileTimes::new().set_modified(modified))?;
+        fs::rename(&replacement, &source)?;
+        let replaced = super::digest_retained_materialized_file(&source, &mut observations)?;
+        assert_eq!(replaced.digest, crate::digest_bytes(b"other bytes!"));
+        assert_eq!(replaced.file_opens, 1);
+        assert_eq!(replaced.input_bytes_read, 12);
+        let warm = super::digest_retained_materialized_file(&source, &mut observations)?;
+        assert_eq!(warm.file_opens, 0);
+        Ok(())
+    }
+
+    /// A real edit between the two path observations must fall back to hashing the changed generation.
+    #[cfg(unix)]
+    #[test]
+    fn retained_metadata_reconciliation_rechecks_races() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("native");
+        let mut observations = BTreeMap::new();
+        fs::write(&source, b"native bytes")?;
+        super::digest_retained_materialized_file(&source, &mut observations)?;
+        let modified = fs::metadata(&source)?.modified()?;
+        let mut calls = 0;
+        let changed = super::digest_retained_materialized_file_with_metadata(&source, &mut observations, |path| {
+            calls += 1;
+            if calls == 2 {
+                fs::write(path, b"edited bytes")?;
+                fs::File::options()
+                    .write(true)
+                    .open(path)?
+                    .set_times(fs::FileTimes::new().set_modified(modified))?;
+            }
+            fs::symlink_metadata(path)
+        })?;
+        assert_eq!(calls, 2);
+        assert_eq!(changed.digest, crate::digest_bytes(b"edited bytes"));
+        assert_eq!(changed.file_opens, 1);
+        assert_eq!(changed.input_bytes_read, 12);
+        let warm = super::digest_retained_materialized_file(&source, &mut observations)?;
+        assert_eq!(warm.file_opens, 0);
+        Ok(())
+    }
+
+    /// A cached generation never admits a missing path, directory or symlink to the old bytes.
+    #[cfg(unix)]
+    #[test]
+    fn retained_metadata_reconciliation_refuses_path_substitution() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("native");
+        let held = root.path().join("held");
+        let mut observations = BTreeMap::new();
+        fs::write(&source, b"native bytes")?;
+        super::digest_retained_materialized_file(&source, &mut observations)?;
+        fs::rename(&source, &held)?;
+        assert!(super::digest_retained_materialized_file(&source, &mut observations).is_err());
+        fs::create_dir(&source)?;
+        assert!(super::digest_retained_materialized_file(&source, &mut observations).is_err());
+        fs::remove_dir(&source)?;
+        std::os::unix::fs::symlink(&held, &source)?;
+        assert!(super::digest_retained_materialized_file(&source, &mut observations).is_err());
+        Ok(())
+    }
 
     /// A retained byte observation eliminates persistent-cache work, while a race still retries against new bytes.
     #[cfg(unix)]
