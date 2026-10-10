@@ -609,6 +609,22 @@ fn published_ordinary_equal_owner_ids_at_distinct_roots_are_both_verified() -> R
     let copied = select_published_library_metadata_reference(&published, &reference, &[])?;
     assert_eq!(copied.reference().owner_identity, leaf.reference().owner_identity);
     assert_ne!(copied.owner.artifact_root, leaf.owner.artifact_root);
+    // Store import may hard-link immutable bytes; this control needs independent physical corruption.
+    let copied_file = copied.owner.artifact_root.join("src/lib.rs");
+    let independent_file = copied_file.with_file_name("lib.rs.independent");
+    let copied_metadata = fs::metadata(&copied_file)?;
+    fs::copy(&copied_file, &independent_file)?;
+    fs::File::open(&independent_file)?.set_modified(copied_metadata.modified()?)?;
+    fs::rename(&independent_file, &copied_file)?;
+    copied.verify()?;
+    leaf.verify()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let original = fs::metadata(leaf.owner.artifact_root.join("src/lib.rs"))?;
+        let independent = fs::metadata(&copied_file)?;
+        assert_ne!((original.dev(), original.ino()), (independent.dev(), independent.ino()));
+    }
     let (_root_package, root) = dependency_package("physical_root", &[Arc::clone(&leaf), Arc::clone(&copied)])?;
     let mut work = MetadataOwnerTraversal::default();
     root.verify_with_traversal(&mut work)?;
