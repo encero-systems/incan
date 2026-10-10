@@ -1,5 +1,7 @@
 //! Real ordinary metadata Store controls; no mirrored receipt or admission implementation.
 
+mod published;
+
 use super::{
     LIBRARY_METADATA_DOMAIN, LibraryMetadataDependency, LibraryMetadataRecipe, SelectedLibraryMetadata,
     publish_library_metadata, select_library_metadata, select_library_metadata_reference,
