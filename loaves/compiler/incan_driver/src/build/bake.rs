@@ -29,7 +29,9 @@ use crate::build::output_paths::{
 };
 use crate::build::output_selection::project_output_report_snapshot;
 use crate::build::oven_project::{prepare_oven_project, remove_completed_generated_cargo_lock};
-use crate::build::package_loafs::{export_selected_package_loaf, publish_checked_library_package};
+use crate::build::package_loafs::{
+    ExportedPackageLoafs, export_selected_package_loaf, publish_checked_library_package,
+};
 use crate::build::plan_authority::{
     collect_caller_owned_provider_registry_leaf_authority, explicit_bake_profiles,
     rematerialize_caller_owned_libraries_with_authority_context, replace_caller_owned_package_libraries,
@@ -1529,6 +1531,8 @@ pub fn bake_oven_project_targets(
     // closure, so its constituents stay leased until the authority is sealed; if the policy cannot hold them all,
     // admission fails loudly instead.
     let mut retained_preparations: Vec<PreparedLibraryProject> = Vec::new();
+    // Destination owners are independent of prepared source Store leases and survive finalization/rollback too.
+    let mut retained_package_loafs: Vec<ExportedPackageLoafs> = Vec::new();
     // The same holds for an executable target: its debug plan is published one profile before its release plan, and
     // the release publisher's staging reservation reclaims unleased entries oldest-first (#1230). Dropping the debug
     // preparation at the end of its loop arm handed that plan to the reclaimer.
@@ -1645,12 +1649,14 @@ pub fn bake_oven_project_targets(
                             })?
                             .to_string_lossy()
                             .replace('\\', "/");
-                        let entries = export_selected_package_loaf(
+                        let exported = export_selected_package_loaf(
                             &store,
                             &package_store_root,
                             &selected_profile.receipt,
                             &selected_profile.plan_selection,
                         )?;
+                        let entries = exported.entries().to_vec();
+                        retained_package_loafs.push(exported);
                         completed_outputs.push((
                             profile.clone(),
                             selected_profile.receipt.clone(),
@@ -1969,10 +1975,12 @@ pub fn bake_oven_project_targets(
             outputs,
         })
     })();
-    match publication {
+    let result = match publication {
         Some(publication) => publication.finish(result),
         None => result,
-    }
+    };
+    drop(retained_package_loafs);
+    result
 }
 
 #[cfg(test)]
