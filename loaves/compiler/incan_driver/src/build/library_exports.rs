@@ -104,6 +104,62 @@ pub fn collect_library_rust_abi(
     Ok(LibraryRustAbi::from_items(items))
 }
 
+/// Select a shipped ABI record only when it can satisfy durable publication without source extraction.
+#[cfg(feature = "rust_inspect")]
+fn complete_shipped_rust_abi_item(
+    index: &incan_frontend::library_manifest_index::LibraryManifestIndex,
+    path: &str,
+) -> Option<incan_lang::interop::RustItemMetadata> {
+    index.rust_abi_item(path).filter(|metadata| match &metadata.kind {
+        incan_lang::interop::RustItemKind::Type(info) => {
+            info.metadata_completeness.has_methods() && info.metadata_completeness.has_trait_impls()
+        }
+        _ => true,
+    })
+}
+
+/// Prepare inspection only for queries not already answered by complete ABI in the checker's dependency index.
+#[cfg(feature = "rust_inspect")]
+pub(crate) fn library_rust_abi_source_queries(
+    query_paths: &[String],
+    index: &incan_frontend::library_manifest_index::LibraryManifestIndex,
+) -> Vec<String> {
+    query_paths
+        .iter()
+        .filter(|path| complete_shipped_rust_abi_item(index, path).is_none())
+        .cloned()
+        .collect()
+}
+
+/// Reuse the checker's complete shipped ABI records and inspect only demands not covered by that same index.
+///
+/// The caller retains the dependency owners behind the index throughout checking and publication. Copying their
+/// checked facts avoids reconstructing a dependency's inspection workspace. Partial type records still require
+/// complete extraction and cannot satisfy a durable ABI requirement by themselves.
+#[cfg(feature = "rust_inspect")]
+pub(crate) fn collect_library_rust_abi_with_shipped(
+    rust_inspect_manifest_dir: Option<&Path>,
+    query_paths: &[String],
+    index: &incan_frontend::library_manifest_index::LibraryManifestIndex,
+) -> CliResult<Option<LibraryRustAbi>> {
+    let mut items = Vec::new();
+    let mut source_queries = Vec::new();
+    for path in query_paths {
+        if let Some(metadata) = complete_shipped_rust_abi_item(index, path) {
+            items.push(metadata);
+        } else {
+            source_queries.push(path.clone());
+        }
+    }
+    if !source_queries.is_empty()
+        && let Some(directory) = rust_inspect_manifest_dir
+        && let Some(extracted) = collect_library_rust_abi(directory, &source_queries)?
+    {
+        items.extend(extracted.items);
+    }
+    Ok(LibraryRustAbi::from_items(items))
+}
+
 /// Resolve the project root for library commands from an optional source path or project directory.
 pub fn resolve_library_project_root(file_path: Option<&str>) -> CliResult<PathBuf> {
     if let Some(file_path) = file_path {
