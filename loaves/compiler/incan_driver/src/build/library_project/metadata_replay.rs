@@ -27,13 +27,23 @@ use oven_store::{
 };
 
 pub(crate) mod lock_transition;
+pub(crate) mod ordinary_native;
+
+use ordinary_native::OrdinaryNativeMetadataAuthority;
+
+/// Retain one original native authority family; explicit ordinary inputs never discover an SDK.
+enum NativeMetadataAuthority {
+    SdkCommand(Arc<NativeSdkCommandContext>),
+    SdkPublication,
+    Ordinary(Arc<OrdinaryNativeMetadataAuthority>),
+}
 
 /// One source-current ordinary checked owner request and the current original dependency/native leases it binds.
 pub(crate) struct MetadataPreparation {
     pub recipe: LibraryMetadataRecipe,
     pub receipt: OvenReceipt,
     pub store: OvenStore,
-    pub native_context: Option<Arc<NativeSdkCommandContext>>,
+    native_authority: NativeMetadataAuthority,
     pub rustc: PathBuf,
     dependency_owners: Vec<Arc<SelectedLibraryMetadata>>,
     delivery_coordinates: BTreeMap<String, String>,
@@ -62,6 +72,44 @@ impl MetadataPreparation {
         authority: Option<&mut OvenProjectBakeAuthorityContext>,
         explicit_native_context: Option<Arc<NativeSdkCommandContext>>,
     ) -> CliResult<Option<Self>> {
+        Self::observe_with_authority(
+            project,
+            session,
+            out_dir,
+            native_sdk,
+            authority,
+            explicit_native_context.map(NativeMetadataAuthority::SdkCommand),
+        )
+    }
+
+    /// Observe checked metadata using only original ordinary producer requests and compiler support sources.
+    /// The caller must establish plain-library checked-demand coverage before supplying this authority.
+    pub(crate) fn observe_with_ordinary_native_authority(
+        project: &ProjectManifest,
+        session: &CompilationSession,
+        out_dir: &Path,
+        native: Arc<OrdinaryNativeMetadataAuthority>,
+    ) -> CliResult<Option<Self>> {
+        native.verify()?;
+        Self::observe_with_authority(
+            project,
+            session,
+            out_dir,
+            None,
+            None,
+            Some(NativeMetadataAuthority::Ordinary(native)),
+        )
+    }
+
+    /// Share source/dependency observation without changing the caller's explicit native authority family.
+    fn observe_with_authority(
+        project: &ProjectManifest,
+        session: &CompilationSession,
+        out_dir: &Path,
+        native_sdk: Option<&NativeSdkPublicationContext<'_>>,
+        authority: Option<&mut OvenProjectBakeAuthorityContext>,
+        explicit_native: Option<NativeMetadataAuthority>,
+    ) -> CliResult<Option<Self>> {
         if !metadata_output_is_observable(project.project_root(), out_dir) {
             tracing::debug!("ordinary checked metadata reuse unavailable for output within authored source");
             return Ok(None);
@@ -70,12 +118,18 @@ impl MetadataPreparation {
         std::fs::create_dir_all(out_dir).map_err(|error| invalid(error.to_string()))?;
         let store = open_default_oven_store()?;
         let producer_digest = crate::build::source_authority::current_compiler_identity_digest()?;
-        let rustc = resolve_active_rustc().map_err(|error| invalid(error.to_string()))?;
-        let target = authority
-            .as_ref()
-            .and_then(|authority| authority.requested_target.clone())
-            .map(Ok)
-            .unwrap_or_else(|| rustc_host_target(&rustc).map_err(|error| invalid(error.to_string())))?;
+        let rustc = match &explicit_native {
+            Some(NativeMetadataAuthority::Ordinary(native)) => native.rustc().to_path_buf(),
+            _ => resolve_active_rustc().map_err(|error| invalid(error.to_string()))?,
+        };
+        let target = match &explicit_native {
+            Some(NativeMetadataAuthority::Ordinary(native)) => native.target().to_string(),
+            _ => authority
+                .as_ref()
+                .and_then(|authority| authority.requested_target.clone())
+                .map(Ok)
+                .unwrap_or_else(|| rustc_host_target(&rustc).map_err(|error| invalid(error.to_string())))?,
+        };
         let toolchain = rustc_identity(&rustc).map_err(|error| invalid(error.to_string()))?;
         let feature_plan = session
             .package_feature_plan
@@ -162,26 +216,26 @@ impl MetadataPreparation {
             dependency_owners.push(selected);
         }
         let delivery_coordinates = current_delivery_coordinates(out_dir, session)?;
-        let native_context = if let Some(context) = explicit_native_context {
+        let native_authority = if let Some(native) = explicit_native {
             if native_sdk.is_some() {
                 return Err(invalid(
-                    "ordinary native admission cannot replace SDK publication authority",
+                    "explicit native admission cannot replace SDK publication authority",
                 ));
             }
-            context.verify()?;
-            Some(context)
+            native
         } else if native_sdk.is_some() {
-            None
+            NativeMetadataAuthority::SdkPublication
         } else {
-            match authority {
+            let context = match authority {
                 Some(authority) => authority.native_sdk_context()?,
                 None => NativeSdkCommandContext::discover()?,
-            }
+            };
+            let Some(context) = context else {
+                return Ok(None);
+            };
+            NativeMetadataAuthority::SdkCommand(context)
         };
-        if native_sdk.is_none() && native_context.is_none() {
-            return Ok(None);
-        }
-        let semantic_authority_digest = semantic_authority(session, native_sdk, native_context.as_deref())?;
+        let semantic_authority_digest = semantic_authority(session, native_sdk, &native_authority)?;
         let policy_digest = metadata_policy_digest(native_sdk, &delivery_coordinates)?;
         let recipe = LibraryMetadataRecipe {
             name,
@@ -200,11 +254,36 @@ impl MetadataPreparation {
             recipe,
             receipt,
             store,
-            native_context,
+            native_authority,
             rustc,
             dependency_owners,
             delivery_coordinates,
         }))
+    }
+
+    /// Borrow the original legacy command admission without discovering or substituting native authority.
+    pub(crate) fn native_context(&self) -> Option<&Arc<NativeSdkCommandContext>> {
+        match &self.native_authority {
+            NativeMetadataAuthority::SdkCommand(context) => Some(context),
+            _ => None,
+        }
+    }
+
+    /// Borrow the retained ordinary producer observations for explicit current-profile caller wiring.
+    pub(crate) fn ordinary_authority(&self) -> Option<&Arc<OrdinaryNativeMetadataAuthority>> {
+        match &self.native_authority {
+            NativeMetadataAuthority::Ordinary(native) => Some(native),
+            _ => None,
+        }
+    }
+
+    /// Revalidate original native leases without observing a different source generation during lock finalization.
+    pub(crate) fn verify_native_authority(&self) -> CliResult<()> {
+        match &self.native_authority {
+            NativeMetadataAuthority::SdkCommand(context) => context.verify(),
+            NativeMetadataAuthority::Ordinary(native) => native.verify(),
+            NativeMetadataAuthority::SdkPublication => Ok(()),
+        }
     }
 
     /// Borrow the original admitted checked dependency owners for the finalized metadata capability.
@@ -214,6 +293,7 @@ impl MetadataPreparation {
 
     /// Admit one unchanged owner through the ordinary Store, retaining this command's dependency authority.
     pub fn select(&self) -> CliResult<Option<Arc<SelectedLibraryMetadata>>> {
+        self.verify_native_authority()?;
         let Some(selected) = select_library_metadata(&self.store, &self.recipe, &self.receipt)? else {
             return Ok(None);
         };
@@ -238,8 +318,7 @@ impl MetadataPreparation {
         if current_delivery_coordinates(out_dir, session)? != self.delivery_coordinates
             || current_source_digest(project.project_root(), features)? != self.recipe.source_digest
             || crate::build::source_authority::current_compiler_identity_digest()? != self.recipe.producer_digest
-            || semantic_authority(session, native_sdk, self.native_context.as_deref())?
-                != self.recipe.semantic_authority_digest
+            || semantic_authority(session, native_sdk, &self.native_authority)? != self.recipe.semantic_authority_digest
         {
             return Err(invalid(
                 "checked library preparation authority changed before publication",
@@ -604,7 +683,7 @@ fn current_source_snapshot(root: &Path, features: &PackageFeaturePlan) -> CliRes
 fn semantic_authority(
     session: &CompilationSession,
     native_sdk: Option<&NativeSdkPublicationContext<'_>>,
-    native_context: Option<&NativeSdkCommandContext>,
+    authority: &NativeMetadataAuthority,
 ) -> CliResult<String> {
     crate::build::library_metadata::validate_rust_fact_agreement(
         session
@@ -620,24 +699,43 @@ fn semantic_authority(
             "checked_manifest": record.manifest.as_ref().map(|manifest| manifest.to_json_string()).transpose().map_err(|error| invalid(error.to_string()))?,
         }))
     }).collect::<CliResult<Vec<_>>>()?;
-    let native = if let Some(context) = native_sdk {
-        serde_json::json!({
-            "inspection": context.closure.inspection_project(),
-            "native": context.closure.units().iter().map(|unit| unit.native_artifact()).collect::<Result<Vec<_>, _>>().map_err(|error| invalid(error.to_string()))?,
-        })
-    } else if let Some(context) = native_context {
-        let receipts: BTreeMap<String, String> =
-            serde_json::from_slice(context.receipt_catalog()?).map_err(|error| invalid(error.to_string()))?;
-        serde_json::json!({ "receipts": receipts })
-    } else {
-        return Err(invalid("complete native semantic authority is unavailable"));
+    let (native, stdlib) = match authority {
+        NativeMetadataAuthority::Ordinary(native) => {
+            if native_sdk.is_some() {
+                return Err(invalid("ordinary metadata cannot substitute SDK publication authority"));
+            }
+            (native.semantic_inputs()?, Some(native.standard_source_digest()?))
+        }
+        NativeMetadataAuthority::SdkPublication => {
+            let context = native_sdk.ok_or_else(|| invalid("original SDK publication authority is unavailable"))?;
+            let native = serde_json::json!({
+                "inspection": context.closure.inspection_project(),
+                "native": context.closure.units().iter().map(|unit| unit.native_artifact()).collect::<Result<Vec<_>, _>>().map_err(|error| invalid(error.to_string()))?,
+            });
+            (native, legacy_standard_source_digest()?)
+        }
+        NativeMetadataAuthority::SdkCommand(context) => {
+            if native_sdk.is_some() {
+                return Err(invalid("SDK command metadata cannot substitute publication authority"));
+            }
+            let receipts: BTreeMap<String, String> =
+                serde_json::from_slice(context.receipt_catalog()?).map_err(|error| invalid(error.to_string()))?;
+            (
+                serde_json::json!({ "receipts": receipts }),
+                legacy_standard_source_digest()?,
+            )
+        }
     };
-    let stdlib = oven_model::toolchain_layout::find_stdlib_root()
-        .map(|root| digest_project_source_tree(&root).map_err(|error| invalid(error.to_string())))
-        .transpose()?;
     Ok(digest_bytes(
         &serde_json::to_vec(&(providers, native, stdlib)).map_err(|error| invalid(error.to_string()))?,
     ))
+}
+
+/// Preserve legacy discovery only for existing SDK-backed callers.
+fn legacy_standard_source_digest() -> CliResult<Option<String>> {
+    oven_model::toolchain_layout::find_stdlib_root()
+        .map(|root| digest_project_source_tree(&root).map_err(|error| invalid(error.to_string())))
+        .transpose()
 }
 
 /// Keep source observation and replay refusals in the ordinary preparation error family.
@@ -718,6 +816,11 @@ pub(super) fn prepare_replayed_library(request: ReplayRequest<'_>) -> CliResult<
     } = request;
     let started = Instant::now();
     preparation.revalidate(project, session, &out_dir, native_sdk)?;
+    if preparation.ordinary_authority().is_some() {
+        return Err(invalid(
+            "ordinary metadata replay requires explicit ordinary current-profile planning authority",
+        ));
+    }
     let contract = selected
         .checked_requirements()
         .ok_or_else(|| invalid("metadata owner lacks checked planning inputs"))?;
@@ -765,7 +868,7 @@ pub(super) fn prepare_replayed_library(request: ReplayRequest<'_>) -> CliResult<
         &requirements,
         &resolved,
         &provider_semantics,
-        preparation.native_context.as_deref(),
+        preparation.native_context().map(Arc::as_ref),
     )?;
     if project.vocab().is_some() && oven_cargo_compat::source_compiler_vocab_support_is_available() {
         build_inputs.insert(
@@ -831,7 +934,7 @@ pub(super) fn prepare_replayed_library(request: ReplayRequest<'_>) -> CliResult<
             target: preparation.recipe.target.clone(),
             toolchain: preparation.recipe.toolchain.clone(),
             store: &preparation.store,
-            native_sdk_context: preparation.native_context.clone(),
+            native_sdk_context: preparation.native_context().cloned(),
             oven_plan_mode,
             rust_edition: project.rust_edition().map(str::to_string),
         },
