@@ -22,6 +22,8 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 const OWN_IO: &str = "pub def owned() -> int:\n    return 7\n";
 const MAIN: &str = "def main() -> None:\n    pass\n";
 const ROUTES: &str = "from std.web.routing import route\n@route(\"/\")\ndef hidden() -> str:\n    return \"handler\"\n";
+// The public signature in loaves/stdlib/web/src/web/routing.incn, including its actual defaulted methods parameter.
+const WEB_ROUTING: &str = "rust.module(\"incan_web_macros\")\n@rust.extern\npub def route(path: str, methods: list[str] = [\"GET\"]) -> None: ...\n";
 
 /// Parse fixture source through the real frontend without introducing test-only semantic shortcuts.
 fn parse(source: &str) -> Result<Program, String> {
@@ -30,8 +32,11 @@ fn parse(source: &str) -> Result<Program, String> {
 }
 
 /// Obtain genuine checked callable identities for the unchanged fixture AST before testing stage cache authority.
-fn checked(program: &Program, path: &str) -> Result<TypeCheckInfo, String> {
+fn checked(program: &Program, path: &str, plan: Option<&Arc<ProviderPlan>>) -> Result<TypeCheckInfo, String> {
     let mut checker = TypeChecker::new();
+    if let Some(plan) = plan {
+        checker.set_provider_plan(Arc::clone(plan));
+    }
     checker.set_current_module_path(Some(module(path)));
     checker
         .check_program(program)
@@ -58,6 +63,9 @@ fn child(mode: &str) -> TestResult {
     let policy = standard_package_namespace_policy("incan_stdlib_system").ok_or("missing pinned policy")?;
     write(&root.path().join("stdlib/system/loaf.toml"), policy.declaration)?;
     write(&root.path().join("stdlib/system/src/io.incn"), OWN_IO)?;
+    let web_policy = standard_package_namespace_policy("incan_stdlib_web").ok_or("missing pinned web policy")?;
+    write(&root.path().join("stdlib/web/loaf.toml"), web_policy.declaration)?;
+    write(&root.path().join("stdlib/web/src/web/routing.incn"), WEB_ROUTING)?;
     let executable = root.path().join("bin/incan");
     fs::create_dir_all(executable.parent().ok_or("missing executable parent")?)?;
     fs::copy(std::env::current_exe()?, &executable)?;
@@ -85,10 +93,7 @@ namespace-roots = ["web"]
         &decoy.path().join("system/src/io.incn"),
         "pub def owned() -> str:\n    return \"ambient\"\n",
     )?;
-    write(
-        &decoy.path().join("web/src/web/routing.incn"),
-        "rust.module(\"incan_web_macros\")\n@rust.extern\npub def route(path: str) -> None: ...\n",
-    )?;
+    write(&decoy.path().join("web/src/web/routing.incn"), WEB_ROUTING)?;
     let output = std::process::Command::new(executable)
         .args([
             "--exact",
@@ -150,8 +155,17 @@ fn dev7_standard_source_stages_actual_executable_child() -> TestResult {
     let mode = mode.to_str().ok_or("invalid child mode")?;
     let main = parse(MAIN)?;
     let routes = parse(ROUTES)?;
-    let main_info = checked(&main, "main")?;
-    let routes_info = checked(&routes, "routes")?;
+    let main_info = checked(&main, "main", None)?;
+    // Check the handler through genuine executable-selected web authority. The separate ambient cache below is
+    // deliberately hostile input to the stages, and must not be responsible for manufacturing callable identities.
+    let web_source =
+        Arc::new(TrustedStandardSourcePublication::discover("incan_stdlib_web")?.ok_or("missing genuine web source")?);
+    let web_package = web_source.verified_package_root()?.to_path_buf();
+    let web_plan = Arc::new(
+        ProviderPlan::from_admitted_libraries(LibraryManifestIndex::default(), &[], std::iter::empty())?
+            .with_standard_source_publication(web_source, &web_package, "incan_stdlib_web", "0.5.0")?,
+    );
+    let routes_info = checked(&routes, "routes", Some(&web_plan))?;
     let hidden_identity = routes_info
         .declarations
         .function_bindings_by_span
@@ -180,10 +194,10 @@ fn dev7_standard_source_stages_actual_executable_child() -> TestResult {
             lowering.lower_program(&main)?;
             let mut codegen = IrCodegen::new();
             bind_codegen(&mut codegen, &ordinary, legacy.clone(), plan_first);
-            assert!(!generate_routes(codegen, &main, &routes)?.contains(&hidden_definition));
+            assert!(!generate_routes(codegen, &main, &routes, &routes_info)?.contains(&hidden_definition));
         }
         // Explicit legacy generation proves the hostile metadata would otherwise keep this unimported handler.
-        assert!(generate_routes(IrCodegen::new(), &main, &routes)?.contains(&hidden_definition));
+        assert!(generate_routes(IrCodegen::new(), &main, &routes, &routes_info)?.contains(&hidden_definition));
         return Ok(());
     }
     let source =
@@ -211,11 +225,11 @@ fn dev7_standard_source_stages_actual_executable_child() -> TestResult {
             assert!(lowering.stdlib_cache.lookup_function_meta(&web, "route").is_some());
             let mut codegen = IrCodegen::new();
             bind_codegen(&mut codegen, &plan, retained.clone(), plan_first);
-            assert!(!generate_routes(codegen, &main, &routes)?.contains(&hidden_definition));
+            assert!(!generate_routes(codegen, &main, &routes, &routes_info)?.contains(&hidden_definition));
             let mut replaced = IrCodegen::new();
             bind_codegen(&mut replaced, &plan, retained.clone(), plan_first);
             replaced.set_library_manifest_index(LibraryManifestIndex::default());
-            assert!(generate_routes(replaced, &main, &routes)?.contains(&hidden_definition));
+            assert!(generate_routes(replaced, &main, &routes, &routes_info)?.contains(&hidden_definition));
         }
         return Ok(());
     }
@@ -274,13 +288,18 @@ fn bind_codegen(codegen: &mut IrCodegen<'_>, plan: &Arc<ProviderPlan>, cache: St
 }
 
 /// Use the actual nested generation route, including production reachability collection and source lowering.
-fn generate_routes<'a>(mut codegen: IrCodegen<'a>, main: &'a Program, routes: &'a Program) -> Result<String, String> {
+fn generate_routes<'a>(
+    mut codegen: IrCodegen<'a>,
+    main: &'a Program,
+    routes: &'a Program,
+    routes_info: &TypeCheckInfo,
+) -> Result<String, String> {
     let path = module("routes");
     codegen.add_module_with_path_segments("routes", routes, path.clone());
     codegen.set_preserve_dependency_public_items(false);
     codegen.set_prechecked_type_info(
-        checked(main, "main")?,
-        HashMap::from([(path.clone(), checked(routes, "routes")?)]),
+        checked(main, "main", None)?,
+        HashMap::from([(path.clone(), routes_info.clone())]),
     );
     let (_, modules) = codegen
         .try_generate_multi_file_nested(main, &[path.clone()])
