@@ -41,6 +41,7 @@ pub mod operators;
 pub mod punctuation;
 pub mod registry;
 pub mod rust_keywords;
+pub mod standard_packages;
 pub mod stdlib;
 pub mod surface;
 pub mod testing;

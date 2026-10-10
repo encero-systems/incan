@@ -8,11 +8,14 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod file_observation;
 mod installed_data;
+mod source_layout;
 pub use installed_data::{
     COMPILER_OWNED_PACKAGE_DESCRIPTOR, CompilerOwnedInstalledData, CompilerOwnedInstalledDataError,
     CompilerOwnedInstalledDataView,
 };
+pub use source_layout::{CompilerOwnedSourceLayout, CompilerOwnedSourceLayoutError, CompilerOwnedSourceMember};
 
 /// Internal scheduler handoff for compiler-owned immutable data when a direct-rustc child is baked outside the
 /// installed toolchain layout.
