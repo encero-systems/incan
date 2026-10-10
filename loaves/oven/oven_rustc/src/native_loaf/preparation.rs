@@ -9,7 +9,9 @@ use oven_store::store::{OvenStore, OvenStoreLimits};
 use serde::{Deserialize, Serialize};
 
 use super::{NativeLoafError, NativeLoafGraph, Result, failed, refused};
-use crate::sdk_closure::{ClosureCompileRequest, LocalFacetSelection, compile_local_sdk_facets, prepare_closure};
+use crate::sdk_closure::{
+    ClosureCompileRequest, LocalFacetSelection, compile_local_native_facets_for_profile, prepare_closure,
+};
 
 /// One explicitly selected local Rust facet; dependency and feature resolution remain the caller's authority.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -39,7 +41,7 @@ pub struct NativeLoafPreparationRequest<'a> {
     pub index_commit: &'a str,
     /// Requested target triple.
     pub target: &'a str,
-    /// Debug or release profile for registry units.
+    /// Debug or release profile for registry and local units, including host procedural macros.
     pub profile: &'a str,
     /// Owner directory for relative local facet project paths.
     pub facet_owner: &'a Path,
@@ -135,17 +137,15 @@ impl NativeLoafPreparation {
 
 /// Prepare native registry/local units and durable per-unit records without publishing or checking stdlib components.
 ///
-/// The existing local operational helper currently supports only debug and the compiler's host target. Requests
-/// outside that envelope refuse explicitly until the local producer carries those policies, rather than silently
-/// using a different target or profile. Cross-Store distribution and semantic/macro completeness remain separate.
+/// Registry and local units use the requested debug or release profile. Local facets still require the compiler's
+/// host target; unsupported targets refuse rather than silently using another triple. Cross-Store distribution and
+/// semantic/macro completeness remain separate.
 pub fn prepare_native_loafs(request: &NativeLoafPreparationRequest<'_>) -> Result<NativeLoafPreparation> {
     let started = Instant::now();
     if !request.facets.is_empty() {
-        if request.profile != "debug"
-            || crate::rustc::rustc_host_target(request.rustc).map_err(failed)? != request.target
-        {
+        if crate::rustc::rustc_host_target(request.rustc).map_err(failed)? != request.target {
             return Err(refused(
-                "local native preparation currently requires debug and the explicit compiler host target",
+                "local native preparation currently requires the explicit compiler host target",
             ));
         }
     }
@@ -170,12 +170,13 @@ pub fn prepare_native_loafs(request: &NativeLoafPreparationRequest<'_>) -> Resul
             domain: facet.domain.clone(),
         })
         .collect::<Vec<_>>();
-    compile_local_sdk_facets(
+    compile_local_native_facets_for_profile(
         &mut closure,
         &facets,
         request.facet_owner,
         request.output,
         request.rustc,
+        request.profile,
     )
     .map_err(NativeLoafError::Failed)?;
     closure.require_complete().map_err(NativeLoafError::Failed)?;
@@ -194,4 +195,174 @@ pub fn prepare_native_loafs(request: &NativeLoafPreparationRequest<'_>) -> Resul
             seconds: started.elapsed().as_secs_f64(),
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NativeLoafFacet, NativeLoafPreparationRequest, prepare_native_loafs};
+    use std::collections::BTreeSet;
+    use std::process::Command;
+
+    /// Real local host macros and target libraries compile under each profile, then reuse their exact receipts.
+    #[test]
+    fn dev7_native_local_profiles_publish_and_reuse_actual_optimization() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let output = root.path().join("native");
+        let lock = root.path().join("lock.json");
+        std::fs::write(&lock, r#"{"schema":"incan.oven.loaf-resolution/2","units":[]}"#)?;
+        for (name, kind, dependencies, source) in [
+            (
+                "consumer",
+                "lib",
+                "[dependencies]\nleaf={loaf='leaf',path='../leaf'}\nmarker={loaf='marker',path='../marker'}\n",
+                "pub fn value() -> u8 { leaf::value() + marker::profile!() }",
+            ),
+            (
+                "leaf",
+                "lib",
+                "",
+                "pub fn value() -> u8 { if cfg!(debug_assertions) { 1 } else { 2 } }",
+            ),
+            (
+                "marker",
+                "proc-macro",
+                "",
+                "use proc_macro::TokenStream; #[proc_macro] pub fn profile(_: TokenStream) -> TokenStream { match (if cfg!(debug_assertions) { \"11\" } else { \"23\" }).parse() { Ok(tokens) => tokens, Err(_) => TokenStream::new() } }",
+            ),
+        ] {
+            let project = root.path().join(name);
+            std::fs::create_dir_all(project.join("src"))?;
+            std::fs::write(
+                project.join("loaf.toml"),
+                format!(
+                    "[project]\nname='{name}'\nversion='1.0.0'\n[rust]\nname='{name}'\ntype='{kind}'\nedition='2024'\n{dependencies}"
+                ),
+            )?;
+            std::fs::write(project.join("src/lib.rs"), source)?;
+        }
+        let facets = ["consumer", "leaf", "marker"].map(|name| NativeLoafFacet {
+            project: name.into(),
+            features: Vec::new(),
+            domain: if name == "marker" {
+                "host".into()
+            } else {
+                "target".into()
+            },
+        });
+        let rustc = crate::rustc::resolve_active_rustc()?;
+        let target = crate::rustc::rustc_host_target(&rustc)?;
+        let mut first_identities = Vec::new();
+        for (profile, expected) in [("debug", 12), ("release", 25)] {
+            let request = NativeLoafPreparationRequest {
+                lock: &lock,
+                blobs: root.path(),
+                output: &output,
+                rustc: &rustc,
+                index: root.path(),
+                index_commit: "0000000000000000000000000000000000000000",
+                target: &target,
+                profile,
+                facet_owner: root.path(),
+                facets: &facets,
+            };
+            let unsupported_target = NativeLoafPreparationRequest {
+                target: "unsupported-local-target",
+                ..request
+            };
+            let error = prepare_native_loafs(&unsupported_target)
+                .err()
+                .ok_or("unsupported local target was accepted")?;
+            assert!(error.to_string().contains("explicit compiler host target"), "{error}");
+            let first = prepare_native_loafs(&request)?;
+            assert_eq!(first.report().compiled.len(), 3, "{profile}: {:?}", first.report());
+            assert!(first.report().reused.is_empty());
+            let consumer = first
+                .graph()
+                .units()
+                .values()
+                .find(|unit| unit.record().source.loaf == "consumer")
+                .ok_or("consumer record missing")?;
+            let original = consumer.record().native.clone();
+            let identities = first.graph().units().keys().cloned().collect::<BTreeSet<_>>();
+            for unit in first.graph().units().values() {
+                assert_eq!(unit.record().recipe.intent.profile, profile);
+                assert_eq!(unit.record().recipe.intent.target, target);
+                assert_eq!(
+                    unit.record().source.domain,
+                    if unit.record().source.loaf == "marker" {
+                        "host"
+                    } else {
+                        "target"
+                    }
+                );
+                unit.verify()?;
+            }
+            let source = root.path().join(format!("{profile}-caller.rs"));
+            std::fs::write(
+                &source,
+                format!("fn main() {{ assert_eq!(consumer::value(), {expected}); }}"),
+            )?;
+            let executable = root
+                .path()
+                .join(format!("{profile}-caller{}", std::env::consts::EXE_SUFFIX));
+            let mut command = Command::new(&rustc);
+            command
+                .arg(&source)
+                .args(["--crate-name", "profile_caller", "--edition", "2024"])
+                .arg("--extern")
+                .arg(format!("consumer={}", consumer.output()?.display()))
+                .arg("-o")
+                .arg(&executable);
+            let searches = first
+                .graph()
+                .units()
+                .values()
+                .map(|unit| {
+                    let path = unit.output()?;
+                    Ok(path.parent().ok_or("native output parent missing")?.to_path_buf())
+                })
+                .collect::<Result<BTreeSet<_>, Box<dyn std::error::Error>>>()?;
+            for search in searches {
+                command.arg("-L").arg(format!("dependency={}", search.display()));
+            }
+            let compiled = command.output()?;
+            assert!(
+                compiled.status.success(),
+                "{profile}: {}",
+                String::from_utf8_lossy(&compiled.stderr)
+            );
+            let ran = Command::new(&executable).output()?;
+            assert!(
+                ran.status.success(),
+                "{profile}: {}",
+                String::from_utf8_lossy(&ran.stderr)
+            );
+            let repeated = prepare_native_loafs(&request)?;
+            assert!(
+                repeated.report().compiled.is_empty(),
+                "{profile}: {:?}",
+                repeated.report()
+            );
+            assert_eq!(repeated.report().reused.len(), 3);
+            assert_eq!(
+                identities,
+                repeated.graph().units().keys().cloned().collect::<BTreeSet<_>>()
+            );
+            let repeated_consumer = repeated
+                .graph()
+                .units()
+                .values()
+                .find(|unit| unit.record().source.loaf == "consumer")
+                .ok_or("repeated consumer missing")?;
+            assert_eq!(original, repeated_consumer.record().native);
+            first_identities.push((identities, original));
+        }
+        assert!(first_identities[0].0.is_disjoint(&first_identities[1].0));
+        assert_ne!(
+            first_identities[0].1.receipt_identity,
+            first_identities[1].1.receipt_identity
+        );
+        assert_ne!(first_identities[0].1.digest, first_identities[1].1.digest);
+        Ok(())
+    }
 }

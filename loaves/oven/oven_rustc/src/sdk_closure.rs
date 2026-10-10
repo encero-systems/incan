@@ -27,7 +27,9 @@ mod local;
 mod native;
 mod physical_edges;
 
-pub(crate) use local::{local_native_source_selection, native_required_features};
+pub(crate) use local::{
+    compile_local_native_facets_for_profile, local_native_source_selection, native_required_features,
+};
 
 pub use physical_edges::SdkPhysicalNativeEdge;
 
