@@ -84,9 +84,7 @@ impl MetadataLockTransition {
         }
         candidate.revalidate(context.project, context.session, context.out_dir, context.native_sdk)?;
         verify_original_materialization(context, &self.metadata)?;
-        if let Some(native) = &self.preparation.native_context {
-            native.verify()?;
-        }
+        self.preparation.verify_native_authority()?;
         for dependency in &self.preparation.dependency_owners {
             dependency.verify()?;
         }
