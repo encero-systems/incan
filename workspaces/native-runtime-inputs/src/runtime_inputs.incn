@@ -46,8 +46,10 @@ def sha_identity(value: str) -> Result[None, str]:
 
 
 pub def project(source: str) -> Result[str, str]:
-    """Bind compiler, providers, features and dependency identity to the complete canonical native catalog."""
+    """Dispatch versioned physical identity requests; legacy catalog and ordinary record authority remain distinct."""
     request = JsonValue.parse(source).map_err((error) => error.message())?
+    if text(request, "schema")? == "incan.ordinary-native-inputs.request/1":
+        return project_ordinary(source, request)
     expected = ["schema", "operation", "compiler_version", "sdk_codegen_revision", "native_catalog", "provider_records", "stdlib_facets", "dependency_records", "runtime_units"]
     if len(request.keys()) != len(expected):
         return Err("native runtime request has missing or unknown fields")
@@ -145,3 +147,132 @@ def dependency_identity(request: JsonValue) -> Result[str, str]:
         declarations[canonical] = record
     normalized = JsonValue.object(declarations).to_json().map_err((error) => error.message())?
     return Ok(digest(normalized))
+
+
+def exact_fields(value: JsonValue, expected: list[str], context: str) -> Result[None, str]:
+    """Refuse incomplete or unknown wire facts instead of silently dropping authority."""
+    if len(value.keys()) != len(expected):
+        return Err(context + " has missing or unknown fields")
+    for key in value.keys():
+        if key not in expected:
+            return Err(context + " has unknown field: " + key)
+    return Ok(None)
+
+
+def ordered_strings(value: JsonValue, key: str) -> Result[list[str], str]:
+    """Require deterministic distinct records rather than accepting ambiguous wire order."""
+    values = strings(value, key)?
+    mut previous = ""
+    for item in values:
+        if item == "" or item <= previous:
+            return Err("ordinary native records are empty, duplicated or unordered: " + key)
+        previous = item
+    return Ok(values)
+
+
+def root_alias(value: str) -> Result[None, str]:
+    """Require one exact Rust extern alias; normalization belongs to current declaration selection."""
+    if value == "" or value[0] not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_":
+        return Err("ordinary native root has a malformed alias")
+    for character in value:
+        if character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789":
+            return Err("ordinary native root has a malformed alias")
+    return Ok(None)
+
+
+def ordinary_dependency_identity(request: JsonValue) -> Result[str, str]:
+    """Retain the portable declaration contract while refusing competing direct aliases."""
+    result = dependency_identity(request)?
+    field = request.require("dependency_records").map_err((error) => error.message())?
+    records = field.expect_array().map_err((error) => error.message())?
+    mut aliases: list[str] = []
+    for record in records:
+        alias = text(record, "alias")?
+        root_alias(alias)?
+        if alias in aliases:
+            return Err("ordinary native dependency alias is duplicated")
+        aliases.append(alias)
+    return Ok(result)
+
+
+def project_ordinary(source: str, request: JsonValue) -> Result[str, str]:
+    """Project physical build identity from original record coordinates verified by the compiler transport.
+
+    Record identities seal producer source, features, domain, recipe and physical edges. This exchange does not
+    admit those records itself and grants no complete semantic, macro or reserved namespace authority.
+    """
+    exact_fields(
+        request,
+        [
+            "schema", "compiler_receipt", "compiler_output", "engine_digest", "rustc_output", "rustc_commit",
+            "target", "host", "profile", "toolchain", "consumer_features", "roots", "selected_records",
+            "provider_records", "stdlib_facets", "dependency_records",
+        ],
+        "ordinary native request",
+    )?
+    for key in ["compiler_receipt", "compiler_output", "engine_digest", "rustc_output"]:
+        sha_identity(text(request, key)?)?
+    for key in ["target", "host", "profile", "toolchain", "rustc_commit"]:
+        value = text(request, key)?
+        if value == "" or "\n" in value or "\r" in value:
+            return Err("ordinary native request has an invalid consumer coordinate: " + key)
+    ordered_strings(request, "consumer_features")?
+    providers = ordered_strings(request, "provider_records")?
+    ordered_strings(request, "stdlib_facets")?
+    records = ordered_strings(request, "selected_records")?
+    for identity in records:
+        sha_identity(identity)?
+    if len(records) == 0:
+        return Err("ordinary native runtime has no selected original records")
+    roots = request.require("roots").map_err((error) => error.message())?
+    entries = roots.expect_array().map_err((error) => error.message())?
+    if len(entries) == 0:
+        return Err("ordinary native runtime has no declared roots")
+    mut previous_alias = ""
+    for entry in entries:
+        exact_fields(entry, ["alias", "record_identity"], "ordinary native root")?
+        alias = text(entry, "alias")?
+        root_alias(alias)?
+        if alias <= previous_alias:
+            return Err("ordinary native roots are duplicated or unordered")
+        previous_alias = alias
+        identity = text(entry, "record_identity")?
+        sha_identity(identity)?
+        if identity not in records:
+            return Err("ordinary native root has no selected original record")
+    dependencies = ordinary_dependency_identity(request)?
+    selected = request.require("selected_records").map_err((error) => error.message())?
+    features = request.require("consumer_features").map_err((error) => error.message())?
+    roots_json = roots.to_json().map_err((error) => error.message())?
+    records_json = selected.to_json().map_err((error) => error.message())?
+    features_json = features.to_json().map_err((error) => error.message())?
+    provider_values = request.require("provider_records").map_err((error) => error.message())?
+    facet_values = request.require("stdlib_facets").map_err((error) => error.message())?
+    provider_json = provider_values.to_json().map_err((error) => error.message())?
+    facet_json = facet_values.to_json().map_err((error) => error.message())?
+    mut inputs: Dict[str, JsonValue] = {
+        "runtime-identity-domain": JsonValue.string("ordinary-native-records/1"),
+        "ordinary-native-roots": JsonValue.string(digest(roots_json)),
+        "ordinary-native-records": JsonValue.string(digest(records_json)),
+        "compiler-receipt": JsonValue.string(text(request, "compiler_receipt")?),
+        "compiler-output": JsonValue.string(text(request, "compiler_output")?),
+        "native-runtime-engine": JsonValue.string(text(request, "engine_digest")?),
+        "rustc-executable": JsonValue.string(text(request, "rustc_output")?),
+        "rustc-commit": JsonValue.string(text(request, "rustc_commit")?),
+        "consumer-target": JsonValue.string(text(request, "target")?),
+        "consumer-host": JsonValue.string(text(request, "host")?),
+        "consumer-profile": JsonValue.string(text(request, "profile")?),
+        "consumer-toolchain": JsonValue.string(text(request, "toolchain")?),
+        "consumer-features": JsonValue.string(digest(features_json)),
+        "provider-plan": JsonValue.string(digest(provider_json)),
+        "stdlib-facets": JsonValue.string(digest(facet_json)),
+        "rust-dependencies": JsonValue.string(dependencies),
+    }
+    if len(providers) > 0:
+        inputs["providers"] = JsonValue.string("\n".join(providers))
+    response = JsonValue.object({
+        "schema": JsonValue.string("incan.ordinary-native-inputs.response/1"),
+        "request_digest": JsonValue.string(digest(source)),
+        "inputs": JsonValue.object(inputs),
+    })
+    return response.to_json().map_err((error) => error.message())

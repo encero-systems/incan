@@ -1,0 +1,170 @@
+"""Exercise the production ordinary physical identity projection and malformed wire refusals."""
+
+from std.json import JsonValue
+from runtime_inputs import project, digest
+
+
+def ordinary_record_identity() -> str:
+    """Use a well-formed wire coordinate; admission of original records belongs to the driver controls."""
+    return "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+
+def ordinary_root(alias: str, identity: str) -> JsonValue:
+    """Build one exact alias-to-record exchange entry without claiming to admit its owner."""
+    return JsonValue.object({"alias": JsonValue.string(alias), "record_identity": JsonValue.string(identity)})
+
+
+def ordinary_request() -> JsonValue:
+    """Describe an explicitly verified physical closure, including one transitive record."""
+    identity = ordinary_record_identity()
+    other = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    compiler = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    output = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    engine = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    return JsonValue.object({
+        "schema": JsonValue.string("incan.ordinary-native-inputs.request/1"),
+        "compiler_receipt": JsonValue.string(compiler),
+        "compiler_output": JsonValue.string(output),
+        "engine_digest": JsonValue.string(engine),
+        "rustc_output": JsonValue.string(output),
+        "rustc_commit": JsonValue.string("exact-rustc-commit"),
+        "target": JsonValue.string("aarch64-apple-darwin"),
+        "host": JsonValue.string("aarch64-apple-darwin"),
+        "profile": JsonValue.string("debug"),
+        "toolchain": JsonValue.string("rustc exact toolchain"),
+        "consumer_features": JsonValue.array([]),
+        "roots": JsonValue.array([ordinary_root("runtime", identity)]),
+        "selected_records": JsonValue.array([JsonValue.string(identity), JsonValue.string(other)]),
+        "provider_records": JsonValue.array([JsonValue.string("provider|module|facet|link")]),
+        "stdlib_facets": JsonValue.array([JsonValue.string("std_core")]),
+        "dependency_records": JsonValue.array([]),
+    })
+
+
+def ordinary_response(request: JsonValue) -> Result[JsonValue, str]:
+    """Invoke the actual prepared executable's projection function, including schema dispatch."""
+    source = request.to_json().map_err((error) => error.message())?
+    return JsonValue.parse(project(source)?).map_err((error) => error.message())
+
+
+def ordinary_inputs(request: JsonValue) -> Result[JsonValue, str]:
+    """Read the production response's projected build inputs."""
+    response = ordinary_response(request)?
+    return response.require("inputs").map_err((error) => error.message())
+
+
+def ordinary_refusal(request: JsonValue, family: str) -> Result[None, str]:
+    """Check a concrete refusal family through the actual projection, without a mirrored verifier."""
+    source = request.to_json().map_err((error) => error.message())?
+    match project(source):
+        Ok(_) =>
+            assert false, "malformed ordinary native request was accepted"
+        Err(error) =>
+            assert family in error, error
+    return Ok(None)
+
+
+pub def test_ordinary_native_first_repeat_binds_exact_request_and_original_record_set() -> Result[None, str]:
+    """An unchanged projection repeats exactly and emits ordinary identities without SDK catalog fields."""
+    request = ordinary_request()
+    first = ordinary_response(request)?
+    repeated = ordinary_response(ordinary_request())?
+    assert first.equals(repeated)
+    source = request.to_json().map_err((error) => error.message())?
+    request_digest = first.require("request_digest").map_err((error) => error.message())?
+    assert request_digest.expect_str().map_err((error) => error.message())? == digest(source)
+    inputs = ordinary_inputs(request)?
+    for name in ["ordinary-native-roots", "ordinary-native-records", "compiler-receipt", "compiler-output", "native-runtime-engine", "rustc-executable", "rustc-commit", "consumer-target", "consumer-host", "consumer-profile", "consumer-toolchain", "consumer-features", "provider-plan", "stdlib-facets", "rust-dependencies"]:
+        assert inputs.contains_key(name)
+    for key in inputs.keys():
+        assert "sdk" not in key
+    return Ok(None)
+
+
+pub def test_ordinary_native_identity_changes_with_alias_root_set_and_selected_records() -> Result[None, str]:
+    """Aliases and immutable selected records are independent physical build inputs."""
+    base = ordinary_inputs(ordinary_request())?
+    mut renamed = ordinary_request()
+    renamed.set("roots", JsonValue.array([ordinary_root("renamed", ordinary_record_identity())])).map_err((error) => error.message())?
+    renamed_inputs = ordinary_inputs(renamed)?
+    base_records = base.require("ordinary-native-records").map_err((error) => error.message())?
+    renamed_records = renamed_inputs.require("ordinary-native-records").map_err((error) => error.message())?
+    assert base_records.equals(renamed_records)
+    assert not base.equals(renamed_inputs)
+    mut another_root = ordinary_request()
+    another_root.set("roots", JsonValue.array([
+        ordinary_root("runtime", ordinary_record_identity()),
+        ordinary_root("second", ordinary_record_identity()),
+    ])).map_err((error) => error.message())?
+    assert not base.equals(ordinary_inputs(another_root)?)
+    mut changed_record = ordinary_request()
+    changed_record.set("selected_records", JsonValue.array([JsonValue.string(ordinary_record_identity())])).map_err((error) => error.message())?
+    assert not base.equals(ordinary_inputs(changed_record)?)
+    return Ok(None)
+
+
+pub def test_ordinary_native_identity_binds_compiler_engine_intent_and_declarations() -> Result[None, str]:
+    """Every current consumer and compiler binding changes projected identity, including provider and feature facts."""
+    base = ordinary_inputs(ordinary_request())?
+    for key in ["compiler_receipt", "compiler_output", "engine_digest", "rustc_output", "rustc_commit", "target", "host", "profile", "toolchain", "consumer_features", "provider_records", "stdlib_facets", "dependency_records"]:
+        mut changed = ordinary_request()
+        mut value = JsonValue.string("changed")
+        if key in ["compiler_receipt", "compiler_output", "engine_digest", "rustc_output"]:
+            value = JsonValue.string("sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+        if key in ["consumer_features", "provider_records", "stdlib_facets"]:
+            value = JsonValue.array([JsonValue.string("changed")])
+        if key == "dependency_records":
+            declaration = JsonValue.parse("{\"alias\":\"renamed\",\"package\":\"actual\",\"version\":\"1\",\"features\":[],\"default_features\":false,\"optional\":false,\"source\":{\"kind\":\"registry\"}}").map_err((error) => error.message())?
+            value = JsonValue.array([declaration])
+        changed.set(key, value).map_err((error) => error.message())?
+        assert not base.equals(ordinary_inputs(changed)?)
+    return Ok(None)
+
+
+pub def test_ordinary_native_refuses_unknown_duplicate_malformed_and_absent_roots() -> Result[None, str]:
+    """An unselected, repeated or malformed alias/record cannot become ordinary root authority."""
+    for roots in [
+        JsonValue.array([]),
+        JsonValue.array([ordinary_root("runtime", "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")]),
+        JsonValue.array([ordinary_root("runtime", "bad-record")]),
+        JsonValue.array([ordinary_root("bad-alias", ordinary_record_identity())]),
+        JsonValue.array([ordinary_root("runtime", ordinary_record_identity()), ordinary_root("runtime", ordinary_record_identity())]),
+    ]:
+        mut changed = ordinary_request()
+        changed.set("roots", roots).map_err((error) => error.message())?
+        ordinary_refusal(changed, "native")?
+    mut changed = ordinary_request()
+    changed.set("roots", JsonValue.array([JsonValue.object({"alias": JsonValue.string("runtime"), "record_identity": JsonValue.string(ordinary_record_identity()), "extra": JsonValue.string("untrusted")})])).map_err((error) => error.message())?
+    ordinary_refusal(changed, "unknown")?
+    return Ok(None)
+
+
+pub def test_ordinary_native_refuses_missing_duplicate_and_malformed_selected_records() -> Result[None, str]:
+    """The versioned selected-record set must be nonempty, canonical and identity-shaped."""
+    for values in [[], ["bad-record"], [ordinary_record_identity(), ordinary_record_identity()]]:
+        mut entries: list[JsonValue] = []
+        for value in values:
+            entries.append(JsonValue.string(value))
+        mut changed = ordinary_request()
+        changed.set("selected_records", JsonValue.array(entries)).map_err((error) => error.message())?
+        ordinary_refusal(changed, "native")?
+    for key in ["compiler_receipt", "compiler_output", "engine_digest", "rustc_output"]:
+        mut changed = ordinary_request()
+        changed.set(key, JsonValue.string("bad-identity")).map_err((error) => error.message())?
+        ordinary_refusal(changed, "identity")?
+    return Ok(None)
+
+
+pub def test_ordinary_native_refuses_unknown_fields_schema_and_competing_dependency_aliases() -> Result[None, str]:
+    """Legacy catalog facts and competing declarations cannot silently enter the ordinary contract."""
+    mut unknown = ordinary_request()
+    unknown.set("native_catalog", JsonValue.string("legacy")).map_err((error) => error.message())?
+    ordinary_refusal(unknown, "unknown")?
+    mut version = ordinary_request()
+    version.set("schema", JsonValue.string("incan.ordinary-native-inputs.request/99")).map_err((error) => error.message())?
+    ordinary_refusal(version, "native runtime")?
+    declaration = JsonValue.parse("{\"alias\":\"same\",\"package\":null,\"version\":\"1\",\"features\":[],\"default_features\":false,\"optional\":false,\"source\":{\"kind\":\"registry\"}}").map_err((error) => error.message())?
+    mut duplicate = ordinary_request()
+    duplicate.set("dependency_records", JsonValue.array([declaration, declaration])).map_err((error) => error.message())?
+    ordinary_refusal(duplicate, "duplicated")?
+    return Ok(None)
