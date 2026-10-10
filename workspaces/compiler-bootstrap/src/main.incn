@@ -1,5 +1,6 @@
 """Build the source compiler CLI from prepared, leased Oven units without Cargo."""
 
+from rust::incan_cli::invocation_trace import initialize
 from rust::std::env import args, var
 from rust::std::process import exit, Command
 from rust::std::path import Path as RustPath
@@ -300,6 +301,11 @@ def inspect_runtime_engine(arguments: list[str]) -> Result[None, str]:
 
 def main() -> None:
     """Accept explicit compiler-development inputs and fail closed on any preparation or execution refusal."""
+    match initialize():
+        Ok(_) => pass
+        Err(error) =>
+            println(str(error))
+            exit(1)
     mut arguments: list[str] = []
     for argument in args():
         arguments.append(argument)

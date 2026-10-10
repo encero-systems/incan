@@ -37,7 +37,9 @@ use std::path::{Path, PathBuf};
 /// Take the hand-filled fixture plan from Incan and compile it through the native boundary.
 ///
 /// Arguments are source, crate name, output, sysroot, runtime rlib, optional mode, and admitted dependency directories.
+/// The shared opt-in invocation sink is initialized before dispatch; disabled tracing uses the ordinary logging filter.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    oven_cli::invocation_trace::initialize()?;
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().is_some_and(|arg| arg == "--source") {
         return frontend::compile(&args[1..]);

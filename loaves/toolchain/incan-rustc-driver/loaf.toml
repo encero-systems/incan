@@ -4,6 +4,8 @@ version = "0.6.0-dev.7"
 private = true
 
 [dependencies]
+oven-cli = { loaf = "oven_cli", path = "../oven-cli", default-features = false, features = ["rust_inspect", "std_async", "std_decorators", "std_testing"] }
+tracing = { loaf = "crates-io/tracing", version = "0.1" }
 incan_mir_plan = { loaf = "incan_mir_plan", path = "../../compiler/incan_mir_plan" }
 incan_mir_lowering = { loaf = "incan_mir_lowering", path = "../../compiler/incan_mir_lowering" }
 

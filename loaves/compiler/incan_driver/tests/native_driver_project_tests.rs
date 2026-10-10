@@ -684,6 +684,7 @@ fn prepare_source_driver(root: &Path, repo: &Path) -> Result<std::path::PathBuf,
     let frontend = fixture_dependency_path(&driver, &repo.join("loaves/compiler/incan_frontend"))?;
     let language = fixture_dependency_path(&lowering, &repo.join("loaves/kernel/incan_lang"))?;
     let compiler = fixture_dependency_path(&driver, &repo.join("loaves/compiler/incan_driver"))?;
+    let oven_cli = fixture_dependency_path(&driver, &repo.join("loaves/toolchain/oven-cli"))?;
     let manifest = fs::read_to_string(repo.join("loaves/compiler/incan_mir_lowering/loaf.toml"))?
         .replace("../incan_mir_plan", "../library")
         .replace("../../kernel/incan_semantics_core", &core)
@@ -698,7 +699,8 @@ fn prepare_source_driver(root: &Path, repo: &Path) -> Result<std::path::PathBuf,
         .replace("../../compiler/incan_mir_lowering", "../lowering")
         .replace("../../kernel/incan_semantics_core", &core)
         .replace("../../compiler/incan_frontend", &frontend)
-        .replace("../../compiler/incan_driver", &compiler);
+        .replace("../../compiler/incan_driver", &compiler)
+        .replace("../oven-cli", &oven_cli);
     fs::write(driver.join("loaf.toml"), manifest)?;
     Ok(driver)
 }
