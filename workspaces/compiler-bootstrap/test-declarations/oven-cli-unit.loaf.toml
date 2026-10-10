@@ -1,0 +1,35 @@
+# Unit-root dependency contract; local cfg markers are distinct from prepared dependency feature selection.
+[project]
+name = "oven-cli-native-unit-tests"
+version = "0.6.0-dev.6"
+private = true
+
+[project.features]
+default = ["rust_inspect", "std_testing", "std_async", "std_decorators"]
+rust_inspect = []
+std_testing = []
+std_async = []
+std_decorators = []
+
+[dependencies]
+clap = { features = ["derive"], loaf = "crates-io/clap", version = "4.4" }
+incan_driver = { default-features = false, features = ["cli", "test_support", "rust_inspect", "std_testing", "std_async", "std_decorators"], loaf = "incan_driver", path = "../../../loaves/compiler/incan_driver" }
+incan_frontend = { default-features = false, loaf = "incan_frontend", path = "../../../loaves/compiler/incan_frontend", features = ["rust_inspect", "std_testing", "std_async", "std_decorators"] }
+incan_lang = { loaf = "incan_lang", path = "../../../loaves/kernel/incan_lang" }
+incan_oven_facet = { loaf = "incan_oven_facet", path = "../../../loaves/compiler/incan_oven_facet" }
+incan_provider = { default-features = false, loaf = "incan_provider", path = "../../../loaves/compiler/incan_provider", features = ["rust_inspect", "std_testing", "std_async", "std_decorators"] }
+oven_cargo_compat = { loaf = "oven_cargo_compat", path = "../../../loaves/oven/oven_cargo_compat", version = "0.6.0-dev.5" }
+oven_interop = { loaf = "oven_interop", path = "../../../loaves/oven/oven_interop", version = "0.6.0-dev.5" }
+oven_model = { loaf = "oven_model", path = "../../../loaves/oven/oven_model", version = "0.6.0-dev.5" }
+oven_rustc = { loaf = "oven_rustc", path = "../../../loaves/oven/oven_rustc", version = "0.6.0-dev.5" }
+oven_store = { loaf = "oven_store", path = "../../../loaves/oven/oven_store", version = "0.6.0-dev.5" }
+rust_inspect = { default-features = false, loaf = "rust_inspect", path = "../../../loaves/compiler/rust_inspect", features = ["inspector"] }
+semver = { loaf = "crates-io/semver", version = "1.0.27" }
+serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
+serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
+sha2 = { loaf = "crates-io/sha2", version = "0.10.9" }
+tempfile = { loaf = "crates-io/tempfile", version = "3" }
+toml = { loaf = "crates-io/toml", version = "0.9" }
+toml_edit = { features = ["parse", "serde"], loaf = "crates-io/toml_edit", version = "0.25" }
+tracing-subscriber = { features = ["env-filter"], loaf = "crates-io/tracing-subscriber", version = "0.3" }
+rustix = { features = ["fs", "time"], loaf = "crates-io/rustix", version = "1.1.4" }

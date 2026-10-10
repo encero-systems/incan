@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crate::{CliError, CliResult, ExitCode};
+use incan_driver::oven_store::{OvenStoreCommandOptions, open_store_with_defaults};
 use oven_model::manifest::ProjectManifest;
 use oven_rustc::native_loaf::NativeLoafGraph;
 use oven_rustc::rustc::{OvenTrustedDirectRustcTargetRequest, bake_trusted_direct_rustc_test_in_store};
@@ -29,6 +30,7 @@ pub(crate) fn run(
     source_inputs: Vec<PathBuf>,
     exact_names: Vec<String>,
     output: PathBuf,
+    store: OvenStoreCommandOptions,
     explicit_bake_workspace: PathBuf,
     rustc: PathBuf,
 ) -> CliResult<ExitCode> {
@@ -42,6 +44,7 @@ pub(crate) fn run(
         source_inputs,
         exact_names,
         output,
+        store,
         explicit_bake_workspace,
         rustc,
     )
@@ -60,6 +63,7 @@ fn execute(
     source_inputs: Vec<PathBuf>,
     exact_names: Vec<String>,
     output: PathBuf,
+    store_options: OvenStoreCommandOptions,
     explicit_bake_workspace: PathBuf,
     rustc: PathBuf,
 ) -> Result<ExitCode, Box<dyn std::error::Error>> {
@@ -103,17 +107,7 @@ fn execute(
         &compile_environment,
     )?;
     std::fs::create_dir_all(&output)?;
-    let store = OvenStore::new(
-        output
-            .parent()
-            .ok_or("test output has no parent")?
-            .join("native-compiler-test-store"),
-        OvenStoreLimits::new(
-            oven_store::DEFAULT_OVEN_COMPILER_SUITE_MAX_PHYSICAL_BYTES,
-            oven_store::DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_PHYSICAL_BYTES,
-            oven_store::DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_LOGICAL_BYTES,
-        ),
-    );
+    let store = native_test_store(&compiler_root, store_options)?;
     let dependencies = manifest.rust_dependencies().values().cloned().collect::<Vec<_>>();
     let prepared = if dependencies.is_empty() {
         None
@@ -185,6 +179,21 @@ fn execute(
         &features,
     )?;
     Ok(ExitCode::SUCCESS)
+}
+
+/// Share one checkout-owned retention allowance across roots and caller projections, honoring explicit Store policy.
+fn native_test_store(root: &Path, mut options: OvenStoreCommandOptions) -> CliResult<OvenStore> {
+    if options.root.is_none() {
+        options.root = Some(root.join("target/compiler-development/native-test-store"));
+    }
+    open_store_with_defaults(
+        &options,
+        OvenStoreLimits::new(
+            oven_store::DEFAULT_OVEN_COMPILER_SUITE_MAX_PHYSICAL_BYTES,
+            oven_store::DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_PHYSICAL_BYTES,
+            oven_store::DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_LOGICAL_BYTES,
+        ),
+    )
 }
 
 /// Resolve the requested root before any output exists, rejecting traversal and symlink escapes from the checkout.
@@ -396,6 +405,76 @@ mod tests {
         assert_ne!(first.identity, second.identity);
         first.verify_identity()?;
         second.verify_identity()?;
+        Ok(())
+    }
+
+    /// Separate roots and output projections reuse one bounded Store without multiplying retained generations.
+    #[test]
+    fn native_test_roots_share_store_and_reuse_across_outputs() -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = tempfile::tempdir()?;
+        let root = fixture.path().canonicalize()?;
+        let sources = root.join("tests");
+        std::fs::create_dir_all(&sources)?;
+        for name in ["one", "two"] {
+            std::fs::write(
+                sources.join(format!("{name}.rs")),
+                "#[test] fn case() { assert_eq!(2 + 2, 4); }\n",
+            )?;
+            std::fs::write(
+                sources.join(format!("{name}.loaf.toml")),
+                format!("[project]\nname = 'native-test-{name}'\nversion = '1.0.0'\n"),
+            )?;
+        }
+        let rustc = oven_rustc::rustc::resolve_active_rustc()?;
+        let options = || OvenStoreCommandOptions {
+            root: None,
+            max_physical_bytes: Some(64 * 1024 * 1024),
+            max_domain_physical_bytes: Some(64 * 1024 * 1024),
+            max_domain_logical_bytes: Some(64 * 1024 * 1024),
+        };
+        for phase in ["first", "repeat"] {
+            for name in ["one", "two"] {
+                let output = root.join(format!("outputs/{phase}/{name}"));
+                execute(
+                    root.clone(),
+                    PathBuf::from(format!("tests/{name}.rs")),
+                    None,
+                    None,
+                    None,
+                    None,
+                    Vec::new(),
+                    vec!["case".into()],
+                    output.clone(),
+                    options(),
+                    root.join("fixtures"),
+                    rustc.clone(),
+                )?;
+                let report: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(output.join("compiler-suite-report.json"))?)?;
+                assert_eq!(report["success"], true);
+                assert_eq!(report["case_counts"]["passed"], 1);
+                assert_eq!(report["test_binary_reused"], phase == "repeat");
+                assert!(
+                    !output
+                        .parent()
+                        .ok_or("output has no parent")?
+                        .join("native-compiler-test-store")
+                        .exists()
+                );
+            }
+        }
+        let store = native_test_store(&root, options())?;
+        assert_eq!(store.root(), root.join("target/compiler-development/native-test-store"));
+        let inspection = store.inspect()?;
+        assert!(inspection.physical_bytes <= store.limits().max_physical_bytes);
+        assert_eq!(
+            inspection
+                .entries
+                .iter()
+                .filter(|entry| entry.manifest.kind == oven_store::store::OvenArtifactKind::Engine)
+                .count(),
+            2
+        );
         Ok(())
     }
 }

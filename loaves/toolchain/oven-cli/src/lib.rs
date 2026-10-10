@@ -265,6 +265,7 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
             source_inputs,
             exact_names,
             output,
+            store,
             explicit_bake_workspace,
             rustc,
         } => commands::oven::native_compiler_tests::run(
@@ -277,6 +278,7 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
             source_inputs,
             exact_names,
             output,
+            store.into(),
             explicit_bake_workspace,
             rustc,
         ),
