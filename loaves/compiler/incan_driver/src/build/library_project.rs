@@ -1734,6 +1734,19 @@ fn prepare_library_project_with_context(
         ],
         backend: None,
     };
+    let ordinary_runtime = ordinary_native
+        .as_ref()
+        .map(|native| {
+            crate::build_unit::OrdinaryLibraryRuntimeInputs::from_checked(
+                Arc::clone(native),
+                &project_root,
+                &provider_plan,
+                &project_requirements,
+                &resolved,
+                &provider_semantic_identities,
+            )
+        })
+        .transpose()?;
     generator.set_dependencies(resolved.dependencies);
     generator.set_dev_dependencies(resolved.dev_dependencies);
 
@@ -1824,19 +1837,7 @@ fn prepare_library_project_with_context(
                     .as_ref()
                     .ok_or_else(|| CliError::failure("normal Oven library build omitted its bounded store"))?,
                 native_sdk_context,
-                ordinary_runtime: ordinary_native
-                    .as_ref()
-                    .map(|native| {
-                        crate::build_unit::OrdinaryLibraryRuntimeInputs::from_checked(
-                            Arc::clone(native),
-                            &project_root,
-                            &provider_plan,
-                            &project_requirements,
-                            &resolved,
-                            &provider_semantic_identities,
-                        )
-                    })
-                    .transpose()?,
+                ordinary_runtime,
                 oven_plan_mode,
                 rust_edition: rust_edition.clone(),
             },
@@ -2046,6 +2047,7 @@ fn checked_requirement_contract(
             Ok((relative, module.path_segments.clone()))
         })
         .collect::<CliResult<BTreeMap<_, _>>>()?;
+    let provider_plan = session.provider_plan_for_modules(modules)?;
     crate::build::library_metadata::requirements::CheckedLibraryRequirements::capture(
         crate::build::library_metadata::requirements::CheckedLibraryCapture {
             project: manifest,
@@ -2062,7 +2064,7 @@ fn checked_requirement_contract(
                 manifest,
                 modules,
                 requirements,
-                &session.provider_plan_for_modules(modules)?,
+                provider_plan.as_ref(),
                 &rust_abi_queries.iter().cloned().collect(),
             )?,
             rust_extern_paths: rust_extern_report_paths(&collect_rust_extern_contexts(modules)),
