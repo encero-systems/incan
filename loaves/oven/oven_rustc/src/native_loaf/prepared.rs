@@ -9,9 +9,7 @@ use oven_model::manifest::{DependencySource, DependencySpec};
 use oven_store::store::{OvenStore, OvenStoreLimits};
 use serde::{Deserialize, Serialize};
 
-use super::preparation::{
-    NativeLoafPreparation, ResolvedNativeGraph, prepare_resolved_native_loafs_in_store, read_resolved_native_graph,
-};
+use super::preparation::{NativeLoafPreparation, ResolvedNativeGraph, read_resolved_native_graph};
 use super::selection::{LocalSources, select_roots_with_sources, source_manifest};
 use super::{
     NativeLoafClosure, NativeLoafError, NativeLoafGraph, NativeLoafOrigin, NativeLoafRoot, Result, failed, refused,
@@ -19,6 +17,8 @@ use super::{
 use crate::sdk_closure::{Seed, current_inputs};
 
 const SCHEMA: &str = "incan.oven.prepared-native-consumer-hint/1";
+
+mod projection;
 
 /// Explicit current physical selection inputs; dependency activation remains the declaration resolver's authority.
 pub struct NativeLoafConsumerRequest<'a> {
@@ -173,17 +173,14 @@ pub fn prepare_declared_native_loafs_in_store(
     request: &NativeLoafConsumerRequest<'_>,
     store: &OvenStore,
 ) -> Result<NativeLoafConsumerPreparation> {
-    prepare_with_store(request, store, || {
-        prepare_resolved_native_loafs_in_store(
-            request.graph,
-            request.index,
-            request.blobs,
-            request.output,
-            request.rustc,
-            request.target,
-            request.profile,
-            store,
-        )
+    prepare_with_store(request, store, |current, report| {
+        let prepared = projection::prepare(request, store, current)?;
+        if Current::read(request, report)?.key != current.key {
+            return Err(refused(
+                "native consumer graph/lock/compiler inputs changed during preparation",
+            ));
+        }
+        Ok(prepared)
     })
 }
 
@@ -194,14 +191,14 @@ fn prepare_with(
     prepare: impl FnOnce() -> Result<NativeLoafPreparation>,
 ) -> Result<NativeLoafConsumerPreparation> {
     let store = native_store(request.output);
-    prepare_with_store(request, &store, prepare)
+    prepare_with_store(request, &store, |_, _| prepare())
 }
 
 /// Admit current native inputs from one explicit Store before invoking its existing producer on a genuine miss.
 fn prepare_with_store(
     request: &NativeLoafConsumerRequest<'_>,
     store: &OvenStore,
-    prepare: impl FnOnce() -> Result<NativeLoafPreparation>,
+    prepare: impl FnOnce(&mut Current, &mut NativeLoafConsumerReport) -> Result<NativeLoafPreparation>,
 ) -> Result<NativeLoafConsumerPreparation> {
     let started = Instant::now();
     let mut report = NativeLoafConsumerReport::default();
@@ -233,7 +230,7 @@ fn prepare_with_store(
         }
     }
     report.preparation_calls += 1;
-    let prepared = prepare()?;
+    let prepared = prepare(&mut current, &mut report)?;
     report.prepared_units = prepared.graph.units.len();
     report.compiled = prepared.report.compiled.clone();
     report.reused = prepared.report.reused.clone();
@@ -771,3 +768,9 @@ fn finish_report(
 
 #[cfg(all(test, unix))]
 mod tests;
+
+#[cfg(test)]
+mod projection_tests;
+
+#[cfg(test)]
+mod projection_registry_tests;
