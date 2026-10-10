@@ -88,6 +88,9 @@ fn child() -> TestResult {
     let output = std::process::Command::new(copied.as_os_str())
         .args(["--exact", SELECTOR, "--ignored", "--nocapture", "--test-threads=1"])
         .env(CHILD, "1")
+        // The outer FIRST flag requires reuse of the native test binary. This isolated control intentionally
+        // creates fresh projects and edits source; its own executor counters enforce unchanged publication reuse.
+        .env_remove("INCAN_TEST_REQUIRE_STORED_NATIVE_REUSE")
         .env("CARGO_BIN_EXE_incan", &compiler)
         .env("INCAN_OVEN_BAKE_PROFILES", "all")
         .env("INCAN_HOME", isolated.path().join("home"))
@@ -337,19 +340,36 @@ fn ordinary_native_library_publication_first_replay_and_source_edit() -> TestRes
     let features = FeatureSelection::default();
     let session =
         CompilationSession::discover_with_admitted_library_dependencies(&entry, &features, Arc::clone(&dependencies))?;
+    let empty_plan = session.provider_plan_for_used_module_paths(BTreeSet::new())?;
+    let mut provider_requirements = incan_provider::requirements::ProjectRequirements::default();
+    assert!(
+        native
+            .provider_semantic_dependencies(&empty_plan, &provider_requirements)?
+            .is_empty()
+    );
+    provider_requirements.stdlib_facets.push("unadmitted_facet".to_string());
+    assert!(
+        native
+            .provider_semantic_dependencies(&empty_plan, &provider_requirements)
+            .is_err()
+    );
     let input = AdmittedLibraryPreparation::with_ordinary_native(session, Arc::clone(&native))?;
     reset_ordinary_library_preparation_branches();
     let mut first: Option<Arc<SelectedLibraryMetadata>> = None;
     let mut first_outputs = None;
     for iteration in 0..2 {
         reset_project_lock_collection_metrics();
+        super::take_library_native_output_work();
         let started = std::time::Instant::now();
         let report = bake_admitted_library(&input, &features, None)?;
+        let (compiled, reused) = super::take_library_native_output_work();
         println!(
             "ordinary-publication-evidence {}",
             serde_json::json!({"phase": if iteration == 0 { "publish-first" } else { "publish-repeat" },
-                "seconds": started.elapsed().as_secs_f64(), "profiles": &report.profiles})
+                "seconds": started.elapsed().as_secs_f64(), "compiled": compiled, "reused": reused,
+                "profiles": &report.profiles})
         );
+        assert_eq!((compiled, reused), if iteration == 0 { (2, 0) } else { (0, 2) });
         let metadata = published_metadata(root.path(), &report)?;
         let actual_outputs = outputs(root.path(), &report, &native)?;
         assert_eq!(project_lock_collection_counts(), (1, 0));
@@ -374,13 +394,16 @@ fn ordinary_native_library_publication_first_replay_and_source_edit() -> TestRes
     // ---- Source edit invalidates checked and both native output generations; complete request stays current ----
     fs::write(&entry, "pub def answer() -> int:\n    return 43\n")?;
     reset_project_lock_collection_metrics();
+    super::take_library_native_output_work();
     let started = std::time::Instant::now();
     let edited = bake_admitted_library(&input, &features, None)?;
+    let (compiled, reused) = super::take_library_native_output_work();
     println!(
         "ordinary-publication-evidence {}",
         serde_json::json!({"phase": "publish-source-edit", "seconds": started.elapsed().as_secs_f64(),
-            "profiles": &edited.profiles})
+            "compiled": compiled, "reused": reused, "profiles": &edited.profiles})
     );
+    assert_eq!((compiled, reused), (2, 0));
     let edited_metadata = published_metadata(root.path(), &edited)?;
     let original = first.ok_or("original checked metadata missing")?;
     assert_ne!(

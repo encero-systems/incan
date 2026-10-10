@@ -136,7 +136,30 @@ fn ordinary_engine_original_closure_first_repeat_and_refusals() -> Result<(), Bo
     let displaced = original.with_extension("temporarily-missing");
     fs::rename(&original, &displaced)?;
     let missing = ordinary_runtime_inputs(&closure, &intent, &rustc, &[], &[], &[]);
-    fs::rename(displaced, original)?;
+    fs::rename(&displaced, &original)?;
     assert!(missing.is_err());
+    let bytes = fs::read(&original)?;
+    let mut changed = bytes.clone();
+    let first_byte = changed.first_mut().ok_or("native fixture output is empty")?;
+    *first_byte ^= 1;
+    fs::rename(&original, &displaced)?;
+    fs::write(&original, &changed)?;
+    let corrupt = ordinary_runtime_inputs(&closure, &intent, &rustc, &[], &[], &[]);
+    fs::remove_file(&original)?;
+    fs::rename(&displaced, &original)?;
+    assert!(corrupt.is_err());
+    #[cfg(unix)]
+    {
+        fs::rename(&original, &displaced)?;
+        std::os::unix::fs::symlink(&displaced, &original)?;
+        let symlinked = ordinary_runtime_inputs(&closure, &intent, &rustc, &[], &[], &[]);
+        fs::remove_file(&original)?;
+        fs::rename(&displaced, &original)?;
+        assert!(symlinked.is_err());
+    }
+    assert_eq!(
+        initial,
+        ordinary_runtime_inputs(&closure, &intent, &rustc, &[], &[], &[])?
+    );
     Ok(())
 }

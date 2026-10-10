@@ -980,6 +980,8 @@ fn prepare_library_project_with_context(
     extend_requirements_with_provider_plan(&mut project_requirements, &provider_plan)?;
     let semantic_sdk_paths = if native_sdk.is_some() {
         Vec::new()
+    } else if let Some(native) = ordinary_native.as_ref() {
+        native.provider_semantic_dependencies(&provider_plan, &project_requirements)?
     } else {
         semantic_sdk_path_dependencies(&project_requirements)
     };

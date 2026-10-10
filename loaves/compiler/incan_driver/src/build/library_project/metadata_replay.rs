@@ -873,7 +873,11 @@ pub(super) fn prepare_replayed_library(request: ReplayRequest<'_>) -> CliResult<
     extend_requirements_with_provider_plan(&mut requirements, &provider_plan)?;
     let (mut resolved, imports) = contract.current_dependencies(project, &requirements)?;
     crate::build::library_outputs::remove_generated_library_self_dependencies(&mut resolved, project.project_root());
-    let semantic_paths = semantic_sdk_path_dependencies(&requirements);
+    let semantic_paths = if let Some(native) = ordinary_native.as_ref() {
+        native.provider_semantic_dependencies(&provider_plan, &requirements)?
+    } else {
+        semantic_sdk_path_dependencies(&requirements)
+    };
     let provider_semantics = session.provider_semantic_identities(&provider_plan, &semantic_paths)?;
     let mut build_inputs = if ordinary_native.is_some() {
         BTreeMap::new()

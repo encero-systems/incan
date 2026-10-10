@@ -594,6 +594,28 @@ pub(crate) fn publish_oven_project_lock_with_admitted_session(
     package_features: &FeatureSelection,
     input: &CompilationSession,
 ) -> CliResult<PublishedOvenProjectLock> {
+    publish_admitted_project_lock(project_root, entrypoint, package_features, input, None)
+}
+
+/// Publish through the canonical collector and writer without rediscovering a legacy SDK support catalog.
+pub(crate) fn publish_oven_project_lock_with_ordinary_native(
+    project_root: &Path,
+    entrypoint: &Path,
+    package_features: &FeatureSelection,
+    input: &CompilationSession,
+    native: &crate::build::ordinary_library_native::OrdinaryLibraryNativeProfiles,
+) -> CliResult<PublishedOvenProjectLock> {
+    publish_admitted_project_lock(project_root, entrypoint, package_features, input, Some(native))
+}
+
+/// Reconstruct source-current admitted session facts and retain the explicit native authority through publication.
+fn publish_admitted_project_lock(
+    project_root: &Path,
+    entrypoint: &Path,
+    package_features: &FeatureSelection,
+    input: &CompilationSession,
+    ordinary_native: Option<&crate::build::ordinary_library_native::OrdinaryLibraryNativeProfiles>,
+) -> CliResult<PublishedOvenProjectLock> {
     let current = crate::build::library_project::current_admitted_library_session(input, entrypoint, package_features)?;
     let current_root = current
         .manifest
@@ -606,6 +628,47 @@ pub(crate) fn publish_oven_project_lock_with_admitted_session(
         return Err(CliError::failure(
             "admitted ordinary lock publication names a different project",
         ));
+    }
+    if let Some(native) = ordinary_native {
+        let manifest = current
+            .manifest
+            .as_ref()
+            .ok_or_else(|| CliError::failure("ordinary lock manifest is absent"))?;
+        if WorkspaceGraph::discover(project_root)
+            .map_err(|error| CliError::failure(error.to_string()))?
+            .is_some()
+        {
+            return Err(CliError::failure(
+                "admitted ordinary lock publication requires standalone project authority",
+            ));
+        }
+        enforce_project_toolchain_constraint(manifest)?;
+        let context = super::workspace::collect_ordinary_project_lock_context(
+            manifest,
+            entrypoint,
+            package_features,
+            &current,
+            native,
+        )?
+        .ok_or_else(|| CliError::failure("ordinary lock collection lost its source entrypoints"))?;
+        if !context.resolved.dependencies.is_empty() || !context.resolved.dev_dependencies.is_empty() {
+            return Err(CliError::failure(
+                "ordinary support-only lock cannot admit authored Rust dependencies",
+            ));
+        }
+        let (_, publication) = generate_oven_lockfile_with_semantic_paths(
+            project_root,
+            &context.resolved,
+            &[],
+            &CargoFeatureSelection::default(),
+            &context.semantic,
+            None,
+        )?;
+        native.verify()?;
+        return Ok(PublishedOvenProjectLock {
+            dependency_surface: context.resolved,
+            publication,
+        });
     }
     publish_oven_project_lock_with_context(project_root, entrypoint, package_features, Some(&current))
 }
@@ -759,6 +822,26 @@ fn generate_oven_lockfile_with_evidence(
     semantic: &SemanticLockState,
     publication_lock: Option<&PublicationLock>,
 ) -> CliResult<(IncanLock, PublishedLockFile)> {
+    let semantic_paths = semantic_sdk_path_dependencies(project_requirements);
+    generate_oven_lockfile_with_semantic_paths(
+        project_root,
+        resolved,
+        &semantic_paths,
+        cargo_features,
+        semantic,
+        publication_lock,
+    )
+}
+
+/// Publish through the same exact guarded writer using semantic dependencies already checked by its collector.
+fn generate_oven_lockfile_with_semantic_paths(
+    project_root: &Path,
+    resolved: &ResolvedDependencies,
+    semantic_paths: &[oven_model::manifest::DependencySpec],
+    cargo_features: &CargoFeatureSelection,
+    semantic: &SemanticLockState,
+    publication_lock: Option<&PublicationLock>,
+) -> CliResult<(IncanLock, PublishedLockFile)> {
     let lock_path = project_root.join(LOCK_FILENAME);
     let owned_publication_lock = if publication_lock.is_none() {
         Some(
@@ -769,14 +852,13 @@ fn generate_oven_lockfile_with_evidence(
         None
     };
     let publication_lock = publication_lock.or(owned_publication_lock.as_ref());
-    let semantic_sdk_paths = semantic_sdk_path_dependencies(project_requirements);
     let fingerprint = compute_resolved_fingerprint_with_sdk_paths(
         &resolved.dependencies,
         &resolved.dev_dependencies,
         cargo_features,
         Some(project_root),
         semantic,
-        &semantic_sdk_paths,
+        semantic_paths,
     );
     let lock = IncanLock::new_with_semantic(
         incan_lang::version::INCAN_VERSION,

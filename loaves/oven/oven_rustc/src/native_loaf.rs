@@ -385,7 +385,7 @@ impl NativeLoafGraph {
             recipe,
             dependencies,
         };
-        verify_native(&record, &owner, false)?;
+        verify_native(&record, &owner)?;
         verify_children(&record, &self.units)?;
         let payload = serde_json::to_vec(&record).map_err(failed)?;
         let receipt = record_receipt(&record, &payload)?;
@@ -674,12 +674,15 @@ fn verify_record(
             "native record payload, recipe, intent or Store identity differs",
         ));
     }
-    verify_native(record, native, read_only)
+    verify_native(record, native)
 }
 
 /// Revalidate the original native generation and prove the complete extern alias-to-bytes recipe.
-fn verify_native(record: &NativeLoafRecord, owner: &OvenStoreExecutionPayload, read_only: bool) -> Result<()> {
-    verify_owner(owner, read_only)?;
+fn verify_native(record: &NativeLoafRecord, owner: &OvenStoreExecutionPayload) -> Result<()> {
+    // Ordinary handoffs promise current original bytes, even for native units with a legacy closure proof. The
+    // Store's file-stamp digest cache avoids hashing unchanged bytes while its walk still rejects missing members,
+    // replacement files and symlinks. A retained lease alone only prevents pruning.
+    owner.verify_admitted_payload().map_err(failed)?;
     record.recipe.verify_identity().map_err(failed)?;
     source_origin(&record.recipe)?;
     let source = &record.source;
