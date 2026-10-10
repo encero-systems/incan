@@ -3,8 +3,9 @@
 use super::{
     DOMAIN, EDGES_INPUT, NativeLoafClosure, NativeLoafDependency, NativeLoafError, NativeLoafGraph, NativeLoafOrigin,
     NativeLoafPhysicalBinding, NativeLoafPredicate, NativeLoafRecord, NativeLoafReference, NativeLoafRoot,
-    NativeLoafSource, ORIGIN_INPUT, Result, SOURCE_INPUT, Store, physical_edges_input, prepare_resolved_native_loafs,
-    record_receipt, retain_forward, select_owner, source_binding_input, verify_children, verify_native, verify_record,
+    NativeLoafSource, NativeLoafVerificationWork, ORIGIN_INPUT, Result, SOURCE_INPUT, Store, physical_edges_input,
+    prepare_resolved_native_loafs, record_receipt, retain_forward, select_owner, source_binding_input, verify_children,
+    verify_native, verify_record,
 };
 use crate::plan::shared::OvenSharedNativeOwners;
 use oven_store::store::{
@@ -469,6 +470,109 @@ fn root(graph: &NativeLoafGraph, identity: &str, alias: &str) -> TestResult<Nati
     })
 }
 
+/// Shared dependencies and root aliases must cost one complete check per vertex at each fresh handoff.
+#[test]
+fn dev7_native_loaf_graph_verification_is_linear_and_fresh() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let native = store(&temp.path().join("store"));
+    let mut graph = NativeLoafGraph::default();
+    let shared = publish(temp.path(), &native, &mut graph, "shared", &[], &[])?;
+    let left = publish(temp.path(), &native, &mut graph, "left", &[], &[("shared", &shared)])?;
+    let right = publish(temp.path(), &native, &mut graph, "right", &[], &[("shared", &shared)])?;
+    let parent = publish(
+        temp.path(),
+        &native,
+        &mut graph,
+        "parent",
+        &[],
+        &[("left", &left), ("right", &right)],
+    )?;
+    let roots = [root(&graph, &parent, "first")?, root(&graph, &parent, "second")?];
+    let mut selection = NativeLoafVerificationWork::default();
+    let selected = graph.select_with_work(&roots, &mut selection)?;
+    assert_eq!(
+        selection,
+        NativeLoafVerificationWork {
+            record_checks: 4,
+            edge_checks: 4
+        }
+    );
+    assert_eq!(selected.roots.len(), 2);
+    assert_eq!(selected.graph.units.len(), 4);
+    for (identity, unit) in &selected.graph.units {
+        assert!(Arc::ptr_eq(
+            unit,
+            graph.units.get(identity).ok_or("original owner missing")?
+        ));
+    }
+    selected.graph.select_with_work(&roots, &mut selection)?;
+    assert_eq!(
+        selection,
+        NativeLoafVerificationWork {
+            record_checks: 8,
+            edge_checks: 8
+        }
+    );
+
+    let mut admission = NativeLoafVerificationWork::default();
+    let admitted = NativeLoafClosure::admit_with_work(&native, &roots, &mut admission)?;
+    assert_eq!(
+        admission,
+        NativeLoafVerificationWork {
+            record_checks: 4,
+            edge_checks: 4
+        }
+    );
+    assert_eq!(admitted.roots, selected.roots);
+    NativeLoafClosure::admit_with_work(&native, &roots, &mut admission)?;
+    assert_eq!(
+        admission,
+        NativeLoafVerificationWork {
+            record_checks: 8,
+            edge_checks: 8
+        }
+    );
+
+    let installed = temp.path().join("installed");
+    copy_tree(native.root(), &installed)?;
+    let mut published = NativeLoafVerificationWork::default();
+    let installed = PublishedOvenStore::new(&installed);
+    let installed_closure = NativeLoafClosure::admit_published_with_work(&installed, &roots, &mut published)?;
+    assert_eq!(
+        published,
+        NativeLoafVerificationWork {
+            record_checks: 4,
+            edge_checks: 4
+        }
+    );
+    assert_eq!(installed_closure.roots, selected.roots);
+
+    let installed_child = installed_closure
+        .graph
+        .units
+        .get(&shared)
+        .ok_or("installed child missing")?;
+    let installed_output = installed_child.output()?;
+    replace_owned_fixture(&installed_output, b"changed installed native bytes")?;
+    assert!(
+        installed_closure
+            .graph
+            .select_with_work(&roots, &mut published)
+            .is_err()
+    );
+    assert!(NativeLoafClosure::admit_published_with_work(&installed, &roots, &mut published).is_err());
+
+    let child = graph.units.get(&shared).ok_or("shared child missing")?;
+    let output = child.output()?;
+    let before = std::fs::metadata(&output)?.modified()?;
+    replace_owned_fixture(&output, b"changed native bytes")?;
+    assert_eq!(std::fs::metadata(&output)?.modified()?, before);
+    assert!(selected.graph.select_with_work(&roots, &mut selection).is_err());
+    assert!(NativeLoafClosure::admit_with_work(&native, &roots, &mut admission).is_err());
+    assert!(selection.record_checks > 8);
+    Ok(())
+}
+
 /// Check a definitive refusal rather than accepting an unrelated I/O failure as semantic coverage.
 fn refuses<T>(result: Result<T>, family: &str) -> TestResult {
     let error = result.err().ok_or("invalid native admission succeeded")?;
@@ -675,7 +779,13 @@ fn dev7_native_loaf_refuses_substituted_and_injected_physical_edges() -> TestRes
     let mut absent = BTreeMap::new();
     absent.insert(parent.clone(), Arc::clone(unit));
     refuses(
-        retain_forward(&parent, &absent, &mut BTreeMap::new(), &mut BTreeSet::new()),
+        retain_forward(
+            &parent,
+            &absent,
+            &mut BTreeMap::new(),
+            &mut BTreeSet::new(),
+            &mut NativeLoafVerificationWork::default(),
+        ),
         "dependency record is missing",
     )?;
     let mut recipe = unit.record.clone();

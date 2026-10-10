@@ -276,6 +276,8 @@ fn dev7_native_loaf_prepared_repeat_skips_preparation_and_unrelated_owners() -> 
     assert_eq!(first.report.preparation_calls, 1);
     assert_eq!(first.report.prepared_units, 2);
     assert_eq!(first.report.selected_units, 1);
+    assert_eq!(first.report.graph_verification.record_checks, 1);
+    assert_eq!(first.report.graph_verification.edge_checks, 0);
     assert!(Arc::ptr_eq(
         &original,
         first.closure.graph.units.get(&identity).ok_or("selected missing")?
@@ -286,6 +288,8 @@ fn dev7_native_loaf_prepared_repeat_skips_preparation_and_unrelated_owners() -> 
     assert_eq!(repeat.report.preparation_calls, 0);
     assert_eq!(repeat.report.prepared_units, 0);
     assert_eq!(repeat.report.selected_units, 1);
+    assert_eq!(repeat.report.graph_verification.record_checks, 1);
+    assert_eq!(repeat.report.graph_verification.edge_checks, 0);
     assert_eq!(repeat.report.selected_native_owners, 1);
     assert_eq!(repeat.report.current_local_sources, 1);
     assert_eq!(repeat.report.current_registry_bindings, 0);
@@ -407,6 +411,8 @@ fn dev7_native_loaf_prepared_empty_dependencies_bypass_all_inputs() -> TestResul
     assert!(prepared.closure.graph.units.is_empty());
     assert_eq!(prepared.report.preparation_calls, 0);
     assert_eq!(prepared.report.compiler_closure_checks, 0);
+    assert_eq!(prepared.report.graph_verification.record_checks, 0);
+    assert_eq!(prepared.report.graph_verification.edge_checks, 0);
     assert!(!absent.exists());
     Ok(())
 }
