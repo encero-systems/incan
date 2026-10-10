@@ -54,7 +54,7 @@ impl MetadataPreparation {
 
     /// Observe the same ordinary authority using an original caller-supplied native admission when present.
     /// Missing explicit input preserves legacy discovery; a supplied capability never falls back to discovery.
-    pub(super) fn observe_with_native_context(
+    pub(crate) fn observe_with_native_context(
         project: &ProjectManifest,
         session: &CompilationSession,
         out_dir: &Path,
