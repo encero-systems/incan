@@ -13,6 +13,66 @@ use incan_provider::lock_semantics::{CheckedProviderSemanticIdentities, provider
 use incan_provider::requirements::{ProjectRequirements, semantic_sdk_path_dependencies};
 use oven_model::manifest::DependencySpec;
 
+/// Checked logical inputs and original native producer requests retained until every profile is planned.
+pub(crate) struct OrdinaryLibraryRuntimeInputs {
+    native: std::sync::Arc<crate::build::ordinary_library_native::OrdinaryLibraryNativeProfiles>,
+    provider_records: Vec<String>,
+    facets: Vec<String>,
+    dependencies: Vec<DependencySpec>,
+    owner: std::path::PathBuf,
+}
+
+impl OrdinaryLibraryRuntimeInputs {
+    /// Bind already checked provider semantics and resolved declarations without selecting or discovering an SDK.
+    pub(crate) fn from_checked(
+        native: std::sync::Arc<crate::build::ordinary_library_native::OrdinaryLibraryNativeProfiles>,
+        owner: &std::path::Path,
+        provider_plan: &ProviderPlan,
+        requirements: &ProjectRequirements,
+        resolved: &ResolvedDependencies,
+        semantic_identities: &CheckedProviderSemanticIdentities,
+    ) -> CliResult<Self> {
+        native.verify()?;
+        let provider_records = oven_native_provider_records_with_checked_identities(
+            provider_plan,
+            &semantic_sdk_path_dependencies(requirements),
+            semantic_identities,
+        )?;
+        let mut dependencies = resolved.dependencies.clone();
+        dependencies.extend(resolved.dev_dependencies.clone());
+        Ok(Self {
+            native,
+            provider_records,
+            facets: requirements.stdlib_facets.clone(),
+            dependencies,
+            owner: owner.to_path_buf(),
+        })
+    }
+
+    /// Borrow original ordinary requests for the current planner and the final compilation handoff.
+    pub(crate) fn native(
+        &self,
+    ) -> &std::sync::Arc<crate::build::ordinary_library_native::OrdinaryLibraryNativeProfiles> {
+        &self.native
+    }
+
+    /// Project exact profile physical identities while retaining all logical dependency records.
+    pub(crate) fn for_profile(
+        &self,
+        intent: &oven_store::OvenBuildIntent,
+        physical_dependencies: &[DependencySpec],
+    ) -> CliResult<BTreeMap<String, String>> {
+        self.native.runtime_inputs(
+            intent,
+            &self.provider_records,
+            &self.facets,
+            &self.dependencies,
+            physical_dependencies,
+            &self.owner,
+        )
+    }
+}
+
 /// Prepare an executable for Oven Alpha without launching Cargo, inspecting a Cargo target, or auto-publishing SDK
 /// providers.
 ///

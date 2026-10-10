@@ -123,7 +123,11 @@ struct PublishedOutput {
 }
 
 /// Verify actual immutable completed-output, receipt and native bytes for each genuinely published profile.
-fn outputs(root: &Path, report: &OvenProjectBakeReport) -> TestResult<BTreeMap<String, PublishedOutput>> {
+fn outputs(
+    root: &Path,
+    report: &OvenProjectBakeReport,
+    native: &OrdinaryLibraryNativeProfiles,
+) -> TestResult<BTreeMap<String, PublishedOutput>> {
     let artifact = root.join("target/lib");
     let package: OvenPackagedLibraryLoafManifest =
         serde_json::from_slice(&fs::read(packaged_library_loaf_manifest_path(&artifact))?)?;
@@ -136,6 +140,12 @@ fn outputs(root: &Path, report: &OvenProjectBakeReport) -> TestResult<BTreeMap<S
         let digest = oven_store::digest_bytes(&fs::read(artifact.join(&profile.library_relative_path))?);
         assert_eq!(digest, profile.library_digest);
         assert_eq!(output.receipt_identity, profile.receipt.identity);
+        let projected = native.runtime_inputs(&profile.receipt.intent, &[], &[], &[], &[], root)?;
+        assert_eq!(
+            profile.receipt.sources.build_unit_inputs.get("ordinary-native-roots"),
+            projected.get("ordinary-native-roots"),
+            "final published receipt must preserve the actual engine's original roots projection"
+        );
         assert!(
             selected
                 .insert(
@@ -322,7 +332,7 @@ fn ordinary_native_library_publication_first_replay_and_source_edit() -> TestRes
         reset_project_lock_collection_metrics();
         let report = bake_admitted_library(&input, &features, None)?;
         let metadata = published_metadata(root.path(), &report)?;
-        let actual_outputs = outputs(root.path(), &report)?;
+        let actual_outputs = outputs(root.path(), &report, &native)?;
         assert_eq!(project_lock_collection_counts(), (1, 0));
         assert!(root.path().join(LOCK_FILENAME).is_file());
         assert_eq!(ordinary_library_preparation_branches(), (1, iteration));
@@ -357,7 +367,7 @@ fn ordinary_native_library_publication_first_replay_and_source_edit() -> TestRes
         original.recipe().semantic_authority_digest,
         edited_metadata.recipe().semantic_authority_digest
     );
-    let edited_outputs = outputs(root.path(), &edited)?;
+    let edited_outputs = outputs(root.path(), &edited, &native)?;
     for (profile, original_output) in first_outputs.ok_or("original outputs missing")? {
         let edited_output = edited_outputs.get(&profile).ok_or("edited profile output missing")?;
         assert_ne!(original_output.artifact_identity, edited_output.artifact_identity);

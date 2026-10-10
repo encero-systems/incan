@@ -24,7 +24,7 @@ use crate::oven_store::open_default_oven_store;
 use crate::session::CompilationSession;
 
 /// Verify real debug/release outputs and original checked/generation owners produced by the shared finalizer.
-fn published_metadata(
+pub(super) fn published_metadata(
     root: &Path,
     report: &OvenProjectBakeReport,
 ) -> Result<Arc<SelectedLibraryMetadata>, Box<dyn std::error::Error>> {
@@ -151,7 +151,12 @@ fn admitted_ordinary_library_publication_first_replay_and_source_edit() -> Resul
         let report = bake_admitted_library(&input, &features, None)?;
         let metadata = published_metadata(root.path(), &report)?;
         assert_eq!(project_lock_collection_counts(), (1, 0));
-        assert!(Arc::ptr_eq(&native, input.temporary_native_sdk_context()));
+        assert!(Arc::ptr_eq(
+            &native,
+            input
+                .temporary_native_sdk_context()
+                .ok_or("missing original SDK admission")?
+        ));
         assert_eq!(ordinary_library_preparation_branches(), (1, iteration));
         if let Some(original) = &first {
             let original: &Arc<SelectedLibraryMetadata> = original;

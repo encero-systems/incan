@@ -136,6 +136,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/build/bake/ordinary_native_publication_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Actual ordinary native library publication, metadata replay and source edit with real debug/release producer requests and compiler-bound identity; legacy SDK discovery is hostile and no generated Cargo invocation is admitted.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/build/caller_facet.rs": {
       "disposition": "keep",
       "notes": "checked, usage-derived caller export selection and refusal at the Rust-hosted Incan boundary.",
@@ -180,6 +188,14 @@
       "disposition": "keep",
       "notes": "library re-export resolution and Rust ABI query paths from checked declarations.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/build/library_metadata/requirements/native_demands/tests.rs": {
+      "disposition": "keep",
+      "notes": "Actual checked source native-demand coverage, explicit unknown old metadata and conservative parsed AST refusals; no generated Rust assertion.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -276,6 +292,14 @@
       "disposition": "unaffected",
       "notes": "Receipt-bound native SDK plans and the actual covered test-envelope path retain original command owners; store-backed controls verify member bindings, compiler mismatch refusal and owner lifetime without generated Cargo metadata.",
       "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/build/ordinary_support/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Actual executable-relative mandatory native declaration selection and original source member refusals; independent of generated Rust. Migrate this authority contract if its caller moves.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -464,6 +488,14 @@
       "disposition": "unaffected",
       "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/lock/registry_sources/optional_lineage_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Original completed-project inspection owner integrity and typed optional native-generation invalidation; tests canonical Store lineage and admission rather than generated Rust.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -9284,6 +9316,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_rustc/src/native_loaf/preparation.rs": {
+      "disposition": "unaffected",
+      "notes": "Ordinary native producer debug/release profiles, real local library and host macro behavior, and unchanged per-profile reuse; tests the native toolchain rather than Incan generated Rust.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_rustc/src/native_loaf/prepared/tests.rs": {
       "disposition": "unaffected",
       "notes": "Ordinary rooted native reuse verifies current source/compiler/lock/facts, records actual work, refuses corrupted authority and bypasses empty declarations.",
@@ -9296,6 +9336,14 @@
       "disposition": "unaffected",
       "notes": "Ordinary retained native source and fact projection verifies original owners, exact physical aliases, generated inputs and read-only installed admission; it grants no macro execution or semantic-world completeness.",
       "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/native_loaf/request_observation/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Actual complete producer request, original native owners, facts, graph and source freshness; semantic observation refusals are distinct from physical preparation.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
@@ -11801,38 +11849,6 @@
       "disposition": "unaffected",
       "notes": "Oven tools command; the build_run hit is a Cargo config hint, not an Incan build.",
       "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/src/build/ordinary_support/tests.rs": {
-      "disposition": "unaffected",
-      "notes": "Actual executable-relative mandatory native declaration selection and original source member refusals; independent of generated Rust. Migrate this authority contract if its caller moves.",
-      "owner": 1337,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/oven/oven_rustc/src/native_loaf/preparation.rs": {
-      "disposition": "unaffected",
-      "notes": "Ordinary native producer debug/release profiles, real local library and host macro behavior, and unchanged per-profile reuse; tests the native toolchain rather than Incan generated Rust.",
-      "owner": 1337,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/compiler/incan_driver/src/lock/registry_sources/optional_lineage_tests.rs": {
-      "disposition": "unaffected",
-      "notes": "Original completed-project inspection owner integrity and typed optional native-generation invalidation; tests canonical Store lineage and admission rather than generated Rust.",
-      "owner": 1337,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
-    "loaves/oven/oven_rustc/src/native_loaf/request_observation/tests.rs": {
-      "disposition": "unaffected",
-      "notes": "Actual complete producer request, original native owners, facts, graph and source freshness; semantic observation refusals are distinct from physical preparation.",
-      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""

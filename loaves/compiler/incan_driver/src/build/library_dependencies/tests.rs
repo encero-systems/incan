@@ -91,6 +91,7 @@ fn checked_package_with_requirements(
         source_modules: BTreeMap::from([("src/lib.incn".into(), vec!["lib".into()])]),
         entry_module: vec!["lib".into()],
         rust_abi_queries: BTreeSet::new(),
+        native_demands: crate::build::library_metadata::requirements::CheckedNativeDemands::default(),
         rust_extern_paths: Vec::new(),
         backend: None,
     })?;

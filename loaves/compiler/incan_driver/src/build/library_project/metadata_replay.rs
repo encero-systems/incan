@@ -784,6 +784,7 @@ pub(super) struct ReplayRequest<'a> {
     pub oven_plan_mode: crate::build::OvenProjectPlanMode,
     pub include_interop_execution: bool,
     pub authority: Option<&'a mut OvenProjectBakeAuthorityContext>,
+    pub ordinary_native: Option<Arc<crate::build::ordinary_library_native::OrdinaryLibraryNativeProfiles>>,
 }
 
 /// Replay checked output before frontend source collection, then rebuild execution state through the shared planner.
@@ -813,18 +814,29 @@ pub(super) fn prepare_replayed_library(request: ReplayRequest<'_>) -> CliResult<
         oven_plan_mode,
         include_interop_execution,
         authority,
+        ordinary_native,
     } = request;
     let started = Instant::now();
     preparation.revalidate(project, session, &out_dir, native_sdk)?;
-    if preparation.ordinary_authority().is_some() {
-        return Err(invalid(
-            "ordinary metadata replay requires explicit ordinary current-profile planning authority",
-        ));
+    match (preparation.ordinary_authority(), &ordinary_native) {
+        (Some(original), Some(native)) if Arc::ptr_eq(original, native.metadata()) => native.verify()?,
+        (None, None) => (),
+        _ => {
+            return Err(invalid(
+                "ordinary metadata replay lost its original current-profile authority",
+            ));
+        }
     }
     let contract = selected
         .checked_requirements()
         .ok_or_else(|| invalid("metadata owner lacks checked planning inputs"))?;
     contract.validate()?;
+    if ordinary_native.is_some() {
+        contract.require_support_only_native()?;
+        if include_interop_execution {
+            return Err(invalid("ordinary support-only replay cannot request interop execution"));
+        }
+    }
     selected.replay(&out_dir)?;
     tracing::debug!(
         package = %preparation.recipe.name,
@@ -863,13 +875,17 @@ pub(super) fn prepare_replayed_library(request: ReplayRequest<'_>) -> CliResult<
     crate::build::library_outputs::remove_generated_library_self_dependencies(&mut resolved, project.project_root());
     let semantic_paths = semantic_sdk_path_dependencies(&requirements);
     let provider_semantics = session.provider_semantic_identities(&provider_plan, &semantic_paths)?;
-    let mut build_inputs = crate::build_unit::oven_build_unit_inputs_with_provider_identities_and_native_sdk(
-        &provider_plan,
-        &requirements,
-        &resolved,
-        &provider_semantics,
-        preparation.native_context().map(Arc::as_ref),
-    )?;
+    let mut build_inputs = if ordinary_native.is_some() {
+        BTreeMap::new()
+    } else {
+        crate::build_unit::oven_build_unit_inputs_with_provider_identities_and_native_sdk(
+            &provider_plan,
+            &requirements,
+            &resolved,
+            &provider_semantics,
+            preparation.native_context().map(Arc::as_ref),
+        )?
+    };
     if project.vocab().is_some() && oven_cargo_compat::source_compiler_vocab_support_is_available() {
         build_inputs.insert(
             oven_rustc::loaf::OVEN_SOURCE_COMPILER_VOCAB_SUPPORT_BUILD_INPUT.into(),
@@ -935,6 +951,19 @@ pub(super) fn prepare_replayed_library(request: ReplayRequest<'_>) -> CliResult<
             toolchain: preparation.recipe.toolchain.clone(),
             store: &preparation.store,
             native_sdk_context: preparation.native_context().cloned(),
+            ordinary_runtime: ordinary_native
+                .as_ref()
+                .map(|native| {
+                    crate::build_unit::OrdinaryLibraryRuntimeInputs::from_checked(
+                        Arc::clone(native),
+                        project.project_root(),
+                        &provider_plan,
+                        &requirements,
+                        &resolved,
+                        &provider_semantics,
+                    )
+                })
+                .transpose()?,
             oven_plan_mode,
             rust_edition: project.rust_edition().map(str::to_string),
         },
