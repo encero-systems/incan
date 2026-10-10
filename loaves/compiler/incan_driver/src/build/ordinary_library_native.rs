@@ -134,15 +134,7 @@ impl OrdinaryLibraryNativeProfiles {
         dependencies: &[DependencySpec],
         owner: &Path,
     ) -> CliResult<NativeLoafClosure> {
-        self.verify()?;
-        let observation = self
-            .metadata
-            .observations()
-            .get(&intent.profile)
-            .ok_or_else(|| failure("ordinary library lacks the requested native profile"))?;
-        observation
-            .verify_intent(self.metadata.rustc(), intent)
-            .map_err(failure)?;
+        let observation = self.metadata.verify_profile(intent)?;
         let graph = observation.graph();
         let support = self.metadata.support();
         let mut roots = graph
@@ -185,7 +177,7 @@ impl OrdinaryLibraryNativeProfiles {
             facets,
             dependencies,
         )?;
-        self.verify()?;
+        self.metadata.verify_profile(intent)?;
         Ok(inputs)
     }
 
@@ -199,7 +191,7 @@ impl OrdinaryLibraryNativeProfiles {
     ) -> CliResult<(OvenReceipt, OvenDirectRustcPlanSelection)> {
         let closure = self.closure(&receipt.intent, dependencies, owner)?;
         let selected = super::native_loaf_plan::select_native_loaf_plan(store, receipt, &closure)?;
-        self.verify()?;
+        self.metadata.verify_profile(&receipt.intent)?;
         Ok(selected)
     }
 

@@ -20,6 +20,7 @@ use super::admitted_publication_tests::published_metadata;
 use super::bake_admitted_library;
 use crate::build::library_dependencies::PreparedLibraryDependencies;
 use crate::build::library_metadata::SelectedLibraryMetadata;
+use crate::build::library_project::metadata_replay::ordinary_native::take_metadata_request_verifications;
 use crate::build::library_project::{
     AdmittedLibraryPreparation, ordinary_library_preparation_branches, reset_ordinary_library_preparation_branches,
 };
@@ -322,6 +323,24 @@ fn ordinary_native_library_publication_first_replay_and_source_edit() -> TestRes
     ] {
         assert!(debug.verify_intent(&rustc, &wrong).is_err());
     }
+    // A physical debug handoff needs its entire original request, but does not consume release output bytes.
+    // Full metadata authority must still refuse the missing release member rather than pruning that request.
+    let release = requests.get("release").ok_or("release request missing")?;
+    let release_unit = release
+        .graph()
+        .units()
+        .values()
+        .next()
+        .ok_or("release native graph is empty")?;
+    let original = release_unit.output()?;
+    let displaced = original.with_extension("profile-missing");
+    fs::rename(&original, &displaced)?;
+    let debug_handoff = native.metadata().verify_profile(&intent).map(|_| ());
+    let complete_metadata = native.verify();
+    fs::rename(&displaced, &original)?;
+    assert!(debug_handoff.is_ok(), "{debug_handoff:?}");
+    assert!(complete_metadata.is_err());
+    native.verify()?;
     // ---- Fresh ordinary checked dependency admission, actual publication and checked metadata replay ----
     let root = tempfile::tempdir()?;
     fs::create_dir_all(root.path().join("src"))?;
@@ -360,13 +379,16 @@ fn ordinary_native_library_publication_first_replay_and_source_edit() -> TestRes
     for iteration in 0..2 {
         reset_project_lock_collection_metrics();
         super::take_library_native_output_work();
+        take_metadata_request_verifications();
         let started = std::time::Instant::now();
         let report = bake_admitted_library(&input, &features, None)?;
         let (compiled, reused) = super::take_library_native_output_work();
+        let request_verifications = take_metadata_request_verifications();
         println!(
             "ordinary-publication-evidence {}",
             serde_json::json!({"phase": if iteration == 0 { "publish-first" } else { "publish-repeat" },
                 "seconds": started.elapsed().as_secs_f64(), "compiled": compiled, "reused": reused,
+                "metadata_request_verifications": request_verifications,
                 "profiles": &report.profiles})
         );
         assert_eq!((compiled, reused), if iteration == 0 { (2, 0) } else { (0, 2) });
@@ -395,13 +417,16 @@ fn ordinary_native_library_publication_first_replay_and_source_edit() -> TestRes
     fs::write(&entry, "pub def answer() -> int:\n    return 43\n")?;
     reset_project_lock_collection_metrics();
     super::take_library_native_output_work();
+    take_metadata_request_verifications();
     let started = std::time::Instant::now();
     let edited = bake_admitted_library(&input, &features, None)?;
     let (compiled, reused) = super::take_library_native_output_work();
+    let request_verifications = take_metadata_request_verifications();
     println!(
         "ordinary-publication-evidence {}",
         serde_json::json!({"phase": "publish-source-edit", "seconds": started.elapsed().as_secs_f64(),
-            "compiled": compiled, "reused": reused, "profiles": &edited.profiles})
+            "compiled": compiled, "reused": reused, "metadata_request_verifications": request_verifications,
+            "profiles": &edited.profiles})
     );
     assert_eq!((compiled, reused), (2, 0));
     let edited_metadata = published_metadata(root.path(), &edited)?;

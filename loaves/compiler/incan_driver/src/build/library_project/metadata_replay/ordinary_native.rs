@@ -97,8 +97,27 @@ impl OrdinaryNativeMetadataAuthority {
             .map_err(|error| invalid(error.to_string()))
     }
 
-    /// Verify every profile's original request and support selection, returning only validated complete digests.
-    fn verified_requests(&self) -> CliResult<BTreeMap<String, String>> {
+    /// Verify the requested full producer observation at a physical profile handoff, retaining its original owners.
+    ///
+    /// Metadata identity still calls `verified_requests` for every supplied profile. A debug-only physical plan does
+    /// not consume release bytes, but never narrows the selected profile's complete request to its linked roots.
+    pub(crate) fn verify_profile(&self, intent: &OvenBuildIntent) -> CliResult<&NativeLoafRequestObservation> {
+        self.verify_compiler()?;
+        if intent.target != self.target || intent.toolchain != self.toolchain {
+            return Err(invalid(
+                "ordinary native profile differs from the requested compiler intent",
+            ));
+        }
+        let observation = self
+            .observations
+            .get(&intent.profile)
+            .ok_or_else(|| invalid("ordinary library lacks the requested native profile"))?;
+        self.verify_original_profile(&intent.profile, observation)?;
+        Ok(observation)
+    }
+
+    /// Check shared original compiler and mandatory source authority before observing any profile.
+    fn verify_compiler(&self) -> CliResult<()> {
         validate_profiles(self.observations.keys().map(String::as_str))?;
         self.support.verify()?;
         if self.target.is_empty()
@@ -107,54 +126,85 @@ impl OrdinaryNativeMetadataAuthority {
         {
             return Err(invalid("ordinary metadata native compiler/target authority changed"));
         }
+        Ok(())
+    }
+
+    /// Verify every profile's original request and support selection, returning only validated complete digests.
+    fn verified_requests(&self) -> CliResult<BTreeMap<String, String>> {
+        self.verify_compiler()?;
+        self.observations
+            .iter()
+            .map(|(profile, observation)| {
+                self.verify_original_profile(profile, observation)
+                    .map(|digest| (profile.clone(), digest.to_string()))
+            })
+            .collect()
+    }
+
+    /// Recheck one complete original request, including unlinked units and the actual mandatory support roots.
+    fn verify_original_profile<'a>(
+        &self,
+        profile: &str,
+        observation: &'a NativeLoafRequestObservation,
+    ) -> CliResult<&'a str> {
         let dependencies = self.support.dependencies()?;
         let owner = self.support.declaration_owner()?;
-        let mut requests = BTreeMap::new();
-        for (profile, observation) in &self.observations {
-            let digest = observation
-                .verify_intent(
-                    &self.rustc,
-                    &OvenBuildIntent {
-                        target: self.target.clone(),
-                        toolchain: self.toolchain.clone(),
-                        profile: profile.clone(),
-                        features: Vec::new(),
-                    },
-                )
-                .map_err(|error| invalid(error.to_string()))?;
-            let roots = observation
-                .graph()
-                .select_dependency_roots(dependencies, owner, "target")
-                .map_err(|error| invalid(error.to_string()))?;
-            if roots.len() != dependencies.len() {
-                return Err(invalid(
-                    "ordinary metadata lacks complete mandatory native support roots",
-                ));
-            }
-            for unit in observation.graph().units().values() {
-                let record = unit.record();
-                let target = match record.source.domain.as_str() {
-                    "target" => &self.target,
-                    "host" => &self.host,
-                    _ => {
-                        return Err(invalid(
-                            "ordinary metadata native record has an unknown compilation domain",
-                        ));
-                    }
-                };
-                if record.recipe.intent.target != *target
-                    || record.recipe.intent.toolchain != self.toolchain
-                    || record.recipe.intent.profile != *profile
-                {
+        #[cfg(test)]
+        METADATA_REQUEST_VERIFICATIONS.with(|work| work.set(work.get() + 1));
+        let digest = observation
+            .verify_intent(
+                &self.rustc,
+                &OvenBuildIntent {
+                    target: self.target.clone(),
+                    toolchain: self.toolchain.clone(),
+                    profile: profile.to_string(),
+                    features: Vec::new(),
+                },
+            )
+            .map_err(|error| invalid(error.to_string()))?;
+        let roots = observation
+            .graph()
+            .select_dependency_roots(dependencies, owner, "target")
+            .map_err(|error| invalid(error.to_string()))?;
+        if roots.len() != dependencies.len() {
+            return Err(invalid(
+                "ordinary metadata lacks complete mandatory native support roots",
+            ));
+        }
+        for unit in observation.graph().units().values() {
+            let record = unit.record();
+            let target = match record.source.domain.as_str() {
+                "target" => &self.target,
+                "host" => &self.host,
+                _ => {
                     return Err(invalid(
-                        "ordinary metadata native record differs from requested profile/target",
+                        "ordinary metadata native record has an unknown compilation domain",
                     ));
                 }
+            };
+            if record.recipe.intent.target != *target
+                || record.recipe.intent.toolchain != self.toolchain
+                || record.recipe.intent.profile != profile
+            {
+                return Err(invalid(
+                    "ordinary metadata native record differs from requested profile/target",
+                ));
             }
-            requests.insert(profile.clone(), digest.to_string());
         }
-        Ok(requests)
+        Ok(digest)
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Actual full-profile request verification attempts made by this test thread's metadata authority.
+    static METADATA_REQUEST_VERIFICATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Take measured complete-request verification work without caching authority or changing refusal policy.
+#[cfg(test)]
+pub(crate) fn take_metadata_request_verifications() -> usize {
+    METADATA_REQUEST_VERIFICATIONS.with(|work| work.replace(0))
 }
 
 /// Validate exact caller-selected profiles without consulting the ambient bake-profile selector.
