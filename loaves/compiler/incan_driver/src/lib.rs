@@ -38,6 +38,8 @@ pub mod rust_inspect_workspace;
 #[cfg(feature = "rust_inspect")]
 pub mod sdk_closure;
 pub mod session;
+#[cfg(test)]
+mod source_authority_stage_tests;
 pub mod testing;
 #[cfg(test)]
 mod tests;

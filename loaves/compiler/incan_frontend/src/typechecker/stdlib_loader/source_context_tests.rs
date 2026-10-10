@@ -133,6 +133,13 @@ fn dev7_standard_source_cache_revalidates_original_members_and_context() -> Test
     child("freshness")
 }
 
+/// A member first read through a clone remains an original owner verified by its untouched parent cache.
+#[cfg(unix)]
+#[test]
+fn dev7_standard_source_cache_clone_new_member_is_retained_by_parent() -> TestResult {
+    child("clone-new-member")
+}
+
 /// The real copied executable enters the public factory, then binds that exact Arc through the real checker adapter.
 #[cfg(unix)]
 #[test]
@@ -184,9 +191,23 @@ fn dev7_standard_source_cache_actual_executable_child() -> TestResult {
     let mut checker = TypeChecker::new();
     checker.stdlib_cache = legacy;
     checker.set_provider_plan(Arc::clone(&plan));
+    if mode == "clone-new-member" {
+        let mut clone = checker.stdlib_cache.clone();
+        assert!(clone.lookup_function_meta(&io, "owned").is_some());
+        assert_eq!(checker.stdlib_cache.source_inputs.parses(), 0);
+        assert_eq!(clone.source_inputs.parses(), 1);
+        let file = package.join("src/io.incn");
+        let modified = fs::metadata(&file)?.modified()?;
+        fs::write(&file, OWN_IO.replace("7", "9"))?;
+        fs::File::open(&file)?.set_modified(modified)?;
+        assert!(checker.stdlib_cache.verify_retained_sources().is_err());
+        return Ok(());
+    }
     if mode == "missing" {
         fs::remove_file(package.join("src/io.incn"))?;
-        assert!(checker.stdlib_cache.lookup_function_symbol(&io, "owned").is_none());
+        let mut clone = checker.stdlib_cache.clone();
+        assert!(clone.lookup_function_symbol(&io, "owned").is_none());
+        checker.stdlib_cache.bind_provider_plan(&plan);
         assert!(checker.stdlib_cache.verify_retained_sources().is_err());
         return Ok(());
     }

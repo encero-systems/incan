@@ -4,7 +4,7 @@
 //! and member owners, checks freshness at checker/cache handoffs and never source-loads a foreign namespace.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use oven_model::toolchain_layout::CompilerOwnedSourceMember;
 
@@ -20,12 +20,18 @@ enum StdlibSourceSelection {
     StandardSource(Arc<TrustedStandardSourcePublication>),
 }
 
+/// Original member owners and refusal state shared by every cache clone within the same source context.
+#[derive(Default)]
+struct RetainedSourceMembers {
+    members: HashMap<String, Arc<CompilerOwnedSourceMember>>,
+    failure: Option<String>,
+}
+
 /// Original source selection and members behind one command's parsed metadata, independent of cache entry spelling.
 #[derive(Clone, Default)]
 pub(super) struct StdlibSourceInputs {
     selection: StdlibSourceSelection,
-    members: HashMap<String, Arc<CompilerOwnedSourceMember>>,
-    failure: Option<String>,
+    retained: Arc<Mutex<RetainedSourceMembers>>,
     #[cfg(test)]
     parses: usize,
 }
@@ -33,12 +39,18 @@ pub(super) struct StdlibSourceInputs {
 impl std::fmt::Debug for StdlibSourceInputs {
     /// Describe selection and retained module names without requiring original file handles to be printable.
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("StdlibSourceInputs")
-            .field("selection", &self.selection)
-            .field("members", &self.members.keys().collect::<Vec<_>>())
-            .field("failure", &self.failure)
-            .finish()
+        let mut debug = formatter.debug_struct("StdlibSourceInputs");
+        debug.field("selection", &self.selection);
+        match self.retained.lock() {
+            Ok(retained) => {
+                debug.field("members", &retained.members.keys().collect::<Vec<_>>());
+                debug.field("failure", &retained.failure);
+            }
+            Err(_) => {
+                debug.field("failure", &"retained source registry is poisoned");
+            }
+        }
+        debug.finish()
     }
 }
 
@@ -66,14 +78,8 @@ impl StdlibSourceInputs {
                 ..Self::default()
             };
         }
-        self.failure = None;
-        if let Err(error) = plan
-            .verify_standard_source_publication()
-            .and_then(|()| self.verify_members())
-        {
-            self.failure = Some(error.clone());
-            return Err(error);
-        }
+        plan.verify_standard_source_publication()?;
+        self.verify_members()?;
         Ok(!same)
     }
 
@@ -87,10 +93,14 @@ impl StdlibSourceInputs {
 
     /// Check original member owners without rereading an already verified declaration at the same handoff.
     fn verify_members(&self) -> Result<(), String> {
-        for member in self.members.values() {
+        let retained = self
+            .retained
+            .lock()
+            .map_err(|_| "retained source registry is poisoned".to_string())?;
+        for member in retained.members.values() {
             member.verified_bytes().map_err(|error| error.to_string())?;
         }
-        if let Some(error) = &self.failure {
+        if let Some(error) = &retained.failure {
             return Err(error.clone());
         }
         Ok(())
@@ -115,26 +125,43 @@ impl StdlibSourceInputs {
             || !module
                 .get(1)
                 .is_some_and(|root| source.namespace_roots().contains(&root.as_str()))
-            || self.failure.is_some()
         {
             return None;
         }
         let key = module.join(".");
         let result = (|| {
-            let member = if let Some(member) = self.members.get(&key) {
+            let mut retained = self
+                .retained
+                .lock()
+                .map_err(|_| "retained source registry is poisoned".to_string())?;
+            if let Some(error) = &retained.failure {
+                return Err(error.clone());
+            }
+            let member = if let Some(member) = retained.members.get(&key) {
                 Arc::clone(member)
             } else {
-                let member = Arc::new(source.open_source_module(module).map_err(|error| error.to_string())?);
-                self.members.insert(key, Arc::clone(&member));
+                let member = match source.open_source_module(module) {
+                    Ok(member) => Arc::new(member),
+                    Err(error) => {
+                        let error = error.to_string();
+                        retained.failure = Some(error.clone());
+                        return Err(error);
+                    }
+                };
+                retained.members.insert(key, Arc::clone(&member));
                 member
             };
             let bytes = member.verified_bytes().map_err(|error| error.to_string())?;
-            String::from_utf8(bytes.to_vec()).map_err(|error| error.to_string())
+            String::from_utf8(bytes.to_vec()).map_err(|error| {
+                let error = error.to_string();
+                retained.failure = Some(error.clone());
+                error
+            })
         })();
         match result {
             Ok(text) => Some(text),
             Err(error) => {
-                self.failure = Some(error);
+                tracing::debug!(module_path = %module.join("."), %error, "retained source read refused");
                 None
             }
         }

@@ -67,8 +67,9 @@ mod serde_activation;
 mod string_try_from_bridge;
 
 use dependency_metadata::{
-    DependencySymbolMetadata, collect_dependency_symbol_metadata, collect_externally_reachable_items_by_module,
-    collect_model_field_aliases, publish_default_constructed_fields, record_default_path_items_from_ir,
+    DependencySymbolMetadata, collect_dependency_symbol_metadata,
+    collect_externally_reachable_items_by_module_with_cache, collect_model_field_aliases,
+    publish_default_constructed_fields, record_default_path_items_from_ir,
     record_direct_generated_path_support_items_from_ir, should_preserve_dependency_public_items, source_module_origins,
     source_module_rust_paths,
 };
@@ -1676,9 +1677,12 @@ impl<'a> IrCodegen<'a> {
         self.public_typecheck_module_paths = paths;
     }
 
-    /// Seed codegen with stdlib metadata already collected by an earlier typecheck phase.
+    /// Seed codegen with stdlib metadata already collected by an earlier typecheck phase, binding any selected plan.
     pub fn set_stdlib_cache(&mut self, cache: StdlibAstCache) {
         self.stdlib_cache = cache;
+        if let Some(plan) = &self.provider_plan {
+            self.stdlib_cache.bind_provider_plan(plan);
+        }
     }
 
     /// Supply the checked lowering inputs owned by one compilation session.
@@ -1704,7 +1708,7 @@ impl<'a> IrCodegen<'a> {
 
     /// Set the consumer-side library manifest index for focused `pub::` tests and embedding adapters.
     pub fn set_library_manifest_index(&mut self, index: LibraryManifestIndex) {
-        self.provider_plan = Some(Arc::new(ProviderPlan::for_library_index(index)));
+        self.set_provider_plan(Arc::new(ProviderPlan::for_library_index(index)));
     }
 
     /// Set one in-memory SDK provider manifest for focused compiler tests.
@@ -1716,7 +1720,7 @@ impl<'a> IrCodegen<'a> {
             .map(ProviderPlan::library_manifest_index)
             .cloned()
             .unwrap_or_default();
-        self.provider_plan = Some(Arc::new(ProviderPlan::for_in_memory_sdk_manifest(
+        self.set_provider_plan(Arc::new(ProviderPlan::for_in_memory_sdk_manifest(
             library_index,
             manifest,
         )));
@@ -1734,14 +1738,17 @@ impl<'a> IrCodegen<'a> {
             .map(ProviderPlan::library_manifest_index)
             .cloned()
             .unwrap_or_default();
-        self.provider_plan = Some(Arc::new(ProviderPlan::for_in_memory_sdk_modules(
+        self.set_provider_plan(Arc::new(ProviderPlan::for_in_memory_sdk_modules(
             library_index,
             module_paths,
         )));
     }
 
     /// Set the immutable provider plan shared across every compiler stage.
+    ///
+    /// This binds existing metadata to the plan's source policy; a refusal propagates from generation's error boundary.
     pub fn set_provider_plan(&mut self, plan: Arc<ProviderPlan>) {
+        self.stdlib_cache.bind_provider_plan(&plan);
         self.provider_plan = Some(plan);
     }
 
@@ -1786,6 +1793,16 @@ impl<'a> IrCodegen<'a> {
         if let Some(dir) = self.rust_inspect_manifest_dir.clone() {
             tc.set_rust_inspect_manifest_dir(dir);
         }
+    }
+
+    /// Revalidate retained source authority before generation and before handing emitted results to the caller.
+    fn verify_retained_source_inputs(&self) -> Result<(), GenerationError> {
+        self.stdlib_cache.verify_retained_sources().map_err(|error| {
+            GenerationError::TypeCheck(vec![CompileError::type_error(
+                format!("retained standard source metadata refused: {error}"),
+                Default::default(),
+            )])
+        })
     }
 
     /// Prefix internal codegen typecheck diagnostics with the module being lowered.
@@ -1973,6 +1990,7 @@ impl<'a> IrCodegen<'a> {
             lowering.set_current_source_module_name(Some(path_segments.join(".")));
             lowering.seed_dependency_trait_decls(&dependencies)?;
             let ir = lowering.lower_program(module_ast)?;
+            self.stdlib_cache = lowering.stdlib_cache.clone();
             programs.push((path_segments.clone(), ir));
         }
         Ok(programs)
@@ -2252,6 +2270,7 @@ impl<'a> IrCodegen<'a> {
 
     /// Internal implementation of try_generate (takes &mut self)
     fn try_generate_internal(&mut self, program: &'a Program) -> Result<String, GenerationError> {
+        self.verify_retained_source_inputs()?;
         self.current_program = Some(program);
         self.implementation_bound_requirements.clear();
         self.inherent_bounds.clear();
@@ -2273,7 +2292,9 @@ impl<'a> IrCodegen<'a> {
         // Use the IR pipeline: AST → IR → Rust
         let code = self.try_generate_via_ir(program, &HashSet::new())?;
         let code = self.attach_provider_rust_dependency_bridge(code);
-        self.attach_caller_facet(code)
+        let code = self.attach_caller_facet(code)?;
+        self.verify_retained_source_inputs()?;
+        Ok(code)
     }
 
     /// Generate code via the IR pipeline (fallible version)
@@ -2350,6 +2371,7 @@ impl<'a> IrCodegen<'a> {
         lowering.seed_dependency_trait_decls(&dependency_modules)?;
         lowering.seed_struct_field_aliases(global_aliases.clone());
         let mut ir_program = lowering.lower_program(program)?;
+        self.stdlib_cache = lowering.stdlib_cache.clone();
         if self.needs_serde {
             add_serde_to_newtypes(&mut ir_program, needs_serialize, needs_deserialize);
         }
@@ -2430,6 +2452,7 @@ impl<'a> IrCodegen<'a> {
             dep_lowering.seed_dependency_trait_decls(&dependency_modules)?;
             dep_lowering.seed_struct_field_aliases(global_aliases.clone());
             let mut dep_ir = dep_lowering.lower_program(dep_ast)?;
+            self.stdlib_cache = dep_lowering.stdlib_cache.clone();
             crate::trait_bound_inference::infer_trait_bounds(&mut dep_ir);
             let module_path = canonical_dep_path_segments.unwrap_or_else(|| vec![dep_name.to_string()]);
             dependency_ir_programs.push((module_path, dep_ir));
@@ -2588,6 +2611,7 @@ impl<'a> IrCodegen<'a> {
     /// Returns `GenerationError::TypeCheck` if module typechecking fails, `GenerationError::Lowering` if AST lowering
     /// fails, or `GenerationError::Emission` if IR emission fails.
     pub fn try_generate_module(&mut self, module_name: &str, program: &Program) -> Result<String, GenerationError> {
+        self.verify_retained_source_inputs()?;
         let dependency_modules = self.dependency_modules.clone();
         let deps: Vec<(&str, &Program)> = dependency_modules.iter().map(|(name, ast, _)| (*name, *ast)).collect();
         let global_aliases = collect_model_field_aliases(program, &deps);
@@ -2623,6 +2647,7 @@ impl<'a> IrCodegen<'a> {
         lowering.seed_dependency_trait_decls(&dependency_modules)?;
         lowering.seed_struct_field_aliases(global_aliases.clone());
         let mut ir_program = lowering.lower_program(program)?;
+        self.stdlib_cache = lowering.stdlib_cache.clone();
 
         // RFC 023: Infer trait bounds for generic functions.
         crate::trait_bound_inference::infer_trait_bounds(&mut ir_program);
@@ -2654,6 +2679,7 @@ impl<'a> IrCodegen<'a> {
             dep_lowering.seed_dependency_trait_decls(&dependency_modules)?;
             dep_lowering.seed_struct_field_aliases(global_aliases.clone());
             let mut dep_ir = dep_lowering.lower_program(dep_ast)?;
+            self.stdlib_cache = dep_lowering.stdlib_cache.clone();
             crate::trait_bound_inference::infer_trait_bounds(&mut dep_ir);
             let dep_module_path = dep_identity_path.unwrap_or_else(|| vec![dep_name.to_string()]);
             dependency_ir_programs.push((dep_module_path, dep_ir));
@@ -2690,7 +2716,9 @@ impl<'a> IrCodegen<'a> {
             inner.set_internal_module_roots(internal_roots);
             inner.set_externally_reachable_items(reachable_items);
             self.apply_capability_bridge_configs(inner, &ordinal_bridge, &string_try_from_bridge);
-            Ok(svc.emit_program(&ir_program)?)
+            let code = svc.emit_program(&ir_program)?;
+            self.verify_retained_source_inputs()?;
+            Ok(code)
         } else {
             let mut emitter = IrEmitter::new(&ir_program.function_registry);
             self.apply_canonical_emission_context(&mut emitter);
@@ -2701,7 +2729,9 @@ impl<'a> IrCodegen<'a> {
             emitter.set_needs_serde(self.needs_serde);
             emitter.set_externally_reachable_items(reachable_items);
             self.apply_capability_bridge_configs(&mut emitter, &ordinal_bridge, &string_try_from_bridge);
-            Ok(emitter.emit_program(&ir_program)?)
+            let code = emitter.emit_program(&ir_program)?;
+            self.verify_retained_source_inputs()?;
+            Ok(code)
         }
     }
 
@@ -2724,8 +2754,8 @@ impl<'a> IrCodegen<'a> {
     ///
     /// ## Errors
     ///
-    /// Returns `GenerationError::Lowering` if AST lowering fails for any module, or `GenerationError::Emission` if IR
-    /// emission fails for any module.
+    /// Returns `GenerationError::TypeCheck` if checking or retained source validation refuses,
+    /// `GenerationError::Lowering` if AST lowering fails, or `GenerationError::Emission` if IR emission fails.
     pub fn try_generate_multi_file(
         mut self,
         program: &'a Program,
@@ -2743,6 +2773,7 @@ impl<'a> IrCodegen<'a> {
         program: &'a Program,
         module_names: &[&str],
     ) -> Result<(String, HashMap<String, String>), GenerationError> {
+        self.verify_retained_source_inputs()?;
         self.current_program = Some(program);
         self.source_dependency_module_paths.clear();
 
@@ -2768,7 +2799,11 @@ impl<'a> IrCodegen<'a> {
         let string_try_from_bridge = StringTryFromBridgeConfig::for_internal_module(
             compilation_imports_std_string_try_from_contract(program, &dependency_symbol_modules),
         );
-        let mut dependency_reachable_items = collect_externally_reachable_items_by_module(program, &dependency_modules);
+        let mut dependency_reachable_items = collect_externally_reachable_items_by_module_with_cache(
+            program,
+            &dependency_modules,
+            &mut self.stdlib_cache,
+        );
 
         // Generate module files
         let mut lowered_modules = Vec::new();
@@ -2801,6 +2836,7 @@ impl<'a> IrCodegen<'a> {
             lowering.seed_dependency_trait_decls(&dependency_modules)?;
             lowering.seed_struct_field_aliases(global_aliases.clone());
             let mut ir = lowering.lower_program(ast)?;
+            self.stdlib_cache = lowering.stdlib_cache.clone();
             // Do not auto-add serde derives to dependency modules. Global serde usage in the main module must not
             // mutate unrelated dependency newtypes (e.g., stdlib wrapper types like std.web.request.Query/Path).
             crate::trait_bound_inference::infer_trait_bounds(&mut ir);
@@ -2969,7 +3005,9 @@ impl<'a> IrCodegen<'a> {
         }
 
         let main_code = self.attach_provider_rust_dependency_bridge(main_code);
-        Ok((self.attach_caller_facet(main_code)?, modules))
+        let main_code = self.attach_caller_facet(main_code)?;
+        self.verify_retained_source_inputs()?;
+        Ok((main_code, modules))
     }
 
     /// Generate Rust code for a multi-file project with nested module paths
@@ -2991,8 +3029,8 @@ impl<'a> IrCodegen<'a> {
     ///
     /// ## Errors
     ///
-    /// Returns `GenerationError::Lowering` if AST lowering fails for any module, or `GenerationError::Emission` if IR
-    /// emission fails for any module.
+    /// Returns `GenerationError::TypeCheck` if checking or retained source validation refuses,
+    /// `GenerationError::Lowering` if AST lowering fails, or `GenerationError::Emission` if IR emission fails.
     pub fn try_generate_multi_file_nested(
         mut self,
         program: &'a Program,
@@ -3032,6 +3070,7 @@ impl<'a> IrCodegen<'a> {
         program: &'a Program,
         module_paths: &[Vec<String>],
     ) -> Result<(String, HashMap<Vec<String>, String>), GenerationError> {
+        self.verify_retained_source_inputs()?;
         self.current_program = Some(program);
         self.source_dependency_module_paths.clear();
         self.implementation_bound_requirements.clear();
@@ -3075,7 +3114,11 @@ impl<'a> IrCodegen<'a> {
         let string_try_from_bridge = StringTryFromBridgeConfig::for_internal_module(
             compilation_imports_std_string_try_from_contract(program, &dependency_symbol_modules),
         );
-        let mut dependency_reachable_items = collect_externally_reachable_items_by_module(program, &dependency_modules);
+        let mut dependency_reachable_items = collect_externally_reachable_items_by_module_with_cache(
+            program,
+            &dependency_modules,
+            &mut self.stdlib_cache,
+        );
 
         // Generate module files by path
         let mut lowered_modules = Vec::new();
@@ -3121,6 +3164,7 @@ impl<'a> IrCodegen<'a> {
                 lowering.seed_dependency_trait_decls(&dependency_modules)?;
                 lowering.seed_struct_field_aliases(global_aliases.clone());
                 let mut ir = lowering.lower_program(ast)?;
+                self.stdlib_cache = lowering.stdlib_cache.clone();
                 self.native_union_origins
                     .insert(path.clone(), lowering.native_publication_origins());
                 // Do not auto-add serde derives to dependency modules. Global serde usage in the main module must not
@@ -3288,7 +3332,9 @@ impl<'a> IrCodegen<'a> {
         }
 
         let main_code = self.attach_provider_rust_dependency_bridge(main_code);
-        Ok((self.attach_caller_facet(main_code)?, modules))
+        let main_code = self.attach_caller_facet(main_code)?;
+        self.verify_retained_source_inputs()?;
+        Ok((main_code, modules))
     }
 }
 
