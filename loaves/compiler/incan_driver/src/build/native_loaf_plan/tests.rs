@@ -102,6 +102,65 @@ fn declared_bootstrap_dependencies_share_command_store() -> TestResult {
     Ok(())
 }
 
+/// Original release requests select only release owners; a changed consumer intent cannot reuse their plan.
+#[test]
+fn declared_native_plan_retains_requested_profile_and_toolchain() -> TestResult {
+    let fixture = tempfile::tempdir()?;
+    let root = fixture.path().canonicalize()?;
+    write_checkout(&root)?;
+    let rustc = resolve_active_rustc()?;
+    let store = OvenStore::new(
+        root.join("shared-store"),
+        OvenStoreLimits::new(64 * 1024 * 1024, 64 * 1024 * 1024, 64 * 1024 * 1024),
+    );
+    let request = OvenGeneratedProjectRequest::new(
+        &root,
+        "release-consumer",
+        "1.0.0",
+        rustc_host_target(&rustc)?,
+        rustc_identity(&rustc)?,
+        "release",
+        Vec::new(),
+    )
+    .with_generated_source("compiler-main", root.join("src/main.rs"));
+    let source_receipt = receipt_generated_project(&request)?;
+    let select = |receipt: &oven_store::OvenReceipt| {
+        select_declared_native_loaf_plan(
+            &store,
+            receipt,
+            &root.join("loaf.toml"),
+            &rustc,
+            &root.join("graph.json"),
+            &root,
+            &root,
+            &root.join("native-hints"),
+        )
+    };
+    let (receipt, selection, _) = select(&source_receipt)?;
+    assert_eq!(receipt.intent.profile, "release");
+    assert_eq!(selection.artifacts().intent.profile, "release");
+    let wrong_request = OvenGeneratedProjectRequest::new(
+        &root,
+        "release-consumer",
+        "1.0.0",
+        rustc_host_target(&rustc)?,
+        "different-toolchain",
+        "release",
+        Vec::new(),
+    )
+    .with_generated_source("compiler-main", root.join("src/main.rs"));
+    assert!(select(&receipt_generated_project(&wrong_request)?).is_err());
+    let inspection = store.inspect()?;
+    assert!(
+        inspection
+            .entries
+            .iter()
+            .all(|entry| entry.manifest.intent.profile == "release"),
+        "release-only native requests must not prepare implicit debug owners"
+    );
+    Ok(())
+}
+
 /// Author an ordinary native dependency and consumer without Cargo manifests or registry units.
 fn write_checkout(root: &Path) -> TestResult {
     std::fs::create_dir_all(root.join("dependency/src"))?;

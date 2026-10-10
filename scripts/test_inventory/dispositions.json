@@ -798,6 +798,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/tests/native_driver_project_tests/ordinary_rust_dependencies.rs": {
+      "disposition": "keep",
+      "notes": "Normal Rust caller links declaration-selected ordinary native dependencies absent from SDK coverage; runtime, selected work, completed-output reuse, native source edits, missing configured input refusal and rollback retain the original output.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/tests/native_driver_project_tests/tail.rs": {
       "disposition": "keep",
       "notes": "Direct-route small statements, operators and places compared byte for byte with legacy output",
