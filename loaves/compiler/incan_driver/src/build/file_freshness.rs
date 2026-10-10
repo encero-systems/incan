@@ -120,12 +120,15 @@ pub(super) fn digest_file_with(
 }
 
 /// Observe and cache the digest of one open regular file under an explicit authority scheme.
+#[track_caller]
 fn digest_file_with_in(
     path: &Path,
     cache: Option<&Path>,
     scheme: &str,
     compute: impl FnOnce(&[u8]) -> io::Result<String>,
 ) -> io::Result<String> {
+    let caller = std::panic::Location::caller();
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::digest_file", input = %path.display(), caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
     let path = fs::canonicalize(path)?;
     let cache_path = cache.map(|root| {
         root.join(format!(
@@ -188,6 +191,7 @@ fn digest_file_with_in(
 
 /// Report bytes actually read from the authoritative input, excluding acceleration records and metadata IO.
 fn trace_file_digest(path: &Path, scheme: &str, input_bytes_read: usize) {
+    tracing::trace!(target: "incan::invocation", input = %path.display(), scheme, input_bytes_read, decision = if input_bytes_read == 0 { "stamp_reuse_or_empty_file" } else { "read_source" });
     if std::env::var_os("INCAN_OVEN_TRACE_FILE_DIGESTS").is_some() {
         eprintln!(
             "Oven file digest: {}",

@@ -2375,13 +2375,16 @@ fn diagnose_fixture_package(
             );
             assert!(available.is_some(), "profile-specific package base is unavailable");
         }
-        let selected = package_store.select_payloads_matching_for_execution(|header| {
-            header.identity == entry.identity
-                && header.kind == entry.kind
-                && header.receipt_identity == entry.receipt.identity
-                && header.build_unit_identity == entry.receipt.build_unit_identity
-                && header.intent == entry.receipt.intent
-        })?;
+        let selected = package_store.select_payloads_matching_for_execution(
+            |header| {
+                header.identity == entry.identity
+                    && header.kind == entry.kind
+                    && header.receipt_identity == entry.receipt.identity
+                    && header.build_unit_identity == entry.receipt.build_unit_identity
+                    && header.intent == entry.receipt.intent
+            },
+            |_, _| true,
+        )?;
         assert_eq!(selected.len(), 1, "exact package entry must remain available");
     }
     Ok(())

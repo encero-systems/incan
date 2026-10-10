@@ -114,7 +114,7 @@ fn ordinary_engine_original_closure_first_repeat_and_refusals() -> Result<(), Bo
     // Locate the original record payload through actual read-only Store admission only for fixture damage.
     let shared = closure.shared_root(first.identity(), "test-native")?;
     let record_owners = PublishedOvenStore::new(&shared.store)
-        .select_payloads_matching_for_execution(|manifest| manifest.identity == first.identity())?;
+        .select_payloads_matching_for_execution(|manifest| manifest.identity == first.identity(), |_, _| true)?;
     let [record_owner] = record_owners.as_slice() else {
         return Err("exact original record fixture owner is missing or ambiguous".into());
     };

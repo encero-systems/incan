@@ -112,13 +112,16 @@ pub fn has_stale_baked_project_output(
         Some(_) | None => return Ok(false),
     };
     let candidates = store
-        .select_payloads_matching_for_execution(|manifest| {
-            manifest.kind == OvenArtifactKind::ProjectOutput
-                && manifest.intent.profile == profile
-                && manifest.intent.target == native_target
-                && manifest.receipt_identity == receipt.identity
-                && manifest.build_unit_identity == receipt.build_unit_identity
-        })
+        .select_payloads_matching_for_execution(
+            |manifest| {
+                manifest.kind == OvenArtifactKind::ProjectOutput
+                    && manifest.intent.profile == profile
+                    && manifest.intent.target == native_target
+                    && manifest.receipt_identity == receipt.identity
+                    && manifest.build_unit_identity == receipt.build_unit_identity
+            },
+            |_, _| true,
+        )
         .map_err(|error| CliError::failure(format!("failed to inspect Oven project-output Loafs: {error}")))?;
     for candidate in candidates {
         let Ok(payload) = serde_json::from_slice::<OvenProjectOutputPayload>(&candidate.payload) else {
@@ -184,34 +187,37 @@ pub fn matching_baked_project_outputs_with_source_authority(
         return Ok(Vec::new());
     };
     let selected = store
-        .select_payloads_matching_for_execution(|manifest| {
-            manifest.kind == OvenArtifactKind::ProjectOutput
-                && manifest.intent.profile == profile
-                && manifest.intent.target == native_target
-                && required_target_toolchain.is_none_or(|(target, toolchain)| {
-                    manifest.intent.target == target && manifest.intent.toolchain == toolchain
-                })
-        })
+        .select_payloads_matching_for_execution(
+            |manifest| {
+                manifest.kind == OvenArtifactKind::ProjectOutput
+                    && manifest.intent.profile == profile
+                    && manifest.intent.target == native_target
+                    && required_target_toolchain.is_none_or(|(target, toolchain)| {
+                        manifest.intent.target == target && manifest.intent.toolchain == toolchain
+                    })
+            },
+            |manifest, bytes| {
+                let Ok(payload) = serde_json::from_slice::<OvenProjectOutputPayload>(bytes) else {
+                    return false;
+                };
+                payload.schema_version == OVEN_PROJECT_OUTPUT_PAYLOAD_SCHEMA_VERSION
+                    && payload.project_target == target.as_str()
+                    && payload.target_identity == target_identity
+                    && payload.source_authority_digest == source_authority_digest
+                    && payload.compiler_version == INCAN_VERSION
+                    && payload.entrypoint_relative_path == entrypoint_relative_path
+                    && payload.receipt_identity == manifest.receipt_identity
+                    && payload.build_unit_identity == manifest.build_unit_identity
+                    && !payload.plan_identity.trim().is_empty()
+            },
+        )
         .map_err(|error| CliError::failure(format!("failed to select Oven project-output Loaf: {error}")))?;
     let mut matches = Vec::new();
     for selected in selected {
         let Ok(payload) = serde_json::from_slice::<OvenProjectOutputPayload>(&selected.payload) else {
-            // An unrelated prior/corrupt output is not this project's authority. Exact-lineage selection used by
-            // normal tests rejects malformed matching receipts separately.
+            // Selection already checked these immutable payload bytes before acquiring the execution lease.
             continue;
         };
-        if payload.schema_version != OVEN_PROJECT_OUTPUT_PAYLOAD_SCHEMA_VERSION
-            || payload.project_target != target.as_str()
-            || payload.target_identity != target_identity
-            || payload.source_authority_digest != source_authority_digest
-            || payload.compiler_version != INCAN_VERSION
-            || payload.entrypoint_relative_path != entrypoint_relative_path
-            || payload.receipt_identity != selected.manifest.receipt_identity
-            || payload.build_unit_identity != selected.manifest.build_unit_identity
-            || payload.plan_identity.trim().is_empty()
-        {
-            continue;
-        }
         let (manifest, artifact_root, _payload, lease) = selected.into_parts();
         matches.push(stored_project_output_from_parts(
             manifest,
@@ -332,17 +338,20 @@ fn select_debug_project_outputs(
         return Ok(None);
     };
     let candidates = store
-        .select_payloads_matching_for_execution(|manifest| {
-            manifest.kind == OvenArtifactKind::ProjectOutput
-                && manifest.intent.profile == "debug"
-                && manifest.intent.target == native_target
-                && manifest.intent.toolchain == toolchain
-                && expected.iter().any(|expected| {
-                    manifest.receipt_identity == expected.receipt.identity
-                        && manifest.build_unit_identity == expected.receipt.build_unit_identity
-                        && manifest.intent == expected.receipt.intent
-                })
-        })
+        .select_payloads_matching_for_execution(
+            |manifest| {
+                manifest.kind == OvenArtifactKind::ProjectOutput
+                    && manifest.intent.profile == "debug"
+                    && manifest.intent.target == native_target
+                    && manifest.intent.toolchain == toolchain
+                    && expected.iter().any(|expected| {
+                        manifest.receipt_identity == expected.receipt.identity
+                            && manifest.build_unit_identity == expected.receipt.build_unit_identity
+                            && manifest.intent == expected.receipt.intent
+                    })
+            },
+            |_, _| true,
+        )
         .map_err(|error| CliError::failure(format!("failed to select Oven project-output Loafs: {error}")))?;
     let mut grouped = (0..expected.len()).map(|_| Vec::new()).collect::<Vec<_>>();
     for candidate in candidates {
@@ -790,6 +799,68 @@ mod tests {
     use oven_store::{OvenGeneratedProjectRequest, digest_bytes, receipt_generated_project, write_receipt};
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+
+    /// Considering historical compiler binaries and other source generations must not make them hot cache entries.
+    #[test]
+    fn project_output_lookup_does_not_refresh_rejected_payloads() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        fs::create_dir(project.path().join("src"))?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = 'fixture'\n")?;
+        fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
+        let (receipt, payload, files) =
+            crate::build::test_support::fixture_project_output_publication(project.path(), "debug", "lru")?;
+        let store_root = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            store_root.path(),
+            oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        let current = publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        let mut stale_payload = payload.clone();
+        stale_payload.source_authority_digest = digest_bytes(b"older source generation");
+        let stale = publish_project_output_loaf(&store, &receipt, &stale_payload, &files)?;
+        let compiler = store.publish(&OvenArtifactPublishRequest {
+            receipt,
+            domain: format!("incan-release-{INCAN_VERSION}"),
+            kind: OvenArtifactKind::ProjectOutput,
+            payload: br#"{"schema":"incan.native-compiler-output/1","unit":"historical-compiler"}"#.to_vec(),
+            materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
+        })?;
+        let (_, compiler_root, _, compiler_lease) = store.select_payload_for_execution(&compiler.identity)?;
+        let access = |root: &Path| -> Result<PathBuf, Box<dyn std::error::Error>> {
+            Ok(root.parent().ok_or("artifact root has no parent")?.join("last-used"))
+        };
+        let current_access = access(&current.artifact_root)?;
+        let stale_access = access(&stale.artifact_root)?;
+        let compiler_access = access(&compiler_root)?;
+        for path in [&current_access, &stale_access, &compiler_access] {
+            fs::write(path, b"7\n")?;
+        }
+        let selected = matching_baked_project_outputs_with_source_authority(
+            &store,
+            project.path(),
+            &project.path().join("src/main.incn"),
+            OvenBakeProjectTarget::Executable,
+            "debug",
+            &payload.source_authority_digest,
+            None,
+        )?;
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].identity, current.identity);
+        assert_ne!(fs::read(&current_access)?, b"7\n");
+        assert_eq!(
+            fs::read(&compiler_access)?,
+            b"7\n",
+            "rejected historical compiler binary became hot"
+        );
+        assert_eq!(
+            fs::read(&stale_access)?,
+            b"7\n",
+            "rejected source generation became hot"
+        );
+        drop(compiler_lease);
+        Ok(())
+    }
 
     /// Own-source edits reuse only the inspection lineage; changed manifest authority remains refused.
     #[test]

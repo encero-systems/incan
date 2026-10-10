@@ -140,7 +140,7 @@ impl Drop for ReadOnlyTree {
 
 /// Reach an exact genuine owner's coordinate through the actual read-only selector, without writable test hooks.
 fn owner_entry(store: &PublishedOvenStore, identity: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let owners = store.select_payloads_matching_for_execution(|manifest| manifest.identity == identity)?;
+    let owners = store.select_payloads_matching_for_execution(|manifest| manifest.identity == identity, |_, _| true)?;
     assert_eq!(owners.len(), 1);
     Ok(owners[0]
         .artifact_root

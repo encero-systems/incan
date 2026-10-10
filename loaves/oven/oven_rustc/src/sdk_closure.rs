@@ -919,7 +919,7 @@ fn select_native_unit(
             && manifest.domain == domain
             && manifest.receipt_identity == receipt.identity
     };
-    let mut selected = store.select_payloads_matching_for_execution(matches)?;
+    let mut selected = store.select_payloads_matching_for_execution(matches, |_, _| true)?;
     if selected.is_empty() {
         oven_store::store_mirror::import_matching_from_mirrors(
             store,
@@ -927,7 +927,7 @@ fn select_native_unit(
             Some(receipt),
             matches,
         )?;
-        selected = store.select_payloads_matching_for_execution(matches)?;
+        selected = store.select_payloads_matching_for_execution(matches, |_, _| true)?;
     }
     let owner = selected.pop();
     if let Some(owner) = &owner {

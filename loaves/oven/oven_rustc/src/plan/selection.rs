@@ -129,12 +129,15 @@ pub fn select_exact_receipt_direct_rustc_execution_plan(
         .verify_identity()
         .map_err(|error| OvenPlanError::selection(format!("invalid caller-owned provider receipt: {error}")))?;
     let mut selected = store
-        .select_payloads_matching_for_execution(|manifest| {
-            manifest.kind == OvenArtifactKind::DirectRustcPlan
-                && manifest.receipt_identity == receipt.identity
-                && manifest.build_unit_identity == receipt.build_unit_identity
-                && manifest.intent == receipt.intent
-        })
+        .select_payloads_matching_for_execution(
+            |manifest| {
+                manifest.kind == OvenArtifactKind::DirectRustcPlan
+                    && manifest.receipt_identity == receipt.identity
+                    && manifest.build_unit_identity == receipt.build_unit_identity
+                    && manifest.intent == receipt.intent
+            },
+            |_, _| true,
+        )
         .map_err(|error| OvenPlanError::selection(format!("failed to select caller-owned provider plan: {error}")))?;
     if selected.len() > 1 {
         return Err(OvenPlanError::selection(format!(
@@ -192,13 +195,16 @@ pub fn select_packaged_direct_rustc_execution_plan(
         .verify_identity()
         .map_err(|error| OvenPlanError::selection(format!("invalid packaged Oven receipt: {error}")))?;
     let mut selected = store
-        .select_payloads_matching_for_execution(|manifest| {
-            manifest.identity == required_identity
-                && manifest.kind == OvenArtifactKind::DirectRustcPlan
-                && manifest.receipt_identity == receipt.identity
-                && manifest.build_unit_identity == receipt.build_unit_identity
-                && manifest.intent == receipt.intent
-        })
+        .select_payloads_matching_for_execution(
+            |manifest| {
+                manifest.identity == required_identity
+                    && manifest.kind == OvenArtifactKind::DirectRustcPlan
+                    && manifest.receipt_identity == receipt.identity
+                    && manifest.build_unit_identity == receipt.build_unit_identity
+                    && manifest.intent == receipt.intent
+            },
+            |_, _| true,
+        )
         .map_err(|error| {
             OvenPlanError::selection(format!("failed to select packaged Oven direct-plan Loaf: {error}"))
         })?;
@@ -267,13 +273,16 @@ pub fn select_receipt_project_extension_execution_plan(
     required_identity: Option<&str>,
 ) -> OvenPlanResult<Option<OvenProjectExtensionExecutionPlan>> {
     let selected = store
-        .select_payloads_matching_for_execution(|manifest| {
-            manifest.kind == OvenArtifactKind::ProjectPayload
-                && manifest.receipt_identity == receipt.identity
-                && manifest.build_unit_identity == receipt.build_unit_identity
-                && manifest.intent == receipt.intent
-                && required_identity.is_none_or(|identity| manifest.identity == identity)
-        })
+        .select_payloads_matching_for_execution(
+            |manifest| {
+                manifest.kind == OvenArtifactKind::ProjectPayload
+                    && manifest.receipt_identity == receipt.identity
+                    && manifest.build_unit_identity == receipt.build_unit_identity
+                    && manifest.intent == receipt.intent
+                    && required_identity.is_none_or(|identity| manifest.identity == identity)
+            },
+            |_, _| true,
+        )
         .map_err(|error| OvenPlanError::selection(error.to_string()))?;
     let mut selected = selected
         .into_iter()

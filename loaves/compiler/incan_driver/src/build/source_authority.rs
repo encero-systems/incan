@@ -37,7 +37,10 @@ pub(super) fn current_compiler_identity_digest() -> CliResult<String> {
 ///
 /// Comments do not affect generated code or the Rust query surface. Other authority files remain byte-exact,
 /// and sources requiring contextual vocabulary retain byte-exact authority rather than losing raw fragment content.
+#[track_caller]
 fn digest_project_authority_file(path: &Path, bytes: &[u8]) -> CliResult<String> {
+    let caller = std::panic::Location::caller();
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::digest_project_authority_file", input = %path.display(), caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
     if path.extension().is_none_or(|extension| extension != "incn") {
         return Ok(digest_bytes(bytes));
     }
@@ -150,7 +153,10 @@ impl ProjectSourceAuthorityDigester {
     }
 
     /// Digest one reachable Incan node and its named dependency edges.
+    #[track_caller]
     pub fn digest_project_node(&mut self, root: &Path, visiting: &mut HashSet<PathBuf>) -> CliResult<String> {
+        let caller = std::panic::Location::caller();
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::digest_project_node", input = %root.display(), caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
         let canonical_root = fs::canonicalize(root).map_err(|error| {
             CliError::failure(format!(
                 "Oven Alpha cannot resolve project source authority at {}: {error}",

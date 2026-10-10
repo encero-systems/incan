@@ -534,9 +534,10 @@ pub fn select_runtime_closure(
 ) -> Result<Option<OvenSelectedRuntimeClosure>, OvenRustcError> {
     let domain = expected.domain()?;
     let owners = store
-        .select_payloads_matching_for_execution(|manifest| {
-            manifest.kind == OvenArtifactKind::NativeRuntimeClosure && manifest.domain == domain
-        })
+        .select_payloads_matching_for_execution(
+            |manifest| manifest.kind == OvenArtifactKind::NativeRuntimeClosure && manifest.domain == domain,
+            |_, _| true,
+        )
         .map_err(|error| OvenRustcError::InvalidInput {
             field: "runtime closure selection",
             message: format!("cannot select a published runtime closure: {error}"),

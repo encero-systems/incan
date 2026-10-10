@@ -30,23 +30,22 @@ enum OvenTopLevelCommand {
     Lock(LockArgs),
 }
 
-fn main() {
+/// Initialize the shared logging/diagnostic boundary before running the compiler command.
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(exit_code) = oven_cargo_compat::run_legacy_native_trace_wrapper() {
         process::exit(exit_code);
     }
     if let Some(exit_code) = oven_cargo_compat::run_legacy_rustc_trace_wrapper() {
         process::exit(exit_code);
     }
-    let _ = tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
-        )
-        .try_init();
+    oven_cli::invocation_trace::initialize()?;
     // Compilation recurses over the AST, so run it on a stack sized for deeply nested expressions rather than
     // the default main-thread stack, which a long operator chain can exhaust outright.
-    incan_frontend::compiler_stack::run_on_compiler_stack(run);
+    incan_frontend::compiler_stack::run_on_compiler_stack(|| {
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_cli::run", input = ?std::env::args_os().skip(1).collect::<Vec<_>>()).entered();
+        run();
+    });
+    Ok(())
 }
 
 /// Parse the command line and run it, terminating the process with the command's exit code.

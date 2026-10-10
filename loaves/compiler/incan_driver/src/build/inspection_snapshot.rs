@@ -141,10 +141,13 @@ pub(super) fn retain_inspection_snapshot(
 ///
 /// Existing damaged entries and missing constituents retain the canonical loader's failure. Restoration reproduces
 /// the original manifest before admission and then runs that loader again, including every constituent check.
+#[track_caller]
 pub(super) fn load_output_inspection_authority(
     store: &OvenStore,
     output: &OvenStoredProjectOutput,
 ) -> Result<OvenLoadedProjectInspectionAuthority, OvenRustcError> {
+    let caller = std::panic::Location::caller();
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::load_output_inspection_authority", input = %output.identity, caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
     let payload = &output.payload;
     let reference = payload
         .inspection_authority

@@ -454,13 +454,16 @@ pub fn select_library_metadata(
         .map_err(|error| CliError::failure(error.to_string()))?;
     validate_recipe_receipt(recipe, receipt)?;
     let mut candidates = store
-        .select_payloads_matching_for_execution(|manifest| {
-            manifest.kind == OvenArtifactKind::Engine
-                && manifest.domain == LIBRARY_METADATA_DOMAIN
-                && manifest.receipt_identity == receipt.identity
-                && manifest.build_unit_identity == receipt.build_unit_identity
-                && manifest.intent == receipt.intent
-        })
+        .select_payloads_matching_for_execution(
+            |manifest| {
+                manifest.kind == OvenArtifactKind::Engine
+                    && manifest.domain == LIBRARY_METADATA_DOMAIN
+                    && manifest.receipt_identity == receipt.identity
+                    && manifest.build_unit_identity == receipt.build_unit_identity
+                    && manifest.intent == receipt.intent
+            },
+            |_, _| true,
+        )
         .map_err(|error| CliError::failure(error.to_string()))?;
     if candidates.is_empty() {
         return Ok(None);
@@ -511,7 +514,7 @@ pub(crate) fn select_optional_library_metadata_reference(
 ) -> CliResult<Option<Arc<SelectedLibraryMetadata>>> {
     validate_metadata_reference(reference)?;
     let candidates = store
-        .select_payloads_matching_for_execution(|manifest| manifest.identity == reference.owner_identity)
+        .select_payloads_matching_for_execution(|manifest| manifest.identity == reference.owner_identity, |_, _| true)
         .map_err(|error| CliError::failure(error.to_string()))?;
     admit_metadata_reference(candidates, reference)
 }

@@ -2337,7 +2337,7 @@ pub(crate) fn import_release_policy_output(
     limits: OvenStoreLimits,
 ) -> CliResult<OvenStoredProjectOutput> {
     let mut selected = PublishedOvenStore::new(source_store)
-        .select_payloads_matching_for_execution(|manifest| manifest.identity == member.artifact_identity)
+        .select_payloads_matching_for_execution(|manifest| manifest.identity == member.artifact_identity, |_, _| true)
         .map_err(oven_error)?;
     if selected.len() != 1 {
         return Err(CliError::failure(
@@ -2396,7 +2396,7 @@ pub(crate) fn import_release_policy_output(
         ));
     }
     let mut selected = PublishedOvenStore::new(staged_generation.join(&member.store_relative_path))
-        .select_payloads_matching_for_execution(|manifest| manifest.identity == member.artifact_identity)
+        .select_payloads_matching_for_execution(|manifest| manifest.identity == member.artifact_identity, |_, _| true)
         .map_err(oven_error)?;
     if selected.len() != 1 {
         return Err(CliError::failure(

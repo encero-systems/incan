@@ -625,7 +625,7 @@ fn select_owner(store: Store<'_>, identity: &str) -> Result<Arc<OvenStoreExecuti
     let selected = match store {
         Store::Writable(store) => store.select_payloads_for_execution(&[identity.to_string()]),
         Store::Published(store) => {
-            store.select_payloads_matching_for_execution(|manifest| manifest.identity == identity)
+            store.select_payloads_matching_for_execution(|manifest| manifest.identity == identity, |_, _| true)
         }
     };
     let mut selected = selected.map_err(|error| match &error {

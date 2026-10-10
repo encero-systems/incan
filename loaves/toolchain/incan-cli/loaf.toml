@@ -14,6 +14,7 @@ std_async = ["incan_frontend/std_async", "incan_provider/std_async", "incan_driv
 std_decorators = ["incan_frontend/std_decorators", "incan_provider/std_decorators", "incan_driver/std_decorators", "oven-cli/std_decorators"]
 
 [dependencies]
+tracing = { loaf = "crates-io/tracing", version = "0.1" }
 incan_codegraph = { loaf = "incan_codegraph", path = "../../kernel/incan_codegraph" }
 incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
 incan_driver = { default-features = false, features = ["cli"], loaf = "incan_driver", path = "../../compiler/incan_driver" }

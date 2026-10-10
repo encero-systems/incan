@@ -200,11 +200,14 @@ fn prepare_with(
 }
 
 /// Admit current native inputs from one explicit Store before invoking its existing producer on a genuine miss.
+#[track_caller]
 fn prepare_with_store(
     request: &NativeLoafConsumerRequest<'_>,
     store: &OvenStore,
     prepare: impl FnOnce(&mut Current, &mut NativeLoafConsumerReport) -> Result<NativeLoafPreparation>,
 ) -> Result<NativeLoafConsumerPreparation> {
+    let caller = std::panic::Location::caller();
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_rustc::prepare_native_loafs", input = %request.output.display(), caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
     let started = Instant::now();
     let mut report = NativeLoafConsumerReport::default();
     if request.dependencies.is_empty() {
@@ -224,6 +227,7 @@ fn prepare_with_store(
         match admitted {
             Ok(closure) => {
                 if current.matches(request, &closure, &hint.roots, &mut report)? {
+                    tracing::trace!(target: "incan::invocation", decision = "reuse", input = %current.key, preparation_calls = 0_u64);
                     report.prepared_reuse = true;
                     current.finish_index()?;
                     finish_report(&closure, &current, &mut report, started);
@@ -234,6 +238,7 @@ fn prepare_with_store(
             Err(error) => return Err(error),
         }
     }
+    tracing::trace!(target: "incan::invocation", decision = "prepare", input = %current.key);
     report.preparation_calls += 1;
     let prepared = prepare(&mut current, &mut report)?;
     report.prepared_units = prepared.graph.units.len();
@@ -273,7 +278,10 @@ fn prepare_with_store(
 
 impl Current {
     /// Capture exact graph/lock/declaration/compiler inputs without source staging or native owner selection.
+    #[track_caller]
     fn read(request: &NativeLoafConsumerRequest<'_>, report: &mut NativeLoafConsumerReport) -> Result<Self> {
+        let caller = std::panic::Location::caller();
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_rustc::read_current_native_inputs", input = %request.output.display(), caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
         if !matches!(request.profile, "debug" | "release") || !matches!(request.domain, "host" | "target") {
             return Err(refused(
                 "ordinary native consumer requires an explicit profile and host/target domain",
@@ -331,6 +339,7 @@ impl Current {
         hinted_roots: &[NativeLoafRoot],
         report: &mut NativeLoafConsumerReport,
     ) -> Result<bool> {
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_rustc::validate_current_native_inputs", input = %self.key).entered();
         if self.seed.schema != "incan.oven.loaf-resolution/2" {
             return Err(refused(
                 "prepared native reuse requires explicit authenticated resolution edges",

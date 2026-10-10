@@ -107,11 +107,14 @@ fn prepare_link(
                 && manifest.receipt_identity == receipt.identity
         },
     )?;
-    let selected = context.store.select_payloads_matching_for_execution(|manifest| {
-        manifest.kind == OvenArtifactKind::Engine
-            && manifest.domain == domain
-            && manifest.receipt_identity == receipt.identity
-    })?;
+    let selected = context.store.select_payloads_matching_for_execution(
+        |manifest| {
+            manifest.kind == OvenArtifactKind::Engine
+                && manifest.domain == domain
+                && manifest.receipt_identity == receipt.identity
+        },
+        |_, _| true,
+    )?;
     if let Some(owner) = selected.into_iter().next() {
         let _verified = context.store.select(&owner.manifest.identity)?;
         return Ok(NativeProduct {

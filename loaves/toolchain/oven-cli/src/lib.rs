@@ -10,6 +10,7 @@
 
 pub mod cli;
 pub mod commands;
+pub mod invocation_trace;
 
 pub use cli::{
     LockArgs, OvenCommand, OvenGateCommand, OvenHarvestProfileArgument, OvenInteropAdapterArgument, OvenInteropCommand,
