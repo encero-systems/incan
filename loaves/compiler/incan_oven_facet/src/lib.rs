@@ -80,6 +80,36 @@ impl OvenProviderHooks for IncanProviderHooks {
             })
         })
     }
+
+    fn authored_native_source_digest(
+        &self,
+        dependency: &oven_model::manifest::DependencySpec,
+    ) -> Option<Result<String, oven_store::OvenError>> {
+        let oven_model::manifest::DependencySource::Path { path } = &dependency.source else {
+            return None;
+        };
+        match fs::symlink_metadata(path.join("loaf.toml")) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(error) => {
+                return Some(Err(oven_store::OvenError::InvalidProjectSource {
+                    path: path.clone(),
+                    message: error.to_string(),
+                }));
+            }
+        }
+        Some({
+            oven_rustc::sdk_closure::local_native_dependency_source_digest(
+                path,
+                &dependency.features,
+                dependency.default_features,
+            )
+            .map_err(|error| oven_store::OvenError::InvalidProjectSource {
+                path: path.clone(),
+                message: error.to_string(),
+            })
+        })
+    }
 }
 
 /// Whether a path dependency root is a packaged Incan provider: a generated library crate carrying its `.incnlib`

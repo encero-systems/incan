@@ -355,12 +355,135 @@ fn ordinary_native_sysroot_demands_bind_every_imported_item() -> TestResult {
         assert!(incomplete.require_source_inspection().is_err());
     }
     let mut old = serde_json::to_value(&demands)?;
+    let facts = old["observed"].as_object_mut().ok_or("facts missing")?;
+    facts.remove("scalar_native_imports");
+    facts.remove("declared_native_crates");
+    let legacy: CheckedNativeDemands = serde_json::from_value(old.clone())?;
+    legacy.require_source_inspection()?;
     old["observed"]
         .as_object_mut()
         .ok_or("facts missing")?
         .remove("scalar_sysroot_imports");
-    let old: CheckedNativeDemands = serde_json::from_value(old)?;
-    assert!(old.require_source_inspection().is_err());
+    let unknown: CheckedNativeDemands = serde_json::from_value(old)?;
+    assert!(unknown.require_source_inspection().is_err());
+    Ok(())
+}
+
+/// A real authored Rust facet must be declared before scalar source imports gain inspection coverage.
+fn declared_project(root: &std::path::Path) -> Result<(ProjectManifest, ProviderPlan), Box<dyn std::error::Error>> {
+    let leaf = root.join("probe_leaf");
+    fs::create_dir_all(leaf.join("src"))?;
+    fs::write(leaf.join("src/lib.rs"), "pub fn ready() -> bool { false }\n")?;
+    fs::write(
+        leaf.join("loaf.toml"),
+        "[project]\nname='probe_leaf'\nversion='1.0.0'\n[rust]\nname='probe_leaf'\ntype='lib'\nedition='2024'\n",
+    )?;
+    project(
+        root,
+        "[dependencies]\nprobe_leaf={loaf='probe_leaf',path='probe_leaf'}\n",
+    )
+}
+
+/// Actual manifest/AST collection covers mixed sysroot and declared aliases without widening support-only authority.
+#[test]
+fn ordinary_native_declared_rust_demands_bind_manifest_imports_and_roundtrip() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let (project, providers) = declared_project(root.path())?;
+    assert!(project.rust_dependencies().contains_key("probe_leaf"));
+    let module = module(
+        root.path(),
+        "from rust::probe_leaf import ready as active\nfrom rust::std::thread import panicking\npub def answer() -> bool:\n    return active() or panicking()\n",
+    )?;
+    let queries =
+        crate::build::library_exports::collect_library_rust_abi_query_paths(std::slice::from_ref(&module), &[])
+            .into_iter()
+            .collect();
+    let demands = capture_checked_native_demands(
+        &project,
+        &[module],
+        &ProjectRequirements::default(),
+        &providers,
+        &queries,
+    )?;
+    demands.require_source_inspection()?;
+    assert!(demands.require_support_only().is_err());
+    let declared = ["probe_leaf".to_string()].into();
+    demands.require_declared_crates(&declared)?;
+    for _ in 0..2 {
+        let decoded: CheckedNativeDemands = serde_json::from_slice(&serde_json::to_vec(&demands)?)?;
+        decoded.require_source_inspection()?;
+        decoded.require_declared_crates(&declared)?;
+    }
+    assert!(demands.require_declared_crates(&BTreeSet::new()).is_err());
+    assert!(demands.require_declared_crates(&["other".to_string()].into()).is_err());
+    for field in [
+        "scalar_native_imports",
+        "declared_native_crates",
+        "scalar_sysroot_imports",
+    ] {
+        let mut missing = serde_json::to_value(&demands)?;
+        missing["observed"]
+            .as_object_mut()
+            .ok_or("facts missing")?
+            .remove(field);
+        let decoded: CheckedNativeDemands = serde_json::from_value(missing)?;
+        assert!(decoded.require_source_inspection().is_err(), "{field}");
+    }
+    let mut legacy = serde_json::to_value(&demands)?;
+    let facts = legacy["observed"].as_object_mut().ok_or("facts missing")?;
+    facts.remove("scalar_native_imports");
+    facts.remove("declared_native_crates");
+    let decoded: CheckedNativeDemands = serde_json::from_value(legacy)?;
+    assert!(decoded.require_source_inspection().is_err());
+    assert!(decoded.require_declared_crates(&declared).is_err());
+    Ok(())
+}
+
+/// Inline source overrides, ambiguous aliases and undeclared roots cannot borrow a manifest dependency grant.
+#[test]
+fn ordinary_native_declared_rust_demands_refuse_uncovered_imports() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let (project, providers) = declared_project(root.path())?;
+    for source in [
+        "from rust::other import ready\npub def answer() -> bool:\n    return ready()\n",
+        "import rust::probe_leaf\npub def answer() -> bool:\n    return False\n",
+        "from rust::probe_leaf @ \"1\" import ready\npub def answer() -> bool:\n    return ready()\n",
+        "from rust::probe_leaf with [\"feature\"] import ready\npub def answer() -> bool:\n    return ready()\n",
+        "from rust::probe_leaf import ready as active\nfrom rust::std::thread import panicking as active\npub def answer() -> bool:\n    return active()\n",
+        "from rust::probe_leaf import ready\npub def answer(ready: bool) -> bool:\n    return ready()\n",
+    ] {
+        let module = module(root.path(), source)?;
+        let queries =
+            crate::build::library_exports::collect_library_rust_abi_query_paths(std::slice::from_ref(&module), &[])
+                .into_iter()
+                .collect();
+        let demands = capture_checked_native_demands(
+            &project,
+            &[module],
+            &ProjectRequirements::default(),
+            &providers,
+            &queries,
+        )?;
+        assert!(demands.require_source_inspection().is_err(), "{source}");
+    }
+    let module = module(
+        root.path(),
+        "from rust::probe_leaf import ready\npub def answer() -> bool:\n    return ready()\n",
+    )?;
+    for queries in [
+        BTreeSet::new(),
+        ["probe_leaf::missing".to_string()].into(),
+        ["probe_leaf::ready".to_string(), "probe_leaf::extra".to_string()].into(),
+    ] {
+        let demands = capture_checked_native_demands(
+            &project,
+            std::slice::from_ref(&module),
+            &ProjectRequirements::default(),
+            &providers,
+            &queries,
+        )?;
+        assert!(demands.require_source_inspection().is_err());
+    }
     Ok(())
 }
 

@@ -10,6 +10,9 @@ use super::{
 use crate::rustc::{rustc_host_target, rustc_identity};
 use oven_store::store::{OvenStore, OvenStoreLimits};
 
+mod dependency_identity;
+pub use dependency_identity::local_native_dependency_source_digest;
+
 /// One already selected local compile unit; feature resolution belongs to the authored graph's resolver.
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]

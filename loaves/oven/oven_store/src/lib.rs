@@ -58,9 +58,9 @@ pub fn digest_dependency_specs(
             // edges its generated manifest still spells out: those point at the producer's private Rust sources,
             // which an admitted package does not need and a source-free consumer does not have (#1469).
             //
-            // Any other path dependency is selected by its recursive Cargo-semantic source closure, not by compiler
-            // output or unrelated repository files. Sharing the package memo also avoids rescanning a common sibling
-            // reached through several top-level dependencies.
+            // Authored native Loaves use their producer's source mapping. Remaining legacy path crates use their
+            // recursive Cargo-semantic source closure. Neither identity depends on compiler output; the legacy
+            // package memo avoids rescanning a common sibling reached through several top-level dependencies.
             DependencySource::Path { path } => match provider_hooks.packaged_provider_digest(path) {
                 Some(digest) => {
                     let digest = digest.map_err(|source| OvenError::ProviderHook {
@@ -70,13 +70,16 @@ pub fn digest_dependency_specs(
                     format!("packaged-provider:{digest}")
                 }
                 None => {
-                    let digest = digest_cargo_path_source_tree_with_cache(path, &mut resolved_path_packages).map_err(
-                        |error| OvenError::InvalidProjectSource {
-                            path: path.clone(),
-                            message: error.to_string(),
-                        },
-                    )?;
-                    format!("path-tree:{digest}")
+                    if let Some(digest) = provider_hooks.authored_native_source_digest(dependency) {
+                        format!("authored-native-tree:{}", digest?)
+                    } else {
+                        let digest = digest_cargo_path_source_tree_with_cache(path, &mut resolved_path_packages)
+                            .map_err(|error| OvenError::InvalidProjectSource {
+                                path: path.clone(),
+                                message: error.to_string(),
+                            })?;
+                        format!("path-tree:{digest}")
+                    }
                 }
             },
         };
@@ -116,6 +119,14 @@ pub trait OvenProviderHooks: Send + Sync {
     /// The sealed artifact digest of a packaged provider at `dependency_root`, or `None` when the path is an
     /// authored crate and the caller should digest its source tree instead.
     fn packaged_provider_digest(&self, dependency_root: &Path) -> Option<Result<String, OvenProviderHookError>>;
+
+    /// The portable source closure of an authored native Loaf, or `None` for legacy path crates.
+    ///
+    /// The native producer owns source geometry and feature activation. The returned identity must include current
+    /// transitive path inputs and reject unavailable or unsupported sources rather than falling back to Cargo.
+    fn authored_native_source_digest(&self, _dependency: &DependencySpec) -> Option<Result<String, OvenError>> {
+        None
+    }
 }
 
 /// The compiler's own error type behind a hook failure, kept whole so a caller can still reach it through
@@ -1866,6 +1877,80 @@ mod tests {
                 source: Box::new(CompilerSideFailure),
             }))
         }
+    }
+
+    /// Native source observations run once per dependency and cannot silently fall back to adjacent Cargo metadata.
+    #[test]
+    fn authored_native_dependency_hook_runs_once_and_preserves_refusals() -> Result<(), Box<dyn std::error::Error>> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct NativeHooks {
+            calls: AtomicUsize,
+            source_ok: bool,
+        }
+
+        impl OvenProviderHooks for NativeHooks {
+            fn sdk_provider_root(&self, inventory: Option<&Path>) -> Result<PathBuf, OvenProviderHookError> {
+                super::NoProviderHooks.sdk_provider_root(inventory)
+            }
+
+            fn sdk_inventory_file(&self) -> &'static str {
+                super::NoProviderHooks.sdk_inventory_file()
+            }
+
+            fn refresh_staged_sdk_provider_digests(&self, root: &Path) -> Result<(), OvenProviderHookError> {
+                super::NoProviderHooks.refresh_staged_sdk_provider_digests(root)
+            }
+
+            fn packaged_provider_digest(&self, _root: &Path) -> Option<Result<String, OvenProviderHookError>> {
+                None
+            }
+
+            fn authored_native_source_digest(&self, dependency: &DependencySpec) -> Option<Result<String, OvenError>> {
+                self.calls.fetch_add(1, Ordering::Relaxed);
+                Some(if self.source_ok {
+                    Ok(digest_bytes(b"complete native source identity"))
+                } else {
+                    Err(OvenError::InvalidProjectSource {
+                        path: match &dependency.source {
+                            DependencySource::Path { path } => path.clone(),
+                            _ => PathBuf::new(),
+                        },
+                        message: "native source refused".to_string(),
+                    })
+                })
+            }
+        }
+
+        let root = tempfile::tempdir()?;
+        fs::write(root.path().join("Cargo.toml"), "invalid adjacent Cargo declaration")?;
+        let dependency = DependencySpec {
+            crate_name: "native_leaf".into(),
+            version: None,
+            features: Vec::new(),
+            default_features: true,
+            source: DependencySource::Path {
+                path: root.path().to_path_buf(),
+            },
+            optional: false,
+            package: None,
+        };
+        for source_ok in [true, false] {
+            let hooks = NativeHooks {
+                calls: AtomicUsize::new(0),
+                source_ok,
+            };
+            let result = super::digest_dependency_specs(std::slice::from_ref(&dependency), &hooks);
+            assert_eq!(hooks.calls.load(Ordering::Relaxed), 1);
+            if source_ok {
+                result?;
+            } else {
+                assert!(
+                    matches!(result, Err(OvenError::InvalidProjectSource { message, .. }) if message == "native source refused")
+                );
+            }
+        }
+        Ok(())
     }
 
     #[test]

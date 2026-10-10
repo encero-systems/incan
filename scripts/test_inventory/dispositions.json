@@ -9652,6 +9652,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_rustc/src/sdk_closure/local/dependency_identity.rs": {
+      "disposition": "unaffected",
+      "notes": "Native producer source mapping, transitive authored path identity, relocation, embedded inputs and feature activation; no Cargo declaration is required.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_rustc/src/sdk_closure/local.rs": {
       "disposition": "unaffected",
       "notes": "Oven-native local source snapshots bind Rust source bytes without consulting adjacent Cargo metadata.",

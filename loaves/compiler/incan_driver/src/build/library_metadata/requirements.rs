@@ -227,6 +227,7 @@ impl CheckedLibraryRequirements {
                 .map(|dependency| dependency.crate_name.clone())
                 .collect(),
             &self.stdlib_facets.iter().cloned().collect(),
+            &self.source_inline_crates,
         )?;
         for path in self
             .source_modules
@@ -276,18 +277,20 @@ impl CheckedLibraryRequirements {
     }
 
     /// Require captured source coverage and complete ABI promises before ordinary native preparation or replay.
-    /// Physical sources and macro/provider execution remain outside this scalar sysroot coverage boundary.
+    /// Declared physical sources must still bind to the original native request; macro/provider execution is separate.
     pub(crate) fn require_source_inspection_native(&self) -> CliResult<()> {
         self.validate()?;
+        self.native_demands
+            .require_declared_crates(&self.source_inline_crates)?;
         if self.schema_version != 2
             || !self.used_module_paths.is_empty()
-            || !self.source_inline_crates.is_empty()
             || !self.rust_extern_paths.is_empty()
             || self.imports.is_empty() != self.rust_abi_queries.is_empty()
-            || self
-                .imports
-                .iter()
-                .any(|value| value.crate_name != "std" || value.version.is_some() || !value.features.is_empty())
+            || self.imports.iter().any(|value| {
+                (value.crate_name != "std" && !self.source_inline_crates.contains(&value.crate_name))
+                    || value.version.is_some()
+                    || !value.features.is_empty()
+            })
         {
             return Err(invalid(
                 "ordinary source inspection planning lacks complete checked demand coverage",
