@@ -3917,19 +3917,8 @@ def list_assignment(
                         argument = boundary_operand(builder, value, element, span)?
                         if operand_type(builder, argument)? != element:
                             return Err("unsupported Body IR list element coercion")
-                        reference = list_borrow(builder, output, true, span)?
-                        unit = temporary(builder, PlanType.Unit, span)
-                        list_call(
-                            builder,
-                            "append_list",
-                            element,
-                            [PlanType.ListMutRef(leaf, depth), element],
-                            PlanType.Unit,
-                            [reference, argument],
-                            unit,
-                            span,
-                        )
-                    None => return Err("unsupported Body IR list spread")
+                        append_list_value(builder, output, argument, leaf, depth, span)?
+                    None => splice_list_spread(builder, output, item, leaf, depth, span)?
         RustRvalue.Use(value) =>
             argument = value_operand(builder, value, span)?
             match argument.kind:
@@ -3942,6 +3931,110 @@ def list_assignment(
     forget_owned(builder, output.local)
     builder.emit(plan_assign(destination, RvalueKind.Use(read_place(output, true, span)), span))
     builder.owned.append(destination.local)
+    return Ok(None)
+
+
+def append_list_value(
+    mut builder: Builder,
+    output: Place,
+    value: Operand,
+    leaf: ListLeaf,
+    depth: int,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Append one checked element to a list literal under construction."""
+    element = list_element(leaf, depth)
+    reference = list_borrow(builder, output, true, span)?
+    unit = temporary(builder, PlanType.Unit, span)
+    list_call(
+        builder,
+        "append_list",
+        element,
+        [PlanType.ListMutRef(leaf, depth), element],
+        PlanType.Unit,
+        [reference, value],
+        unit,
+        span,
+    )
+    return Ok(None)
+
+
+def splice_list_spread(
+    mut builder: Builder,
+    output: Place,
+    item: &RustArgumentElement,
+    leaf: ListLeaf,
+    depth: int,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Append a `*source` spread to a list literal at its written position."""
+    match item:
+        RustArgumentElement.Spread(spread) =>
+            # A whole tuple has a fixed arity, so it splices field by field without a runtime helper.
+            match tuple_spread_place(builder, spread.source, span)?:
+                Some(tuple_place) => return append_tuple_fields(builder, output, tuple_place, leaf, depth, span)
+                None => pass
+            # A list spread's own ownership fact materializes one owner: the moved list, or a clone of a list that is
+            # read again. `extend_list` copies from it and it is then dropped, as set and dictionary spreads do.
+            source = value_operand(builder, spread.source, span)?
+            match source.kind:
+                OperandKind.Move(place) =>
+                    if place.projection != Projection.Whole:
+                        return Err("unsupported Body IR projected list spread owner")
+                    if place_type(builder.locals, place) != PlanType.List(leaf, depth):
+                        return Err("unsupported Body IR list spread source type")
+                    target = list_borrow(builder, output, true, span)?
+                    reference = list_borrow(builder, place, false, span)?
+                    unit = temporary(builder, PlanType.Unit, span)
+                    list_call(
+                        builder,
+                        "extend_list",
+                        list_element(leaf, depth),
+                        [PlanType.ListMutRef(leaf, depth), PlanType.ListRef(leaf, depth)],
+                        PlanType.Unit,
+                        [target, reference],
+                        unit,
+                        span,
+                    )
+                    drop_owned(builder, place.local, span)
+                    return Ok(None)
+                _ => return Err("unsupported Body IR list spread without owned source")
+        _ => return Err("unsupported Body IR named list element")
+
+
+def tuple_spread_place(builder: Builder, source: &RustOperand, span: SourceSpan) -> Result[Option[Place], str]:
+    """Select a spread source that is a whole tuple local; every other source splices as a list."""
+    match source:
+        RustOperand.Place(read) =>
+            if len(read.place.projection) != 0:
+                return Ok(None)
+            match read.place.global():
+                Some(_global) => return Ok(None)
+                None => pass
+            place = scalar_place(builder, read.place, span)?
+            if is_tuple_type(place_type(builder.locals, place)):
+                return Ok(Some(place))
+            return Ok(None)
+        RustOperand.Constant(_constant) => return Ok(None)
+
+
+def append_tuple_fields(
+    mut builder: Builder,
+    output: Place,
+    source: Place,
+    leaf: ListLeaf,
+    depth: int,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Splice each tuple field in order, copying scalars and cloning text so the tuple itself stays whole."""
+    element = list_element(leaf, depth)
+    for field in tuple_fields(source, place_type(builder.locals, source), span)?:
+        if place_type(builder.locals, field) != element:
+            return Err("unsupported Body IR tuple spread element type")
+        mut value = read_place(field, false, span)
+        if element == PlanType.String:
+            value = read_place(clone_text(builder, field, span)?, true, span)
+        append_list_value(builder, output, value, leaf, depth, span)?
     return Ok(None)
 
 

@@ -1079,6 +1079,24 @@ fn a_leading_spread_splices_before_its_fixed_elements() -> Result<(), Box<dyn st
     Ok(())
 }
 
+/// A tuple spread in a list literal keeps the whole tuple as one spread source, which the plan lowering splices field
+/// by field from its checked layout.
+#[test]
+fn a_tuple_spread_in_a_list_literal_keeps_the_whole_tuple_source() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def m(tail: tuple[int, int]) -> list[int]:\n  return [1, *tail]\n";
+    let rendered = body_named(&build(source, &["m", "tuple_spread"])?, "m")?.render_snapshot();
+
+    assert!(
+        !rendered.contains("unsupported("),
+        "a tuple spread must lower: {rendered}"
+    );
+    assert!(
+        rendered.contains("list[const(1), *move(_0, last_use)]"),
+        "a tuple spread must stay one whole-tuple spread element after the fixed ones: {rendered}"
+    );
+    Ok(())
+}
+
 /// Preserve written argument order while shared list parameter reads retain caller storage.
 #[test]
 fn a_trailing_spread_splices_after_its_fixed_elements() -> Result<(), Box<dyn std::error::Error>> {
