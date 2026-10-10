@@ -9420,6 +9420,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_rustc/src/rustc/diagnostic_parsing.rs": {
+      "disposition": "keep",
+      "notes": "Actual direct rustc error stream retains structured codes, spans and full rendering, preserves wrapped-message compatibility and keeps raw tool output. No Cargo execution.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_rustc/src/rustc/direct_compiler.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; publisher-only native-link execution and receipt tests carry no compiler-crate dependency. Reviewed at crate level.",
