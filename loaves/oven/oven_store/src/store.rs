@@ -1948,8 +1948,18 @@ impl OvenStore {
     }
 
     /// Remove only complete-or-partial staging children after the manager lock proves no publisher owns them.
+    /// Synchronize actual removals; an empty staging directory needs no durability work during selection.
     fn reclaim_stale_staging(&self) -> Result<(), OvenStoreError> {
+        self.reclaim_stale_staging_with_sync(sync_directory)
+    }
+
+    /// Apply the same locked reclamation boundary with an observable directory synchronization operation.
+    fn reclaim_stale_staging_with_sync(
+        &self,
+        synchronize: impl FnOnce(PathBuf) -> Result<(), OvenStoreError>,
+    ) -> Result<(), OvenStoreError> {
         let staging = self.staging_root_base();
+        let mut removed = false;
         for candidate in fs::read_dir(&staging).map_err(|source| OvenStoreError::Io {
             path: staging.clone(),
             source,
@@ -1970,8 +1980,9 @@ impl OvenStore {
                 });
             }
             fs::remove_dir_all(&path).map_err(|source| OvenStoreError::Io { path, source })?;
+            removed = true;
         }
-        sync_directory(staging)
+        if removed { synchronize(staging) } else { Ok(()) }
     }
 
     /// Reject a normal publication while the exclusive legacy publisher owns private staging, reclaiming only
@@ -6899,6 +6910,63 @@ pub(crate) mod tests {
         assert!(!stale.exists());
         assert_eq!(inspection.entries.len(), 1);
         assert!(inspection.physical_bytes >= inspection.logical_bytes);
+        Ok(())
+    }
+
+    /// Empty admission performs no durability work; actual reclamation synchronizes once and invalid entries refuse.
+    #[test]
+    fn staging_reclamation_synchronizes_only_actual_removals() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let store = OvenStore::new(temp.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        store.ensure_layout()?;
+        let manager = super::open_lock(&store.root.join(super::MANAGER_LOCK_FILE))?;
+        manager.lock()?;
+        let synchronizations = std::cell::Cell::new(0);
+        let synchronize = |path| {
+            synchronizations.set(synchronizations.get() + 1);
+            super::sync_directory(path)
+        };
+
+        for _ in 0..100 {
+            store.reclaim_stale_staging_with_sync(synchronize)?;
+        }
+        assert_eq!(synchronizations.get(), 0);
+
+        let staging = store.staging_root_base();
+        for name in ["interrupted-one", "interrupted-two"] {
+            let stale = staging.join(name).join("nested");
+            fs::create_dir_all(&stale)?;
+            fs::write(stale.join("payload"), b"unpublished bytes")?;
+        }
+        store.reclaim_stale_staging_with_sync(synchronize)?;
+        assert_eq!(fs::read_dir(&staging)?.count(), 0);
+        assert_eq!(synchronizations.get(), 1);
+        store.reclaim_stale_staging_with_sync(synchronize)?;
+        assert_eq!(synchronizations.get(), 1);
+
+        let unexpected = staging.join("unexpected-file");
+        fs::write(&unexpected, b"not a compiler-owned directory")?;
+        assert!(matches!(
+            store.reclaim_stale_staging_with_sync(synchronize),
+            Err(OvenStoreError::Integrity { .. })
+        ));
+        assert!(unexpected.is_file());
+        assert_eq!(synchronizations.get(), 1);
+        fs::remove_file(unexpected)?;
+
+        #[cfg(unix)]
+        {
+            let outside = tempfile::tempdir()?;
+            let marker = outside.path().join("preserved");
+            fs::write(&marker, b"outside staging")?;
+            std::os::unix::fs::symlink(outside.path(), staging.join("linked-directory"))?;
+            assert!(matches!(
+                store.reclaim_stale_staging_with_sync(synchronize),
+                Err(OvenStoreError::Integrity { .. })
+            ));
+            assert_eq!(fs::read(marker)?, b"outside staging");
+            assert_eq!(synchronizations.get(), 1);
+        }
         Ok(())
     }
 
