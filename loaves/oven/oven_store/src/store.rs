@@ -3482,13 +3482,13 @@ fn verify_materialized_files_with_observations(
         });
     }
     for (relative_path, expected_file) in expected {
-        let path = actual.get(&relative_path).ok_or_else(|| OvenStoreError::Integrity {
+        let (path, metadata) = actual.get(&relative_path).ok_or_else(|| OvenStoreError::Integrity {
             identity: manifest.identity.clone(),
             message: format!("materialized artifact `{relative_path}` is missing"),
         })?;
         let (logical_bytes, digest) = match observations.as_deref_mut() {
             Some(observations) => {
-                let observed = digest_retained_materialized_file(path, observations)?;
+                let observed = digest_retained_materialized_file(path, observations, Some(metadata))?;
                 (observed.length, observed.digest)
             }
             None => digest_materialized_file(path)?,
@@ -3650,32 +3650,38 @@ fn digest_materialized_file(path: &Path) -> Result<(u64, String), OvenStoreError
     Ok((observed.length, observed.digest))
 }
 
-/// Reconcile an owner's observed generation without reopening unchanged files or consulting persistent cache records.
+/// Reconcile an owner's observed generation using inventory metadata when available and a fresh final path check.
 fn digest_retained_materialized_file(
     path: &Path,
     observations: &mut BTreeMap<PathBuf, MaterializedFileDigest>,
+    inventory_metadata: Option<&fs::Metadata>,
 ) -> Result<ObservedFileDigest, OvenStoreError> {
-    digest_retained_materialized_file_with_metadata(path, observations, |path| fs::symlink_metadata(path))
+    digest_retained_materialized_file_with_metadata(path, observations, inventory_metadata, |path| {
+        fs::symlink_metadata(path)
+    })
 }
 
 /// Reuse bytes only between matching non-following path observations; changed generations use held-file verification.
 ///
 /// The existing owner map remains the only retained cache. Unsupported identities, changed stamps and unstable path
-/// observations fall through to the existing hashing/retry path. The callback exposes real metadata observations for
-/// deterministic replacement and edit controls without introducing another freshness policy.
+/// observations fall through to the existing hashing/retry path. The inventory's non-following observation can supply
+/// the initial stamp, but never replaces the final fresh check. The callback exposes that boundary for race controls.
 fn digest_retained_materialized_file_with_metadata(
     path: &Path,
     observations: &mut BTreeMap<PathBuf, MaterializedFileDigest>,
+    inventory_metadata: Option<&fs::Metadata>,
     mut metadata: impl FnMut(&Path) -> io::Result<fs::Metadata>,
 ) -> Result<ObservedFileDigest, OvenStoreError> {
     if let Some(retained) = observations.get(path) {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_store::reconcile_retained_file", input = %path.display()).entered();
-        let before = metadata(path)
-            .and_then(|metadata| materialized_metadata_stamp(&metadata))
-            .map_err(|source| OvenStoreError::Io {
-                path: path.to_path_buf(),
-                source,
-            })?;
+        let before = match inventory_metadata {
+            Some(metadata) => materialized_metadata_stamp(metadata),
+            None => metadata(path).and_then(|metadata| materialized_metadata_stamp(&metadata)),
+        }
+        .map_err(|source| OvenStoreError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
         if file_digest_matches(retained, &before) {
             let after = metadata(path)
                 .and_then(|metadata| materialized_metadata_stamp(&metadata))
@@ -3884,11 +3890,11 @@ fn report_observed_file_digest(
     observed
 }
 
-/// Collect regular materialized files while rejecting links and non-file entry types.
+/// Collect regular files and their non-following metadata for reconciliation, rejecting links and non-file entries.
 fn collect_materialized_files(
     root: &Path,
     directory: &Path,
-    files: &mut BTreeMap<String, PathBuf>,
+    files: &mut BTreeMap<String, (PathBuf, fs::Metadata)>,
     empty_directories: &mut BTreeSet<String>,
 ) -> Result<(), OvenStoreError> {
     let children = fs::read_dir(directory)
@@ -3942,7 +3948,7 @@ fn collect_materialized_files(
             })?
             .to_string_lossy()
             .replace('\\', "/");
-        if files.insert(relative_path.clone(), path).is_some() {
+        if files.insert(relative_path.clone(), (path, metadata)).is_some() {
             return Err(OvenStoreError::Integrity {
                 identity: relative_path,
                 message: "materialized artifact path occurred more than once".to_string(),
@@ -4831,6 +4837,68 @@ pub(crate) mod tests {
     use std::fs::{self, OpenOptions};
     use std::path::{Path, PathBuf};
 
+    /// Inventory metadata saves the first query but never conceals replacement before the final fresh observation.
+    #[cfg(unix)]
+    #[test]
+    fn inventory_metadata_reconciliation_rechecks_replacements() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("native");
+        let replacement = root.path().join("replacement");
+        let mut observations = BTreeMap::new();
+        fs::write(&source, b"native bytes")?;
+        let first = super::digest_retained_materialized_file(&source, &mut observations, None)?;
+        let inventory = fs::symlink_metadata(&source)?;
+        let mut queries = 0;
+        let warm = super::digest_retained_materialized_file_with_metadata(
+            &source,
+            &mut observations,
+            Some(&inventory),
+            |path| {
+                queries += 1;
+                fs::symlink_metadata(path)
+            },
+        )?;
+        assert_eq!(queries, 1);
+        assert_eq!(warm.file_opens, 0);
+        assert_eq!(warm.input_bytes_read, 0);
+        assert_eq!(warm.digest, first.digest);
+
+        fs::write(&replacement, b"edited bytes")?;
+        fs::File::options()
+            .write(true)
+            .open(&replacement)?
+            .set_times(fs::FileTimes::new().set_modified(inventory.modified()?))?;
+        queries = 0;
+        let changed = super::digest_retained_materialized_file_with_metadata(
+            &source,
+            &mut observations,
+            Some(&inventory),
+            |path| {
+                queries += 1;
+                fs::rename(&replacement, path)?;
+                fs::symlink_metadata(path)
+            },
+        )?;
+        assert_eq!(queries, 1);
+        assert_eq!(changed.digest, crate::digest_bytes(b"edited bytes"));
+        assert_eq!(changed.file_opens, 1);
+        assert_eq!(changed.input_bytes_read, 12);
+
+        let inventory = fs::symlink_metadata(&source)?;
+        let substituted = super::digest_retained_materialized_file_with_metadata(
+            &source,
+            &mut observations,
+            Some(&inventory),
+            |path| {
+                fs::rename(path, &replacement)?;
+                std::os::unix::fs::symlink(&replacement, path)?;
+                fs::symlink_metadata(path)
+            },
+        );
+        assert!(substituted.is_err());
+        Ok(())
+    }
+
     /// Warm owner reconciliation avoids artifact opens; edits and replacements still observe new bytes.
     #[cfg(unix)]
     #[test]
@@ -4839,10 +4907,10 @@ pub(crate) mod tests {
         let source = root.path().join("native");
         let mut observations = BTreeMap::new();
         fs::write(&source, b"native bytes")?;
-        let first = super::digest_retained_materialized_file(&source, &mut observations)?;
+        let first = super::digest_retained_materialized_file(&source, &mut observations, None)?;
         assert_eq!(first.file_opens, 1);
         assert_eq!(first.input_bytes_read, 12);
-        let warm = super::digest_retained_materialized_file(&source, &mut observations)?;
+        let warm = super::digest_retained_materialized_file(&source, &mut observations, None)?;
         assert_eq!(warm.digest, first.digest);
         assert_eq!(warm.file_opens, 0);
         assert_eq!(warm.input_bytes_read, 0);
@@ -4853,7 +4921,7 @@ pub(crate) mod tests {
             .write(true)
             .open(&source)?
             .set_times(fs::FileTimes::new().set_modified(modified))?;
-        let edited = super::digest_retained_materialized_file(&source, &mut observations)?;
+        let edited = super::digest_retained_materialized_file(&source, &mut observations, None)?;
         assert_eq!(edited.digest, crate::digest_bytes(b"edited bytes"));
         assert_eq!(edited.file_opens, 1);
         assert_eq!(edited.input_bytes_read, 12);
@@ -4865,11 +4933,11 @@ pub(crate) mod tests {
             .open(&replacement)?
             .set_times(fs::FileTimes::new().set_modified(modified))?;
         fs::rename(&replacement, &source)?;
-        let replaced = super::digest_retained_materialized_file(&source, &mut observations)?;
+        let replaced = super::digest_retained_materialized_file(&source, &mut observations, None)?;
         assert_eq!(replaced.digest, crate::digest_bytes(b"other bytes!"));
         assert_eq!(replaced.file_opens, 1);
         assert_eq!(replaced.input_bytes_read, 12);
-        let warm = super::digest_retained_materialized_file(&source, &mut observations)?;
+        let warm = super::digest_retained_materialized_file(&source, &mut observations, None)?;
         assert_eq!(warm.file_opens, 0);
         Ok(())
     }
@@ -4882,25 +4950,26 @@ pub(crate) mod tests {
         let source = root.path().join("native");
         let mut observations = BTreeMap::new();
         fs::write(&source, b"native bytes")?;
-        super::digest_retained_materialized_file(&source, &mut observations)?;
+        super::digest_retained_materialized_file(&source, &mut observations, None)?;
         let modified = fs::metadata(&source)?.modified()?;
         let mut calls = 0;
-        let changed = super::digest_retained_materialized_file_with_metadata(&source, &mut observations, |path| {
-            calls += 1;
-            if calls == 2 {
-                fs::write(path, b"edited bytes")?;
-                fs::File::options()
-                    .write(true)
-                    .open(path)?
-                    .set_times(fs::FileTimes::new().set_modified(modified))?;
-            }
-            fs::symlink_metadata(path)
-        })?;
+        let changed =
+            super::digest_retained_materialized_file_with_metadata(&source, &mut observations, None, |path| {
+                calls += 1;
+                if calls == 2 {
+                    fs::write(path, b"edited bytes")?;
+                    fs::File::options()
+                        .write(true)
+                        .open(path)?
+                        .set_times(fs::FileTimes::new().set_modified(modified))?;
+                }
+                fs::symlink_metadata(path)
+            })?;
         assert_eq!(calls, 2);
         assert_eq!(changed.digest, crate::digest_bytes(b"edited bytes"));
         assert_eq!(changed.file_opens, 1);
         assert_eq!(changed.input_bytes_read, 12);
-        let warm = super::digest_retained_materialized_file(&source, &mut observations)?;
+        let warm = super::digest_retained_materialized_file(&source, &mut observations, None)?;
         assert_eq!(warm.file_opens, 0);
         Ok(())
     }
@@ -4914,14 +4983,14 @@ pub(crate) mod tests {
         let held = root.path().join("held");
         let mut observations = BTreeMap::new();
         fs::write(&source, b"native bytes")?;
-        super::digest_retained_materialized_file(&source, &mut observations)?;
+        super::digest_retained_materialized_file(&source, &mut observations, None)?;
         fs::rename(&source, &held)?;
-        assert!(super::digest_retained_materialized_file(&source, &mut observations).is_err());
+        assert!(super::digest_retained_materialized_file(&source, &mut observations, None).is_err());
         fs::create_dir(&source)?;
-        assert!(super::digest_retained_materialized_file(&source, &mut observations).is_err());
+        assert!(super::digest_retained_materialized_file(&source, &mut observations, None).is_err());
         fs::remove_dir(&source)?;
         std::os::unix::fs::symlink(&held, &source)?;
-        assert!(super::digest_retained_materialized_file(&source, &mut observations).is_err());
+        assert!(super::digest_retained_materialized_file(&source, &mut observations, None).is_err());
         Ok(())
     }
 
