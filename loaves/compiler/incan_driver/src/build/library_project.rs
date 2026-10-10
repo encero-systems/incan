@@ -174,7 +174,9 @@ fn checked_public_library_metadata(
         }
 
         // A provider producer checks its complete source package before publishing the public checked facade.
-        let check_result = if provider_plan.bootstrap_sdk_namespace_roots().next().is_some() {
+        let check_result = if provider_plan.bootstrap_sdk_namespace_roots().next().is_some()
+            || provider_plan.standard_source_publication().is_some()
+        {
             checker.check_with_imports_allow_private(&module.ast, &deps_for_module)
         } else {
             checker.check_with_imports(&module.ast, &deps_for_module)
@@ -628,19 +630,21 @@ pub(crate) fn current_admitted_library_session(
         .admitted_library_dependencies()
         .ok_or_else(|| CliError::failure("explicit ordinary preparation requires admitted library dependencies"))?;
     dependencies.verify()?;
-    if input.sdk_inventory.is_some()
-        || input.sdk_components.is_some()
-        || !Arc::ptr_eq(&input.provider_plan, dependencies.provider_plan())
-    {
-        return Err(CliError::failure(
-            "explicit ordinary session contains competing provider authority",
-        ));
-    }
-    let current = CompilationSession::discover_with_admitted_library_dependencies(
-        entry,
-        package_features,
-        Arc::clone(dependencies),
-    )?;
+    let original_plan = input.original_admitted_provider_plan()?;
+    let current = if let Some(source) = original_plan.standard_source_publication() {
+        CompilationSession::discover_with_admitted_standard_source(
+            entry,
+            package_features,
+            Arc::clone(dependencies),
+            Arc::clone(source),
+        )?
+    } else {
+        CompilationSession::discover_with_admitted_library_dependencies(
+            entry,
+            package_features,
+            Arc::clone(dependencies),
+        )?
+    };
     let input_manifest = input
         .manifest
         .as_ref()

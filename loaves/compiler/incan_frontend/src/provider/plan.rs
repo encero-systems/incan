@@ -410,6 +410,8 @@ pub struct ProviderPlan {
     bootstrap_sdk_namespace_roots: BTreeSet<String>,
     /// Original compiler-selected source publication authority, separate from dependency namespace grants.
     source_publication: Option<Arc<super::source_policy::TrustedStandardSourcePublication>>,
+    /// Ordinary checked dependency inputs forbid ambient standard-source discovery, including an empty catalog.
+    admitted_library_context: bool,
     /// Original issuer records produced by validated selection, never reconstructed from public record spelling.
     namespace_issuers: BTreeMap<String, Arc<ProviderRecord>>,
     /// Process-local identity assigned when this immutable record set is constructed.
@@ -497,6 +499,7 @@ impl ProviderPlan {
             checked_source_materialized: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
             source_publication: None,
+            admitted_library_context: false,
             namespace_issuers: BTreeMap::new(),
             semantic_projection_identity: next_provider_semantic_projection_identity(),
             semantic_projection_persistent_key: Some(semantic_projection_persistent_key),
@@ -1217,11 +1220,23 @@ impl ProviderPlan {
         let mut records = project_dependency_records(&library_manifest_index, None)?;
         records.extend(namespaces.iter().map(|namespace| namespace.record().clone()));
         let mut plan = Self::new(library_manifest_index, records, used_module_paths)?;
+        plan.admitted_library_context = true;
+        plan.semantic_projection_persistent_key = Some(plan.semantic_projection_persistent_key().map(|base| {
+            let mut hash = Sha256::new();
+            hash.update(b"incan-ordinary-checked-provider-plan-v1\0");
+            hash.update(base.as_bytes());
+            format!("sha256:{:x}", hash.finalize())
+        }));
         plan.namespace_issuers = namespaces
             .iter()
             .map(|namespace| (namespace.record().identity.stable_key(), Arc::clone(namespace.issuer())))
             .collect();
         Ok(plan)
+    }
+
+    /// Whether this catalog came from ordinary checked dependency admission, without ambient SDK source authority.
+    pub fn is_admitted_library_context(&self) -> bool {
+        self.admitted_library_context
     }
 
     /// Create a plan that carries an ordinary dependency index and no SDK providers.
@@ -1265,6 +1280,7 @@ impl ProviderPlan {
             checked_source_materialized: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
             source_publication: None,
+            admitted_library_context: false,
             namespace_issuers: BTreeMap::new(),
             semantic_projection_identity: next_provider_semantic_projection_identity(),
             semantic_projection_persistent_key: Some(semantic_projection_persistent_key),
@@ -1342,6 +1358,7 @@ impl ProviderPlan {
             checked_source_materialized: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
             source_publication: None,
+            admitted_library_context: false,
             namespace_issuers: BTreeMap::new(),
             semantic_projection_identity: next_provider_semantic_projection_identity(),
             semantic_projection_persistent_key: Some(semantic_projection_persistent_key),

@@ -83,6 +83,36 @@ fn dev7_standard_source_session_actual_executable_child() -> TestResult {
         &dependencies
     ));
     assert!(session.provider_plan.public_artifacts().next().is_none());
+    assert!(session.provider_plan.is_admitted_library_context());
+    assert!(Arc::ptr_eq(
+        session.original_admitted_provider_plan()?,
+        &session.provider_plan
+    ));
+    for _ in 0..2 {
+        let current = crate::build::library_project::current_admitted_library_session(&session, &entry, &features)?;
+        assert!(Arc::ptr_eq(
+            current
+                .provider_plan
+                .standard_source_publication()
+                .ok_or("missing current source")?,
+            &source,
+        ));
+        assert!(Arc::ptr_eq(
+            current
+                .admitted_library_dependencies()
+                .ok_or("missing current dependencies")?,
+            &dependencies,
+        ));
+    }
+    let mut substituted = session.clone();
+    substituted.provider_plan = Arc::clone(dependencies.provider_plan());
+    assert!(substituted.original_admitted_provider_plan().is_err());
+    assert!(
+        substituted
+            .provider_plan_for_used_module_paths(BTreeSet::new())
+            .is_err()
+    );
+    assert!(crate::build::library_project::current_admitted_library_session(&substituted, &entry, &features).is_err());
     let modules = crate::modules::collect_modules_detailed_with_session(entry.clone(), &session)
         .map_err(|failure| failure.render_human())?;
     assert_eq!(modules.len(), 2);

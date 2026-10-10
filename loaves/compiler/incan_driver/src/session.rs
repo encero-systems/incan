@@ -231,6 +231,8 @@ pub struct CompilationSession {
     provider_plans_by_modules: ProviderPlanCache,
     /// Original ordinary checked package capabilities retained throughout analysis and current plan preparation.
     admitted_library_dependencies: Option<Arc<PreparedLibraryDependencies>>,
+    /// Original provider plan issued with the private admitted dependencies, before public session fields can change.
+    admitted_provider_plan: Option<Arc<ProviderPlan>>,
     /// Semantic provider identities reused only within this checked compilation context.
     provider_semantic_identities: Arc<incan_provider::lock_semantics::ProviderSemanticIdentitySession>,
     /// Integrity-checked active SDK catalog, when this toolchain is component-aware.
@@ -542,6 +544,7 @@ impl CompilationSession {
                 BTreeSet::new(),
                 Arc::clone(&provider_plan),
             )]))),
+            admitted_provider_plan: Some(Arc::clone(&provider_plan)),
             provider_plan,
             admitted_library_dependencies: Some(dependencies),
             provider_semantic_identities: Arc::new(
@@ -589,6 +592,7 @@ impl CompilationSession {
             .with_standard_source_publication(source, manifest.project_root(), name, version)
             .map_err(CliError::failure)?;
         session.provider_plan = Arc::new(plan);
+        session.admitted_provider_plan = Some(Arc::clone(&session.provider_plan));
         session.provider_plans_by_modules = Arc::new(Mutex::new(BTreeMap::from([(
             BTreeSet::new(),
             Arc::clone(&session.provider_plan),
@@ -792,6 +796,7 @@ impl CompilationSession {
             provider_plan,
             provider_plans_by_modules,
             admitted_library_dependencies: None,
+            admitted_provider_plan: None,
             provider_semantic_identities: Arc::new(
                 incan_provider::lock_semantics::ProviderSemanticIdentitySession::default(),
             ),
@@ -812,6 +817,27 @@ impl CompilationSession {
     /// owner for those sessions or infer that absent authority means an authenticated empty dependency closure.
     pub fn admitted_library_dependencies(&self) -> Option<&Arc<PreparedLibraryDependencies>> {
         self.admitted_library_dependencies.as_ref()
+    }
+
+    /// Borrow the original ordinary provider plan, refusing a public replacement or mixed SDK discovery state.
+    pub(crate) fn original_admitted_provider_plan(&self) -> CliResult<&Arc<ProviderPlan>> {
+        let original = self
+            .admitted_provider_plan
+            .as_ref()
+            .ok_or_else(|| CliError::failure("explicit ordinary session has no original provider authority"))?;
+        if self.admitted_library_dependencies.is_none()
+            || self.sdk_inventory.is_some()
+            || self.sdk_components.is_some()
+            || !Arc::ptr_eq(&self.provider_plan, original)
+        {
+            return Err(CliError::failure(
+                "explicit ordinary session contains competing provider authority",
+            ));
+        }
+        original
+            .verify_standard_source_publication()
+            .map_err(CliError::failure)?;
+        Ok(original)
     }
 
     /// Return provider semantic identities after revalidating their exact physical and dependency context.
@@ -842,6 +868,7 @@ impl CompilationSession {
             .verify_standard_source_publication()
             .map_err(CliError::failure)?;
         if let Some(dependencies) = &self.admitted_library_dependencies {
+            self.original_admitted_provider_plan()?;
             dependencies.verify()?;
             let dependency_modules = used_module_paths
                 .iter()
@@ -1144,6 +1171,7 @@ mod tests {
                 Arc::clone(&provider_plan),
             )]))),
             admitted_library_dependencies: None,
+            admitted_provider_plan: None,
             provider_semantic_identities: Arc::new(
                 incan_provider::lock_semantics::ProviderSemanticIdentitySession::default(),
             ),
@@ -1451,6 +1479,7 @@ mod tests {
                 Arc::clone(&provider_plan),
             )]))),
             admitted_library_dependencies: None,
+            admitted_provider_plan: None,
             provider_semantic_identities: Arc::new(
                 incan_provider::lock_semantics::ProviderSemanticIdentitySession::default(),
             ),

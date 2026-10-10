@@ -5,7 +5,6 @@ use std::fs;
 use std::path::Path;
 
 use incan_lang::lang::standard_packages::{STANDARD_PACKAGE_NAMESPACE_POLICIES, standard_package_namespace_policy};
-use oven_model::manifest::ProjectManifest;
 
 use super::{TrustedStandardSourcePublication, TrustedStandardSourcePublicationError};
 
@@ -22,10 +21,19 @@ fn dev7_standard_source_policy_matches_authored_declarations() -> TestResult {
         let path = Path::new("compiler-pinned")
             .join(policy.source_directory)
             .join("loaf.toml");
-        let parsed = ProjectManifest::from_str(policy.declaration, &path)?;
-        let project = parsed.project.as_ref().ok_or("missing authored project identity")?;
-        assert_eq!(project.name.as_deref(), Some(policy.package_name));
-        assert_eq!(project.version.as_deref(), Some(policy.version));
+        // Embedded policy has no physical sibling roots. Full admission belongs to the actual factory below;
+        // this source-independent check validates pinned identity and registry grammar without classifying paths.
+        let parsed: toml::Value = toml::from_str(policy.declaration)?;
+        let project = parsed.get("project").ok_or("missing authored project identity")?;
+        assert_eq!(
+            project.get("name").and_then(toml::Value::as_str),
+            Some(policy.package_name)
+        );
+        assert_eq!(
+            project.get("version").and_then(toml::Value::as_str),
+            Some(policy.version)
+        );
+        oven_model::manifest::registry_loaf_dependencies_from_str(policy.declaration, &path)?;
         for root in policy.namespace_roots {
             assert!(roots.insert(*root), "duplicate namespace owner: {root}");
             assert!(!matches!(*root, "rust" | "builtins"));
