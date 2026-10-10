@@ -27,8 +27,9 @@ use crate::build::output_materialization::{
     warn_for_completed_output_lock_fingerprint_drift,
 };
 use crate::build::output_paths::{
-    library_project_output_sidecars, normalized_project_entrypoint, oven_binary_path, project_locked_registry_packages,
-    project_output_bake_files, project_root_for_completed_output, validated_project_output_relative_path,
+    canonical_output_file_relative_to_root, library_project_output_sidecars, normalized_project_entrypoint,
+    oven_binary_path, project_locked_registry_packages, project_output_bake_files, project_root_for_completed_output,
+    validated_project_output_relative_path,
 };
 use crate::build::output_selection::project_output_report_snapshot;
 use crate::build::oven_project::{prepare_oven_project, remove_completed_generated_cargo_lock};
@@ -1748,18 +1749,8 @@ fn bake_oven_project_targets_with_admission(
                             }
                         }
                         let bake = bake_oven_library(&prepared, selected, profile, Some(&mut authority_context))?;
-                        let library_relative_path = bake
-                            .output
-                            .strip_prefix(&prepared.out_dir)
-                            .map_err(|_| {
-                                CliError::failure(format!(
-                                    "baked public library output {} escaped its artifact root {}",
-                                    bake.output.display(),
-                                    prepared.out_dir.display()
-                                ))
-                            })?
-                            .to_string_lossy()
-                            .replace('\\', "/");
+                        let (_, library_relative_path) =
+                            canonical_output_file_relative_to_root(&prepared.out_dir, &bake.output)?;
                         let exported = export_selected_package_loaf(
                             &store,
                             &package_store_root,
