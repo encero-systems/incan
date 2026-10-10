@@ -4,6 +4,91 @@
 
 use super::*;
 
+/// Publication must retain receiver ABI discovered through a Rust function's return, without shipping unrelated ABI.
+#[test]
+fn rust_metadata_queries_follow_checked_return_receivers() -> Result<(), Box<dyn std::error::Error>> {
+    let make = RustItemMetadata {
+        canonical_path: "demo_runtime::make".to_string(),
+        definition_path: Some("demo_runtime::make".to_string()),
+        visibility: RustVisibility::Public,
+        kind: RustItemKind::Function(RustFunctionSig {
+            receiver_contract: None,
+            type_params: Vec::new(),
+            params: Vec::new(),
+            return_type: "demo_runtime::Record".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        }),
+    };
+    let record = RustItemMetadata {
+        canonical_path: "demo_runtime::Record".to_string(),
+        definition_path: Some("demo_runtime::Record".to_string()),
+        visibility: RustVisibility::Public,
+        kind: RustItemKind::Type(RustTypeInfo {
+            type_params: Vec::new(),
+            type_param_defaults: Vec::new(),
+            mutable_reference_type_params: Vec::new(),
+            expanded_derive_traits: Vec::new(),
+            has_const_params: false,
+            alias_target: None,
+            metadata_completeness: Default::default(),
+            methods: vec![RustMethodSig {
+                name: "ready".to_string(),
+                signature: RustFunctionSig {
+                    receiver_contract: None,
+                    type_params: Vec::new(),
+                    params: vec![RustParam {
+                        name: Some("self".to_string()),
+                        type_display: "&self".to_string(),
+                    }],
+                    return_type: "bool".to_string(),
+                    is_async: false,
+                    is_unsafe: false,
+                },
+            }],
+            implemented_traits: Vec::new(),
+            fields: Vec::new(),
+            variants: Vec::new(),
+        }),
+    };
+    let mut unrelated = record.clone();
+    unrelated.canonical_path = "demo_runtime::Unused".to_string();
+    unrelated.definition_path = Some(unrelated.canonical_path.clone());
+    let mut manifest = LibraryManifest::new("runtime_facade", "0.1.0");
+    manifest.rust_abi = LibraryRustAbi::from_items(vec![make, record, unrelated]);
+    let index = LibraryManifestIndex::from_entries(HashMap::from([(
+        "runtime_facade".to_string(),
+        LibraryManifestIndexEntry::Loaded {
+            manifest: Box::new(manifest),
+            metadata: LibraryArtifactMetadata::from_crate_root(
+                "runtime_facade",
+                "runtime_facade",
+                PathBuf::from("/synthetic/checked-receiver-abi"),
+            ),
+        },
+    )]));
+    let source = "from rust::demo_runtime import make\n\npub def ready() -> bool:\n    return make().ready()\n";
+    let tokens = lexer::lex(source).map_err(|errors| format!("lex failed: {errors:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errors| format!("parse failed: {errors:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker.set_library_manifest_index(index);
+    checker
+        .check_program(&ast)
+        .map_err(|errors| format!("check failed: {errors:?}"))?;
+    assert_eq!(
+        checker.observed_rust_metadata_queries(),
+        BTreeSet::from(["demo_runtime::Record".to_string(), "demo_runtime::make".to_string()]),
+        "the receiver is required even though only its factory was imported"
+    );
+    for path in ["rust::demo_runtime::Record<int>", "demo_runtime::Record"] {
+        assert!(checker.rust_item_metadata_for_path_blocking(path).is_some());
+    }
+    assert!(checker.rust_item_metadata_for_path("demo_runtime::Missing").is_none());
+    assert_eq!(checker.observed_rust_metadata_queries().len(), 2);
+    assert!(TypeChecker::new().observed_rust_metadata_queries().is_empty());
+    Ok(())
+}
+
 #[test]
 fn rust_item_metadata_prefers_shipped_library_abi() {
     let manifest_metadata = RustItemMetadata {

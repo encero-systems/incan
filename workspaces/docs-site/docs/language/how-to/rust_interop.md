@@ -422,6 +422,8 @@ When a library exposes Rust-backed items, run `incan build --lib` before another
 
 Consumers load that shipped ABI metadata first for Rust-backed imported symbols. `rust_inspect` remains available for producer capture, local workspace imports, and explicit fallback/debug paths, but a packaged dependency should not require consumer-side workspace inspection for signatures that were already published in its `.incnlib`.
 
+Producer capture includes successful metadata lookups made while checking function bodies, in addition to explicit imports and `rust.extern` backing items. A Rust factory's inferred return receiver can therefore carry its checked ABI without a separate type import. Complete ABI records already shipped by dependencies are reused; other requested type records are completed before shipping them. Partial fast-inspection records are insufficient. Repeated queries are deduplicated, and unsuccessful speculative lookups do not become ABI requirements.
+
 A library can deliberately publish a checked Rust import:
 
 ```incan
