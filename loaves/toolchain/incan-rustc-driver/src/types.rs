@@ -32,6 +32,13 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::Enum(_, name) => enum_type(tcx, name)?,
         PlanType::EnumRef(_, name) => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, enum_type(tcx, name)?),
         PlanType::Model(_, name) => model_type(tcx, name)?,
+        PlanType::CallableArguments(inputs) => Ty::new_tup(
+            tcx,
+            &inputs
+                .iter()
+                .map(|input| native_type(tcx, input))
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
         PlanType::Tuple(elements) => Ty::new_tup(
             tcx,
             &elements
@@ -157,12 +164,42 @@ fn function_pointer_type<'tcx>(tcx: TyCtxt<'tcx>, signature: &[PlanType]) -> Res
         function: "function pointer".into(),
         reason: "callable signature has no return type".into(),
     })?;
-    let inputs = parameters
-        .iter()
-        .map(|ty| native_type(tcx, ty))
-        .collect::<Result<Vec<_>, _>>()?;
+    let (inputs, bound) = bound_callable_inputs(tcx, parameters)?;
     let signature = tcx.mk_fn_sig_safe_rust_abi(inputs, native_type(tcx, result)?);
-    Ok(Ty::new_fn_ptr(tcx, rustc_middle::ty::Binder::dummy(signature)))
+    Ok(Ty::new_fn_ptr(
+        tcx,
+        rustc_middle::ty::Binder::bind_with_vars(signature, tcx.mk_bound_variable_kinds(&bound)),
+    ))
+}
+
+/// Bind each borrowed input independently so a callable accepts a fresh caller loan on every invocation.
+///
+/// Body-local references use erased regions, but signature references must agree with rustc's higher-ranked AST
+/// declarations. Nested callable signatures retain their own binders through `native_type`.
+fn bound_callable_inputs<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    parameters: &[PlanType],
+) -> Result<(Vec<Ty<'tcx>>, Vec<rustc_middle::ty::BoundVariableKind<'tcx>>), PlanError> {
+    use rustc_middle::ty::{BoundRegion, BoundRegionKind, BoundVar, BoundVariableKind, INNERMOST, Region, TyKind};
+    let mut inputs = Vec::new();
+    let mut bound = Vec::new();
+    for parameter in parameters {
+        let native = native_type(tcx, parameter)?;
+        let input = if let TyKind::Ref(_, pointee, mutability) = native.kind() {
+            let var = BoundVar::from_usize(bound.len());
+            let kind = BoundRegionKind::Anon;
+            bound.push(BoundVariableKind::Region(kind));
+            let region = Region::new_bound(tcx, INNERMOST, BoundRegion { var, kind });
+            match mutability {
+                rustc_hir::Mutability::Mut => Ty::new_mut_ref(tcx, region, *pointee),
+                rustc_hir::Mutability::Not => Ty::new_imm_ref(tcx, region, *pointee),
+            }
+        } else {
+            native
+        };
+        inputs.push(input);
+    }
+    Ok((inputs, bound))
 }
 
 /// Build the `dyn Fn(inputs) -> output` object a boxed closure or closure-holding parameter holds.
@@ -179,14 +216,27 @@ pub fn callable_object_type<'tcx>(tcx: TyCtxt<'tcx>, signature: &[PlanType]) -> 
         .lang_items()
         .fn_once_output()
         .ok_or_else(|| missing("FnOnce::Output"))?;
-    let arguments = callable_arguments_type(tcx, parameters)?;
+    let (inputs, bound) = bound_callable_inputs(tcx, parameters)?;
+    let arguments = Ty::new_tup(tcx, &inputs);
+    let bound = tcx.mk_bound_variable_kinds(&bound);
     let predicates = tcx.mk_poly_existential_predicates(&[
-        rustc_middle::ty::Binder::dummy(rustc_middle::ty::ExistentialPredicate::Trait(
-            rustc_middle::ty::ExistentialTraitRef::new(tcx, fn_trait, [arguments]),
-        )),
-        rustc_middle::ty::Binder::dummy(rustc_middle::ty::ExistentialPredicate::Projection(
-            rustc_middle::ty::ExistentialProjection::new(tcx, output, [arguments], native_type(tcx, result)?.into()),
-        )),
+        rustc_middle::ty::Binder::bind_with_vars(
+            rustc_middle::ty::ExistentialPredicate::Trait(rustc_middle::ty::ExistentialTraitRef::new(
+                tcx,
+                fn_trait,
+                [arguments],
+            )),
+            bound,
+        ),
+        rustc_middle::ty::Binder::bind_with_vars(
+            rustc_middle::ty::ExistentialPredicate::Projection(rustc_middle::ty::ExistentialProjection::new(
+                tcx,
+                output,
+                [arguments],
+                native_type(tcx, result)?.into(),
+            )),
+            bound,
+        ),
     ]);
     Ok(Ty::new_dynamic(tcx, predicates, tcx.lifetimes.re_static))
 }
@@ -246,8 +296,10 @@ pub fn model_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Result<Ty<'tcx>, PlanE
         .free_items()
         .map(|item| item.owner_id.to_def_id())
         .find(|def| {
-            matches!(tcx.def_kind(*def), rustc_hir::def::DefKind::Struct | rustc_hir::def::DefKind::TyAlias)
-                && tcx.opt_item_name(*def).is_some_and(|symbol| symbol.as_str() == name)
+            matches!(
+                tcx.def_kind(*def),
+                rustc_hir::def::DefKind::Struct | rustc_hir::def::DefKind::TyAlias
+            ) && tcx.opt_item_name(*def).is_some_and(|symbol| symbol.as_str() == name)
         })
         .ok_or_else(|| PlanError::Invalid {
             function: name.into(),

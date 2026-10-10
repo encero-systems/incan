@@ -29,7 +29,7 @@ pub model SourceSpan:
 
 @derive(Clone, PartialEq)
 pub enum ListLeaf:
-    """Scalar, flat tuple, and exact retained nominal/carrier leaves; hash keys still require admitted Eq and Hash authority."""
+    """Scalar, flat tuple, Copy function pointer, and exact retained nominal/carrier leaves; hash keys still require admitted Eq and Hash authority."""
 
     Int
     Float
@@ -42,6 +42,7 @@ pub enum ListLeaf:
     Unit
     Decimal
     FrozenStr
+    FunctionPointer(list[PlanType])
 
 
 @derive(Clone, PartialEq)
@@ -82,7 +83,7 @@ pub enum PlanType:
     handles; they never represent source values or eagerly collected elements.
     ZipIterator retains two independent owned list snapshots; its reference variants retain shared read or exclusive poll authority.
     FunctionPointer retains its inputs followed by exactly one return entry; the vector is never empty, including for a zero-argument function. FunctionItem keeps that same signature and the proven source declaration's name; it remains distinct from a pointer until an explicit reification.
-    Closure owns a boxed callable object with that signature layout, holding its captures by value; ClosureRef is the shared view a closure-holding parameter receives. Their inputs are tuple-element types, because a call packs them into one argument tuple.
+    Closure owns a boxed callable object with that signature layout, holding its captures by value; ClosureRef is the shared view a closure-holding parameter receives. CallableArguments is the body-internal argument tuple; it preserves each input's exact type, including caller-owned collection references, independently of source tuple layouts.
     """
 
     Int
@@ -147,6 +148,7 @@ pub enum PlanType:
     FunctionItem(str, list[PlanType])
     Closure(list[PlanType])
     ClosureRef(list[PlanType])
+    CallableArguments(list[PlanType])
 
 
 pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
@@ -163,6 +165,7 @@ pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
         ListLeaf.Unit => return PlanType.Unit
         ListLeaf.Decimal => return PlanType.Decimal
         ListLeaf.FrozenStr => return PlanType.FrozenStr
+        ListLeaf.FunctionPointer(signature) => return PlanType.FunctionPointer(signature)
 
 
 pub def tuple_element_type(element: TupleElement) -> PlanType:

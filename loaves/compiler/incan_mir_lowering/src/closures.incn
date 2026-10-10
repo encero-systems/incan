@@ -15,7 +15,6 @@ from pub::incan_mir_plan import (
     PlanType,
     Operand,
     RvalueKind,
-    TupleElement,
     Callee,
     CalleeKind,
     Function,
@@ -133,19 +132,23 @@ pub def return_representation(body: &RustBody, ty: PlanType) -> Result[PlanType,
     return Ok(ty)
 
 
-pub def closure_arguments(signature: list[PlanType]) -> Result[list[TupleElement], str]:
-    """A callable object's call packs its inputs into one tuple, so each input must be a flat tuple element."""
+pub def closure_arguments(signature: list[PlanType]) -> Result[list[PlanType], str]:
+    """Pack scalar/text inputs and shared collection views with their exact checked call representations."""
     if len(signature) == 0:
         return Err("invalid Body IR callable signature without return type")
-    mut elements: list[TupleElement] = []
+    mut elements: list[PlanType] = []
     for index in range(len(signature) - 1):
         match signature[index]:
-            PlanType.Int => elements.append(TupleElement.Int)
-            PlanType.Float => elements.append(TupleElement.Float)
-            PlanType.Bool => elements.append(TupleElement.Bool)
-            PlanType.Unit => elements.append(TupleElement.Unit)
-            PlanType.String => elements.append(TupleElement.String)
-            _ => return Err("unsupported Body IR closure input outside scalars and owned text")
+            PlanType.Int => pass
+            PlanType.Float => pass
+            PlanType.Bool => pass
+            PlanType.Unit => pass
+            PlanType.String => pass
+            PlanType.ListRef(_leaf, _depth) => pass
+            PlanType.SetRef(_leaf) => pass
+            PlanType.DictRef(_key, _value) => pass
+            _ => return Err("unsupported Body IR closure input outside scalars, owned text, and shared collections")
+        elements.append(signature[index])
     match signature[-1]:
         PlanType.Int => pass
         PlanType.Float => pass
@@ -209,6 +212,39 @@ pub def callable_copy_type(ty: PlanType) -> bool:
         PlanType.FunctionPointer(_signature) => return true
         PlanType.FunctionItem(_name, _signature) => return true
         _ => return false
+
+
+pub def pointer_forwarder(name: str, signature: list[PlanType], span: SourceSpan) -> Function:
+    """Forward a copied function pointer and its inputs through a closure's lifted body."""
+    pointer = PlanType.FunctionPointer(signature)
+    mut locals = [Local(ty=signature[-1], span=span), Local(ty=pointer, span=span)]
+    mut parameters = [Parameter(name="__incan_pointer", ty=pointer, span=span)]
+    mut operands: list[Operand] = []
+    for index in range(len(signature) - 1):
+        ty = signature[index]
+        locals.append(Local(ty=ty, span=span))
+        parameters.append(Parameter(name=f"__incan_argument_{index}", ty=ty, span=span))
+        place = plan_place(index + 2, span)
+        mut kind = OperandKind.Copy(place)
+        if ty == PlanType.String:
+            kind = OperandKind.Move(place)
+        operands.append(Operand(kind=kind, span=span))
+    pointer_value = Operand(kind=OperandKind.Copy(plan_place(1, span)), span=span)
+    call = TerminatorKind.Call(
+        Callee(kind=CalleeKind.Value(pointer_value), span=span),
+        operands,
+        plan_place(0, span),
+        1,
+        Unwind.Continue,
+    )
+    return Function(
+        name=name,
+        parameters=parameters,
+        return_type=signature[-1],
+        locals=locals,
+        blocks=[plan_block([], call, span), plan_block([], TerminatorKind.Return, span)],
+        span=span,
+    )
 
 
 pub def callable_signature(ty: PlanType) -> Result[list[PlanType], str]:
