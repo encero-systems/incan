@@ -257,6 +257,8 @@ pub struct OvenStoreExecutionPayload {
     /// consumer needs to be able to report. `None` is an entry published before the witness existed, which is
     /// legacy evidence rather than an empty recipe.
     original_native_receipt: Option<AdmittedNativeReceipt>,
+    /// Replacement-sensitive file observations, bounded by this admitted owner's manifest and lease lifetime.
+    materialized_observations: Mutex<BTreeMap<PathBuf, MaterializedFileDigest>>,
     _lease: OvenStoreLease,
 }
 
@@ -320,10 +322,19 @@ impl OvenStoreExecutionPayload {
     /// Revalidate the original admitted record, payload and complete materialized closure under the held lease.
     ///
     /// [`Self::verify_admitted_record`] proves everything but the closure; this adds the full artifact walk for a
-    /// consumer that will not read those files itself.
+    /// consumer that will not read those files itself. File digests may reuse this owner's previous observation,
+    /// but every current file still opens and verifies its replacement-sensitive metadata before and after reuse.
     pub fn verify_admitted_payload(&self) -> Result<(), OvenStoreError> {
         self.verify_admitted_record()?;
-        verify_materialized_files(&self.admitted_entry_root, &self.manifest).map(|_| ())
+        let mut observations = self
+            .materialized_observations
+            .lock()
+            .map_err(|_| OvenStoreError::Integrity {
+                identity: self.admitted_identity.clone(),
+                message: "materialized file observation lock poisoned".to_string(),
+            })?;
+        verify_materialized_files_with_observations(&self.admitted_entry_root, &self.manifest, Some(&mut observations))
+            .map(|_| ())
     }
 
     /// Verify a sealed native unit once, then reuse its identity-bound closure proof under the retained lease.
@@ -542,6 +553,7 @@ impl PublishedOvenStore {
                 admitted_entry_root: path.clone(),
                 admitted_identity: identity.clone(),
                 original_native_receipt,
+                materialized_observations: Mutex::new(BTreeMap::new()),
                 manifest,
                 artifact_root: path.join(MATERIALIZED_DIRECTORY),
                 payload,
@@ -1293,6 +1305,7 @@ impl OvenStore {
                 admitted_entry_root: path.clone(),
                 admitted_identity: identity.clone(),
                 original_native_receipt,
+                materialized_observations: Mutex::new(BTreeMap::new()),
                 manifest,
                 artifact_root: path.join(MATERIALIZED_DIRECTORY),
                 payload,
@@ -2408,6 +2421,7 @@ where
                 admitted_entry_root: path.clone(),
                 admitted_identity: manifest.identity.clone(),
                 original_native_receipt,
+                materialized_observations: Mutex::new(BTreeMap::new()),
                 manifest,
                 artifact_root: path.join(MATERIALIZED_DIRECTORY),
                 payload,
@@ -3356,6 +3370,16 @@ fn verify_materialized_root(root: &Path, manifest: &OvenArtifactManifest) -> Res
 
 /// Verify the exact recursive file closure materialized beneath one immutable entry.
 fn verify_materialized_files(root: &Path, manifest: &OvenArtifactManifest) -> Result<u64, OvenStoreError> {
+    verify_materialized_files_with_observations(root, manifest, None)
+}
+
+/// Walk the complete current inventory, optionally retaining only byte observations under its admitted owner.
+/// Every file still opens and rechecks replacement-sensitive metadata; no cached inventory skips missing members.
+fn verify_materialized_files_with_observations(
+    root: &Path,
+    manifest: &OvenArtifactManifest,
+    mut observations: Option<&mut BTreeMap<PathBuf, MaterializedFileDigest>>,
+) -> Result<u64, OvenStoreError> {
     let expected = manifest
         .materialized_files
         .iter()
@@ -3387,7 +3411,13 @@ fn verify_materialized_files(root: &Path, manifest: &OvenArtifactManifest) -> Re
             identity: manifest.identity.clone(),
             message: format!("materialized artifact `{relative_path}` is missing"),
         })?;
-        let (logical_bytes, digest) = digest_materialized_file(path)?;
+        let (logical_bytes, digest) = match observations.as_deref_mut() {
+            Some(observations) => {
+                let observed = digest_retained_materialized_file(path, observations)?;
+                (observed.length, observed.digest)
+            }
+            None => digest_materialized_file(path)?,
+        };
         if logical_bytes != expected_file.logical_bytes || digest != expected_file.digest {
             return Err(OvenStoreError::Integrity {
                 identity: manifest.identity.clone(),
@@ -3413,7 +3443,7 @@ fn verify_materialized_files(root: &Path, manifest: &OvenArtifactManifest) -> Re
 }
 
 /// Metadata for one exact open file, including replacement and preserved-mtime edits.
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct MaterializedFileStamp {
     length: u64,
     modified: u128,
@@ -3421,7 +3451,7 @@ struct MaterializedFileStamp {
 }
 
 /// A local acceleration record populated only from observed artifact bytes.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MaterializedFileDigest {
     stamp: MaterializedFileStamp,
@@ -3530,6 +3560,7 @@ struct ObservedFileDigest {
     length: u64,
     digest: String,
     input_bytes_read: u64,
+    stamp: MaterializedFileStamp,
 }
 
 /// Hash one materialized file using its existing cache namespace outside the published inventory.
@@ -3537,6 +3568,29 @@ fn digest_materialized_file(path: &Path) -> Result<(u64, String), OvenStoreError
     let cache_path = materialized_digest_cache_path(path);
     let observed = digest_observed_file(path, cache_path.as_deref())?;
     Ok((observed.length, observed.digest))
+}
+
+/// Reuse this owner's observed bytes after fresh held-file checks, computing persistent cache coordinates on misses.
+fn digest_retained_materialized_file(
+    path: &Path,
+    observations: &mut BTreeMap<PathBuf, MaterializedFileDigest>,
+) -> Result<ObservedFileDigest, OvenStoreError> {
+    let observed = digest_observed_file_with_retained(
+        path,
+        observations.get(path),
+        || materialized_digest_cache_path(path),
+        materialized_file_stamp,
+    )?;
+    if !observed.stamp.identity.is_empty() {
+        observations.insert(
+            path.to_path_buf(),
+            MaterializedFileDigest {
+                stamp: observed.stamp.clone(),
+                digest: observed.digest.clone(),
+            },
+        );
+    }
+    Ok(observed)
 }
 
 /// Hash the exact held file, or reuse a digest bound to its replacement-sensitive metadata.
@@ -3552,6 +3606,17 @@ fn digest_observed_file(path: &Path, cache_path: Option<&Path>) -> Result<Observ
 fn digest_observed_file_with_stamp(
     path: &Path,
     cache_path: Option<&Path>,
+    stamp: impl FnMut(&File) -> io::Result<MaterializedFileStamp>,
+) -> Result<ObservedFileDigest, OvenStoreError> {
+    digest_observed_file_with_retained(path, None, || cache_path.map(Path::to_path_buf), stamp)
+}
+
+/// Observe the same held file on both sides of reuse or hashing; retained records never bypass freshness or retries.
+/// Cache-coordinate selection and cache-file I/O occur only when the owner's previous observed generation misses.
+fn digest_observed_file_with_retained(
+    path: &Path,
+    retained: Option<&MaterializedFileDigest>,
+    mut cache: impl FnMut() -> Option<PathBuf>,
     mut stamp: impl FnMut(&File) -> io::Result<MaterializedFileStamp>,
 ) -> Result<ObservedFileDigest, OvenStoreError> {
     let mut file = File::open(path).map_err(|source| OvenStoreError::Io {
@@ -3559,6 +3624,7 @@ fn digest_observed_file_with_stamp(
         source,
     })?;
     let mut input_bytes_read = 0_u64;
+    let mut cache_path = None;
     for attempt in 0..3 {
         if attempt != 0 {
             file.rewind().map_err(|source| OvenStoreError::Io {
@@ -3570,16 +3636,18 @@ fn digest_observed_file_with_stamp(
             path: path.to_path_buf(),
             source,
         })?;
-        if !before.identity.is_empty()
-            && let Some(record) = cache_path
+        let retained = retained.filter(|record| file_digest_matches(record, &before));
+        let persisted = if retained.is_some() {
+            None
+        } else {
+            cache_path
+                .get_or_insert_with(&mut cache)
+                .as_deref()
                 .and_then(|path| fs::read(path).ok())
                 .and_then(|bytes| serde_json::from_slice::<MaterializedFileDigest>(&bytes).ok())
-            && record.stamp == before
-            && record
-                .digest
-                .strip_prefix("sha256:")
-                .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
-        {
+                .filter(|record| file_digest_matches(record, &before))
+        };
+        if let Some(record) = retained.or(persisted.as_ref()) {
             let after = stamp(&file).map_err(|source| OvenStoreError::Io {
                 path: path.to_path_buf(),
                 source,
@@ -3588,8 +3656,9 @@ fn digest_observed_file_with_stamp(
                 return Ok(report_observed_file_digest(
                     path,
                     before.length,
-                    record.digest,
+                    record.digest.clone(),
                     input_bytes_read,
+                    before,
                 ));
             }
             continue;
@@ -3631,11 +3700,11 @@ fn digest_observed_file_with_stamp(
             continue;
         }
         let digest = format!("sha256:{}", hex::encode(hasher.finalize()));
-        if let Some(path) = cache_path {
+        if let Some(path) = cache_path.get_or_insert_with(&mut cache).as_deref() {
             let _published = publish_materialized_file_digest(
                 path,
                 &MaterializedFileDigest {
-                    stamp: before,
+                    stamp: before.clone(),
                     digest: digest.clone(),
                 },
             );
@@ -3645,6 +3714,7 @@ fn digest_observed_file_with_stamp(
             logical_bytes,
             digest,
             input_bytes_read,
+            before,
         ));
     }
     Err(OvenStoreError::Integrity {
@@ -3653,12 +3723,29 @@ fn digest_observed_file_with_stamp(
     })
 }
 
+/// Match only a valid byte digest under a stable replacement-sensitive stamp; unsupported platforms rehash.
+fn file_digest_matches(record: &MaterializedFileDigest, current: &MaterializedFileStamp) -> bool {
+    !current.identity.is_empty()
+        && record.stamp == *current
+        && record
+            .digest
+            .strip_prefix("sha256:")
+            .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+}
+
 /// Report authoritative byte reads separately from stat observations and cache-record IO.
-fn report_observed_file_digest(path: &Path, length: u64, digest: String, input_bytes_read: u64) -> ObservedFileDigest {
+fn report_observed_file_digest(
+    path: &Path,
+    length: u64,
+    digest: String,
+    input_bytes_read: u64,
+    stamp: MaterializedFileStamp,
+) -> ObservedFileDigest {
     let observed = ObservedFileDigest {
         length,
         digest,
         input_bytes_read,
+        stamp,
     };
     if std::env::var_os("INCAN_OVEN_TRACE_FILE_DIGESTS").is_some() {
         eprintln!(
@@ -4615,6 +4702,164 @@ pub(crate) mod tests {
     use std::collections::BTreeMap;
     use std::fs::{self, OpenOptions};
     use std::path::{Path, PathBuf};
+
+    /// A retained byte observation eliminates persistent-cache work, while a race still retries against new bytes.
+    #[cfg(unix)]
+    #[test]
+    fn retained_file_digest_avoids_cache_io_and_rechecks_races() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("native");
+        let cache = root.path().join("digest.json");
+        fs::write(&source, b"native bytes")?;
+        let first = super::digest_observed_file(&source, Some(&cache))?;
+        let retained = super::MaterializedFileDigest {
+            stamp: first.stamp,
+            digest: first.digest.clone(),
+        };
+        fs::remove_file(&cache)?;
+        let mut cache_requests = 0;
+        let mut observations = 0;
+        let warm = super::digest_observed_file_with_retained(
+            &source,
+            Some(&retained),
+            || {
+                cache_requests += 1;
+                Some(cache.clone())
+            },
+            |file| {
+                observations += 1;
+                super::materialized_file_stamp(file)
+            },
+        )?;
+        assert_eq!(warm.digest, first.digest);
+        assert_eq!(warm.input_bytes_read, 0);
+        assert_eq!(observations, 2);
+        assert_eq!(cache_requests, 0);
+        assert!(!cache.exists());
+
+        let modified = fs::metadata(&source)?.modified()?;
+        observations = 0;
+        let changed = super::digest_observed_file_with_retained(
+            &source,
+            Some(&retained),
+            || {
+                cache_requests += 1;
+                Some(cache.clone())
+            },
+            |file| {
+                observations += 1;
+                if observations == 2 {
+                    fs::write(&source, b"edited bytes")?;
+                    fs::File::options()
+                        .write(true)
+                        .open(&source)?
+                        .set_times(fs::FileTimes::new().set_modified(modified))?;
+                }
+                super::materialized_file_stamp(file)
+            },
+        )?;
+        assert_eq!(changed.digest, crate::digest_bytes(b"edited bytes"));
+        assert_eq!(changed.input_bytes_read, 12);
+        assert_eq!(observations, 4);
+        assert_eq!(cache_requests, 1);
+        Ok(())
+    }
+
+    /// Original owners retain bounded observations, but unchanged inventory, bytes and coordinates still govern reuse.
+    #[cfg(unix)]
+    #[test]
+    fn retained_payload_observations_preserve_complete_inventory() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let source = project.path().join("native");
+        fs::write(&source, b"native bytes")?;
+        let store = OvenStore::new(temp.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let mut publication = request(project.path(), "observed-owner", b"payload")?;
+        publication.materialized_files = vec![OvenArtifactMaterializedFile {
+            relative_path: "nested/native".to_string(),
+            source_path: source,
+        }];
+        let manifest = store.publish(&publication)?;
+        let selected = store.select_payloads_for_execution(std::slice::from_ref(&manifest.identity))?;
+        let owner = &selected[0];
+        assert_eq!(
+            owner
+                .materialized_observations
+                .lock()
+                .map_err(|_| "observation lock poisoned")?
+                .len(),
+            0
+        );
+        owner.verify_admitted_payload()?;
+        assert_eq!(
+            owner
+                .materialized_observations
+                .lock()
+                .map_err(|_| "observation lock poisoned")?
+                .len(),
+            1
+        );
+        let native = owner.artifact_root.join("nested/native");
+        let cache = super::materialized_digest_cache_path(&native).ok_or("native cache path absent")?;
+        fs::remove_file(&cache)?;
+        owner.verify_admitted_payload()?;
+        assert!(
+            !cache.exists(),
+            "retained owner reopened or recreated persistent digest state"
+        );
+
+        let held = temp.path().join("held-native");
+        fs::rename(&native, &held)?;
+        assert!(owner.verify_admitted_payload().is_err());
+        fs::write(&native, b"edited bytes")?;
+        assert!(owner.verify_admitted_payload().is_err());
+        fs::remove_file(&native)?;
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&held, &native)?;
+            assert!(owner.verify_admitted_payload().is_err());
+            fs::remove_file(&native)?;
+        }
+        fs::rename(&held, &native)?;
+        owner.verify_admitted_payload()?;
+        fs::write(owner.artifact_root.join("injected"), b"unlisted")?;
+        assert!(owner.verify_admitted_payload().is_err());
+        fs::remove_file(owner.artifact_root.join("injected"))?;
+        owner.verify_admitted_payload()?;
+        let fresh = store.select_payloads_for_execution(std::slice::from_ref(&manifest.identity))?;
+        assert_eq!(
+            fresh[0]
+                .materialized_observations
+                .lock()
+                .map_err(|_| "observation lock poisoned")?
+                .len(),
+            0
+        );
+        Ok(())
+    }
+
+    /// Platforms without a replacement-sensitive identity cannot reuse an observed digest, even under a held owner.
+    #[test]
+    fn retained_file_digest_without_stable_identity_rehashes() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("native");
+        fs::write(&source, b"native bytes")?;
+        let unsupported_stamp = |file: &fs::File| {
+            let mut stamp = super::materialized_file_stamp(file)?;
+            stamp.identity.clear();
+            Ok(stamp)
+        };
+        let first = super::digest_observed_file_with_retained(&source, None, || None, unsupported_stamp)?;
+        let retained = super::MaterializedFileDigest {
+            stamp: first.stamp,
+            digest: first.digest.clone(),
+        };
+        let repeated = super::digest_observed_file_with_retained(&source, Some(&retained), || None, unsupported_stamp)?;
+        assert_eq!(repeated.digest, first.digest);
+        assert_eq!(repeated.input_bytes_read, 12);
+        Ok(())
+    }
 
     /// Cold reads, warm reuse, edits, replacement, malformed records and cache failures preserve byte authority.
     #[cfg(unix)]
