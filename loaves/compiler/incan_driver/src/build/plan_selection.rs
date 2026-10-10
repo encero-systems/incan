@@ -118,7 +118,9 @@ pub fn canonical_project_inspection_dependencies_with_native_sdk(
 }
 
 /// Digest each promoted dependency independently so generated test batches can prove an exact subset later.
-fn oven_test_dependency_root_digests(dependencies: &[DependencySpec]) -> CliResult<BTreeMap<String, String>> {
+pub(super) fn oven_test_dependency_root_digests(
+    dependencies: &[DependencySpec],
+) -> CliResult<BTreeMap<String, String>> {
     let mut roots = BTreeMap::new();
     for dependency in dependencies {
         let alias = dependency.crate_name.replace('-', "_");

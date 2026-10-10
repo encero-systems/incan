@@ -67,6 +67,11 @@
       "declaration": "loaves/oven/oven_model/src/lib.loaf.toml",
       "dependency_graph": "workspaces/oven/compiler-oven-tests-native.json",
       "use_compiler_resolution": true
+    },
+    "loaves/toolchain/oven-cli/src/lib.rs": {
+      "declaration": "workspaces/compiler-bootstrap/test-declarations/oven-cli-unit.loaf.toml",
+      "dependency_graph": "workspaces/oven/compiler-metadata-tests-native.json",
+      "use_compiler_resolution": true
     }
   }
 }

@@ -18,8 +18,9 @@ use crate::build::backend_selection::{finalize_backend_receipt, select_build_bac
 use crate::build::caller_facet::CallerFacetRequest;
 use crate::build::caller_owned::append_oven_interop_execution_build_inputs;
 use crate::build::library_exports::{
-    LibraryReexportResolver, collect_library_rust_abi, collect_library_rust_abi_query_paths, module_key,
-    public_ordinal_type_identities, resolve_library_project_root, validate_library_entrypoint,
+    LibraryReexportResolver, collect_library_rust_abi_query_paths, collect_library_rust_abi_with_shipped,
+    library_rust_abi_source_queries, module_key, public_ordinal_type_identities, resolve_library_project_root,
+    validate_library_entrypoint,
 };
 use crate::build::library_outputs::{
     dependency_artifact_skips_canonical_lock, library_output_path, library_rust_inspection_required,
@@ -127,6 +128,8 @@ struct CheckedPublicLibraryMetadata {
     selected_exports: Vec<CheckedNamedExport>,
     type_info: BTreeMap<PathBuf, typechecker::TypeCheckInfo>,
     stdlib_cache: StdlibAstCache,
+    #[cfg(feature = "rust_inspect")]
+    rust_metadata_queries: BTreeSet<String>,
 }
 
 /// Check the selected package projection once and retain only its public export contract.
@@ -153,6 +156,8 @@ fn checked_public_library_metadata(
     let module_idx_by_key = module_key_index(&modules);
     let mut stdlib_cache = StdlibAstCache::new();
     let mut checked_type_info_by_path = BTreeMap::new();
+    #[cfg(feature = "rust_inspect")]
+    let mut rust_metadata_queries = BTreeSet::new();
 
     let typecheck_start = Instant::now();
     for (idx, module) in modules.iter().enumerate() {
@@ -200,6 +205,8 @@ fn checked_public_library_metadata(
                     checked_exports_by_name(module_exports),
                 );
                 checked_type_info_by_path.insert(module.file_path.clone(), checker.type_info().clone());
+                #[cfg(feature = "rust_inspect")]
+                rust_metadata_queries.extend(checker.observed_rust_metadata_queries());
                 stdlib_cache = checker.stdlib_cache.clone();
             }
             Err(errs) => {
@@ -340,6 +347,8 @@ fn checked_public_library_metadata(
         selected_exports,
         type_info: checked_type_info_by_path,
         stdlib_cache,
+        #[cfg(feature = "rust_inspect")]
+        rust_metadata_queries,
     })
 }
 
@@ -1064,6 +1073,9 @@ fn prepare_library_project_with_context(
     record_timing(&mut timings_ms, "library_resolve_dependencies", dependency_start);
     #[cfg(feature = "rust_inspect")]
     let metadata_query_paths = collect_library_rust_abi_query_paths(&modules, &rust_extern_contexts);
+    #[cfg(feature = "rust_inspect")]
+    let inspection_query_paths =
+        library_rust_abi_source_queries(&metadata_query_paths, provider_plan.library_manifest_index());
     #[cfg(not(feature = "rust_inspect"))]
     let metadata_query_paths: Vec<String> = Vec::new();
 
@@ -1280,9 +1292,9 @@ fn prepare_library_project_with_context(
         Some(context.inspection_workspace()?)
     } else {
         if normal_oven {
-            !metadata_query_paths.is_empty()
+            !inspection_query_paths.is_empty()
         } else {
-            library_rust_inspection_required(artifact_only, &metadata_query_paths)
+            library_rust_inspection_required(artifact_only, &inspection_query_paths)
         }
         .then(|| {
             if normal_oven {
@@ -1328,7 +1340,7 @@ fn prepare_library_project_with_context(
                 clear_cargo_lock,
                 cargo_policy_flags: cargo_flags.clone(),
                 cargo_target_dir: &rust_inspect_target_path,
-                rust_inspect_query_paths: &metadata_query_paths,
+                rust_inspect_query_paths: &inspection_query_paths,
                 rust_derive_probe_paths: &derives,
                 prepare_when_empty: true,
                 direct_oven_inspection: normal_oven,
@@ -1394,6 +1406,13 @@ fn prepare_library_project_with_context(
         .copied()
         .unwrap_or_default();
     let manifest_start = Instant::now();
+    #[cfg(feature = "rust_inspect")]
+    let metadata_query_paths = metadata_query_paths
+        .into_iter()
+        .chain(public_metadata.rust_metadata_queries)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
     let mut library_manifest = public_metadata.manifest;
     let selected_exports = public_metadata.selected_exports;
     let checked_type_info_by_path = public_metadata.type_info;
@@ -1467,11 +1486,20 @@ fn prepare_library_project_with_context(
         checked_type_info_by_path: &checked_type_info_by_path,
     })?;
     #[cfg(feature = "rust_inspect")]
-    if let Some(rust_inspect_manifest_dir) = rust_inspect_manifest_dir.as_ref() {
-        rust_inspect_manifest_dir.verify_ordinary_native()?;
-        library_manifest.rust_abi =
-            collect_library_rust_abi(rust_inspect_manifest_dir.manifest_dir(), &metadata_query_paths)?;
-        rust_inspect_manifest_dir.verify_ordinary_native()?;
+    {
+        if let Some(workspace) = rust_inspect_manifest_dir.as_ref() {
+            workspace.verify_ordinary_native()?;
+        }
+        library_manifest.rust_abi = collect_library_rust_abi_with_shipped(
+            rust_inspect_manifest_dir
+                .as_ref()
+                .map(|workspace| workspace.manifest_dir()),
+            &metadata_query_paths,
+            provider_plan.library_manifest_index(),
+        )?;
+        if let Some(workspace) = rust_inspect_manifest_dir.as_ref() {
+            workspace.verify_ordinary_native()?;
+        }
     }
     record_timing(&mut timings_ms, "library_build_manifest_metadata", manifest_start);
     if let Some(elapsed) = timings_ms.get_mut("library_build_manifest_metadata") {

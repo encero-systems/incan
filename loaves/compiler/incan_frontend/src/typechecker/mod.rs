@@ -91,7 +91,7 @@ mod identity_surface_tests;
 #[cfg(test)]
 pub mod tests;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashMap, HashSet};
 #[cfg(feature = "rust_inspect")]
 use std::path::PathBuf;
@@ -856,6 +856,8 @@ pub struct TypeChecker {
     /// Lossless numeric widening converts one value, so it applies only at depth zero; see
     /// [`TypeChecker::nested_types_compatible`].
     nested_type_compatibility_depth: Cell<usize>,
+    /// Successful canonical Rust ABI lookups made by this checker, including inferred receiver and return types.
+    rust_metadata_queries: RefCell<BTreeSet<String>>,
     /// Actual complete-type lookup requests observed by this isolated checker in demand regression tests.
     #[cfg(test)]
     rust_complete_type_lookup_requests: Cell<usize>,
@@ -1016,6 +1018,7 @@ impl TypeChecker {
             pending_trait_supertraits: Vec::new(),
             type_compatibility_depth: Cell::new(0),
             nested_type_compatibility_depth: Cell::new(0),
+            rust_metadata_queries: RefCell::new(BTreeSet::new()),
             #[cfg(test)]
             rust_complete_type_lookup_requests: Cell::new(0),
             #[cfg(feature = "rust_inspect")]
@@ -1192,9 +1195,42 @@ impl TypeChecker {
         self.rust_inspect_manifest_dir = Some(dir);
     }
 
+    /// Return canonical Rust metadata queries successfully resolved by this checker.
+    ///
+    /// Library publication uses these paths in addition to explicit imports so inferred return receivers and other
+    /// transitive ABI lookups survive the source-to-Loaf boundary. Failed speculative lookups are not requirements.
+    pub fn observed_rust_metadata_queries(&self) -> BTreeSet<String> {
+        self.rust_metadata_queries.borrow().clone()
+    }
+
+    /// Retain a successful lookup's nominal query spelling without turning missing speculative paths into demands.
+    fn record_rust_metadata_query(&self, canonical_path: &str) {
+        let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
+        if let Some(lookup_path) = Self::rust_metadata_lookup_path(canonical_path) {
+            let mut queries = self.rust_metadata_queries.borrow_mut();
+            if !queries.contains(lookup_path) {
+                queries.insert(lookup_path.to_string());
+            }
+        }
+    }
+
+    /// Resolve Rust metadata through the selected shipped ABI or inspection authority and retain successful demand.
+    pub fn rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+        let metadata = self.lookup_rust_item_metadata_for_path(canonical_path)?;
+        self.record_rust_metadata_query(canonical_path);
+        Some(metadata)
+    }
+
+    /// Resolve a demanded Rust item, allowing the selected inspection authority to extract missing metadata.
+    pub fn rust_item_metadata_for_path_blocking(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+        let metadata = self.lookup_rust_item_metadata_for_path_blocking(canonical_path)?;
+        self.record_rust_metadata_query(canonical_path);
+        Some(metadata)
+    }
+
     #[cfg(feature = "rust_inspect")]
     /// Return Rust item metadata, preferring shipped dependency ABI over rust-inspect cache reads.
-    pub fn rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+    fn lookup_rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
         let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
         if let Some(metadata) = self.provider_plan.library_manifest_index().rust_abi_item(lookup_path) {
@@ -1246,7 +1282,7 @@ impl TypeChecker {
 
     #[cfg(feature = "rust_inspect")]
     /// Return Rust item metadata, falling back to extraction only after shipped ABI and cache-only reads miss.
-    pub fn rust_item_metadata_for_path_blocking(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+    fn lookup_rust_item_metadata_for_path_blocking(&self, canonical_path: &str) -> Option<RustItemMetadata> {
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
         let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
         if !Self::rust_identity_metadata_base_should_probe(lookup_path) {
@@ -1399,7 +1435,7 @@ impl TypeChecker {
 
     #[cfg(not(feature = "rust_inspect"))]
     /// Return Rust item metadata from shipped dependency ABI when rust-inspect support is not compiled in.
-    pub fn rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+    fn lookup_rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
         let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
         self.provider_plan.library_manifest_index().rust_abi_item(lookup_path)
@@ -1422,8 +1458,8 @@ impl TypeChecker {
 
     #[cfg(not(feature = "rust_inspect"))]
     /// Return Rust item metadata from shipped dependency ABI when rust-inspect support is not compiled in.
-    pub fn rust_item_metadata_for_path_blocking(&self, canonical_path: &str) -> Option<RustItemMetadata> {
-        self.rust_item_metadata_for_path(canonical_path)
+    fn lookup_rust_item_metadata_for_path_blocking(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+        self.lookup_rust_item_metadata_for_path(canonical_path)
     }
 
     /// Split top-level generic arguments from a Rust display type.

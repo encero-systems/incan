@@ -1,8 +1,8 @@
 //! Actual ordinary native library publication with complete original producer requests (#1337/#1698).
 //!
 //! This deliberately requires a coherent source compiler/engine and explicit real resolved support graph. It
-//! exercises plain libraries and explicit scalar sysroot ABI uses, not arbitrary semantic/macro coverage or complete
-//! SDK removal.
+//! exercises plain libraries and scalar sysroot/declared Rust ABI uses, including native source invalidation, not
+//! arbitrary semantic/macro coverage or complete SDK removal.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -39,7 +39,48 @@ const SELECTOR: &str =
     "build::bake::ordinary_native_publication_tests::ordinary_native_library_publication_first_replay_and_source_edit";
 const ABI_SELECTOR: &str =
     "build::bake::ordinary_native_publication_tests::ordinary_native_sysroot_abi_publication_replay_and_runtime";
+const DECLARED_SELECTOR: &str =
+    "build::bake::ordinary_native_publication_tests::ordinary_native_declared_rust_abi_publication_replay_and_runtime";
 const PROFILES: [&str; 2] = ["debug", "release"];
+
+/// Select equivalent ordinary publication journeys with distinct native semantic demand owners.
+#[derive(Clone, Copy)]
+enum Publication {
+    Plain,
+    Sysroot,
+    Declared,
+}
+
+impl Publication {
+    /// Bind every nonempty journey to its exact imported ABI item.
+    fn abi_query(self) -> Option<&'static str> {
+        match self {
+            Self::Plain => None,
+            Self::Sysroot => Some("std::thread::panicking"),
+            Self::Declared => Some("probe_leaf::ready"),
+        }
+    }
+
+    /// Produce an observable Incan source edit without changing the native dependency selection.
+    fn source(self, edited: bool) -> &'static str {
+        match (self, edited) {
+            (Self::Plain, false) => "pub def answer() -> int:\n    return 42\n",
+            (Self::Plain, true) => "pub def answer() -> int:\n    return 43\n",
+            (Self::Sysroot, false) => {
+                "from rust::std::thread import panicking\npub def answer() -> bool:\n    return panicking()\n"
+            }
+            (Self::Sysroot, true) => {
+                "from rust::std::thread import panicking\npub def answer() -> bool:\n    return not panicking()\n"
+            }
+            (Self::Declared, false) => {
+                "from rust::probe_leaf import ready\npub def answer() -> bool:\n    return ready()\n"
+            }
+            (Self::Declared, true) => {
+                "from rust::probe_leaf import ready\npub def answer() -> bool:\n    return not ready()\n"
+            }
+        }
+    }
+}
 
 /// Require each explicit genuine graph/registry/compiler coordinate instead of skipping unavailable prerequisites.
 fn required_path(name: &str) -> TestResult<PathBuf> {
@@ -148,7 +189,9 @@ fn outputs(
         let digest = oven_store::digest_bytes(&fs::read(artifact.join(&profile.library_relative_path))?);
         assert_eq!(digest, profile.library_digest);
         assert_eq!(output.receipt_identity, profile.receipt.identity);
-        let projected = native.runtime_inputs(&profile.receipt.intent, &[], &[], &[], &[], root)?;
+        let project = oven_model::manifest::ProjectManifest::load(&root.join("loaf.toml"))?;
+        let dependencies = project.rust_dependency_values();
+        let projected = native.runtime_inputs(&profile.receipt.intent, &[], &[], &dependencies, &dependencies, root)?;
         assert_eq!(
             profile.receipt.sources.build_unit_inputs.get("ordinary-native-roots"),
             projected.get("ordinary-native-roots"),
@@ -218,7 +261,7 @@ fn ordinary_native_library_publication_first_replay_and_source_edit() -> TestRes
     if std::env::var_os(CHILD).is_none() {
         return child(SELECTOR);
     }
-    publication(false)
+    publication(Publication::Plain)
 }
 
 /// Ship real sysroot callable metadata in the ordinary loaf and run both native profiles before and after an edit.
@@ -228,14 +271,56 @@ fn ordinary_native_sysroot_abi_publication_replay_and_runtime() -> TestResult {
     if std::env::var_os(CHILD).is_none() {
         return child(ABI_SELECTOR);
     }
-    publication(true)
+    publication(Publication::Sysroot)
 }
 
-/// Run the identical ordinary admission, publication, reuse and source-edit journey with optional sysroot demand.
-fn publication(sysroot_abi: bool) -> TestResult {
+/// Ship an authored Rust dependency's ABI in an ordinary loaf and observe replay and source edits in both profiles.
+#[test]
+#[ignore = "requires coherent source compiler/engine and explicit real ordinary support graph/index/blobs"]
+fn ordinary_native_declared_rust_abi_publication_replay_and_runtime() -> TestResult {
+    if std::env::var_os(CHILD).is_none() {
+        return child(DECLARED_SELECTOR);
+    }
+    publication(Publication::Declared)
+}
+
+/// Add a real source-owned Rust dependency to the complete support producer request without synthetic owners.
+fn declared_graph(root: &Path, graph: &Path) -> TestResult<PathBuf> {
+    let project = root.join("probe_leaf");
+    fs::create_dir_all(project.join("src"))?;
+    fs::write(project.join("src/lib.rs"), "pub fn ready() -> bool { false }\n")?;
+    fs::write(
+        project.join("loaf.toml"),
+        "[project]\nname='probe_leaf'\nversion='1.0.0'\n[rust]\nname='probe_leaf'\ntype='lib'\nedition='2024'\n",
+    )?;
+    let owner = graph.parent().ok_or("graph has no owner")?;
+    let mut document: serde_json::Value = serde_json::from_slice(&fs::read(graph)?)?;
+    let lock = document["registry_lock"].as_str().ok_or("graph lock missing")?;
+    document["registry_lock"] = serde_json::json!(owner.join(lock).canonicalize()?);
+    for facet in document["facets"].as_array_mut().ok_or("graph facets missing")? {
+        let path = facet["project"].as_str().ok_or("facet project missing")?;
+        facet["project"] = serde_json::json!(owner.join(path).canonicalize()?);
+    }
+    document["facets"]
+        .as_array_mut()
+        .ok_or("graph facets missing")?
+        .push(serde_json::json!({"project": project, "features": [], "domain": "target"}));
+    let output = root.join("graph.json");
+    fs::write(&output, serde_json::to_vec_pretty(&document)?)?;
+    Ok(output)
+}
+
+/// Run the identical ordinary admission, publication, reuse and source-edit journey for genuine native demands.
+fn publication(variant: Publication) -> TestResult {
     // ---- Genuine executable/source/compiler prerequisites and productive hostile ambient source ----
     assert_eq!(crate::build::plan_authority::explicit_bake_profiles(), PROFILES);
-    let graph = required_path("INCAN_ORDINARY_LIBRARY_GRAPH")?;
+    let original_graph = required_path("INCAN_ORDINARY_LIBRARY_GRAPH")?;
+    let authored = tempfile::tempdir()?;
+    let graph = if matches!(variant, Publication::Declared) {
+        declared_graph(authored.path(), &original_graph)?
+    } else {
+        original_graph
+    };
     let index = required_path("INCAN_ORDINARY_LIBRARY_INDEX")?;
     let blobs = required_path("INCAN_ORDINARY_LIBRARY_BLOBS")?;
     required_path("CARGO_BIN_EXE_incan")?;
@@ -367,19 +452,34 @@ fn publication(sysroot_abi: bool) -> TestResult {
     // ---- Fresh ordinary checked dependency admission, actual publication and checked metadata replay ----
     let root = tempfile::tempdir()?;
     fs::create_dir_all(root.path().join("src"))?;
-    fs::write(
-        root.path().join("loaf.toml"),
-        "[project]\nname='ordinary_native_publication'\nversion='1.0.0'\n",
-    )?;
+    let mut manifest = "[project]\nname='ordinary_native_publication'\nversion='1.0.0'\n".to_string();
+    if matches!(variant, Publication::Declared) {
+        manifest.push_str(&format!(
+            "[dependencies]\nprobe_leaf={{loaf='probe_leaf',path='{}'}}\n",
+            authored.path().join("probe_leaf").display()
+        ));
+    }
+    fs::write(root.path().join("loaf.toml"), manifest)?;
+    if matches!(variant, Publication::Declared) {
+        let project = oven_model::manifest::ProjectManifest::load(&root.path().join("loaf.toml"))?;
+        let declared = project.rust_dependency_values();
+        native.verify_dependencies(&declared, root.path())?;
+        let mut wrong_features = declared.clone();
+        wrong_features
+            .first_mut()
+            .ok_or("declared dependency missing")?
+            .features
+            .push("unprepared".to_string());
+        assert!(native.verify_dependencies(&wrong_features, root.path()).is_err());
+        let mut wrong_source = declared;
+        wrong_source.first_mut().ok_or("declared dependency missing")?.source =
+            oven_model::manifest::DependencySource::Path {
+                path: root.path().join("absent-leaf"),
+            };
+        assert!(native.verify_dependencies(&wrong_source, root.path()).is_err());
+    }
     let entry = root.path().join("src/lib.incn");
-    fs::write(
-        &entry,
-        if sysroot_abi {
-            "from rust::std::thread import panicking\npub def answer() -> bool:\n    return panicking()\n"
-        } else {
-            "pub def answer() -> int:\n    return 42\n"
-        },
-    )?;
+    fs::write(&entry, variant.source(false))?;
     let dependencies = Arc::new(PreparedLibraryDependencies::admit(
         &[],
         &target,
@@ -423,10 +523,13 @@ fn publication(sysroot_abi: bool) -> TestResult {
         );
         assert_eq!((compiled, reused), if iteration == 0 { (2, 0) } else { (0, 2) });
         let metadata = published_metadata(root.path(), &report)?;
-        if sysroot_abi {
+        if matches!(variant, Publication::Declared) {
+            verify_declared_contract(&metadata)?;
+        }
+        if let Some(query) = variant.abi_query() {
             crate::build::library_metadata::validate_required_rust_abi(
                 metadata.manifest(),
-                &["std::thread::panicking".to_string()].into(),
+                &[query.to_string()].into(),
             )?;
             run_consumer(root.path(), &report, &native, false)?;
         }
@@ -451,14 +554,7 @@ fn publication(sysroot_abi: bool) -> TestResult {
         }
     }
     // ---- Source edit invalidates checked and both native output generations; complete request stays current ----
-    fs::write(
-        &entry,
-        if sysroot_abi {
-            "from rust::std::thread import panicking\npub def answer() -> bool:\n    return not panicking()\n"
-        } else {
-            "pub def answer() -> int:\n    return 43\n"
-        },
-    )?;
+    fs::write(&entry, variant.source(true))?;
     reset_project_lock_collection_metrics();
     super::take_library_native_output_work();
     take_metadata_request_verifications();
@@ -474,7 +570,7 @@ fn publication(sysroot_abi: bool) -> TestResult {
     );
     assert_eq!((compiled, reused), (2, 0));
     let edited_metadata = published_metadata(root.path(), &edited)?;
-    if sysroot_abi {
+    if variant.abi_query().is_some() {
         run_consumer(root.path(), &edited, &native, true)?;
     }
     let original = first.ok_or("original checked metadata missing")?;
@@ -499,6 +595,133 @@ fn publication(sysroot_abi: bool) -> TestResult {
     original.verify()?;
     edited_metadata.verify()?;
     original_requests(&input, &native, &requests, &digests)?;
+    if matches!(variant, Publication::Declared) {
+        // A native source edit makes the retained producer request stale. Reprepare only the changed leaf,
+        // then prove that an unchanged Incan consumer observes the new dependency body in both profiles.
+        let unchanged_incan_source = fs::read(&entry)?;
+        fs::write(
+            authored.path().join("probe_leaf/src/lib.rs"),
+            "pub fn ready() -> bool { true }\n",
+        )?;
+        assert!(native.verify().is_err());
+        assert!(bake_admitted_library(&input, &features, None).is_err());
+        let refreshed = Arc::new(OrdinaryLibraryNativeProfiles::prepare(OrdinaryLibraryNativeRequest {
+            support: Arc::clone(&support),
+            graph: &graph,
+            index: &index,
+            blobs: &blobs,
+            output: native_output.path(),
+            rustc: &rustc,
+            target: &target,
+            profiles: &PROFILES,
+        })?);
+        for (profile, report) in refreshed.reports() {
+            let request = refreshed
+                .metadata()
+                .observations()
+                .get(profile)
+                .ok_or("refreshed request missing")?;
+            println!(
+                "ordinary-publication-evidence {}",
+                serde_json::json!({
+                    "phase": "native-dependency-edit", "profile": profile, "compiled": report.compiled.len(),
+                    "reused": report.reused.len(), "seconds": report.seconds,
+                })
+            );
+            assert_eq!(report.compiled.len(), 1);
+            assert_eq!(report.reused.len() + 1, request.graph().units().len());
+            assert_ne!(
+                request.verified_digest()?,
+                digests.get(profile).ok_or("original full digest missing")?
+            );
+        }
+        let session = CompilationSession::discover_with_admitted_library_dependencies(
+            &entry,
+            &features,
+            Arc::clone(&dependencies),
+        )?;
+        let refreshed_input = AdmittedLibraryPreparation::with_ordinary_native(session, Arc::clone(&refreshed))?;
+        super::take_library_native_output_work();
+        let started = std::time::Instant::now();
+        let changed = bake_admitted_library(&refreshed_input, &features, None)?;
+        let (compiled, reused) = super::take_library_native_output_work();
+        println!(
+            "ordinary-publication-evidence {}",
+            serde_json::json!({
+                "phase": "publish-dependency-edit", "seconds": started.elapsed().as_secs_f64(),
+                "compiled": compiled, "reused": reused,
+            })
+        );
+        assert_eq!((compiled, reused), (2, 0));
+        let changed_metadata = published_metadata(root.path(), &changed)?;
+        verify_declared_contract(&changed_metadata)?;
+        assert_ne!(
+            edited_metadata.reference().owner_identity,
+            changed_metadata.reference().owner_identity
+        );
+        assert_ne!(
+            edited_metadata.recipe().semantic_authority_digest,
+            changed_metadata.recipe().semantic_authority_digest
+        );
+        assert_eq!(unchanged_incan_source, fs::read(&entry)?);
+        assert_ne!(
+            edited_metadata.recipe().source_digest,
+            changed_metadata.recipe().source_digest
+        );
+        run_consumer(root.path(), &changed, &refreshed, false)?;
+        super::take_library_native_output_work();
+        let repeated = bake_admitted_library(&refreshed_input, &features, None)?;
+        assert_eq!(super::take_library_native_output_work(), (0, 2));
+        assert_eq!(
+            outputs(root.path(), &changed, &refreshed)?,
+            outputs(root.path(), &repeated, &refreshed)?
+        );
+        run_consumer(root.path(), &repeated, &refreshed, false)?;
+        changed_metadata.verify()?;
+        refreshed.verify()?;
+    }
+    Ok(())
+}
+
+/// Serialized ordinary contracts cannot substitute a crate, omit coverage or inject inline source overrides.
+fn verify_declared_contract(metadata: &SelectedLibraryMetadata) -> TestResult {
+    use crate::build::library_metadata::requirements::CheckedLibraryRequirements;
+
+    let checked = metadata
+        .checked_requirements()
+        .ok_or("declared publication lacks checked requirements")?;
+    checked.require_source_inspection_native()?;
+    assert_eq!(checked.source_inline_crates, ["probe_leaf".to_string()].into());
+    let original = serde_json::to_value(checked)?;
+    for crates in [
+        serde_json::json!([]),
+        serde_json::json!(["other"]),
+        serde_json::json!(["probe_leaf", "other"]),
+    ] {
+        let mut payload = original.clone();
+        payload["source_inline_crates"] = crates;
+        let decoded: CheckedLibraryRequirements = serde_json::from_value(payload)?;
+        assert!(decoded.require_source_inspection_native().is_err());
+    }
+    for (field, value) in [
+        ("crate_name", serde_json::json!("other")),
+        ("version", serde_json::json!("1")),
+        ("features", serde_json::json!(["unobserved"])),
+    ] {
+        let mut payload = original.clone();
+        payload["imports"][0][field] = value;
+        let decoded: CheckedLibraryRequirements = serde_json::from_value(payload)?;
+        assert!(decoded.require_source_inspection_native().is_err(), "{field}");
+    }
+    for field in ["scalar_native_imports", "declared_native_crates"] {
+        let mut payload = original.clone();
+        payload["native_demands"]["observed"]
+            .as_object_mut()
+            .ok_or("native facts missing")?
+            .remove(field);
+        let decoded: CheckedLibraryRequirements = serde_json::from_value(payload)?;
+        assert!(decoded.require_source_inspection_native().is_err(), "{field}");
+    }
     Ok(())
 }
 
