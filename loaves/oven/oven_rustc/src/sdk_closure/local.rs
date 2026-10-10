@@ -33,6 +33,28 @@ pub fn compile_local_sdk_facets(
     output: &Path,
     rustc: &Path,
 ) -> Result<(), Error> {
+    compile_local_native_facets_for_profile(closure, selections, owner, output, rustc, "debug")
+}
+
+/// Compile a local graph under one explicit profile, retaining its exact dependency and source bindings.
+///
+/// The ordinary native producer supplies the profile. Legacy SDK callers retain the debug wrapper; this helper
+/// keeps the existing compiler-host target policy and never reinterprets source selections or resolves dependencies.
+pub(crate) fn compile_local_native_facets_for_profile(
+    closure: &mut SdkCompiledClosure,
+    selections: &[LocalFacetSelection],
+    owner: &Path,
+    output: &Path,
+    rustc: &Path,
+    profile: &str,
+) -> Result<(), Error> {
+    if !matches!(profile, "debug" | "release") {
+        return Err("local native profile must be debug or release".into());
+    }
+    if selections.is_empty() {
+        return Ok(());
+    }
+    let target = rustc_host_target(rustc)?;
     let mut pending: BTreeSet<_> = (0..selections.len()).collect();
     let mut names = BTreeMap::new();
     for (index, selection) in selections.iter().enumerate() {
@@ -79,9 +101,16 @@ pub fn compile_local_sdk_facets(
             }
             pending.remove(&index);
             progressed = true;
-            if let Err(error) =
-                compile_local_sdk_facet(closure, &project, &selection.features, &selection.domain, output, rustc)
-            {
+            if let Err(error) = compile_local_native_facet_for_target_and_profile(
+                closure,
+                &project,
+                &selection.features,
+                &selection.domain,
+                output,
+                rustc,
+                &target,
+                profile,
+            ) {
                 closure
                     .report
                     .failed
@@ -194,6 +223,29 @@ pub fn compile_local_sdk_facet_for_target(
     rustc: &Path,
     target: &str,
 ) -> Result<(), Error> {
+    compile_local_native_facet_for_target_and_profile(
+        closure, project, features, domain, output, rustc, target, "debug",
+    )
+}
+
+/// Compile one actual local native facet with profile-bound optimization, receipt identity and dependency owners.
+///
+/// An already selected unit or dependency from another profile refuses rather than being relabelled or linked into
+/// this cohort. The existing target-specific debug wrapper preserves auxiliary-target callers' behavior.
+#[allow(clippy::too_many_arguments)]
+fn compile_local_native_facet_for_target_and_profile(
+    closure: &mut SdkCompiledClosure,
+    project: &Path,
+    features: &[String],
+    domain: &str,
+    output: &Path,
+    rustc: &Path,
+    target: &str,
+    profile: &str,
+) -> Result<(), Error> {
+    if !matches!(profile, "debug" | "release") {
+        return Err("local native profile must be debug or release".into());
+    }
     if !matches!(domain, "host" | "target") {
         return Err("local SDK facet domain must be host or target".into());
     }
@@ -202,6 +254,11 @@ pub fn compile_local_sdk_facet_for_target(
     let snapshot = tempfile::Builder::new().prefix("sdk-local-").tempdir_in(output)?;
     let mut unit = prepare_local_unit(project, snapshot.path(), features, domain)?;
     let edges = selected_local_edges(&unit, closure)?;
+    for (alias, index) in &edges {
+        if closure.units[*index].owner.manifest.intent.profile != profile {
+            return Err(format!("local dependency {alias} does not match requested {profile} profile").into());
+        }
+    }
     if let Some(selected) = closure
         .units
         .iter()
@@ -211,6 +268,7 @@ pub fn compile_local_sdk_facet_for_target(
             || selected.binding.archive_digest != unit.binding.archive_digest
             || selected.binding.features != unit.binding.features
             || selected.owner.manifest.intent.target != target
+            || selected.owner.manifest.intent.profile != profile
             || selected.owner.manifest.intent.toolchain != rustc_identity(rustc)?
         {
             return Err(format!(
@@ -230,10 +288,10 @@ pub fn compile_local_sdk_facet_for_target(
             &dependencies,
         )?;
         selected.owner.verify_admitted_payload()?;
-        closure
-            .report
-            .reused
-            .push(format!("{} {} {domain} debug", unit.binding.loaf, unit.binding.version));
+        closure.report.reused.push(format!(
+            "{} {} {domain} {profile}",
+            unit.binding.loaf, unit.binding.version
+        ));
         return Ok(());
     }
     let (source, lease) =
@@ -262,7 +320,7 @@ pub fn compile_local_sdk_facet_for_target(
         store: &store,
         compiler_digest: compiler_closure_digest(rustc, target)?,
         compiler_executable: oven_store::store::digest_regular_file(&rustc.canonicalize()?)?.1,
-        profile: "debug",
+        profile,
         unit_codegen: &[],
     };
     let selected_dependencies = edges
@@ -278,7 +336,7 @@ pub fn compile_local_sdk_facet_for_target(
         .map(|(name, index)| serde_json::json!({"crate": index, "name": name}))
         .collect();
     let inspection = inspection_unit(&unit, &owner.artifact_root.join("source"), dependencies)?;
-    let label = format!("{} {} {domain} debug", unit.binding.loaf, unit.binding.version);
+    let label = format!("{} {} {domain} {profile}", unit.binding.loaf, unit.binding.version);
     closure.units.push(SdkCompiledUnit {
         binding: unit.binding,
         output: path,
@@ -734,8 +792,8 @@ pub(crate) fn native_required_features(
 #[cfg(test)]
 mod tests {
     use super::{
-        LocalFacetSelection, compile_local_sdk_facet, compile_local_sdk_facets, local_feature_selection,
-        prepare_local_unit,
+        LocalFacetSelection, compile_local_native_facet_for_target_and_profile, compile_local_sdk_facet,
+        compile_local_sdk_facets, local_feature_selection, prepare_local_unit,
     };
     use crate::sdk_closure::{SdkClosureReport, SdkCompiledClosure};
     use std::collections::BTreeMap;
@@ -899,6 +957,109 @@ mod tests {
         );
         assert!(!root.join("Cargo.toml").exists());
         assert!(!root.join("build.rs").exists());
+        Ok(())
+    }
+
+    /// An existing local owner and a real dependency cannot be reused under another requested profile.
+    #[test]
+    fn dev7_native_local_profile_refuses_mixed_selected_cohorts() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let output = tempfile::tempdir()?;
+        for name in ["leaf", "consumer"] {
+            let project = root.path().join(name);
+            std::fs::create_dir_all(project.join("src"))?;
+            std::fs::write(
+                project.join("loaf.toml"),
+                format!(
+                    "[project]\nname='{name}'\nversion='1.0.0'\n[rust]\nname='{name}'\ntype='lib'\nedition='2024'\n{}",
+                    if name == "consumer" {
+                        "[dependencies]\nleaf={loaf='leaf',path='../leaf'}\n"
+                    } else {
+                        ""
+                    }
+                ),
+            )?;
+            std::fs::write(
+                project.join("src/lib.rs"),
+                if name == "leaf" {
+                    "pub fn value() -> u8 { 1 }"
+                } else {
+                    "pub fn value() -> u8 { leaf::value() }"
+                },
+            )?;
+        }
+        let rustc = crate::rustc::resolve_active_rustc()?;
+        let target = crate::rustc::rustc_host_target(&rustc)?;
+        let mut closure = SdkCompiledClosure {
+            report: SdkClosureReport::default(),
+            units: Vec::new(),
+            auxiliary_targets: BTreeMap::new(),
+        };
+        let leaf = root.path().join("leaf");
+        compile_local_sdk_facet(&mut closure, &leaf, &[], "target", output.path(), &rustc)?;
+        let original = closure.units[0].compiled_identity().to_string();
+        let existing = compile_local_native_facet_for_target_and_profile(
+            &mut closure,
+            &leaf,
+            &[],
+            "target",
+            output.path(),
+            &rustc,
+            &target,
+            "release",
+        )
+        .err()
+        .ok_or("selected debug owner was accepted as release")?;
+        assert!(existing.to_string().contains("already selected binding"), "{existing}");
+        let dependency = compile_local_native_facet_for_target_and_profile(
+            &mut closure,
+            &root.path().join("consumer"),
+            &[],
+            "target",
+            output.path(),
+            &rustc,
+            &target,
+            "release",
+        )
+        .err()
+        .ok_or("debug dependency was accepted in release consumer")?;
+        assert!(
+            dependency.to_string().contains("requested release profile"),
+            "{dependency}"
+        );
+        assert_eq!(closure.units.len(), 1);
+        assert_eq!(closure.units[0].compiled_identity(), original);
+        assert_eq!(closure.report.compiled.len(), 1);
+        assert!(closure.report.reused.is_empty());
+        Ok(())
+    }
+
+    /// Unsupported profiles refuse before touching sources, the compiler or the output directory.
+    #[test]
+    fn dev7_native_local_profile_refuses_unsupported_before_preparation() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let absent = root.path().join("absent");
+        let output = root.path().join("output");
+        let mut closure = SdkCompiledClosure {
+            report: SdkClosureReport::default(),
+            units: Vec::new(),
+            auxiliary_targets: BTreeMap::new(),
+        };
+        let error = compile_local_native_facet_for_target_and_profile(
+            &mut closure,
+            &absent,
+            &[],
+            "target",
+            &output,
+            &absent,
+            "unused-target",
+            "fast",
+        )
+        .err()
+        .ok_or("unsupported profile was accepted")?;
+        assert_eq!(error.to_string(), "local native profile must be debug or release");
+        assert!(!output.exists());
+        assert!(closure.units.is_empty());
         Ok(())
     }
 
