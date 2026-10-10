@@ -15,6 +15,7 @@ use incan_frontend::library_manifest::LibraryManifest;
 use incan_lang::interop::metadata::RustItemKind;
 use oven_store::store::{
     OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, OvenStoreExecutionPayload,
+    PublishedOvenStore,
 };
 use oven_store::{OvenGeneratedProjectRequest, OvenReceipt, digest_bytes, receipt_generated_project};
 use serde::{Deserialize, Serialize};
@@ -190,7 +191,11 @@ impl SelectedLibraryMetadata {
         self.owner
             .verify_admitted_payload()
             .map_err(|error| CliError::failure(error.to_string()))?;
-        validate_output_contract(&self.owner.artifact_root, &self.payload).map(|_| ())
+        validate_output_contract(&self.owner.artifact_root, &self.payload)?;
+        for dependency in &self._dependency_owners {
+            dependency.verify()?;
+        }
+        Ok(())
     }
 
     /// Require a consumer's materialized checked and generated closure to match this original immutable owner.
@@ -274,6 +279,31 @@ impl SelectedLibraryMetadata {
 
     /// Retain the exact admitted dependency owners through the same original lease, without reacquiring coordinates.
     pub(crate) fn retaining_dependencies(&self, dependencies: &[Arc<SelectedLibraryMetadata>]) -> CliResult<Arc<Self>> {
+        for dependency in dependencies {
+            dependency.verify()?;
+        }
+        self.validate_dependency_owners(dependencies)?;
+        Ok(Arc::new(Self {
+            owner: Arc::clone(&self.owner),
+            payload: self.payload.clone(),
+            manifest: self.manifest.clone(),
+            _dependency_owners: dependencies.to_vec(),
+        }))
+    }
+
+    /// Require complete transitive retained contracts, without re-admission or repeated filesystem verification.
+    ///
+    /// Actual bytes are observed separately by `verify`; this structural pass refuses missing original owners.
+    pub(crate) fn verify_dependency_closure(&self) -> CliResult<()> {
+        self.validate_dependency_owners(&self._dependency_owners)?;
+        for dependency in &self._dependency_owners {
+            dependency.verify_dependency_closure()?;
+        }
+        Ok(())
+    }
+
+    /// Match the retained selections to every exact checked dependency contract, including shared alias owners.
+    fn validate_dependency_owners(&self, dependencies: &[Arc<SelectedLibraryMetadata>]) -> CliResult<()> {
         let expected = self
             .payload
             .recipe
@@ -292,7 +322,6 @@ impl SelectedLibraryMetadata {
         let actual = dependencies
             .iter()
             .map(|dependency| {
-                dependency.verify()?;
                 Ok((
                     dependency.owner.manifest.identity.clone(),
                     dependency.payload.receipt.identity.clone(),
@@ -310,12 +339,7 @@ impl SelectedLibraryMetadata {
                 "checked metadata dependency lease set disagrees with its recipe",
             ));
         }
-        Ok(Arc::new(Self {
-            owner: Arc::clone(&self.owner),
-            payload: self.payload.clone(),
-            manifest: self.manifest.clone(),
-            _dependency_owners: dependencies.to_vec(),
-        }))
+        Ok(())
     }
 
     /// Borrow validated checked planning inputs. Missing older knowledge is an explicit production replay miss.
@@ -410,11 +434,43 @@ pub fn select_library_metadata_reference(
         .ok_or_else(|| CliError::failure("missing checked library reference owner"))
 }
 
+/// Admit one original installed metadata owner without modifying the published Store or consulting authored source.
+///
+/// The caller supplies every original checked dependency selection; absent knowledge is refused rather than treated
+/// as an empty closure. Selection uses existing read-only manager/active lock files and retains active owner leases
+/// through the returned capability. It validates checked bytes and original identity, without granting installed
+/// namespace authority or establishing current authored source.
+pub fn select_published_library_metadata_reference(
+    store: &PublishedOvenStore,
+    reference: &LibraryMetadataReference,
+    dependencies: &[Arc<SelectedLibraryMetadata>],
+) -> CliResult<Arc<SelectedLibraryMetadata>> {
+    validate_metadata_reference(reference)?;
+    let candidates = store
+        .select_payloads_matching_for_execution(|manifest| manifest.identity == reference.owner_identity)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let selected = admit_metadata_reference(candidates, reference)?
+        .ok_or_else(|| CliError::failure("missing checked library reference owner"))?;
+    for dependency in dependencies {
+        dependency.verify_dependency_closure()?;
+    }
+    selected.retaining_dependencies(dependencies)
+}
+
 /// Allow absence alone to decline restoration; an existing claimed owner must satisfy the entire exact reference.
 pub(crate) fn select_optional_library_metadata_reference(
     store: &OvenStore,
     reference: &LibraryMetadataReference,
 ) -> CliResult<Option<Arc<SelectedLibraryMetadata>>> {
+    validate_metadata_reference(reference)?;
+    let candidates = store
+        .select_payloads_matching_for_execution(|manifest| manifest.identity == reference.owner_identity)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    admit_metadata_reference(candidates, reference)
+}
+
+/// Validate portable reference syntax before either writable or read-only Store selection.
+fn validate_metadata_reference(reference: &LibraryMetadataReference) -> CliResult<()> {
     if reference.schema_version != LIBRARY_METADATA_SCHEMA_VERSION {
         return Err(CliError::failure("unsupported checked library reference version"));
     }
@@ -422,10 +478,14 @@ pub(crate) fn select_optional_library_metadata_reference(
     reference
         .receipt
         .verify_identity()
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    let mut candidates = store
-        .select_payloads_matching_for_execution(|manifest| manifest.identity == reference.owner_identity)
-        .map_err(|error| CliError::failure(error.to_string()))?;
+        .map_err(|error| CliError::failure(error.to_string()))
+}
+
+/// Share exact original owner/receipt and full checked-byte admission across both Store access modes.
+fn admit_metadata_reference(
+    mut candidates: Vec<OvenStoreExecutionPayload>,
+    reference: &LibraryMetadataReference,
+) -> CliResult<Option<Arc<SelectedLibraryMetadata>>> {
     if candidates.is_empty() {
         return Ok(None);
     }
@@ -433,7 +493,8 @@ pub(crate) fn select_optional_library_metadata_reference(
         return Err(CliError::failure("competing checked library reference owners"));
     }
     let owner = candidates.remove(0);
-    if owner.manifest.kind != OvenArtifactKind::Engine
+    if owner.manifest.identity != reference.owner_identity
+        || owner.manifest.kind != OvenArtifactKind::Engine
         || owner.manifest.domain != LIBRARY_METADATA_DOMAIN
         || owner.manifest.receipt_identity != reference.receipt.identity
         || owner.manifest.build_unit_identity != reference.receipt.build_unit_identity

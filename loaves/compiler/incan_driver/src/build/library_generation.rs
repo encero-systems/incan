@@ -6,7 +6,9 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use oven_store::store::{OvenArtifactKind, OvenArtifactPublishRequest, OvenStore, OvenStoreExecutionPayload};
+use oven_store::store::{
+    OvenArtifactKind, OvenArtifactPublishRequest, OvenStore, OvenStoreExecutionPayload, PublishedOvenStore,
+};
 use oven_store::{OvenReceipt, digest_bytes, receipt_with_build_unit_input};
 use serde::{Deserialize, Serialize};
 
@@ -198,16 +200,52 @@ pub fn select_library_generation_reference(
     source_authority_digest: &str,
     checked_files: &[OvenPackagedLibraryMetadataFile],
 ) -> CliResult<Arc<SelectedLibraryGeneration>> {
+    validate_generation_reference(reference)?;
+    let owners = store
+        .select_payloads_for_execution(std::slice::from_ref(&reference.owner_identity))
+        .map_err(|error| invalid(error.to_string()))?;
+    admit_generation_reference(owners, reference, metadata, source_authority_digest, checked_files)
+}
+
+/// Admit an original source-free generation through existing read-only Store locks, without any publication or repair.
+///
+/// Exact owner identity, reproduced receipt, complete payload bytes and original checked metadata association use
+/// the same validator as writable selection. The retained metadata capability also retains its dependency owners;
+/// this grants no namespace authority and never remints an association from missing authored source.
+pub fn select_published_library_generation_reference(
+    store: &PublishedOvenStore,
+    reference: &LibraryGenerationReference,
+    metadata: Arc<SelectedLibraryMetadata>,
+    source_authority_digest: &str,
+    checked_files: &[OvenPackagedLibraryMetadataFile],
+) -> CliResult<Arc<SelectedLibraryGeneration>> {
+    metadata.verify_dependency_closure()?;
+    validate_generation_reference(reference)?;
+    let owners = store
+        .select_payloads_matching_for_execution(|manifest| manifest.identity == reference.owner_identity)
+        .map_err(|error| invalid(error.to_string()))?;
+    admit_generation_reference(owners, reference, metadata, source_authority_digest, checked_files)
+}
+
+/// Validate the portable reference before selecting through either Store access mode.
+fn validate_generation_reference(reference: &LibraryGenerationReference) -> CliResult<()> {
     if reference.schema_version != LIBRARY_GENERATION_SCHEMA_VERSION {
         return Err(invalid("unsupported ordinary package generation reference"));
     }
     reference
         .receipt
         .verify_identity()
-        .map_err(|error| invalid(error.to_string()))?;
-    let mut owners = store
-        .select_payloads_for_execution(std::slice::from_ref(&reference.owner_identity))
-        .map_err(|error| invalid(error.to_string()))?;
+        .map_err(|error| invalid(error.to_string()))
+}
+
+/// Share the full exact original association admission without constructing writable Store state.
+fn admit_generation_reference(
+    mut owners: Vec<OvenStoreExecutionPayload>,
+    reference: &LibraryGenerationReference,
+    metadata: Arc<SelectedLibraryMetadata>,
+    source_authority_digest: &str,
+    checked_files: &[OvenPackagedLibraryMetadataFile],
+) -> CliResult<Arc<SelectedLibraryGeneration>> {
     if owners.len() != 1 {
         return Err(invalid(
             "ordinary package generation original owner is missing or competing",
@@ -216,7 +254,7 @@ pub fn select_library_generation_reference(
     let owner = owners.remove(0);
     let payload: LibraryGenerationPayload =
         serde_json::from_slice(&owner.payload).map_err(|error| invalid(error.to_string()))?;
-    if payload.receipt != reference.receipt {
+    if owner.manifest.identity != reference.owner_identity || payload.receipt != reference.receipt {
         return Err(invalid("ordinary package generation differs from selected reference"));
     }
     validate_owner(&owner, &payload)?;
