@@ -495,7 +495,7 @@ pub fn select_published_library_metadata_reference(
 ) -> CliResult<Arc<SelectedLibraryMetadata>> {
     validate_metadata_reference(reference)?;
     let candidates = store
-        .select_payloads_matching_for_execution(|manifest| manifest.identity == reference.owner_identity)
+        .select_payloads_for_execution(std::slice::from_ref(&reference.owner_identity))
         .map_err(|error| CliError::failure(error.to_string()))?;
     let selected = admit_metadata_reference(candidates, reference)?
         .ok_or_else(|| CliError::failure("missing checked library reference owner"))?;

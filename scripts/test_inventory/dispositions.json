@@ -9612,6 +9612,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_store/src/store/published_identity_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Exact original immutable-owner read-only selection preserves byte integrity, batch leases and complete bookkeeping while avoiding unrelated Store entries.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_store/src/store_mirror.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",

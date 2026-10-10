@@ -518,6 +518,51 @@ impl PublishedOvenStore {
         }
     }
 
+    /// Select exact immutable owners without enumerating unrelated published entries.
+    ///
+    /// All identities are validated before filesystem access. One existing shared manager lock protects the entire
+    /// batch until every payload has its original active lease. Selection verifies the same manifest, requested
+    /// identity, payload and native receipt as writable admission, but creates no layout or bookkeeping. Missing
+    /// owners and competing bare/Loaf coordinates refuse; materialized files still require caller verification.
+    pub fn select_payloads_for_execution(
+        &self,
+        identities: &[String],
+    ) -> Result<Vec<OvenStoreExecutionPayload>, OvenStoreError> {
+        validate_execution_identities(identities)?;
+        let _manager = self.manager_lock()?;
+        let mut selected = Vec::with_capacity(identities.len());
+        for identity in identities {
+            let path = exact_published_entry_root(&self.root.join(ENTRIES_DIRECTORY), identity)?;
+            let manifest = verify_published_entry_manifest(&path)?;
+            verify_requested_entry_identity(identity, &manifest)?;
+            let payload = verified_payload_bytes(&path, &manifest)?;
+            let lease = acquire_execution_lease(&path, false)?;
+            let original_native_receipt = admit_native_receipt(&path, &manifest)?;
+            selected.push(OvenStoreExecutionPayload {
+                admitted_entry_root: path.clone(),
+                admitted_identity: identity.clone(),
+                original_native_receipt,
+                manifest,
+                artifact_root: path.join(MATERIALIZED_DIRECTORY),
+                payload,
+                _lease: lease,
+            });
+        }
+        Ok(selected)
+    }
+
+    /// Hold an existing read-only manager lock without repairing a missing publication.
+    fn manager_lock(&self) -> Result<File, OvenStoreError> {
+        let path = self.root.join(MANAGER_LOCK_FILE);
+        let file = File::open(&path).map_err(|source| OvenStoreError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        file.lock_shared()
+            .map_err(|source| OvenStoreError::Io { path, source })?;
+        Ok(file)
+    }
+
     /// Read verified manifests and payloads without changing package files.
     ///
     /// The shared manager lock prevents a concurrent publisher from pruning candidates before their active leases
@@ -530,15 +575,7 @@ impl PublishedOvenStore {
     where
         F: Fn(&OvenArtifactManifest) -> bool,
     {
-        let manager_path = self.root.join(MANAGER_LOCK_FILE);
-        let manager = File::open(&manager_path).map_err(|source| OvenStoreError::Io {
-            path: manager_path.clone(),
-            source,
-        })?;
-        manager.lock_shared().map_err(|source| OvenStoreError::Io {
-            path: manager_path,
-            source,
-        })?;
+        let _manager = self.manager_lock()?;
         Ok(
             select_matching_execution_payloads(&self.root.join(ENTRIES_DIRECTORY), matches)?
                 .into_iter()
@@ -1234,22 +1271,7 @@ impl OvenStore {
         &self,
         identities: &[String],
     ) -> Result<Vec<OvenStoreExecutionPayload>, OvenStoreError> {
-        if identities.is_empty() {
-            return Err(OvenStoreError::InvalidInput {
-                field: "execution identities",
-                message: "must contain at least one immutable entry identity".to_string(),
-            });
-        }
-        let unique = identities.iter().collect::<BTreeSet<_>>();
-        if unique.len() != identities.len() {
-            return Err(OvenStoreError::InvalidInput {
-                field: "execution identities",
-                message: "must not repeat one immutable entry identity".to_string(),
-            });
-        }
-        for identity in identities {
-            validate_entry_identity(identity)?;
-        }
+        validate_execution_identities(identities)?;
         self.ensure_layout()?;
         let manager = open_lock(&self.root.join(MANAGER_LOCK_FILE))?;
         manager.lock().map_err(|source| OvenStoreError::Io {
@@ -2077,6 +2099,56 @@ impl OvenStore {
             std::process::id()
         ))
     }
+}
+
+/// Validate a complete exact batch before either Store access mode observes filesystem state.
+fn validate_execution_identities(identities: &[String]) -> Result<(), OvenStoreError> {
+    if identities.is_empty() {
+        return Err(OvenStoreError::InvalidInput {
+            field: "execution identities",
+            message: "must contain at least one immutable entry identity".to_string(),
+        });
+    }
+    let unique = identities.iter().collect::<BTreeSet<_>>();
+    if unique.len() != identities.len() {
+        return Err(OvenStoreError::InvalidInput {
+            field: "execution identities",
+            message: "must not repeat one immutable entry identity".to_string(),
+        });
+    }
+    for identity in identities {
+        validate_entry_identity(identity)?;
+    }
+    Ok(())
+}
+
+/// Resolve exactly one of the two supported entry spellings without scanning any other identity.
+fn exact_published_entry_root(entries: &Path, identity: &str) -> Result<PathBuf, OvenStoreError> {
+    let name = entry_directory_name(identity);
+    let bare = entries.join(&name);
+    let loaf = entries.join(format!("{name}{LOAF_ENTRY_SUFFIX}"));
+    let mut selected = None;
+    for path in [&bare, &loaf] {
+        match fs::symlink_metadata(path) {
+            Ok(_) => {
+                if selected.is_some() {
+                    return Err(OvenStoreError::Integrity {
+                        identity: identity.to_string(),
+                        message: "exact published owner has competing entry coordinates".to_string(),
+                    });
+                }
+                selected = Some(path);
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(OvenStoreError::Io {
+                    path: path.clone(),
+                    source,
+                });
+            }
+        }
+    }
+    canonical_published_entry_root(selected.unwrap_or(&bare))
 }
 
 /// Reject any exact-selection identity that is not one canonical content digest before filesystem resolution.
@@ -6897,3 +6969,7 @@ pub(crate) mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "store/published_identity_tests.rs"]
+mod published_identity_tests;

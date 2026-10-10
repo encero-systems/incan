@@ -222,7 +222,7 @@ pub fn select_published_library_generation_reference(
     metadata.verify_dependency_closure()?;
     validate_generation_reference(reference)?;
     let owners = store
-        .select_payloads_matching_for_execution(|manifest| manifest.identity == reference.owner_identity)
+        .select_payloads_for_execution(std::slice::from_ref(&reference.owner_identity))
         .map_err(|error| invalid(error.to_string()))?;
     admit_generation_reference(owners, reference, metadata, source_authority_digest, checked_files)
 }
