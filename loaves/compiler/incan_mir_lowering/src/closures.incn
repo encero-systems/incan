@@ -26,10 +26,14 @@ from pub::incan_mir_plan import (
     TerminatorKind,
     Unwind,
     OperandKind,
+    EnumDeclaration,
 )
 from pub::incan_mir_plan import block as plan_block, place as plan_place
 from types import primitive_type
 from classes import function_name
+from collections import is_collection
+from layout_types import native_source_type
+from lists import is_list, list_parameter_type
 
 
 pub def function_pointer_type(parameters: &list[IncanCallableParam], result: &RustType) -> Result[PlanType, str]:
@@ -38,17 +42,33 @@ pub def function_pointer_type(parameters: &list[IncanCallableParam], result: &Ru
     for parameter in parameters:
         if parameter.kind != IncanCallableParamKind.Normal or parameter.is_mut:
             return Err("unsupported Body IR function pointer with rest or mutable parameters")
-        signature.append(callable_component(parameter.ty)?)
+        signature.append(signature_input(callable_component(parameter.ty)?))
     signature.append(callable_component(result)?)
     return Ok(PlanType.FunctionPointer(signature))
 
 
+pub def signature_input(ty: PlanType) -> PlanType:
+    """A callable's list or collection input is the caller-owned reference its declaration's frame receives."""
+    # Every function frame takes a list or collection parameter by shared reference, so a function item, a lifted
+    # closure and an annotated callable type all agree on this one input representation.
+    return list_parameter_type(ty, false)
+
+
 def callable_component(ty: &RustType) -> Result[PlanType, str]:
-    """Admit scalar and recursively callable signature components; name every other retained type."""
+    """Admit scalar, list, collection and recursively callable signature components; name every other type."""
     match ty:
         RustType.Primitive(primitive) => return primitive_type(primitive)
         RustType.Function(params=parameters, return_type=result) => return function_pointer_type(parameters, result)
-        _ => return Err(f"unsupported Body IR callable signature type {ty}")
+        _ => pass
+    # A signature component carries no source-local nominal context, and lists or collections of admitted elements
+    # translate without one. Models, enums and unions inside a signature stay refused by name. The `EnumDeclaration`
+    # import keeps the empty intrinsics list's element type in scope (the compiler gap tracked by #2010).
+    match native_source_type([], [], [], ty, []):
+        Ok(component) =>
+            if is_list(component) or is_collection(component):
+                return Ok(component)
+        Err(_reason) => pass
+    return Err(f"unsupported Body IR callable signature type {ty}")
 
 
 pub def function_pointer_storage(body: &RustBody) -> list[int]:
@@ -281,7 +301,7 @@ def function_item_identity(
                     for index in range(len(parameters)):
                         if parameters[index].ty != body.params[index].ty or body.params[index].mutable:
                             return Err("unsupported Body IR function-item parameter contract")
-                        signature.append(callable_component(body.params[index].ty)?)
+                        signature.append(signature_input(callable_component(body.params[index].ty)?))
                     signature.append(callable_component(body.return_type)?)
                     # The item names the same plan symbol a direct call to this declaration uses.
                     name = function_name(module, body)
