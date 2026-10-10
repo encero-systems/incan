@@ -15,9 +15,9 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | keep | 3538 | 242 | 431 |
 | re-point | 1487 | 91 | 1058 |
 | retire | 1506 | 153 | 0 |
-| unaffected | 1932 | 206 | 5 |
+| unaffected | 1933 | 206 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8463** | **692** | **1494** |
+| **Total** | **8464** | **692** | **1494** |
 
 - Retire-class tests: 1506, of which twinned 1022, dies 294, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -3107,7 +3107,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 |---|---|---|---|---|---|
 | `every_submode_survives_desugar_typecheck_and_lowering_then_refuses_emission` | retire | `dies` | the exact late refusal belongs only to the retiring Rust-source emitter; parse, desugar, typecheck, hole ownership and LSP behavior remain in this file's keep-class tests, while the replacement route owns its separate unsupported-source profile. | codegen, checker | - |
 
-### `loaves/toolchain/oven-cli` (133 tests in 15 files: keep 2, unaffected 131)
+### `loaves/toolchain/oven-cli` (134 tests in 15 files: keep 2, unaffected 132)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -3120,7 +3120,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 | `loaves/toolchain/oven-cli/src/commands/oven/harvest.rs` | 4 | 457 | 79 | unaffected | - | - | - | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |
 | `loaves/toolchain/oven-cli/src/commands/oven/inventory.rs` | 4 | 515 | 183 | unaffected | - | - | - | #1561 | - | Oven CLI; validates typed harvest closure evidence, no compiler semantics. Reviewed at crate level. |
 | `loaves/toolchain/oven-cli/src/commands/oven/loaf_bake.rs` | 8 | 3363 | 436 | unaffected | - | - | - | #1561 | - | Oven publisher configuration and owner-identity enforcement; no compiler semantics. Reviewed at crate level. |
-| `loaves/toolchain/oven-cli/src/commands/oven/native_compiler_tests.rs` | 2 | 402 | 46 | unaffected | - | - | - | #2090 | - | Native selected-root source containment and complete module-tree receipt coverage; no Cargo graph or generated Cargo project. |
+| `loaves/toolchain/oven-cli/src/commands/oven/native_compiler_tests.rs` | 3 | 481 | 116 | unaffected | - | - | - | #2090 | - | Native selected-root source containment and complete module-tree receipt coverage; no Cargo graph or generated Cargo project. |
 | `loaves/toolchain/oven-cli/src/commands/oven/partition_reconciliation.rs` | 2 | 354 | 111 | unaffected | - | - | - | #1561 | - | Oven CI evidence reconciliation; no compiler semantics. |
 | `loaves/toolchain/oven-cli/src/commands/oven/sdk_handoff.rs` | 11 | 725 | 265 | unaffected | - | - | - | #1965 | - | CI transport of one compiler-selected SDK provider; no compiler semantics. |
 | `loaves/toolchain/oven-cli/src/commands/oven/suite_environment.rs` | 2 | 912 | 32 | unaffected | - | - | - | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |

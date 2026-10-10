@@ -383,6 +383,8 @@ pub enum OvenCommand {
         /// Caller-owned output; kept outputs reuse the receipt-bound executable
         #[arg(long)]
         output: PathBuf,
+        #[command(flatten)]
+        store: OvenStoreCliFlags,
         /// Persistent source workspaces for explicit native fixture bakes
         #[arg(long)]
         explicit_bake_workspace: PathBuf,
