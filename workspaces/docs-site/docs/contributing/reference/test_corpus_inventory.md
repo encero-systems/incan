@@ -15,9 +15,9 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | keep | 3541 | 242 | 431 |
 | re-point | 1487 | 91 | 1058 |
 | retire | 1506 | 153 | 0 |
-| unaffected | 1942 | 208 | 5 |
+| unaffected | 1947 | 210 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8476** | **694** | **1494** |
+| **Total** | **8481** | **696** | **1494** |
 
 - Retire-class tests: 1506, of which twinned 1022, dies 294, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -2599,13 +2599,15 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `loaves/kernel/incan_syntax/src/parser/tests/types_and_bounds.rs` | 23 | 463 | 463 | keep | - | - | - | #1561 | checker 14, parser 23 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/parser/tests/vocab_scoped_symbols.rs` | 14 | 824 | 824 | keep | - | - | - | #1561 | parser 14 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 
-### `loaves/oven/oven_rustc` (443 tests in 49 files: keep 10, unaffected 433)
+### `loaves/oven/oven_rustc` (448 tests in 51 files: keep 10, unaffected 438)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
 | `loaves/oven/oven_rustc/src/loaf.rs` | 30 | 4835 | 1424 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 | `loaves/oven/oven_rustc/src/loaf_mirror.rs` | 9 | 758 | 429 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-| `loaves/oven/oven_rustc/src/native_loaf/preparation.rs` | 1 | 420 | 169 | unaffected | - | - | - | #1337 | - | Ordinary native producer debug/release profiles, real local library and host macro behavior, and unchanged per-profile reuse; tests the native toolchain rather than Incan generated Rust. |
+| `loaves/oven/oven_rustc/src/native_loaf/preparation.rs` | 1 | 428 | 169 | unaffected | - | - | - | #1337 | - | Ordinary native producer debug/release profiles, real local library and host macro behavior, and unchanged per-profile reuse; tests the native toolchain rather than Incan generated Rust. |
+| `loaves/oven/oven_rustc/src/native_loaf/prepared/projection_registry_tests.rs` | 1 | 181 | 181 | unaffected | - | - | - | #1698 | - | Real ordinary registry archives retain exact native edges and codegen receipts, execute selected consumers, skip unrelated failing units and refuse missing or ambiguous locked dependencies. |
+| `loaves/oven/oven_rustc/src/native_loaf/prepared/projection_tests.rs` | 4 | 257 | 257 | unaffected | - | - | - | #1698 | - | Cold ordinary native preparation compiles only the declared forward closure; real edits and restoration preserve runtime results, ambiguity and missing authority refuse, and physical subsets cannot grant complete semantic producer observation. |
 | `loaves/oven/oven_rustc/src/native_loaf/prepared/tests.rs` | 7 | 844 | 844 | unaffected | - | - | - | #1698 | - | Ordinary rooted native reuse verifies current source/compiler/lock/facts, records actual work, refuses corrupted authority and bypasses empty declarations. |
 | `loaves/oven/oven_rustc/src/native_loaf/producer/tests.rs` | 6 | 595 | 595 | unaffected | - | - | - | #1698 | - | Ordinary retained native source and fact projection verifies original owners, exact physical aliases, generated inputs and read-only installed admission; it grants no macro execution or semantic-world completeness. |
 | `loaves/oven/oven_rustc/src/native_loaf/request_observation/tests.rs` | 7 | 617 | 617 | unaffected | - | - | - | #1337 | - | Actual complete producer request, original native owners, facts, graph and source freshness; semantic observation refusals are distinct from physical preparation. |

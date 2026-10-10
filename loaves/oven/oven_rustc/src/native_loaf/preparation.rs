@@ -180,7 +180,15 @@ impl NativeLoafPreparation {
 /// semantic/macro completeness remain separate.
 pub fn prepare_native_loafs(request: &NativeLoafPreparationRequest<'_>) -> Result<NativeLoafPreparation> {
     let store = native_store(request.output);
-    prepare_native_loafs_with_document(request, None, &store)
+    prepare_native_loafs_in_store(request, &store)
+}
+
+/// Preserve full supplied-request observation while publishing its exact selected units in the caller's Store.
+pub(super) fn prepare_native_loafs_in_store(
+    request: &NativeLoafPreparationRequest<'_>,
+    store: &OvenStore,
+) -> Result<NativeLoafPreparation> {
+    prepare_native_loafs_with_document(request, None, store)
 }
 
 /// Preserve the optional original resolved document while running the same ordinary producer for either entrypoint.

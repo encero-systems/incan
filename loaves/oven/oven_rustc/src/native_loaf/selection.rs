@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 use oven_model::manifest::{DependencySource, DependencySpec};
 
 use super::{
-    NativeLoafError, NativeLoafGraph, NativeLoafOrigin, NativeLoafRoot, Result, SelectedNativeLoaf, failed, refused,
+    NativeLoafError, NativeLoafGraph, NativeLoafOrigin, NativeLoafRoot, NativeLoafSource, Result, SelectedNativeLoaf,
+    failed, refused,
 };
 
 /// Match already active declarations without resolving, compiling, or granting undeclared graph namespaces.
@@ -59,12 +60,64 @@ pub(super) fn select_roots_with_sources(
     if !matches!(domain, "host" | "target") {
         return Err(refused("declared native roots require host or target domain"));
     }
+    let mut roots = Vec::new();
+    for demand in declared_root_demands(dependencies, declaration_owner, local)? {
+        let mut matches = Vec::new();
+        for unit in graph.units.values() {
+            if unit.record.source.loaf != demand.loaf {
+                continue;
+            }
+            let origin = super::source_origin(&unit.record.recipe)?;
+            if origin != demand.origin || !demand.matches_version(&unit.record.source.version)? {
+                continue;
+            }
+            unit.verify()?;
+            if demand.matches(&unit.record.source, origin, &source_manifest(unit)?, domain)? {
+                matches.push(unit);
+            }
+        }
+        match matches.as_slice() {
+            [unit] => roots.push(unit.declared_root(&demand.alias)?),
+            [] => {
+                return Err(refused(&format!(
+                    "native dependency {} has no current declared source binding",
+                    demand.dependency.crate_name
+                )));
+            }
+            _ => {
+                return Err(refused(&format!(
+                    "native dependency {} has ambiguous declared source bindings",
+                    demand.dependency.crate_name
+                )));
+            }
+        }
+    }
+    roots.sort_by(|left, right| left.alias.cmp(&right.alias));
+    Ok(roots)
+}
+
+/// One authored root demand shared by cold source projection and retained physical owner selection.
+pub(super) struct DeclaredRootDemand<'a> {
+    pub(super) alias: String,
+    pub(super) loaf: String,
+    pub(super) origin: NativeLoafOrigin,
+    dependency: &'a DependencySpec,
+    requirement: Option<semver::VersionReq>,
+    authored: Option<(toml::Value, String)>,
+}
+
+/// Canonicalize authored aliases and path generations before inspecting any candidate physical output.
+pub(super) fn declared_root_demands<'a>(
+    dependencies: &'a [DependencySpec],
+    declaration_owner: &Path,
+    local: &mut LocalSources,
+) -> Result<Vec<DeclaredRootDemand<'a>>> {
     let owner = declaration_owner.canonicalize().map_err(failed)?;
     if !owner.is_dir() {
         return Err(refused("native declaration owner must be a directory"));
     }
     let mut aliases = BTreeSet::new();
-    let mut roots = Vec::new();
+    let mut demands = Vec::new();
     for dependency in dependencies {
         let alias = dependency.crate_name.replace('-', "_");
         if alias.is_empty() || !aliases.insert(alias.clone()) {
@@ -96,7 +149,7 @@ pub(super) fn select_roots_with_sources(
                         "local native declaration package contradicts its current source",
                     ));
                 }
-                (NativeLoafOrigin::Local, loaf.to_string(), Some(selected))
+                (NativeLoafOrigin::Local, loaf.to_string(), Some(selected.clone()))
             }
             DependencySource::Git { .. } => {
                 return Err(refused(
@@ -104,78 +157,73 @@ pub(super) fn select_roots_with_sources(
                 ));
             }
         };
-        let mut matches = Vec::new();
-        for unit in graph.units.values() {
-            if unit.record.source.loaf != loaf || super::source_origin(&unit.record.recipe)? != origin {
-                continue;
-            }
-            unit.verify()?;
-            let version = semver::Version::parse(&unit.record.source.version).map_err(failed)?;
-            if requirement
-                .as_ref()
-                .is_some_and(|requirement| !requirement.matches(&version))
-            {
-                continue;
-            }
-            // The archive member belongs to the admitted native owner. No mutable graph hint determines macro
-            // domain or feature expansion, and no compiler/toolchain directory is recaptured here.
-            let manifest = source_manifest(unit)?;
-            if project_string(&manifest, "name")? != loaf
-                || project_string(&manifest, "version")? != unit.record.source.version
-            {
-                return Err(refused(
-                    "native source manifest contradicts its producer-bound selection",
-                ));
-            }
-            if let Some((current, digest)) = authored {
-                if digest != &unit.record.source.archive_digest || current != &manifest {
-                    continue;
-                }
-            }
-            let selected_domain = if manifest
-                .get("rust")
-                .and_then(|rust| rust.get("type"))
-                .and_then(toml::Value::as_str)
-                == Some("proc-macro")
-            {
-                "host"
-            } else {
-                domain
-            };
-            if unit.record.source.domain != selected_domain {
-                continue;
-            }
-            let required = crate::sdk_closure::native_required_features(
-                &manifest,
-                &dependency.features,
-                dependency.default_features,
-            )
-            .map_err(NativeLoafError::Failed)?;
-            if required
-                .iter()
-                .all(|feature| unit.record.source.features.contains(feature))
-            {
-                matches.push(unit);
-            }
-        }
-        match matches.as_slice() {
-            [unit] => roots.push(unit.declared_root(&alias)?),
-            [] => {
-                return Err(refused(&format!(
-                    "native dependency {} has no current declared source binding",
-                    dependency.crate_name
-                )));
-            }
-            _ => {
-                return Err(refused(&format!(
-                    "native dependency {} has ambiguous declared source bindings",
-                    dependency.crate_name
-                )));
-            }
-        }
+        demands.push(DeclaredRootDemand {
+            alias,
+            loaf,
+            origin,
+            dependency,
+            requirement,
+            authored,
+        });
     }
-    roots.sort_by(|left, right| left.alias.cmp(&right.alias));
-    Ok(roots)
+    Ok(demands)
+}
+
+impl DeclaredRootDemand<'_> {
+    /// Reject incompatible coordinates before reading or hashing a candidate's source declaration.
+    pub(super) fn matches_version(&self, version: &str) -> Result<bool> {
+        let version = semver::Version::parse(version).map_err(failed)?;
+        Ok(self
+            .requirement
+            .as_ref()
+            .is_none_or(|requirement| requirement.matches(&version)))
+    }
+
+    /// Apply the original source/version/domain/default-feature contract without granting native ownership.
+    pub(super) fn matches(
+        &self,
+        source: &NativeLoafSource,
+        origin: NativeLoafOrigin,
+        manifest: &toml::Value,
+        domain: &str,
+    ) -> Result<bool> {
+        if !matches!(domain, "host" | "target") {
+            return Err(refused("declared native roots require host or target domain"));
+        }
+        if source.loaf != self.loaf || origin != self.origin {
+            return Ok(false);
+        }
+        if !self.matches_version(&source.version)? {
+            return Ok(false);
+        }
+        if project_string(manifest, "name")? != source.loaf || project_string(manifest, "version")? != source.version {
+            return Err(refused(
+                "native source manifest contradicts its producer-bound selection",
+            ));
+        }
+        if let Some((current, digest)) = &self.authored {
+            if digest != &source.archive_digest || current != manifest {
+                return Ok(false);
+            }
+        }
+        let selected_domain = if manifest
+            .get("rust")
+            .and_then(|rust| rust.get("type"))
+            .and_then(toml::Value::as_str)
+            == Some("proc-macro")
+        {
+            "host"
+        } else {
+            domain
+        };
+        let required = crate::sdk_closure::native_required_features(
+            manifest,
+            &self.dependency.features,
+            self.dependency.default_features,
+        )
+        .map_err(NativeLoafError::Failed)?;
+        Ok(source.domain == selected_domain && required.iter().all(|feature| source.features.contains(feature)))
+    }
 }
 
 /// Read only an exact inventoried source declaration and verify the bytes used for semantic root projection.
