@@ -278,6 +278,8 @@ pub struct PreparedRustInspectWorkspace {
     _sdk_native: Vec<Arc<oven_store::store::OvenStoreExecutionPayload>>,
     /// Complete original ordinary request retained across checked metadata preparation and final ABI extraction.
     _ordinary_native: Option<oven_rustc::native_loaf::NativeLoafRequestObservation>,
+    /// Original compiler-bound Rust source owner retained through final semantic metadata extraction.
+    _ordinary_toolchain: Option<Arc<oven_rustc::rustc::OvenRustInspectionToolchain>>,
 }
 
 /// Command-local source authority shared by every parallel native-test unit.
@@ -308,6 +310,7 @@ impl PreparedRustInspectWorkspace {
             _project_source_authorities: None,
             _sdk_native: Vec::new(),
             _ordinary_native: None,
+            _ordinary_toolchain: None,
         }
     }
 
@@ -320,6 +323,11 @@ impl PreparedRustInspectWorkspace {
     pub(crate) fn verify_ordinary_native(&self) -> CliResult<()> {
         if let Some(native) = &self._ordinary_native {
             native.verify().map_err(|error| CliError::failure(error.to_string()))?;
+        }
+        if let Some(toolchain) = &self._ordinary_toolchain {
+            toolchain
+                .verify()
+                .map_err(|error| CliError::failure(error.to_string()))?;
         }
         Ok(())
     }
