@@ -2112,6 +2112,44 @@ fn numeric_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     )
 }
 
+/// Prove mixed arithmetic whose checked result is a float carrier byte-identical to legacy: `int / int`, `int` with
+/// `float` on either side and in `//` and `%`, an `f32` operand widened by `int` or `float`, and a compound `/=`,
+/// while `f32` with `f32`, integer results and `**` keep their own carriers.
+#[test]
+fn mixed_float_arithmetic_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("mixed-float-arithmetic")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def widen(narrow: f32, whole: int, wide: float) -> float:
+    return narrow * whole + narrow - wide
+
+def main() -> None:
+    whole: int = 10
+    ratio: float = 2.5
+    println(whole / 3)
+    println(10 / 4)
+    println(whole + ratio)
+    println(ratio - whole)
+    println(whole * ratio)
+    println(whole // 4.0)
+    println(whole % 4.0)
+    narrow: f32 = 1.5
+    println(widen(narrow, 3, 0.25))
+    println(narrow + narrow)
+    mut total: float = 1.0
+    total /= 4
+    total += whole
+    println(total)
+    println(whole // 3)
+    println(whole % 3)
+    println(2 ** 3)
+"#,
+    )
+}
+
 /// Measure the actual unchanged graph with expensive fallback forbidden and retain numeric parity evidence.
 #[test]
 #[ignore = "machine-local diagnostic of the 50 ms completed fixture graph reuse budget"]
