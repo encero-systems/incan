@@ -2155,7 +2155,7 @@ fn bake_oven_project_targets_with_admission(
         let mut published_outputs = Vec::with_capacity(pending_outputs.len());
         for pending in pending_outputs {
             let files = pending.files;
-            let payload = project_output_payload_for_bake(OvenProjectOutputBakeRequest {
+            let mut payload = project_output_payload_for_bake(OvenProjectOutputBakeRequest {
                 project_root: &project_root,
                 entrypoint: &pending.entrypoint,
                 target: pending.target,
@@ -2171,6 +2171,7 @@ fn bake_oven_project_targets_with_admission(
                 backend_receipt: pending.backend_receipt,
                 build_report: pending.build_report,
             })?;
+            payload.inspection_authority_snapshot = Some(inspection_authority.snapshot.clone());
             published_outputs.push(publish_project_output_loaf(&store, &pending.receipt, &payload, &files)?);
         }
         // Keep every sibling output and the authority leased through completion. A tight policy must fail this bake

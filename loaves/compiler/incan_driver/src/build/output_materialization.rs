@@ -1218,6 +1218,7 @@ mod tests {
                 receipt_identity: receipt.identity.clone(),
                 build_unit_identity: receipt.build_unit_identity.clone(),
             }),
+            inspection_authority_snapshot: None,
             files: vec![
                 OvenProjectOutputFile {
                     caller_relative_path: "target/lib/src/lib.rs".to_string(),

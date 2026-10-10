@@ -594,6 +594,12 @@ pub(crate) fn publish_project_inspection_authority(
         ));
     }
     Ok(PublishedProjectInspectionAuthority {
+        snapshot: crate::build::OvenProjectInspectionSnapshot {
+            manifest: selected.clone(),
+            receipt: receipt.clone(),
+            payload: String::from_utf8(request.payload)
+                .map_err(|error| CliError::failure(format!("inspection metadata is not UTF-8: {error}")))?,
+        },
         reference: OvenProjectInspectionAuthorityRef {
             identity: selected.identity,
             receipt_identity: selected.receipt_identity,
@@ -701,7 +707,7 @@ pub fn publish_project_output_loaf(
     }
     let payload_bytes = serde_json::to_vec(payload)
         .map_err(|error| CliError::failure(format!("failed to serialize Oven project-output Loaf: {error}")))?;
-    let request = OvenArtifactPublishRequest {
+    let mut request = OvenArtifactPublishRequest {
         receipt: receipt.clone(),
         domain: format!("incan-release-{INCAN_VERSION}"),
         kind: OvenArtifactKind::ProjectOutput,
@@ -715,6 +721,8 @@ pub fn publish_project_output_loaf(
             .collect(),
         materialized_directories: Vec::new(),
     };
+    let _inspection_owner = super::inspection_snapshot::retain_inspection_snapshot(store, payload, &mut request)
+        .map_err(oven_rustc_error)?;
     let deadline = Instant::now() + OVEN_PROJECT_OUTPUT_PUBLICATION_WAIT;
     let manifest = loop {
         match store.publish(&request) {
@@ -972,6 +980,7 @@ pub fn project_output_payload_for_bake(
         plan_identity: request.plan_identity,
         backend_receipt: request.backend_receipt,
         inspection_authority: Some(request.inspection_authority),
+        inspection_authority_snapshot: None,
         files,
         required_project_loafs,
         package_loaf_store_relative_path: request.package_loaf_store_relative_path,

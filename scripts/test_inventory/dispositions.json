@@ -176,6 +176,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/build/inspection_snapshot.rs": {
+      "disposition": "keep",
+      "notes": "Completed ordinary loaves retain exact inspection metadata; whole-owner eviction recovery preserves receipt identities and refuses damaged owners, changed snapshots and missing native constituents.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/build/library_dependencies/tests.rs": {
       "disposition": "keep",
       "notes": "Ordinary checked dependency admission preserves original metadata and generation owners, exact aliases, features, namespace issuers and complete checked dependency closure.",

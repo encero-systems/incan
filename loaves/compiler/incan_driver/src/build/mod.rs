@@ -11,6 +11,7 @@ pub mod caller_facet;
 pub mod caller_owned;
 mod file_freshness;
 pub mod inline_command;
+mod inspection_snapshot;
 pub mod library_dependencies;
 pub mod library_exports;
 pub mod library_generation;
@@ -590,6 +591,10 @@ pub struct OvenProjectOutputPayload {
     /// Singular project-level Rust inspection authority selected through this source-current output.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inspection_authority: Option<OvenProjectInspectionAuthorityRef>,
+    /// Exact inspection metadata and its receipt retained by this completed loaf. Its files live under the internal
+    /// inspection-authority prefix, allowing ordinary bounded Store eviction to reclaim the standalone metadata owner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inspection_authority_snapshot: Option<OvenProjectInspectionSnapshot>,
     /// Every generated source, package handoff record, and final native artifact retained by this completed project
     /// result. The Loaf is therefore a complete project result, not a binary-only cache entry.
     pub files: Vec<OvenProjectOutputFile>,
@@ -687,7 +692,17 @@ pub struct OvenStoredProjectOutput {
 /// Newly published project inspection authority retained until every completed output names it.
 pub struct PublishedProjectInspectionAuthority {
     pub reference: OvenProjectInspectionAuthorityRef,
+    pub snapshot: OvenProjectInspectionSnapshot,
     pub _lease: OvenStoreLease,
+}
+
+/// Original metadata publication retained by a completed output, excluding its independently selected constituents.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OvenProjectInspectionSnapshot {
+    pub manifest: oven_store::store::OvenArtifactManifest,
+    pub receipt: oven_store::OvenReceipt,
+    /// Original JSON bytes preserved as UTF-8 rather than reserialized into a different authority identity.
+    pub payload: String,
 }
 
 /// Completed target data retained until one whole-project inspection authority is finalized.

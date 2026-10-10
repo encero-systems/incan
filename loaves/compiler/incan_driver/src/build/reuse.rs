@@ -12,9 +12,7 @@ use crate::build::output_materialization::{
     materialize_project_output, project_output_projection_is_current,
 };
 use crate::build::output_paths::{validate_packaged_library_metadata_files, validated_project_output_relative_path};
-use crate::build::output_selection::{
-    baked_project_owner_identity, matching_baked_project_outputs_with_source_authority,
-};
+use crate::build::output_selection::matching_baked_project_outputs_with_source_authority;
 use crate::build::package_loafs::{
     copy_receipted_oven_store_entry, decode_packaged_library_loaf_manifest, validated_packaged_library_loaf_profile,
 };
@@ -37,8 +35,8 @@ use oven_rustc::loaf::{
     resolve_compiler_owned_loaf_by_identity, resolve_compiler_owned_loaf_for_registry_dependencies,
 };
 use oven_rustc::rustc::{
-    OvenLoadedProjectInspectionAuthority, OvenProjectInspectionConstituent, OvenRustcError,
-    load_project_inspection_authority, resolve_active_rustc, rustc_host_target, rustc_identity,
+    OvenLoadedProjectInspectionAuthority, OvenProjectInspectionConstituent, OvenRustcError, resolve_active_rustc,
+    rustc_host_target, rustc_identity,
 };
 use oven_store::store::{OvenArtifactKind, OvenStore, OvenStoreError};
 
@@ -748,13 +746,11 @@ pub fn try_reuse_baked_project(
     {
         return Ok(None);
     }
-    let authority = match load_project_inspection_authority(
-        store,
-        &authority_ref,
-        &baked_project_owner_identity(project_root)?,
-        &source_authority_digest,
-        INCAN_VERSION,
-    ) {
+    let selected_output = &selected_outputs
+        .first()
+        .ok_or_else(|| CliError::failure("no completed output selected"))?
+        .1;
+    let authority = match super::inspection_snapshot::load_output_inspection_authority(store, selected_output) {
         Ok(authority) => authority,
         Err(error) if inspection_constituent_was_evicted(store, &error) => return Ok(None),
         Err(error) => return Err(CliError::failure(error.to_string())),
