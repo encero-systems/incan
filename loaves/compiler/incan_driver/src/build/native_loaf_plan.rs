@@ -99,7 +99,8 @@ pub fn select_native_loaf_plan(
     let mut artifacts = empty_manifest(&receipt);
     let mut shared_roots = Vec::new();
     for (index, (identity, unit)) in closure.graph().units().iter().enumerate() {
-        unit.verify().map_err(failure)?;
+        let prefix = format!("units/{index}");
+        let (shared_root, members) = unit.plan_members(&prefix).map_err(failure)?;
         let record = unit.record();
         if record.recipe.intent.toolchain != receipt.intent.toolchain
             || (record.source.domain == "target" && record.recipe.intent.target != receipt.intent.target)
@@ -110,9 +111,8 @@ pub fn select_native_loaf_plan(
                 record.source.loaf
             )));
         }
-        let prefix = format!("units/{index}");
         artifacts.dependency_search_paths.push(prefix.clone());
-        shared_roots.push(closure.shared_root(identity, &prefix).map_err(failure)?);
+        shared_roots.push(shared_root);
         for (alias, root_identity) in closure.roots() {
             if root_identity == identity {
                 artifacts.externs.push(OvenRustcArtifactExtern {
@@ -122,7 +122,7 @@ pub fn select_native_loaf_plan(
                 });
             }
         }
-        for file in unit.materialized_files().map_err(failure)? {
+        for file in members {
             if Path::new(&file.relative_path)
                 .file_name()
                 .is_some_and(|name| name == "Cargo.toml" || name == "Cargo.lock")
