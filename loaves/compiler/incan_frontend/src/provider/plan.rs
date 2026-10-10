@@ -401,6 +401,8 @@ pub struct ProviderPlan {
     checked_source_records: BTreeMap<String, ProviderRecord>,
     /// Declared semantic dependency edges, retaining each alias without granting a transitive import namespace.
     checked_source_dependencies: BTreeMap<String, Vec<(String, String)>>,
+    /// Original materialized metadata retained only for checked-source semantic routes, without native exposure.
+    checked_source_materialized: BTreeMap<String, PublicProviderArtifact>,
     /// Reserved namespace roots owned by the one SDK component currently being compiled from source.
     ///
     /// This bootstrap-only grant disappears once the checked provider manifest is published and must never be
@@ -490,6 +492,7 @@ impl ProviderPlan {
             public_dependencies: artifact_graph.public_dependencies,
             checked_source_records,
             checked_source_dependencies: BTreeMap::new(),
+            checked_source_materialized: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
             namespace_issuers: BTreeMap::new(),
             semantic_projection_identity: next_provider_semantic_projection_identity(),
@@ -501,18 +504,61 @@ impl ProviderPlan {
     pub fn retain_checked_source_dependencies(&mut self, library: &str, child: &ProviderPlan) -> Result<(), String> {
         let parent = self.checked_source_import_identity(library)?.stable_key();
         let mut edges = Vec::new();
-        for (alias, _, metadata) in child.library_manifest_index.loaded_entries() {
-            if metadata.kind == LibraryArtifactKind::CheckedSource {
-                edges.push((
-                    alias.to_string(),
-                    child.checked_source_import_identity(alias)?.stable_key(),
-                ));
-            }
+        for (alias, manifest, metadata) in child.library_manifest_index.loaded_entries() {
+            let identity = match metadata.kind {
+                LibraryArtifactKind::CheckedSource => child.checked_source_import_identity(alias)?,
+                LibraryArtifactKind::Materialized => child.materialized_import_identity(alias, manifest, metadata)?,
+                LibraryArtifactKind::ParserSource | LibraryArtifactKind::StandardVocab => continue,
+            };
+            edges.push((alias.to_string(), identity.stable_key()));
         }
         edges.sort();
+        let mut retained_materialized = child.checked_source_materialized.clone();
+        for (key, artifact) in child
+            .public_artifacts
+            .iter()
+            .chain(child.checked_source_materialized.iter())
+        {
+            for existing in [
+                self.checked_source_materialized.get(key),
+                retained_materialized.get(key),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                let mut same_alias = artifact.artifact.clone();
+                same_alias.dependency_key = existing.artifact.dependency_key.clone();
+                if existing.artifact != same_alias
+                    || (!Arc::ptr_eq(&existing.manifest, &artifact.manifest)
+                        && canonical_manifest_digest(&existing.manifest)?
+                            != canonical_manifest_digest(&artifact.manifest)?)
+                {
+                    return Err(format!(
+                        "checked semantic owner `{key}` has competing artifact coordinates or metadata"
+                    ));
+                }
+            }
+            retained_materialized.insert(key.clone(), artifact.clone());
+        }
+        let mut materialized_edges = BTreeMap::new();
+        for artifact in child.public_artifacts.values() {
+            let dependencies = child
+                .public_dependencies
+                .get(&normalize_artifact_root(&artifact.artifact.crate_root))
+                .cloned()
+                .unwrap_or_default();
+            for (_, target) in &dependencies {
+                if !child.public_artifacts.contains_key(target) {
+                    return Err("checked semantic edge has no admitted materialized owner".to_string());
+                }
+            }
+            materialized_edges.insert(artifact.identity.stable_key(), dependencies);
+        }
         self.checked_source_records.extend(child.checked_source_records.clone());
+        self.checked_source_materialized.extend(retained_materialized);
         self.checked_source_dependencies
             .extend(child.checked_source_dependencies.clone());
+        self.checked_source_dependencies.extend(materialized_edges);
         self.checked_source_dependencies.insert(parent, edges);
         Ok(())
     }
@@ -523,6 +569,8 @@ impl ProviderPlan {
             .extend(source.checked_source_records.clone());
         self.checked_source_dependencies
             .extend(source.checked_source_dependencies.clone());
+        self.checked_source_materialized
+            .extend(source.checked_source_materialized.clone());
         self
     }
 
@@ -540,6 +588,47 @@ impl ProviderPlan {
             .get(&identity.stable_key())
             .map(|record| record.identity.clone())
             .ok_or_else(|| format!("checked source import container `{library}` has no matching declaration owner"))
+    }
+
+    /// Bind one materialized child alias to the exact artifact and checked manifest admitted by its own plan.
+    fn materialized_import_identity(
+        &self,
+        library: &str,
+        manifest: &LibraryManifest,
+        metadata: &LibraryArtifactMetadata,
+    ) -> Result<ProviderIdentity, String> {
+        let digest = canonical_manifest_digest(manifest)?;
+        let mut candidates = self.public_artifacts.values().filter(|artifact| {
+            normalize_artifact_root(&artifact.artifact.crate_root) == normalize_artifact_root(&metadata.crate_root)
+                && artifact.artifact.manifest_path == metadata.manifest_path
+                && artifact.identity.name == manifest.name
+                && artifact.identity.version == manifest.version
+                && artifact.identity.feature_projection == manifest.contract_metadata.provider.active_features
+        });
+        let selected = candidates
+            .next()
+            .ok_or_else(|| format!("materialized import `{library}` has no matching admitted declaration owner"))?;
+        if candidates.next().is_some() || canonical_manifest_digest(&selected.manifest)? != digest {
+            return Err(format!(
+                "materialized import `{library}` has ambiguous or mismatched checked metadata"
+            ));
+        }
+        let declared_alias = self.records.get(&selected.identity.stable_key()).is_some_and(|record| {
+            record.available
+                && record.enabled
+                && (matches!(&record.authority, NamespaceAuthority::ProjectDependency { dependency_key }
+                    if dependency_key == library)
+                    || record
+                        .namespace_claims
+                        .iter()
+                        .any(|claim| claim.starts_with(&["pub".to_string(), library.to_string()])))
+        });
+        if metadata.dependency_key != library || !declared_alias {
+            return Err(format!(
+                "materialized import `{library}` has no exact declared alias authority"
+            ));
+        }
+        Ok(selected.identity.clone())
     }
 
     /// Find a source semantic route through already-checked declared dependency edges.
@@ -579,11 +668,16 @@ impl ProviderPlan {
         ),
         String,
     > {
-        let (target, export) = self.public_nominal_metadata(origin)?;
-        let route = if target.materialized {
-            self.public_artifact_route(library, &target.identity)?
-        } else {
+        let source_container = matches!(
+            self.library_manifest_index.get(library),
+            Some(LibraryManifestIndexEntry::Loaded { metadata, .. })
+                if metadata.kind == LibraryArtifactKind::CheckedSource
+        );
+        let (target, export) = self.nominal_metadata(origin, source_container)?;
+        let route = if source_container {
             self.checked_source_route(library, &target.identity)?
+        } else {
+            self.public_artifact_route(library, &target.identity)?
         };
         Ok((target, export, route))
     }
@@ -654,6 +748,11 @@ impl ProviderPlan {
                 "public signature has no admitted importing library `{importing_library}`"
             ));
         };
+        if metadata.kind != LibraryArtifactKind::Materialized {
+            return Err(format!(
+                "import container `{importing_library}` has no admitted physical artifact"
+            ));
+        }
         let target_root = normalize_artifact_root(&target.artifact.crate_root);
         let mut pending =
             std::collections::VecDeque::from([(normalize_artifact_root(&metadata.crate_root), Vec::new())]);
@@ -870,22 +969,37 @@ impl ProviderPlan {
         &self,
         origin: &crate::library_manifest::NominalTypeOriginExport,
     ) -> Result<(PublicProviderMetadata, crate::library_manifest::ExportIdentity), String> {
-        let target = if let Some(target) = self.public_artifacts.get(&origin.provider.stable_key()) {
+        self.nominal_metadata(origin, false)
+    }
+
+    /// Select exact nominal membership while keeping source exposure bound to its retained semantic owner.
+    fn nominal_metadata(
+        &self,
+        origin: &crate::library_manifest::NominalTypeOriginExport,
+        semantic_only: bool,
+    ) -> Result<(PublicProviderMetadata, crate::library_manifest::ExportIdentity), String> {
+        let key = origin.provider.stable_key();
+        let artifact = if semantic_only {
+            self.checked_source_materialized.get(&key).map(|target| (target, false))
+        } else {
+            self.public_artifacts
+                .get(&key)
+                .map(|target| (target, true))
+                .or_else(|| self.checked_source_materialized.get(&key).map(|target| (target, false)))
+        };
+        let target = if let Some((target, materialized)) = artifact {
             PublicProviderMetadata {
                 identity: target.identity.clone(),
                 manifest: Arc::clone(&target.manifest),
-                materialized: true,
+                materialized,
             }
         } else {
-            let record = self
-                .checked_source_records
-                .get(&origin.provider.stable_key())
-                .ok_or_else(|| {
-                    format!(
-                        "public signature requires unadmitted checked provider {}",
-                        origin.provider.stable_key()
-                    )
-                })?;
+            let record = self.checked_source_records.get(&key).ok_or_else(|| {
+                format!(
+                    "public signature requires unadmitted checked provider {}",
+                    origin.provider.stable_key()
+                )
+            })?;
             PublicProviderMetadata {
                 identity: record.identity.clone(),
                 manifest: record.manifest.clone().ok_or("checked source contract is missing")?,
@@ -964,6 +1078,27 @@ impl ProviderPlan {
                     })
                 {
                     candidates.insert(record.identity.stable_key(), record.identity.clone());
+                }
+            }
+            for artifact in self.checked_source_materialized.values() {
+                if self.checked_source_route(importing_library, &artifact.identity).is_ok()
+                    && matches!(&canonical.origin, incan_semantics_core::SymbolOrigin::Package { library, .. } if library == &artifact.identity.name)
+                    && artifact
+                        .manifest
+                        .contract_metadata
+                        .identity_graph
+                        .exports
+                        .iter()
+                        .any(|entry| {
+                            entry
+                                .canonical
+                                .as_ref()
+                                .and_then(|identity| identity.hydrate())
+                                .as_ref()
+                                == Some(canonical)
+                        })
+                {
+                    candidates.insert(artifact.identity.stable_key(), artifact.identity.clone());
                 }
             }
             if candidates.len() != 1 {
@@ -1124,6 +1259,7 @@ impl ProviderPlan {
             public_dependencies: BTreeMap::new(),
             checked_source_records: BTreeMap::new(),
             checked_source_dependencies: BTreeMap::new(),
+            checked_source_materialized: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
             namespace_issuers: BTreeMap::new(),
             semantic_projection_identity: next_provider_semantic_projection_identity(),
@@ -1199,6 +1335,7 @@ impl ProviderPlan {
             public_dependencies: BTreeMap::new(),
             checked_source_records: BTreeMap::new(),
             checked_source_dependencies: BTreeMap::new(),
+            checked_source_materialized: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
             namespace_issuers: BTreeMap::new(),
             semantic_projection_identity: next_provider_semantic_projection_identity(),
@@ -3200,3 +3337,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "plan/checked_routes_tests.rs"]
+mod checked_routes_tests;
