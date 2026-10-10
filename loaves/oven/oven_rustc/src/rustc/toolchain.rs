@@ -15,7 +15,7 @@ use std::sync::{Mutex, OnceLock};
 
 use super::{
     BTreeMap, BTreeSet, OvenRustcArtifactManifest, OvenRustcArtifactPlan, OvenRustcError,
-    OvenSelectedRustFacetCfgSnapshot, clear_inherited_cargo_environment, normalized_relative_path,
+    OvenSelectedRustFacetCfgSnapshot, clear_inherited_cargo_environment, digest_regular_file, normalized_relative_path,
     rustup_reported_tool, validate_selected_graph_cfg_snapshot, verified_regular_file,
 };
 
@@ -225,34 +225,35 @@ pub fn rustc_probe_command(rustc: &Path) -> Command {
     command
 }
 
-/// The two facts every command asks of the selected compiler, answered by one `rustc -vV`.
+/// Identity, host and source commit reported together by the selected compiler's single `rustc -vV` probe.
 #[derive(Debug, Clone)]
 pub struct RustcProbe {
     /// The first `-vV` line, identical to `rustc --version`.
     identity: String,
     /// The `host:` line, absent when the compiler (a test double, typically) printed none.
     host_target: Option<String>,
+    /// The `commit-hash:` line, absent for compiler test doubles that do not report one.
+    commit_hash: Option<String>,
 }
 
-/// Process-wide memo of `rustc -vV` answers, keyed by the compiler file's canonical path, length and modification
-/// time so a replaced compiler is probed afresh. Every normal command asked the compiler twice -- once for its
-/// version, once for its host -- and each spawn cost about twenty milliseconds of a warm no-change build (#1111).
+/// Process-local `rustc -vV` answers keyed by canonical executable coordinate and observed content digest.
+/// Replacement-sensitive file observation avoids rereading unchanged bytes while preserved-mtime edits invalidate.
 pub fn rustc_probe_memo() -> &'static Mutex<HashMap<RustcFileStamp, RustcProbe>> {
     static MEMO: OnceLock<Mutex<HashMap<RustcFileStamp, RustcProbe>>> = OnceLock::new();
     MEMO.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// What identifies one compiler file for the probe memo: its path, length and modification time.
-pub type RustcFileStamp = (PathBuf, u64, Option<std::time::SystemTime>);
+/// Canonical compiler coordinate and content generation, independent of timestamps and cached probe answers.
+pub type RustcFileStamp = (PathBuf, String);
 
-/// Probe one regular Rust compiler with `-vV`, once per observed compiler file per process.
+/// Probe one regular Rust compiler with `-vV`, sharing identity/host/commit under its current observed bytes.
 pub fn rustc_probe(rustc: &Path) -> Result<RustcProbe, OvenRustcError> {
     let rustc = verified_regular_file(rustc, "rustc")?;
-    let metadata = fs::metadata(&rustc).map_err(|source| OvenRustcError::Io {
+    let rustc = rustc.canonicalize().map_err(|source| OvenRustcError::Io {
         path: rustc.clone(),
         source,
     })?;
-    let key = (rustc.clone(), metadata.len(), metadata.modified().ok());
+    let key = (rustc.clone(), digest_regular_file(&rustc, "rustc")?);
     if let Ok(memo) = rustc_probe_memo().lock()
         && let Some(probe) = memo.get(&key)
     {
@@ -290,8 +291,23 @@ pub fn rustc_probe(rustc: &Path) -> Result<RustcProbe, OvenRustcError> {
         .map(str::trim)
         .filter(|target| !target.is_empty())
         .map(ToString::to_string);
-    let probe = RustcProbe { identity, host_target };
+    let commit_hash = output
+        .lines()
+        .find_map(|line| line.strip_prefix("commit-hash: "))
+        .map(|hash| hash.trim().to_string());
+    if digest_regular_file(&rustc, "rustc")? != key.1 {
+        return Err(OvenRustcError::InvalidInput {
+            field: "rustc",
+            message: "compiler bytes changed during the `-vV` probe".to_string(),
+        });
+    }
+    let probe = RustcProbe {
+        identity,
+        host_target,
+        commit_hash,
+    };
     if let Ok(mut memo) = rustc_probe_memo().lock() {
+        memo.retain(|previous, _| previous.0 != rustc);
         memo.insert(key, probe.clone());
     }
     Ok(probe)
@@ -772,16 +788,9 @@ pub fn expected_artifacts(manifest: &OvenRustcArtifactManifest) -> Result<BTreeM
 
 /// Return the exact commit hash reported by `rustc -vV`, used to remap installed `rust-src` checkouts onto the
 /// virtual `/rustc/<commit>` prefix a source-less toolchain embeds in standard-library debug spans.
+/// This shares the identity/host probe for the same observed compiler bytes instead of launching another process.
 pub fn rustc_commit_hash(rustc: &Path) -> Option<String> {
-    let output = rustc_probe_command(rustc).arg("-vV").output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8(output.stdout).ok()?;
-    stdout
-        .lines()
-        .find_map(|line| line.strip_prefix("commit-hash: "))
-        .map(|hash| hash.trim().to_string())
+    rustc_probe(rustc).ok()?.commit_hash
 }
 
 #[cfg(test)]
@@ -791,6 +800,61 @@ mod tests {
     use super::*;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    /// Identity, host and commit share one actual probe; changed bytes invalidate even with preserved size/mtime.
+    #[test]
+    #[cfg(unix)]
+    fn dev7_rustc_probe_shares_commit_and_refuses_preserved_metadata_substitution() -> TestResult {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir()?;
+        let compiler = root.path().join("rustc");
+        let script = |generation| {
+            format!(
+                "#!/bin/sh\nprintf 'probe\\n' >> \"$0.log\"\nprintf 'rustc fixture-{generation}\\nhost: fixture-host-{generation}\\ncommit-hash: commit-{generation}\\n'\n"
+            )
+        };
+        fs::write(&compiler, script('a'))?;
+        fs::set_permissions(&compiler, fs::Permissions::from_mode(0o755))?;
+        let original = fs::metadata(&compiler)?;
+        for _ in 0..3 {
+            assert_eq!(rustc_identity(&compiler)?, "rustc fixture-a");
+            assert_eq!(rustc_host_target(&compiler)?, "fixture-host-a");
+            assert_eq!(rustc_commit_hash(&compiler).as_deref(), Some("commit-a"));
+        }
+        assert_eq!(fs::read_to_string(compiler.with_extension("log"))?.lines().count(), 1);
+
+        let replacement = root.path().join("replacement");
+        fs::write(&replacement, script('b'))?;
+        fs::set_permissions(&replacement, fs::Permissions::from_mode(0o755))?;
+        fs::File::options()
+            .write(true)
+            .open(&replacement)?
+            .set_times(fs::FileTimes::new().set_modified(original.modified()?))?;
+        fs::rename(&replacement, &compiler)?;
+        assert_eq!(fs::metadata(&compiler)?.len(), original.len());
+        assert_eq!(fs::metadata(&compiler)?.modified()?, original.modified()?);
+        assert_eq!(rustc_commit_hash(&compiler).as_deref(), Some("commit-b"));
+        assert_eq!(rustc_host_target(&compiler)?, "fixture-host-b");
+        assert_eq!(rustc_identity(&compiler)?, "rustc fixture-b");
+        assert_eq!(fs::read_to_string(compiler.with_extension("log"))?.lines().count(), 2);
+        fs::remove_file(&compiler)?;
+        assert!(rustc_probe(&compiler).is_err());
+        assert!(rustc_commit_hash(&compiler).is_none());
+
+        // A successful subprocess cannot authorize output from a compiler generation that changed while running.
+        fs::write(
+            &compiler,
+            "#!/bin/sh\nprintf x >> \"$0\"\nprintf 'rustc changing\\nhost: fixture-host\\ncommit-hash: changing\\n'\nexit 0\n",
+        )?;
+        fs::set_permissions(&compiler, fs::Permissions::from_mode(0o755))?;
+        assert!(matches!(
+            rustc_probe(&compiler),
+            Err(OvenRustcError::InvalidInput { message, .. })
+                if message == "compiler bytes changed during the `-vV` probe"
+        ));
+        Ok(())
+    }
 
     #[test]
     fn cfg_snapshot_parser_preserves_complete_canonical_rustc_facts() -> TestResult {

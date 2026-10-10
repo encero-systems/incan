@@ -668,10 +668,10 @@ fn dev7_native_loaf_refuses_substituted_and_injected_physical_edges() -> TestRes
     refuses(verify_children(&substituted, &graph.units), "owner was substituted")?;
     let mut injected = unit.record.clone();
     injected.dependencies[0].alias = "injected".to_string();
-    refuses(verify_native(&injected, &unit.native_owner, false), "extern recipe")?;
+    refuses(verify_native(&injected, &unit.native_owner), "extern recipe")?;
     let mut missing = unit.record.clone();
     missing.dependencies.clear();
-    refuses(verify_native(&missing, &unit.native_owner, false), "extern recipe")?;
+    refuses(verify_native(&missing, &unit.native_owner), "extern recipe")?;
     let mut absent = BTreeMap::new();
     absent.insert(parent.clone(), Arc::clone(unit));
     refuses(
