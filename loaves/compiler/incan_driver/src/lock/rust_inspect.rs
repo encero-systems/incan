@@ -301,12 +301,16 @@ fn prepare_oven_inspection_authority(
     } else {
         false
     };
-    if normal_inspection_requires_installed_project_authority(
-        project_root,
-        explicit_oven_bake,
-        command_authority_available,
-        command_authority_installed,
-    ) {
+    // Rust's standard library belongs to the selected compiler, so an empty project source request can use the
+    // existing sealed empty catalog below without requiring a previous project bake.
+    if !authority_request.registry_dependencies.is_empty()
+        && normal_inspection_requires_installed_project_authority(
+            project_root,
+            explicit_oven_bake,
+            command_authority_available,
+            command_authority_installed,
+        )
+    {
         let detail = if command_authority_available {
             "the source-current project inspection authority could not authorize this inspection batch"
         } else {
