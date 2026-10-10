@@ -100,9 +100,10 @@ pub fn prepare_resolved_native_loafs(
     prepare_resolved_native_loafs_in_store(graph, index, blobs, output, rustc, target, profile, &store)
 }
 
-/// Preserve the original producer request while publishing every native unit and record in one supplied Store.
+/// Preserve the complete original producer request using the caller's Store and any admitted mirror owners.
+/// Output directories carry staging only; relocating them does not create another native dependency Store.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn prepare_resolved_native_loafs_in_store(
+pub fn prepare_resolved_native_loafs_in_store(
     graph: &Path,
     index: &Path,
     blobs: &Path,

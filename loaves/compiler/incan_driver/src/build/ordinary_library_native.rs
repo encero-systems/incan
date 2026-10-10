@@ -11,7 +11,7 @@ use crate::build::library_project::metadata_replay::ordinary_native::OrdinaryNat
 use crate::build::ordinary_support::CompilerSupportSources;
 use crate::error::{CliError, CliResult};
 use oven_model::manifest::DependencySpec;
-use oven_rustc::native_loaf::{NativeLoafClosure, NativeLoafPreparationReport, prepare_resolved_native_loafs};
+use oven_rustc::native_loaf::{NativeLoafClosure, NativeLoafPreparationReport, prepare_resolved_native_loafs_in_store};
 use oven_rustc::plan::OvenDirectRustcPlanSelection;
 use oven_store::store::OvenStore;
 use oven_store::{OvenBuildIntent, OvenReceipt};
@@ -38,7 +38,7 @@ pub(crate) struct OrdinaryLibraryNativeProfiles {
 }
 
 impl OrdinaryLibraryNativeProfiles {
-    /// Prepare exact requested profiles through the existing native producer, without any SDK discovery.
+    /// Prepare requested profiles in the shared command Store, retaining complete requests without SDK discovery.
     pub(crate) fn prepare(request: OrdinaryLibraryNativeRequest<'_>) -> CliResult<Self> {
         if request.profiles.is_empty()
             || request
@@ -57,8 +57,9 @@ impl OrdinaryLibraryNativeProfiles {
         let toolchain = oven_rustc::rustc::rustc_identity(request.rustc).map_err(failure)?;
         let mut observations = BTreeMap::new();
         let mut reports = BTreeMap::new();
+        let store = crate::oven_store::open_default_oven_store()?;
         for profile in request.profiles {
-            let prepared = prepare_resolved_native_loafs(
+            let prepared = prepare_resolved_native_loafs_in_store(
                 request.graph,
                 request.index,
                 request.blobs,
@@ -66,6 +67,7 @@ impl OrdinaryLibraryNativeProfiles {
                 request.rustc,
                 request.target,
                 profile,
+                &store,
             )
             .map_err(failure)?;
             observations.insert((*profile).to_string(), prepared.request_observation().map_err(failure)?);
