@@ -2653,16 +2653,21 @@ impl TypeChecker {
 
     /// Set the loaded dependency library manifests used for `pub::` import resolution.
     pub fn set_library_manifest_index(&mut self, index: LibraryManifestIndex) {
-        self.provider_plan = Arc::new(ProviderPlan::for_library_index(index));
+        let plan = Arc::new(ProviderPlan::for_library_index(index));
+        self.stdlib_cache.bind_provider_plan(&plan);
+        self.provider_plan = plan;
     }
 
     /// Set shared dependency library manifests used for `pub::` import resolution.
     pub fn set_library_manifest_index_shared(&mut self, index: Arc<LibraryManifestIndex>) {
-        self.provider_plan = Arc::new(ProviderPlan::for_library_index((*index).clone()));
+        let plan = Arc::new(ProviderPlan::for_library_index((*index).clone()));
+        self.stdlib_cache.bind_provider_plan(&plan);
+        self.provider_plan = plan;
     }
 
     /// Set the immutable provider plan consumed by import resolution and semantic checking.
     pub fn set_provider_plan(&mut self, plan: Arc<ProviderPlan>) {
+        self.stdlib_cache.bind_provider_plan(&plan);
         self.provider_plan = plan;
         self.seed_sdk_provider_symbols();
     }
@@ -7044,6 +7049,12 @@ impl TypeChecker {
         self.type_info = TypeCheckInfo::default();
         self.warnings.clear();
         self.errors.clear();
+        if let Err(error) = self.stdlib_cache.verify_retained_sources() {
+            return Err(vec![CompileError::new(
+                format!("retained standard source metadata refused: {error}"),
+                Span::default(),
+            )]);
+        }
         self.pending_uncopyable_dict_lookups.clear();
         self.mutable_bindings.clear();
         self.static_alias_bindings.clear();
@@ -7162,6 +7173,12 @@ impl TypeChecker {
                     ));
                 }
             }
+        }
+        if let Err(error) = self.stdlib_cache.verify_retained_sources() {
+            self.errors.push(CompileError::new(
+                format!("retained standard source metadata refused: {error}"),
+                Span::default(),
+            ));
         }
         // Split fatal errors from non-fatal diagnostics.
         let all = std::mem::take(&mut self.errors);
