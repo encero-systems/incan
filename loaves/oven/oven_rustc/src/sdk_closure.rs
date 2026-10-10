@@ -27,6 +27,9 @@ mod local;
 mod native;
 mod physical_edges;
 
+/// Actual process, protocol and blob work for one native preparation or validation reader.
+pub use index_batch::IndexBatchWork as NativeIndexReadWork;
+
 pub(crate) use local::{
     compile_local_native_facets_for_profile, local_native_source_selection, native_required_features,
 };
@@ -163,6 +166,8 @@ pub(crate) struct UnitCodegenSelection {
 /// Measured compile outcomes, including refused units and their dependent units.
 #[derive(Default, Serialize)]
 pub struct SdkClosureReport {
+    /// Actual pinned-index transport work during registry preparation, excluding later current-input replay.
+    pub index_reads: NativeIndexReadWork,
     /// Units compiled during this invocation.
     pub compiled: Vec<String>,
     /// Units reused through the executor's content-checked output receipts.
@@ -254,7 +259,7 @@ pub(crate) fn prepare_closure_in_store(
     std::fs::create_dir_all(output)?;
     let toolchain = rustc_identity(rustc)?;
     let scratch = tempfile::Builder::new().prefix("sdk-source-").tempdir_in(output)?;
-    let units = prepare_units(seed.units, scratch.path(), request, &toolchain)?;
+    let (units, index_reads) = prepare_units(seed.units, scratch.path(), request, &toolchain)?;
     let context = CompileContext {
         rustc,
         target,
@@ -267,6 +272,7 @@ pub(crate) fn prepare_closure_in_store(
         unit_codegen: &seed.unit_codegen,
     };
     let mut closure = compile_units(&units, &context)?;
+    closure.report.index_reads = index_reads;
     closure.report.seconds = started.elapsed().as_secs_f64();
     Ok(closure)
 }
@@ -482,22 +488,35 @@ pub(crate) fn inspection_source_unit(
     }))
 }
 
-/// Verify archives before parsing their adopted manifests and create fresh source-only roots.
+/// Verify archives and pinned metadata through one reader, requiring its child to finish before native compilation.
 fn prepare_units(
     bindings: Vec<SdkLockedUnit>,
     scratch: &Path,
     request: &ClosureCompileRequest<'_>,
     toolchain: &str,
+) -> Result<(Vec<PreparedUnit>, NativeIndexReadWork), Error> {
+    if bindings.is_empty() {
+        return Ok((Vec::new(), NativeIndexReadWork::default()));
+    }
+    let mut reader = index_batch::PinnedIndexBatch::open(request.index, request.index_commit)?;
+    let units = prepare_units_with_reader(bindings, scratch, request, toolchain, &mut reader)?;
+    reader.finish()?;
+    Ok((units, *reader.work()))
+}
+
+/// Prepare the same archive/source/fact inputs through one admitted pin, with no mutable-index fallback.
+fn prepare_units_with_reader(
+    bindings: Vec<SdkLockedUnit>,
+    scratch: &Path,
+    request: &ClosureCompileRequest<'_>,
+    toolchain: &str,
+    reader: &mut index_batch::PinnedIndexBatch,
 ) -> Result<Vec<PreparedUnit>, Error> {
     let ClosureCompileRequest {
-        blobs,
-        index,
-        index_commit,
-        target,
-        profile,
-        ..
+        blobs, target, profile, ..
     } = *request;
-    let about = environment::adopted_about(index, index_commit, &bindings)?;
+    let paths = reader.adoption_paths()?;
+    let about = environment::adopted_about_with_reader(&bindings, &paths, &mut |path| reader.read(path))?;
     // A host-domain unit's build script ran for the machine that compiles it, so its fact is keyed by the compiler's
     // host triple even when the closure cross-compiles its target-domain units.
     let host = rustc_host_target(request.rustc)?;
@@ -529,9 +548,10 @@ fn prepare_units(
             } else {
                 target
             };
-            let fact = index_fact(index, index_commit, &binding, fact_target, toolchain, profile)?;
+            let fact =
+                index_fact_with_reader(&binding, fact_target, toolchain, profile, &mut |path| reader.read(path))?;
             let fact_out = match &fact {
-                Some(fact) => fact_out_files(index, index_commit, &binding, fact)?,
+                Some(fact) => fact_out_files_with_reader(&binding, fact, &mut |path| reader.read(path))?,
                 None => Vec::new(),
             };
             let metadata = about
@@ -1029,20 +1049,7 @@ fn declares_build_script(manifest: &toml::Value) -> bool {
         .unwrap_or(false)
 }
 
-/// Read a fact's generated files from the version's record directory at the pinned index commit.
-///
-/// RFC 119 `out` paths are owner-relative to the record that declares the fact (`<loaf>/<version>/`), not to the
-/// source archive, so the bytes come from the index and are checked against the declared digest before use.
-fn fact_out_files(
-    index: &Path,
-    index_commit: &str,
-    binding: &SdkLockedUnit,
-    fact: &oven_model::manifest::RustFactRecord,
-) -> Result<Vec<FactOutFile>, Error> {
-    fact_out_files_with_reader(binding, fact, &mut |relative| index_file(index, index_commit, relative))
-}
-
-/// Share generated-file digest validation between compatibility reads and one command-owned pinned reader.
+/// Verify RFC 119 generated bytes from the declaring index record's owner-relative paths and exact digests.
 fn fact_out_files_with_reader(
     binding: &SdkLockedUnit,
     fact: &oven_model::manifest::RustFactRecord,
@@ -1143,20 +1150,6 @@ fn validate_index_commit(index_commit: &str) -> Result<(), Error> {
         return Err("index commit must be a full hexadecimal commit identity".into());
     }
     Ok(())
-}
-
-/// Select a fact only after verifying the pinned index archive association and all four binding dimensions.
-fn index_fact(
-    index: &Path,
-    index_commit: &str,
-    binding: &SdkLockedUnit,
-    target: &str,
-    toolchain: &str,
-    profile: &str,
-) -> Result<Option<oven_model::manifest::RustFactRecord>, Error> {
-    index_fact_with_reader(binding, target, toolchain, profile, &mut |relative| {
-        index_file(index, index_commit, relative)
-    })
 }
 
 /// Select the identical complete fact through either canonical pinned file transport.

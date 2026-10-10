@@ -54,6 +54,8 @@ pub struct NativeLoafPreparationRequest<'a> {
 /// Actual native producer outcomes, independent of a stdlib inventory or aggregate SDK identity.
 #[derive(Debug, Serialize)]
 pub struct NativeLoafPreparationReport {
+    /// Actual registry preparation index work; independent source-current replay is reported separately.
+    pub index_reads: crate::sdk_closure::NativeIndexReadWork,
     /// Exact labels compiled by the existing native producer.
     pub compiled: Vec<String>,
     /// Exact labels reused by the existing native producer.
@@ -243,12 +245,14 @@ fn prepare_native_loafs_with_document(
     closure.require_complete().map_err(NativeLoafError::Failed)?;
     let compiled = closure.report().compiled.clone();
     let reused = closure.report().reused.clone();
+    let index_reads = closure.report().index_reads;
     let graph = closure.into_native_loafs(store).map_err(NativeLoafError::Failed)?;
     let observation = NativeLoafRequestObservation::from_producer(actual_request, &graph)?;
     Ok(NativeLoafPreparation {
         graph,
         observation: Some(observation),
         report: NativeLoafPreparationReport {
+            index_reads,
             compiled,
             reused,
             seconds: started.elapsed().as_secs_f64(),

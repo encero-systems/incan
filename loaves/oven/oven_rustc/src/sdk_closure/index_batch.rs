@@ -1,4 +1,4 @@
-//! Command-owned pinned Git blob reads for current native metadata (#1337, #1698).
+//! Command-owned pinned Git blob reads for native preparation and current metadata (#1337, #1698).
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
@@ -9,21 +9,21 @@ use super::{
     Error, environment, index_file_with_counter, validate_index_commit, validate_index_pin, validate_index_relative,
 };
 
-/// Actual work performed by one current-input reader; these counters exclude independent native preparation.
-#[derive(Default)]
-pub(crate) struct IndexBatchWork {
+/// Actual work performed by one pinned index reader; callers identify its preparation or validation boundary.
+#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
+pub struct IndexBatchWork {
     /// Git processes started for capability selection, either transport and optional adoption listing.
-    pub(crate) processes: usize,
+    pub processes: usize,
     /// Requests written to the persistent child, including the initial commit-type check.
-    pub(crate) requests: usize,
+    pub requests: usize,
     /// File demands, including repeated demands served by command-local bytes.
-    pub(crate) file_requests: usize,
+    pub file_requests: usize,
     /// Distinct blob payloads read through the selected transport.
-    pub(crate) blob_reads: usize,
+    pub blob_reads: usize,
     /// Repeated file demands served from the same pinned command snapshot.
-    pub(crate) cache_hits: usize,
+    pub cache_hits: usize,
     /// Actual blob payload bytes read through the selected transport, excluding headers and commit metadata.
-    pub(crate) blob_bytes: usize,
+    pub blob_bytes: usize,
 }
 
 /// One canonical pin with a NUL-framed child when supported, otherwise the conservative canonical transport.
