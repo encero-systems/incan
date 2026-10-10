@@ -30,6 +30,7 @@ pub(crate) const ORIGIN_INPUT: &str = "native-source-origin";
 mod preparation;
 mod prepared;
 mod producer;
+mod request_observation;
 mod selection;
 pub use preparation::{
     NativeLoafFacet, NativeLoafPreparation, NativeLoafPreparationReport, NativeLoafPreparationRequest,
@@ -38,6 +39,8 @@ pub use preparation::{
 pub use prepared::{
     NativeLoafConsumerPreparation, NativeLoafConsumerReport, NativeLoafConsumerRequest, prepare_declared_native_loafs,
 };
+
+pub use request_observation::NativeLoafRequestObservation;
 
 pub use producer::{NativeLoafInspectionInputs, NativeLoafInspectionUnit, NativeLoafInspectionWork};
 
