@@ -591,7 +591,7 @@ fn collect_project_lock_context_impl(
             &provider_plan,
             &queries,
         )?
-        .require_source_inspection()?;
+        .require_ordinary_source_inspection()?;
         native.provider_semantic_dependencies(&provider_plan, &project_requirements)?
     } else {
         semantic_sdk_path_dependencies(&project_requirements)

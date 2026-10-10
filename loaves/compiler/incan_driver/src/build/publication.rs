@@ -466,7 +466,10 @@ pub(crate) fn publish_project_inspection_authority(
         dependency_authority.locked_registry_packages,
         &owner_locked_registry_packages,
     )?;
+    // Release-only publication still owns its exact inspection constituent. It cannot advertise a debug test
+    // envelope: future tests need an independently prepared debug plan, rather than accepting release artifacts.
     let test_dependency_envelope = test_dependency_constituent_index
+        .filter(|_| receipt.intent.profile == "debug")
         .map(|constituent_index| {
             project_inspection_test_dependency_roots(
                 &test_dependency_envelope.dependencies,
