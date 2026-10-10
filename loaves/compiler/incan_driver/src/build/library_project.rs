@@ -519,11 +519,17 @@ pub fn prepare_library_project_with_caller_facet(
 
 /// Explicit ordinary dependency/session inputs retained by the invoking publisher (#1337/#1698).
 ///
-/// The existing native SDK capability is a temporary compatibility requirement of current identity, inspection
-/// and profile planners. This input grants no new namespace or macro authority and is not SDK-free preparation.
+/// Ordinary native requests and the temporary SDK compatibility route are explicit alternatives. This input grants
+/// no new namespace or macro authority; ordinary callers must prove their checked native demands separately.
 pub(crate) struct AdmittedLibraryPreparation {
     session: CompilationSession,
-    temporary_native_sdk_context: Arc<super::NativeSdkCommandContext>,
+    native: AdmittedLibraryNative,
+}
+
+/// Retain the exact native route selected by the caller; absence never selects a different route.
+enum AdmittedLibraryNative {
+    TemporarySdk(Arc<super::NativeSdkCommandContext>),
+    Ordinary(Arc<super::ordinary_library_native::OrdinaryLibraryNativeProfiles>),
 }
 
 impl AdmittedLibraryPreparation {
@@ -539,8 +545,32 @@ impl AdmittedLibraryPreparation {
         temporary_native_sdk_context.verify()?;
         Ok(Self {
             session,
-            temporary_native_sdk_context,
+            native: AdmittedLibraryNative::TemporarySdk(temporary_native_sdk_context),
         })
+    }
+
+    /// Bind an admitted language dependency session to original ordinary native producer requests.
+    pub(crate) fn with_ordinary_native(
+        session: CompilationSession,
+        native: Arc<super::ordinary_library_native::OrdinaryLibraryNativeProfiles>,
+    ) -> CliResult<Self> {
+        session
+            .admitted_library_dependencies()
+            .ok_or_else(|| CliError::failure("ordinary native preparation requires admitted language dependencies"))?
+            .verify()?;
+        native.verify()?;
+        Ok(Self {
+            session,
+            native: AdmittedLibraryNative::Ordinary(native),
+        })
+    }
+
+    /// Revalidate the original chosen native route without discovery or cross-route fallback.
+    pub(crate) fn verify_native(&self) -> CliResult<()> {
+        match &self.native {
+            AdmittedLibraryNative::TemporarySdk(native) => native.verify(),
+            AdmittedLibraryNative::Ordinary(native) => native.verify(),
+        }
     }
 
     /// Borrow the original admitted session for the invoking publisher's source/lock finalization boundary.
@@ -549,8 +579,21 @@ impl AdmittedLibraryPreparation {
     }
 
     /// Borrow the explicitly temporary native SDK admission without reacquiring or discovering another owner set.
-    pub(crate) fn temporary_native_sdk_context(&self) -> &Arc<super::NativeSdkCommandContext> {
-        &self.temporary_native_sdk_context
+    pub(crate) fn temporary_native_sdk_context(&self) -> Option<&Arc<super::NativeSdkCommandContext>> {
+        match &self.native {
+            AdmittedLibraryNative::TemporarySdk(native) => Some(native),
+            AdmittedLibraryNative::Ordinary(_) => None,
+        }
+    }
+
+    /// Borrow complete original ordinary requests through preparation, replay and finalization.
+    pub(crate) fn ordinary_native(
+        &self,
+    ) -> Option<&Arc<super::ordinary_library_native::OrdinaryLibraryNativeProfiles>> {
+        match &self.native {
+            AdmittedLibraryNative::Ordinary(native) => Some(native),
+            AdmittedLibraryNative::TemporarySdk(_) => None,
+        }
     }
 }
 
@@ -768,7 +811,30 @@ fn prepare_library_project_with_context(
     admitted: Option<&AdmittedLibraryPreparation>,
 ) -> CliResult<LibraryPreparation> {
     let mut authority_context = authority_context;
-    let explicit_native_context = admitted.map(|input| Arc::clone(&input.temporary_native_sdk_context));
+    let explicit_native_context = admitted.and_then(|input| input.temporary_native_sdk_context().cloned());
+    let ordinary_native = admitted.and_then(|input| input.ordinary_native().cloned());
+    if let Some(native) = &ordinary_native {
+        if !normal_oven
+            || native_sdk.is_some()
+            || authority_context
+                .as_ref()
+                .is_some_and(|authority| authority.native_sdk_context.is_some())
+        {
+            return Err(CliError::failure(
+                "ordinary native preparation has competing SDK or legacy authority",
+            ));
+        }
+        native.verify()?;
+        if authority_context
+            .as_ref()
+            .and_then(|authority| authority.requested_target.as_deref())
+            .is_some_and(|target| target != native.metadata().target())
+        {
+            return Err(CliError::failure(
+                "ordinary native request differs from the library target",
+            ));
+        }
+    }
     if let Some(context) = &explicit_native_context {
         if !normal_oven || native_sdk.is_some() {
             return Err(CliError::failure(
@@ -834,17 +900,31 @@ fn prepare_library_project_with_context(
         && !cargo_no_default_features
         && !cargo_all_features
     {
-        metadata_replay::MetadataPreparation::observe_with_native_context(
-            &manifest,
-            &compilation_session,
-            &out_dir,
-            native_sdk,
-            authority_context.as_deref_mut(),
-            explicit_native_context.clone(),
-        )?
+        if let Some(native) = &ordinary_native {
+            metadata_replay::MetadataPreparation::observe_with_ordinary_native_authority(
+                &manifest,
+                &compilation_session,
+                &out_dir,
+                Arc::clone(native.metadata()),
+            )?
+        } else {
+            metadata_replay::MetadataPreparation::observe_with_native_context(
+                &manifest,
+                &compilation_session,
+                &out_dir,
+                native_sdk,
+                authority_context.as_deref_mut(),
+                explicit_native_context.clone(),
+            )?
+        }
     } else {
         None
     };
+    if ordinary_native.is_some() && metadata_preparation.is_none() {
+        return Err(CliError::failure(
+            "ordinary native library requires observable checked metadata authority",
+        ));
+    }
     if let Some(preparation) = metadata_preparation.as_ref()
         && let Some(selected) = preparation.select()?
     {
@@ -864,6 +944,7 @@ fn prepare_library_project_with_context(
             oven_plan_mode,
             include_interop_execution,
             authority: authority_context,
+            ordinary_native: ordinary_native.clone(),
         });
     }
     #[cfg(test)]
@@ -984,6 +1065,22 @@ fn prepare_library_project_with_context(
     #[cfg(not(feature = "rust_inspect"))]
     let metadata_query_paths: Vec<String> = Vec::new();
 
+    if ordinary_native.is_some() {
+        crate::build::library_metadata::requirements::capture_checked_native_demands(
+            &manifest,
+            &modules,
+            &source_requirements,
+            &provider_plan,
+            &metadata_query_paths.iter().cloned().collect(),
+        )?
+        .require_support_only()?;
+        if include_interop_execution {
+            return Err(CliError::failure(
+                "ordinary support-only library cannot request interop execution",
+            ));
+        }
+    }
+
     let lock_start = Instant::now();
     let artifact_only = env::var_os(INTERNAL_LIBRARY_ARTIFACT_ONLY_ENV).is_some();
     if normal_oven && native_sdk.is_none() {
@@ -1089,6 +1186,8 @@ fn prepare_library_project_with_context(
         preparation.native_context().cloned()
     } else if let Some(context) = &explicit_native_context {
         Some(Arc::clone(context))
+    } else if ordinary_native.is_some() {
+        None
     } else if normal_oven && native_sdk.is_none() {
         match authority_context.as_deref_mut() {
             Some(context) => context.native_sdk_context()?,
@@ -1102,13 +1201,17 @@ fn prepare_library_project_with_context(
     }
     let mut oven_build_inputs = (normal_oven && native_sdk.is_none())
         .then(|| {
-            crate::build_unit::oven_build_unit_inputs_with_provider_identities_and_native_sdk(
-                &provider_plan,
-                &project_requirements,
-                &resolved,
-                &provider_semantic_identities,
-                native_sdk_context.as_deref(),
-            )
+            if ordinary_native.is_some() {
+                Ok(BTreeMap::new())
+            } else {
+                crate::build_unit::oven_build_unit_inputs_with_provider_identities_and_native_sdk(
+                    &provider_plan,
+                    &project_requirements,
+                    &resolved,
+                    &provider_semantic_identities,
+                    native_sdk_context.as_deref(),
+                )
+            }
         })
         .transpose()?;
     let source_compiler_vocab_support = normal_oven
@@ -1721,6 +1824,19 @@ fn prepare_library_project_with_context(
                     .as_ref()
                     .ok_or_else(|| CliError::failure("normal Oven library build omitted its bounded store"))?,
                 native_sdk_context,
+                ordinary_runtime: ordinary_native
+                    .as_ref()
+                    .map(|native| {
+                        crate::build_unit::OrdinaryLibraryRuntimeInputs::from_checked(
+                            Arc::clone(native),
+                            &project_root,
+                            &provider_plan,
+                            &project_requirements,
+                            &resolved,
+                            &provider_semantic_identities,
+                        )
+                    })
+                    .transpose()?,
                 oven_plan_mode,
                 rust_edition: rust_edition.clone(),
             },
@@ -1841,8 +1957,16 @@ fn prepare_library_project_with_context(
             &metadata_query_paths,
             report_draft.backend.clone(),
         ) {
-            Ok(contract) => Some(contract),
+            Ok(contract) => {
+                if ordinary_native.is_some() {
+                    contract.require_support_only_native()?;
+                }
+                Some(contract)
+            }
             Err(error) => {
+                if ordinary_native.is_some() {
+                    return Err(error);
+                }
                 tracing::debug!(reason = %error, "checked library replay contract is unavailable");
                 None
             }
@@ -1934,6 +2058,13 @@ fn checked_requirement_contract(
             source_modules,
             entry_module: entry.path_segments.clone(),
             rust_abi_queries: rust_abi_queries.iter().cloned().collect(),
+            native_demands: crate::build::library_metadata::requirements::capture_checked_native_demands(
+                manifest,
+                modules,
+                requirements,
+                &session.provider_plan_for_modules(modules)?,
+                &rust_abi_queries.iter().cloned().collect(),
+            )?,
             rust_extern_paths: rust_extern_report_paths(&collect_rust_extern_contexts(modules)),
             backend,
         },

@@ -235,6 +235,9 @@ fn bake_oven_library_with_dependencies(
             "normal Oven library build has no prepared `{profile}` direct-rustc selection"
         ))
     })?;
+    if let Some(native) = &selected.ordinary_native {
+        native.verify()?;
+    }
     let mut caller_owned_libraries = selected.caller_owned_libraries.clone();
     let mut re_materialized_package_library_names = BTreeSet::new();
     let mut registry_authority = registry_leaf_authority_for_plan_selection(&selected.plan_selection)?;
@@ -337,7 +340,11 @@ fn bake_oven_library_with_dependencies(
         &store,
     );
 
-    classify_direct_rustc_bake(&oven.crate_name, direct).map(|bake| (bake, artifact_plan))
+    let bake = classify_direct_rustc_bake(&oven.crate_name, direct)?;
+    if let Some(native) = &selected.ordinary_native {
+        native.verify()?;
+    }
+    Ok((bake, artifact_plan))
 }
 
 /// Recompile a source-owned Body IR caller against the host's exact compiled semantics-core instance.
@@ -651,15 +658,8 @@ fn capture_library_metadata_lock_transition(
     };
     let project = crate::project::effective_project_manifest_for_exact_root(&prepared.project_root)?;
     let session = library_metadata_publication_session(prepared, features, admitted)?;
-    let preparation = MetadataPreparation::observe_with_native_context(
-        &project,
-        &session,
-        &prepared.out_dir,
-        None,
-        Some(authority),
-        admitted.map(|input| std::sync::Arc::clone(input.temporary_native_sdk_context())),
-    )?
-    .ok_or_else(|| CliError::failure("ordinary metadata lost preparation authority before lock publication"))?;
+    let preparation = observe_admitted_library_metadata(&project, &session, &prepared.out_dir, authority, admitted)?
+        .ok_or_else(|| CliError::failure("ordinary metadata lost preparation authority before lock publication"))?;
     MetadataLockTransition::capture(
         preparation,
         &MetadataTransitionContext {
@@ -688,15 +688,8 @@ fn finalize_library_metadata_lock_transition(
     };
     let project = crate::project::effective_project_manifest_for_exact_root(&prepared.project_root)?;
     let session = library_metadata_publication_session(prepared, features, admitted)?;
-    let candidate = MetadataPreparation::observe_with_native_context(
-        &project,
-        &session,
-        &prepared.out_dir,
-        None,
-        Some(authority),
-        admitted.map(|input| std::sync::Arc::clone(input.temporary_native_sdk_context())),
-    )?
-    .ok_or_else(|| CliError::failure("ordinary metadata lost preparation authority after lock publication"))?;
+    let candidate = observe_admitted_library_metadata(&project, &session, &prepared.out_dir, authority, admitted)?
+        .ok_or_else(|| CliError::failure("ordinary metadata lost preparation authority after lock publication"))?;
     prepared.metadata_owner = Some(transition.finalize(
         candidate,
         &MetadataTransitionContext {
@@ -709,6 +702,34 @@ fn finalize_library_metadata_lock_transition(
         published,
     )?);
     Ok(())
+}
+
+/// Reobserve the original caller-selected native route on both sides of canonical lock publication.
+fn observe_admitted_library_metadata(
+    project: &ProjectManifest,
+    session: &crate::session::CompilationSession,
+    output: &Path,
+    authority: &mut OvenProjectBakeAuthorityContext,
+    admitted: Option<&AdmittedLibraryPreparation>,
+) -> CliResult<Option<MetadataPreparation>> {
+    if let Some(native) = admitted.and_then(AdmittedLibraryPreparation::ordinary_native) {
+        native.verify()?;
+        MetadataPreparation::observe_with_ordinary_native_authority(
+            project,
+            session,
+            output,
+            std::sync::Arc::clone(native.metadata()),
+        )
+    } else {
+        MetadataPreparation::observe_with_native_context(
+            project,
+            session,
+            output,
+            None,
+            Some(authority),
+            admitted.and_then(|input| input.temporary_native_sdk_context().cloned()),
+        )
+    }
 }
 
 /// Discover the conventional or explicitly declared binary roots of a project's Rust facet.
@@ -1466,7 +1487,7 @@ pub fn bake_oven_project_targets(
 
 /// Publish a standalone ordinary library from original command admissions through the existing bake engine.
 /// This migration caller deliberately exercises metadata preparation on repeats instead of completed-output reuse.
-/// Native authority still uses the visibly temporary SDK context; no standard namespace grant is created here.
+/// The caller retains its explicit ordinary or temporary SDK route; no standard namespace grant is created here.
 pub(crate) fn bake_admitted_library(
     input: &AdmittedLibraryPreparation,
     package_features: &FeatureSelection,
@@ -1493,7 +1514,7 @@ pub(crate) fn bake_admitted_library(
         ));
     }
     current_admitted_library_session(input.session(), &targets[0].1, package_features)?;
-    input.temporary_native_sdk_context().verify()?;
+    input.verify_native()?;
     bake_oven_project_targets_with_admission(root, package_features, requested_target, Some(input))
 }
 
@@ -1575,7 +1596,7 @@ fn bake_oven_project_targets_with_admission(
     let store = open_default_oven_store()?;
     let mut authority_context = OvenProjectBakeAuthorityContext {
         requested_target: requested_target.map(str::to_owned),
-        native_sdk_context: admitted.map(|input| std::sync::Arc::clone(input.temporary_native_sdk_context())),
+        native_sdk_context: admitted.and_then(|input| input.temporary_native_sdk_context().cloned()),
         ..OvenProjectBakeAuthorityContext::default()
     };
     if admitted.is_none() {
@@ -1977,14 +1998,30 @@ fn bake_oven_project_targets_with_admission(
             .as_ref()
             .ok_or_else(|| CliError::failure("explicit Oven bake did not retain its canonical project lock"))?
             .dependency_surface();
-        let test_dependency_envelope = prepare_oven_test_dependency_envelope(
-            &store,
-            &project_root,
-            dependency_surface,
-            &debug_target_receipts,
-            Some(&mut authority_context),
-        )?;
-        let native_sdk_context = authority_context.native_sdk_context()?;
+        let ordinary_native = admitted.and_then(AdmittedLibraryPreparation::ordinary_native);
+        let test_dependency_envelope = if let Some(native) = ordinary_native {
+            native.support_only_test_envelope(
+                &store,
+                debug_target_receipts
+                    .first()
+                    .ok_or_else(|| CliError::failure("ordinary library publication requires its debug receipt"))?,
+                dependency_surface,
+                &project_root,
+            )?
+        } else {
+            prepare_oven_test_dependency_envelope(
+                &store,
+                &project_root,
+                dependency_surface,
+                &debug_target_receipts,
+                Some(&mut authority_context),
+            )?
+        };
+        let native_sdk_context = if ordinary_native.is_some() {
+            None
+        } else {
+            authority_context.native_sdk_context()?
+        };
         let (registry_dependencies, dev_registry_dependencies) =
             crate::build::plan_selection::canonical_project_inspection_dependencies_with_native_sdk(
                 dependency_surface,
@@ -2419,3 +2456,6 @@ mod tests {
 
 #[cfg(test)]
 mod admitted_publication_tests;
+
+#[cfg(test)]
+mod ordinary_native_publication_tests;

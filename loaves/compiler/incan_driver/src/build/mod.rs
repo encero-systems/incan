@@ -24,6 +24,7 @@ pub mod native_runtime_inputs;
 pub mod native_sdk;
 pub(crate) mod native_sdk_plan;
 pub use native_sdk_plan::NativeSdkCommandContext;
+pub(crate) mod ordinary_library_native;
 pub(crate) mod ordinary_support;
 pub mod output_materialization;
 pub mod output_paths;
@@ -214,6 +215,8 @@ pub struct OvenPreparedLibrary {
 pub struct OvenPreparedLibraryProfile {
     /// Shared admission used by all profiles of this library command.
     pub native_sdk_context: Option<Arc<NativeSdkCommandContext>>,
+    /// Original complete ordinary requests retained through native compilation and output publication.
+    pub(crate) ordinary_native: Option<Arc<ordinary_library_native::OrdinaryLibraryNativeProfiles>>,
     pub receipt: oven_store::OvenReceipt,
     pub plan_selection: OvenDirectRustcPlanSelection,
     pub materialization: OvenToolchainMaterialization,

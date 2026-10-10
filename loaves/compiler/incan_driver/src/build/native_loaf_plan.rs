@@ -15,7 +15,7 @@ use oven_rustc::rustc::{
     OvenRustcSourceSearchClosure, OvenRustcSupportingArtifact,
 };
 use oven_store::store::{OvenArtifactKind, OvenArtifactPublishRequest, OvenStore};
-use oven_store::{OvenReceipt, digest_bytes, receipt_with_build_unit_input};
+use oven_store::{OvenReceipt, receipt_with_build_unit_input};
 
 use crate::error::{CliError, CliResult};
 
@@ -73,9 +73,19 @@ pub fn select_native_loaf_plan(
     source_receipt: &OvenReceipt,
     closure: &NativeLoafClosure,
 ) -> CliResult<(OvenReceipt, OvenDirectRustcPlanSelection)> {
-    let roots = serde_json::to_vec(closure.roots()).map_err(failure)?;
-    let receipt = receipt_with_build_unit_input(source_receipt, "ordinary-native-roots", digest_bytes(&roots))
-        .map_err(failure)?;
+    let roots_digest = super::native_runtime_inputs::ordinary_roots_digest(closure.roots())?;
+    if source_receipt
+        .sources
+        .build_unit_inputs
+        .get("ordinary-native-roots")
+        .is_some_and(|original| original != &roots_digest)
+    {
+        return Err(CliError::failure(
+            "ordinary native plan roots differ from the original runtime projection",
+        ));
+    }
+    let receipt =
+        receipt_with_build_unit_input(source_receipt, "ordinary-native-roots", roots_digest).map_err(failure)?;
     let owners = closure.shared_owners().map_err(failure)?;
     if let Some(plan) =
         select_receipt_direct_rustc_execution_plan_with_native_owners_for_domain(store, &receipt, &owners, DOMAIN)

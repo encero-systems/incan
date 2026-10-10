@@ -102,6 +102,15 @@ struct OrdinaryRoot<'a> {
     record_identity: &'a str,
 }
 
+/// Encode declared roots identically for the Incan exchange and the final native consumer receipt.
+pub(crate) fn ordinary_roots_digest(roots: &BTreeMap<String, String>) -> CliResult<String> {
+    let roots = roots
+        .iter()
+        .map(|(alias, record_identity)| OrdinaryRoot { alias, record_identity })
+        .collect::<Vec<_>>();
+    Ok(oven_store::digest_bytes(&serde_json::to_vec(&roots).map_err(failure)?))
+}
+
 /// Physical identity exchange; no semantic, macro or namespace authority is conveyed by this payload.
 #[derive(Serialize)]
 struct OrdinaryRequest<'a> {
@@ -185,7 +194,7 @@ pub(crate) fn ordinary_runtime_inputs(
     }
     // ---- Bound executable response and final original-owner observation ----
     let response = execute_exchange(&bound.engine, &bytes)?;
-    let roots_digest = oven_store::digest_bytes(&serde_json::to_vec(&request.roots).map_err(failure)?);
+    let roots_digest = ordinary_roots_digest(selected.roots())?;
     let records_digest = oven_store::digest_bytes(&serde_json::to_vec(&request.selected_records).map_err(failure)?);
     let features_digest = oven_store::digest_bytes(&serde_json::to_vec(&request.consumer_features).map_err(failure)?);
     let providers_digest = oven_store::digest_bytes(&serde_json::to_vec(&request.provider_records).map_err(failure)?);

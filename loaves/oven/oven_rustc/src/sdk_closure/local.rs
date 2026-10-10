@@ -230,7 +230,7 @@ pub fn compile_local_sdk_facet_for_target(
 
 /// Compile one actual local native facet with profile-bound optimization, receipt identity and dependency owners.
 ///
-/// An already selected unit or dependency from another profile refuses rather than being relabelled or linked into
+/// An already selected unit or dependency from another profile refuses rather than being relabeled or linked into
 /// this cohort. The existing target-specific debug wrapper preserves auxiliary-target callers' behavior.
 #[allow(clippy::too_many_arguments)]
 fn compile_local_native_facet_for_target_and_profile(
