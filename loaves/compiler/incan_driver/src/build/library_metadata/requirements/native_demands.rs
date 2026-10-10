@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use incan_frontend::ParsedModule;
-use incan_frontend::ast::{Declaration, Expr, FunctionDecl, ImportKind, Literal, ParamKind, Statement, Type};
+use incan_frontend::ast::{CallArg, Declaration, Expr, FunctionDecl, ImportKind, Literal, ParamKind, Statement, Type};
 use incan_provider::ProviderPlan;
 use incan_provider::inventory::provider_source_used_module_paths;
 use incan_provider::requirements::ProjectRequirements;
@@ -32,6 +32,9 @@ struct NativeDemandFacts {
     public_dependency_modules: BTreeSet<Vec<String>>,
     provider_contracts: BTreeMap<String, String>,
     rust_abi_queries: BTreeSet<String>,
+    /// Exact item imports covered by the scalar sysroot walk; absent old facts grant no expanded coverage.
+    #[serde(default)]
+    scalar_sysroot_imports: Option<BTreeSet<String>>,
     rust_derive_probe_paths: BTreeSet<String>,
     vocab_manifest: ManifestDemand,
     c_manifest: ManifestDemand,
@@ -112,6 +115,7 @@ pub(crate) fn capture_checked_native_demands(
     // ---- Authored structure proof ----
     let mut source_modules = BTreeMap::new();
     let mut unsupported_source = BTreeSet::new();
+    let mut scalar_sysroot_imports = BTreeSet::new();
     for module in modules {
         let path = source_relative(project.project_root(), &module.file_path)?;
         if source_modules
@@ -123,10 +127,44 @@ pub(crate) fn capture_checked_native_demands(
         if module.ast.rust_module_path.is_some() {
             unsupported_source.insert(format!("{path}:rust.module"));
         }
+        let mut imported = BTreeMap::new();
+        for declaration in &module.ast.declarations {
+            if let Declaration::Import(import) = &declaration.node
+                && let ImportKind::RustFrom {
+                    crate_name,
+                    path: rust_path,
+                    items,
+                    version,
+                    features,
+                } = &import.kind
+                && crate_name == "std"
+                && version.is_none()
+                && features.is_empty()
+            {
+                for item in items {
+                    let canonical = std::iter::once(crate_name.as_str())
+                        .chain(rust_path.iter().map(String::as_str))
+                        .chain(std::iter::once(item.name.as_str()))
+                        .collect::<Vec<_>>()
+                        .join("::");
+                    if imported
+                        .insert(item.alias.as_ref().unwrap_or(&item.name).clone(), canonical.clone())
+                        .is_some()
+                    {
+                        unsupported_source.insert(format!("{path}:ambiguous-import"));
+                    }
+                    scalar_sysroot_imports.insert(canonical);
+                }
+            }
+        }
+        let imported_names = imported.keys().cloned().collect();
         for declaration in &module.ast.declarations {
             let supported = match &declaration.node {
                 Declaration::Docstring(_) => true,
-                Declaration::Function(function) => support_only_function(function),
+                Declaration::Function(function) => scalar_function(function, &imported_names),
+                Declaration::Import(import) => matches!(&import.kind, ImportKind::RustFrom {
+                    crate_name, version, features, items, ..
+                } if crate_name == "std" && version.is_none() && features.is_empty() && !items.is_empty()),
                 _ => false,
             };
             if !supported {
@@ -143,6 +181,7 @@ pub(crate) fn capture_checked_native_demands(
             public_dependency_modules,
             provider_contracts,
             rust_abi_queries: rust_abi_queries.clone(),
+            scalar_sysroot_imports: Some(scalar_sysroot_imports),
             rust_derive_probe_paths: collect_rust_inspect_derive_probe_paths(modules).into_iter().collect(),
             vocab_manifest: ManifestDemand::capture(project.vocab())?,
             c_manifest: ManifestDemand::capture(project.interop_c())?,
@@ -174,6 +213,10 @@ impl CheckedNativeDemands {
             || !facts.public_dependency_modules.is_empty()
             || !facts.provider_contracts.is_empty()
             || !facts.rust_abi_queries.is_empty()
+            || facts
+                .scalar_sysroot_imports
+                .as_ref()
+                .is_some_and(|paths| !paths.is_empty())
             || !facts.rust_derive_probe_paths.is_empty()
             || !matches!(facts.vocab_manifest, ManifestDemand::Absent)
             || !matches!(facts.c_manifest, ManifestDemand::Absent)
@@ -184,6 +227,44 @@ impl CheckedNativeDemands {
         {
             return Err(invalid(
                 "ordinary native support-only coverage does not admit these checked demands",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Admit scalar sysroot item uses only when every imported item has a promised complete ABI query.
+    /// This grants source inspection, never provider, derive, vocabulary or C execution authority. Final publication
+    /// and replay must additionally validate every promised ABI item against the original checked metadata owner.
+    pub(crate) fn require_source_inspection(&self) -> CliResult<()> {
+        if self.require_support_only().is_ok() {
+            return Ok(());
+        }
+        let facts = self
+            .observed
+            .as_ref()
+            .ok_or_else(|| invalid("ordinary native demand coverage is unknown"))?;
+        let imports = facts
+            .scalar_sysroot_imports
+            .as_ref()
+            .ok_or_else(|| invalid("ordinary sysroot source coverage is unknown"))?;
+        if facts.schema_version != 1
+            || facts.source_modules.is_empty()
+            || imports.is_empty()
+            || imports != &facts.rust_abi_queries
+            || imports.iter().any(|path| !path.starts_with("std::"))
+            || !facts.used_module_paths.is_empty()
+            || !facts.public_dependency_modules.is_empty()
+            || !facts.provider_contracts.is_empty()
+            || !facts.rust_derive_probe_paths.is_empty()
+            || !matches!(facts.vocab_manifest, ManifestDemand::Absent)
+            || !matches!(facts.c_manifest, ManifestDemand::Absent)
+            || !facts.dependency_aliases.is_empty()
+            || !facts.stdlib_facets.is_empty()
+            || facts.physical_projections
+            || !facts.unsupported_source.is_empty()
+        {
+            return Err(invalid(
+                "ordinary source inspection lacks complete checked demand coverage",
             ));
         }
         Ok(())
@@ -214,8 +295,8 @@ impl CheckedNativeDemands {
     }
 }
 
-/// Prove a primitive function has no imported, decorator, generic, vocabulary or implicit callable demand.
-fn support_only_function(function: &FunctionDecl) -> bool {
+/// Walk primitive functions and explicit imported sysroot calls without granting generic or implicit dispatch.
+fn scalar_function(function: &FunctionDecl, imported: &BTreeSet<String>) -> bool {
     if !function.decorators.is_empty()
         || !function.surface_modifiers.is_empty()
         || !function.type_params.is_empty()
@@ -232,7 +313,7 @@ fn support_only_function(function: &FunctionDecl) -> bool {
                 .node
                 .default
                 .as_ref()
-                .is_some_and(|value| !scalar_expression(&value.node, &BTreeSet::new()))
+                .is_some_and(|value| !scalar_expression(&value.node, &BTreeSet::new(), imported))
             || !bindings.insert(parameter.node.name.clone())
         {
             return false;
@@ -244,10 +325,10 @@ fn support_only_function(function: &FunctionDecl) -> bool {
             Statement::Return(value)
                 if value
                     .as_ref()
-                    .is_none_or(|value| scalar_expression(&value.node, &bindings)) => {}
+                    .is_none_or(|value| scalar_expression(&value.node, &bindings, imported)) => {}
             Statement::Assignment(value)
                 if value.ty.as_ref().is_none_or(|ty| scalar_type(&ty.node))
-                    && scalar_expression(&value.value.node, &bindings) =>
+                    && scalar_expression(&value.value.node, &bindings, imported) =>
             {
                 bindings.insert(value.name.clone());
             }
@@ -265,11 +346,19 @@ fn scalar_type(ty: &Type) -> bool {
 }
 
 /// Walk all admitted scalar expression children; unknown expression kinds never infer empty native requirements.
-fn scalar_expression(expression: &Expr, bindings: &BTreeSet<String>) -> bool {
+fn scalar_expression(expression: &Expr, bindings: &BTreeSet<String>, imported: &BTreeSet<String>) -> bool {
     match expression {
         Expr::Literal(Literal::Int(_) | Literal::Float(_) | Literal::Bool(_)) => true,
-        Expr::Ident(name) => bindings.contains(name),
-        Expr::Paren(inner) | Expr::Unary(_, inner) => scalar_expression(&inner.node, bindings),
+        Expr::Ident(name) => bindings.contains(name) || imported.contains(name),
+        Expr::Paren(inner) | Expr::Unary(_, inner) => scalar_expression(&inner.node, bindings, imported),
+        Expr::Call(callee, types, args)
+            if types.is_empty()
+                && matches!(&callee.node, Expr::Ident(name) if imported.contains(name) && !bindings.contains(name)) =>
+        {
+            args.iter().all(
+                |arg| matches!(arg, CallArg::Positional(value) if scalar_expression(&value.node, bindings, imported)),
+            )
+        }
         Expr::Binary(left, op, right)
             if !matches!(
                 op,
@@ -282,7 +371,7 @@ fn scalar_expression(expression: &Expr, bindings: &BTreeSet<String>) -> bool {
                     | incan_frontend::ast::BinaryOp::IsNot
             ) =>
         {
-            scalar_expression(&left.node, bindings) && scalar_expression(&right.node, bindings)
+            scalar_expression(&left.node, bindings, imported) && scalar_expression(&right.node, bindings, imported)
         }
         _ => false,
     }

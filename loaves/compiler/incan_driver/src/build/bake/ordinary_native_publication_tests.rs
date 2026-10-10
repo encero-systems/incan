@@ -1,7 +1,8 @@
 //! Actual ordinary native library publication with complete original producer requests (#1337/#1698).
 //!
 //! This deliberately requires a coherent source compiler/engine and explicit real resolved support graph. It
-//! exercises the admitted plain-library route, not arbitrary semantic/macro coverage or complete SDK removal.
+//! exercises plain libraries and explicit scalar sysroot ABI uses, not arbitrary semantic/macro coverage or complete
+//! SDK removal.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -36,6 +37,8 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 const CHILD: &str = "INCAN_DEV7_ORDINARY_NATIVE_PUBLICATION_CHILD";
 const SELECTOR: &str =
     "build::bake::ordinary_native_publication_tests::ordinary_native_library_publication_first_replay_and_source_edit";
+const ABI_SELECTOR: &str =
+    "build::bake::ordinary_native_publication_tests::ordinary_native_sysroot_abi_publication_replay_and_runtime";
 const PROFILES: [&str; 2] = ["debug", "release"];
 
 /// Require each explicit genuine graph/registry/compiler coordinate instead of skipping unavailable prerequisites.
@@ -64,7 +67,7 @@ fn decoy(root: &Path) -> TestResult {
 }
 
 /// Execute only the ignored control beside the real compiler, with a uniquely owned copied libtest lifetime.
-fn child() -> TestResult {
+fn child(selector: &str) -> TestResult {
     let compiler = required_path("CARGO_BIN_EXE_incan")?;
     for name in [
         "INCAN_ORDINARY_LIBRARY_GRAPH",
@@ -87,7 +90,7 @@ fn child() -> TestResult {
     let ambient = isolated.path().join("ambient");
     decoy(&ambient)?;
     let output = std::process::Command::new(copied.as_os_str())
-        .args(["--exact", SELECTOR, "--ignored", "--nocapture", "--test-threads=1"])
+        .args(["--exact", selector, "--ignored", "--nocapture", "--test-threads=1"])
         .env(CHILD, "1")
         // The outer FIRST flag requires reuse of the native test binary. This isolated control intentionally
         // creates fresh projects and edits source; its own executor counters enforce unchanged publication reuse.
@@ -182,6 +185,11 @@ fn original_requests(
     let retained = input.ordinary_native().ok_or("ordinary native admission lost")?;
     assert!(Arc::ptr_eq(original, retained));
     assert!(Arc::ptr_eq(original.metadata(), retained.metadata()));
+    #[cfg(feature = "rust_inspect")]
+    assert!(Arc::ptr_eq(
+        original.metadata().inspection_toolchain(),
+        retained.metadata().inspection_toolchain()
+    ));
     for (profile, request) in requests {
         let current = retained
             .metadata()
@@ -208,8 +216,23 @@ fn original_requests(
 #[ignore = "requires coherent source compiler/engine and explicit real ordinary support graph/index/blobs"]
 fn ordinary_native_library_publication_first_replay_and_source_edit() -> TestResult {
     if std::env::var_os(CHILD).is_none() {
-        return child();
+        return child(SELECTOR);
     }
+    publication(false)
+}
+
+/// Ship real sysroot callable metadata in the ordinary loaf and run both native profiles before and after an edit.
+#[test]
+#[ignore = "requires coherent source compiler/engine and explicit real ordinary support graph/index/blobs"]
+fn ordinary_native_sysroot_abi_publication_replay_and_runtime() -> TestResult {
+    if std::env::var_os(CHILD).is_none() {
+        return child(ABI_SELECTOR);
+    }
+    publication(true)
+}
+
+/// Run the identical ordinary admission, publication, reuse and source-edit journey with optional sysroot demand.
+fn publication(sysroot_abi: bool) -> TestResult {
     // ---- Genuine executable/source/compiler prerequisites and productive hostile ambient source ----
     assert_eq!(crate::build::plan_authority::explicit_bake_profiles(), PROFILES);
     let graph = required_path("INCAN_ORDINARY_LIBRARY_GRAPH")?;
@@ -349,7 +372,14 @@ fn ordinary_native_library_publication_first_replay_and_source_edit() -> TestRes
         "[project]\nname='ordinary_native_publication'\nversion='1.0.0'\n",
     )?;
     let entry = root.path().join("src/lib.incn");
-    fs::write(&entry, "pub def answer() -> int:\n    return 42\n")?;
+    fs::write(
+        &entry,
+        if sysroot_abi {
+            "from rust::std::thread import panicking\npub def answer() -> bool:\n    return panicking()\n"
+        } else {
+            "pub def answer() -> int:\n    return 42\n"
+        },
+    )?;
     let dependencies = Arc::new(PreparedLibraryDependencies::admit(
         &[],
         &target,
@@ -393,6 +423,13 @@ fn ordinary_native_library_publication_first_replay_and_source_edit() -> TestRes
         );
         assert_eq!((compiled, reused), if iteration == 0 { (2, 0) } else { (0, 2) });
         let metadata = published_metadata(root.path(), &report)?;
+        if sysroot_abi {
+            crate::build::library_metadata::validate_required_rust_abi(
+                metadata.manifest(),
+                &["std::thread::panicking".to_string()].into(),
+            )?;
+            run_consumer(root.path(), &report, &native, false)?;
+        }
         let actual_outputs = outputs(root.path(), &report, &native)?;
         assert_eq!(project_lock_collection_counts(), (1, 0));
         assert!(root.path().join(LOCK_FILENAME).is_file());
@@ -414,7 +451,14 @@ fn ordinary_native_library_publication_first_replay_and_source_edit() -> TestRes
         }
     }
     // ---- Source edit invalidates checked and both native output generations; complete request stays current ----
-    fs::write(&entry, "pub def answer() -> int:\n    return 43\n")?;
+    fs::write(
+        &entry,
+        if sysroot_abi {
+            "from rust::std::thread import panicking\npub def answer() -> bool:\n    return not panicking()\n"
+        } else {
+            "pub def answer() -> int:\n    return 43\n"
+        },
+    )?;
     reset_project_lock_collection_metrics();
     super::take_library_native_output_work();
     take_metadata_request_verifications();
@@ -430,6 +474,9 @@ fn ordinary_native_library_publication_first_replay_and_source_edit() -> TestRes
     );
     assert_eq!((compiled, reused), (2, 0));
     let edited_metadata = published_metadata(root.path(), &edited)?;
+    if sysroot_abi {
+        run_consumer(root.path(), &edited, &native, true)?;
+    }
     let original = first.ok_or("original checked metadata missing")?;
     assert_ne!(
         original.reference().owner_identity,
@@ -452,5 +499,81 @@ fn ordinary_native_library_publication_first_replay_and_source_edit() -> TestRes
     original.verify()?;
     edited_metadata.verify()?;
     original_requests(&input, &native, &requests, &digests)?;
+    Ok(())
+}
+
+/// Link the actually published rlib and its original native dependency owners, then observe the exported value.
+fn run_consumer(
+    root: &Path,
+    report: &OvenProjectBakeReport,
+    native: &OrdinaryLibraryNativeProfiles,
+    expected: bool,
+) -> TestResult {
+    let artifact = root.join("target/lib");
+    let package: OvenPackagedLibraryLoafManifest =
+        serde_json::from_slice(&fs::read(packaged_library_loaf_manifest_path(&artifact))?)?;
+    let source_digest = crate::build::library_project::metadata_replay::observe_library_source_digest(root, &[])?;
+    // Consumers are separate projects. Their source and binaries must not mutate the publisher's authored tree
+    // and legitimately invalidate its unchanged-source metadata recipe before the replay assertion.
+    let consumer = tempfile::tempdir()?;
+    let source = consumer.path().join("consumer.rs");
+    fs::write(
+        &source,
+        format!("fn main() {{ assert_eq!(ordinary_native_publication::answer(), {expected}); }}\n"),
+    )?;
+    for output in &report.outputs {
+        let profile = package
+            .profiles
+            .get(&output.profile)
+            .ok_or("consumer profile missing")?;
+        let executable = consumer.path().join(format!("consumer-{}", output.profile));
+        let mut command = std::process::Command::new(native.metadata().rustc());
+        command
+            .arg(&source)
+            .args(["--edition=2024", "--crate-name", "ordinary_consumer", "--extern"])
+            .arg(format!(
+                "ordinary_native_publication={}",
+                artifact.join(&profile.library_relative_path).display()
+            ))
+            .arg("-o")
+            .arg(&executable);
+        let observation = native
+            .metadata()
+            .observations()
+            .get(&output.profile)
+            .ok_or("consumer original request missing")?;
+        let mut paths = BTreeSet::new();
+        for unit in observation.graph().units().values() {
+            let path = unit.output()?;
+            paths.insert(path.parent().ok_or("native output has no parent")?.to_path_buf());
+        }
+        for path in paths {
+            command.arg("-L").arg(format!("dependency={}", path.display()));
+        }
+        let built = command.output()?;
+        assert!(
+            built.status.success(),
+            "consumer compile: {}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let ran = std::process::Command::new(&executable).output()?;
+        assert!(
+            ran.status.success(),
+            "consumer runtime: {}",
+            String::from_utf8_lossy(&ran.stderr)
+        );
+        println!(
+            "ordinary-consumer-evidence {}",
+            serde_json::json!({
+                "profile": output.profile, "expected": expected, "command": format!("{command:?}"),
+                "library_digest": profile.library_digest,
+                "executable_digest": oven_store::digest_bytes(&fs::read(&executable)?), "success": true,
+            })
+        );
+    }
+    assert_eq!(
+        source_digest,
+        crate::build::library_project::metadata_replay::observe_library_source_digest(root, &[])?
+    );
     Ok(())
 }

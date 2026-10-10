@@ -82,6 +82,7 @@ fn ordinary_native_checked_scalar_demands_first_repeat_roundtrip() -> TestResult
     let root = tempfile::tempdir()?;
     let original = checked(root.path())?;
     original.require_support_only_native()?;
+    original.require_source_inspection_native()?;
     assert_eq!(original.schema_version, 2);
     for _ in 0..2 {
         let decoded: CheckedLibraryRequirements = serde_json::from_slice(&serde_json::to_vec(&original)?)?;
@@ -106,6 +107,7 @@ fn ordinary_native_demands_missing_old_and_current_payloads_are_unknown() -> Tes
         let decoded: CheckedLibraryRequirements = serde_json::from_value(payload)?;
         decoded.validate()?;
         assert!(decoded.require_support_only_native().is_err());
+        assert!(decoded.require_source_inspection_native().is_err());
     }
     assert!(CheckedNativeDemands::default().require_support_only().is_err());
     Ok(())
@@ -226,6 +228,7 @@ fn ordinary_native_demands_manifest_vocabulary_and_c_are_not_empty() -> TestResu
             &BTreeSet::new(),
         )?;
         assert!(demands.require_support_only().is_err());
+        assert!(demands.require_source_inspection().is_err());
         let facts = demands.observed.ok_or("facts missing")?;
         assert!(
             matches!(facts.vocab_manifest, ManifestDemand::Declared(_))
@@ -259,6 +262,7 @@ fn ordinary_native_demands_unsupported_parsed_shapes_refuse_before_inspection() 
             &BTreeSet::new(),
         )?;
         assert!(demands.require_support_only().is_err(), "{source}");
+        assert!(demands.require_source_inspection().is_err(), "{source}");
         assert!(
             !demands
                 .observed
@@ -295,6 +299,7 @@ fn ordinary_native_demands_source_dependencies_and_facets_refuse() -> TestResult
         &BTreeSet::new(),
     )?;
     assert!(demands.require_support_only().is_err());
+    assert!(demands.require_source_inspection().is_err());
     requirements.dependencies.clear();
     requirements.stdlib_facets.push("incan_std_data".to_string());
     assert!(
@@ -302,5 +307,88 @@ fn ordinary_native_demands_source_dependencies_and_facets_refuse() -> TestResult
             .require_support_only()
             .is_err()
     );
+    Ok(())
+}
+
+/// Explicit sysroot aliases and calls carry exact query coverage; their original strict support gate still refuses.
+#[test]
+fn ordinary_native_sysroot_demands_bind_every_imported_item() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let (project, providers) = project(root.path(), "")?;
+    let module = module(
+        root.path(),
+        "from rust::std::thread import panicking as active\npub def answer() -> bool:\n    return not active()\n",
+    )?;
+    let queries =
+        crate::build::library_exports::collect_library_rust_abi_query_paths(std::slice::from_ref(&module), &[])
+            .into_iter()
+            .collect();
+    let demands = capture_checked_native_demands(
+        &project,
+        std::slice::from_ref(&module),
+        &ProjectRequirements::default(),
+        &providers,
+        &queries,
+    )?;
+    assert!(demands.require_support_only().is_err());
+    demands.require_source_inspection()?;
+    for _ in 0..2 {
+        let decoded: CheckedNativeDemands = serde_json::from_slice(&serde_json::to_vec(&demands)?)?;
+        decoded.require_source_inspection()?;
+    }
+    for replacement in [
+        BTreeSet::new(),
+        [
+            "std::thread::panicking".to_string(),
+            "std::thread::yield_now".to_string(),
+        ]
+        .into(),
+        ["foreign::panicking".to_string()].into(),
+    ] {
+        let incomplete = capture_checked_native_demands(
+            &project,
+            std::slice::from_ref(&module),
+            &ProjectRequirements::default(),
+            &providers,
+            &replacement,
+        )?;
+        assert!(incomplete.require_source_inspection().is_err());
+    }
+    let mut old = serde_json::to_value(&demands)?;
+    old["observed"]
+        .as_object_mut()
+        .ok_or("facts missing")?
+        .remove("scalar_sysroot_imports");
+    let old: CheckedNativeDemands = serde_json::from_value(old)?;
+    assert!(old.require_source_inspection().is_err());
+    Ok(())
+}
+
+/// Unbound calls, dynamic/generic dispatch and foreign or whole-module imports cannot borrow a sysroot grant.
+#[test]
+fn ordinary_native_sysroot_demands_refuse_uncovered_calls_and_imports() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let (project, providers) = project(root.path(), "")?;
+    for source in [
+        "from rust::std::thread import panicking\npub def answer() -> bool:\n    return unknown()\n",
+        "from rust::std::thread import panicking\npub def answer() -> bool:\n    return panicking[bool]()\n",
+        "from rust::std::thread import panicking\npub def answer(panicking: bool) -> bool:\n    return panicking()\n",
+        "import rust::std::thread\npub def answer() -> bool:\n    return False\n",
+        "from rust::foreign import panicking\npub def answer() -> bool:\n    return panicking()\n",
+    ] {
+        let module = module(root.path(), source)?;
+        let queries =
+            crate::build::library_exports::collect_library_rust_abi_query_paths(std::slice::from_ref(&module), &[])
+                .into_iter()
+                .collect();
+        let demands = capture_checked_native_demands(
+            &project,
+            &[module],
+            &ProjectRequirements::default(),
+            &providers,
+            &queries,
+        )?;
+        assert!(demands.require_source_inspection().is_err(), "{source}");
+    }
     Ok(())
 }

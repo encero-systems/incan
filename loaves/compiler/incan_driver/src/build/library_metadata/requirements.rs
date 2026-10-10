@@ -259,6 +259,7 @@ impl CheckedLibraryRequirements {
     }
 
     /// Require explicit current-version checked demand facts before ordinary support-only planning or replay.
+    #[cfg(test)]
     pub(crate) fn require_support_only_native(&self) -> CliResult<()> {
         self.validate()?;
         if self.schema_version != 2
@@ -272,6 +273,27 @@ impl CheckedLibraryRequirements {
             ));
         }
         self.native_demands.require_support_only()
+    }
+
+    /// Require captured source coverage and complete ABI promises before ordinary native preparation or replay.
+    /// Physical sources and macro/provider execution remain outside this scalar sysroot coverage boundary.
+    pub(crate) fn require_source_inspection_native(&self) -> CliResult<()> {
+        self.validate()?;
+        if self.schema_version != 2
+            || !self.used_module_paths.is_empty()
+            || !self.source_inline_crates.is_empty()
+            || !self.rust_extern_paths.is_empty()
+            || self.imports.is_empty() != self.rust_abi_queries.is_empty()
+            || self
+                .imports
+                .iter()
+                .any(|value| value.crate_name != "std" || value.version.is_some() || !value.features.is_empty())
+        {
+            return Err(invalid(
+                "ordinary source inspection planning lacks complete checked demand coverage",
+            ));
+        }
+        self.native_demands.require_source_inspection()
     }
 
     /// Restore current source-derived requirements, then let the existing provider planner add current coordinates.

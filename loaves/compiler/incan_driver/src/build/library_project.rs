@@ -1075,7 +1075,7 @@ fn prepare_library_project_with_context(
             &provider_plan,
             &metadata_query_paths.iter().cloned().collect(),
         )?
-        .require_support_only()?;
+        .require_source_inspection()?;
         if include_interop_execution {
             return Err(CliError::failure(
                 "ordinary support-only library cannot request interop execution",
@@ -1355,6 +1355,7 @@ fn prepare_library_project_with_context(
                         request,
                         observation.clone(),
                         metadata.rustc(),
+                        Some(Arc::clone(metadata.inspection_toolchain())),
                     )?
                 }
                 None => crate::lock::rust_inspect::prepare_rust_inspect_workspace_with_native_sdk(
@@ -1983,7 +1984,7 @@ fn prepare_library_project_with_context(
         ) {
             Ok(contract) => {
                 if ordinary_native.is_some() {
-                    contract.require_support_only_native()?;
+                    contract.require_source_inspection_native()?;
                 }
                 Some(contract)
             }

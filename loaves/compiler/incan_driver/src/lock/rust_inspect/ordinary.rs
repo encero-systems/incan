@@ -46,6 +46,10 @@ impl RetainedInspectionProject for OrdinaryInspectionProject {
 
 /// Prepare a source-only inspection database from one complete native request and exact declared query roots.
 /// Macro execution remains unsupported here; source presence never becomes a grant to run a dynamic library.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Retains explicit original native, compiler and source-owner inputs at one semantic boundary"
+)]
 pub(super) fn prepare(
     manifest_dir: &Path,
     target_dir: &Path,
@@ -55,6 +59,7 @@ pub(super) fn prepare(
     authority: &OvenRustInspectSourceAuthorityRequest<'_>,
     queries: &[String],
     derives: &[String],
+    retained_toolchain: Option<&Arc<OvenRustInspectionToolchain>>,
 ) -> CliResult<Arc<OvenRustInspectionToolchain>> {
     if !derives.is_empty() {
         return Err(CliError::failure(
@@ -97,10 +102,14 @@ pub(super) fn prepare(
             )));
         }
     }
-    let toolchain = Arc::new(
-        prepare_rust_inspection_toolchain(&crate::oven_store::open_default_oven_store()?, rustc, authority.target)
-            .map_err(failure)?,
-    );
+    let toolchain = match retained_toolchain {
+        Some(toolchain) => Arc::clone(toolchain),
+        None => Arc::new(
+            prepare_rust_inspection_toolchain(&crate::oven_store::open_default_oven_store()?, rustc, authority.target)
+                .map_err(failure)?,
+        ),
+    };
+    toolchain.verify_compiler(rustc, authority.target).map_err(failure)?;
     let project = OrdinaryInspectionProject {
         toolchain: Arc::clone(&toolchain),
         observation: observation.clone(),
