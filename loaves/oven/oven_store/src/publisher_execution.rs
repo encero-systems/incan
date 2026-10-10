@@ -1321,6 +1321,9 @@ mod link_execution {
         pub executable_owner: String,
         /// Executable byte identity.
         pub executable_digest: String,
+        /// Version-based system installation evidence; absent for legacy byte-owned publishers.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub virtual_toolchain: Option<crate::publisher_owner::VirtualToolchainLoaf>,
         /// Sorted per-object compiler argument and byte identities.
         pub objects: Vec<PublisherExecutionObjectReceipt>,
         /// Relocation-independent declared environment projection.
@@ -1382,6 +1385,26 @@ mod link_execution {
             {
                 return Err(PublisherExecutionError::InvalidReceipt(
                     "link receipt has malformed archive, object, input, or output evidence".to_string(),
+                ));
+            }
+            let virtual_identity = self
+                .virtual_toolchain
+                .as_ref()
+                .map(|descriptor| descriptor.identity())
+                .transpose()
+                .map_err(|error| PublisherExecutionError::InvalidReceipt(error.to_string()))?;
+            if crate::publisher_owner::VirtualToolchainLoaf::owns_identity(&self.executable_owner)
+                != self.virtual_toolchain.is_some()
+                || virtual_identity
+                    .as_ref()
+                    .is_some_and(|identity| identity != &self.executable_owner)
+                || self
+                    .virtual_toolchain
+                    .as_ref()
+                    .is_some_and(|descriptor| descriptor.executable_digest() != self.executable_digest)
+            {
+                return Err(PublisherExecutionError::InvalidReceipt(
+                    "virtual toolchain evidence does not match executable authority".to_string(),
                 ));
             }
             let actual = publisher_execution_receipt_identity(self)?;
@@ -1448,11 +1471,41 @@ mod link_execution {
             ));
         }
         let executable = verified_file(request.executable, request.executable_digest, "executable")?;
-        let actual_owner = crate::publisher_owner::publisher_owner_identity(
-            request.executable_owner_root,
-            request.executable_owner_paths.iter().copied(),
-        )
-        .map_err(|error| PublisherExecutionError::Invalid(error.to_string()))?;
+        let virtual_toolchain =
+            if crate::publisher_owner::VirtualToolchainLoaf::owns_identity(&request.executable_owner) {
+                let root =
+                    fs::canonicalize(request.executable_owner_root).map_err(|source| PublisherExecutionError::Io {
+                        path: request.executable_owner_root.to_path_buf(),
+                        source,
+                    })?;
+                let relative = executable
+                    .strip_prefix(&root)
+                    .map_err(|_| PublisherExecutionError::Invalid("executable escaped toolchain owner".to_string()))?;
+                let relative = relative
+                    .to_str()
+                    .ok_or_else(|| PublisherExecutionError::Invalid("non UTF-8 executable path".to_string()))?;
+                Some(
+                    crate::publisher_owner::VirtualToolchainLoaf::read(
+                        request.executable_owner_root,
+                        relative,
+                        request.executable_owner_paths.iter().copied(),
+                    )
+                    .map_err(|error| PublisherExecutionError::Invalid(error.to_string()))?,
+                )
+            } else {
+                None
+            };
+        let actual_owner = if let Some(descriptor) = &virtual_toolchain {
+            descriptor
+                .identity()
+                .map_err(|error| PublisherExecutionError::Invalid(error.to_string()))?
+        } else {
+            crate::publisher_owner::publisher_owner_identity(
+                request.executable_owner_root,
+                request.executable_owner_paths.iter().copied(),
+            )
+            .map_err(|error| PublisherExecutionError::Invalid(error.to_string()))?
+        };
         if actual_owner != request.executable_owner {
             return Err(PublisherExecutionError::Invalid(format!(
                 "executable owner identity mismatch: expected {}, got {actual_owner}",
@@ -1520,6 +1573,7 @@ mod link_execution {
             toolchain: request.toolchain.to_string(),
             executable_owner: request.executable_owner.to_string(),
             executable_digest: request.executable_digest.to_string(),
+            virtual_toolchain,
             objects,
             logical_environment,
             inputs: request
@@ -1551,6 +1605,8 @@ mod link_execution {
             toolchain: &'a str,
             executable_owner: &'a str,
             executable_digest: &'a str,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            virtual_toolchain: &'a Option<crate::publisher_owner::VirtualToolchainLoaf>,
             objects: &'a [PublisherExecutionObjectReceipt],
             logical_environment: &'a BTreeMap<String, String>,
             inputs: &'a BTreeMap<String, String>,
@@ -1566,6 +1622,7 @@ mod link_execution {
             toolchain: &receipt.toolchain,
             executable_owner: &receipt.executable_owner,
             executable_digest: &receipt.executable_digest,
+            virtual_toolchain: &receipt.virtual_toolchain,
             objects: &receipt.objects,
             logical_environment: &receipt.logical_environment,
             inputs: &receipt.inputs,
@@ -2448,6 +2505,32 @@ mod link_execution {
             )
             .unwrap_or_else(|_| "sha256:invalid-owner-fixture".to_string());
             request
+        }
+
+        /// Virtual installation evidence survives real execution, seals its receipt and refuses descriptor drift.
+        #[test]
+        fn virtual_toolchain_publisher_receipt_and_drift() -> Result<(), Box<dyn Error>> {
+            let root = tempdir()?;
+            let compiler = root.path().join("fake-compiler");
+            let source = root.path().join("source.c");
+            let products = root.path().join("products");
+            fs::write(&source, b"source")?;
+            let compiler_digest = executable(&compiler, COPY_INPUT_TO_OUTPUT)?;
+            let descriptor =
+                crate::publisher_owner::VirtualToolchainLoaf::read(root.path(), "fake-compiler", ["fake-compiler"])?;
+            let mut request = request(&compiler, &compiler_digest, &source, &products);
+            request.executable_owner = descriptor.identity()?;
+            // Unlike older confinement fixtures, this acceptance control requires actual execution.
+            let product = execute_publisher_work(&request)?;
+            assert_eq!(product.receipt.virtual_toolchain.as_ref(), Some(&descriptor));
+            product.receipt.verify_identity()?;
+            let mut tampered = product.receipt.clone();
+            tampered.virtual_toolchain = None;
+            tampered.identity = super::publisher_execution_receipt_identity(&tampered)?;
+            assert!(tampered.verify_identity().is_err());
+            executable(&compiler, "exit 1")?;
+            assert!(execute_publisher_work(&request).is_err());
+            Ok(())
         }
 
         #[test]

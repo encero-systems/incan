@@ -9788,6 +9788,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_store/src/publisher_owner/virtual_toolchain.rs": {
+      "disposition": "unaffected",
+      "notes": "Native toolchain virtual loaf: bounded version/compiler identity, relocation and refusal controls; system SDK descendants are trusted rather than recursively inventoried.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_store/src/source_archive.rs": {
       "disposition": "unaffected",
       "notes": "Digest-first adopted archive admission and source-only materialization; inert Cargo metadata is omitted.",

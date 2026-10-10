@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use oven_model::manifest::{RustFactArgument, RustFactLink};
 use oven_store::process::BoundedProcessLimits;
-use oven_store::publisher_owner::publisher_owner_identity;
+use oven_store::publisher_owner::VirtualToolchainLoaf;
 use oven_store::store::{
     OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStoreExecutionPayload,
 };
@@ -12,43 +12,6 @@ use oven_store::{OvenReceipt, receipt_with_build_unit_input};
 
 use super::{CompileContext, Error, PreparedUnit};
 use crate::rustc::direct_compiler::{OvenPublisherLinkBakeRequest, bake_publisher_link, publisher_archive_format};
-
-/// Command-local native tool-owner checks, retaining exact input identity without a process-global admission cache.
-pub(crate) struct NativeToolOwners {
-    roots: Vec<PathBuf>,
-    checked: std::collections::BTreeSet<String>,
-    /// Actual complete-owner selections performed at this command boundary.
-    pub(crate) checks: usize,
-}
-
-impl Default for NativeToolOwners {
-    /// Freeze the original producer's explicit owner-root selection for this command only.
-    fn default() -> Self {
-        Self {
-            roots: std::env::var_os("INCAN_OVEN_LINK_OWNERS")
-                .map(|value| std::env::split_paths(&value).collect())
-                .unwrap_or_default(),
-            checked: Default::default(),
-            checks: 0,
-        }
-    }
-}
-
-impl NativeToolOwners {
-    /// Recheck each demanded executable-owner/path set through the publisher's canonical selection boundary.
-    pub(crate) fn verify(&mut self, fact: &oven_model::manifest::RustFactRecord) -> Result<(), Error> {
-        for link in &fact.link {
-            validate_source_catalog(link)?;
-            let key = serde_json::to_string(&(&link.executable.owner, owner_paths(link)))?;
-            if !self.checked.contains(&key) {
-                select_owner(link, &self.roots)?;
-                self.checks += 1;
-                self.checked.insert(key);
-            }
-        }
-        Ok(())
-    }
-}
 
 /// A store-owned native archive retained while the consuming compiler runs.
 pub(super) struct NativeProduct {
@@ -83,7 +46,7 @@ pub(super) fn prepare(
     Ok(products)
 }
 
-/// Bind a native archive cache key to the fact, admitted source archive, and verified executable owner closure.
+/// Reuse an exact source/fact-bound archive before selecting tools; a miss requires a versioned system installation.
 fn prepare_link(
     unit: &PreparedUnit,
     context: &CompileContext<'_>,
@@ -94,7 +57,6 @@ fn prepare_link(
     let effective_link = apple_deployment_link(link, context.target);
     let link = &effective_link;
     validate_source_catalog(link)?;
-    let owner = select_owner(link, roots)?;
     let receipt = receipt_with_build_unit_input(receipt, "sdk-link-fact", serde_json::to_string(link)?)?;
     let domain = "adopted-native-link";
     oven_store::store_mirror::import_matching_from_mirrors(
@@ -116,15 +78,18 @@ fn prepare_link(
         |_, _| true,
     )?;
     if let Some(owner) = selected.into_iter().next() {
-        let _verified = context.store.select(&owner.manifest.identity)?;
+        owner.verify_admitted_payload()?;
         return Ok(NativeProduct {
             name: link.library.name.clone(),
             owner,
         });
     }
+    let (owner, descriptor) = select_owner(link, roots)?;
+    let mut execution_link = link.clone();
+    execution_link.executable.owner = descriptor.identity()?;
     let staging = tempfile::Builder::new().prefix("native-").tempdir_in(context.output)?;
     let product = bake_publisher_link(&OvenPublisherLinkBakeRequest {
-        link,
+        link: &execution_link,
         selected_target: context.target,
         archive_format: publisher_archive_format(context.target),
         toolchain: context.toolchain,
@@ -177,7 +142,7 @@ fn apple_deployment_link(link: &RustFactLink, target: &str) -> RustFactLink {
 }
 
 /// Refuse source catalogs requiring inert metadata reads or ambiguous object/library names before execution.
-fn validate_source_catalog(link: &RustFactLink) -> Result<(), Error> {
+pub(super) fn validate_source_catalog(link: &RustFactLink) -> Result<(), Error> {
     let mut objects = std::collections::BTreeSet::new();
     for object in &link.objects {
         if !objects.insert(&object.name) {
@@ -214,18 +179,19 @@ fn validate_source_catalog(link: &RustFactLink) -> Result<(), Error> {
     Ok(())
 }
 
-/// Select exactly one supplied tool owner whose complete declared closure matches the fact identity.
-fn select_owner(link: &RustFactLink, roots: &[PathBuf]) -> Result<PathBuf, Error> {
+/// Select one versioned installation with the exact declared compiler bytes, without walking its SDK contents.
+fn select_owner(link: &RustFactLink, roots: &[PathBuf]) -> Result<(PathBuf, VirtualToolchainLoaf), Error> {
     let paths = owner_paths(link);
     let mut selected = Vec::new();
     for root in roots {
-        if publisher_owner_identity(root, paths.iter().copied())? == link.executable.owner {
-            selected.push(root.clone());
+        let descriptor = VirtualToolchainLoaf::read(root, &link.executable.path, paths.iter().copied())?;
+        if descriptor.executable_digest() == link.executable.digest {
+            selected.push((root.clone(), descriptor));
         }
     }
-    match selected.as_slice() {
-        [root] => Ok(root.clone()),
-        [] => Err(format!(
+    match selected.len() {
+        1 => selected.pop().ok_or_else(|| "selected toolchain disappeared".into()),
+        0 => Err(format!(
             "executable owner {} absent; supply INCAN_OVEN_LINK_OWNERS",
             link.executable.owner
         )
@@ -251,53 +217,83 @@ mod tests {
     use super::{select_owner, validate_source_catalog};
     use oven_model::manifest::RustFactLink;
 
-    /// Repeated facts check one exact owner per command; a new command detects preserved-mtime tool edits.
+    /// A pinned cached archive remains usable without its build tools; corrupt output still refuses.
     #[test]
-    fn dev7_prepared_native_tools_are_command_local_and_source_current() -> Result<(), Box<dyn std::error::Error>> {
+    fn dev7_cached_native_link_needs_no_compiler_installation() -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
-        std::fs::create_dir_all(root.path().join("bin"))?;
-        let executable = root.path().join("bin/cc");
-        std::fs::write(&executable, b"tool one")?;
-        let owner = super::publisher_owner_identity(root.path(), ["bin/cc"])?;
-        let fact: oven_model::manifest::RustFactRecord = serde_json::from_value(serde_json::json!({
-            "toolchain":"fixture", "target":"fixture", "profile":"debug", "link":[{
-                "name":"shim", "target":"fixture", "executable":{"name":"cc", "owner":owner,
-                    "path":"bin/cc", "digest":oven_store::digest_bytes(b"tool one")},
-                "library":{"name":"shim", "kind":"static"}}]}))?;
-        let mut command = super::NativeToolOwners {
-            roots: vec![root.path().to_path_buf()],
-            checked: Default::default(),
-            checks: 0,
+        let store = oven_store::store::OvenStore::new(
+            root.path().join("store"),
+            oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        let source = root.path().join("source.c");
+        std::fs::write(&source, b"int shim(void) { return 7; }")?;
+        let receipt = oven_store::receipt_generated_project(
+            &oven_store::OvenGeneratedProjectRequest::new(
+                root.path(),
+                "fixture",
+                "1.0.0",
+                "fixture-target",
+                "fixture-toolchain",
+                "debug",
+                Vec::new(),
+            )
+            .with_generated_source("source", &source),
+        )?;
+        let link: RustFactLink = serde_json::from_value(serde_json::json!({
+            "name":"native", "target":"fixture-target",
+            "executable":{"name":"cc", "owner":"sha256:absent-installation", "path":"bin/cc", "digest":"sha256:absent-compiler"},
+            "library":{"name":"shim", "kind":"static"}
+        }))?;
+        let archive = root.path().join("libshim.a");
+        std::fs::write(&archive, b"immutable native archive")?;
+        let bound =
+            oven_store::receipt_with_build_unit_input(&receipt, "sdk-link-fact", serde_json::to_string(&link)?)?;
+        let entry = store.publish(&oven_store::store::OvenArtifactPublishRequest {
+            receipt: bound,
+            domain: "adopted-native-link".to_string(),
+            kind: oven_store::store::OvenArtifactKind::Engine,
+            payload: b"cached publisher receipt".to_vec(),
+            materialized_files: vec![oven_store::store::OvenArtifactMaterializedFile {
+                source_path: archive,
+                relative_path: "libshim.a".to_string(),
+            }],
+            materialized_directories: Vec::new(),
+        })?;
+        let unit = super::PreparedUnit {
+            binding: serde_json::from_value(
+                serde_json::json!({"loaf":"fixture", "version":"1.0.0", "archive_digest":"sha256:source", "domain":"target", "features":[], "target_predicates":[]}),
+            )?,
+            source_origin: crate::native_loaf::NativeLoafOrigin::Local,
+            about: serde_json::Value::Null,
+            primary: true,
+            _source_lease: None,
+            manifest: toml::from_str("")?,
+            root: root.path().to_path_buf(),
+            build_script: false,
+            fact: None,
+            fact_out: Vec::new(),
         };
-        command.verify(&fact)?;
-        command.verify(&fact)?;
-        assert_eq!(command.checks, 1);
-        let modified = std::fs::metadata(&executable)?.modified()?;
-        std::fs::write(&executable, b"tool two")?;
-        std::fs::OpenOptions::new()
-            .write(true)
-            .open(&executable)?
-            .set_times(std::fs::FileTimes::new().set_modified(modified))?;
-        let mut next = super::NativeToolOwners {
-            roots: vec![root.path().to_path_buf()],
-            checked: Default::default(),
-            checks: 0,
+        let context = super::CompileContext {
+            rustc: &root.path().join("absent-rustc"),
+            target: "fixture-target",
+            toolchain: "fixture-toolchain",
+            output: root.path(),
+            store: &store,
+            compiler_digest: "unused".to_string(),
+            compiler_executable: "unused".to_string(),
+            profile: "debug",
+            unit_codegen: &[],
         };
-        assert!(next.verify(&fact).is_err());
-        std::fs::write(&executable, b"tool one")?;
-        let mut restored = super::NativeToolOwners {
-            roots: vec![root.path().to_path_buf()],
-            checked: Default::default(),
-            checks: 0,
-        };
-        restored.verify(&fact)?;
-        assert_eq!(restored.checks, 1);
-        let mut missing = super::NativeToolOwners {
-            roots: Vec::new(),
-            checked: Default::default(),
-            checks: 0,
-        };
-        assert!(missing.verify(&fact).is_err());
+        let product = super::prepare_link(&unit, &context, &receipt, &link, &[])?;
+        assert_eq!(product.owner.manifest.identity, entry.identity);
+        assert_eq!(product.name, "shim");
+        let cached = product.owner.artifact_root.join("libshim.a");
+        std::fs::remove_file(&cached)?;
+        std::fs::write(&cached, b"corrupt native archive")?;
+        assert!(super::prepare_link(&unit, &context, &receipt, &link, &[]).is_err());
+        let mut changed = link.clone();
+        changed.executable.digest = "sha256:changed-compiler".to_string();
+        assert!(super::prepare_link(&unit, &context, &receipt, &changed, &[]).is_err());
         Ok(())
     }
 
