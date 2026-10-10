@@ -49,6 +49,19 @@ impl MetadataPreparation {
         native_sdk: Option<&NativeSdkPublicationContext<'_>>,
         authority: Option<&mut OvenProjectBakeAuthorityContext>,
     ) -> CliResult<Option<Self>> {
+        Self::observe_with_native_context(project, session, out_dir, native_sdk, authority, None)
+    }
+
+    /// Observe the same ordinary authority using an original caller-supplied native admission when present.
+    /// Missing explicit input preserves legacy discovery; a supplied capability never falls back to discovery.
+    pub(super) fn observe_with_native_context(
+        project: &ProjectManifest,
+        session: &CompilationSession,
+        out_dir: &Path,
+        native_sdk: Option<&NativeSdkPublicationContext<'_>>,
+        authority: Option<&mut OvenProjectBakeAuthorityContext>,
+        explicit_native_context: Option<Arc<NativeSdkCommandContext>>,
+    ) -> CliResult<Option<Self>> {
         if !metadata_output_is_observable(project.project_root(), out_dir) {
             tracing::debug!("ordinary checked metadata reuse unavailable for output within authored source");
             return Ok(None);
@@ -149,7 +162,15 @@ impl MetadataPreparation {
             dependency_owners.push(selected);
         }
         let delivery_coordinates = current_delivery_coordinates(out_dir, session)?;
-        let native_context = if native_sdk.is_some() {
+        let native_context = if let Some(context) = explicit_native_context {
+            if native_sdk.is_some() {
+                return Err(invalid(
+                    "ordinary native admission cannot replace SDK publication authority",
+                ));
+            }
+            context.verify()?;
+            Some(context)
+        } else if native_sdk.is_some() {
             None
         } else {
             match authority {
@@ -720,14 +741,17 @@ pub(super) fn prepare_replayed_library(request: ReplayRequest<'_>) -> CliResult<
             metadata_owner: Some(selected),
         });
     }
-    crate::lock::resolution::validate_oven_lock_policy(
-        project.project_root(),
-        Some(project),
-        &entrypoint,
-        &oven_model::lock::CargoFeatureSelection::default(),
-        cargo_policy,
-        package_features,
-        sdk_profile_override,
+    crate::lock::resolution::validate_oven_lock_policy_with_session(
+        crate::lock::OvenLockValidationRequest {
+            project_root: project.project_root(),
+            manifest: Some(project),
+            entry_file: &entrypoint,
+            cargo_features: &oven_model::lock::CargoFeatureSelection::default(),
+            cargo_policy,
+            package_features,
+            sdk_profile_override,
+        },
+        session,
     )?;
     let provider_plan = session.provider_plan_for_used_module_paths(contract.used_module_paths.clone())?;
     let mut requirements = contract.current_requirements(project, &session.library_manifest_index)?;
