@@ -17,6 +17,7 @@ use oven_model::toolchain_layout::{
 /// Original canonical standard-package source and declaration retained against compiler-pinned ownership policy.
 pub struct TrustedStandardSourcePublication {
     policy: &'static StandardPackageNamespacePolicy,
+    layout: Arc<CompilerOwnedSourceLayout>,
     declaration: CompilerOwnedSourceMember,
     policy_bytes: Vec<u8>,
 }
@@ -109,6 +110,7 @@ impl TrustedStandardSourcePublication {
         ))?;
         let selected = Self {
             policy,
+            layout,
             declaration,
             policy_bytes,
         };
@@ -136,6 +138,19 @@ impl TrustedStandardSourcePublication {
         &self,
         module: &[String],
     ) -> Result<PathBuf, TrustedStandardSourcePublicationError> {
+        let member = self.open_source_module(module)?;
+        Ok(member.path().to_path_buf())
+    }
+
+    /// Retain the original regular source member for one owned registered module, with no ambient fallback.
+    ///
+    /// The member retains this original layout and exact observed bytes. Its consumer must revalidate that member
+    /// at cache/handoff boundaries; the source declaration is checked once here, rather than per symbol lookup.
+    pub fn open_source_module(
+        &self,
+        module: &[String],
+    ) -> Result<CompilerOwnedSourceMember, TrustedStandardSourcePublicationError> {
+        self.verify()?;
         if module.first().map(String::as_str) != Some("std")
             || !module
                 .get(1)
@@ -151,18 +166,9 @@ impl TrustedStandardSourcePublication {
         let relative = Path::new(&relative)
             .strip_prefix("stdlib")
             .map_err(|_| invalid(self.policy, "registered source path is outside stdlib"))?;
-        let source_root = self.verified_package_root()?.join("src");
-        let path = source_root.join(relative);
-        let canonical =
-            std::fs::canonicalize(&path).map_err(|_| invalid(self.policy, "owned module source is unavailable"))?;
-        if canonical != path || !canonical.starts_with(&source_root) || !canonical.is_file() {
-            return Err(invalid(
-                self.policy,
-                "owned module source is not a confined regular coordinate",
-            ));
-        }
-        self.verify()?;
-        Ok(canonical)
+        self.layout
+            .open_member(&Path::new(self.policy.source_directory).join("src").join(relative))
+            .map_err(TrustedStandardSourcePublicationError::from)
     }
 
     /// Return exact retained compiler policy bytes after source revalidation; a digest alone cannot replace them.
