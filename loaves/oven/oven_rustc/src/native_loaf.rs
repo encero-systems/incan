@@ -261,11 +261,46 @@ impl SelectedNativeLoaf {
         &self,
     ) -> Result<impl Iterator<Item = &oven_store::store::OvenArtifactMaterializedFileManifest>> {
         self.verify()?;
-        Ok(self
-            .native_owner
+        Ok(self.native_files())
+    }
+
+    /// Project a shared root and its complete native inventory after one original-owner verification.
+    ///
+    /// Consumer plan construction needs both coordinates and members in the same handoff. Returning them together
+    /// avoids walking the same retained source and native files again for each accessor. Every new call verifies
+    /// current bytes; the returned inventory borrows this selected unit and excludes retained source snapshots.
+    pub fn plan_members(
+        &self,
+        prefix: &str,
+    ) -> Result<(
+        OvenSharedNativeRoot,
+        impl Iterator<Item = &oven_store::store::OvenArtifactMaterializedFileManifest>,
+    )> {
+        if prefix.is_empty()
+            || !Path::new(prefix)
+                .components()
+                .all(|part| matches!(part, std::path::Component::Normal(_)))
+        {
+            return Err(refused("native shared-root prefix is unsafe"));
+        }
+        self.verify()?;
+        Ok((
+            OvenSharedNativeRoot {
+                store: original_store(&self.native_owner)?,
+                identity: self.record.native.identity.clone(),
+                receipt_identity: self.record.native.receipt_identity.clone(),
+                prefix: prefix.to_string(),
+            },
+            self.native_files(),
+        ))
+    }
+
+    /// Borrow member metadata only within an accessor that has already verified this handoff.
+    fn native_files(&self) -> impl Iterator<Item = &oven_store::store::OvenArtifactMaterializedFileManifest> {
+        self.native_owner
             .admitted_materialized_files()
             .iter()
-            .filter(|file| !file.relative_path.starts_with("source/")))
+            .filter(|file| !file.relative_path.starts_with("source/"))
     }
 }
 
@@ -502,20 +537,8 @@ impl NativeLoafClosure {
             .units
             .get(identity)
             .ok_or_else(|| refused("shared root is not admitted"))?;
-        unit.verify()?;
-        if prefix.is_empty()
-            || !Path::new(prefix)
-                .components()
-                .all(|part| matches!(part, std::path::Component::Normal(_)))
-        {
-            return Err(refused("native shared-root prefix is unsafe"));
-        }
-        Ok(OvenSharedNativeRoot {
-            store: original_store(&unit.native_owner)?,
-            identity: unit.record.native.identity.clone(),
-            receipt_identity: unit.record.native.receipt_identity.clone(),
-            prefix: prefix.to_string(),
-        })
+        let (root, _) = unit.plan_members(prefix)?;
+        Ok(root)
     }
 }
 

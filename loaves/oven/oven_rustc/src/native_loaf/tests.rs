@@ -425,10 +425,16 @@ fn dev7_native_loaf_declaration_requires_defaults_and_admitted_manifest() -> Tes
         1
     );
     let unit = graph.units.values().next().ok_or("fixture missing")?;
+    let (_, members) = unit.plan_members("units/fixture")?;
+    assert_eq!(
+        members.map(|file| file.relative_path.as_str()).collect::<Vec<_>>(),
+        ["libfixture.rlib"]
+    );
     replace_owned_fixture(
         &unit.native_owner.artifact_root.join("source/loaf.toml"),
         b"[project]\nname='substituted'\n",
     )?;
+    assert!(unit.plan_members("units/fixture").is_err());
     assert!(
         graph
             .select_dependency_roots(&[declaration], temp.path(), "target")
@@ -671,6 +677,19 @@ fn dev7_native_loaf_declared_closure_retains_aliases_and_original_leases() -> Te
     assert_eq!(graph.select(&[root(&graph, &leaf, "leaf_only")?])?.graph.units.len(), 1);
     let reference = selected.shared_root(&leaf, "native/leaf")?;
     assert_eq!(reference.identity, original.record.native.identity);
+    let (projected, members) = retained.plan_members("native/leaf")?;
+    assert_eq!(projected.identity, reference.identity);
+    assert_eq!(projected.receipt_identity, reference.receipt_identity);
+    assert_eq!(projected.store, reference.store);
+    assert_eq!(projected.prefix, reference.prefix);
+    let members = members.collect::<Vec<_>>();
+    assert!(members.iter().any(|file| {
+        file.relative_path == original.record.native.relative_path && file.digest == original.record.native.digest
+    }));
+    assert!(members.iter().all(|file| !file.relative_path.starts_with("source/")));
+    for unsafe_prefix in ["", "../outside", "/absolute"] {
+        assert!(retained.plan_members(unsafe_prefix).is_err());
+    }
     let held = selected.shared_owners()?;
     drop(graph);
     let bounded = OvenStore::new(native.root(), OvenStoreLimits::new(1, 1, 1));
@@ -850,18 +869,23 @@ fn dev7_native_loaf_missing_and_corrupt_owners_refuse_without_fallback() -> Test
                 "changed held bytes accepted: {}",
                 path.display()
             );
+            assert!(held.plan_members("units/fixture").is_err());
         }
         assert!(selected.shared_owners().is_err());
         assert!(published.shared_owners().is_err());
         replace_owned_fixture(path, &original)?;
         assert!(unit.output()?.is_file());
         assert!(published_unit.output()?.is_file());
+        assert!(unit.plan_members("units/fixture").is_ok());
+        assert!(published_unit.plan_members("units/fixture").is_ok());
     }
     for path in [&record_payload, &native_payload] {
         let moved = temp.path().join("removed-payload");
         std::fs::rename(path, &moved)?;
         assert!(unit.output().is_err());
         assert!(published_unit.output().is_err());
+        assert!(unit.plan_members("units/fixture").is_err());
+        assert!(published_unit.plan_members("units/fixture").is_err());
         std::fs::rename(&moved, path)?;
         assert!(unit.output()?.is_file());
         assert!(published_unit.output()?.is_file());
@@ -871,6 +895,8 @@ fn dev7_native_loaf_missing_and_corrupt_owners_refuse_without_fallback() -> Test
             std::os::unix::fs::symlink(&moved, path)?;
             assert!(unit.output().is_err(), "matching foreign payload symlink accepted");
             assert!(published_unit.output().is_err());
+            assert!(unit.plan_members("units/fixture").is_err());
+            assert!(published_unit.plan_members("units/fixture").is_err());
             std::fs::remove_file(path)?;
             std::fs::rename(&moved, path)?;
             assert!(unit.output()?.is_file());
