@@ -1,5 +1,7 @@
 //! Lowering for binary operators, including dispatch to a user-defined operator method.
 
+use incan_lang::lang::types::numerics::NumericTypeId;
+
 use super::args::*;
 use super::primitives::*;
 use super::*;
@@ -216,7 +218,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// make the operator a runtime operation -- Body IR's compiler-owned-runtime-operation requirement (#653
     /// criterion 3). Two helper families qualify: string operands with a [`string_helper_for_binop`] mapping, and
     /// builtin collections with a [`collection_helper_for_binop`] mapping. Everything else becomes a plain
-    /// [`bir::Rvalue::BinaryOp`], with a division/modulo panic fact recorded when [`bir::BinOp::may_panic`] holds.
+    /// [`bir::Rvalue::BinaryOp`], with a division/modulo panic fact recorded when [`bir::BinOp::may_panic`] holds. A
+    /// primitive whose checked result is a float carrier first assigns each mixed operand to a temporary of that
+    /// carrier (see [`promotes_operands_to_float_result`]), so its operands and result share one checked type.
     ///
     /// Helper families are checked before the primitive path rather than after, because several operators map to
     /// both: `+` is a primitive on two ints and a concatenation on two lists, and only the operand types separate
@@ -291,6 +295,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             });
             self.record_runtime_requirement(AbiV0RuntimeRequirement::PanicStrategy);
         }
+        let (lhs_operand, rhs_operand) = if promotes_operands_to_float_result(bin_op, &result_ty) {
+            (
+                self.promote_operand(lhs_ty, lhs_operand, &result_ty, scope, span, out),
+                self.promote_operand(rhs_ty, rhs_operand, &result_ty, scope, span, out),
+            )
+        } else {
+            (lhs_operand, rhs_operand)
+        };
         self.push_assign_temp(
             bir::Rvalue::BinaryOp(bin_op, lhs_operand, rhs_operand),
             result_ty,
@@ -298,6 +310,53 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             span,
             out,
         )
+    }
+
+    /// Assign a numeric operand to a temporary of the checked result carrier when its own type differs.
+    ///
+    /// The temporary's declared type is the checker's answer, so a backend reads the conversion off a typed assignment
+    /// exactly as it reads any other checked widening, and never decides which operand a binary promotion applies to.
+    fn promote_operand(
+        &mut self,
+        operand_ty: &IncanType,
+        operand: bir::Operand,
+        result_ty: &IncanType,
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        if operand_ty == result_ty || !is_numeric_carrier(operand_ty) {
+            return operand;
+        }
+        self.push_assign_temp(bir::Rvalue::Use(operand), result_ty.clone(), scope, span, out)
+    }
+}
+
+/// Whether a primitive operation reads both operands at its checked float result carrier (RFC 009).
+///
+/// Mixed arithmetic whose checked result is a float carrier converts each operand to that carrier first: `int / int`
+/// is `float`, `int` with `float` is `float`, and `f32` with `int` or `float` widens to `float`. `**` is excluded
+/// because a dynamic `int ** int` resolves `float` from its exponent rather than by promoting its operands, and the
+/// power lowering keeps that rule. Integer results are excluded because mixed exact-width `//` and `%` keep their
+/// unsigned operand through a dedicated helper rather than converting the `int` side.
+fn promotes_operands_to_float_result(op: bir::BinOp, result_ty: &IncanType) -> bool {
+    matches!(
+        op,
+        bir::BinOp::Add | bir::BinOp::Sub | bir::BinOp::Mul | bir::BinOp::Div | bir::BinOp::FloorDiv | bir::BinOp::Mod
+    ) && matches!(
+        result_ty,
+        IncanType::Primitive(
+            IncanPrimitiveType::Float | IncanPrimitiveType::Numeric(NumericTypeId::F32 | NumericTypeId::F64)
+        )
+    )
+}
+
+/// Whether a checked type is a numeric carrier that a typed assignment may convert; `bool` is never promoted.
+fn is_numeric_carrier(ty: &IncanType) -> bool {
+    match ty {
+        IncanType::Primitive(IncanPrimitiveType::Int | IncanPrimitiveType::Float) => true,
+        IncanType::Primitive(IncanPrimitiveType::Numeric(id)) => *id != NumericTypeId::Bool,
+        _ => false,
     }
 }
 
