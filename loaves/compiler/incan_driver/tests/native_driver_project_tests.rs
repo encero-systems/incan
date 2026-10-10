@@ -2194,6 +2194,45 @@ def main() -> None:
     )
 }
 
+/// Prove callables whose signatures carry a list byte-identical to legacy: a function item passed as a function
+/// pointer, an annotated callable local holding a closure, a returned closure, and a list of callables all take the
+/// list by the same shared reference, and the caller's list keeps its items.
+#[test]
+fn list_callable_signature_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("list-callable-signature")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def total(items: list[int]) -> int:
+    mut sum = 0
+    for item in items:
+        sum += item
+    return sum
+
+def apply(f: (list[int]) -> int, items: list[int]) -> int:
+    return f(items)
+
+def counter() -> (list[int]) -> int:
+    return (xs) => len(xs)
+
+def main() -> None:
+    values = [1, 2, 3]
+    println(apply(total, values))
+    println(len(values))
+    size: (list[int]) -> int = (xs) => len(xs)
+    println(size(values))
+    println(apply(size, [4, 5]))
+    count = counter()
+    println(count([6]))
+    ops: list[(list[int]) -> int] = [total, counter()]
+    first = ops[0]
+    println(first(values))
+"#,
+    )
+}
+
 /// Measure the actual unchanged graph with expensive fallback forbidden and retain numeric parity evidence.
 #[test]
 #[ignore = "machine-local diagnostic of the 50 ms completed fixture graph reuse budget"]
