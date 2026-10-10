@@ -531,6 +531,14 @@
       },
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/session/source_publication_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Genuine standard-source capability retention in ordinary sessions and refusal of copied projects, foreign namespaces, mixed authority and stale declarations.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/testing/discovery.rs": {
       "disposition": "keep",
       "notes": "test discovery through the parser.",
@@ -6111,6 +6119,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/provider/source_policy/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Compiler-pinned ordinary source namespace policy and real executable-relative source selection; distinct from installed grants and generated Rust.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/provider/stdlib_sources.rs": {
       "disposition": "keep",
       "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics.",
@@ -9191,6 +9207,14 @@
     "loaves/oven/oven_model/src/toolchain_layout/installed_data/tests.rs": {
       "disposition": "unaffected",
       "notes": "Executable-relative opaque installed descriptor discovery and exact original-file observation, including relocation, read-only discovery, tamper, aliases and competing roots; no namespace authority or generated backend.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_model/src/toolchain_layout/source_layout/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Original executable-relative source directory/member ownership, freshness, read-only access and ambient path refusal.",
       "owner": 1337,
       "split_required": false,
       "split_target": "",

@@ -556,6 +556,46 @@ impl CompilationSession {
         })
     }
 
+    /// Construct an ordinary standard-source publisher session with original dependency and own-source admissions.
+    /// Own namespaces remain source authority only; dependency metadata/native routes are never fabricated.
+    pub(crate) fn discover_with_admitted_standard_source(
+        entry_path: &Path,
+        feature_selection: &FeatureSelection,
+        dependencies: Arc<PreparedLibraryDependencies>,
+        source: Arc<incan_frontend::provider::source_policy::TrustedStandardSourcePublication>,
+    ) -> CliResult<Self> {
+        let mut session =
+            Self::discover_with_admitted_library_dependencies(entry_path, feature_selection, dependencies)?;
+        let manifest = session
+            .manifest
+            .as_ref()
+            .ok_or_else(|| CliError::failure("standard source publication has no project manifest"))?;
+        let project = manifest
+            .project
+            .as_ref()
+            .ok_or_else(|| CliError::failure("standard source publication has no package identity"))?;
+        let name = project
+            .name
+            .as_deref()
+            .ok_or_else(|| CliError::failure("standard source package has no name"))?;
+        let version = project
+            .version
+            .as_deref()
+            .ok_or_else(|| CliError::failure("standard source package has no version"))?;
+        let plan = session
+            .provider_plan
+            .as_ref()
+            .clone()
+            .with_standard_source_publication(source, manifest.project_root(), name, version)
+            .map_err(CliError::failure)?;
+        session.provider_plan = Arc::new(plan);
+        session.provider_plans_by_modules = Arc::new(Mutex::new(BTreeMap::from([(
+            BTreeSet::new(),
+            Arc::clone(&session.provider_plan),
+        )])));
+        Ok(session)
+    }
+
     /// Construct a publisher session from the partial inventory and explicit reserved namespace grants.
     ///
     /// The caller retains native receipts and frozen inspection authority. Discovery never prepares another SDK
@@ -798,9 +838,20 @@ impl CompilationSession {
         &self,
         used_module_paths: BTreeSet<Vec<String>>,
     ) -> CliResult<Arc<ProviderPlan>> {
+        self.provider_plan
+            .verify_standard_source_publication()
+            .map_err(CliError::failure)?;
         if let Some(dependencies) = &self.admitted_library_dependencies {
             dependencies.verify()?;
-            dependencies.validate_module_usage(&used_module_paths)?;
+            let dependency_modules = used_module_paths
+                .iter()
+                .filter(|module| {
+                    self.provider_plan.standard_source_publication().is_none()
+                        || !self.provider_plan.bootstrap_owns_sdk_module(module)
+                })
+                .cloned()
+                .collect();
+            dependencies.validate_module_usage(&dependency_modules)?;
         }
         if let Some(plan) = self
             .provider_plans_by_modules
@@ -1068,6 +1119,9 @@ impl CompilationSession {
         }
     }
 }
+
+#[cfg(test)]
+mod source_publication_tests;
 
 #[cfg(test)]
 mod tests {

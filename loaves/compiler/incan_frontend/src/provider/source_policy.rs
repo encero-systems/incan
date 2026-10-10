@@ -5,7 +5,7 @@
 //! completeness. Matching public names, manifests, paths and SDK catalogs cannot publicly construct this capability.
 
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use incan_lang::lang::standard_packages::{StandardPackageNamespacePolicy, standard_package_namespace_policy};
@@ -128,6 +128,41 @@ impl TrustedStandardSourcePublication {
             .path()
             .parent()
             .ok_or_else(|| invalid(self.policy, "declaration parent missing"))
+    }
+
+    /// Resolve an owned registered module only below this retained package's real source directory.
+    /// Missing files, foreign namespaces and symlinked/escaping coordinates refuse without ambient fallback.
+    pub fn verified_module_source_path(
+        &self,
+        module: &[String],
+    ) -> Result<PathBuf, TrustedStandardSourcePublicationError> {
+        if module.first().map(String::as_str) != Some("std")
+            || !module
+                .get(1)
+                .is_some_and(|root| self.policy.namespace_roots.contains(&root.as_str()))
+        {
+            return Err(invalid(
+                self.policy,
+                "module is outside this package's source namespaces",
+            ));
+        }
+        let relative = incan_lang::lang::stdlib::stdlib_stub_path(module)
+            .ok_or_else(|| invalid(self.policy, "module has no registered source path"))?;
+        let relative = Path::new(&relative)
+            .strip_prefix("stdlib")
+            .map_err(|_| invalid(self.policy, "registered source path is outside stdlib"))?;
+        let source_root = self.verified_package_root()?.join("src");
+        let path = source_root.join(relative);
+        let canonical =
+            std::fs::canonicalize(&path).map_err(|_| invalid(self.policy, "owned module source is unavailable"))?;
+        if canonical != path || !canonical.starts_with(&source_root) || !canonical.is_file() {
+            return Err(invalid(
+                self.policy,
+                "owned module source is not a confined regular coordinate",
+            ));
+        }
+        self.verify()?;
+        Ok(canonical)
     }
 
     /// Return exact retained compiler policy bytes after source revalidation; a digest alone cannot replace them.

@@ -87,6 +87,22 @@ fn sdk_catalog_claims_module_for_collection(provider_plan: &ProviderPlan, module
     )
 }
 
+/// Resolve source publication through its original capability; admitted consumers never use ambient stdlib sources.
+fn resolve_session_stdlib_source(session: &CompilationSession, module_path: &[String]) -> CliResult<PathBuf> {
+    if let Some(source) = session.provider_plan.standard_source_publication() {
+        return source
+            .verified_module_source_path(module_path)
+            .map_err(|error| CliError::failure(error.to_string()));
+    }
+    if session.admitted_library_dependencies().is_some() {
+        return Err(CliError::failure(format!(
+            "ordinary session module `{}` lacks admitted checked dependency metadata",
+            module_path.join(".")
+        )));
+    }
+    resolve_stdlib_module_source_path(module_path)
+}
+
 /// Collect and parse the entry file and all its dependencies, preserving structured diagnostic context.
 pub fn collect_modules_detailed(entry_path: &str) -> Result<Vec<ParsedModule>, CliDiagnosticFailure> {
     collect_modules_detailed_with_feature_selection(entry_path, &FeatureSelection::default())
@@ -297,12 +313,17 @@ fn collect_modules_detailed_from_seeds(
     session: &CompilationSession,
     mut to_process: Vec<(String, String, Vec<String>)>,
 ) -> Result<Vec<ParsedModule>, CliDiagnosticFailure> {
+    session
+        .provider_plan
+        .verify_standard_source_publication()
+        .map_err(CliError::failure)?;
     let base_dir = path.parent().unwrap_or(Path::new("."));
     let mut modules = Vec::new();
     let mut processed = HashSet::new();
     let mut dependency_edges: HashMap<String, HashSet<String>> = HashMap::new();
     let mut incan_source_stdlib_module_paths: HashMap<String, PathBuf> = HashMap::new();
-    let compiling_sdk_provider = session.provider_plan.bootstrap_sdk_namespace_roots().next().is_some();
+    let compiling_sdk_provider = session.provider_plan.bootstrap_sdk_namespace_roots().next().is_some()
+        || session.provider_plan.standard_source_publication().is_some();
     let stdlib_module_segments = |module_path: &[String]| {
         if compiling_sdk_provider {
             module_path.iter().skip(1).cloned().collect()
@@ -351,7 +372,7 @@ fn collect_modules_detailed_from_seeds(
                 "collection".to_string(),
             ];
             if !sdk_catalog_claims_module_for_collection(&session.provider_plan, &module_path) {
-                let source_path = resolve_stdlib_module_source_path(&module_path)?;
+                let source_path = resolve_session_stdlib_source(session, &module_path)?;
                 let module_segments = stdlib_module_segments(&module_path);
                 let module_name = module_segments.join("_");
                 let dep_path_str = source_path.to_string_lossy().to_string();
@@ -365,7 +386,7 @@ fn collect_modules_detailed_from_seeds(
         if uses_result_combinator_surface(&ast) {
             let module_path = vec![stdlib::STDLIB_ROOT.to_string(), "result".to_string()];
             if !sdk_catalog_claims_module_for_collection(&session.provider_plan, &module_path) {
-                let source_path = resolve_stdlib_module_source_path(&module_path)?;
+                let source_path = resolve_session_stdlib_source(session, &module_path)?;
                 let module_segments = stdlib_module_segments(&module_path);
                 let module_name = module_segments.join("_");
                 let dep_path_str = source_path.to_string_lossy().to_string();
@@ -390,7 +411,7 @@ fn collect_modules_detailed_from_seeds(
                     let source_path = if let Some(cached_path) = incan_source_stdlib_module_paths.get(&stdlib_key) {
                         cached_path.clone()
                     } else {
-                        let resolved = resolve_stdlib_module_source_path(&module_path)?;
+                        let resolved = resolve_session_stdlib_source(session, &module_path)?;
                         incan_source_stdlib_module_paths.insert(stdlib_key, resolved.clone());
                         resolved
                     };
