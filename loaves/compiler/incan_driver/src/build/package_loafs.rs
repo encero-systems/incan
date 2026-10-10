@@ -24,53 +24,85 @@ use oven_rustc::rustc::select_direct_rustc_plan_for_execution;
 use oven_store::digest_bytes;
 use oven_store::store::{
     OvenArtifactKind, OvenArtifactMaterializedDirectory, OvenArtifactMaterializedFile, OvenArtifactPublishRequest,
-    OvenStore, OvenStoreLimits, PublishedOvenStore,
+    OvenStore, OvenStoreExecutionPayload, OvenStoreLimits, PublishedOvenStore,
 };
+
+/// Exported ordinary package descriptors with every exact destination owner retained through publication.
+///
+/// Source selections lease a different Store. These original destination leases prevent later member/profile or
+/// metadata publication from reclaiming the entries the final package index will reference (#1337/#1698).
+#[must_use = "retain exported destination owners until the complete package publication finishes"]
+pub struct ExportedPackageLoafs {
+    entries: Vec<OvenPackagedLibraryLoafEntry>,
+    _owners: Vec<OvenStoreExecutionPayload>,
+}
+
+impl ExportedPackageLoafs {
+    /// Borrow the portable descriptors without releasing their original destination owners.
+    pub fn entries(&self) -> &[OvenPackagedLibraryLoafEntry] {
+        &self.entries
+    }
+}
 
 /// Copy one already selected project Loaf into the public provider artifact through normal immutable-store admission.
 ///
-/// This is intentionally an explicit-bake operation. The source store selection retains its active lease while the
-/// package store validates every file and performs its atomic publication, so a package can never point to a
-/// mutable cache directory or a half-copied third-party closure.
+/// Each destination entry is selected immediately after publication, before exporting another member. The caller
+/// must retain the returned owning result through every later profile and the final atomic package publication.
 pub fn export_selected_package_loaf(
     source_store: &OvenStore,
     package_store_root: &Path,
     receipt: &oven_store::OvenReceipt,
     selection: &OvenDirectRustcPlanSelection,
-) -> CliResult<Vec<OvenPackagedLibraryLoafEntry>> {
+) -> CliResult<ExportedPackageLoafs> {
     let package_store = OvenStore::new(package_store_root, *source_store.limits());
-    selection
-        .package_entries(receipt)
-        .into_iter()
-        .map(|entry| {
-            let exported = copy_receipted_oven_store_entry(
-                source_store,
-                &package_store,
-                &entry.receipt,
-                &entry.identity,
-                entry.kind,
-                "package export",
-            )?;
-            if exported.kind != entry.kind
-                || exported.receipt_identity != entry.receipt.identity
-                || exported.build_unit_identity != entry.receipt.build_unit_identity
-                || exported.intent != entry.receipt.intent
-            {
-                return Err(CliError::failure(
-                    "package Loaf changed its receipt-bound execution contract during immutable export",
-                ));
-            }
-            // A shared direct plan can be byte-identical to a plan first sealed under another compatible receipt.
-            // The package store must still publish that verified content under this library output's receipt, so its
-            // portable entry identity is the destination publication rather than the reusable source entry.
-            Ok(OvenPackagedLibraryLoafEntry {
-                receipt: entry.receipt,
-                identity: exported.identity,
-                kind: entry.kind,
-                base_loaf_identity: entry.base_loaf_identity,
-            })
-        })
-        .collect()
+    let mut entries = Vec::new();
+    let mut owners = Vec::new();
+    for entry in selection.package_entries(receipt) {
+        let exported = copy_receipted_oven_store_entry(
+            source_store,
+            &package_store,
+            &entry.receipt,
+            &entry.identity,
+            entry.kind,
+            "package export",
+        )?;
+        if exported.kind != entry.kind
+            || exported.receipt_identity != entry.receipt.identity
+            || exported.build_unit_identity != entry.receipt.build_unit_identity
+            || exported.intent != entry.receipt.intent
+        {
+            return Err(CliError::failure(
+                "package Loaf changed its receipt-bound execution contract during immutable export",
+            ));
+        }
+        let mut selected = package_store
+            .select_payloads_for_execution(std::slice::from_ref(&exported.identity))
+            .map_err(|error| CliError::failure(format!("failed to retain exported package Loaf: {error}")))?;
+        if selected.len() != 1 {
+            return Err(CliError::failure(
+                "exported package Loaf original destination owner is missing",
+            ));
+        }
+        let owner = selected.remove(0);
+        if owner.manifest != exported {
+            return Err(CliError::failure(
+                "exported package Loaf destination owner changed before retention",
+            ));
+        }
+        // A shared direct plan may have originated under another compatible receipt. The destination publication
+        // above binds this output's exact receipt; transport its actual identity while keeping that owner leased.
+        entries.push(OvenPackagedLibraryLoafEntry {
+            receipt: entry.receipt,
+            identity: exported.identity,
+            kind: entry.kind,
+            base_loaf_identity: entry.base_loaf_identity,
+        });
+        owners.push(owner);
+    }
+    Ok(ExportedPackageLoafs {
+        entries,
+        _owners: owners,
+    })
 }
 
 /// Copy one selected immutable entry, or its receipt-compatible direct-plan equivalent, through destination validation.
@@ -672,6 +704,172 @@ mod tests {
     use oven_store::store::{OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore};
     use oven_store::{OvenGeneratedProjectRequest, digest_bytes, receipt_generated_project, write_receipt};
     use sha2::Digest as _;
+
+    /// Publish and select an actual validated direct-plan Store record without invoking a native compiler.
+    fn exportable_profile_fixture(
+        root: &Path,
+        profile: &str,
+        store: &OvenStore,
+    ) -> Result<(oven_store::OvenReceipt, OvenDirectRustcPlanSelection), Box<dyn std::error::Error>> {
+        let source = root.join("src/lib.rs");
+        fs::create_dir_all(source.parent().ok_or("profile source has no parent")?)?;
+        fs::write(&source, format!("pub fn {profile}() {{}}\n"))?;
+        let receipt = receipt_generated_project(
+            &OvenGeneratedProjectRequest::new(
+                root,
+                "provider",
+                "0.1.0",
+                "aarch64-apple-darwin",
+                "rustc fixture",
+                profile,
+                Vec::new(),
+            )
+            .with_generated_source("generated-root", &source),
+        )?;
+        let mut artifacts =
+            package_loaf_manifest(receipt.intent.clone(), "provider", &digest_bytes(profile.as_bytes()));
+        let mut files = Vec::new();
+        for (index, artifact) in artifacts.externs.iter_mut().enumerate() {
+            let source = root.join(format!("sealed-{index}.rlib"));
+            fs::write(&source, format!("sealed {profile} {} artifact", artifact.crate_name))?;
+            artifact.digest = digest_bytes(&fs::read(&source)?);
+            files.push(OvenArtifactMaterializedFile {
+                source_path: source,
+                relative_path: artifact.relative_path.clone(),
+            });
+        }
+        recapture_package_loaf_closure(&mut artifacts);
+        store.publish(&OvenArtifactPublishRequest {
+            receipt: receipt.clone(),
+            domain: "exported-profile-fixture".into(),
+            kind: OvenArtifactKind::DirectRustcPlan,
+            payload: serde_json::to_vec(&artifacts)?,
+            materialized_files: files,
+            materialized_directories: Vec::new(),
+        })?;
+        let selected = oven_rustc::plan::selection::select_receipt_direct_rustc_execution_plan(store, &receipt)?
+            .ok_or("actual profile plan was not selected")?;
+        Ok((receipt, OvenDirectRustcPlanSelection::Stored(Box::new(selected))))
+    }
+
+    /// Exact destination leases survive later profiles/metadata pressure; idle entries are reclaimed independently.
+    #[test]
+    fn exported_package_profiles_retain_destination_owners_under_aggregate_pressure()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = tempfile::tempdir()?;
+        let destination = tempfile::tempdir()?;
+        let projects = tempfile::tempdir()?;
+        let generous = oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024);
+        let source_store = OvenStore::new(source.path(), generous);
+        let (debug_receipt, debug_plan) =
+            exportable_profile_fixture(&projects.path().join("debug"), "debug", &source_store)?;
+        let (release_receipt, release_plan) =
+            exportable_profile_fixture(&projects.path().join("release"), "release", &source_store)?;
+        // Aggregate retention is deliberately below every real record; per-request/domain allowance stays valid.
+        let tight = oven_store::store::OvenStoreLimits::new(1, 1024 * 1024, 1024 * 1024);
+        let source_handle = OvenStore::new(source.path(), tight);
+        let package_store = OvenStore::new(destination.path(), tight);
+        let debug = export_selected_package_loaf(&source_handle, destination.path(), &debug_receipt, &debug_plan)?;
+        assert_eq!(debug.entries().len(), 1);
+        let debug_identity = debug.entries()[0].identity.clone();
+        let idle = package_store.publish(&OvenArtifactPublishRequest {
+            receipt: debug_receipt.clone(),
+            domain: "ordinary-metadata-pressure-fixture".into(),
+            kind: OvenArtifactKind::Engine,
+            payload: b"idle checked-output fixture".to_vec(),
+            materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
+        })?;
+        let release =
+            export_selected_package_loaf(&source_handle, destination.path(), &release_receipt, &release_plan)?;
+        assert_eq!(release.entries().len(), 1);
+        let release_identity = release.entries()[0].identity.clone();
+        assert_ne!(debug_identity, release_identity);
+        let inspection = package_store.inspect()?;
+        assert!(
+            inspection
+                .entries
+                .iter()
+                .any(|entry| entry.manifest.identity == debug_identity)
+        );
+        assert!(
+            inspection
+                .entries
+                .iter()
+                .any(|entry| entry.manifest.identity == release_identity)
+        );
+        assert!(
+            !inspection
+                .entries
+                .iter()
+                .any(|entry| entry.manifest.identity == idle.identity)
+        );
+        package_store.publish(&OvenArtifactPublishRequest {
+            receipt: release_receipt.clone(),
+            domain: "ordinary-generation-pressure-fixture".into(),
+            kind: OvenArtifactKind::Engine,
+            payload: b"later immutable generation publication fixture".to_vec(),
+            materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
+        })?;
+        for entry in debug.entries().iter().chain(release.entries()) {
+            let mut owners = package_store.select_payloads_for_execution(std::slice::from_ref(&entry.identity))?;
+            assert_eq!(owners.len(), 1);
+            let owner = owners.remove(0);
+            owner.verify_admitted_payload()?;
+            assert_eq!(owner.manifest.receipt_identity, entry.receipt.identity);
+            assert_eq!(owner.manifest.kind, entry.kind);
+            assert_eq!(owner.manifest.intent, entry.receipt.intent);
+        }
+        let oversized = package_store.publish(&OvenArtifactPublishRequest {
+            receipt: release_receipt,
+            domain: "oversized-generation-fixture".into(),
+            kind: OvenArtifactKind::Engine,
+            payload: vec![0; 2 * 1024 * 1024],
+            materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
+        });
+        assert!(matches!(
+            oversized,
+            Err(oven_store::store::OvenStoreError::CapacityBlocked { .. })
+        ));
+        package_store.prune()?;
+        let held = package_store.inspect()?;
+        assert!(
+            held.entries
+                .iter()
+                .any(|entry| entry.manifest.identity == debug_identity)
+        );
+        assert!(
+            held.entries
+                .iter()
+                .any(|entry| entry.manifest.identity == release_identity)
+        );
+        drop((debug, release));
+        package_store.prune()?;
+        let released = package_store.inspect()?;
+        assert!(
+            !released
+                .entries
+                .iter()
+                .any(|entry| entry.manifest.identity == debug_identity)
+        );
+        assert!(
+            !released
+                .entries
+                .iter()
+                .any(|entry| entry.manifest.identity == release_identity)
+        );
+        // Original source selections remain held: their independent leases could not protect these destination IDs.
+        assert!(
+            source_store
+                .inspect()?
+                .entries
+                .iter()
+                .any(|entry| entry.manifest.identity == debug_plan.package_entries(&debug_receipt)[0].identity)
+        );
+        Ok(())
+    }
 
     #[test]
     fn direct_plan_package_loaf_composes_from_provider_into_consumer() -> Result<(), Box<dyn std::error::Error>> {
