@@ -435,7 +435,7 @@ fn verify_original_records(graph: &NativeLoafGraph) -> Result<BTreeMap<String, t
         .units
         .iter()
         .map(|(identity, unit)| {
-            super::verify_record(&unit.record, &unit.record_owner, &unit.native_owner, true)?;
+            super::verify_record(&unit.record, &unit.record_owner, &unit.native_owner)?;
             verify_child_bindings(&unit.record, &graph.units)?;
             Ok((identity.clone(), source_manifest(unit)?))
         })

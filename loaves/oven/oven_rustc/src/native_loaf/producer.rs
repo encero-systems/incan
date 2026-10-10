@@ -202,8 +202,7 @@ struct SourceProjection {
 /// Verify original complete inventories, then reconstruct source/fact inputs without a live producer shortcut.
 fn source_projection(unit: &SelectedNativeLoaf, work: &mut NativeLoafInspectionWork) -> Result<SourceProjection> {
     work.source_projection_attempts += 1;
-    // Full admitted verification is intentional even for transitional domains with writable closure-proof caches.
-    verify_record(&unit.record, &unit.record_owner, &unit.native_owner, true)?;
+    verify_record(&unit.record, &unit.record_owner, &unit.native_owner)?;
     let manifest = super::selection::source_manifest_with_reader(unit, &mut |path| {
         work.manifest_read_attempts += 1;
         std::fs::read(path).map_err(failed)

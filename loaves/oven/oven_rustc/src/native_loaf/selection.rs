@@ -71,14 +71,14 @@ pub(super) fn select_roots_with_sources(
             if origin != demand.origin || !demand.matches_version(&unit.record.source.version)? {
                 continue;
             }
-            unit.verify()?;
+            let root = unit.declared_root(&demand.alias)?;
             if demand.matches(&unit.record.source, origin, &source_manifest(unit)?, domain)? {
-                matches.push(unit);
+                matches.push(root);
             }
         }
-        match matches.as_slice() {
-            [unit] => roots.push(unit.declared_root(&demand.alias)?),
-            [] => {
+        match matches.len() {
+            1 => roots.extend(matches),
+            0 => {
                 return Err(refused(&format!(
                     "native dependency {} has no current declared source binding",
                     demand.dependency.crate_name

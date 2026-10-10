@@ -299,6 +299,42 @@ fn dev7_native_loaf_prepared_repeat_skips_preparation_and_unrelated_owners() -> 
     Ok(())
 }
 
+/// Compare current authority over a freshly admitted graph without walking every native inventory again.
+#[test]
+fn dev7_native_loaf_current_comparison_does_not_repeat_closure_validation() -> TestResult {
+    let fixture = Fixture::new()?;
+    let mut report = NativeLoafConsumerReport::default();
+    let mut current = Current::read(&fixture.request(), &mut report)?;
+    let mut graph = NativeLoafGraph::default();
+    let identity = fixture.publish(&current, &mut graph, &[])?;
+    let root = graph
+        .units
+        .get(&identity)
+        .ok_or("root missing")?
+        .declared_root("renamed")?;
+    let roots = [root];
+    let closure = graph.select(&roots)?;
+    let checks = crate::native_loaf::tests::InventoryChecks::default();
+    assert!(tracing::subscriber::with_default(checks.clone(), || {
+        current.matches(&fixture.request(), &closure, &roots, &mut report)
+    })?);
+    assert_eq!(
+        checks.count(),
+        2,
+        "only the final declared-root handoff validates its record/native pair"
+    );
+
+    let unit = closure.graph.units.get(&identity).ok_or("unit missing")?;
+    replace_owned_fixture(&unit.output()?, b"changed native bytes")?;
+    assert!(
+        current
+            .matches(&fixture.request(), &closure, &roots, &mut report)
+            .is_err()
+    );
+    assert!(unit.output().is_err());
+    Ok(())
+}
+
 /// Preserved-mtime source/compiler edits invalidate the real reuse decision; restoration admits the old generation.
 #[test]
 fn dev7_native_loaf_prepared_source_compiler_edits_and_restoration() -> TestResult {

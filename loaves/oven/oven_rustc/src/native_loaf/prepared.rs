@@ -331,7 +331,10 @@ impl Current {
         })
     }
 
-    /// Revalidate only the rooted physical owners against independently current declaration/lock/source inputs.
+    /// Compare a freshly admitted closure against independently current declaration, lock and source inputs.
+    /// Both callers select or admit the complete graph immediately before comparison. This operation reads sealed
+    /// records and digest-checked source declarations, not native outputs; repeating every owner inventory here
+    /// adds no authority. Declared-root projection and subsequent physical consumers retain fresh owner checks.
     fn matches(
         &mut self,
         request: &NativeLoafConsumerRequest<'_>,
@@ -374,7 +377,6 @@ impl Current {
             .map_err(NativeLoafError::Failed)?
         };
         for unit in closure.graph.units.values() {
-            unit.verify()?;
             let record = &unit.record;
             let source = &record.source;
             let inputs = &record.recipe.sources.build_unit_inputs;
