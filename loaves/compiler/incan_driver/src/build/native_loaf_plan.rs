@@ -25,7 +25,8 @@ const DOMAIN: &str = "ordinary-native-consumer-plan";
 ///
 /// This adapter keeps the Incan bootstrap on the same current-input and rooted-admission boundary as native tests.
 /// It returns measured native preparation facts alongside the existing plan, whose original execution owners stay
-/// leased through compilation. The runtime engine, when required, remains separate supplemental source authority.
+/// leased through compilation. Dependencies and the consumer plan use the same supplied Store; the output directory
+/// carries only staging and mutable hints. The runtime engine remains separate supplemental source authority.
 #[allow(clippy::too_many_arguments)]
 pub fn select_declared_native_loaf_plan(
     store: &OvenStore,
@@ -44,8 +45,8 @@ pub fn select_declared_native_loaf_plan(
     let manifest = oven_model::manifest::ProjectManifest::load(&declaration).map_err(failure)?;
     let dependencies = manifest.rust_dependency_values();
     let target = oven_rustc::rustc::rustc_host_target(rustc).map_err(failure)?;
-    let prepared =
-        oven_rustc::native_loaf::prepare_declared_native_loafs(&oven_rustc::native_loaf::NativeLoafConsumerRequest {
+    let prepared = oven_rustc::native_loaf::prepare_declared_native_loafs_in_store(
+        &oven_rustc::native_loaf::NativeLoafConsumerRequest {
             graph,
             index,
             blobs,
@@ -56,8 +57,10 @@ pub fn select_declared_native_loaf_plan(
             dependencies: &dependencies,
             declaration_owner: owner,
             domain: "target",
-        })
-        .map_err(failure)?;
+        },
+        store,
+    )
+    .map_err(failure)?;
     let (receipt, plan) = select_native_loaf_plan(store, source_receipt, prepared.closure())?;
     let report = serde_json::to_string(prepared.report()).map_err(failure)?;
     Ok((receipt, plan, report))
@@ -223,3 +226,6 @@ fn seal_source_roles(receipt: &OvenReceipt, artifacts: &mut OvenRustcArtifactMan
 fn failure(error: impl std::fmt::Display) -> CliError {
     CliError::failure(error.to_string())
 }
+
+#[cfg(test)]
+mod tests;
