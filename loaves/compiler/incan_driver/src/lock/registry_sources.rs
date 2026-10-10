@@ -37,9 +37,48 @@ pub fn prepare_project_registry_source_authorities(
 
 /// Prepare canonical command-owned inspection authority while reusing its explicitly admitted native SDK.
 pub fn prepare_project_registry_source_authorities_with_native_sdk(
-    mut authority: OvenLoadedProjectInspectionAuthority,
+    authority: OvenLoadedProjectInspectionAuthority,
     native_sdk_context: Option<Arc<crate::build::NativeSdkCommandContext>>,
 ) -> CliResult<Arc<PreparedOvenProjectRegistrySourceAuthorities>> {
+    match prepare_project_registry_source_authorities_inner(authority, native_sdk_context, false)? {
+        ProjectRegistrySourceAuthoritySelection::Prepared(prepared) => Ok(prepared),
+        ProjectRegistrySourceAuthoritySelection::StaleNativeGeneration => Err(CliError::failure(
+            "receipt-selected native SDK differs from command admission",
+        )),
+    }
+}
+
+/// Outcome of selecting optional completed-project inspection lineage for a current command.
+pub enum ProjectRegistrySourceAuthoritySelection {
+    /// Exact original authority and compatible test dependency plan retained for the command.
+    Prepared(Arc<PreparedOvenProjectRegistrySourceAuthorities>),
+    /// Intact historical lineage names another native generation and cannot authorize this command.
+    StaleNativeGeneration,
+}
+
+/// Prepare optional project lineage without making an old native generation mandatory for fresh compilation.
+///
+/// Only an intact, canonically admitted authority with a different native receipt catalog becomes stale. Damage,
+/// malformed bindings and changes to the current command's admission remain errors. A stale result grants no
+/// dependency authority: the caller must prepare its actual declarations using its current retained native owners.
+pub fn prepare_optional_project_registry_source_authorities_with_native_sdk(
+    authority: OvenLoadedProjectInspectionAuthority,
+    native_sdk_context: Option<Arc<crate::build::NativeSdkCommandContext>>,
+) -> CliResult<ProjectRegistrySourceAuthoritySelection> {
+    prepare_project_registry_source_authorities_inner(authority, native_sdk_context, true)
+}
+
+/// Share exact source and constituent preparation while allowing only optional callers to reject stale lineage.
+fn prepare_project_registry_source_authorities_inner(
+    mut authority: OvenLoadedProjectInspectionAuthority,
+    native_sdk_context: Option<Arc<crate::build::NativeSdkCommandContext>>,
+    optional: bool,
+) -> CliResult<ProjectRegistrySourceAuthoritySelection> {
+    if optional {
+        authority
+            .verify()
+            .map_err(|error| CliError::failure(error.to_string()))?;
+    }
     struct ResolvedSourceCatalog {
         root: PathBuf,
         packages: Vec<oven_rustc::rustc::OvenRustcRegistrySourcePackage>,
@@ -69,6 +108,7 @@ pub fn prepare_project_registry_source_authorities_with_native_sdk(
         .unwrap_or_default();
     let mut test_dependency_stored_roles = Vec::new();
     let mut test_dependency_release_identity = None;
+    let mut native_receipts = Vec::new();
     for (constituent_index, constituent) in authority.payload.constituents.iter().enumerate() {
         match constituent {
             OvenProjectInspectionConstituent::ReleaseLoaf {
@@ -105,6 +145,7 @@ pub fn prepare_project_registry_source_authorities_with_native_sdk(
             OvenProjectInspectionConstituent::Stored {
                 artifact_kind,
                 base_loaf_identity,
+                receipt,
                 ..
             } => {
                 if let Some(dependency_key) = test_dependency_roles.get(&constituent_index) {
@@ -114,6 +155,14 @@ pub fn prepare_project_registry_source_authorities_with_native_sdk(
                     CliError::failure("project inspection authority lost a store constituent during preparation")
                 })?;
                 stored_index += 1;
+                if selected.manifest.domain == "sdk-native-consumer-plan" {
+                    if optional && !receipt.sources.build_unit_inputs.contains_key("sdk-native-closure") {
+                        return Err(CliError::failure(
+                            "native project inspection constituent lacks its receipt catalog identity",
+                        ));
+                    }
+                    native_receipts.push(receipt);
+                }
                 let catalogs = match artifact_kind {
                     oven_store::store::OvenArtifactKind::DirectRustcPlan => {
                         let packages =
@@ -246,6 +295,15 @@ pub fn prepare_project_registry_source_authorities_with_native_sdk(
             version: dir.version.clone(),
         })
         .collect::<Vec<_>>();
+    if optional
+        && let Some(context) = native_sdk_context.as_deref()
+        && !context.receipts_match_admission(&native_receipts)?
+    {
+        tracing::debug!(
+            "completed project inspection lineage has another native generation; preparing current authority"
+        );
+        return Ok(ProjectRegistrySourceAuthoritySelection::StaleNativeGeneration);
+    }
     let test_dependency_plan = prepare_project_test_dependency_plan(
         &mut authority,
         &mut release_loafs,
@@ -253,15 +311,17 @@ pub fn prepare_project_registry_source_authorities_with_native_sdk(
         test_dependency_release_identity,
         native_sdk_context.as_deref(),
     )?;
-    Ok(Arc::new(PreparedOvenProjectRegistrySourceAuthorities {
-        native_sdk_context,
-        authority,
-        sources,
-        registry_lock_source,
-        generated_out_dirs,
-        test_dependency_plan,
-        _release_loafs: release_loafs,
-    }))
+    Ok(ProjectRegistrySourceAuthoritySelection::Prepared(Arc::new(
+        PreparedOvenProjectRegistrySourceAuthorities {
+            native_sdk_context,
+            authority,
+            sources,
+            registry_lock_source,
+            generated_out_dirs,
+            test_dependency_plan,
+            _release_loafs: release_loafs,
+        },
+    )))
 }
 
 /// Return whether a stored project extension physically owns one sealed registry source tree.
@@ -637,6 +697,9 @@ pub fn install_required_oven_registry_lock(
     }
     install_oven_registry_lock(&sealed_lock, destination)
 }
+
+#[cfg(test)]
+mod optional_lineage_tests;
 
 #[cfg(test)]
 mod tests {
