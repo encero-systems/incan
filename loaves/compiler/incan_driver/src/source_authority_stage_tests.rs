@@ -5,7 +5,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
-use incan_frontend::ast::Program;
+use incan_frontend::ast::{Declaration, Program, Visibility};
 use incan_frontend::library_manifest_index::LibraryManifestIndex;
 use incan_frontend::provider::ProviderPlan;
 use incan_frontend::provider::source_policy::TrustedStandardSourcePublication;
@@ -23,7 +23,7 @@ const OWN_IO: &str = "pub def owned() -> int:\n    return 7\n";
 const MAIN: &str = "def main() -> None:\n    pass\n";
 const ROUTES: &str = "from std.web.routing import route\n@route(\"/\")\ndef hidden() -> str:\n    return \"handler\"\n";
 // The public signature in loaves/stdlib/web/src/web/routing.incn, including its actual defaulted methods parameter.
-const WEB_ROUTING: &str = "rust.module(\"incan_web_macros\")\n@rust.extern\npub def route(path: str, methods: list[str] = [\"GET\"]) -> None: ...\n";
+const WEB_ROUTING: &str = "rust.module(\"incan_web_macros\")\n@rust.extern\npub def route(path: str, methods: list[str] = [\"GET\"]) -> None:\n    ...\n";
 
 /// Parse fixture source through the real frontend without introducing test-only semantic shortcuts.
 fn parse(source: &str) -> Result<Program, String> {
@@ -165,6 +165,24 @@ fn dev7_standard_source_stages_actual_executable_child() -> TestResult {
         ProviderPlan::from_admitted_libraries(LibraryManifestIndex::default(), &[], std::iter::empty())?
             .with_standard_source_publication(web_source, &web_package, "incan_stdlib_web", "0.5.0")?,
     );
+    // Cache readers intentionally return no metadata after a parser refusal. Assert the real exported declaration
+    // and productive retained-source metadata before using the checker, so malformed fixture syntax cannot masquerade
+    // as an import-authority failure.
+    let parsed_web = parse(WEB_ROUTING)?;
+    assert!(parsed_web.declarations.iter().any(|declaration| {
+        matches!(&declaration.node, Declaration::Function(function)
+            if function.name == "route" && function.visibility == Visibility::Public)
+    }));
+    let mut own_web_cache = StdlibAstCache::new();
+    own_web_cache.bind_provider_plan(&web_plan);
+    let web = module("std.web.routing");
+    assert!(own_web_cache.lookup_function_symbol(&web, "route").is_some());
+    let own_metadata = own_web_cache
+        .lookup_function_meta(&web, "route")
+        .ok_or("genuine retained web metadata is not productive")?;
+    assert!(own_metadata.is_rust_extern);
+    assert_eq!(own_metadata.rust_module_path.as_deref(), Some("incan_web_macros"));
+    own_web_cache.verify_retained_sources()?;
     let routes_info = checked(&routes, "routes", Some(&web_plan))?;
     let hidden_identity = routes_info
         .declarations
@@ -175,7 +193,6 @@ fn dev7_standard_source_stages_actual_executable_child() -> TestResult {
         .ok_or("missing checked handler identity")?;
     let hidden_definition = format!("fn {}", encode_incan_symbol_identity(hidden_identity));
     let mut legacy = StdlibAstCache::new();
-    let web = module("std.web.routing");
     let metadata = legacy
         .lookup_function_meta(&web, "route")
         .ok_or("hostile web metadata is not productive")?;
