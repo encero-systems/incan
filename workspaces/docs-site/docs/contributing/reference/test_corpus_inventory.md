@@ -15,9 +15,9 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | keep | 3526 | 240 | 431 |
 | re-point | 1487 | 91 | 1058 |
 | retire | 1506 | 153 | 0 |
-| unaffected | 1890 | 199 | 5 |
+| unaffected | 1894 | 199 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8409** | **683** | **1494** |
+| **Total** | **8413** | **683** | **1494** |
 
 - Retire-class tests: 1506, of which twinned 1022, dies 294, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -127,7 +127,7 @@ The collector counts these in the text of each test function and of the file-loc
 
 `Lines` is the file length; `Test lines` is the test region the split threshold applies to: the `#[cfg(test)]` modules when the file has any, otherwise the whole file. `Twins` is `twinned/retire-class` and `Dies` the number recorded `dies`, for files with retire-class tests. Per-test rows follow a file only when it carries per-test overrides.
 
-### `loaves/compiler/incan_driver` (617 tests in 87 files: keep 283, re-point 19, retire 103, unaffected 212)
+### `loaves/compiler/incan_driver` (619 tests in 87 files: keep 283, re-point 19, retire 103, unaffected 214)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -182,7 +182,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/lock/mod.rs` | 2 | 613 | 159 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/lock/registry_sources.rs` | 5 | 752 | 111 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/lock/resolution.rs` | 6 | 983 | 139 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
-| `loaves/compiler/incan_driver/src/lock/resolution/admitted_session_tests.rs` | 3 | 104 | 104 | unaffected | - | - | - | #1337 | checker 3 | Canonical ordinary lock writer retains the original admitted session and exact writer evidence, refusing other projects and unadmitted workspace siblings. |
+| `loaves/compiler/incan_driver/src/lock/resolution/admitted_session_tests.rs` | 5 | 165 | 165 | unaffected | - | - | - | #1337 | checker 5 | Canonical ordinary lock writer retains the original admitted session and exact writer evidence, refusing other projects and unadmitted workspace siblings. |
 | `loaves/compiler/incan_driver/src/lock/rust_inspect.rs` | 2 | 612 | 97 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/lock/test_inputs.rs` | 2 | 200 | 91 | unaffected | - | - | - | #1561 | checker 2, parser 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/lock/workspace.rs` | 2 | 653 | 53 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
@@ -190,7 +190,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/project.rs` | 9 | 410 | 105 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/rust_inspect_workspace.rs` | 20 | 2023 | 934 | unaffected | - | - | - | #1561 | codegen 5, text 1, run 10, checker 1 | generated rust-inspect Cargo workspace that feeds the checker with Rust metadata; not the Rust backend. |
 | `loaves/compiler/incan_driver/src/sdk_closure.rs` | 1 | 231 | 77 | unaffected | - | - | - | #1698 | - | A locally compiled SDK facet seals its native source identity and loads a frozen inspection graph without Cargo metadata. |
-| `loaves/compiler/incan_driver/src/session.rs` | 7 | 2037 | 884 | keep (keep 6, retire 1) | 1/1 | 0 | - | #1561 | codegen 1, run 1, checker 7, parser 2 | CompilationSession analysis (provider plan reuse, feature projection); one test builds a consumer's generated Rust with the standard library mounted from source. |
+| `loaves/compiler/incan_driver/src/session.rs` | 7 | 2049 | 884 | keep (keep 6, retire 1) | 1/1 | 0 | - | #1561 | codegen 1, run 1, checker 7, parser 2 | CompilationSession analysis (provider plan reuse, feature projection); one test builds a consumer's generated Rust with the standard library mounted from source. |
 | `loaves/compiler/incan_driver/src/session/source_publication_tests.rs` | 2 | 193 | 193 | unaffected | - | - | - | #1337 | checker 1 | Genuine standard-source capability retention in ordinary sessions and refusal of copied projects, foreign namespaces, mixed authority and stale declarations. |
 | `loaves/compiler/incan_driver/src/source_authority_stage_tests.rs` | 5 | 293 | 293 | unaffected | - | - | - | #1337 | codegen 1, checker 1, parser 1, legacy_ir 1 | Layering controls carry genuine original source context through stage setters, cache clones, lowering and emission; hostile ambient and stale owners refuse. Temporary emission APIs require corresponding authority controls when backend callers migrate. |
 | `loaves/compiler/incan_driver/src/testing/discovery.rs` | 33 | 1973 | 829 | keep | - | - | - | #1561 | checker 32, parser 32 | test discovery through the parser. |
@@ -3118,7 +3118,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 | `loaves/toolchain/oven-cli/src/commands/oven/suite_retention.rs` | 8 | 680 | 188 | unaffected | - | - | - | #1965 | - | Oven replay evidence retention and cleanup measurements; no compiler semantics. |
 | `loaves/toolchain/oven-cli/src/commands/tools.rs` | 8 | 1869 | 414 | unaffected | - | - | - | #1561 | run 1 | Oven tools command; the build_run hit is a Cargo config hint, not an Incan build. |
 
-??? note "Unaffected crates (963 tests in 84 files)"
+??? note "Unaffected crates (965 tests in 84 files)"
 
     Every test in these crates is `unaffected`: the cutover does not touch them. They are listed so the summary reconciles to the whole tree.
 
@@ -3129,13 +3129,13 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     | `loaves/compiler/incan_oven_facet/src/lib.rs` | 4 | 465 | 235 | unaffected | - | - | - | #1561 | - | Oven facet of the compiler; no emit/driver dependency. Reviewed at crate level. |
     | `loaves/compiler/incan_oven_facet/tests/oven_pr_regressions.rs` | 2 | 214 | 214 | unaffected | - | - | - | #1561 | - | Oven facet of the compiler; no emit/driver dependency. Reviewed at crate level. |
 
-    #### `loaves/compiler/incan_provider` (111 tests in 10 files: unaffected 111)
+    #### `loaves/compiler/incan_provider` (113 tests in 10 files: unaffected 113)
 
     | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
     | `loaves/compiler/incan_provider/src/compiled_sdk.rs` | 1 | 74 | 16 | unaffected | - | - | - | #1561 | - | SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level. |
     | `loaves/compiler/incan_provider/src/dependency_resolver.rs` | 23 | 1281 | 597 | unaffected | - | - | - | #1561 | checker 22 | SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level. |
-    | `loaves/compiler/incan_provider/src/inventory.rs` | 10 | 1361 | 789 | unaffected | - | - | - | #1561 | checker 5 | SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level. |
+    | `loaves/compiler/incan_provider/src/inventory.rs` | 12 | 1415 | 833 | unaffected | - | - | - | #1561 | checker 5 | SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level. |
     | `loaves/compiler/incan_provider/src/lock_semantics.rs` | 14 | 2063 | 1320 | unaffected | - | - | - | #1561 | checker 12 | SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level. |
     | `loaves/compiler/incan_provider/src/requirements.rs` | 13 | 1119 | 316 | unaffected | - | - | - | #1561 | checker 8 | SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level. |
     | `loaves/compiler/incan_provider/src/sdk_build.rs` | 8 | 1104 | 334 | unaffected | - | - | - | #1698 | checker 1 | Native SDK transaction uses real direct-rustc fixtures to verify publication, receipt reuse, discovery-hint repair, and failed-generation rollback with poisoned Cargo metadata. Legacy command-transport fixtures remain test-only. |
