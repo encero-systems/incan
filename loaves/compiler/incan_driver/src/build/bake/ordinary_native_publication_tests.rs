@@ -111,6 +111,7 @@ fn child() -> TestResult {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+    print!("{}", String::from_utf8_lossy(&output.stdout));
     Ok(())
 }
 
@@ -237,6 +238,13 @@ fn ordinary_native_library_publication_first_replay_and_source_edit() -> TestRes
         profiles: &PROFILES,
     })?);
     assert!(Arc::ptr_eq(&support, native.metadata().support()));
+    for (profile, report) in native.reports() {
+        println!(
+            "ordinary-publication-evidence {}",
+            serde_json::json!({"phase": "native-first", "profile": profile,
+                "compiled": report.compiled.len(), "reused": report.reused.len(), "seconds": report.seconds})
+        );
+    }
     assert_eq!(
         native.reports().keys().map(String::as_str).collect::<BTreeSet<_>>(),
         PROFILES.into()
@@ -266,6 +274,11 @@ fn ordinary_native_library_publication_first_replay_and_source_edit() -> TestRes
         profiles: &PROFILES,
     })?;
     for (profile, report) in repeated.reports() {
+        println!(
+            "ordinary-publication-evidence {}",
+            serde_json::json!({"phase": "native-repeat", "profile": profile,
+                "compiled": report.compiled.len(), "reused": report.reused.len(), "seconds": report.seconds})
+        );
         assert!(report.compiled.is_empty());
         let request = repeated
             .metadata()
@@ -330,7 +343,13 @@ fn ordinary_native_library_publication_first_replay_and_source_edit() -> TestRes
     let mut first_outputs = None;
     for iteration in 0..2 {
         reset_project_lock_collection_metrics();
+        let started = std::time::Instant::now();
         let report = bake_admitted_library(&input, &features, None)?;
+        println!(
+            "ordinary-publication-evidence {}",
+            serde_json::json!({"phase": if iteration == 0 { "publish-first" } else { "publish-repeat" },
+                "seconds": started.elapsed().as_secs_f64(), "profiles": &report.profiles})
+        );
         let metadata = published_metadata(root.path(), &report)?;
         let actual_outputs = outputs(root.path(), &report, &native)?;
         assert_eq!(project_lock_collection_counts(), (1, 0));
@@ -355,7 +374,13 @@ fn ordinary_native_library_publication_first_replay_and_source_edit() -> TestRes
     // ---- Source edit invalidates checked and both native output generations; complete request stays current ----
     fs::write(&entry, "pub def answer() -> int:\n    return 43\n")?;
     reset_project_lock_collection_metrics();
+    let started = std::time::Instant::now();
     let edited = bake_admitted_library(&input, &features, None)?;
+    println!(
+        "ordinary-publication-evidence {}",
+        serde_json::json!({"phase": "publish-source-edit", "seconds": started.elapsed().as_secs_f64(),
+            "profiles": &edited.profiles})
+    );
     let edited_metadata = published_metadata(root.path(), &edited)?;
     let original = first.ok_or("original checked metadata missing")?;
     assert_ne!(
