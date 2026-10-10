@@ -5,8 +5,9 @@ version = "0.6.0-dev.6"
 private = true
 
 [dependencies]
-incan_driver = { loaf = "incan_driver", path = ".." }
-incan_provider = { loaf = "incan_provider", path = "../../incan_provider" }
+incan_driver = { loaf = "incan_driver", path = "..", default-features = false, features = ["cli", "rust_inspect", "std_async", "std_decorators", "std_testing"] }
+incan_provider = { loaf = "incan_provider", path = "../../incan_provider", default-features = false, features = ["rust_inspect", "std_async", "std_decorators", "std_testing"] }
+incan_lang = { loaf = "incan_lang", path = "../../../kernel/incan_lang" }
 incan_test_support = { loaf = "incan_test_support", path = "../../incan_test_support" }
 oven_model = { loaf = "oven_model", path = "../../../oven/oven_model" }
 oven_rustc = { loaf = "oven_rustc", path = "../../../oven/oven_rustc" }

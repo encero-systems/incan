@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3545 | 242 | 431 |
+| keep | 3546 | 243 | 431 |
 | re-point | 1487 | 91 | 1058 |
 | retire | 1507 | 153 | 0 |
-| unaffected | 1952 | 210 | 5 |
+| unaffected | 1953 | 210 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8491** | **696** | **1494** |
+| **Total** | **8493** | **697** | **1494** |
 
 - Retire-class tests: 1507, of which twinned 1022, dies 295, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -127,7 +127,7 @@ The collector counts these in the text of each test function and of the file-loc
 
 `Lines` is the file length; `Test lines` is the test region the split threshold applies to: the `#[cfg(test)]` modules when the file has any, otherwise the whole file. `Twins` is `twinned/retire-class` and `Dies` the number recorded `dies`, for files with retire-class tests. Per-test rows follow a file only when it carries per-test overrides.
 
-### `loaves/compiler/incan_driver` (663 tests in 93 files: keep 299, re-point 19, retire 104, unaffected 241)
+### `loaves/compiler/incan_driver` (665 tests in 94 files: keep 300, re-point 19, retire 104, unaffected 242)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -140,7 +140,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/backend/project/runner.rs` | 18 | 1031 | 449 | re-point | - | - | - | #1561 | codegen 2, run 14 | project runner: builds and runs the generated project; the run contract (profiles, rebuild triggers) is re-pointed at the replacement route. |
 | `loaves/compiler/incan_driver/src/backend/project/tests/codegen_generator.rs` | 5 | 410 | 410 | retire | 0/5 | 5 | - | #1561 | codegen 4, text 1, run 5, checker 1, parser 3, legacy_ir 1 | codegen into a generated project; asserts generated Rust text. |
 | `loaves/compiler/incan_driver/src/backend/project/tests/lock_payload.rs` | 1 | 26 | 26 | retire | 0/1 | 1 | - | #1561 | codegen 1, run 1 | generated Cargo project shape; dies with the generated-project route |
-| `loaves/compiler/incan_driver/src/build/bake.rs` | 8 | 2501 | 324 | unaffected | - | - | - | #1561 | codegen 1, run 1, checker 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
+| `loaves/compiler/incan_driver/src/build/bake.rs` | 8 | 2536 | 324 | unaffected | - | - | - | #1561 | codegen 1, run 1, checker 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/bake/admitted_publication_tests.rs` | 1 | 193 | 193 | unaffected | - | - | - | #1337 | checker 1 | Actual admitted ordinary publication with both profiles, metadata replay, changed source, canonical lock and original generation owners; temporary native SDK context remains explicit. |
 | `loaves/compiler/incan_driver/src/build/bake/ordinary_native_publication_tests.rs` | 7 | 1027 | 1027 | unaffected | - | - | - | #1337 | checker 7 | Actual ordinary native library publication, metadata replay and source edit with real debug/release producer requests and compiler-bound identity; legacy SDK discovery is hostile and no generated Cargo invocation is admitted. |
 | `loaves/compiler/incan_driver/src/build/caller_facet.rs` | 7 | 500 | 165 | keep | - | - | - | #1337 | replacement 6, checker 6, parser 6 | checked, usage-derived caller export selection and refusal at the Rust-hosted Incan boundary. |
@@ -159,7 +159,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/build/library_project/metadata_replay/tests.rs` | 5 | 205 | 205 | keep | - | - | - | #1698 | checker 1 | Source-current metadata preflight binds raw source, declarations and external Rust without entering the Incan frontend. |
 | `loaves/compiler/incan_driver/src/build/library_publication.rs` | 7 | 661 | 254 | unaffected | - | - | - | #1561 | checker 7 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/mod.rs` | 3 | 958 | 79 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
-| `loaves/compiler/incan_driver/src/build/native_loaf_plan/tests.rs` | 1 | 130 | 130 | unaffected | - | - | - | #1698 | - | Bootstrap adapter retains native dependencies and consumer plans in one supplied Store across compatible checkouts and relocated outputs; real Rust consumers execute and unchanged receipts reuse their binaries. |
+| `loaves/compiler/incan_driver/src/build/native_loaf_plan/tests.rs` | 2 | 189 | 189 | unaffected | - | - | - | #1698 | - | Bootstrap adapter retains native dependencies and consumer plans in one supplied Store across compatible checkouts and relocated outputs; real Rust consumers execute and unchanged receipts reuse their binaries. |
 | `loaves/compiler/incan_driver/src/build/native_runtime_inputs/tests.rs` | 1 | 166 | 166 | unaffected | - | - | - | #1337 | - | Actual receipt-bound ordinary Incan identity exchange retains original producer native owners, checks roots/records/intent/compiler and refuses missing original bytes; physical identity does not grant semantic, macro or namespace authority. |
 | `loaves/compiler/incan_driver/src/build/native_sdk.rs` | 2 | 584 | 64 | unaffected | - | - | - | #1698 | - | Native SDK facet version/feature selection and canonical receipt catalog binding; no Cargo resolution. |
 | `loaves/compiler/incan_driver/src/build/native_sdk_plan.rs` | 2 | 821 | 282 | unaffected | - | - | - | #1698 | - | Receipt-bound native SDK plans and the actual covered test-envelope path retain original command owners; store-backed controls verify member bindings, compiler mismatch refusal and owner lifetime without generated Cargo metadata. |
@@ -213,10 +213,11 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/tests/generated_rust_callability_artifact_tests.rs` | 1 | 258 | 258 | retire | 1/1 | 0 | - | #1561 | text 1, run 1, checker 1 | The generated Cargo manifests and the `transforms.rs`/`main.rs` text (fn-pointer parameters, qualified provider calls) die with #654; the surviving observable, the consumer run printing `2 3 4` (a `Callable` value passed across a `pub::` package boundary, which no other test runs), is the twin: a project fixture carrying the producer under `deps/callability_core`, which the runner bakes before `incan run` (harness-deps). |
 | `loaves/compiler/incan_driver/tests/generated_rust_native_consumer_tests.rs` | 1 | 367 | 367 | retire | 0/1 | 1 | - | #1561 | run 1 | public generated-Rust artifact contract (RFC 120 projections, native consumers, audit) |
 | `loaves/compiler/incan_driver/tests/mir_plan_contract_tests.rs` | 3 | 141 | 141 | keep | - | - | - | #1337 | checker 1, parser 1 | public Incan scalar native-plan contract and required sibling dependency boundary |
-| `loaves/compiler/incan_driver/tests/native_driver_project_tests.rs` | 82 | 4391 | 4391 | keep | - | - | planned: native_driver_project_tests/collections.rs for focused collection parity cases | #1337 | run 81, checker 4 | Oven-built pinned native driver; scalar plan and real Body IR lowering; unchanged benchmark byte parity and opt-in census of every behavior fixture |
+| `loaves/compiler/incan_driver/tests/native_driver_project_tests.rs` | 82 | 4394 | 4394 | keep | - | - | planned: native_driver_project_tests/collections.rs for focused collection parity cases | #1337 | run 81, checker 4 | Oven-built pinned native driver; scalar plan and real Body IR lowering; unchanged benchmark byte parity and opt-in census of every behavior fixture |
 | `loaves/compiler/incan_driver/tests/native_driver_project_tests/census.rs` | 5 | 561 | 561 | keep | - | - | - | #1337 | - | Direct-route census refusal grouping and bounded process capture; route-independent measurement support |
 | `loaves/compiler/incan_driver/tests/native_driver_project_tests/dev7_carrier_admission.rs` | 1 | 70 | 70 | keep | - | - | - | #1337 | run 1 | Real frontend and Incan lower_module accept nested carrier layouts; actual native validation rejects independent malformed payload paths, layouts, collection identities and by-value recursion. |
 | `loaves/compiler/incan_driver/tests/native_driver_project_tests/enum_alias_admission.rs` | 1 | 47 | 47 | keep | - | - | - | #1337 | run 1 | Actual Incan lower_module accepts checked aliases and rejects independently corrupted canonical enum targets, payloads and bindings. |
+| `loaves/compiler/incan_driver/tests/native_driver_project_tests/ordinary_rust_dependencies.rs` | 1 | 121 | 121 | keep | - | - | - | #1698 | run 1 | Normal Rust caller links declaration-selected ordinary native dependencies absent from SDK coverage; runtime, selected work, completed-output reuse, native source edits, missing configured input refusal and rollback retain the original output. |
 | `loaves/compiler/incan_driver/tests/native_driver_project_tests/tail.rs` | 10 | 400 | 400 | keep | - | - | - | #1337 | run 10 | Direct-route small statements, operators and places compared byte for byte with legacy output |
 | `loaves/compiler/incan_driver/tests/native_library_projection_publication_tests.rs` | 2 | 260 | 260 | keep | - | - | - | #1698 | codegen 2, replacement 2 | Completed library publication rollback restores changed and absent local projection markers without losing retained package caches. |
 | `loaves/compiler/incan_driver/tests/native_rust_source_authority_tests.rs` | 11 | 757 | 757 | keep | - | - | - | #1698 | checker 3 | Cargo-independent Loaf source authority, sealed provider integrity and generated-root semantic lock bookkeeping; authored, transitive, target and nested inputs remain bound. |

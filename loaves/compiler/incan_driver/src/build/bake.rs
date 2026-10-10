@@ -1116,7 +1116,7 @@ fn prepare_rust_unit_dependencies(
     context: &ProjectRustBakeContext<'_>,
     profile: &str,
     base_receipt: &oven_store::OvenReceipt,
-) -> CliResult<Option<(oven_store::OvenReceipt, crate::build::OvenDirectRustcPlanPreparation)>> {
+) -> CliResult<Option<(oven_store::OvenReceipt, OvenDirectRustcPlanSelection)>> {
     if context.manifest.rust_dependencies().is_empty() {
         return Ok(None);
     }
@@ -1174,6 +1174,9 @@ fn prepare_rust_unit_dependencies(
 
     // ---- Explicit plan selection under lease ----
     let store = open_default_oven_store()?;
+    if let Some(selected) = select_configured_rust_unit_native_plan(context, &store, &receipt, &generated)? {
+        return Ok(Some(selected));
+    }
     let preparation = crate::build::plan_selection::select_or_bake_generated_project_plan(
         OvenProjectPlanMode::ExplicitBake,
         &store,
@@ -1187,17 +1190,54 @@ fn prepare_rust_unit_dependencies(
         context.rustc,
     )?
     .ok_or_else(|| CliError::failure("Rust unit dependency closure was not prepared"))?;
-    Ok(Some((receipt, preparation)))
+    Ok(Some((receipt, preparation.plan_selection)))
+}
+
+/// Prepare declared Rust-unit roots from explicit native producer coordinates rather than SDK coverage.
+///
+/// The existing source-toolchain configuration names coordinates only: the ordinary producer independently verifies
+/// declarations, current sources, features, compiler, target, profile and immutable owners. A configured graph cannot
+/// fall back to a stale SDK on failure. The SDK-prefixed coordinate transport remains removable debt under #1698;
+/// it conveys no SDK inventory or checked-language authority, and introduces no additional user configuration.
+fn select_configured_rust_unit_native_plan(
+    context: &ProjectRustBakeContext<'_>,
+    store: &oven_store::store::OvenStore,
+    receipt: &oven_store::OvenReceipt,
+    generated: &Path,
+) -> CliResult<Option<(oven_store::OvenReceipt, OvenDirectRustcPlanSelection)>> {
+    let Some(graph) = std::env::var_os("INCAN_SDK_NATIVE_COMPILER_GRAPH").filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let required = |name: &str| {
+        std::env::var_os(name)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .ok_or_else(|| CliError::failure(format!("configured Rust-unit native graph requires {name}")))
+    };
+    let index = required("INCAN_SDK_NATIVE_INDEX")?;
+    let blobs = required("INCAN_SDK_NATIVE_BLOBS")?;
+    let (receipt, selection, report) = crate::build::native_loaf_plan::select_declared_native_loaf_plan(
+        store,
+        receipt,
+        context.manifest.path(),
+        context.rustc,
+        &PathBuf::from(graph),
+        &index,
+        &blobs,
+        generated,
+    )?;
+    fs::write(generated.join("native-loaf-preparation.json"), report)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    Ok(Some((receipt, selection)))
 }
 
 /// Compose separately leased native closures, retaining direct roots and all transitive search bindings.
 fn compose_rust_unit_dependencies(
     plan: &mut oven_rustc::rustc::OvenRustcArtifactPlan,
-    preparation: &crate::build::OvenDirectRustcPlanPreparation,
+    preparation: &OvenDirectRustcPlanSelection,
     manifest: &ProjectManifest,
 ) -> CliResult<()> {
     let own = preparation
-        .plan_selection
         .source_artifact_plan("generated-root")
         .map_err(oven_rustc_error)?;
     let mut libraries = Vec::new();
@@ -1322,7 +1362,6 @@ fn bake_project_rust_profile(
             .as_ref()
             .map(|(_, preparation)| {
                 preparation
-                    .plan_selection
                     .source_artifact_plan("generated-root")
                     .map_err(oven_rustc_error)
             })
@@ -1365,11 +1404,7 @@ fn bake_project_rust_profile(
         receipt = oven_store::receipt_with_build_unit_input(
             &receipt,
             "rust-unit-dependencies",
-            format!(
-                "{}:{}",
-                dependency_receipt.identity,
-                preparation.plan_selection.report_identity()
-            ),
+            format!("{}:{}", dependency_receipt.identity, preparation.report_identity()),
         )
         .map_err(|error| CliError::failure(error.to_string()))?;
         write_receipt(&receipt, &receipt_path).map_err(|error| CliError::failure(error.to_string()))?;
