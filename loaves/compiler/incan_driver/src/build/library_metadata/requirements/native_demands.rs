@@ -14,6 +14,9 @@ use super::{invalid, source_relative};
 use crate::error::CliResult;
 use crate::rust_inspect_workspace::collect_rust_inspect_derive_probe_paths;
 
+mod ordinary_source;
+use ordinary_source::OrdinarySourceDemands;
+
 /// Missing facts are unknown, never a declaration that ABI or macro requirements are empty.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -48,6 +51,10 @@ struct NativeDemandFacts {
     stdlib_facets: BTreeSet<String>,
     physical_projections: bool,
     unsupported_source: BTreeSet<String>,
+    /// Loaded ordinary source has explicit native imports and an independently selected own-source namespace.
+    /// This is input coverage, not evidence of successful type checking or a native execution grant.
+    #[serde(default)]
+    ordinary_source: Option<OrdinarySourceDemands>,
 }
 
 /// Distinguish explicit observed absence from a missing serialized manifest-demand field.
@@ -245,11 +252,25 @@ pub(crate) fn capture_checked_native_demands(
             physical_projections: !requirements.sdk_dependency_rebindings.is_empty()
                 || !requirements.sdk_artifact_projections.is_empty(),
             unsupported_source,
+            ordinary_source: Some(OrdinarySourceDemands::capture(project, modules, provider_plan)?),
         }),
     })
 }
 
 impl CheckedNativeDemands {
+    /// Admit loaded ordinary source for checking while keeping every native, provider and macro demand explicit.
+    /// Old scalar metadata retains its narrower coverage; no source fact alone certifies a checked publication.
+    pub(crate) fn require_ordinary_source_inspection(&self) -> CliResult<()> {
+        let facts = self
+            .observed
+            .as_ref()
+            .ok_or_else(|| invalid("ordinary native demand coverage is unknown"))?;
+        match &facts.ordinary_source {
+            Some(source) => source.require_inspection(facts),
+            None => self.require_source_inspection(),
+        }
+    }
+
     /// Require an actually observed, dependency-free scalar-function closure with no additional native demand.
     /// Wider valid source remains unsupported by this initial authority slice, rather than gaining fake empty demand.
     pub(crate) fn require_support_only(&self) -> CliResult<()> {
@@ -368,6 +389,9 @@ impl CheckedNativeDemands {
     ) -> CliResult<()> {
         if let Some(facts) = &self.observed {
             facts.validate_scalar_coverage()?;
+            if let Some(source) = &facts.ordinary_source {
+                source.validate_contract(source_inline_crates)?;
+            }
             if facts
                 .declared_native_crates
                 .as_ref()

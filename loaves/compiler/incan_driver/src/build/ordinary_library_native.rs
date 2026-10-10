@@ -120,28 +120,59 @@ impl OrdinaryLibraryNativeProfiles {
         self.verify()
     }
 
-    /// Check the currently admitted empty provider context without inventing Cargo support-package semantics.
+    /// Check provider semantics against the original mandatory support declarations.
     ///
-    /// Mandatory native support remains bound by the complete original requests in checked metadata. This slice
-    /// admits no provider/facet/dependency projections; broader semantics must supply their own ordinary authority.
+    /// A source import can explicitly name an already mandatory native facet. This does not introduce another
+    /// dependency or grant a namespace: the full requests already bind its original compiler-owned source.
+    /// Other facets, provider records and dependency projections still need their own ordinary authority.
     pub(crate) fn provider_semantic_dependencies(
         &self,
         plan: &incan_provider::ProviderPlan,
         requirements: &incan_provider::requirements::ProjectRequirements,
     ) -> CliResult<Vec<DependencySpec>> {
-        self.metadata.support().verify()?;
+        let support = self.metadata.support().dependencies()?;
         if plan.records().next().is_some()
-            || !requirements.stdlib_facets.is_empty()
+            || requirements.stdlib_facets.iter().any(|facet| {
+                !incan_lang::lang::stdlib::facets::is_facet(facet)
+                    || !support.iter().any(|dependency| dependency.crate_name == *facet)
+            })
             || !requirements.dependencies.is_empty()
             || !requirements.sdk_dependency_rebindings.is_empty()
             || !requirements.sdk_path_dependencies.is_empty()
             || !requirements.sdk_artifact_projections.is_empty()
         {
             return Err(failure(
-                "ordinary support-only provider semantics do not admit provider or dependency projections",
+                "ordinary mandatory support does not cover the requested provider, facet or dependency projections",
             ));
         }
         Ok(Vec::new())
+    }
+
+    /// Bind source inspection to explicit dependencies and the same original mandatory native support roots.
+    /// Conflicting aliases refuse in the physical selector before an implicit support request can be appended.
+    pub(crate) fn inspection_dependencies(
+        &self,
+        declared: &[DependencySpec],
+        owner: &Path,
+    ) -> CliResult<Vec<DependencySpec>> {
+        let (profile, _) = self.metadata.inspection_request()?;
+        let intent = OvenBuildIntent {
+            target: self.metadata.target().to_string(),
+            toolchain: oven_rustc::rustc::rustc_identity(self.metadata.rustc()).map_err(failure)?,
+            profile: profile.to_string(),
+            features: Vec::new(),
+        };
+        self.closure(&intent, declared, owner)?;
+        let mut dependencies = declared.to_vec();
+        for support in self.metadata.support().dependencies()? {
+            if !dependencies
+                .iter()
+                .any(|dependency| dependency.crate_name == support.crate_name)
+            {
+                dependencies.push(support.clone());
+            }
+        }
+        Ok(dependencies)
     }
 
     /// Select authored dependency aliases and mandatory compiler support from the original producer graph.
@@ -213,7 +244,7 @@ impl OrdinaryLibraryNativeProfiles {
     }
 
     /// Retain the exact promoted normal/dev surface through original native roots and per-root source digests.
-    /// Reuse a covering debug receipt; a real dependency delta gets its own generated constituent and native plan.
+    /// Reuse a covering requested receipt; a real dependency delta gets its own constituent and native plan.
     pub(crate) fn test_envelope(
         &self,
         store: &OvenStore,
@@ -222,9 +253,6 @@ impl OrdinaryLibraryNativeProfiles {
         owner: &Path,
     ) -> CliResult<super::PreparedOvenTestDependencyEnvelope> {
         let dependencies = crate::build_unit::promoted_oven_test_dependencies(resolved)?;
-        if receipt.intent.profile != "debug" {
-            return Err(failure("ordinary library test envelope requires its debug receipt"));
-        }
         // ---- Complete promoted declaration and original physical-root coverage ----
         let dependency_surface_digest =
             oven_store::digest_dependency_specs(&dependencies, incan_oven_facet::provider_hooks().as_ref())
@@ -251,7 +279,7 @@ impl OrdinaryLibraryNativeProfiles {
                 incan_lang::version::INCAN_VERSION,
                 receipt.intent.target.clone(),
                 receipt.intent.toolchain.clone(),
-                "debug",
+                receipt.intent.profile.clone(),
                 receipt.intent.features.clone(),
             )
             .with_generated_source("generated-root", generator.crate_root_path())

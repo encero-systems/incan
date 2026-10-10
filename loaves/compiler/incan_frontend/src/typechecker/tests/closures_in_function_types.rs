@@ -185,6 +185,110 @@ fn sdk_provider_bootstrap_checks_its_modules_as_standard_library_source_issue156
     Ok(())
 }
 
+/// Ordinary source ownership preserves standard lowering only inside its original namespace roots.
+#[cfg(unix)]
+#[test]
+fn ordinary_source_publication_checks_only_its_owned_modules_as_standard_source_issue1561() -> Result<(), String> {
+    use crate::provider::source_policy::TrustedStandardSourcePublication;
+
+    const CHILD: &str = "INCAN_ORDINARY_SOURCE_LOWERING_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let stage = || -> Result<(), Box<dyn std::error::Error>> {
+            let layout = tempfile::tempdir()?;
+            let executable = layout.path().join("bin/incan");
+            std::fs::create_dir_all(executable.parent().ok_or("missing executable parent")?)?;
+            if std::fs::hard_link(std::env::current_exe()?, &executable).is_err() {
+                std::fs::copy(std::env::current_exe()?, &executable)?;
+            }
+            let policy = incan_lang::lang::standard_packages::standard_package_namespace_policy("incan_stdlib_core")
+                .ok_or("missing pinned core policy")?;
+            let package = layout.path().join("stdlib").join(policy.source_directory);
+            std::fs::create_dir_all(&package)?;
+            std::fs::write(package.join("loaf.toml"), policy.declaration)?;
+            // Core lowering also reads implicit trait modules; retain the whole unchanged source fixture.
+            fn copy_source_tree(original: &std::path::Path, staged: &std::path::Path) -> std::io::Result<()> {
+                std::fs::create_dir_all(staged)?;
+                for entry in std::fs::read_dir(original)? {
+                    let entry = entry?;
+                    let kind = entry.file_type()?;
+                    let destination = staged.join(entry.file_name());
+                    if kind.is_dir() {
+                        copy_source_tree(&entry.path(), &destination)?;
+                    } else if kind.is_file() {
+                        std::fs::copy(entry.path(), destination)?;
+                    } else {
+                        return Err(std::io::Error::other(
+                            "owned source fixture contains a non-regular entry",
+                        ));
+                    }
+                }
+                Ok(())
+            }
+            copy_source_tree(
+                &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../stdlib/core/src"),
+                &package.join("src"),
+            )?;
+            let output = std::process::Command::new(executable)
+                .args([
+                    "--exact",
+                    "typechecker::tests::closures_in_function_types::ordinary_source_publication_checks_only_its_owned_modules_as_standard_source_issue1561",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
+                .env(CHILD, "1")
+                .output()?;
+            assert!(
+                output.status.success(),
+                "stdout={} stderr={}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+            Ok(())
+        };
+        return stage().map_err(|error| error.to_string());
+    }
+
+    let source = Arc::new(
+        TrustedStandardSourcePublication::discover("incan_stdlib_core")
+            .map_err(|error| error.to_string())?
+            .ok_or("missing genuine standard source")?,
+    );
+    let root = source.verified_package_root().map_err(|error| error.to_string())?;
+    let plan = Arc::new(ProviderPlan::default().with_standard_source_publication(
+        Arc::clone(&source),
+        &root,
+        "incan_stdlib_core",
+        "0.6.0-dev.6",
+    )?);
+    assert!(plan.bootstrap_sdk_namespace_roots().next().is_none());
+    let collection = parse_stdlib_core_module("derives/collection.incn")?;
+    let callable = parse_stdlib_core_module("traits/callable.incn")?;
+    let mut checker = TypeChecker::new();
+    checker.set_provider_plan(Arc::clone(&plan));
+    checker.set_current_module_path(Some(vec!["derives".into(), "collection".into()]));
+    checker.register_dependency_module_path_segments("traits_callable", vec!["traits".into(), "callable".into()]);
+    checker
+        .check_with_imports_allow_private(&collection, &[("traits_callable", &callable)])
+        .map_err(|errors| format!("the ordinary publisher's owned source should check: {errors:?}"))?;
+
+    let mut foreign = TypeChecker::new();
+    foreign.set_provider_plan(plan);
+    foreign.set_current_module_path(Some(vec!["application".into(), "collection".into()]));
+    foreign.register_dependency_module_path_segments("traits_callable", vec!["traits".into(), "callable".into()]);
+    let errors = foreign
+        .check_with_imports_allow_private(&collection, &[("traits_callable", &callable)])
+        .err()
+        .ok_or("foreign module incorrectly acquired standard lowering rules")?;
+    let messages = errors.iter().map(|error| error.message.as_str()).collect::<Vec<_>>();
+    assert!(
+        messages.contains(&"A closure that captures local values cannot be an argument of a construction")
+            && messages.contains(&"List.append requires element type 'T' to be Clone"),
+        "foreign source keeps ordinary rules: {messages:?}"
+    );
+    Ok(())
+}
+
 /// #1561: a consumer with no SDK inventory, such as one on a fresh home, checks each standard-library module it imports
 /// from source under the generated `__incan_std` namespace (`__incan_std.derives.collection`). That is the standard
 /// library's own source as well, so `Iterator.flat_map`'s capturing adapter closure and the unbounded items

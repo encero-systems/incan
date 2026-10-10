@@ -1068,7 +1068,10 @@ fn prepare_library_project_with_context(
     };
     // Compiled Incan providers participate in linking; their checked types do not require Rust source inspection.
     #[cfg(feature = "rust_inspect")]
-    let inspection_dependencies = resolved.dependencies.clone();
+    let inspection_dependencies = match &ordinary_native {
+        Some(native) => native.inspection_dependencies(&resolved.dependencies, &project_root)?,
+        None => resolved.dependencies.clone(),
+    };
     merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
     record_timing(&mut timings_ms, "library_resolve_dependencies", dependency_start);
     #[cfg(feature = "rust_inspect")]
@@ -1087,7 +1090,7 @@ fn prepare_library_project_with_context(
             &provider_plan,
             &metadata_query_paths.iter().cloned().collect(),
         )?
-        .require_source_inspection()?;
+        .require_ordinary_source_inspection()?;
         if include_interop_execution {
             return Err(CliError::failure(
                 "ordinary support-only library cannot request interop execution",
@@ -1328,6 +1331,10 @@ fn prepare_library_project_with_context(
         .map(|(rust_inspect_target_path, _rust_inspect_cache_lease)| {
             let rust_inspect_start = Instant::now();
             let derives = collect_rust_inspect_derive_probe_paths(&modules);
+            let ordinary_inspection = ordinary_native
+                .as_ref()
+                .map(|native| native.metadata().inspection_request())
+                .transpose()?;
             let request = RustInspectWorkspaceRequest {
                 project_root: &project_root,
                 project_name: project_name.as_str(),
@@ -1349,7 +1356,7 @@ fn prepare_library_project_with_context(
                     project_version: &project_version,
                     target: oven_target.as_deref().unwrap_or_default(),
                     toolchain: oven_toolchain.as_deref().unwrap_or_default(),
-                    profile: "debug",
+                    profile: ordinary_inspection.as_ref().map_or("debug", |(profile, _)| *profile),
                     features: &cargo_features.cargo_features,
                     build_unit_inputs: oven_build_inputs.as_ref().unwrap_or(&empty_oven_build_inputs),
                     registry_dependencies: &inspection_dependencies,
@@ -1360,9 +1367,8 @@ fn prepare_library_project_with_context(
             let rust_inspect_manifest_dir = match &ordinary_native {
                 Some(native) => {
                     let metadata = native.metadata();
-                    let observation = metadata.observations().get("debug").ok_or_else(|| {
-                        CliError::failure("ordinary inspection lacks its original debug producer request")
-                    })?;
+                    let (_, observation) = ordinary_inspection
+                        .ok_or_else(|| CliError::failure("ordinary inspection lost its original requested producer"))?;
                     crate::lock::rust_inspect::prepare_rust_inspect_workspace_with_ordinary_native(
                         request,
                         observation.clone(),
@@ -1828,9 +1834,12 @@ fn prepare_library_project_with_context(
             .map(|module| module.path_segments.clone())
             .collect();
         let emit_rust_start = Instant::now();
-        let ((main_code, rust_modules), generation_metadata) = codegen
+        let ((mut main_code, rust_modules), generation_metadata) = codegen
             .try_generate_multi_file_nested_with_metadata(&lib_module.ast, &module_paths, &lib_module.path_segments)
             .map_err(|e| CliError::failure(format!("Code generation error: {e}")))?;
+        generator
+            .project_owned_standard_namespace(&mut main_code, &rust_modules, &provider_plan)
+            .map_err(|error| CliError::failure(format!("Error projecting own-source namespace: {error}")))?;
         record_timing(&mut timings_ms, "library_codegen_emit_rust", emit_rust_start);
         let write_project_start = Instant::now();
         generator
@@ -2012,7 +2021,7 @@ fn prepare_library_project_with_context(
         ) {
             Ok(contract) => {
                 if ordinary_native.is_some() {
-                    contract.require_source_inspection_native()?;
+                    contract.require_ordinary_source_inspection_native()?;
                 }
                 Some(contract)
             }

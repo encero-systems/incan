@@ -299,6 +299,24 @@ impl CheckedLibraryRequirements {
         self.native_demands.require_source_inspection()
     }
 
+    /// Require complete loaded source imports before publishing or replaying successfully checked ordinary code.
+    /// The retained metadata owner, current source and original native requests remain independent prerequisites.
+    pub(crate) fn require_ordinary_source_inspection_native(&self) -> CliResult<()> {
+        self.validate()?;
+        if self.schema_version != 2
+            || !self.rust_extern_paths.is_empty()
+            || self
+                .imports
+                .iter()
+                .any(|value| value.version.is_some() || !value.features.is_empty())
+        {
+            return Err(invalid(
+                "ordinary checked source has unsupported native execution demands",
+            ));
+        }
+        self.native_demands.require_ordinary_source_inspection()
+    }
+
     /// Restore current source-derived requirements, then let the existing provider planner add current coordinates.
     pub fn current_requirements(
         &self,

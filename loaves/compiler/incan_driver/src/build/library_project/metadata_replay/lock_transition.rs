@@ -91,9 +91,27 @@ impl MetadataLockTransition {
         let mut original = self.preparation.recipe.clone();
         original.source_digest = candidate.recipe.source_digest.clone();
         if original != candidate.recipe || self.preparation.delivery_coordinates != candidate.delivery_coordinates {
-            return Err(invalid(
-                "lock transition changed non-source compiler/dependency/native/provider authority",
-            ));
+            let before = serde_json::to_value(&original).map_err(|error| invalid(error.to_string()))?;
+            let after = serde_json::to_value(&candidate.recipe).map_err(|error| invalid(error.to_string()))?;
+            let changed = before
+                .as_object()
+                .ok_or_else(|| invalid("lock transition recipe is not an object"))?
+                .iter()
+                .filter(|(key, value)| after.get(*key) != Some(*value))
+                .map(|(key, value)| {
+                    (
+                        key.clone(),
+                        serde_json::json!({"before": value, "after": after.get(key)}),
+                    )
+                })
+                .collect::<std::collections::BTreeMap<_, _>>();
+            return Err(invalid(format!(
+                "lock transition changed non-source compiler/dependency/native/provider authority: {}",
+                serde_json::json!({
+                    "recipe_changes": changed,
+                    "delivery_changed": self.preparation.delivery_coordinates != candidate.delivery_coordinates,
+                })
+            )));
         }
         let features = context
             .session
