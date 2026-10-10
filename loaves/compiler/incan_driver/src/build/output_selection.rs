@@ -23,8 +23,7 @@ use crate::error::{CliError, CliResult};
 use incan_lang::version::INCAN_VERSION;
 use oven_model::manifest::{LOAF_MANIFEST_FILENAME, ProjectManifest};
 use oven_rustc::rustc::{
-    OvenLoadedProjectInspectionAuthority, load_project_inspection_authority, resolve_active_rustc, rustc_host_target,
-    rustc_identity,
+    OvenLoadedProjectInspectionAuthority, resolve_active_rustc, rustc_host_target, rustc_identity,
 };
 use oven_store::digest_bytes;
 use oven_store::store::{OvenArtifactKind, OvenStore};
@@ -522,18 +521,9 @@ pub fn load_current_project_registry_source_authorities(
             "source-current debug project outputs disagree on their singular Rust inspection authority; rerun `incan oven bake --project .`",
         ));
     }
-    let source_authority_digest = preferred.1.payload.source_authority_digest.clone();
-    let project_identity = preferred.1.payload.project_identity.clone();
-    let compiler_version = preferred.1.payload.compiler_version.clone();
+    let mut authority = super::inspection_snapshot::load_output_inspection_authority(store, &preferred.1)
+        .map_err(|error| CliError::failure(error.to_string()))?;
     let output_leases = outputs.into_iter().map(|(_, output)| output._lease).collect();
-    let mut authority = load_project_inspection_authority(
-        store,
-        &authority_ref,
-        &project_identity,
-        &source_authority_digest,
-        &compiler_version,
-    )
-    .map_err(|error| CliError::failure(error.to_string()))?;
     authority.retain_lineage_leases(output_leases);
     Ok(Some(authority))
 }
@@ -934,6 +924,7 @@ mod tests {
                 receipt_identity: receipt.identity.clone(),
                 build_unit_identity: receipt.build_unit_identity.clone(),
             }),
+            inspection_authority_snapshot: None,
             files: vec![
                 OvenProjectOutputFile {
                     caller_relative_path: "generated/main.rs".to_string(),
