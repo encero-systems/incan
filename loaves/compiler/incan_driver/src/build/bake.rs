@@ -2029,7 +2029,7 @@ fn bake_oven_project_targets_with_admission(
             .dependency_surface();
         let ordinary_native = admitted.and_then(AdmittedLibraryPreparation::ordinary_native);
         let test_dependency_envelope = if let Some(native) = ordinary_native {
-            native.support_only_test_envelope(
+            native.test_envelope(
                 &store,
                 debug_target_receipts
                     .first()

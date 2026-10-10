@@ -651,11 +651,8 @@ fn publish_admitted_project_lock(
             native,
         )?
         .ok_or_else(|| CliError::failure("ordinary lock collection lost its source entrypoints"))?;
-        if !context.resolved.dependencies.is_empty() || !context.resolved.dev_dependencies.is_empty() {
-            return Err(CliError::failure(
-                "ordinary support-only lock cannot admit authored Rust dependencies",
-            ));
-        }
+        let dependencies = crate::build_unit::promoted_oven_test_dependencies(&context.resolved)?;
+        native.verify_dependencies(&dependencies, project_root)?;
         let (_, publication) = generate_oven_lockfile_with_semantic_paths(
             project_root,
             &context.resolved,

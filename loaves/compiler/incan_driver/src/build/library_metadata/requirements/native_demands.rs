@@ -35,6 +35,12 @@ struct NativeDemandFacts {
     /// Exact item imports covered by the scalar sysroot walk; absent old facts grant no expanded coverage.
     #[serde(default)]
     scalar_sysroot_imports: Option<BTreeSet<String>>,
+    /// Exact scalar item imports from sysroot or manifest-declared Rust dependencies; absent old facts stay narrow.
+    #[serde(default)]
+    scalar_native_imports: Option<BTreeSet<String>>,
+    /// Manifest-declared aliases actually imported by the checked source, excluding sysroot.
+    #[serde(default)]
+    declared_native_crates: Option<BTreeSet<String>>,
     rust_derive_probe_paths: BTreeSet<String>,
     vocab_manifest: ManifestDemand,
     c_manifest: ManifestDemand,
@@ -50,6 +56,34 @@ struct NativeDemandFacts {
 enum ManifestDemand {
     Absent,
     Declared(serde_json::Value),
+}
+
+impl NativeDemandFacts {
+    /// Keep new coverage coupled and consistent with the retained sysroot projection and imported crate roots.
+    fn validate_scalar_coverage(&self) -> CliResult<()> {
+        match (&self.scalar_native_imports, &self.declared_native_crates) {
+            (None, None) => Ok(()),
+            (Some(imports), Some(crates)) => {
+                let sysroot = imports
+                    .iter()
+                    .filter(|path| path.starts_with("std::"))
+                    .cloned()
+                    .collect();
+                let declared = imports
+                    .iter()
+                    .filter(|path| !path.starts_with("std::"))
+                    .map(|path| path.split_once("::").map(|(root, _)| root.to_string()))
+                    .collect::<Option<BTreeSet<_>>>();
+                if self.scalar_sysroot_imports.as_ref() != Some(&sysroot) || declared.as_ref() != Some(crates) {
+                    return Err(invalid(
+                        "scalar native imports disagree with their sysroot and declared crate coverage",
+                    ));
+                }
+                Ok(())
+            }
+            _ => Err(invalid("scalar native import coverage is incomplete")),
+        }
+    }
 }
 
 impl ManifestDemand {
@@ -116,6 +150,14 @@ pub(crate) fn capture_checked_native_demands(
     let mut source_modules = BTreeMap::new();
     let mut unsupported_source = BTreeSet::new();
     let mut scalar_sysroot_imports = BTreeSet::new();
+    let mut scalar_native_imports = BTreeSet::new();
+    let mut declared_native_crates = BTreeSet::new();
+    let declared_rust_crates = project
+        .rust_dependencies()
+        .keys()
+        .filter(|name| !incan_lang::lang::stdlib::facets::is_facet(name))
+        .cloned()
+        .collect::<BTreeSet<_>>();
     for module in modules {
         let path = source_relative(project.project_root(), &module.file_path)?;
         if source_modules
@@ -137,7 +179,7 @@ pub(crate) fn capture_checked_native_demands(
                     version,
                     features,
                 } = &import.kind
-                && crate_name == "std"
+                && (crate_name == "std" || declared_rust_crates.contains(crate_name))
                 && version.is_none()
                 && features.is_empty()
             {
@@ -153,7 +195,12 @@ pub(crate) fn capture_checked_native_demands(
                     {
                         unsupported_source.insert(format!("{path}:ambiguous-import"));
                     }
-                    scalar_sysroot_imports.insert(canonical);
+                    if crate_name == "std" {
+                        scalar_sysroot_imports.insert(canonical.clone());
+                    } else {
+                        declared_native_crates.insert(crate_name.clone());
+                    }
+                    scalar_native_imports.insert(canonical);
                 }
             }
         }
@@ -164,7 +211,8 @@ pub(crate) fn capture_checked_native_demands(
                 Declaration::Function(function) => scalar_function(function, &imported_names),
                 Declaration::Import(import) => matches!(&import.kind, ImportKind::RustFrom {
                     crate_name, version, features, items, ..
-                } if crate_name == "std" && version.is_none() && features.is_empty() && !items.is_empty()),
+                } if (crate_name == "std" || declared_rust_crates.contains(crate_name))
+                    && version.is_none() && features.is_empty() && !items.is_empty()),
                 _ => false,
             };
             if !supported {
@@ -182,6 +230,8 @@ pub(crate) fn capture_checked_native_demands(
             provider_contracts,
             rust_abi_queries: rust_abi_queries.clone(),
             scalar_sysroot_imports: Some(scalar_sysroot_imports),
+            scalar_native_imports: Some(scalar_native_imports),
+            declared_native_crates: Some(declared_native_crates),
             rust_derive_probe_paths: collect_rust_inspect_derive_probe_paths(modules).into_iter().collect(),
             vocab_manifest: ManifestDemand::capture(project.vocab())?,
             c_manifest: ManifestDemand::capture(project.interop_c())?,
@@ -207,6 +257,7 @@ impl CheckedNativeDemands {
             .observed
             .as_ref()
             .ok_or_else(|| invalid("ordinary native demand coverage is unknown"))?;
+        facts.validate_scalar_coverage()?;
         if facts.schema_version != 1
             || facts.source_modules.is_empty()
             || !facts.used_module_paths.is_empty()
@@ -217,6 +268,14 @@ impl CheckedNativeDemands {
                 .scalar_sysroot_imports
                 .as_ref()
                 .is_some_and(|paths| !paths.is_empty())
+            || facts
+                .scalar_native_imports
+                .as_ref()
+                .is_some_and(|paths| !paths.is_empty())
+            || facts
+                .declared_native_crates
+                .as_ref()
+                .is_some_and(|crates| !crates.is_empty())
             || !facts.rust_derive_probe_paths.is_empty()
             || !matches!(facts.vocab_manifest, ManifestDemand::Absent)
             || !matches!(facts.c_manifest, ManifestDemand::Absent)
@@ -232,7 +291,7 @@ impl CheckedNativeDemands {
         Ok(())
     }
 
-    /// Admit scalar sysroot item uses only when every imported item has a promised complete ABI query.
+    /// Admit scalar sysroot and declared Rust item uses only when every import has a promised complete ABI query.
     /// This grants source inspection, never provider, derive, vocabulary or C execution authority. Final publication
     /// and replay must additionally validate every promised ABI item against the original checked metadata owner.
     pub(crate) fn require_source_inspection(&self) -> CliResult<()> {
@@ -243,15 +302,26 @@ impl CheckedNativeDemands {
             .observed
             .as_ref()
             .ok_or_else(|| invalid("ordinary native demand coverage is unknown"))?;
-        let imports = facts
-            .scalar_sysroot_imports
-            .as_ref()
-            .ok_or_else(|| invalid("ordinary sysroot source coverage is unknown"))?;
+        facts.validate_scalar_coverage()?;
+        let imports = match (&facts.scalar_native_imports, &facts.declared_native_crates) {
+            (Some(imports), Some(_)) => imports,
+            (None, None) => facts
+                .scalar_sysroot_imports
+                .as_ref()
+                .ok_or_else(|| invalid("ordinary sysroot source coverage is unknown"))?,
+            _ => return Err(invalid("ordinary native source coverage is incomplete")),
+        };
         if facts.schema_version != 1
             || facts.source_modules.is_empty()
             || imports.is_empty()
             || imports != &facts.rust_abi_queries
-            || imports.iter().any(|path| !path.starts_with("std::"))
+            || imports.iter().any(|path| {
+                !path.starts_with("std::")
+                    && !facts
+                        .declared_native_crates
+                        .as_ref()
+                        .is_some_and(|crates| path.split_once("::").is_some_and(|(root, _)| crates.contains(root)))
+            })
             || !facts.used_module_paths.is_empty()
             || !facts.public_dependency_modules.is_empty()
             || !facts.provider_contracts.is_empty()
@@ -270,6 +340,22 @@ impl CheckedNativeDemands {
         Ok(())
     }
 
+    /// Require exact declared-crate coverage for ordinary replay; legacy sysroot facts grant no foreign imports.
+    pub(super) fn require_declared_crates(&self, crates: &BTreeSet<String>) -> CliResult<()> {
+        let facts = self
+            .observed
+            .as_ref()
+            .ok_or_else(|| invalid("ordinary native demand coverage is unknown"))?;
+        facts.validate_scalar_coverage()?;
+        match &facts.declared_native_crates {
+            Some(observed) if observed == crates => Ok(()),
+            None if crates.is_empty() => Ok(()),
+            _ => Err(invalid(
+                "ordinary native source imports lack exact declared crate coverage",
+            )),
+        }
+    }
+
     /// Validate the recorded facts against their same checked planning contract without treating unknown as empty.
     pub(super) fn validate_contract(
         &self,
@@ -278,7 +364,20 @@ impl CheckedNativeDemands {
         abi: &BTreeSet<String>,
         dependencies: &BTreeSet<String>,
         facets: &BTreeSet<String>,
+        source_inline_crates: &BTreeSet<String>,
     ) -> CliResult<()> {
+        if let Some(facts) = &self.observed {
+            facts.validate_scalar_coverage()?;
+            if facts
+                .declared_native_crates
+                .as_ref()
+                .is_some_and(|crates| !crates.is_subset(source_inline_crates))
+            {
+                return Err(invalid(
+                    "native source imports disagree with their checked Rust crate declarations",
+                ));
+            }
+        }
         if let Some(facts) = &self.observed
             && (facts.schema_version != 1
                 || &facts.source_modules != modules
@@ -295,7 +394,7 @@ impl CheckedNativeDemands {
     }
 }
 
-/// Walk primitive functions and explicit imported sysroot calls without granting generic or implicit dispatch.
+/// Walk primitive functions and explicit imported native calls without granting generic or implicit dispatch.
 fn scalar_function(function: &FunctionDecl, imported: &BTreeSet<String>) -> bool {
     if !function.decorators.is_empty()
         || !function.surface_modifiers.is_empty()

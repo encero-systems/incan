@@ -103,6 +103,20 @@ impl OrdinaryLibraryNativeProfiles {
         self.metadata.verify()
     }
 
+    /// Bind a canonical normal/dev dependency surface to every original profile before its lock is published.
+    /// This verifies declared roots and their transitive physical closure without granting macro execution.
+    pub(crate) fn verify_dependencies(&self, dependencies: &[DependencySpec], owner: &Path) -> CliResult<()> {
+        self.verify()?;
+        for observation in self.metadata.observations().values() {
+            let graph = observation.graph();
+            let roots = graph
+                .select_dependency_roots(dependencies, owner, "target")
+                .map_err(failure)?;
+            graph.select(&roots).map_err(failure)?;
+        }
+        self.verify()
+    }
+
     /// Check the currently admitted empty provider context without inventing Cargo support-package semantics.
     ///
     /// Mandatory native support remains bound by the complete original requests in checked metadata. This slice
@@ -195,9 +209,9 @@ impl OrdinaryLibraryNativeProfiles {
         Ok(selected)
     }
 
-    /// Retain an exact debug test envelope for the currently proved dependency-free library surface.
-    /// The real checked library receipt already covers this empty authored surface and its mandatory support.
-    pub(crate) fn support_only_test_envelope(
+    /// Retain the exact promoted normal/dev surface through original native roots and per-root source digests.
+    /// Reuse a covering debug receipt; a real dependency delta gets its own generated constituent and native plan.
+    pub(crate) fn test_envelope(
         &self,
         store: &OvenStore,
         receipt: &OvenReceipt,
@@ -205,20 +219,59 @@ impl OrdinaryLibraryNativeProfiles {
         owner: &Path,
     ) -> CliResult<super::PreparedOvenTestDependencyEnvelope> {
         let dependencies = crate::build_unit::promoted_oven_test_dependencies(resolved)?;
-        if receipt.intent.profile != "debug" || !dependencies.is_empty() {
-            return Err(failure(
-                "ordinary support-only library test envelope requires empty checked normal/dev dependencies",
-            ));
+        if receipt.intent.profile != "debug" {
+            return Err(failure("ordinary library test envelope requires its debug receipt"));
         }
+        // ---- Complete promoted declaration and original physical-root coverage ----
         let dependency_surface_digest =
             oven_store::digest_dependency_specs(&dependencies, incan_oven_facet::provider_hooks().as_ref())
                 .map_err(failure)?;
-        let (receipt, plan_selection) = self.select_plan(store, receipt, &dependencies, owner)?;
+        let dependency_root_digests = super::plan_selection::oven_test_dependency_root_digests(&dependencies)?;
+        let inputs = self.runtime_inputs(&receipt.intent, &[], &[], &dependencies, &dependencies, owner)?;
+        // ---- Reuse the actual library receipt only when every native input already covers the test surface ----
+        let selected_receipt = if inputs
+            .iter()
+            .all(|(key, value)| receipt.sources.build_unit_inputs.get(key) == Some(value))
+        {
+            receipt.clone()
+        } else {
+            let generated = owner.join("target/incan/oven/test-dependency-envelope");
+            let mut generator =
+                crate::backend::ProjectGenerator::new(&generated, "incan_test_dependency_envelope", true);
+            generator.set_package_metadata(Some(incan_lang::version::INCAN_VERSION.to_string()), None);
+            generator.set_dependencies(dependencies.clone());
+            generator.set_dev_dependencies(Vec::new());
+            generator.generate("fn main() {}\n").map_err(failure)?;
+            let mut request = oven_store::OvenGeneratedProjectRequest::new(
+                owner,
+                "incan-test-dependency-envelope",
+                incan_lang::version::INCAN_VERSION,
+                receipt.intent.target.clone(),
+                receipt.intent.toolchain.clone(),
+                "debug",
+                receipt.intent.features.clone(),
+            )
+            .with_generated_source("generated-root", generator.crate_root_path())
+            .with_generated_source_tree("generated-source-tree", generator.output_dir().join("src"));
+            for (key, value) in &receipt.sources.build_unit_inputs {
+                request = request.with_build_unit_input(key.clone(), value.clone());
+            }
+            request = request.with_build_unit_input(
+                "project-owner-identity",
+                super::output_selection::baked_project_owner_identity(owner)?,
+            );
+            for (key, value) in inputs {
+                request = request.with_build_unit_input(key, value);
+            }
+            oven_store::receipt_generated_project(&request).map_err(failure)?
+        };
+        // ---- Select and retain the same genuine producer graph for future generated tests ----
+        let (receipt, plan_selection) = self.select_plan(store, &selected_receipt, &dependencies, owner)?;
         Ok(super::PreparedOvenTestDependencyEnvelope {
             receipt,
             dependency_surface_digest,
             dependencies,
-            dependency_root_digests: BTreeMap::new(),
+            dependency_root_digests,
             provider_entries: Vec::new(),
             plan_selection,
         })
