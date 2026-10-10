@@ -10,7 +10,7 @@ use oven_store::store::{OvenStore, OvenStoreLimits};
 use serde::{Deserialize, Serialize};
 
 use super::preparation::{
-    NativeLoafPreparation, ResolvedNativeGraph, prepare_resolved_native_loafs, read_resolved_native_graph,
+    NativeLoafPreparation, ResolvedNativeGraph, prepare_resolved_native_loafs_in_store, read_resolved_native_graph,
 };
 use super::selection::{LocalSources, select_roots_with_sources, source_manifest};
 use super::{
@@ -28,7 +28,7 @@ pub struct NativeLoafConsumerRequest<'a> {
     pub index: &'a Path,
     /// Archive directory used only on a genuine preparation miss.
     pub blobs: &'a Path,
-    /// Ordinary native Store and optional consumer-coordinate hint parent.
+    /// Mutable hints and staging; also the default Store parent when no Store is supplied explicitly.
     pub output: &'a Path,
     /// Explicit selected native compiler executable.
     pub rustc: &'a Path,
@@ -161,8 +161,20 @@ struct CurrentCandidate {
 /// conservative; cold registry projection, cross-Store distribution and code/receipt decoupling remain separate work.
 /// Cross-target closures containing host units refuse until their recipes independently bind the host standard library.
 pub fn prepare_declared_native_loafs(request: &NativeLoafConsumerRequest<'_>) -> Result<NativeLoafConsumerPreparation> {
-    prepare_with(request, || {
-        prepare_resolved_native_loafs(
+    let store = native_store(request.output);
+    prepare_declared_native_loafs_in_store(request, &store)
+}
+
+/// Retain declared dependencies in the command's Store while keeping mutable hints and staging at its output.
+///
+/// Relocating a checkout or output never creates another dependency Store. Every warm selection still reproduces
+/// current source/compiler facts and retains the original native owners; explicit Store limits remain authoritative.
+pub fn prepare_declared_native_loafs_in_store(
+    request: &NativeLoafConsumerRequest<'_>,
+    store: &OvenStore,
+) -> Result<NativeLoafConsumerPreparation> {
+    prepare_with_store(request, store, || {
+        prepare_resolved_native_loafs_in_store(
             request.graph,
             request.index,
             request.blobs,
@@ -170,13 +182,25 @@ pub fn prepare_declared_native_loafs(request: &NativeLoafConsumerRequest<'_>) ->
             request.rustc,
             request.target,
             request.profile,
+            store,
         )
     })
 }
 
 /// Run the real reuse decision with one injectable preparation boundary for work-count/refusal controls.
+#[cfg(test)]
 fn prepare_with(
     request: &NativeLoafConsumerRequest<'_>,
+    prepare: impl FnOnce() -> Result<NativeLoafPreparation>,
+) -> Result<NativeLoafConsumerPreparation> {
+    let store = native_store(request.output);
+    prepare_with_store(request, &store, prepare)
+}
+
+/// Admit current native inputs from one explicit Store before invoking its existing producer on a genuine miss.
+fn prepare_with_store(
+    request: &NativeLoafConsumerRequest<'_>,
+    store: &OvenStore,
     prepare: impl FnOnce() -> Result<NativeLoafPreparation>,
 ) -> Result<NativeLoafConsumerPreparation> {
     let started = Instant::now();
@@ -189,13 +213,12 @@ fn prepare_with(
         });
     }
     let mut current = Current::read(request, &mut report)?;
-    let store = native_store(request.output);
     let hint_path = request
         .output
         .join("consumer-hints")
         .join(format!("{}.json", current.key.replace(':', "-")));
     if let Some(hint) = read_hint(&hint_path, &current.key)? {
-        let admitted = NativeLoafClosure::admit(&store, &hint.roots);
+        let admitted = NativeLoafClosure::admit(store, &hint.roots);
         match admitted {
             Ok(closure) => {
                 if current.matches(request, &closure, &hint.roots, &mut report)? {
@@ -709,7 +732,7 @@ fn write_hint(path: &Path, hint: &Hint) -> Result<()> {
 }
 
 /// Construct the same bounded ordinary Store as the existing native-only preparation boundary.
-fn native_store(output: &Path) -> OvenStore {
+pub(super) fn native_store(output: &Path) -> OvenStore {
     OvenStore::new(
         output.join("store"),
         OvenStoreLimits::new(4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024),

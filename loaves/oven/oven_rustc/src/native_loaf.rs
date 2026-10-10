@@ -38,6 +38,7 @@ pub use preparation::{
 };
 pub use prepared::{
     NativeLoafConsumerPreparation, NativeLoafConsumerReport, NativeLoafConsumerRequest, prepare_declared_native_loafs,
+    prepare_declared_native_loafs_in_store,
 };
 
 pub use request_observation::NativeLoafRequestObservation;

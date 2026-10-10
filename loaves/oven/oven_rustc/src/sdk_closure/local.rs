@@ -36,7 +36,11 @@ pub fn compile_local_sdk_facets(
     output: &Path,
     rustc: &Path,
 ) -> Result<(), Error> {
-    compile_local_native_facets_for_profile(closure, selections, owner, output, rustc, "debug")
+    let store = OvenStore::new(
+        output.join("store"),
+        OvenStoreLimits::new(4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024),
+    );
+    compile_local_native_facets_for_profile(closure, selections, owner, output, rustc, "debug", &store)
 }
 
 /// Compile a local graph under one explicit profile, retaining its exact dependency and source bindings.
@@ -50,6 +54,7 @@ pub(crate) fn compile_local_native_facets_for_profile(
     output: &Path,
     rustc: &Path,
     profile: &str,
+    store: &OvenStore,
 ) -> Result<(), Error> {
     if !matches!(profile, "debug" | "release") {
         return Err("local native profile must be debug or release".into());
@@ -113,6 +118,7 @@ pub(crate) fn compile_local_native_facets_for_profile(
                 rustc,
                 &target,
                 profile,
+                store,
             ) {
                 closure
                     .report
@@ -226,8 +232,12 @@ pub fn compile_local_sdk_facet_for_target(
     rustc: &Path,
     target: &str,
 ) -> Result<(), Error> {
+    let store = OvenStore::new(
+        output.join("store"),
+        OvenStoreLimits::new(4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024),
+    );
     compile_local_native_facet_for_target_and_profile(
-        closure, project, features, domain, output, rustc, target, "debug",
+        closure, project, features, domain, output, rustc, target, "debug", &store,
     )
 }
 
@@ -245,6 +255,7 @@ fn compile_local_native_facet_for_target_and_profile(
     rustc: &Path,
     target: &str,
     profile: &str,
+    store: &OvenStore,
 ) -> Result<(), Error> {
     if !matches!(profile, "debug" | "release") {
         return Err("local native profile must be debug or release".into());
@@ -311,16 +322,12 @@ fn compile_local_native_facet_for_target_and_profile(
         .filter_map(|unit| unit.output.parent().map(Path::to_path_buf))
         .collect();
     let toolchain = rustc_identity(rustc)?;
-    let store = OvenStore::new(
-        output.join("store"),
-        OvenStoreLimits::new(4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024),
-    );
     let context = CompileContext {
         rustc,
         target,
         toolchain: &toolchain,
         output,
-        store: &store,
+        store,
         compiler_digest: compiler_closure_digest(rustc, target)?,
         compiler_executable: oven_store::store::digest_regular_file(&rustc.canonicalize()?)?.1,
         profile,
@@ -794,6 +801,8 @@ pub(crate) fn native_required_features(
 
 #[cfg(test)]
 mod tests {
+    use oven_store::store::{OvenStore, OvenStoreLimits};
+
     use super::{
         LocalFacetSelection, compile_local_native_facet_for_target_and_profile, compile_local_sdk_facet,
         compile_local_sdk_facets, local_feature_selection, prepare_local_unit,
@@ -1001,6 +1010,7 @@ mod tests {
         let leaf = root.path().join("leaf");
         compile_local_sdk_facet(&mut closure, &leaf, &[], "target", output.path(), &rustc)?;
         let original = closure.units[0].compiled_identity().to_string();
+        let store = OvenStore::new(output.path().join("store"), OvenStoreLimits::new(0, 0, 0));
         let existing = compile_local_native_facet_for_target_and_profile(
             &mut closure,
             &leaf,
@@ -1010,6 +1020,7 @@ mod tests {
             &rustc,
             &target,
             "release",
+            &store,
         )
         .err()
         .ok_or("selected debug owner was accepted as release")?;
@@ -1023,6 +1034,7 @@ mod tests {
             &rustc,
             &target,
             "release",
+            &store,
         )
         .err()
         .ok_or("debug dependency was accepted in release consumer")?;
@@ -1043,6 +1055,7 @@ mod tests {
         let root = tempfile::tempdir()?;
         let absent = root.path().join("absent");
         let output = root.path().join("output");
+        let store = OvenStore::new(output.join("store"), OvenStoreLimits::new(0, 0, 0));
         let mut closure = SdkCompiledClosure {
             report: SdkClosureReport::default(),
             units: Vec::new(),
@@ -1057,6 +1070,7 @@ mod tests {
             &absent,
             "unused-target",
             "fast",
+            &store,
         )
         .err()
         .ok_or("unsupported profile was accepted")?;

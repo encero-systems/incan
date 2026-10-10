@@ -4,10 +4,12 @@ use std::path::Path;
 
 use oven_model::manifest::DependencySpec;
 use oven_rustc::native_loaf::{
-    NativeLoafClosure, NativeLoafConsumerPreparation, NativeLoafConsumerRequest, prepare_declared_native_loafs,
+    NativeLoafClosure, NativeLoafConsumerPreparation, NativeLoafConsumerRequest, prepare_declared_native_loafs_in_store,
 };
+use oven_store::store::OvenStore;
 
-/// Prepare exact native records in a shared worktree-owned cache without publishing checked library components.
+/// Share exact native records in the command Store; retain only mutable observation hints in the checkout.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn prepare(
     compiler_root: &Path,
     graph: &Path,
@@ -16,21 +18,25 @@ pub(super) fn prepare(
     rustc: &Path,
     dependencies: &[DependencySpec],
     declaration_owner: &Path,
+    store: &OvenStore,
 ) -> Result<NativeLoafConsumerPreparation, Box<dyn std::error::Error>> {
     let output = compiler_root.join("target/compiler-development/native-loafs");
     let target = oven_rustc::rustc::rustc_host_target(rustc)?;
-    Ok(prepare_declared_native_loafs(&NativeLoafConsumerRequest {
-        graph,
-        index,
-        blobs,
-        output: &output,
-        rustc,
-        target: &target,
-        profile: "debug",
-        dependencies,
-        declaration_owner,
-        domain: "target",
-    })?)
+    Ok(prepare_declared_native_loafs_in_store(
+        &NativeLoafConsumerRequest {
+            graph,
+            index,
+            blobs,
+            output: &output,
+            rustc,
+            target: &target,
+            profile: "debug",
+            dependencies,
+            declaration_owner,
+            domain: "target",
+        },
+        store,
+    )?)
 }
 
 /// Retain actual preparation work and selected physical closure counts beside the native test report.

@@ -5,13 +5,14 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use oven_store::store::{OvenStore, OvenStoreLimits};
+use oven_store::store::OvenStore;
 use serde::{Deserialize, Serialize};
 
+use super::prepared::native_store;
 use super::request_observation::{NativeLoafRequestObservation, ProducerRequest, RequestFile};
 use super::{NativeLoafError, NativeLoafGraph, Result, failed, refused};
 use crate::sdk_closure::{
-    ClosureCompileRequest, LocalFacetSelection, compile_local_native_facets_for_profile, prepare_closure,
+    ClosureCompileRequest, LocalFacetSelection, compile_local_native_facets_for_profile, prepare_closure_in_store,
 };
 
 /// One explicitly selected local Rust facet; dependency and feature resolution remain the caller's authority.
@@ -93,6 +94,22 @@ pub fn prepare_resolved_native_loafs(
     target: &str,
     profile: &str,
 ) -> Result<NativeLoafPreparation> {
+    let store = native_store(output);
+    prepare_resolved_native_loafs_in_store(graph, index, blobs, output, rustc, target, profile, &store)
+}
+
+/// Preserve the original producer request while publishing every native unit and record in one supplied Store.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn prepare_resolved_native_loafs_in_store(
+    graph: &Path,
+    index: &Path,
+    blobs: &Path,
+    output: &Path,
+    rustc: &Path,
+    target: &str,
+    profile: &str,
+    store: &OvenStore,
+) -> Result<NativeLoafPreparation> {
     let (document, owner, selection) = read_resolved_native_graph_inputs(graph)?;
     prepare_native_loafs_with_document(
         &NativeLoafPreparationRequest {
@@ -108,6 +125,7 @@ pub fn prepare_resolved_native_loafs(
             facets: &selection.facets,
         },
         Some(document),
+        store,
     )
 }
 
@@ -161,13 +179,15 @@ impl NativeLoafPreparation {
 /// host target; unsupported targets refuse rather than silently using another triple. Cross-Store distribution and
 /// semantic/macro completeness remain separate.
 pub fn prepare_native_loafs(request: &NativeLoafPreparationRequest<'_>) -> Result<NativeLoafPreparation> {
-    prepare_native_loafs_with_document(request, None)
+    let store = native_store(request.output);
+    prepare_native_loafs_with_document(request, None, &store)
 }
 
 /// Preserve the optional original resolved document while running the same ordinary producer for either entrypoint.
 fn prepare_native_loafs_with_document(
     request: &NativeLoafPreparationRequest<'_>,
     document: Option<RequestFile>,
+    store: &OvenStore,
 ) -> Result<NativeLoafPreparation> {
     let started = Instant::now();
     if !request.facets.is_empty() {
@@ -178,17 +198,20 @@ fn prepare_native_loafs_with_document(
         }
     }
     let actual_request = ProducerRequest::capture(request, document)?;
-    let mut closure = prepare_closure(&ClosureCompileRequest {
-        primary: &[],
-        lock: request.lock,
-        blobs: request.blobs,
-        output: request.output,
-        rustc: request.rustc,
-        index: request.index,
-        index_commit: request.index_commit,
-        target: request.target,
-        profile: request.profile,
-    })
+    let mut closure = prepare_closure_in_store(
+        &ClosureCompileRequest {
+            primary: &[],
+            lock: request.lock,
+            blobs: request.blobs,
+            output: request.output,
+            rustc: request.rustc,
+            index: request.index,
+            index_commit: request.index_commit,
+            target: request.target,
+            profile: request.profile,
+        },
+        store,
+    )
     .map_err(NativeLoafError::Failed)?;
     let facets = request
         .facets
@@ -206,16 +229,13 @@ fn prepare_native_loafs_with_document(
         request.output,
         request.rustc,
         request.profile,
+        store,
     )
     .map_err(NativeLoafError::Failed)?;
     closure.require_complete().map_err(NativeLoafError::Failed)?;
     let compiled = closure.report().compiled.clone();
     let reused = closure.report().reused.clone();
-    let store = OvenStore::new(
-        request.output.join("store"),
-        OvenStoreLimits::new(4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024),
-    );
-    let graph = closure.into_native_loafs(&store).map_err(NativeLoafError::Failed)?;
+    let graph = closure.into_native_loafs(store).map_err(NativeLoafError::Failed)?;
     let observation = NativeLoafRequestObservation::from_producer(actual_request, &graph)?;
     Ok(NativeLoafPreparation {
         graph,
