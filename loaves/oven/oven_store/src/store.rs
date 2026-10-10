@@ -1283,6 +1283,26 @@ impl OvenStore {
         &self,
         identities: &[String],
     ) -> Result<Vec<OvenStoreExecutionPayload>, OvenStoreError> {
+        self.select_execution_payloads(identities, false)
+    }
+
+    /// Select an exact original-owner batch without publication or a catalog scan, returning `None` for an absent
+    /// entry directory. Damaged admission records refuse; callers still verify materialized files.
+    /// The manager lock protects the complete presence check and lease acquisition as one admission.
+    pub fn try_select_payloads_for_execution(
+        &self,
+        identities: &[String],
+    ) -> Result<Option<Vec<OvenStoreExecutionPayload>>, OvenStoreError> {
+        let owners = self.select_execution_payloads(identities, true)?;
+        Ok((!owners.is_empty()).then_some(owners))
+    }
+
+    /// Admit a complete exact batch under one manager lock, optionally reporting absent entry directories as a miss.
+    fn select_execution_payloads(
+        &self,
+        identities: &[String],
+        allow_missing: bool,
+    ) -> Result<Vec<OvenStoreExecutionPayload>, OvenStoreError> {
         validate_execution_identities(identities)?;
         self.ensure_layout()?;
         let manager = open_lock(&self.root.join(MANAGER_LOCK_FILE))?;
@@ -1294,7 +1314,14 @@ impl OvenStore {
 
         let mut selected = Vec::with_capacity(identities.len());
         for identity in identities {
-            let path = canonical_published_entry_root(&self.entry_root(identity))?;
+            let path = if allow_missing {
+                match try_exact_published_entry_root(&self.entries_root(), identity)? {
+                    Some(path) => path,
+                    None => return Ok(Vec::new()),
+                }
+            } else {
+                canonical_published_entry_root(&self.entry_root(identity))?
+            };
             let manifest = verify_published_entry_manifest(&path)?;
             verify_requested_entry_identity(identity, &manifest)?;
             let payload = verified_payload_bytes(&path, &manifest)?;
@@ -2137,6 +2164,14 @@ fn validate_execution_identities(identities: &[String]) -> Result<(), OvenStoreE
 
 /// Resolve exactly one of the two supported entry spellings without scanning any other identity.
 fn exact_published_entry_root(entries: &Path, identity: &str) -> Result<PathBuf, OvenStoreError> {
+    match try_exact_published_entry_root(entries, identity)? {
+        Some(path) => Ok(path),
+        None => canonical_published_entry_root(&entries.join(entry_directory_name(identity))),
+    }
+}
+
+/// Return a verified exact coordinate when present; linked or competing coordinates never become cache misses.
+fn try_exact_published_entry_root(entries: &Path, identity: &str) -> Result<Option<PathBuf>, OvenStoreError> {
     let name = entry_directory_name(identity);
     let bare = entries.join(&name);
     let loaf = entries.join(format!("{name}{LOAF_ENTRY_SUFFIX}"));
@@ -2161,7 +2196,7 @@ fn exact_published_entry_root(entries: &Path, identity: &str) -> Result<PathBuf,
             }
         }
     }
-    canonical_published_entry_root(selected.unwrap_or(&bare))
+    selected.map(|path| canonical_published_entry_root(path)).transpose()
 }
 
 /// Reject any exact-selection identity that is not one canonical content digest before filesystem resolution.
@@ -2780,7 +2815,7 @@ struct AdmittedNativeReceipt {
 fn retains_native_receipt(kind: OvenArtifactKind) -> bool {
     matches!(
         kind,
-        OvenArtifactKind::DirectRustcPlan | OvenArtifactKind::ProjectOutput
+        OvenArtifactKind::DirectRustcPlan | OvenArtifactKind::ProjectOutput | OvenArtifactKind::RustInspectionToolchain
     )
 }
 
@@ -7012,6 +7047,53 @@ pub(crate) mod tests {
         );
         replace_native_witness_fixture(&path, &original_bytes)?;
         store.select_payloads_for_execution(&[published.identity])?;
+        Ok(())
+    }
+
+    /// Optional exact reuse distinguishes absent owners from damaged contents and ambiguous Store coordinates.
+    #[test]
+    fn optional_exact_selection_preserves_original_receipt_and_refuses_damage() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let store = OvenStore::new(root.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let absent = crate::digest_bytes(b"absent owner");
+        assert!(
+            store
+                .try_select_payloads_for_execution(std::slice::from_ref(&absent))?
+                .is_none()
+        );
+        let mut original = request(project.path(), "sources", b"native")?;
+        original.kind = OvenArtifactKind::RustInspectionToolchain;
+        let manifest = store.publish(&original)?;
+        let identities = [manifest.identity.clone()];
+        let owners = store
+            .try_select_payloads_for_execution(&identities)?
+            .ok_or("exact source owner missing")?;
+        assert_eq!(owners.len(), 1);
+        assert_eq!(owners[0].original_native_receipt(), Some(&original.receipt));
+        owners[0].verify_admitted_payload()?;
+        assert!(
+            store
+                .try_select_payloads_for_execution(&[manifest.identity.clone(), absent])?
+                .is_none()
+        );
+        let entry = store.entry_root(&manifest.identity);
+        let saved = root.path().join("saved-manifest.json");
+        fs::rename(entry.join(super::ARTIFACT_MANIFEST_FILE), &saved)?;
+        assert!(store.try_select_payloads_for_execution(&identities).is_err());
+        fs::rename(&saved, entry.join(super::ARTIFACT_MANIFEST_FILE))?;
+        fs::write(entry.join(super::PAYLOAD_FILE), b"damaged")?;
+        assert!(store.try_select_payloads_for_execution(&identities).is_err());
+        fs::write(entry.join(super::PAYLOAD_FILE), b"native")?;
+        let competing = entry.with_extension("loaf");
+        fs::create_dir(&competing)?;
+        assert!(store.try_select_payloads_for_execution(&identities).is_err());
+        fs::remove_dir(&competing)?;
+        store
+            .try_select_payloads_for_execution(&identities)?
+            .ok_or("restored owner missing")?;
         Ok(())
     }
 

@@ -9476,6 +9476,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_rustc/src/rustc/inspection_toolchain.rs": {
+      "disposition": "unaffected",
+      "notes": "Compiler-bound Rust library source Store ownership, original receipt evidence and complete inventory refusals; native orchestration rather than the Rust backend.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_rustc/src/rustc/linking.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; the pinned linker binds the SDK closure, platform inputs and explicit arguments into link identities on macOS and Linux.",

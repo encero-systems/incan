@@ -1,6 +1,9 @@
 //! Rust metadata preparation from original ordinary native producers, independent of SDK inventories.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use oven_rustc::rustc::{OvenRustInspectionToolchain, prepare_rust_inspection_toolchain};
 
 use oven_rustc::native_loaf::{NativeLoafInspectionInputs, NativeLoafRequestObservation};
 use oven_store::OvenBuildIntent;
@@ -12,6 +15,7 @@ use crate::lock::OvenRustInspectSourceAuthorityRequest;
 /// Original complete request and source owners, kept inside the inspector's cached database.
 struct OrdinaryInspectionProject {
     observation: NativeLoafRequestObservation,
+    toolchain: Arc<OvenRustInspectionToolchain>,
     inputs: NativeLoafInspectionInputs,
     rustc: PathBuf,
     intent: OvenBuildIntent,
@@ -28,7 +32,15 @@ impl RetainedInspectionProject for OrdinaryInspectionProject {
             .inputs
             .inspection_project()
             .map_err(|error| invalid(&self.manifest_dir, error))?;
-        RustWorkspace::inspection_project_with_compiler(graph, &self.rustc)
+        self.toolchain
+            .verify_compiler(&self.rustc, &self.intent.target)
+            .map_err(|error| invalid(&self.manifest_dir, error))?;
+        RustWorkspace::inspection_project_with_sources(
+            graph,
+            self.toolchain.sysroot(),
+            self.toolchain.source_root(),
+            self.toolchain.cfg(),
+        )
     }
 }
 
@@ -43,7 +55,7 @@ pub(super) fn prepare(
     authority: &OvenRustInspectSourceAuthorityRequest<'_>,
     queries: &[String],
     derives: &[String],
-) -> CliResult<()> {
+) -> CliResult<Arc<OvenRustInspectionToolchain>> {
     if !derives.is_empty() {
         return Err(CliError::failure(
             "ordinary source inspection requires separate native macro authority",
@@ -85,7 +97,12 @@ pub(super) fn prepare(
             )));
         }
     }
+    let toolchain = Arc::new(
+        prepare_rust_inspection_toolchain(&crate::oven_store::open_default_oven_store()?, rustc, authority.target)
+            .map_err(failure)?,
+    );
     let project = OrdinaryInspectionProject {
+        toolchain: Arc::clone(&toolchain),
         observation: observation.clone(),
         inputs,
         rustc: rustc.to_path_buf(),
@@ -133,7 +150,7 @@ pub(super) fn prepare(
     rust_inspect::write_oven_inspection_proc_macro_authority(manifest_dir, Vec::new()).map_err(failure)?;
     rust_inspect::RustMetadataCache::new()
         .prepare_retained_project(manifest_dir, target_dir, Box::new(project), &|_| {})
-        .map(|_| ())
+        .map(|_| toolchain)
         .map_err(failure)
 }
 

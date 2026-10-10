@@ -10,16 +10,13 @@ mod compiled_unit;
 mod diagnostics;
 pub mod driver_grant;
 mod inspection;
+mod inspection_toolchain;
 pub(crate) mod linking;
 pub use linking::{pinned_driver_link_closure_identity, pinned_link_closure_identity};
+pub mod direct_compiler;
 mod manifest_cohort;
 mod manifest_materialize;
 mod manifest_source_roles;
-// `inspection_toolchain` is deliberately absent. It is the compiler/sysroot-closure-under-lease surface, and the
-// only thing here that needs `rust_inspect`'s selected-projection API, which this tree does not have; it lands
-// together with that port. Nothing in Gates 6 or 7 of RFC 119 depends on it, so its absence is what lets the four
-// runtime modules those gates do use compile on their own.
-pub mod direct_compiler;
 pub mod native_input;
 mod registry_leaf;
 mod runtime_closure;
@@ -44,6 +41,7 @@ pub use compiled_unit::*;
 pub use diagnostics::*;
 pub use direct_compiler::OvenPublisherLinkProduct;
 pub use inspection::*;
+pub use inspection_toolchain::{OvenRustInspectionToolchain, prepare_rust_inspection_toolchain};
 pub use registry_leaf::*;
 #[allow(
     unused_imports,

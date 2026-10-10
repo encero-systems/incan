@@ -52,42 +52,31 @@ impl RustWorkspace {
         Self::load_oven_graph(manifest_dir, target_dir, graph, Vec::new(), Some(project), progress)
     }
 
-    /// Add the explicit compiler's sysroot graph without ambient compiler discovery or Cargo metadata.
-    pub fn inspection_project_with_compiler(
+    /// Project compiler-bound source coordinates only after the caller verifies their original retained owner.
+    ///
+    /// This helper performs no compiler discovery. The retained producer capability remains responsible for source
+    /// and target evidence; these paths alone never authorize loading an ordinary database.
+    pub fn inspection_project_with_sources(
         mut graph: serde_json::Value,
-        rustc: &Path,
+        sysroot: &Path,
+        source: &Path,
+        cfg: &[String],
     ) -> Result<serde_json::Value, RustMetadataError> {
-        let output = std::process::Command::new(rustc)
-            .args(["--print", "sysroot"])
-            .output()?;
-        if !output.status.success() {
+        if !sysroot.is_absolute() || !source.is_absolute() || !source.join("core/src/lib.rs").is_file() {
             return Err(RustMetadataError::LoadWorkspace {
-                path: rustc.to_path_buf(),
-                message: "ordinary inspection compiler could not report its sysroot".to_string(),
+                path: source.to_path_buf(),
+                message: "ordinary inspection requires retained absolute compiler source coordinates".to_string(),
             });
         }
-        let text = std::str::from_utf8(&output.stdout).map_err(|error| RustMetadataError::LoadWorkspace {
-            path: rustc.to_path_buf(),
-            message: error.to_string(),
-        })?;
-        let reported = Path::new(text.trim());
-        if !reported.is_absolute() {
-            return Err(RustMetadataError::LoadWorkspace {
-                path: rustc.to_path_buf(),
-                message: "ordinary inspection compiler reported a non-absolute sysroot".to_string(),
-            });
-        }
-        let sysroot = reported.canonicalize()?;
-        let source = sysroot.join("lib/rustlib/src/rust/library");
-        if !source.join("core/src/lib.rs").is_file() {
-            return Err(RustMetadataError::LoadWorkspace {
-                path: source,
-                message: "ordinary inspection requires the explicit compiler's Rust library sources".to_string(),
-            });
+        let mut sysroot_project = super::sysroot_project_graph(source);
+        if let Some(crates) = sysroot_project["crates"].as_array_mut() {
+            for krate in crates {
+                krate["cfg"] = serde_json::json!(cfg);
+            }
         }
         graph["sysroot"] = serde_json::json!(sysroot);
         graph["sysroot_src"] = serde_json::json!(source);
-        graph["sysroot_project"] = super::sysroot_project_graph(&source);
+        graph["sysroot_project"] = sysroot_project;
         Ok(graph)
     }
 }

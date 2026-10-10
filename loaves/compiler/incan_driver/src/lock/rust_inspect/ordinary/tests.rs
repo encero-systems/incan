@@ -185,7 +185,32 @@ fn ordinary_native_source_inspection_retains_original_owners_and_cached_database
     assert!(signature.params.is_empty());
     let second = cache.get_or_extract_complete(prepared.manifest_dir(), "probe_leaf::answer", &|_| {})?;
     assert!(Arc::ptr_eq(&first, &second));
+    let toolchain = prepared
+        ._ordinary_toolchain
+        .as_ref()
+        .ok_or("ordinary compiler sources not retained")?;
+    toolchain.verify_compiler(&fixture.rustc, &fixture.target)?;
+    assert!(!toolchain.source_root().starts_with(toolchain.sysroot()));
+    let frozen: serde_json::Value = serde_json::from_slice(&fs::read(
+        prepared
+            .manifest_dir()
+            .join(rust_inspect::OVEN_DIRECT_LOAF_PROJECT_FILE),
+    )?)?;
+    assert_eq!(frozen["sysroot_src"], serde_json::json!(toolchain.source_root()));
+    let seek = cache.get_or_extract_complete(prepared.manifest_dir(), "std::io::SeekFrom", &|_| {})?;
+    assert_eq!(seek.canonical_path, "std::io::SeekFrom");
+    let incan_lang::interop::metadata::RustItemKind::Type(info) = &seek.kind else {
+        return Err("standard-library source did not yield type metadata".into());
+    };
+    assert_eq!(info.variants.len(), 3);
+    assert_eq!(
+        info.metadata_completeness,
+        incan_lang::interop::metadata::RustTypeMetadataCompleteness::Complete
+    );
+    assert!(toolchain.verify_compiler(&fixture.rustc, "wrong-target").is_err());
+    let retained_toolchain = Arc::downgrade(toolchain);
     let reuse = super::OrdinaryInspectionProject {
+        toolchain: Arc::clone(toolchain),
         observation: observation.clone(),
         inputs: observation.graph().inspection_inputs()?,
         rustc: fixture.rustc.clone(),
@@ -260,6 +285,7 @@ fn ordinary_native_source_inspection_retains_original_owners_and_cached_database
     drop(native);
     drop(observation);
     assert!(retained.upgrade().is_some());
+    assert!(retained_toolchain.upgrade().is_some());
     assert!(
         cache
             .get_or_extract_complete(&manifest_dir, "probe_leaf::answer", &|_| {})
@@ -267,6 +293,7 @@ fn ordinary_native_source_inspection_retains_original_owners_and_cached_database
     );
     cache.invalidate_manifest_dir(&manifest_dir)?;
     assert!(retained.upgrade().is_none());
+    assert!(retained_toolchain.upgrade().is_none());
     assert!(
         cache
             .get_or_extract_complete(&manifest_dir, "probe_leaf::answer", &|_| {})

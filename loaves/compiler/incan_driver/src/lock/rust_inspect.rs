@@ -143,12 +143,13 @@ fn prepare_workspace_with_native_authority(
     let mut project_source_authorities = None;
     let mut sdk_native = Vec::new();
     let mut ordinary_native = None;
+    let mut ordinary_toolchain = None;
     if direct_oven_inspection {
         if let Some(InspectionNativeAuthority::Ordinary { observation, rustc }) = native.as_ref() {
             let authority = oven_source_authority
                 .as_ref()
                 .ok_or_else(|| CliError::failure("ordinary inspection lacks the requested compiler intent"))?;
-            ordinary::prepare(
+            ordinary_toolchain = Some(ordinary::prepare(
                 &rust_inspect_manifest_dir,
                 cargo_target_dir,
                 project_root,
@@ -157,7 +158,7 @@ fn prepare_workspace_with_native_authority(
                 authority,
                 rust_inspect_query_paths,
                 rust_derive_probe_paths,
-            )?;
+            )?);
             ordinary_native = Some(observation.clone());
         } else if std::env::var_os(oven_rustc::loaf::OVEN_LOAF_ENV).is_some_and(|value| value == "1") {
             let source = std::env::var_os(OVEN_LEGACY_CARGO_INSPECTION_AUTHORITY_ENV)
@@ -198,6 +199,7 @@ fn prepare_workspace_with_native_authority(
         _project_source_authorities: project_source_authorities,
         _sdk_native: sdk_native,
         _ordinary_native: ordinary_native,
+        _ordinary_toolchain: ordinary_toolchain,
     }))
 }
 
@@ -256,6 +258,7 @@ fn prepare_oven_inspection_authority(
             _project_source_authorities: None,
             _sdk_native: sdk_native,
             _ordinary_native: None,
+            _ordinary_toolchain: None,
         });
     }
     let mut source_loaf = None;
@@ -338,6 +341,7 @@ fn prepare_oven_inspection_authority(
         _project_source_authorities: project_source_authorities,
         _sdk_native: Vec::new(),
         _ordinary_native: None,
+        _ordinary_toolchain: None,
     })
 }
 
