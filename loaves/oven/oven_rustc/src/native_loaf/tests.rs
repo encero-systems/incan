@@ -11,7 +11,9 @@ use oven_store::store::{
     OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore, OvenStoreLimits,
     PublishedOvenStore,
 };
-use oven_store::{OvenGeneratedProjectRequest, OvenReceipt, digest_bytes, receipt_generated_project};
+use oven_store::{
+    OvenGeneratedProjectRequest, OvenReceipt, digest_bytes, receipt_generated_project, receipt_with_build_unit_input,
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
