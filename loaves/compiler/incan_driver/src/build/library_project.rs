@@ -1930,7 +1930,7 @@ fn checked_requirement_contract(
             imports,
             exports,
             version,
-            used_module_paths: incan_provider::inventory::provider_used_module_paths(modules),
+            used_module_paths: session.provider_module_paths(modules),
             source_modules,
             entry_module: entry.path_segments.clone(),
             rust_abi_queries: rust_abi_queries.iter().cloned().collect(),

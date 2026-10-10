@@ -490,15 +490,25 @@ fn provider_cargo_dependency_spec(dependency: &ProviderCargoDependency) -> Depen
     .normalized()
 }
 
-/// Collect canonical provider module use from resolved source modules and authored import edges.
+/// Preserve legacy generated-core linkage alongside actual source module use.
+///
+/// The synthetic root prelude activates the existing SDK core provider; it is not an authored source import.
+/// Admitted ordinary sessions use [`provider_source_used_module_paths`] and select native runtime support separately.
 pub fn provider_used_module_paths(modules: &[ParsedModule]) -> BTreeSet<Vec<String>> {
-    let mut used = BTreeSet::new();
+    let mut used = provider_source_used_module_paths(modules);
     if !modules.is_empty() && env::var_os(SDK_PROVIDER_BUILD_ENV).is_none() {
-        // Every ordinary compilation consumes the implicit language prelude. Recording that compiler requirement
-        // keeps the mandatory core provider linked even when generated support such as iterator adapters is the only
-        // emitted path into `std.derives.*`.
+        // Keep the existing mandatory core provider linked for legacy generated support such as iterator adapters.
         used.insert(vec![stdlib::STDLIB_ROOT.to_string(), "prelude".to_string()]);
     }
+    used
+}
+
+/// Collect canonical module coordinates and authored import edges without synthetic native link requirements.
+///
+/// Explicit root prelude imports remain source usage. Collected standard-library source modules also retain their
+/// canonical coordinates, including modules materialized for an actual compiler-generated support requirement.
+pub fn provider_source_used_module_paths(modules: &[ParsedModule]) -> BTreeSet<Vec<String>> {
+    let mut used = BTreeSet::new();
     for module in modules {
         if module.path_segments.first().map(String::as_str) == Some(stdlib::INCAN_STD_NAMESPACE) {
             let mut canonical = vec![stdlib::STDLIB_ROOT.to_string()];
@@ -628,6 +638,50 @@ mod tests {
         assert!(
             rendered.contains("current command's `--sdk-profile` override"),
             "expected transient profile provenance, got: {rendered}"
+        );
+        Ok(())
+    }
+
+    /// Native core linkage cannot make an import-free scalar program claim the root prelude's checked module.
+    #[test]
+    fn source_module_usage_separates_actual_imports_from_legacy_core_linkage() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let module = parsed_module_for_test("pub def answer() -> int:\n    return 42\n")?;
+        assert!(provider_source_used_module_paths(std::slice::from_ref(&module)).is_empty());
+        let legacy = provider_used_module_paths(&[module]);
+        let prelude = vec!["std".to_string(), "prelude".to_string()];
+        assert_eq!(legacy.contains(&prelude), env::var_os(SDK_PROVIDER_BUILD_ENV).is_none());
+        Ok(())
+    }
+
+    /// Accurate ordinary usage preserves explicit prelude spellings and actual collected standard-source ownership.
+    #[test]
+    fn source_module_usage_keeps_explicit_and_collected_root_prelude() -> Result<(), Box<dyn std::error::Error>> {
+        let prelude = vec!["std".to_string(), "prelude".to_string()];
+        for source in [
+            "import std.prelude\n",
+            "from std.prelude import Clone\n",
+            "from std import prelude\n",
+        ] {
+            let module = parsed_module_for_test(source)?;
+            assert_eq!(
+                provider_source_used_module_paths(&[module]),
+                BTreeSet::from([prelude.clone()])
+            );
+        }
+        let mut collected = parsed_module_for_test("pub def answer() -> int:\n    return 42\n")?;
+        collected.path_segments = vec![stdlib::INCAN_STD_NAMESPACE.to_string(), "prelude".to_string()];
+        assert_eq!(
+            provider_source_used_module_paths(&[collected]),
+            BTreeSet::from([prelude])
+        );
+        let namespace = parsed_module_for_test("import std.async.prelude\nfrom std.traits.prelude import Error\n")?;
+        assert_eq!(
+            provider_source_used_module_paths(&[namespace]),
+            BTreeSet::from([
+                vec!["std".to_string(), "async".to_string()],
+                vec!["std".to_string(), "traits".to_string()],
+            ])
         );
         Ok(())
     }
