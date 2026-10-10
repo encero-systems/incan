@@ -683,7 +683,7 @@ fn ordinary_feature_coordinates_preserve_relocated_transitive_artifact() -> Resu
         .edges()
         .find(|edge| edge.dependency_key == "catalog")
         .ok_or("compiled edge absent")?;
-    assert_eq!(edge.to, installed);
+    assert_eq!(edge.to, fs::canonicalize(&installed)?);
     assert!(!installed.join("target/lib").exists());
     let mut injected = state.clone();
     injected.feature_manifest_path = workspace.path().join("missing/provider.incnlib");
@@ -691,18 +691,64 @@ fn ordinary_feature_coordinates_preserve_relocated_transitive_artifact() -> Resu
     Ok(())
 }
 
-/// Byte-identical artifacts at different original coordinates cannot share one canonical provider owner.
+/// Transport the exact fixture artifact and original Store records without reminting authored authority.
+fn copy_checked_fixture_tree(source: &std::path::Path, destination: &std::path::Path) -> std::io::Result<()> {
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        let output = destination.join(entry.file_name());
+        if kind.is_dir() {
+            copy_checked_fixture_tree(&entry.path(), &output)?;
+        } else if kind.is_file() {
+            fs::copy(entry.path(), output)?;
+        } else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "checked fixture transport requires regular files and directories",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Byte-identical original owners transported to different coordinates cannot share one canonical provider owner.
 #[test]
 fn ordinary_alias_sharing_refuses_different_physical_owners() -> Result<(), Box<dyn std::error::Error>> {
     let (_first_root, first_artifact, first) = checked_package()?;
-    let (_second_root, second_artifact, mut second) = checked_package()?;
+    let installed = tempfile::tempdir()?;
+    let mut second_artifact = first_artifact.clone();
+    second_artifact.crate_root = installed.path().join("installed-package");
+    second_artifact.manifest_path = second_artifact
+        .crate_root
+        .join(first_artifact.manifest_path.strip_prefix(&first_artifact.crate_root)?);
+    copy_checked_fixture_tree(&first_artifact.crate_root, &second_artifact.crate_root)?;
+    let mut second = first.clone();
+    second.artifact_root = second_artifact.crate_root.clone();
     second.import_alias = Some("shape".into());
+    assert_eq!(first.handoff_digest, handoff_digest(&second_artifact)?);
     assert_eq!(
         digest_provider_artifact(&first_artifact.crate_root)?,
         digest_provider_artifact(&second_artifact.crate_root)?
     );
-    assert_ne!(first_artifact.crate_root, second_artifact.crate_root);
-    assert!(PreparedLibraryDependencies::admit(&[first, second], TARGET, TOOLCHAIN, limits()).is_err());
+    assert_ne!(
+        fs::canonicalize(&first_artifact.crate_root)?,
+        fs::canonicalize(&second_artifact.crate_root)?,
+    );
+    let original = PreparedLibraryDependencies::admit(&[first.clone()], TARGET, TOOLCHAIN, limits())?;
+    let transported = PreparedLibraryDependencies::admit(&[second.clone()], TARGET, TOOLCHAIN, limits())?;
+    assert_eq!(
+        original.nodes.keys().collect::<Vec<_>>(),
+        transported.nodes.keys().collect::<Vec<_>>()
+    );
+    let Err(error) = PreparedLibraryDependencies::admit(&[first, second], TARGET, TOOLCHAIN, limits()) else {
+        return Err("competing physical coordinates unexpectedly shared one admitted owner".into());
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("owner has competing physical package coordinates")
+    );
     Ok(())
 }
 
