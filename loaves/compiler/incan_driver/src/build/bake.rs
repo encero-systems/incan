@@ -341,10 +341,27 @@ fn bake_oven_library_with_dependencies(
     );
 
     let bake = classify_direct_rustc_bake(&oven.crate_name, direct)?;
+    #[cfg(test)]
+    LIBRARY_NATIVE_OUTPUT_WORK.with(|work| {
+        let (compiled, reused) = work.get();
+        work.set((compiled + usize::from(!bake.reused), reused + usize::from(bake.reused)));
+    });
     if let Some(native) = &selected.ordinary_native {
         native.verify()?;
     }
     Ok((bake, artifact_plan))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Actual library executor outcomes for this test thread, independent of native plan materialization reports.
+    static LIBRARY_NATIVE_OUTPUT_WORK: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+/// Take actual successful native library compile/reuse work without changing executor policy or environment.
+#[cfg(test)]
+fn take_library_native_output_work() -> (usize, usize) {
+    LIBRARY_NATIVE_OUTPUT_WORK.with(|work| work.replace((0, 0)))
 }
 
 /// Recompile a source-owned Body IR caller against the host's exact compiled semantics-core instance.
@@ -627,6 +644,18 @@ fn publish_project_lock_after_provider_bake(
     admitted: Option<&AdmittedLibraryPreparation>,
 ) -> CliResult<PublishedOvenProjectLock> {
     match admitted {
+        Some(input) if input.ordinary_native().is_some() => {
+            let native = input
+                .ordinary_native()
+                .ok_or_else(|| CliError::failure("ordinary native authority lost"))?;
+            crate::lock::resolution::publish_oven_project_lock_with_ordinary_native(
+                project_root,
+                entrypoint,
+                package_features,
+                input.session(),
+                native,
+            )
+        }
         Some(input) => {
             publish_oven_project_lock_with_admitted_session(project_root, entrypoint, package_features, input.session())
         }

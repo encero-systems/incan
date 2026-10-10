@@ -35,7 +35,7 @@ impl OrdinaryLibraryRuntimeInputs {
         native.verify()?;
         let provider_records = oven_native_provider_records_with_checked_identities(
             provider_plan,
-            &semantic_sdk_path_dependencies(requirements),
+            &native.provider_semantic_dependencies(provider_plan, requirements)?,
             semantic_identities,
         )?;
         let mut dependencies = resolved.dependencies.clone();

@@ -426,6 +426,53 @@ pub fn collect_project_lock_context(
     workspace: Option<&WorkspaceGraph>,
     command_session: Option<&CompilationSession>,
 ) -> CliResult<Option<ProjectLockContext>> {
+    collect_project_lock_context_impl(
+        manifest,
+        explicit_entry_file,
+        cargo_features,
+        package_features,
+        sdk_profile_override,
+        workspace,
+        command_session,
+        None,
+    )
+}
+
+/// Collect the same whole-project inputs under an explicitly retained ordinary native authority.
+pub(crate) fn collect_ordinary_project_lock_context(
+    manifest: &ProjectManifest,
+    entry: &Path,
+    features: &FeatureSelection,
+    session: &CompilationSession,
+    native: &crate::build::ordinary_library_native::OrdinaryLibraryNativeProfiles,
+) -> CliResult<Option<ProjectLockContext>> {
+    collect_project_lock_context_impl(
+        manifest,
+        Some(entry),
+        &CargoFeatureSelection::default(),
+        features,
+        None,
+        None,
+        Some(session),
+        Some(native),
+    )
+}
+
+/// Share source/test collection while keeping legacy and explicit ordinary native semantic authority distinct.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Preserves the canonical collector inputs with explicit native authority"
+)]
+fn collect_project_lock_context_impl(
+    manifest: &ProjectManifest,
+    explicit_entry_file: Option<&Path>,
+    cargo_features: &CargoFeatureSelection,
+    package_features: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
+    workspace: Option<&WorkspaceGraph>,
+    command_session: Option<&CompilationSession>,
+    ordinary_native: Option<&crate::build::ordinary_library_native::OrdinaryLibraryNativeProfiles>,
+) -> CliResult<Option<ProjectLockContext>> {
     #[cfg(any(test, feature = "test_support"))]
     record_project_lock_context_collection();
     let command_session_manifest = command_session
@@ -526,7 +573,20 @@ pub fn collect_project_lock_context(
     let provider_plan = session
         .provider_plan_for_used_module_paths(lock_provider_used_module_paths(session, &project_requirement_modules))?;
     extend_requirements_with_provider_plan(&mut project_requirements, &provider_plan)?;
-    let semantic_sdk_paths = semantic_sdk_path_dependencies(&project_requirements);
+    let semantic_sdk_paths = if let Some(native) = ordinary_native {
+        native.verify()?;
+        crate::build::library_metadata::requirements::capture_checked_native_demands(
+            session_manifest,
+            &project_requirement_modules,
+            &project_requirements,
+            &provider_plan,
+            &BTreeSet::new(),
+        )?
+        .require_support_only()?;
+        native.provider_semantic_dependencies(&provider_plan, &project_requirements)?
+    } else {
+        semantic_sdk_path_dependencies(&project_requirements)
+    };
     let semantic = semantic_lock_state(
         session_manifest.project_root(),
         session_manifest.interop_c(),

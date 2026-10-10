@@ -103,6 +103,30 @@ impl OrdinaryLibraryNativeProfiles {
         self.metadata.verify()
     }
 
+    /// Check the currently admitted empty provider context without inventing Cargo support-package semantics.
+    ///
+    /// Mandatory native support remains bound by the complete original requests in checked metadata. This slice
+    /// admits no provider/facet/dependency projections; broader semantics must supply their own ordinary authority.
+    pub(crate) fn provider_semantic_dependencies(
+        &self,
+        plan: &incan_provider::ProviderPlan,
+        requirements: &incan_provider::requirements::ProjectRequirements,
+    ) -> CliResult<Vec<DependencySpec>> {
+        self.metadata.support().verify()?;
+        if plan.records().next().is_some()
+            || !requirements.stdlib_facets.is_empty()
+            || !requirements.dependencies.is_empty()
+            || !requirements.sdk_dependency_rebindings.is_empty()
+            || !requirements.sdk_path_dependencies.is_empty()
+            || !requirements.sdk_artifact_projections.is_empty()
+        {
+            return Err(failure(
+                "ordinary support-only provider semantics do not admit provider or dependency projections",
+            ));
+        }
+        Ok(Vec::new())
+    }
+
     /// Select authored dependency aliases and mandatory compiler support from the original producer graph.
     fn closure(
         &self,
