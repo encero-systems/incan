@@ -31,7 +31,7 @@ use crate::build::output_paths::{
     oven_binary_path, project_locked_registry_packages, project_output_bake_files, project_root_for_completed_output,
     validated_project_output_relative_path,
 };
-use crate::build::output_selection::project_output_report_snapshot;
+use crate::build::output_selection::{project_output_report_snapshot, remember_project_output};
 use crate::build::oven_project::{prepare_oven_project, remove_completed_generated_cargo_lock};
 use crate::build::package_loafs::{
     ExportedPackageLoafs, export_selected_package_loaf, publish_checked_library_package,
@@ -517,7 +517,14 @@ pub fn publish_ordinary_project_output(
         build_report: Some(project_output_report_snapshot(&prepared.project_root, report)?),
     })?;
     payload.preparation_identity_digest = Some(preparation_identity.to_string());
-    let _output = publish_project_output_loaf(&open_default_oven_store()?, &prepared.receipt, &payload, &files)?;
+    let output = publish_project_output_loaf(&open_default_oven_store()?, &prepared.receipt, &payload, &files)?;
+    let receipt_path = project_bake_receipt_path(
+        &prepared.project_root,
+        OvenBakeProjectTarget::Executable,
+        &prepared.entrypoint,
+        &prepared.receipt.intent.profile,
+    )?;
+    remember_project_output(&receipt_path, &output.identity);
     Ok(())
 }
 

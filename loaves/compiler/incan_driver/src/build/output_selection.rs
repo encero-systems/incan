@@ -28,6 +28,80 @@ use oven_rustc::rustc::{
 use oven_store::digest_bytes;
 use oven_store::store::{OvenArtifactKind, OvenStore};
 
+/// Resolve an optional local locator through the store's verified payload and active-lease boundary.
+///
+/// The locator is only a search hint. Explicit bake reuse requires its local receipt lineage; ordinary selection
+/// supplies its current source, preparation and intent predicates instead. Both retain Store integrity and leases.
+/// Missing, malformed, reclaimed or mismatched hints fall back to normal selection and never authorize execution alone.
+#[track_caller]
+pub(super) fn located_project_output(
+    store: &OvenStore,
+    receipt_path: &Path,
+    receipt: Option<&oven_store::OvenReceipt>,
+    payload_matches: impl Fn(&oven_store::store::OvenArtifactManifest, &[u8]) -> bool,
+) -> CliResult<Option<OvenStoredProjectOutput>> {
+    let caller = std::panic::Location::caller();
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::located_project_output", input = %receipt_path.display(), caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
+    let Some(identity) = fs::read(receipt_path.with_extension("output.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<String>(&bytes).ok())
+        .filter(|identity| {
+            identity
+                .strip_prefix("sha256:")
+                .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        })
+    else {
+        return Ok(None);
+    };
+    let Ok((manifest, root, bytes, lease)) = store.select_payload_for_execution(&identity) else {
+        return Ok(None);
+    };
+    if manifest.kind != OvenArtifactKind::ProjectOutput
+        || receipt.is_some_and(|receipt| {
+            manifest.receipt_identity != receipt.identity
+                || manifest.build_unit_identity != receipt.build_unit_identity
+                || manifest.intent != receipt.intent
+        })
+        || !payload_matches(&manifest, &bytes)
+    {
+        return Ok(None);
+    }
+    let Ok(payload) = serde_json::from_slice::<super::OvenProjectOutputPayload>(&bytes) else {
+        return Ok(None);
+    };
+    if payload.schema_version != super::OVEN_PROJECT_OUTPUT_PAYLOAD_SCHEMA_VERSION {
+        return Ok(None);
+    }
+    crate::build::publication::stored_project_output_from_parts(manifest, root, payload, lease).map(Some)
+}
+
+/// Atomically retain a verified output's address as a replaceable local selection hint.
+pub(super) fn remember_project_output(receipt_path: &Path, identity: &str) {
+    let locator = receipt_path.with_extension("output.json");
+    if fs::read(&locator)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<String>(&bytes).ok())
+        .as_deref()
+        == Some(identity)
+    {
+        return;
+    }
+    let Some(parent) = locator.parent() else {
+        return;
+    };
+    if fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    let staged = locator.with_extension(format!("{}.tmp", std::process::id()));
+    let result = serde_json::to_vec(identity)
+        .map_err(std::io::Error::other)
+        .and_then(|bytes| fs::write(&staged, bytes))
+        .and_then(|()| fs::rename(&staged, &locator));
+    if result.is_err() {
+        let _removed = fs::remove_file(staged);
+    }
+}
+
 /// Select a completed executable output before frontend work on an exact project match.
 ///
 /// This intentionally consults no ambient `rustc`: the stored native output is already bound to its publisher receipt
@@ -151,7 +225,7 @@ pub fn select_baked_project_output_with_source_authority(
     source_authority_digest: &str,
     required_target_toolchain: Option<(&str, &str)>,
 ) -> CliResult<Option<OvenStoredProjectOutput>> {
-    Ok(matching_baked_project_outputs_with_source_authority(
+    Ok(project_outputs_with_source_authority(
         store,
         project_root,
         entrypoint,
@@ -159,6 +233,7 @@ pub fn select_baked_project_output_with_source_authority(
         profile,
         source_authority_digest,
         required_target_toolchain,
+        true,
     )?
     .into_iter()
     .next())
@@ -176,6 +251,33 @@ pub fn matching_baked_project_outputs_with_source_authority(
     source_authority_digest: &str,
     required_target_toolchain: Option<(&str, &str)>,
 ) -> CliResult<Vec<OvenStoredProjectOutput>> {
+    project_outputs_with_source_authority(
+        store,
+        project_root,
+        entrypoint,
+        target,
+        profile,
+        source_authority_digest,
+        required_target_toolchain,
+        false,
+    )
+}
+
+/// Apply the same intent, payload and lineage checks to an exact locator and the fallback collection.
+///
+/// Multi-profile consumers retain the complete ordered candidate set. A single-output consumer may avoid the scan
+/// only when its verified hint has the preferred receipt lineage and current lock fingerprint.
+#[allow(clippy::too_many_arguments)]
+fn project_outputs_with_source_authority(
+    store: &OvenStore,
+    project_root: &Path,
+    entrypoint: &Path,
+    target: OvenBakeProjectTarget,
+    profile: &str,
+    source_authority_digest: &str,
+    required_target_toolchain: Option<(&str, &str)>,
+    first_only: bool,
+) -> CliResult<Vec<OvenStoredProjectOutput>> {
     let Some(entrypoint_relative_path) = project_relative_entrypoint(project_root, entrypoint) else {
         return Ok(Vec::new());
     };
@@ -187,35 +289,49 @@ pub fn matching_baked_project_outputs_with_source_authority(
         return Ok(Vec::new());
     };
     let preparation_identity = super::source_authority::ordinary_preparation_identity_digest().ok();
+    let manifest_matches = |manifest: &oven_store::store::OvenArtifactManifest| {
+        manifest.kind == OvenArtifactKind::ProjectOutput
+            && manifest.intent.profile == profile
+            && manifest.intent.target == native_target
+            && required_target_toolchain.is_none_or(|(target, toolchain)| {
+                manifest.intent.target == target && manifest.intent.toolchain == toolchain
+            })
+    };
+    let payload_matches = |manifest: &oven_store::store::OvenArtifactManifest, bytes: &[u8]| {
+        let Ok(payload) = serde_json::from_slice::<OvenProjectOutputPayload>(bytes) else {
+            return false;
+        };
+        payload.schema_version == OVEN_PROJECT_OUTPUT_PAYLOAD_SCHEMA_VERSION
+            && payload.project_target == target.as_str()
+            && payload.target_identity == target_identity
+            && payload.source_authority_digest == source_authority_digest
+            && payload
+                .preparation_identity_digest
+                .as_ref()
+                .is_none_or(|identity| Some(identity) == preparation_identity.as_ref())
+            && payload.compiler_version == INCAN_VERSION
+            && payload.entrypoint_relative_path == entrypoint_relative_path
+            && payload.receipt_identity == manifest.receipt_identity
+            && payload.build_unit_identity == manifest.build_unit_identity
+            && !payload.plan_identity.trim().is_empty()
+    };
+    let current_receipt = current_project_output_receipt(project_root, target, entrypoint, profile)?;
+    let current_fingerprint = baked_project_lock_dependencies_fingerprint(project_root)?;
+    let receipt_path = project_bake_receipt_path(project_root, target, entrypoint, profile)?;
+    if first_only {
+        if let Some(located) =
+            located_project_output(store, &receipt_path, current_receipt.as_ref(), |manifest, bytes| {
+                manifest_matches(manifest) && payload_matches(manifest, bytes)
+            })?
+        {
+            if located.payload.lock_dependencies_fingerprint == current_fingerprint {
+                tracing::trace!(target: "incan::invocation", decision = "reuse_project_output_locator", input = %located.identity);
+                return Ok(vec![located]);
+            }
+        }
+    }
     let selected = store
-        .select_payloads_matching_for_execution(
-            |manifest| {
-                manifest.kind == OvenArtifactKind::ProjectOutput
-                    && manifest.intent.profile == profile
-                    && manifest.intent.target == native_target
-                    && required_target_toolchain.is_none_or(|(target, toolchain)| {
-                        manifest.intent.target == target && manifest.intent.toolchain == toolchain
-                    })
-            },
-            |manifest, bytes| {
-                let Ok(payload) = serde_json::from_slice::<OvenProjectOutputPayload>(bytes) else {
-                    return false;
-                };
-                payload.schema_version == OVEN_PROJECT_OUTPUT_PAYLOAD_SCHEMA_VERSION
-                    && payload.project_target == target.as_str()
-                    && payload.target_identity == target_identity
-                    && payload.source_authority_digest == source_authority_digest
-                    && payload
-                        .preparation_identity_digest
-                        .as_ref()
-                        .is_none_or(|identity| Some(identity) == preparation_identity.as_ref())
-                    && payload.compiler_version == INCAN_VERSION
-                    && payload.entrypoint_relative_path == entrypoint_relative_path
-                    && payload.receipt_identity == manifest.receipt_identity
-                    && payload.build_unit_identity == manifest.build_unit_identity
-                    && !payload.plan_identity.trim().is_empty()
-            },
-        )
+        .select_payloads_matching_for_execution(manifest_matches, payload_matches)
         .map_err(|error| CliError::failure(format!("failed to select Oven project-output Loaf: {error}")))?;
     let mut matches = Vec::new();
     for selected in selected {
@@ -231,8 +347,6 @@ pub fn matching_baked_project_outputs_with_source_authority(
             lease,
         )?);
     }
-    let current_receipt = current_project_output_receipt(project_root, target, entrypoint, profile)?;
-    let current_fingerprint = baked_project_lock_dependencies_fingerprint(project_root)?;
     // Prefer the explicit bake's verified lineage before the derived lock fingerprint: a non-strict stale lock
     // must not make an older SDK output outrank the current bake. Missing local receipts still permit store reuse.
     matches.sort_by_key(|output| {
@@ -247,6 +361,11 @@ pub fn matching_baked_project_outputs_with_source_authority(
             output.identity.clone(),
         )
     });
+    if first_only {
+        if let Some(selected) = matches.first() {
+            remember_project_output(&receipt_path, &selected.identity);
+        }
+    }
     Ok(matches)
 }
 
@@ -804,6 +923,63 @@ mod tests {
     use oven_store::{OvenGeneratedProjectRequest, digest_bytes, receipt_generated_project, write_receipt};
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+
+    /// An exact existing locator selects through verified Store admission without enumerating unrelated owners.
+    #[test]
+    fn ordinary_project_output_locator_avoids_unrelated_manifest_walk() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        fs::create_dir(project.path().join("src"))?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = 'fixture'\n")?;
+        let entrypoint = project.path().join("src/main.incn");
+        fs::write(&entrypoint, "def main() -> None:\n    pass\n")?;
+        let (receipt, mut payload, files) =
+            crate::build::test_support::fixture_project_output_publication(project.path(), "debug", "located")?;
+        payload.inspection_authority = None;
+        payload.preparation_identity_digest =
+            Some(super::super::source_authority::ordinary_preparation_identity_digest()?);
+        let store_root = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            store_root.path(),
+            oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        let output = publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        let receipt_path =
+            project_bake_receipt_path(project.path(), OvenBakeProjectTarget::Executable, &entrypoint, "debug")?;
+        fs::create_dir_all(receipt_path.parent().ok_or("receipt has no parent")?)?;
+        fs::write(
+            receipt_path.with_extension("output.json"),
+            serde_json::to_vec(&output.identity)?,
+        )?;
+
+        // A full Store walk would encounter this damaged, unrelated entry. Exact admission must never read it.
+        let unrelated = store.root().join("entries").join(format!("sha256-{}", "0".repeat(64)));
+        fs::create_dir(&unrelated)?;
+        fs::write(unrelated.join("artifact.json"), b"not a manifest")?;
+        let selected = select_baked_project_output(
+            &store,
+            project.path(),
+            &entrypoint,
+            OvenBakeProjectTarget::Executable,
+            "debug",
+        )?
+        .ok_or("exact ordinary output locator missed")?;
+        assert_eq!(selected.identity, output.identity);
+        fs::remove_dir_all(&unrelated)?;
+        fs::write(receipt_path.with_extension("output.json"), b"\"../../foreign\"")?;
+        assert_eq!(
+            select_baked_project_output(
+                &store,
+                project.path(),
+                &entrypoint,
+                OvenBakeProjectTarget::Executable,
+                "debug",
+            )?
+            .ok_or("malformed hint prevented fallback")?
+            .identity,
+            output.identity
+        );
+        Ok(())
+    }
 
     /// Considering historical compiler binaries and other source generations must not make them hot cache entries.
     #[test]
