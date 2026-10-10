@@ -1614,7 +1614,7 @@ fn publish_native_loaf_units(
 }
 
 /// Preserve the producer's complete source and evaluated predicates while dropping unauthenticated catalog edges.
-fn ordinary_native_source(binding: &SdkLockedUnit) -> crate::native_loaf::NativeLoafSource {
+pub(crate) fn ordinary_native_source(binding: &SdkLockedUnit) -> crate::native_loaf::NativeLoafSource {
     crate::native_loaf::NativeLoafSource {
         loaf: binding.loaf.clone(),
         version: binding.version.clone(),

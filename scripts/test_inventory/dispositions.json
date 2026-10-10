@@ -272,6 +272,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/build/native_loaf_plan/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Bootstrap adapter retains native dependencies and consumer plans in one supplied Store across compatible checkouts and relocated outputs; real Rust consumers execute and unchanged receipts reuse their binaries.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/build/native_runtime_inputs/tests.rs": {
       "disposition": "unaffected",
       "notes": "Actual receipt-bound ordinary Incan identity exchange retains original producer native owners, checks roots/records/intent/compiler and refuses missing original bytes; physical identity does not grant semantic, macro or namespace authority.",
@@ -9332,6 +9340,22 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_rustc/src/native_loaf/prepared/projection_registry_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Real ordinary registry archives retain exact native edges and codegen receipts, execute selected consumers, skip unrelated failing units and refuse missing or ambiguous locked dependencies.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/native_loaf/prepared/projection_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Cold ordinary native preparation compiles only the declared forward closure; real edits and restoration preserve runtime results, ambiguity and missing authority refuse, and physical subsets cannot grant complete semantic producer observation.",
+      "owner": 1698,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_rustc/src/native_loaf/prepared/tests.rs": {
       "disposition": "unaffected",
       "notes": "Ordinary rooted native reuse verifies current source/compiler/lock/facts, records actual work, refuses corrupted authority and bypasses empty declarations.",
@@ -9652,17 +9676,17 @@
       "split_target": "",
       "twin": ""
     },
-    "loaves/oven/oven_rustc/src/sdk_closure/local/dependency_identity.rs": {
+    "loaves/oven/oven_rustc/src/sdk_closure/local.rs": {
       "disposition": "unaffected",
-      "notes": "Native producer source mapping, transitive authored path identity, relocation, embedded inputs and feature activation; no Cargo declaration is required.",
+      "notes": "Oven-native local source snapshots bind Rust source bytes without consulting adjacent Cargo metadata.",
       "owner": 1698,
       "split_required": false,
       "split_target": "",
       "twin": ""
     },
-    "loaves/oven/oven_rustc/src/sdk_closure/local.rs": {
+    "loaves/oven/oven_rustc/src/sdk_closure/local/dependency_identity.rs": {
       "disposition": "unaffected",
-      "notes": "Oven-native local source snapshots bind Rust source bytes without consulting adjacent Cargo metadata.",
+      "notes": "Native producer source mapping, transitive authored path identity, relocation, embedded inputs and feature activation; no Cargo declaration is required.",
       "owner": 1698,
       "split_required": false,
       "split_target": "",
