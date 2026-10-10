@@ -93,6 +93,34 @@ fn published_metadata(
 #[test]
 #[ignore = "requires a published native SDK; exercises the real ordinary publisher"]
 fn admitted_ordinary_library_publication_first_replay_and_source_edit() -> Result<(), Box<dyn std::error::Error>> {
+    // The native suite deliberately narrows ordinary fixtures to debug. This publication control needs both
+    // profiles, so isolate its explicit policy in a child instead of mutating the shared libtest environment.
+    const CHILD: &str = "INCAN_DEV7_ORDINARY_PUBLICATION_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "build::bake::admitted_publication_tests::admitted_ordinary_library_publication_first_replay_and_source_edit",
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD, "1")
+            .env("INCAN_OVEN_BAKE_PROFILES", "all")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+        return Ok(());
+    }
+    assert_eq!(
+        crate::build::plan_authority::explicit_bake_profiles(),
+        ["debug", "release"]
+    );
     let native = NativeSdkCommandContext::discover()?.ok_or("missing published native command authority")?;
     let rustc = resolve_active_rustc()?;
     let limits = *open_default_oven_store()?.limits();
