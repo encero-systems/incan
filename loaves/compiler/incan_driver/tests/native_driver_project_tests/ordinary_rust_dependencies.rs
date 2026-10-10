@@ -4,6 +4,60 @@ use super::{Command, Output, Path, fs, success, support};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
+/// Standard-library interop needs no project bake, and normal run publishes through the existing reuse boundary.
+#[test]
+fn ordinary_standard_rust_interop_run_reuses_and_invalidates() -> TestResult {
+    let fixture = tempfile::tempdir()?;
+    let root = fixture.path().canonicalize()?;
+    fs::create_dir(root.join("src"))?;
+    fs::write(
+        root.join("loaf.toml"),
+        "[project]\nname='ordinary_std_interop'\nversion='0.1.0'\nprivate=true\n",
+    )?;
+    let source = root.join("src/main.incn");
+    let original = "from rust::std::env import args\n\ndef main() -> None:\n    mut count = 0\n    for argument in args():\n        count += 1\n    println(count)\n";
+    fs::write(&source, original)?;
+    let run = |arguments: &[&str], require_reuse: bool| -> TestResult<Output> {
+        let mut command = support::cli_project::configured_incan_command(&root, &["run", "src/main.incn", "--"]);
+        support::configure_explicit_oven_bake_command(&mut command)?;
+        command.args(arguments);
+        if require_reuse {
+            command.env("INCAN_TEST_REQUIRE_COMPLETED_PROJECT_REUSE", "1");
+        }
+        Ok(command.output()?)
+    };
+    let first = run(&["one", "two"], false)?;
+    success(&first, "standard Rust interop without manual bake");
+    assert_eq!(first.stdout, b"3\n");
+    let repeat = run(&["one"], true)?;
+    success(&repeat, "normal run completed-output reuse");
+    assert_eq!(repeat.stdout, b"2\n");
+
+    fs::write(&source, original.replace("println(count)", "println(count + 10)"))?;
+    let edited_reuse = run(&["one"], true)?;
+    if edited_reuse.status.success() {
+        // Another identical project may already have published this content-addressed source generation.
+        assert_eq!(
+            edited_reuse.stdout, b"12\n",
+            "source edit must not reuse the original output"
+        );
+    } else {
+        assert!(
+            String::from_utf8_lossy(&edited_reuse.stderr)
+                .contains("required completed project reuse missed before frontend preparation"),
+            "edited reuse must select exact changed output or miss before preparation"
+        );
+    }
+    let changed = run(&["one"], false)?;
+    success(&changed, "changed normal standard Rust interop");
+    assert_eq!(changed.stdout, b"12\n");
+    fs::write(&source, original)?;
+    let restored = run(&["one"], true)?;
+    success(&restored, "restored normal run completed-output reuse");
+    assert_eq!(restored.stdout, b"2\n");
+    Ok(())
+}
+
 /// A caller links its own native loaf, reuses completed output, and observes native edits and restored inputs.
 #[test]
 fn ordinary_rust_caller_dependencies_execute_reuse_and_invalidate() -> TestResult {

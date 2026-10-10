@@ -403,6 +403,7 @@ pub fn prepare_oven_project(
             && !loaf_codegen_mode()
             && manifest.is_some()
             && !metadata_query_paths.is_empty()
+            && !inspection_dependencies.is_empty()
         {
             let authority = load_current_project_registry_source_authorities(&oven_store, &project_root)?
                 .ok_or_else(|| {
