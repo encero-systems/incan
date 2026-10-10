@@ -180,6 +180,12 @@ impl CompilerSupportSources {
         self.verify()?;
         Ok(&self.owner)
     }
+
+    /// Borrow the original standard source tree after verifying its executable owner and declarations.
+    pub(crate) fn verified_standard_source_root(&self) -> CliResult<&Path> {
+        self.verify()?;
+        self.layout.verified_source_root().map_err(failure)
+    }
 }
 
 /// Require the original declaration to have a package directory.
