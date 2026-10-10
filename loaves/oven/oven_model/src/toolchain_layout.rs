@@ -8,6 +8,12 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod installed_data;
+pub use installed_data::{
+    COMPILER_OWNED_PACKAGE_DESCRIPTOR, CompilerOwnedInstalledData, CompilerOwnedInstalledDataError,
+    CompilerOwnedInstalledDataView,
+};
+
 /// Internal scheduler handoff for compiler-owned immutable data when a direct-rustc child is baked outside the
 /// installed toolchain layout.
 const INTERNAL_TOOLCHAIN_DATA_ROOT_ENV: &str = "INCAN_INTERNAL_TOOLCHAIN_DATA_ROOT";
