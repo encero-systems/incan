@@ -575,14 +575,23 @@ fn collect_project_lock_context_impl(
     extend_requirements_with_provider_plan(&mut project_requirements, &provider_plan)?;
     let semantic_sdk_paths = if let Some(native) = ordinary_native {
         native.verify()?;
+        #[cfg(feature = "rust_inspect")]
+        let queries = crate::build::library_exports::collect_library_rust_abi_query_paths(
+            &project_requirement_modules,
+            &crate::build::rust_extern::collect_rust_extern_contexts(&project_requirement_modules),
+        )
+        .into_iter()
+        .collect();
+        #[cfg(not(feature = "rust_inspect"))]
+        let queries = BTreeSet::new();
         crate::build::library_metadata::requirements::capture_checked_native_demands(
             session_manifest,
             &project_requirement_modules,
             &project_requirements,
             &provider_plan,
-            &BTreeSet::new(),
+            &queries,
         )?
-        .require_support_only()?;
+        .require_source_inspection()?;
         native.provider_semantic_dependencies(&provider_plan, &project_requirements)?
     } else {
         semantic_sdk_path_dependencies(&project_requirements)

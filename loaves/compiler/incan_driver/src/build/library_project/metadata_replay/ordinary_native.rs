@@ -11,6 +11,8 @@ use std::sync::Arc;
 use crate::build::ordinary_support::CompilerSupportSources;
 use crate::error::CliResult;
 use oven_rustc::native_loaf::NativeLoafRequestObservation;
+#[cfg(feature = "rust_inspect")]
+use oven_rustc::rustc::{OvenRustInspectionToolchain, prepare_rust_inspection_toolchain};
 use oven_rustc::rustc::{rustc_host_target, rustc_identity};
 use oven_store::{OvenBuildIntent, digest_project_source_tree};
 
@@ -27,6 +29,8 @@ pub(crate) struct OrdinaryNativeMetadataAuthority {
     target: String,
     toolchain: String,
     host: String,
+    #[cfg(feature = "rust_inspect")]
+    inspection_toolchain: Arc<OvenRustInspectionToolchain>,
 }
 
 impl OrdinaryNativeMetadataAuthority {
@@ -42,6 +46,11 @@ impl OrdinaryNativeMetadataAuthority {
         validate_profiles(observations.keys().map(String::as_str))?;
         let rustc = rustc.canonicalize().map_err(|error| invalid(error.to_string()))?;
         let host = rustc_host_target(&rustc).map_err(|error| invalid(error.to_string()))?;
+        #[cfg(feature = "rust_inspect")]
+        let inspection_toolchain = Arc::new(
+            prepare_rust_inspection_toolchain(&crate::oven_store::open_default_oven_store()?, &rustc, target)
+                .map_err(|error| invalid(error.to_string()))?,
+        );
         let selected = Self {
             support,
             observations,
@@ -49,6 +58,8 @@ impl OrdinaryNativeMetadataAuthority {
             target: target.to_string(),
             toolchain: toolchain.to_string(),
             host,
+            #[cfg(feature = "rust_inspect")]
+            inspection_toolchain,
         };
         selected.verify()?;
         Ok(selected)
@@ -74,6 +85,24 @@ impl OrdinaryNativeMetadataAuthority {
         &self.support
     }
 
+    /// Borrow the exact immutable Rust source owner bound into this metadata recipe, without selecting it again.
+    #[cfg(feature = "rust_inspect")]
+    pub(crate) fn inspection_toolchain(&self) -> &Arc<OvenRustInspectionToolchain> {
+        &self.inspection_toolchain
+    }
+
+    /// Include actual Rust inspection source ownership only in a build that can produce Rust ABI metadata.
+    fn inspection_identity(&self) -> Option<&str> {
+        #[cfg(feature = "rust_inspect")]
+        {
+            Some(self.inspection_toolchain.identity())
+        }
+        #[cfg(not(feature = "rust_inspect"))]
+        {
+            None
+        }
+    }
+
     /// Revalidate full requests, exact compiler/profile intent and genuine mandatory forward root selections.
     pub(crate) fn verify(&self) -> CliResult<()> {
         self.verified_requests().map(|_| ())
@@ -82,8 +111,9 @@ impl OrdinaryNativeMetadataAuthority {
     /// Produce deterministic full-request semantic inputs, preserving compile-time coordinates and unselected units.
     pub(super) fn semantic_inputs(&self) -> CliResult<serde_json::Value> {
         Ok(serde_json::json!({
-            "contract": "ordinary-native-full-producer-requests-v1",
+            "contract": "ordinary-native-full-producer-requests-v2",
             "requests": self.verified_requests()?,
+            "rust_inspection_toolchain": self.inspection_identity(),
             "target": self.target,
             "toolchain": self.toolchain,
             "host": self.host,
@@ -132,6 +162,10 @@ impl OrdinaryNativeMetadataAuthority {
     /// Verify every profile's original request and support selection, returning only validated complete digests.
     fn verified_requests(&self) -> CliResult<BTreeMap<String, String>> {
         self.verify_compiler()?;
+        #[cfg(feature = "rust_inspect")]
+        self.inspection_toolchain
+            .verify_compiler(&self.rustc, &self.target)
+            .map_err(|error| invalid(error.to_string()))?;
         self.observations
             .iter()
             .map(|(profile, observation)| {

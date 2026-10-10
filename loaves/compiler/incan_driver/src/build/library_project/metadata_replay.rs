@@ -832,7 +832,7 @@ pub(super) fn prepare_replayed_library(request: ReplayRequest<'_>) -> CliResult<
         .ok_or_else(|| invalid("metadata owner lacks checked planning inputs"))?;
     contract.validate()?;
     if ordinary_native.is_some() {
-        contract.require_support_only_native()?;
+        contract.require_source_inspection_native()?;
         if include_interop_execution {
             return Err(invalid("ordinary support-only replay cannot request interop execution"));
         }

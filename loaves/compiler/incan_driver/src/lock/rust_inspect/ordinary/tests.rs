@@ -103,6 +103,7 @@ fn prepare(
     query: &str,
     profile: &str,
     derives: &[String],
+    toolchain: Option<Arc<oven_rustc::rustc::OvenRustInspectionToolchain>>,
 ) -> TestResult<crate::lock::PreparedRustInspectWorkspace> {
     fs::create_dir_all(project)?;
     let dependencies = fixture.dependencies();
@@ -145,6 +146,7 @@ fn prepare(
         },
         observation,
         &fixture.rustc,
+        toolchain,
     )?
     .ok_or("ordinary inspection did not return its retained workspace")?)
 }
@@ -173,6 +175,7 @@ fn ordinary_native_source_inspection_retains_original_owners_and_cached_database
         "probe_leaf::answer",
         "debug",
         &[],
+        None,
     )?;
     prepared.verify_ordinary_native()?;
     let cache = RustMetadataCache::new();
@@ -208,6 +211,25 @@ fn ordinary_native_source_inspection_retains_original_owners_and_cached_database
         incan_lang::interop::metadata::RustTypeMetadataCompleteness::Complete
     );
     assert!(toolchain.verify_compiler(&fixture.rustc, "wrong-target").is_err());
+    let bound = prepare(
+        &fixture,
+        &fixture.root.path().join("recipe-bound-consumer"),
+        observation.clone(),
+        "probe_leaf::answer",
+        "debug",
+        &[],
+        Some(Arc::clone(toolchain)),
+    )?;
+    assert!(Arc::ptr_eq(
+        toolchain,
+        bound
+            ._ordinary_toolchain
+            .as_ref()
+            .ok_or("recipe-bound source owner lost")?
+    ));
+    bound.verify_ordinary_native()?;
+    cache.invalidate_manifest_dir(bound.manifest_dir())?;
+    drop(bound);
     let retained_toolchain = Arc::downgrade(toolchain);
     let reuse = super::OrdinaryInspectionProject {
         toolchain: Arc::clone(toolchain),
@@ -251,7 +273,8 @@ fn ordinary_native_source_inspection_retains_original_owners_and_cached_database
                 observation.clone(),
                 query,
                 profile,
-                &derives
+                &derives,
+                None,
             )
             .is_err()
         );

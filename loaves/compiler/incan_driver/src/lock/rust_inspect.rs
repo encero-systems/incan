@@ -47,6 +47,7 @@ enum InspectionNativeAuthority<'a> {
     Ordinary {
         observation: oven_rustc::native_loaf::NativeLoafRequestObservation,
         rustc: &'a Path,
+        toolchain: Option<Arc<oven_rustc::rustc::OvenRustInspectionToolchain>>,
     },
 }
 
@@ -66,17 +67,23 @@ pub fn prepare_rust_inspect_workspace_with_native_sdk(
 }
 
 /// Prepare Rust metadata from the command's complete original ordinary producer request, with no SDK fallback.
+/// A metadata publisher supplies its recipe-bound source owner; independent inspection may acquire its own owner.
 pub fn prepare_rust_inspect_workspace_with_ordinary_native(
     request: RustInspectWorkspaceRequest<'_>,
     observation: oven_rustc::native_loaf::NativeLoafRequestObservation,
     rustc: &Path,
+    toolchain: Option<Arc<oven_rustc::rustc::OvenRustInspectionToolchain>>,
 ) -> CliResult<Option<PreparedRustInspectWorkspace>> {
     if !request.direct_oven_inspection {
         return Err(CliError::failure("ordinary inspection requires the direct Oven loader"));
     }
     prepare_workspace_with_native_authority(
         request,
-        Some(InspectionNativeAuthority::Ordinary { observation, rustc }),
+        Some(InspectionNativeAuthority::Ordinary {
+            observation,
+            rustc,
+            toolchain,
+        }),
     )
 }
 
@@ -145,7 +152,12 @@ fn prepare_workspace_with_native_authority(
     let mut ordinary_native = None;
     let mut ordinary_toolchain = None;
     if direct_oven_inspection {
-        if let Some(InspectionNativeAuthority::Ordinary { observation, rustc }) = native.as_ref() {
+        if let Some(InspectionNativeAuthority::Ordinary {
+            observation,
+            rustc,
+            toolchain,
+        }) = native.as_ref()
+        {
             let authority = oven_source_authority
                 .as_ref()
                 .ok_or_else(|| CliError::failure("ordinary inspection lacks the requested compiler intent"))?;
@@ -158,6 +170,7 @@ fn prepare_workspace_with_native_authority(
                 authority,
                 rust_inspect_query_paths,
                 rust_derive_probe_paths,
+                toolchain.as_ref(),
             )?);
             ordinary_native = Some(observation.clone());
         } else if std::env::var_os(oven_rustc::loaf::OVEN_LOAF_ENV).is_some_and(|value| value == "1") {
