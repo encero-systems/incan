@@ -64,6 +64,12 @@ impl NativeLoafInspectionUnit {
         &self.root_module
     }
 
+    /// Borrow the complete inventoried source directory after revalidating its original retained owner.
+    pub fn source_root(&self) -> Result<std::path::PathBuf> {
+        self.selected.verify()?;
+        Ok(self.selected.native_owner.artifact_root.join("source"))
+    }
+
     /// Declared host procedural-macro source role; this grants no macro execution permission.
     pub fn is_proc_macro(&self) -> bool {
         self.proc_macro
