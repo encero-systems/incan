@@ -225,6 +225,18 @@ pub fn prepare_sdk_seed(
 
 /// Compile a resolved closure using one pinned index and profile through the SDK executor.
 pub fn prepare_closure(request: &ClosureCompileRequest<'_>) -> Result<SdkCompiledClosure, Error> {
+    let store = OvenStore::new(
+        request.output.join("store"),
+        OvenStoreLimits::new(4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024),
+    );
+    prepare_closure_in_store(request, &store)
+}
+
+/// Prepare the same resolved native units in the caller's Store, keeping staging separate from retained bytes.
+pub(crate) fn prepare_closure_in_store(
+    request: &ClosureCompileRequest<'_>,
+    store: &OvenStore,
+) -> Result<SdkCompiledClosure, Error> {
     if !matches!(request.profile, "debug" | "release") {
         return Err("closure profile must be debug or release".into());
     }
@@ -243,16 +255,12 @@ pub fn prepare_closure(request: &ClosureCompileRequest<'_>) -> Result<SdkCompile
     let toolchain = rustc_identity(rustc)?;
     let scratch = tempfile::Builder::new().prefix("sdk-source-").tempdir_in(output)?;
     let units = prepare_units(seed.units, scratch.path(), request, &toolchain)?;
-    let store = OvenStore::new(
-        output.join("store"),
-        OvenStoreLimits::new(4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024),
-    );
     let context = CompileContext {
         rustc,
         target,
         toolchain: &toolchain,
         output,
-        store: &store,
+        store,
         compiler_digest: compiler_closure_digest(rustc, target)?,
         compiler_executable: oven_store::store::digest_regular_file(&rustc.canonicalize()?)?.1,
         profile,

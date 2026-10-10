@@ -126,6 +126,7 @@ fn execute(
             &rustc,
             &dependencies,
             &declaration_owner,
+            &store,
         )?)
     };
     let empty = NativeLoafGraph::default().select(&[])?;
@@ -402,6 +403,99 @@ mod tests {
         assert_ne!(first.identity, second.identity);
         first.verify_identity()?;
         second.verify_identity()?;
+        Ok(())
+    }
+
+    /// Compatible checkouts retain one native dependency generation in the command's selected Store.
+    #[test]
+    fn native_dependencies_share_test_store_across_checkouts() -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = tempfile::tempdir()?;
+        let root = fixture.path().canonicalize()?;
+        let shared_store = root.join("shared-store");
+        let rustc = oven_rustc::rustc::resolve_active_rustc()?;
+        for checkout in ["one", "two"] {
+            let checkout = root.join(checkout);
+            std::fs::create_dir_all(checkout.join("dependency/src"))?;
+            std::fs::create_dir_all(checkout.join("tests"))?;
+            std::fs::write(
+                checkout.join("dependency/loaf.toml"),
+                "[project]\nname='dependency'\nversion='1.0.0'\n[rust]\nname='dependency'\ntype='lib'\nedition='2024'\n",
+            )?;
+            std::fs::write(checkout.join("dependency/src/lib.rs"), "pub const VALUE: u8 = 7;\n")?;
+            std::fs::write(
+                checkout.join("tests/root.loaf.toml"),
+                "[project]\nname='shared-native-test'\nversion='1.0.0'\n[dependencies]\ndependency={loaf='dependency',path='../dependency'}\n",
+            )?;
+            std::fs::write(
+                checkout.join("tests/root.rs"),
+                "#[test] fn case() { assert_eq!(dependency::VALUE, 7); }\n",
+            )?;
+            std::fs::write(
+                checkout.join("lock.json"),
+                r#"{"schema":"incan.oven.loaf-resolution/2","units":[]}"#,
+            )?;
+            std::fs::write(
+                checkout.join("graph.json"),
+                r#"{"index_commit":"0000000000000000000000000000000000000000","registry_lock":"lock.json","facets":[{"project":"dependency","features":[],"domain":"target"}]}"#,
+            )?;
+        }
+        for phase in ["first", "repeat"] {
+            for name in ["one", "two"] {
+                let checkout = root.join(name);
+                let output = checkout.join(format!("outputs/{phase}"));
+                execute(
+                    checkout.clone(),
+                    PathBuf::from("tests/root.rs"),
+                    None,
+                    Some(checkout.join("graph.json")),
+                    Some(root.clone()),
+                    Some(root.clone()),
+                    Vec::new(),
+                    vec!["case".into()],
+                    output.clone(),
+                    OvenStoreCommandOptions {
+                        root: Some(shared_store.clone()),
+                        max_physical_bytes: Some(64 * 1024 * 1024),
+                        max_domain_physical_bytes: Some(64 * 1024 * 1024),
+                        max_domain_logical_bytes: Some(64 * 1024 * 1024),
+                    },
+                    root.join("fixtures"),
+                    rustc.clone(),
+                )?;
+                let report: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(output.join("compiler-suite-report.json"))?)?;
+                assert_eq!(report["success"], true);
+                assert_eq!(report["test_binary_reused"], phase == "repeat");
+                let preparation: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(output.join("native-loaf-preparation.json"))?)?;
+                assert_eq!(
+                    preparation["native"]["compiled"]
+                        .as_array()
+                        .ok_or("missing native work")?
+                        .len(),
+                    usize::from(phase == "first" && name == "one")
+                );
+                if phase == "repeat" {
+                    assert_eq!(preparation["native"]["preparation_calls"], 0);
+                }
+                assert!(!checkout.join("target/compiler-development/native-loafs/store").exists());
+            }
+        }
+        let store = OvenStore::new(
+            shared_store,
+            OvenStoreLimits::new(64 * 1024 * 1024, 64 * 1024 * 1024, 64 * 1024 * 1024),
+        );
+        let inspection = store.inspect()?;
+        for domain in ["sdk-source-unit-target", "native-loaf-record"] {
+            assert_eq!(
+                inspection
+                    .entries
+                    .iter()
+                    .filter(|entry| entry.manifest.domain == domain)
+                    .count(),
+                1
+            );
+        }
         Ok(())
     }
 
