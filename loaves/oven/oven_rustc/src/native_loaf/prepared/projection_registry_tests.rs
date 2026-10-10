@@ -12,6 +12,11 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 fn cold_registry_consumer_preserves_edges_codegen_and_runtime() -> TestResult {
     with_fixture(|root, original, store| {
         let mut lock = write_registry(root)?;
+        let document: serde_json::Value = serde_json::from_slice(&std::fs::read(root.join("graph.json"))?)?;
+        let pin = document["index_commit"].as_str().ok_or("fixture pin missing")?;
+        let mut transport = crate::sdk_closure::current_inputs::PinnedIndexBatch::open(root, pin)?;
+        let batched = transport.work().requests > 0;
+        transport.finish()?;
         std::fs::write(
             root.join("loaf.toml"),
             "[project]\nname='consumer'\nversion='1.0.0'\n[dependencies]\nparent={loaf='crates-io/parent',version='^1.0'}\n",
@@ -28,6 +33,18 @@ fn cold_registry_consumer_preserves_edges_codegen_and_runtime() -> TestResult {
             assert_eq!(prepared.report().compiled.len(), if repeat { 0 } else { 2 });
             assert_eq!(prepared.report().prepared_units, if repeat { 0 } else { 2 });
             assert_eq!(prepared.report().preparation_calls, usize::from(!repeat));
+            let work = &prepared.report().preparation_index_reads;
+            if repeat {
+                assert_eq!(work.processes, 0);
+                assert_eq!(work.file_requests, 0);
+            } else {
+                assert_eq!(work.processes, if batched { 3 } else { 11 });
+                assert_eq!(work.requests, if batched { 5 } else { 0 });
+                assert_eq!(work.file_requests, 4);
+                assert_eq!(work.blob_reads, 4);
+                assert_eq!(work.cache_hits, 0);
+                assert!(work.blob_bytes > 0);
+            }
             assert_eq!(prepared.closure().graph().units().len(), 2);
             assert_eq!(run_consumer(root, request.rustc, prepared.closure())?, "7");
             let parent = prepared

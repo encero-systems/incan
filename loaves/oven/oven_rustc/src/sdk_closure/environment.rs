@@ -1,6 +1,8 @@
 //! Cargo-compatible package inputs restored from pinned adoption data, never from Cargo files.
 
-use super::{Error, PreparedUnit, SdkLockedUnit, index_file};
+#[cfg(test)]
+use super::index_file;
+use super::{Error, PreparedUnit, SdkLockedUnit};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -77,6 +79,7 @@ pub(super) fn package_environment(unit: &PreparedUnit) -> Result<BTreeMap<String
 ///
 /// Events are processed in sequence order, so a later record-about adoption supersedes its earlier metadata.
 /// No mutable index worktree or upstream Cargo manifest supplies compilation inputs.
+#[cfg(test)]
 pub(super) fn adopted_about(
     index: &Path,
     commit: &str,
@@ -91,6 +94,7 @@ pub(super) fn adopted_about(
 }
 
 /// List pinned event coordinates independently of file reads; the working-tree contents remain irrelevant.
+#[cfg(test)]
 pub(super) fn adoption_paths(index: &Path, commit: &str) -> Result<Vec<String>, Error> {
     adoption_paths_with_counter(index, commit, &mut 0)
 }
