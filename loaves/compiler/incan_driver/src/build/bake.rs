@@ -469,6 +469,58 @@ fn direct_rustc_composition_failure(error: &OvenRustcError) -> bool {
         || report.unstructured_output.contains(STABLE_CRATE_ID_COLLISION)
 }
 
+/// Retain a successful ordinary executable in the existing completed-output loaf store.
+///
+/// Source authority is observed before preparation and checked again after execution. Changed inputs refuse
+/// publication instead of associating an old executable with a newer source tree. Ordinary outputs carry no
+/// whole-project inspection authority and therefore cannot satisfy explicit multi-target bake reuse.
+pub fn publish_ordinary_project_output(
+    prepared: &OvenPreparedProject,
+    native_output: &Path,
+    source_authority: &str,
+    preparation_identity: &str,
+    report: &crate::build_report::BuildReport,
+) -> CliResult<()> {
+    if super::source_authority::digest_baked_project_source_authority(&prepared.project_root)? != source_authority
+        || super::source_authority::ordinary_preparation_identity_digest()? != preparation_identity
+    {
+        return Err(CliError::failure(
+            "project inputs changed during build; completed output was not published",
+        ));
+    }
+    let files = project_output_bake_files(
+        &prepared.project_root,
+        &prepared.generator,
+        native_output,
+        None,
+        None,
+        &[],
+    )?;
+    let backend_receipt = report
+        .backend
+        .clone()
+        .ok_or_else(|| CliError::failure("ordinary build has no backend receipt"))?;
+    let mut payload = project_output_payload_for_bake(OvenProjectOutputBakeRequest {
+        project_root: &prepared.project_root,
+        entrypoint: &prepared.entrypoint,
+        target: OvenBakeProjectTarget::Executable,
+        receipt: &prepared.receipt,
+        plan_identity: prepared.plan_selection.report_identity(),
+        profile: &prepared.receipt.intent.profile,
+        source_authority_digest: source_authority,
+        lock_dependencies_fingerprint: baked_project_lock_dependencies_fingerprint(&prepared.project_root)?,
+        files: files.clone(),
+        inspection_authority: None,
+        required_project_loafs: Vec::new(),
+        package_loaf_store_relative_path: None,
+        backend_receipt,
+        build_report: Some(project_output_report_snapshot(&prepared.project_root, report)?),
+    })?;
+    payload.preparation_identity_digest = Some(preparation_identity.to_string());
+    let _output = publish_project_output_loaf(&open_default_oven_store()?, &prepared.receipt, &payload, &files)?;
+    Ok(())
+}
+
 /// Select the default sealed release output without entering frontend or report reconstruction.
 pub fn select_default_executable_project_output(
     file_path: &str,
@@ -2165,7 +2217,7 @@ fn bake_oven_project_targets_with_admission(
                 source_authority_digest: &source_authority_digest,
                 lock_dependencies_fingerprint: lock_dependencies_fingerprint.clone(),
                 files: files.clone(),
-                inspection_authority: inspection_authority.reference.clone(),
+                inspection_authority: Some(inspection_authority.reference.clone()),
                 required_project_loafs: pending.required_project_loafs,
                 package_loaf_store_relative_path: pending.package_loaf_store_relative_path,
                 backend_receipt: pending.backend_receipt,
@@ -2174,8 +2226,8 @@ fn bake_oven_project_targets_with_admission(
             payload.inspection_authority_snapshot = Some(inspection_authority.snapshot.clone());
             published_outputs.push(publish_project_output_loaf(&store, &pending.receipt, &payload, &files)?);
         }
-        // Keep every sibling output and the authority leased through completion. A tight policy must fail this bake
-        // rather than prune an earlier target/profile and then report a partial project as successfully prepared.
+        // Keep every sibling output and the authority leased through completion. Retention sweeps must preserve
+        // earlier targets/profiles while bounded publications complete, even above the aggregate retention target.
         // The inspection authority names the selected dependency envelope's exact plan. Retain that selection until
         // every output Loaf is visible: otherwise a later output admission can prune the now-unleased constituent and
         // leave a source-current authority that points at a missing closure.
@@ -2525,6 +2577,75 @@ mod tests {
         };
         assert!(error.to_string().contains("src/lib.incn"));
         assert!(error.to_string().contains("src/main.incn"));
+        Ok(())
+    }
+    /// Ordinary builds publish their own loaf; unchanged repeats and output repairs never enter preparation.
+    #[test]
+    fn ordinary_build_reuses_before_frontend_and_invalidates_restored_mtime_edits()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let project = root.path().join("project");
+        fs::create_dir_all(project.join("src"))?;
+        fs::write(
+            project.join("loaf.toml"),
+            "[project]\nname = \"ordinary_reuse\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n",
+        )?;
+        let source = project.join("src/main.incn");
+        fs::write(&source, "def main() -> None:\n    println(42)\n")?;
+        let build = |require_reuse: bool| {
+            let mut command = incan_test_support::incan_command();
+            command
+                .arg("build")
+                .current_dir(&project)
+                .env("INCAN_HOME", root.path().join("home"));
+            // The parent fixture's native reuse guard must not prohibit this child's intentional cold/edit builds.
+            command.env_remove("INCAN_TEST_REQUIRE_STORED_NATIVE_REUSE");
+            command.env_remove("INCAN_TEST_REQUIRE_COMPLETED_PROJECT_REUSE");
+            if require_reuse {
+                command.env("INCAN_TEST_REQUIRE_COMPLETED_PROJECT_REUSE", "1");
+            }
+            command.output()
+        };
+        let first = build(false)?;
+        assert!(first.status.success(), "{}", String::from_utf8_lossy(&first.stderr));
+        let binary = project.join("target/incan/ordinary_reuse/oven/release/ordinary_reuse");
+        let first_bytes = fs::read(&binary)?;
+        let first_modified = fs::metadata(&binary)?.modified()?;
+        let unchanged = build(true)?;
+        assert!(
+            unchanged.status.success(),
+            "{}",
+            String::from_utf8_lossy(&unchanged.stderr)
+        );
+        assert_eq!(first_bytes, fs::read(&binary)?);
+        assert_eq!(first_modified, fs::metadata(&binary)?.modified()?);
+        let modified = fs::metadata(&source)?.modified()?;
+        fs::write(&source, "def main() -> None:\n    println(43)\n")?;
+        fs::File::options()
+            .write(true)
+            .open(&source)?
+            .set_times(fs::FileTimes::new().set_modified(modified))?;
+        let refused = build(true)?;
+        assert!(
+            !refused.status.success(),
+            "changed source incorrectly reused an old executable"
+        );
+        assert!(String::from_utf8_lossy(&refused.stderr).contains("before frontend preparation"));
+        let changed = build(false)?;
+        assert!(changed.status.success(), "{}", String::from_utf8_lossy(&changed.stderr));
+        let output = std::process::Command::new(&binary).output()?;
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"43\n");
+        fs::write(&binary, b"damaged output")?;
+        let repaired = build(true)?;
+        assert!(
+            repaired.status.success(),
+            "{}",
+            String::from_utf8_lossy(&repaired.stderr)
+        );
+        let output = std::process::Command::new(&binary).output()?;
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"43\n");
         Ok(())
     }
 }

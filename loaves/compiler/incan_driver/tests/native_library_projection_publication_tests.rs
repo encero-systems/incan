@@ -103,11 +103,11 @@ fn published_fixture(
         source_authority_digest: &digest_baked_project_source_authority(project.path())?,
         lock_dependencies_fingerprint: baked_project_lock_dependencies_fingerprint(project.path())?,
         files: files.clone(),
-        inspection_authority: OvenProjectInspectionAuthorityRef {
+        inspection_authority: Some(OvenProjectInspectionAuthorityRef {
             identity: "sha256:fixture-authority".into(),
             receipt_identity: "sha256:fixture-authority-receipt".into(),
             build_unit_identity: "sha256:fixture-authority-unit".into(),
-        },
+        }),
         required_project_loafs: Vec::new(),
         package_loaf_store_relative_path: None,
         backend_receipt: backend_receipt.clone(),

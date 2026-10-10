@@ -54,6 +54,11 @@ fn stamp_metadata(metadata: &fs::Metadata) -> io::Result<FileStamp> {
     if !metadata.is_file() {
         return Err(io::Error::other("build input must be a regular file"));
     }
+    observation_stamp(metadata)
+}
+
+/// Observe identity, permissions and nanosecond change times for either a regular file or a directory.
+fn observation_stamp(metadata: &fs::Metadata) -> io::Result<FileStamp> {
     let modified = metadata
         .modified()?
         .duration_since(std::time::UNIX_EPOCH)
@@ -67,6 +72,7 @@ fn stamp_metadata(metadata: &fs::Metadata) -> io::Result<FileStamp> {
             metadata.ino(),
             metadata.ctime().cast_unsigned(),
             metadata.ctime_nsec().cast_unsigned(),
+            u64::from(metadata.mode()),
         ]
     };
     #[cfg(not(unix))]
@@ -76,6 +82,84 @@ fn stamp_metadata(metadata: &fs::Metadata) -> io::Result<FileStamp> {
         modified,
         identity,
     })
+}
+
+/// Cached child names share the existing observation store; source content authority remains in file records.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DirectoryRecord {
+    schema: String,
+    stamp: FileStamp,
+    children: Vec<PathBuf>,
+}
+
+/// Observe a real directory without following a symlink into an unowned source tree.
+pub(super) fn stat_directory(path: &Path) -> io::Result<FileStamp> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(io::Error::other("build input must be a regular directory"));
+    }
+    observation_stamp(&metadata)
+}
+
+/// Reconcile known children by directory identity, enumerating only changed directories.
+///
+/// Every returned file still passes the existing file-digest observation. Unsupported identity platforms enumerate
+/// conservatively. Callers check the returned directory stamp again after visiting its children to reject concurrent
+/// topology changes; failed or malformed local records only lose acceleration.
+pub(super) fn directory_entries(path: &Path) -> io::Result<(Vec<PathBuf>, FileStamp)> {
+    directory_entries_in(path, cache_root().as_deref())
+}
+
+/// Read one directory observation using an explicit cache root for isolated tests.
+fn directory_entries_in(path: &Path, cache: Option<&Path>) -> io::Result<(Vec<PathBuf>, FileStamp)> {
+    let before = stat_directory(path)?;
+    let cache_path = cache.map(|root| {
+        root.join("directories").join(format!(
+            "{:x}.json",
+            Sha256::digest(path.as_os_str().as_encoded_bytes())
+        ))
+    });
+    let retained = cache_path
+        .as_ref()
+        .and_then(|path| fs::read(path).ok())
+        .and_then(|bytes| serde_json::from_slice::<DirectoryRecord>(&bytes).ok())
+        .filter(|record| {
+            !before.identity.is_empty() && record.schema == "directory-children/1" && record.stamp == before
+        })
+        .filter(|record| {
+            record.children.windows(2).all(|pair| pair[0] < pair[1])
+                && record.children.iter().all(|child| {
+                    let mut parts = child.components();
+                    matches!(parts.next(), Some(std::path::Component::Normal(_))) && parts.next().is_none()
+                })
+        });
+    let (children, enumerated) = match retained {
+        Some(record) => (record.children, false),
+        None => {
+            let mut names = fs::read_dir(path)?
+                .map(|entry| entry.map(|entry| PathBuf::from(entry.file_name())))
+                .collect::<io::Result<Vec<_>>>()?;
+            names.sort();
+            (names, true)
+        }
+    };
+    if stat_directory(path)? != before {
+        return Err(io::Error::other("build directory changed while reconciling"));
+    }
+    if enumerated && let Some(cache_path) = cache_path {
+        let record = DirectoryRecord {
+            schema: "directory-children/1".into(),
+            stamp: stat_directory(path)?,
+            children: children.clone(),
+        };
+        if record.stamp != before {
+            return Err(io::Error::other("build directory changed before retaining observation"));
+        }
+        let _published = publish_json(&cache_path, &record);
+    }
+    tracing::trace!(target: "incan::invocation", input = %path.display(), directory_listings = u64::from(enumerated), decision = if enumerated { "enumerate_directory" } else { "reuse_children" });
+    Ok((children.into_iter().map(|child| path.join(child)).collect(), before))
 }
 
 /// Resolve optional local cache storage through the same home precedence as the Oven store.
@@ -311,6 +395,69 @@ mod tests {
             cold.as_secs_f64() * 1000.0,
             started.elapsed().as_secs_f64() * 1000.0
         );
+        Ok(())
+    }
+    /// Unchanged directories retain names, while additions, deletion and replacement invalidate observations.
+    #[test]
+    fn directory_children_reconcile_topology_and_corrupt_records() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let directory = root.path().join("src");
+        let cache = root.path().join("cache");
+        fs::create_dir(&directory)?;
+        fs::write(directory.join("one.incn"), b"first")?;
+        let (first, stamp) = directory_entries_in(&directory, Some(&cache))?;
+        assert_eq!(first, directory_entries_in(&directory, Some(&cache))?.0);
+        fs::write(directory.join("two.incn"), b"second")?;
+        let (second, changed) = directory_entries_in(&directory, Some(&cache))?;
+        assert_ne!(stamp, changed);
+        assert_eq!(second.len(), 2);
+        fs::remove_file(directory.join("one.incn"))?;
+        assert_eq!(
+            directory_entries_in(&directory, Some(&cache))?.0,
+            vec![directory.join("two.incn")]
+        );
+        for entry in fs::read_dir(cache.join("directories"))? {
+            fs::write(entry?.path(), b"invalid json")?;
+        }
+        assert_eq!(
+            directory_entries_in(&directory, Some(&cache))?.0,
+            vec![directory.join("two.incn")]
+        );
+        #[cfg(unix)]
+        {
+            let link = root.path().join("link");
+            std::os::unix::fs::symlink(&directory, &link)?;
+            assert!(directory_entries_in(&link, Some(&cache)).is_err());
+        }
+        Ok(())
+    }
+    /// Unchanged and identical-byte replacements reuse named authority without running its parser transformation.
+    #[test]
+    fn named_authority_reuses_metadata_and_content_records() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let cache = root.path().join("cache");
+        let source = root.path().join("main.incn");
+        fs::write(&source, b"same source")?;
+        let calls = std::cell::Cell::new(0);
+        let digest = || {
+            digest_file_with_in(&source, Some(&cache), "test-authority/1", |bytes| {
+                calls.set(calls.get() + 1);
+                Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
+            })
+        };
+        let first = digest()?;
+        assert_eq!(first, digest()?);
+        fs::write(&source, b"same source")?;
+        assert_eq!(first, digest()?);
+        assert_eq!(calls.get(), 1);
+        let modified = fs::metadata(&source)?.modified()?;
+        fs::write(&source, b"edit source")?;
+        fs::File::options()
+            .write(true)
+            .open(&source)?
+            .set_times(fs::FileTimes::new().set_modified(modified))?;
+        assert_ne!(first, digest()?);
+        assert_eq!(calls.get(), 2);
         Ok(())
     }
 }

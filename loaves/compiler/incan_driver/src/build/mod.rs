@@ -90,10 +90,10 @@ pub const OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION: u32 = 7;
 
 /// Current wire schema for completed receipt-bound project-output Loafs.
 ///
-/// Version 13 carries the verified default backend execution receipt alongside every completed output. This lets a
-/// source-current cache hit retain the same compiler-backend provenance as the explicit bake without trusting a stale
-/// report snapshot.
-pub const OVEN_PROJECT_OUTPUT_PAYLOAD_SCHEMA_VERSION: u32 = 13;
+/// Version 14 also admits successful ordinary executable builds with exact preparation identity, without requiring
+/// the whole-project inspection authority owned by an explicit multi-target bake. Version 13 introduced the verified
+/// backend receipt retained by both publication forms.
+pub const OVEN_PROJECT_OUTPUT_PAYLOAD_SCHEMA_VERSION: u32 = 14;
 
 pub const OVEN_PROJECT_OUTPUT_PROJECTION_SCHEMA_VERSION: u32 = 3;
 
@@ -581,6 +581,10 @@ pub struct OvenProjectOutputPayload {
     /// hit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compiler_identity_digest: Option<String>,
+    /// Ordinary-command preparation inputs, including exact compiler bytes and explicit SDK/environment selections.
+    /// Explicit project bakes retain their independently sealed inspection authority instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preparation_identity_digest: Option<String>,
     pub compiler_version: String,
     pub entrypoint_relative_path: String,
     pub build_unit_identity: String,
@@ -671,7 +675,8 @@ pub struct OvenProjectOutputBakeRequest<'a> {
     pub source_authority_digest: &'a str,
     pub lock_dependencies_fingerprint: Option<String>,
     pub files: Vec<OvenProjectOutputBakeFile>,
-    pub inspection_authority: OvenProjectInspectionAuthorityRef,
+    /// Explicit bakes retain inspection authority; ordinary completed outputs need only their executable authority.
+    pub inspection_authority: Option<OvenProjectInspectionAuthorityRef>,
     pub required_project_loafs: Vec<OvenPackagedLibraryLoafEntry>,
     pub package_loaf_store_relative_path: Option<String>,
     pub backend_receipt: BackendExecutionReceipt,

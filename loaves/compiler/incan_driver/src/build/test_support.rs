@@ -112,7 +112,7 @@ pub fn fixture_project_output_publication_for(
         source_authority_digest: &digest_baked_project_source_authority(project_root)?,
         lock_dependencies_fingerprint: baked_project_lock_dependencies_fingerprint(project_root)?,
         files: files.clone(),
-        inspection_authority,
+        inspection_authority: Some(inspection_authority),
         required_project_loafs: Vec::new(),
         package_loaf_store_relative_path: None,
         backend_receipt,

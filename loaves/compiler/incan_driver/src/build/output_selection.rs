@@ -186,6 +186,7 @@ pub fn matching_baked_project_outputs_with_source_authority(
     let Some(native_target) = native_project_output_target() else {
         return Ok(Vec::new());
     };
+    let preparation_identity = super::source_authority::ordinary_preparation_identity_digest().ok();
     let selected = store
         .select_payloads_matching_for_execution(
             |manifest| {
@@ -204,6 +205,10 @@ pub fn matching_baked_project_outputs_with_source_authority(
                     && payload.project_target == target.as_str()
                     && payload.target_identity == target_identity
                     && payload.source_authority_digest == source_authority_digest
+                    && payload
+                        .preparation_identity_digest
+                        .as_ref()
+                        .is_none_or(|identity| Some(identity) == preparation_identity.as_ref())
                     && payload.compiler_version == INCAN_VERSION
                     && payload.entrypoint_relative_path == entrypoint_relative_path
                     && payload.receipt_identity == manifest.receipt_identity
@@ -942,6 +947,62 @@ mod tests {
         Ok(())
     }
 
+    /// An ordinary output shares the completed-loaf selector but cannot reuse another preparation configuration.
+    #[test]
+    fn ordinary_project_output_requires_exact_preparation_identity() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        fs::create_dir(project.path().join("src"))?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = \"fixture\"\n")?;
+        fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
+        let (receipt, mut payload, files) =
+            crate::build::test_support::fixture_project_output_publication(project.path(), "release", "ordinary")?;
+        let store_root = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            store_root.path(),
+            oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        payload.inspection_authority = None;
+        assert!(publish_project_output_loaf(&store, &receipt, &payload, &files).is_err());
+        payload.preparation_identity_digest = Some("sha256:other-preparation".into());
+        publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        let entrypoint = project.path().join("src/main.incn");
+        assert!(
+            select_baked_project_output(
+                &store,
+                project.path(),
+                &entrypoint,
+                OvenBakeProjectTarget::Executable,
+                "release"
+            )?
+            .is_none()
+        );
+        payload.preparation_identity_digest =
+            Some(super::super::source_authority::ordinary_preparation_identity_digest()?);
+        publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        assert!(
+            select_baked_project_output(
+                &store,
+                project.path(),
+                &entrypoint,
+                OvenBakeProjectTarget::Executable,
+                "release"
+            )?
+            .is_some()
+        );
+        fs::write(&entrypoint, "def main() -> None:\n    println(1)\n")?;
+        assert!(
+            select_baked_project_output(
+                &store,
+                project.path(),
+                &entrypoint,
+                OvenBakeProjectTarget::Executable,
+                "release"
+            )?
+            .is_none()
+        );
+        Ok(())
+    }
+
     #[test]
     fn project_output_loaf_selects_only_the_exact_authored_project_before_frontend_work()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -985,6 +1046,7 @@ mod tests {
             dependency_authority_digest: None,
             lock_dependencies_fingerprint: baked_project_lock_dependencies_fingerprint(project.path())?,
             compiler_identity_digest: None,
+            preparation_identity_digest: None,
             compiler_version: INCAN_VERSION.to_string(),
             entrypoint_relative_path: "src/main.incn".to_string(),
             build_unit_identity: receipt.build_unit_identity.clone(),
@@ -1041,11 +1103,11 @@ mod tests {
             source_authority_digest: &payload.source_authority_digest,
             lock_dependencies_fingerprint: payload.lock_dependencies_fingerprint.clone(),
             files: files.clone(),
-            inspection_authority: OvenProjectInspectionAuthorityRef {
+            inspection_authority: Some(OvenProjectInspectionAuthorityRef {
                 identity: String::new(),
                 receipt_identity: receipt.identity.clone(),
                 build_unit_identity: receipt.build_unit_identity.clone(),
-            },
+            }),
             required_project_loafs: Vec::new(),
             package_loaf_store_relative_path: None,
             backend_receipt: payload.backend_receipt.clone(),

@@ -12,7 +12,9 @@ use std::{env, fs};
 use crate::commands::build_report::{emit_build_report, emit_rust_inspection_report, emit_workspace_build_report};
 use crate::{CliError, CliResult, ExitCode};
 use incan_driver::build::backend_selection::{default_backend_receipt_path, write_backend_receipt};
-use incan_driver::build::bake::{bake_oven_library, bake_oven_project, select_default_executable_project_output};
+use incan_driver::build::bake::{
+    bake_oven_library, bake_oven_project, publish_ordinary_project_output, select_default_executable_project_output,
+};
 use incan_driver::build::inline_command::{inline_command_project, wrap_inline_command_source};
 use incan_driver::build::library_exports::resolve_library_project_root;
 use incan_driver::build::library_outputs::{
@@ -176,6 +178,22 @@ pub(crate) fn build_file_report(
         );
         return completed_executable_output_report(&project_root, &selected, &backend_receipt, total_start);
     }
+    // Retain authority before any frontend work; the same existing loaf selector consumes this on the next command.
+    let completed_authority = if output_dir.is_none()
+        && options.package_features == FeatureSelection::default()
+        && options.sdk_profile.is_none()
+    {
+        project_root_for_completed_output(&normalized_project_entrypoint(file_path)?)?
+            .map(|root| {
+                Ok::<_, CliError>((
+                    incan_driver::build::source_authority::digest_baked_project_source_authority(&root)?,
+                    incan_driver::build::source_authority::ordinary_preparation_identity_digest()?,
+                ))
+            })
+            .transpose()?
+    } else {
+        None
+    };
     let prepare_start = Instant::now();
     let prepared = prepare_oven_project(
         file_path,
@@ -218,6 +236,15 @@ pub(crate) fn build_file_report(
     timings_ms.insert("oven_build".to_string(), oven_build_ms);
     timings_ms.insert("total".to_string(), elapsed_ms(total_start));
     let report = report_draft.finish(timings_ms);
+    if let Some((source_authority, preparation_identity)) = completed_authority {
+        publish_ordinary_project_output(
+            &prepared,
+            &bake.output,
+            &source_authority,
+            &preparation_identity,
+            &report,
+        )?;
+    }
     serde_json::to_value(report)
         .map_err(|error| CliError::failure(format!("failed to serialize Oven build report: {error}")))
 }
