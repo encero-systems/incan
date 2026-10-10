@@ -16,6 +16,7 @@ pub mod requirements;
 pub mod sdk_build;
 pub mod sdk_native;
 pub mod sdk_store;
+pub mod source_policy;
 #[cfg(any(test, feature = "test_support"))]
 pub mod test_support;
 pub mod vocab_extraction;

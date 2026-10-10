@@ -7,6 +7,7 @@ mod features;
 pub mod namespaces;
 mod plan;
 mod sdk;
+pub mod source_policy;
 pub mod stdlib_sources;
 
 pub use features::*;

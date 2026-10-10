@@ -5,12 +5,11 @@
 
 use std::collections::BTreeSet;
 use std::fs::{self, File, Metadata};
-use std::io::{Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
-use std::time::SystemTime;
 
 use super::executable_search_bases_for;
+use super::file_observation::{self, FileIdentity, ObservationError};
 use crate::digest::digest_bytes;
 
 /// Stable installation-relative ordinary package descriptor, shared by the compiler and installer.
@@ -77,25 +76,6 @@ struct DescriptorCoordinate {
     root: PathBuf,
     path: PathBuf,
     file_identity: FileIdentity,
-}
-
-/// Stable identity of an opened regular file, distinct from its content digest.
-#[derive(Debug, PartialEq, Eq)]
-struct FileIdentity {
-    #[cfg(unix)]
-    device: u64,
-    #[cfg(unix)]
-    inode: u64,
-}
-
-/// Detect ordinary concurrent modifications while reading bytes without making timestamps authority for reuse.
-#[derive(PartialEq, Eq)]
-struct FileObservation {
-    identity: FileIdentity,
-    length: u64,
-    modified: SystemTime,
-    #[cfg(unix)]
-    changed: (i64, i64),
 }
 
 impl CompilerOwnedInstalledData {
@@ -266,49 +246,33 @@ fn descriptor_in_root(root: PathBuf) -> Result<Option<DescriptorCoordinate>, Com
     Err(invalid(&path, "descriptor coordinate is empty"))
 }
 
-/// Read actual bytes through an existing handle and reject modifications observed during that read.
+/// Reuse the shared stable original-handle observation without changing installed descriptor selection.
 fn read_stable(file: &mut File, path: &Path) -> Result<(Vec<u8>, FileIdentity), CompilerOwnedInstalledDataError> {
-    let before = file_observation(&file.metadata().map_err(|source| io(path, source))?, path)?;
-    file.seek(SeekFrom::Start(0)).map_err(|source| io(path, source))?;
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes).map_err(|source| io(path, source))?;
-    let after = file_observation(&file.metadata().map_err(|source| io(path, source))?, path)?;
-    if before != after {
-        return Err(invalid(path, "descriptor changed while reading"));
-    }
-    Ok((bytes, after.identity))
+    file_observation::read_stable(file, path).map_err(CompilerOwnedInstalledDataError::from)
 }
 
-/// Preserve physical identity rather than treating equal content at a new file as the retained original owner.
-#[cfg(unix)]
+/// Preserve the existing installed anchor's original-file identity requirement.
 fn file_identity(metadata: &Metadata) -> Result<FileIdentity, CompilerOwnedInstalledDataError> {
-    use std::os::unix::fs::MetadataExt;
-    Ok(FileIdentity {
-        device: metadata.dev(),
-        inode: metadata.ino(),
-    })
+    file_observation::file_identity(metadata).map_err(CompilerOwnedInstalledDataError::from)
 }
 
-/// Refuse unsupported platforms instead of substituting timestamps or equal bytes for a same-file witness.
-#[cfg(not(unix))]
-fn file_identity(_metadata: &Metadata) -> Result<FileIdentity, CompilerOwnedInstalledDataError> {
-    Err(CompilerOwnedInstalledDataError::UnsupportedFileIdentity)
-}
-
-/// Capture read stability while leaving timestamps outside the retained descriptor's semantic identity.
-fn file_observation(metadata: &Metadata, path: &Path) -> Result<FileObservation, CompilerOwnedInstalledDataError> {
-    if !metadata.is_file() {
-        return Err(invalid(path, "descriptor handle must own a regular file"));
+impl From<ObservationError> for CompilerOwnedInstalledDataError {
+    /// Preserve failed coordinates and original errors across the shared physical observation boundary.
+    fn from(error: ObservationError) -> Self {
+        match error {
+            ObservationError::Io { path, source } => Self::Io { path, source },
+            ObservationError::Invalid { path, reason } => Self::Invalid {
+                path,
+                reason: match reason {
+                    "file changed while reading" => "descriptor changed while reading",
+                    "handle must own a regular file" => "descriptor handle must own a regular file",
+                    reason => reason,
+                },
+            },
+            #[cfg(not(unix))]
+            ObservationError::UnsupportedFileIdentity => Self::UnsupportedFileIdentity,
+        }
     }
-    #[cfg(unix)]
-    use std::os::unix::fs::MetadataExt;
-    Ok(FileObservation {
-        identity: file_identity(metadata)?,
-        length: metadata.len(),
-        modified: metadata.modified().map_err(|source| io(path, source))?,
-        #[cfg(unix)]
-        changed: (metadata.ctime(), metadata.ctime_nsec()),
-    })
 }
 
 /// Open a descriptor read-only, retaining its original OS file handle.
