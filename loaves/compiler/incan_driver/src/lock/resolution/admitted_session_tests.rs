@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use incan_provider::FeatureSelection;
+use incan_provider::test_support::parsed_module_for_test;
 use oven_model::lock::{IncanLock, LOCK_FILENAME};
 use oven_store::store::OvenStoreLimits;
 
@@ -99,5 +100,65 @@ fn admitted_ordinary_lock_writer_refuses_workspace_sibling_authority() -> Result
     assert!(error.to_string().contains("standalone project authority"), "{error}");
     assert_eq!(project_lock_collection_counts(), (0, 0));
     assert!(!root.path().join(LOCK_FILENAME).exists());
+    Ok(())
+}
+
+/// A genuine admitted session accepts source-only scalar usage and refuses every explicit root-prelude spelling.
+#[test]
+fn admitted_ordinary_module_usage_refuses_explicit_prelude_without_owner() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let (_, session) = ordinary_session(root.path())?;
+    let scalar = parsed_module_for_test("pub def answer() -> int:\n    return 42\n")?;
+    assert!(session.provider_module_paths(std::slice::from_ref(&scalar)).is_empty());
+    let first = session.provider_plan_for_modules(std::slice::from_ref(&scalar))?;
+    let repeat = session.provider_plan_for_modules(&[scalar])?;
+    assert!(Arc::ptr_eq(&first, &repeat));
+    for source in [
+        "import std.prelude\n",
+        "from std.prelude import Clone\n",
+        "from std import prelude\n",
+    ] {
+        let parsed = parsed_module_for_test(source)?;
+        let paths = session.provider_module_paths(std::slice::from_ref(&parsed));
+        assert!(paths.contains(&vec!["std".to_string(), "prelude".to_string()]));
+        let error = session
+            .provider_plan_for_modules(&[parsed])
+            .err()
+            .ok_or("explicit prelude import acquired an absent namespace owner")?;
+        assert!(error.to_string().contains("std.prelude"), "{error}");
+        assert!(
+            error.to_string().contains("lacks an admitted namespace owner"),
+            "{error}"
+        );
+    }
+    Ok(())
+}
+
+/// The actual canonical writer preserves explicit prelude imports, including imports inside inline test modules.
+#[test]
+fn admitted_ordinary_lock_writer_refuses_explicit_and_nested_prelude_without_owner()
+-> Result<(), Box<dyn std::error::Error>> {
+    for source in [
+        "import std.prelude\npub def answer() -> int:\n    return 42\n",
+        "from std.prelude import Clone\npub def answer() -> int:\n    return 42\n",
+        "from std import prelude\npub def answer() -> int:\n    return 42\n",
+        "pub def answer() -> int:\n    return 42\nmodule tests:\n    import std.prelude\n    def test_answer() -> None:\n        pass\n",
+    ] {
+        let root = tempfile::tempdir()?;
+        let (entry, session) = ordinary_session(root.path())?;
+        fs::write(&entry, source)?;
+        reset_project_lock_collection_metrics();
+        let error = publish_oven_project_lock_with_admitted_session(
+            root.path(),
+            &entry,
+            &FeatureSelection::default(),
+            &session,
+        )
+        .err()
+        .ok_or("canonical lock accepted an absent explicit prelude owner")?;
+        assert!(error.to_string().contains("std.prelude"), "{error}");
+        assert_eq!(project_lock_collection_counts(), (1, 0));
+        assert!(!root.path().join(LOCK_FILENAME).exists());
+    }
     Ok(())
 }

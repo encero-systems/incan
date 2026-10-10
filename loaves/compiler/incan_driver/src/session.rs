@@ -35,8 +35,8 @@ use incan_frontend::typechecker::TypeCheckInfo;
 use incan_frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_frontend::{diagnostics, lexer, parser, vocab_desugar_pass};
 use incan_provider::inventory::{
-    discover_or_reuse_published_sdk_inventory, provider_used_module_paths, resolve_sdk_component_selection,
-    sdk_provider_bootstrap_namespace_roots, validate_component_inventory_selection,
+    discover_or_reuse_published_sdk_inventory, provider_source_used_module_paths, provider_used_module_paths,
+    resolve_sdk_component_selection, sdk_provider_bootstrap_namespace_roots, validate_component_inventory_selection,
 };
 use incan_provider::requirements::{
     DependencyManifestMode, SdkInventorySource, checked_source_library_manifest_index,
@@ -853,7 +853,19 @@ impl CompilationSession {
 
     /// Resolve module participation from this session's immutable provider, feature, and SDK inputs.
     pub fn provider_plan_for_modules(&self, modules: &[ParsedModule]) -> CliResult<Arc<ProviderPlan>> {
-        self.provider_plan_for_used_module_paths(provider_used_module_paths(modules))
+        self.provider_plan_for_used_module_paths(self.provider_module_paths(modules))
+    }
+
+    /// Collect this session's module-use facts without confusing ordinary namespace use with legacy core linkage.
+    ///
+    /// Admitted ordinary dependencies require exact source use. Discovered legacy sessions retain their existing
+    /// synthetic prelude link requirement. Explicit prelude imports are preserved by both routes.
+    pub(crate) fn provider_module_paths(&self, modules: &[ParsedModule]) -> BTreeSet<Vec<String>> {
+        if self.admitted_library_dependencies.is_some() {
+            provider_source_used_module_paths(modules)
+        } else {
+            provider_used_module_paths(modules)
+        }
     }
 
     /// Resolve one provider projection from canonical module paths while retaining the session's authority snapshot.
