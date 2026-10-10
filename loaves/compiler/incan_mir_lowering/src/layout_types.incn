@@ -6,6 +6,7 @@ from pub::incan_mir_plan import PlanType, ListLeaf, EnumDeclaration
 from models import model_type
 from enums import enum_type
 from collections import primitive_leaf
+from closures import signature_input
 
 
 pub def native_source_type(
@@ -28,7 +29,7 @@ pub def native_source_type(
             for parameter in parameters:
                 if parameter.kind != IncanCallableParamKind.Normal or parameter.is_mut:
                     return Err("unsupported Body IR function pointer with rest or mutable parameters")
-                signature.append(native_source_type(nominals, enums, unions, parameter.ty, intrinsics)?)
+                signature.append(signature_input(native_source_type(nominals, enums, unions, parameter.ty, intrinsics)?))
             signature.append(native_source_type(nominals, enums, unions, result, intrinsics)?)
             return Ok(PlanType.FunctionPointer(signature))
         RustType.Generic(base=base, args=arguments) =>
