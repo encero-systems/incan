@@ -1672,7 +1672,17 @@ fn bake_oven_project_targets_with_admission(
     let mut generated_sources = BTreeMap::new();
     let mut profiles = Vec::new();
     let mut pending_outputs = Vec::new();
-    let mut debug_target_receipts = Vec::new();
+    let inspection_profile = admitted
+        .and_then(AdmittedLibraryPreparation::ordinary_native)
+        .map(|native| {
+            native
+                .metadata()
+                .inspection_request()
+                .map(|(profile, _)| profile.to_string())
+        })
+        .transpose()?
+        .unwrap_or_else(|| "debug".to_string());
+    let mut inspection_target_receipts = Vec::new();
     let mut library_inspection_constituent: Option<LibraryInspectionConstituent> = None;
     // Every prepared target keeps the store leases of the plans it selected or published. Those leases must outlive
     // the whole bake, not just the target's own loop arm: the inspection authority sealed after the loop names those
@@ -1758,11 +1768,11 @@ fn bake_oven_project_targets_with_admission(
                     let mut package_profiles = BTreeMap::new();
                     let mut completed_outputs = Vec::new();
                     for (profile, selected_profile) in &selected.profiles {
-                        if profile == "debug" {
-                            debug_target_receipts.push(selected_profile.receipt.clone());
+                        if profile == &inspection_profile {
+                            inspection_target_receipts.push(selected_profile.receipt.clone());
                         }
-                        if profile == "debug" {
-                            // The library's debug plan is the constituent that lets a test unit inspect the library's
+                        if profile == &inspection_profile {
+                            // The selected library plan is the constituent that lets a test unit inspect the library's
                             // dependencies. A direct-rustc bake stores it whole, and its rust-inspect workspace holds
                             // the Cargo bootstrap's generated Rust. When the closure is not loadable as independently
                             // compiled parts, the bounded compatibility baker publishes the library as a store-owned
@@ -1964,8 +1974,8 @@ fn bake_oven_project_targets_with_admission(
                         if let Some(manifest_dir) = prepared.rust_inspect_manifest_dir.as_ref() {
                             rust_inspect_manifest_dirs.insert(manifest_dir.clone());
                         }
-                        if profile == "debug" {
-                            debug_target_receipts.push(prepared.receipt.clone());
+                        if profile == inspection_profile.as_str() {
+                            inspection_target_receipts.push(prepared.receipt.clone());
                         }
                         let receipt = project_bake_receipt_path(&project_root, target, &prepared.entrypoint, profile)?;
                         write_receipt(&prepared.receipt, &receipt)
@@ -2031,9 +2041,9 @@ fn bake_oven_project_targets_with_admission(
         let test_dependency_envelope = if let Some(native) = ordinary_native {
             native.test_envelope(
                 &store,
-                debug_target_receipts
-                    .first()
-                    .ok_or_else(|| CliError::failure("ordinary library publication requires its debug receipt"))?,
+                inspection_target_receipts.first().ok_or_else(|| {
+                    CliError::failure("ordinary library publication lacks its requested inspection receipt")
+                })?,
                 dependency_surface,
                 &project_root,
             )?
@@ -2042,7 +2052,7 @@ fn bake_oven_project_targets_with_admission(
                 &store,
                 &project_root,
                 dependency_surface,
-                &debug_target_receipts,
+                &inspection_target_receipts,
                 Some(&mut authority_context),
             )?
         };
@@ -2054,10 +2064,10 @@ fn bake_oven_project_targets_with_admission(
         let (registry_dependencies, dev_registry_dependencies) =
             crate::build::plan_selection::canonical_project_inspection_dependencies_with_native_sdk(
                 dependency_surface,
-                debug_target_receipts.first(),
+                inspection_target_receipts.first(),
                 native_sdk_context.as_deref(),
             )?;
-        if debug_target_receipts
+        if inspection_target_receipts
             .first()
             .is_some_and(|receipt| receipt.sources.build_unit_inputs.contains_key("sdk-native-closure"))
         {
@@ -2130,7 +2140,7 @@ fn bake_oven_project_targets_with_admission(
         }
         // Keep every sibling output and the authority leased through completion. A tight policy must fail this bake
         // rather than prune an earlier target/profile and then report a partial project as successfully prepared.
-        // The inspection authority names the debug test dependency envelope's exact plan. Retain that selection until
+        // The inspection authority names the selected dependency envelope's exact plan. Retain that selection until
         // every output Loaf is visible: otherwise a later output admission can prune the now-unleased constituent and
         // leave a source-current authority that points at a missing closure.
         let outputs = published_outputs

@@ -1386,6 +1386,47 @@ impl ProjectGenerator {
         facade
     }
 
+    /// Include compiler bridge paths in the emitted root before its backend identity is recorded.
+    ///
+    /// An ordinary source publication owns its modules at crate root. Only its retained source capability can map
+    /// those same emitted modules into the compiler's standard namespace; other local modules gain no such alias.
+    pub(crate) fn project_owned_standard_namespace(
+        &self,
+        crate_root: &mut String,
+        modules: &HashMap<Vec<String>, String>,
+        plan: &ProviderPlan,
+    ) -> io::Result<()> {
+        let Some(source) = plan.standard_source_publication() else {
+            return Ok(());
+        };
+        plan.verify_standard_source_publication()
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+        let roots = modules
+            .keys()
+            .filter_map(|path| path.first())
+            .filter(|root| source.namespace_roots().contains(&root.as_str()))
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        if roots.is_empty() {
+            return Ok(());
+        }
+        if self.is_binary
+            || modules
+                .keys()
+                .any(|path| path.first().map(String::as_str) == Some(stdlib::INCAN_STD_NAMESPACE))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "own-source standard namespace conflicts with the emitted project",
+            ));
+        }
+        crate_root.push('\n');
+        crate_root.push_str(&self.compiled_provider_facade(&roots));
+        Ok(())
+    }
+
     /// Keep Rust implementation lints from leaking through compiled Incan provider crates.
     ///
     /// Incan owns declaration reachability and identifier style for provider source. Private metadata declarations and

@@ -44,8 +44,16 @@ fn project(root: &std::path::Path, extra: &str) -> Result<(ProjectManifest, Prov
 
 /// Capture a genuine checked scalar contract using the same frontend exports and demand collector as production.
 fn checked(root: &std::path::Path) -> Result<CheckedLibraryRequirements, Box<dyn std::error::Error>> {
+    checked_source(root, SCALAR)
+}
+
+/// Run real checking and contract capture for an ordinary source case, including non-scalar declarations.
+fn checked_source(
+    root: &std::path::Path,
+    source: &str,
+) -> Result<CheckedLibraryRequirements, Box<dyn std::error::Error>> {
     let (project, providers) = project(root, "")?;
-    let module = module(root, SCALAR)?;
+    let module = module(root, source)?;
     let mut checker = TypeChecker::new();
     checker.set_current_package_identity(Some("ordinary".to_string()));
     checker.set_current_module_path(Some(module.path_segments.clone()));
@@ -57,7 +65,7 @@ fn checked(root: &std::path::Path) -> Result<CheckedLibraryRequirements, Box<dyn
     let abi = BTreeSet::new();
     let demands =
         capture_checked_native_demands(&project, std::slice::from_ref(&module), &requirements, &providers, &abi)?;
-    demands.require_support_only()?;
+    demands.require_ordinary_source_inspection()?;
     let sources = [("src/lib.incn".to_string(), module.path_segments.clone())].into();
     Ok(CheckedLibraryRequirements::capture(CheckedLibraryCapture {
         project: &project,
@@ -74,6 +82,106 @@ fn checked(root: &std::path::Path) -> Result<CheckedLibraryRequirements, Box<dyn
         backend: None,
         native_demands: demands,
     })?)
+}
+
+/// Ordinary source shapes reach real checking, retain their checked exports and roundtrip with explicit demand facts.
+#[test]
+fn ordinary_native_checked_generic_and_model_source_roundtrip() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let source = "pub model Holder:\n    value: int\n\npub def first_or[T](values: list[T], fallback: T) -> T:\n    if len(values) > 0:\n        return values[0]\n    return fallback\n";
+    let contract = checked_source(root.path(), source)?;
+    contract.require_ordinary_source_inspection_native()?;
+    assert!(contract.require_source_inspection_native().is_err());
+    assert!(!contract.caller_exports()?.is_empty());
+    let payload = serde_json::to_value(&contract)?;
+    let decoded: CheckedLibraryRequirements = serde_json::from_value(payload.clone())?;
+    decoded.require_ordinary_source_inspection_native()?;
+    for (field, value) in [
+        ("native_imports", serde_json::json!(["unbound::item"])),
+        ("native_crates", serde_json::json!(["unbound"])),
+        ("schema_version", serde_json::json!(999)),
+    ] {
+        let mut changed = payload.clone();
+        changed["native_demands"]["observed"]["ordinary_source"][field] = value;
+        let decoded: CheckedLibraryRequirements = serde_json::from_value(changed)?;
+        assert!(decoded.require_ordinary_source_inspection_native().is_err(), "{field}");
+    }
+    let mut missing = payload;
+    missing["native_demands"]["observed"]
+        .as_object_mut()
+        .ok_or("facts missing")?
+        .remove("ordinary_source");
+    let decoded: CheckedLibraryRequirements = serde_json::from_value(missing)?;
+    assert!(decoded.require_ordinary_source_inspection_native().is_err());
+    Ok(())
+}
+
+/// Broad Incan declaration coverage cannot grant foreign source, provider namespaces or unsupported native execution.
+#[test]
+fn ordinary_native_loaded_source_refuses_unbound_native_and_provider_demands() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let (project, providers) = project(root.path(), "")?;
+    for source in [
+        "from rust::foreign import item\npub def answer() -> int:\n    return 42\n",
+        "import std.prelude\npub def answer() -> int:\n    return 42\n",
+        "import pub::other\npub def answer() -> int:\n    return 42\n",
+    ] {
+        let parsed = module(root.path(), source)?;
+        let demands = capture_checked_native_demands(
+            &project,
+            &[parsed],
+            &ProjectRequirements::default(),
+            &providers,
+            &BTreeSet::new(),
+        )?;
+        assert!(demands.require_ordinary_source_inspection().is_err(), "{source}");
+    }
+    let parsed = module(root.path(), SCALAR)?;
+    let demands = capture_checked_native_demands(
+        &project,
+        &[parsed],
+        &ProjectRequirements::default(),
+        &providers,
+        &["unbound::item".to_string()].into(),
+    )?;
+    assert!(demands.require_ordinary_source_inspection().is_err());
+    Ok(())
+}
+
+/// Publication collects its explicit mandatory-facet ABI imports independently of consumer prewarm exclusions.
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn ordinary_native_publication_captures_mandatory_facet_imports() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let (project, providers) = project(root.path(), "")?;
+    let parsed = module(
+        root.path(),
+        "from rust::incan_std_core::errors import raise_value_error\n",
+    )?;
+    let queries =
+        crate::build::library_exports::collect_library_rust_abi_query_paths(std::slice::from_ref(&parsed), &[])
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+    assert_eq!(
+        queries,
+        ["incan_std_core::errors::raise_value_error".to_string()].into()
+    );
+    let requirements = incan_provider::requirements::collect_project_requirements(
+        std::slice::from_ref(&parsed),
+        &LibraryManifestIndex::default(),
+    )?;
+    assert_eq!(requirements.stdlib_facets, vec!["incan_std_core"]);
+    let demands = capture_checked_native_demands(
+        &project,
+        std::slice::from_ref(&parsed),
+        &requirements,
+        &providers,
+        &queries,
+    )?;
+    demands.require_ordinary_source_inspection()?;
+    let missing = capture_checked_native_demands(&project, &[parsed], &requirements, &providers, &BTreeSet::new())?;
+    assert!(missing.require_ordinary_source_inspection().is_err());
+    Ok(())
 }
 
 /// Real checked primitive parameters, defaults, bindings and arithmetic preserve explicit coverage on roundtrip.
@@ -207,6 +315,7 @@ fn ordinary_native_demands_derive_collector_preserves_real_paths() -> TestResult
         ["provider::prelude::Component".to_string()].into()
     );
     assert!(demands.require_support_only().is_err());
+    assert!(demands.require_ordinary_source_inspection().is_err());
     Ok(())
 }
 
@@ -229,6 +338,7 @@ fn ordinary_native_demands_manifest_vocabulary_and_c_are_not_empty() -> TestResu
         )?;
         assert!(demands.require_support_only().is_err());
         assert!(demands.require_source_inspection().is_err());
+        assert!(demands.require_ordinary_source_inspection().is_err());
         let facts = demands.observed.ok_or("facts missing")?;
         assert!(
             matches!(facts.vocab_manifest, ManifestDemand::Declared(_))

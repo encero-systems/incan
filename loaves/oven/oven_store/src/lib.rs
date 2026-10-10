@@ -1512,6 +1512,28 @@ impl OvenProjectSourceTreeEvidence {
         Ok(digest_bytes(&payload))
     }
 
+    /// Hash this observation apart from one exact coordinate bound independently by the caller's full recipe.
+    ///
+    /// The coordinate is part of this projection's identity, including before the file exists. This digest alone
+    /// cannot authorize a file change; callers must also retain and validate the complete source observation.
+    pub fn digest_except_exact_file(&self, relative: &Path) -> Result<String, OvenError> {
+        let key = source_evidence_relative_file(relative)?;
+        let remaining = self
+            .records
+            .iter()
+            .filter(|(path, _)| *path != &key)
+            .collect::<BTreeMap<_, _>>();
+        if remaining.is_empty() {
+            return Err(OvenError::InvalidProjectSource {
+                path: relative.to_path_buf(),
+                message: "source projection must retain authored input beyond the excluded file".into(),
+            });
+        }
+        let payload = serde_json::to_vec(&("incan-source-exact-file-projection-v1", key, remaining))
+            .map_err(|error| OvenError::Serialize(error.to_string()))?;
+        Ok(digest_bytes(&payload))
+    }
+
     /// Compare complete observed trees allowing only one explicit safe file coordinate to differ.
     /// At least one snapshot must contain that file; missing knowledge never proves an authorized empty change.
     pub fn unchanged_except_exact_file(&self, later: &Self, relative: &Path) -> Result<bool, OvenError> {
@@ -2480,12 +2502,21 @@ mod project_source_evidence_controls {
         fs::write(root.path().join("oven.lock"), "published lock")?;
         let later = project_source_tree_evidence(root.path())?;
         assert_ne!(first.digest()?, later.digest()?);
+        assert_eq!(
+            first.digest_except_exact_file(Path::new("oven.lock"))?,
+            later.digest_except_exact_file(Path::new("oven.lock"))?
+        );
+        assert_ne!(
+            first.digest_except_exact_file(Path::new("oven.lock"))?,
+            first.digest_except_exact_file(Path::new("different.lock"))?
+        );
         assert!(first.unchanged_except_exact_file(&later, Path::new("oven.lock"))?);
         assert_eq!(
             later.file_digest(Path::new("oven.lock"))?,
             Some(digest_bytes(b"published lock").as_str())
         );
         for unsafe_path in ["", "../oven.lock", "/oven.lock", "./oven.lock", "nested//oven.lock"] {
+            assert!(first.digest_except_exact_file(Path::new(unsafe_path)).is_err());
             assert!(
                 first
                     .unchanged_except_exact_file(&later, Path::new(unsafe_path))
@@ -2498,6 +2529,17 @@ mod project_source_evidence_controls {
         fs::File::options().write(true).open(&source)?.set_modified(modified)?;
         let changed = project_source_tree_evidence(root.path())?;
         assert!(!first.unchanged_except_exact_file(&changed, Path::new("oven.lock"))?);
+        assert_ne!(
+            first.digest_except_exact_file(Path::new("oven.lock"))?,
+            changed.digest_except_exact_file(Path::new("oven.lock"))?
+        );
+        let only_lock = tempfile::tempdir()?;
+        fs::write(only_lock.path().join("oven.lock"), "published lock")?;
+        assert!(
+            project_source_tree_evidence(only_lock.path())?
+                .digest_except_exact_file(Path::new("oven.lock"))
+                .is_err()
+        );
         Ok(())
     }
 

@@ -8,6 +8,89 @@ use crate::backend::ir::test_support::{
 use crate::backend::ir::{AstLowering, IrCodegen, IrEmitter};
 use incan_frontend::{lexer, parser};
 
+/// A genuine source owner maps only emitted owned roots; a default plan and conflicting roots cannot grant it.
+#[cfg(unix)]
+#[test]
+fn ordinary_source_namespace_projection_preserves_original_roots() -> Result<(), Box<dyn std::error::Error>> {
+    use crate::backend::project::ProjectGenerator;
+    use incan_frontend::provider::source_policy::TrustedStandardSourcePublication;
+    use incan_provider::ProviderPlan;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    const CHILD: &str = "INCAN_ORDINARY_NAMESPACE_PROJECTION_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let layout = tempfile::tempdir()?;
+        let executable = layout.path().join("bin/incan");
+        std::fs::create_dir_all(executable.parent().ok_or("missing executable parent")?)?;
+        if std::fs::hard_link(std::env::current_exe()?, &executable).is_err() {
+            std::fs::copy(std::env::current_exe()?, &executable)?;
+        }
+        let policy = incan_lang::lang::standard_packages::standard_package_namespace_policy("incan_stdlib_core")
+            .ok_or("missing pinned core policy")?;
+        let package = layout.path().join("stdlib").join(policy.source_directory);
+        std::fs::create_dir_all(&package)?;
+        std::fs::write(package.join("loaf.toml"), policy.declaration)?;
+        let output = std::process::Command::new(executable)
+            .args([
+                "--exact",
+                "backend::project::tests::codegen_generator::ordinary_source_namespace_projection_preserves_original_roots",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD, "1")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+        return Ok(());
+    }
+
+    let source = Arc::new(
+        TrustedStandardSourcePublication::discover("incan_stdlib_core")?.ok_or("missing genuine core source")?,
+    );
+    let root = source.verified_package_root()?;
+    let plan = ProviderPlan::default().with_standard_source_publication(
+        Arc::clone(&source),
+        &root,
+        "incan_stdlib_core",
+        "0.6.0-dev.6",
+    )?;
+    let output = tempfile::tempdir()?;
+    let generator = ProjectGenerator::new(output.path(), "ordinary_core", false);
+    let mut modules: HashMap<Vec<String>, String> = [
+        (vec!["traits".into(), "callable".into()], "pub trait Callable {}".into()),
+        (vec!["application".into()], "pub struct Unowned;".into()),
+    ]
+    .into();
+    let original = "// __INCAN_INSERT_MODS__\n";
+    let mut unowned = original.to_string();
+    generator.project_owned_standard_namespace(&mut unowned, &modules, &ProviderPlan::default())?;
+    assert_eq!(unowned, original);
+
+    let mut projected = original.to_string();
+    generator.project_owned_standard_namespace(&mut projected, &modules, &plan)?;
+    assert!(projected.contains("pub use crate::traits;"), "{projected}");
+    assert!(!projected.contains("pub use crate::application;"), "{projected}");
+    assert!(!projected.contains("pub use crate::derives;"), "{projected}");
+    generator.generate_nested(&projected, &modules)?;
+    let emitted = std::fs::read_to_string(generator.crate_root_path())?;
+    assert!(emitted.contains("pub mod __incan_std"), "{emitted}");
+    assert!(emitted.contains("pub mod application;"), "{emitted}");
+
+    modules.insert(vec!["__incan_std".into()], String::new());
+    assert!(
+        generator
+            .project_owned_standard_namespace(&mut String::new(), &modules, &plan)
+            .is_err()
+    );
+    Ok(())
+}
+
 #[test]
 fn generated_rust_warning_clean() -> Result<(), Box<dyn std::error::Error>> {
     use crate::backend::project::ProjectGenerator;

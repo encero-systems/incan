@@ -704,7 +704,10 @@ fn semantic_authority(
             if native_sdk.is_some() {
                 return Err(invalid("ordinary metadata cannot substitute SDK publication authority"));
             }
-            (native.semantic_inputs()?, Some(native.standard_source_digest()?))
+            (
+                native.semantic_inputs()?,
+                Some(native.standard_source_digest(session.provider_plan.standard_source_publication())?),
+            )
         }
         NativeMetadataAuthority::SdkPublication => {
             let context = native_sdk.ok_or_else(|| invalid("original SDK publication authority is unavailable"))?;
@@ -832,7 +835,7 @@ pub(super) fn prepare_replayed_library(request: ReplayRequest<'_>) -> CliResult<
         .ok_or_else(|| invalid("metadata owner lacks checked planning inputs"))?;
     contract.validate()?;
     if ordinary_native.is_some() {
-        contract.require_source_inspection_native()?;
+        contract.require_ordinary_source_inspection_native()?;
         if include_interop_execution {
             return Err(invalid("ordinary support-only replay cannot request interop execution"));
         }

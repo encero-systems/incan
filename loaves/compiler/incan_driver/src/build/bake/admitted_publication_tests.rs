@@ -28,6 +28,15 @@ pub(super) fn published_metadata(
     root: &Path,
     report: &OvenProjectBakeReport,
 ) -> Result<Arc<SelectedLibraryMetadata>, Box<dyn std::error::Error>> {
+    published_metadata_profiles(root, report, &["debug", "release"])
+}
+
+/// Verify the exact requested profile set and its original checked/generation owners.
+pub(super) fn published_metadata_profiles(
+    root: &Path,
+    report: &OvenProjectBakeReport,
+    profiles: &[&str],
+) -> Result<Arc<SelectedLibraryMetadata>, Box<dyn std::error::Error>> {
     let artifact = root.join("target/lib");
     let package: OvenPackagedLibraryLoafManifest =
         serde_json::from_slice(&fs::read(packaged_library_loaf_manifest_path(&artifact))?)?;
@@ -37,7 +46,7 @@ pub(super) fn published_metadata(
     );
     assert_eq!(
         package.profiles.keys().map(String::as_str).collect::<BTreeSet<_>>(),
-        ["debug", "release"].into()
+        profiles.iter().copied().collect()
     );
     assert_eq!(
         report
@@ -45,9 +54,9 @@ pub(super) fn published_metadata(
             .iter()
             .map(|profile| profile.profile.as_str())
             .collect::<BTreeSet<_>>(),
-        ["debug", "release"].into()
+        profiles.iter().copied().collect()
     );
-    assert_eq!(report.outputs.len(), 2);
+    assert_eq!(report.outputs.len(), profiles.len());
     for (profile, published) in &package.profiles {
         let output = artifact.join(&published.library_relative_path);
         assert_eq!(oven_store::digest_bytes(&fs::read(&output)?), published.library_digest);

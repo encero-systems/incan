@@ -11,8 +11,6 @@ use crate::build::rust_extern::RustExternDeclContext;
 use crate::error::{CliError, CliResult};
 use crate::project::resolve_project_root;
 #[cfg(feature = "rust_inspect")]
-use crate::rust_inspect_workspace::collect_rust_inspect_query_paths;
-#[cfg(feature = "rust_inspect")]
 use ::rust_inspect::Inspector;
 #[cfg(feature = "rust_inspect")]
 use ::rust_inspect::InspectorConfig;
@@ -32,7 +30,35 @@ pub fn collect_library_rust_abi_query_paths(
     modules: &[ParsedModule],
     rust_extern_contexts: &[RustExternDeclContext],
 ) -> Vec<String> {
-    let mut paths: BTreeSet<String> = collect_rust_inspect_query_paths(modules).into_iter().collect();
+    // Consumer prewarming can skip runtime facets. A durable publication must retain its own imported native ABI
+    // as well, regardless of that performance policy or the ambient prewarm environment.
+    let mut paths = BTreeSet::new();
+    for module in modules {
+        for declaration in &module.ast.declarations {
+            let Declaration::Import(import) = &declaration.node else {
+                continue;
+            };
+            let ImportKind::RustFrom {
+                crate_name,
+                path,
+                items,
+                ..
+            } = &import.kind
+            else {
+                continue;
+            };
+            let base = std::iter::once(crate_name.replace('-', "_"))
+                .chain(path.iter().cloned())
+                .collect::<Vec<_>>()
+                .join("::");
+            if matches!(base.as_str(), "std::primitive" | "core::primitive") {
+                continue;
+            }
+            for item in items {
+                paths.insert(format!("{base}::{}", item.name));
+            }
+        }
+    }
     for context in rust_extern_contexts {
         paths.insert(format!("{}::{}", context.rust_module_path, context.item_name));
     }

@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use incan_frontend::library_manifest::published_layout::packaged_library_loaf_manifest_path;
+use incan_frontend::provider::source_policy::TrustedStandardSourcePublication;
 use incan_frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_provider::FeatureSelection;
 use oven_model::lock::LOCK_FILENAME;
@@ -41,6 +42,14 @@ const ABI_SELECTOR: &str =
     "build::bake::ordinary_native_publication_tests::ordinary_native_sysroot_abi_publication_replay_and_runtime";
 const DECLARED_SELECTOR: &str =
     "build::bake::ordinary_native_publication_tests::ordinary_native_declared_rust_abi_publication_replay_and_runtime";
+const SYSTEM_SELECTOR: &str =
+    "build::bake::ordinary_native_publication_tests::ordinary_standard_system_publication_and_replay";
+const SYSTEM_DEBUG_SELECTOR: &str =
+    "build::bake::ordinary_native_publication_tests::ordinary_standard_system_debug_publication_and_replay";
+const CORE_SELECTOR: &str =
+    "build::bake::ordinary_native_publication_tests::ordinary_standard_core_publication_and_replay";
+const CORE_RELEASE_SELECTOR: &str =
+    "build::bake::ordinary_native_publication_tests::ordinary_standard_core_release_publication_and_replay";
 const PROFILES: [&str; 2] = ["debug", "release"];
 
 /// Select equivalent ordinary publication journeys with distinct native semantic demand owners.
@@ -109,6 +118,11 @@ fn decoy(root: &Path) -> TestResult {
 
 /// Execute only the ignored control beside the real compiler, with a uniquely owned copied libtest lifetime.
 fn child(selector: &str) -> TestResult {
+    child_profiles(selector, "all")
+}
+
+/// Execute the same isolated control with an exact explicit native profile selection.
+fn child_profiles(selector: &str, profiles: &str) -> TestResult {
     let compiler = required_path("CARGO_BIN_EXE_incan")?;
     for name in [
         "INCAN_ORDINARY_LIBRARY_GRAPH",
@@ -137,7 +151,7 @@ fn child(selector: &str) -> TestResult {
         // creates fresh projects and edits source; its own executor counters enforce unchanged publication reuse.
         .env_remove("INCAN_TEST_REQUIRE_STORED_NATIVE_REUSE")
         .env("CARGO_BIN_EXE_incan", &compiler)
-        .env("INCAN_OVEN_BAKE_PROFILES", "all")
+        .env("INCAN_OVEN_BAKE_PROFILES", profiles)
         .env("INCAN_HOME", isolated.path().join("home"))
         .env("INCAN_STDLIB", &ambient)
         .env("INCAN_SOURCE_ROOT", &ambient)
@@ -160,6 +174,176 @@ fn child(selector: &str) -> TestResult {
     );
     assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
     print!("{}", String::from_utf8_lossy(&output.stdout));
+    Ok(())
+}
+
+/// Publish the unchanged executable-owned system package through the ordinary producer and checked replay.
+#[test]
+#[ignore = "requires coherent source compiler/engine and explicit real standard-system native graph/index/blobs"]
+fn ordinary_standard_system_publication_and_replay() -> TestResult {
+    if std::env::var_os(CHILD).is_none() {
+        return child(SYSTEM_SELECTOR);
+    }
+    standard_source_publication(
+        "incan_stdlib_system",
+        "INCAN_ORDINARY_SYSTEM_GRAPH",
+        &["std::io::Read", "std::io::SeekFrom"],
+        &PROFILES,
+    )
+}
+
+/// Reach actual system source/publication gates independently of missing release-only native facts.
+#[test]
+#[ignore = "requires coherent source compiler/engine and explicit real standard-system native graph/index/blobs"]
+fn ordinary_standard_system_debug_publication_and_replay() -> TestResult {
+    if std::env::var_os(CHILD).is_none() {
+        return child_profiles(SYSTEM_DEBUG_SELECTOR, "debug");
+    }
+    standard_source_publication(
+        "incan_stdlib_system",
+        "INCAN_ORDINARY_SYSTEM_GRAPH",
+        &["std::io::Read", "std::io::SeekFrom"],
+        &["debug"],
+    )
+}
+
+/// Publish the actual core source and its own Rust facet before a dependent standard package is admitted.
+#[test]
+#[ignore = "requires coherent source compiler/engine and explicit real ordinary native graph/index/blobs"]
+fn ordinary_standard_core_publication_and_replay() -> TestResult {
+    if std::env::var_os(CHILD).is_none() {
+        return child(CORE_SELECTOR);
+    }
+    standard_source_publication(
+        "incan_stdlib_core",
+        "INCAN_ORDINARY_LIBRARY_GRAPH",
+        &["incan_std_core::errors::raise_value_error"],
+        &PROFILES,
+    )
+}
+
+/// A release-only ordinary request must publish and replay without preparing or inspecting a debug profile.
+#[test]
+#[ignore = "requires coherent source compiler/engine and explicit real ordinary native graph/index/blobs"]
+fn ordinary_standard_core_release_publication_and_replay() -> TestResult {
+    if std::env::var_os(CHILD).is_none() {
+        return child_profiles(CORE_RELEASE_SELECTOR, "release");
+    }
+    standard_source_publication(
+        "incan_stdlib_core",
+        "INCAN_ORDINARY_LIBRARY_GRAPH",
+        &["incan_std_core::errors::raise_value_error"],
+        &["release"],
+    )
+}
+
+/// Keep every requested profile, original source grant and published checked metadata owner in one journey.
+fn standard_source_publication(package: &str, graph: &str, required_abi: &[&str], profiles: &[&str]) -> TestResult {
+    let source =
+        Arc::new(TrustedStandardSourcePublication::discover(package)?.ok_or("standard package source unavailable")?);
+    let root = source.verified_package_root()?.to_path_buf();
+    let before = oven_store::project_source_tree_evidence(&root)?;
+    let rustc = resolve_active_rustc()?;
+    let target = rustc_host_target(&rustc)?;
+    let toolchain = rustc_identity(&rustc)?;
+    let dependencies = Arc::new(PreparedLibraryDependencies::admit(
+        &[],
+        &target,
+        &toolchain,
+        *open_default_oven_store()?.limits(),
+    )?);
+    let features = FeatureSelection::default();
+    let session = CompilationSession::discover_with_admitted_standard_source(
+        &root.join("src/lib.incn"),
+        &features,
+        dependencies,
+        Arc::clone(&source),
+    )?;
+    assert!(session.sdk_inventory.is_none());
+    assert!(session.sdk_components.is_none());
+    assert!(Arc::ptr_eq(
+        session
+            .provider_plan
+            .standard_source_publication()
+            .ok_or("own source authority lost")?,
+        &source,
+    ));
+    let manifest = session
+        .manifest
+        .as_ref()
+        .ok_or("standard package declaration missing")?;
+    let support = Arc::new(CompilerSupportSources::discover()?.ok_or("compiler support unavailable")?);
+    let output = tempfile::tempdir()?;
+    let native = Arc::new(OrdinaryLibraryNativeProfiles::prepare(OrdinaryLibraryNativeRequest {
+        support,
+        graph: &required_path(graph)?,
+        index: &required_path("INCAN_ORDINARY_LIBRARY_INDEX")?,
+        blobs: &required_path("INCAN_ORDINARY_LIBRARY_BLOBS")?,
+        output: output.path(),
+        rustc: &rustc,
+        target: &target,
+        profiles,
+    })?);
+    assert_eq!(
+        native.reports().keys().map(String::as_str).collect::<BTreeSet<_>>(),
+        profiles.iter().copied().collect()
+    );
+    native.verify_dependencies(&manifest.rust_dependency_values(), &root)?;
+    let input = AdmittedLibraryPreparation::with_ordinary_native(session, native)?;
+    let mut original_owner = None;
+    for _ in 0..2 {
+        let _ = super::take_library_native_output_work();
+        let result = bake_admitted_library(&input, &features, None);
+        let after = oven_store::project_source_tree_evidence(&root)?;
+        if before.digest()? != after.digest()? {
+            assert!(before.unchanged_except_exact_file(&after, Path::new("oven.lock"))?);
+        }
+        let report = result?;
+        let (compiled, reused) = super::take_library_native_output_work();
+        let metadata = super::admitted_publication_tests::published_metadata_profiles(&root, &report, profiles)?;
+        let store = oven_store::store::OvenStore::with_release(
+            &report.store,
+            *open_default_oven_store()?.limits(),
+            &incan_oven_facet::compiler_identity(),
+        );
+        for profile in profiles {
+            let output = crate::build::output_selection::select_baked_project_output(
+                &store,
+                &root,
+                &root.join("src/lib.incn"),
+                crate::build::OvenBakeProjectTarget::Library,
+                profile,
+            )?
+            .ok_or("ordinary source-current output missing")?;
+            let payload = &output.payload;
+            let authority = oven_rustc::rustc::load_project_inspection_authority(
+                &store,
+                payload
+                    .inspection_authority
+                    .as_ref()
+                    .ok_or("inspection authority missing")?,
+                &payload.project_identity,
+                &payload.source_authority_digest,
+                &payload.compiler_version,
+            )?;
+            assert_eq!(
+                authority.payload.test_dependency_envelope.is_some(),
+                profiles.contains(&"debug")
+            );
+            assert!(!authority.payload.constituents.is_empty());
+        }
+        crate::build::library_metadata::validate_required_rust_abi(
+            metadata.manifest(),
+            &required_abi.iter().map(|path| (*path).to_string()).collect(),
+        )?;
+        let owner = metadata.reference().owner_identity.clone();
+        if let Some(original) = &original_owner {
+            assert_eq!(original, &owner);
+            assert_eq!((compiled, reused), (0, profiles.len()));
+        } else {
+            original_owner = Some(owner);
+        }
+    }
     Ok(())
 }
 

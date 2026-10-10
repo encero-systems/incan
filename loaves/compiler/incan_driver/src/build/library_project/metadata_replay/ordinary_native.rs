@@ -14,7 +14,7 @@ use oven_rustc::native_loaf::NativeLoafRequestObservation;
 #[cfg(feature = "rust_inspect")]
 use oven_rustc::rustc::{OvenRustInspectionToolchain, prepare_rust_inspection_toolchain};
 use oven_rustc::rustc::{rustc_host_target, rustc_identity};
-use oven_store::{OvenBuildIntent, digest_project_source_tree};
+use oven_store::{OvenBuildIntent, project_source_tree_evidence};
 
 use super::invalid;
 
@@ -80,6 +80,16 @@ impl OrdinaryNativeMetadataAuthority {
         &self.observations
     }
 
+    /// Borrow an originally requested inspection profile, preferring debug only when it is already included.
+    /// This does not prepare another profile; the inspection handoff still verifies the original observation.
+    pub(crate) fn inspection_request(&self) -> CliResult<(&str, &NativeLoafRequestObservation)> {
+        self.observations
+            .get_key_value("debug")
+            .or_else(|| self.observations.first_key_value())
+            .map(|(profile, observation)| (profile.as_str(), observation))
+            .ok_or_else(|| invalid("ordinary inspection lacks an original requested native profile"))
+    }
+
     /// Borrow the genuine support source capability for explicit inspection and planning integration.
     pub(crate) fn support(&self) -> &Arc<CompilerSupportSources> {
         &self.support
@@ -120,11 +130,28 @@ impl OrdinaryNativeMetadataAuthority {
         }))
     }
 
-    /// Conservatively observe the complete canonical standard source tree through its genuine retained owner.
-    /// Narrowing to linked physical inputs would omit semantic and macro inputs and is deliberately unavailable.
-    pub(super) fn standard_source_digest(&self) -> CliResult<String> {
-        digest_project_source_tree(self.support.verified_standard_source_root()?)
-            .map_err(|error| invalid(error.to_string()))
+    /// Observe the complete standard tree, keeping an own-package lock in its independent full source recipe.
+    ///
+    /// Only genuine source publication can identify that exact canonical lock. Other source, native and macro
+    /// inputs remain covered here; the metadata lock transition still proves the actual writer and complete tree.
+    pub(super) fn standard_source_digest(
+        &self,
+        own_source: Option<&Arc<incan_frontend::provider::source_policy::TrustedStandardSourcePublication>>,
+    ) -> CliResult<String> {
+        let standard_root = self.support.verified_standard_source_root()?;
+        let tree = project_source_tree_evidence(standard_root).map_err(|error| invalid(error.to_string()))?;
+        if let Some(source) = own_source {
+            let package_root = source
+                .verified_package_root()
+                .map_err(|error| invalid(error.to_string()))?;
+            let lock = super::lock_transition::canonical_lock_coordinate(&package_root)?;
+            if let Ok(relative) = lock.strip_prefix(standard_root) {
+                return tree
+                    .digest_except_exact_file(relative)
+                    .map_err(|error| invalid(error.to_string()));
+            }
+        }
+        tree.digest().map_err(|error| invalid(error.to_string()))
     }
 
     /// Verify the requested full producer observation at a physical profile handoff, retaining its original owners.
