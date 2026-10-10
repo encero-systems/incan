@@ -146,13 +146,16 @@ fn reuse_native(
     domain: &str,
     filename: &str,
 ) -> Result<Option<OvenDirectRustcBake>, OvenRustcError> {
-    let candidates = store.select_payloads_matching_for_execution(|manifest| {
-        manifest.kind == OvenArtifactKind::Engine
-            && manifest.domain == domain
-            && manifest.receipt_identity == request.receipt.identity
-            && manifest.build_unit_identity == request.receipt.build_unit_identity
-            && manifest.intent == request.receipt.intent
-    })?;
+    let candidates = store.select_payloads_matching_for_execution(
+        |manifest| {
+            manifest.kind == OvenArtifactKind::Engine
+                && manifest.domain == domain
+                && manifest.receipt_identity == request.receipt.identity
+                && manifest.build_unit_identity == request.receipt.build_unit_identity
+                && manifest.intent == request.receipt.intent
+        },
+        |_, _| true,
+    )?;
     for candidate in candidates {
         let stored: StoredNativeOutput = serde_json::from_slice(&candidate.payload).map_err(recipe_error)?;
         if stored.record.inputs != *expected || stored.environment != *environment {

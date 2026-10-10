@@ -579,17 +579,20 @@ impl PublishedOvenStore {
     ///
     /// The shared manager lock prevents a concurrent publisher from pruning candidates before their active leases
     /// are acquired. Missing locks are errors: a consumer cannot repair a published artifact in place. Before
-    /// importing source files, verify their closure with [`OvenStoreExecutionPayload::verify_materialized_files`].
-    pub fn select_payloads_matching_for_execution<F>(
+    /// The payload predicate runs after integrity verification and before lease acquisition. Before importing source
+    /// files, verify their closure with [`OvenStoreExecutionPayload::verify_materialized_files`].
+    pub fn select_payloads_matching_for_execution<F, P>(
         &self,
         matches: F,
+        payload_matches: P,
     ) -> Result<Vec<OvenStoreExecutionPayload>, OvenStoreError>
     where
         F: Fn(&OvenArtifactManifest) -> bool,
+        P: Fn(&OvenArtifactManifest, &[u8]) -> bool,
     {
         let _manager = self.manager_lock()?;
         Ok(
-            select_matching_execution_payloads(&self.root.join(ENTRIES_DIRECTORY), matches)?
+            select_matching_execution_payloads(&self.root.join(ENTRIES_DIRECTORY), matches, payload_matches)?
                 .into_iter()
                 .map(|(_, payload)| payload)
                 .collect(),
@@ -1298,11 +1301,14 @@ impl OvenStore {
     }
 
     /// Admit a complete exact batch under one manager lock, optionally reporting absent entry directories as a miss.
+    #[track_caller]
     fn select_execution_payloads(
         &self,
         identities: &[String],
         allow_missing: bool,
     ) -> Result<Vec<OvenStoreExecutionPayload>, OvenStoreError> {
+        let caller = std::panic::Location::caller();
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_store::select_exact_payloads", input = ?identities, caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
         validate_execution_identities(identities)?;
         self.ensure_layout()?;
         let manager = open_lock(&self.root.join(MANAGER_LOCK_FILE))?;
@@ -1342,18 +1348,20 @@ impl OvenStore {
         Ok(selected)
     }
 
-    /// Select every execution payload whose verified manifest satisfies `matches`, retaining each active lease.
+    /// Select only candidates whose verified manifest and payload satisfy the caller's authority predicates.
     ///
-    /// Matching, payload verification, and lease acquisition all occur under one manager lock. This is the safe
-    /// selection primitive for receipt-based cache lookup: a separately returned manifest header has no lease and
-    /// may legitimately be reclaimed by a concurrent bounded-policy publication before a later identity lookup.
-    /// Non-matching entries are never opened or leased.
-    pub fn select_payloads_matching_for_execution<F>(
+    /// Payload filtering runs under the manager lock after manifest and payload integrity verification, before lease
+    /// acquisition and LRU refresh. A rejected historical output therefore does not become recently used merely because
+    /// a lookup considered it. Accepted entries retain the same receipt admission and execution leases as ordinary
+    /// manifest-only selection; materialized files still require the consumer's normal verification.
+    pub fn select_payloads_matching_for_execution<F, P>(
         &self,
         matches: F,
+        payload_matches: P,
     ) -> Result<Vec<OvenStoreExecutionPayload>, OvenStoreError>
     where
         F: Fn(&OvenArtifactManifest) -> bool,
+        P: Fn(&OvenArtifactManifest, &[u8]) -> bool,
     {
         self.ensure_layout()?;
         let manager = open_lock(&self.root.join(MANAGER_LOCK_FILE))?;
@@ -1362,7 +1370,7 @@ impl OvenStore {
             source,
         })?;
         self.reclaim_stale_staging()?;
-        select_matching_execution_payloads(&self.entries_root(), matches)?
+        select_matching_execution_payloads(&self.entries_root(), matches, payload_matches)?
             .into_iter()
             .map(|(path, payload)| {
                 touch_entry(&path)?;
@@ -2305,7 +2313,10 @@ fn verify_published_entry_coordinate(root: &Path, manifest: &OvenArtifactManifes
 /// being a regular file rather than a symlink, the schema version, and the coordinate check that binds the
 /// directory name to the identity the manifest records. What is left out is only the proof that the content
 /// hashes to that identity, which `verify_published_entry_manifest` adds.
+#[track_caller]
 fn read_published_entry_manifest(root: &Path) -> Result<ReadEntryManifest, OvenStoreError> {
+    let caller = std::panic::Location::caller();
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_store::read_manifest", input = %root.display(), caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
     verify_store_entry_root(root)?;
     let manifest_path = manifest_path_for_entry(root);
     let metadata = fs::symlink_metadata(&manifest_path).map_err(|source| OvenStoreError::Io {
@@ -2418,13 +2429,18 @@ fn acquire_execution_lease(root: &Path, writable: bool) -> Result<OvenStoreLease
 ///
 /// Both published readers and mutable caches share manifest, payload, and active-lease validation. The caller owns
 /// any additional materialized-closure verification or writable-cache bookkeeping.
-fn select_matching_execution_payloads<F>(
+#[track_caller]
+fn select_matching_execution_payloads<F, P>(
     root: &Path,
     matches: F,
+    payload_matches: P,
 ) -> Result<Vec<(PathBuf, OvenStoreExecutionPayload)>, OvenStoreError>
 where
     F: Fn(&OvenArtifactManifest) -> bool,
+    P: Fn(&OvenArtifactManifest, &[u8]) -> bool,
 {
+    let caller = std::panic::Location::caller();
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_store::select_matching_payloads", input = %root.display(), caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
     let mut selected = Vec::new();
     for candidate in fs::read_dir(root).map_err(|source| OvenStoreError::Io {
         path: root.to_path_buf(),
@@ -2454,12 +2470,18 @@ where
         // coordinate binding the directory name to the recorded identity — still run for every entry enumerated.
         let read = read_published_entry_manifest(&path)?;
         if !matches(&read.manifest) {
+            tracing::trace!(target: "incan::invocation", decision = "reject_manifest", input = %read.manifest.identity);
             continue;
         }
         prove_entry_manifest(&read)?;
         let manifest = read.manifest;
         let payload = verified_payload_bytes(&path, &manifest)?;
+        if !payload_matches(&manifest, &payload) {
+            tracing::trace!(target: "incan::invocation", decision = "reject_payload", input = %manifest.identity);
+            continue;
+        }
         let lease = acquire_execution_lease(&path, false)?;
+        tracing::trace!(target: "incan::invocation", decision = "select", input = %manifest.identity);
         let original_native_receipt = admit_native_receipt(&path, &manifest)?;
         selected.push((
             path.clone(),
@@ -3347,7 +3369,10 @@ fn verify_manifest_identity(manifest: &OvenArtifactManifest) -> Result<(), OvenS
 ///
 /// The memo key is the stamp the manifest was read under, not a fresh stat: the proof must be recorded for the
 /// bytes that were hashed, and a file rewritten between the read and this call must miss, not ride along.
+#[track_caller]
 fn prove_entry_manifest(read: &ReadEntryManifest) -> Result<(), OvenStoreError> {
+    let caller = std::panic::Location::caller();
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_store::prove_manifest", input = %read.manifest.identity, caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
     if let Some(stamp) = read.stamp.as_ref()
         && let Ok(proven) = proven_manifest_memo().lock()
         && proven.contains(stamp)
@@ -3371,7 +3396,10 @@ fn verify_entry_manifest(root: &Path) -> Result<OvenArtifactManifest, OvenStoreE
 }
 
 /// Read and authenticate one primary payload only from a regular file within its verified entry root.
+#[track_caller]
 fn verified_payload_bytes(root: &Path, manifest: &OvenArtifactManifest) -> Result<Vec<u8>, OvenStoreError> {
+    let caller = std::panic::Location::caller();
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_store::verified_payload_bytes", input = %manifest.identity, caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
     let payload_path = root.join(PAYLOAD_FILE);
     let metadata = fs::symlink_metadata(&payload_path).map_err(|source| OvenStoreError::Io {
         path: payload_path.clone(),
@@ -3426,6 +3454,7 @@ fn verify_materialized_files_with_observations(
     manifest: &OvenArtifactManifest,
     mut observations: Option<&mut BTreeMap<PathBuf, MaterializedFileDigest>>,
 ) -> Result<u64, OvenStoreError> {
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_store::verify_materialized_inventory", input = %manifest.identity).entered();
     let expected = manifest
         .materialized_files
         .iter()
@@ -3665,6 +3694,9 @@ fn digest_observed_file_with_retained(
     mut cache: impl FnMut() -> Option<PathBuf>,
     mut stamp: impl FnMut(&File) -> io::Result<MaterializedFileStamp>,
 ) -> Result<ObservedFileDigest, OvenStoreError> {
+    let _invocation =
+        tracing::trace_span!(target: "incan::invocation", "oven_store::observe_file_digest", input = %path.display())
+            .entered();
     let mut file = File::open(path).map_err(|source| OvenStoreError::Io {
         path: path.to_path_buf(),
         source,
@@ -3787,6 +3819,7 @@ fn report_observed_file_digest(
     input_bytes_read: u64,
     stamp: MaterializedFileStamp,
 ) -> ObservedFileDigest {
+    tracing::trace!(target: "incan::invocation", input = %path.display(), input_bytes_read, logical_bytes = length, decision = if input_bytes_read == 0 { "stamp_reuse_or_empty_file" } else { "read_file" });
     let observed = ObservedFileDigest {
         length,
         digest,
@@ -5229,8 +5262,8 @@ pub(crate) mod tests {
             let before = published_inventory(temp.path())?;
             let published = super::PublishedOvenStore::new(temp.path());
             for _ in 0..2 {
-                let selected =
-                    published.select_payloads_matching_for_execution(|item| item.identity == manifest.identity)?;
+                let selected = published
+                    .select_payloads_matching_for_execution(|item| item.identity == manifest.identity, |_, _| true)?;
                 assert_eq!(selected.len(), 1);
                 assert_eq!(selected[0].payload, b"native plan");
                 selected[0].verify_materialized_files()?;
@@ -5306,8 +5339,8 @@ pub(crate) mod tests {
         ));
 
         let published = super::PublishedOvenStore::new(temp.path());
-        let matched =
-            published.select_payloads_matching_for_execution(|manifest| manifest.identity == first.identity)?;
+        let matched = published
+            .select_payloads_matching_for_execution(|manifest| manifest.identity == first.identity, |_, _| true)?;
         assert_eq!(matched.len(), 1);
         matched[0].verify_materialized_files()?;
         Ok(())
@@ -5350,7 +5383,7 @@ pub(crate) mod tests {
 
         let published = super::PublishedOvenStore::new(temp.path());
         assert!(matches!(
-            published.select_payloads_matching_for_execution(|_| true),
+            published.select_payloads_matching_for_execution(|_| true, |_, _| true),
             Err(OvenStoreError::Integrity { .. })
         ));
         Ok(())
@@ -5381,7 +5414,7 @@ pub(crate) mod tests {
         ));
         let published = super::PublishedOvenStore::new(temp.path());
         assert!(matches!(
-            published.select_payloads_matching_for_execution(|_| true),
+            published.select_payloads_matching_for_execution(|_| true, |_, _| true),
             Err(OvenStoreError::Integrity { .. })
         ));
         Ok(())
@@ -5414,7 +5447,7 @@ pub(crate) mod tests {
             ));
             let published = super::PublishedOvenStore::new(temp.path());
             assert!(matches!(
-                published.select_payloads_matching_for_execution(|_| true),
+                published.select_payloads_matching_for_execution(|_| true, |_, _| true),
                 Err(OvenStoreError::Integrity { .. })
             ));
         }
@@ -5441,7 +5474,8 @@ pub(crate) mod tests {
         let selected = store.select_payloads_for_execution(std::slice::from_ref(&manifest.identity))?;
         assert_eq!(selected.len(), 1);
         let published = super::PublishedOvenStore::new(&store_alias);
-        let matched = published.select_payloads_matching_for_execution(|item| item.identity == manifest.identity)?;
+        let matched =
+            published.select_payloads_matching_for_execution(|item| item.identity == manifest.identity, |_, _| true)?;
         assert_eq!(matched.len(), 1);
         let canonical_store = fs::canonicalize(&actual_store)?;
         assert!(selected[0].artifact_root.starts_with(&canonical_store));
@@ -5663,7 +5697,8 @@ pub(crate) mod tests {
                 fs::canonicalize(entry_root)?.join(super::ACTIVE_LOCK_FILE)
             };
             let before = published_inventory(temp.path())?;
-            let result = super::PublishedOvenStore::new(temp.path()).select_payloads_matching_for_execution(|_| true);
+            let result = super::PublishedOvenStore::new(temp.path())
+                .select_payloads_matching_for_execution(|_| true, |_, _| true);
             assert!(matches!(result, Err(OvenStoreError::Io { path, .. }) if path == expected_error_path));
             assert_eq!(published_inventory(temp.path())?, before);
             assert!(!lock.exists());
@@ -5698,7 +5733,7 @@ pub(crate) mod tests {
             fs::write(changed, b"changed content")?;
             let before = published_inventory(temp.path())?;
             let result = super::PublishedOvenStore::new(temp.path())
-                .select_payloads_matching_for_execution(|_| true)
+                .select_payloads_matching_for_execution(|_| true, |_, _| true)
                 .and_then(|selected| {
                     for payload in selected {
                         payload.verify_materialized_files()?;
@@ -5735,12 +5770,13 @@ pub(crate) mod tests {
 
         // A selection that does not want the tampered entry still succeeds, and returns only what it asked for.
         let untouched = super::PublishedOvenStore::new(temp.path())
-            .select_payloads_matching_for_execution(|manifest| manifest.identity == wanted.identity)?;
+            .select_payloads_matching_for_execution(|manifest| manifest.identity == wanted.identity, |_, _| true)?;
         assert_eq!(untouched.len(), 1);
         assert_eq!(untouched[0].admitted_identity, wanted.identity);
 
         // A selection that does want it is refused.
-        let refused = super::PublishedOvenStore::new(temp.path()).select_payloads_matching_for_execution(|_| true);
+        let refused =
+            super::PublishedOvenStore::new(temp.path()).select_payloads_matching_for_execution(|_| true, |_, _| true);
         assert!(
             matches!(refused, Err(OvenStoreError::Integrity { .. })),
             "a tampered manifest must be refused once the selection takes it"
@@ -6188,8 +6224,8 @@ pub(crate) mod tests {
             OvenStoreLimits::new(first_physical.saturating_add(1), 1_000_000, 1_000_000),
         );
 
-        let selected =
-            bounded.select_payloads_matching_for_execution(|manifest| manifest.identity == first.identity)?;
+        let selected = bounded
+            .select_payloads_matching_for_execution(|manifest| manifest.identity == first.identity, |_, _| true)?;
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].manifest.identity, first.identity);
 
@@ -6996,9 +7032,10 @@ pub(crate) mod tests {
         let reused = store.publish(&current)?;
         assert_eq!(reused, published);
         assert_eq!(fs::read_dir(root.path().join(super::ENTRIES_DIRECTORY))?.count(), 1);
-        let selected = store.select_payloads_matching_for_execution(|header| {
-            header.build_unit_identity == current.receipt.build_unit_identity
-        })?;
+        let selected = store.select_payloads_matching_for_execution(
+            |header| header.build_unit_identity == current.receipt.build_unit_identity,
+            |_, _| true,
+        )?;
         let owner = selected.first().ok_or("original native owner missing")?;
         assert_eq!(owner.original_native_receipt(), Some(&original.receipt));
         assert_ne!(owner.original_native_receipt(), Some(&current.receipt));

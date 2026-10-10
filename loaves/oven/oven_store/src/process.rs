@@ -2,7 +2,7 @@
 
 use std::io;
 use std::process::{Child, Command, ExitStatus};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 #[cfg(unix)]
@@ -12,11 +12,12 @@ use std::process::Stdio;
 #[cfg(unix)]
 use std::sync::Arc;
 #[cfg(unix)]
-use std::sync::atomic::Ordering;
-#[cfg(unix)]
 use std::thread;
 #[cfg(unix)]
 use std::time::Instant;
+
+/// Cross-process trace links must outlive reusable tracing registry slot IDs.
+static TRACE_PROCESS_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[cfg(unix)]
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(10);
@@ -100,6 +101,17 @@ pub fn run_bounded_process(
     limits: BoundedProcessLimits,
     cancellation: Option<&AtomicBool>,
 ) -> io::Result<BoundedProcessOutput> {
+    let invocation_id = tracing::enabled!(target: "incan::invocation", tracing::Level::TRACE).then(|| {
+        format!(
+            "{}:process:{}",
+            std::process::id(),
+            TRACE_PROCESS_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        )
+    });
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_store::run_bounded_process", invocation_id = invocation_id.as_deref(), input = ?command.get_program(), arguments = ?command.get_args().collect::<Vec<_>>()).entered();
+    if let Some(invocation_id) = invocation_id {
+        command.env("INCAN_TRACE_PARENT", invocation_id);
+    }
     #[cfg(unix)]
     {
         run_bounded_process_unix(command, limits, cancellation)
@@ -138,6 +150,7 @@ fn run_bounded_process_unix(
     isolate_process_group(command);
 
     let mut child = command.spawn()?;
+    tracing::trace!(target: "incan::invocation", decision = "spawn", child_pid = u64::from(child.id()));
     let process_id = child.id();
     let stdout = match child.stdout.take() {
         Some(stdout) => stdout,
@@ -488,7 +501,7 @@ mod tests {
     use std::io;
     use std::process::Command;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::thread;
     use std::time::Duration;
 

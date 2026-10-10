@@ -2712,11 +2712,14 @@ fn select_compiler_test_suite(
     rustc: &Path,
 ) -> CliResult<OvenStoreExecutionPayload> {
     let selected = store
-        .select_payloads_matching_for_execution(|manifest| {
-            manifest.kind == OvenArtifactKind::CompilerTestSuite
-                && manifest.build_unit_identity == receipt.build_unit_identity
-                && manifest.intent == receipt.intent
-        })
+        .select_payloads_matching_for_execution(
+            |manifest| {
+                manifest.kind == OvenArtifactKind::CompilerTestSuite
+                    && manifest.build_unit_identity == receipt.build_unit_identity
+                    && manifest.intent == receipt.intent
+            },
+            |_, _| true,
+        )
         .map_err(oven_error)?;
     let mut current_schema = Vec::new();
     for candidate in selected {

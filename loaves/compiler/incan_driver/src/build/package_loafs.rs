@@ -121,12 +121,15 @@ pub fn copy_receipted_oven_store_entry(
         return Ok(existing);
     }
     let mut selected = source_store
-        .select_payloads_matching_for_execution(|manifest| {
-            manifest.identity == entry_identity
-                && manifest.kind == entry_kind
-                && manifest.build_unit_identity == receipt.build_unit_identity
-                && manifest.intent == receipt.intent
-        })
+        .select_payloads_matching_for_execution(
+            |manifest| {
+                manifest.identity == entry_identity
+                    && manifest.kind == entry_kind
+                    && manifest.build_unit_identity == receipt.build_unit_identity
+                    && manifest.intent == receipt.intent
+            },
+            |_, _| true,
+        )
         .map_err(|error| CliError::failure(format!("failed to select provider Loaf for {operation}: {error}")))?;
     if selected.is_empty() && entry_kind == OvenArtifactKind::DirectRustcPlan {
         // Direct plans are reusable by their verified build unit and intent. A semantically inert source edit can
@@ -164,13 +167,16 @@ fn existing_provider_loaf(
     operation: &str,
 ) -> CliResult<Option<oven_store::store::OvenArtifactManifest>> {
     let existing = destination_store
-        .select_payloads_matching_for_execution(|manifest| {
-            manifest.identity == entry_identity
-                && manifest.kind == entry_kind
-                && manifest.receipt_identity == receipt.identity
-                && manifest.build_unit_identity == receipt.build_unit_identity
-                && manifest.intent == receipt.intent
-        })
+        .select_payloads_matching_for_execution(
+            |manifest| {
+                manifest.identity == entry_identity
+                    && manifest.kind == entry_kind
+                    && manifest.receipt_identity == receipt.identity
+                    && manifest.build_unit_identity == receipt.build_unit_identity
+                    && manifest.intent == receipt.intent
+            },
+            |_, _| true,
+        )
         .map_err(|error| CliError::failure(format!("failed to inspect provider Loaf before {operation}: {error}")))?;
     if existing.len() > 1 {
         return Err(CliError::failure(format!(
@@ -567,13 +573,16 @@ pub fn validated_packaged_library_loaf_profile(
 fn has_complete_packaged_library_loaf(store: &OvenStore, entries: &[OvenPackagedLibraryLoafEntry]) -> CliResult<bool> {
     for entry in entries {
         let selected = store
-            .select_payloads_matching_for_execution(|stored| {
-                stored.identity == entry.identity
-                    && stored.kind == entry.kind
-                    && stored.receipt_identity == entry.receipt.identity
-                    && stored.build_unit_identity == entry.receipt.build_unit_identity
-                    && stored.intent == entry.receipt.intent
-            })
+            .select_payloads_matching_for_execution(
+                |stored| {
+                    stored.identity == entry.identity
+                        && stored.kind == entry.kind
+                        && stored.receipt_identity == entry.receipt.identity
+                        && stored.build_unit_identity == entry.receipt.build_unit_identity
+                        && stored.intent == entry.receipt.intent
+                },
+                |_, _| true,
+            )
             .map_err(|error| {
                 CliError::failure(format!(
                     "failed to inspect package Loaf `{}` before consumer import: {error}",
@@ -607,15 +616,18 @@ pub fn import_checked_packaged_library_loaf(
     })?;
     if package_store_exists {
         let selected = PublishedOvenStore::new(&package_store_root)
-            .select_payloads_matching_for_execution(|stored| {
-                package_profile.entries.iter().any(|entry| {
-                    stored.identity == entry.identity
-                        && stored.kind == entry.kind
-                        && stored.receipt_identity == entry.receipt.identity
-                        && stored.build_unit_identity == entry.receipt.build_unit_identity
-                        && stored.intent == entry.receipt.intent
-                })
-            })
+            .select_payloads_matching_for_execution(
+                |stored| {
+                    package_profile.entries.iter().any(|entry| {
+                        stored.identity == entry.identity
+                            && stored.kind == entry.kind
+                            && stored.receipt_identity == entry.receipt.identity
+                            && stored.build_unit_identity == entry.receipt.build_unit_identity
+                            && stored.intent == entry.receipt.intent
+                    })
+                },
+                |_, _| true,
+            )
             .map_err(|error| {
                 CliError::failure(format!(
                     "failed to read published package Loaf for pub::{}: {error}",

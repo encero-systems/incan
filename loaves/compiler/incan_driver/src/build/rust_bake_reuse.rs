@@ -196,12 +196,15 @@ pub(super) fn try_reuse_rust_bake(
         for profile in crate::build::plan_authority::explicit_bake_profiles() {
             let lookup = lookup_receipt(root, key, unit, profile)?;
             let candidates = store
-                .select_payloads_matching_for_execution(|header| {
-                    header.kind == OvenArtifactKind::ProjectOutput
-                        && header.receipt_identity == lookup.identity
-                        && header.build_unit_identity == lookup.build_unit_identity
-                        && header.intent == lookup.intent
-                })
+                .select_payloads_matching_for_execution(
+                    |header| {
+                        header.kind == OvenArtifactKind::ProjectOutput
+                            && header.receipt_identity == lookup.identity
+                            && header.build_unit_identity == lookup.build_unit_identity
+                            && header.intent == lookup.intent
+                    },
+                    |_, _| true,
+                )
                 .map_err(|error| CliError::failure(error.to_string()))?;
             if candidates.len() != 1 {
                 return Ok(None);

@@ -157,11 +157,14 @@ pub fn select_direct_rustc_plan_for_execution(
             message: error.to_string(),
         })?;
     let mut matches = Vec::new();
-    for selected in store.select_payloads_matching_for_execution(|manifest| {
-        manifest.kind == OvenArtifactKind::DirectRustcPlan
-            && manifest.build_unit_identity == receipt.build_unit_identity
-            && manifest.intent == receipt.intent
-    })? {
+    for selected in store.select_payloads_matching_for_execution(
+        |manifest| {
+            manifest.kind == OvenArtifactKind::DirectRustcPlan
+                && manifest.build_unit_identity == receipt.build_unit_identity
+                && manifest.intent == receipt.intent
+        },
+        |_, _| true,
+    )? {
         let Ok(plan) = serde_json::from_slice::<OvenRustcArtifactManifest>(&selected.payload) else {
             continue;
         };

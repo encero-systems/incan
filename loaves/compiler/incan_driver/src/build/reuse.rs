@@ -52,11 +52,14 @@ fn trace_reuse_timing(started: std::time::Instant, phase: &str) {
 /// The locator is only a search hint. Its payload must still match the local receipt here and all current source,
 /// compiler, lock, target and inspection facts at the caller. Missing, malformed or reclaimed hints fall back to
 /// normal store selection; they never authorize execution by themselves.
+#[track_caller]
 fn located_project_output(
     store: &OvenStore,
     receipt_path: &Path,
     receipt: &oven_store::OvenReceipt,
 ) -> CliResult<Option<OvenStoredProjectOutput>> {
+    let caller = std::panic::Location::caller();
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::located_project_output", input = %receipt.identity, caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
     let Some(identity) = fs::read(receipt_path.with_extension("output.json"))
         .ok()
         .and_then(|bytes| serde_json::from_slice::<String>(&bytes).ok())
@@ -206,23 +209,29 @@ fn restore_reused_library_package(
             {
                 return Ok(false);
             }
-            let packaged = package_store.select_payloads_matching_for_execution(|stored| {
-                stored.identity == entry.identity
-                    && stored.kind == entry.kind
-                    && stored.receipt_identity == entry.receipt.identity
-                    && stored.build_unit_identity == entry.receipt.build_unit_identity
-                    && stored.intent == entry.receipt.intent
-            });
+            let packaged = package_store.select_payloads_matching_for_execution(
+                |stored| {
+                    stored.identity == entry.identity
+                        && stored.kind == entry.kind
+                        && stored.receipt_identity == entry.receipt.identity
+                        && stored.build_unit_identity == entry.receipt.build_unit_identity
+                        && stored.intent == entry.receipt.intent
+                },
+                |_, _| true,
+            );
             match packaged {
                 Ok(selected) if selected.len() == 1 => {}
                 Ok(selected) if selected.is_empty() => {
-                    let source = store.select_payloads_matching_for_execution(|stored| {
-                        stored.identity == entry.identity
-                            && stored.kind == entry.kind
-                            && stored.receipt_identity == entry.receipt.identity
-                            && stored.build_unit_identity == entry.receipt.build_unit_identity
-                            && stored.intent == entry.receipt.intent
-                    });
+                    let source = store.select_payloads_matching_for_execution(
+                        |stored| {
+                            stored.identity == entry.identity
+                                && stored.kind == entry.kind
+                                && stored.receipt_identity == entry.receipt.identity
+                                && stored.build_unit_identity == entry.receipt.build_unit_identity
+                                && stored.intent == entry.receipt.intent
+                        },
+                        |_, _| true,
+                    );
                     if source.map_or(true, |selected| selected.len() != 1) {
                         return Ok(false);
                     }
@@ -413,6 +422,7 @@ fn locate_expected_project_outputs(
 }
 
 /// Select one exact target/profile, falling back from a stale hint to verified source-current compiler candidates.
+#[track_caller]
 fn select_current_project_output(
     project_root: &Path,
     store: &OvenStore,
@@ -420,6 +430,8 @@ fn select_current_project_output(
     located: Option<OvenStoredProjectOutput>,
     authority: &CurrentReuseAuthority<'_>,
 ) -> CliResult<Option<SelectedReuseOutput>> {
+    let caller = std::panic::Location::caller();
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::select_current_project_output", input = %project_root.display(), caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
     let (project_target, entrypoint, profile, receipt_path, receipt) = expected;
     // Source-equivalent publications from older compiler generations may sort before the current generation.
     // Select the exact compiler and dependency authority before choosing a candidate. Source authority already binds
@@ -681,6 +693,7 @@ fn restore_reused_outputs(
 ///
 /// Any stale, absent, or malformed evidence returns a cache miss so the explicit baker can repair it. Selection
 /// completes before any caller projection is restored, and a full hit returns before frontend, codegen, or Rustc.
+#[track_caller]
 pub fn try_reuse_baked_project(
     project_root: &Path,
     targets: &[(OvenBakeProjectTarget, PathBuf)],
@@ -689,6 +702,8 @@ pub fn try_reuse_baked_project(
     requested_target: Option<&str>,
     authority_context: &mut OvenProjectBakeAuthorityContext,
 ) -> CliResult<Option<OvenProjectBakeReport>> {
+    let caller = std::panic::Location::caller();
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::try_reuse_baked_project", input = %project_root.display(), caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
     let started = std::time::Instant::now();
     // A completed project-output payload is selected only for the default command projection. Feature-qualified project
     // outputs remain explicit bake results until their selection facts are part of the public normal command payload,

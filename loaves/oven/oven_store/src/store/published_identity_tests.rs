@@ -61,7 +61,11 @@ fn dev7_published_exact_selection_ignores_unrelated_entries_and_preserves_invent
     }
     assert_eq!(inventory(root.path())?, before);
     assert!(published.select_payloads_for_execution(&[other.identity]).is_err());
-    assert!(published.select_payloads_matching_for_execution(|_| true).is_err());
+    assert!(
+        published
+            .select_payloads_matching_for_execution(|_| true, |_, _| true)
+            .is_err()
+    );
     assert_eq!(inventory(root.path())?, before);
     Ok(())
 }

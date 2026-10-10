@@ -11924,6 +11924,14 @@
       "split_required": false,
       "split_target": "",
       "twin": ""
+    },
+    "loaves/toolchain/oven-cli/src/invocation_trace.rs": {
+      "disposition": "keep",
+      "notes": "Opt-in compiler invocation diagnostics: disabled field laziness, nested identities, decision records, parent linkage, retained sinks and concurrent record integrity. No compiler semantics or legacy emitter dependence.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
     }
   },
   "fixture_roots": {

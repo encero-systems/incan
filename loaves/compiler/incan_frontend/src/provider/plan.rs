@@ -1057,11 +1057,14 @@ impl ProviderPlan {
     ///
     /// Canonical package names alone cannot select among multiple artifact generations. Such ambiguity refuses
     /// instead of collapsing nominal types; explicit leaf origins avoid it in newly published signatures.
+    #[track_caller]
     pub fn declaring_public_provider(
         &self,
         importing_library: &str,
         canonical: &incan_semantics_core::CanonicalSymbolId,
     ) -> Result<ProviderIdentity, String> {
+        let caller = std::panic::Location::caller();
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_frontend::declaring_public_provider", input = ?canonical, caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
         let Some(LibraryManifestIndexEntry::Loaded { metadata, .. }) =
             self.library_manifest_index.get(importing_library)
         else {

@@ -67,6 +67,8 @@ pub use oven_cli::cli::{
     OvenLoafEnvelopeArgument, OvenOutputFormat, OvenPlanCommand, OvenStoreCliFlags, OvenStoreCommand,
     PackageFeatureCliFlags, SdkProfileCliFlags, ToolsCommand, ToolsMetadataCommand,
 };
+/// Shared opt-in invocation diagnostics used by both CLI entrypoints.
+pub use oven_cli::invocation_trace;
 
 /// ASCII art logo - embedded at compile time from the package's assets/logo.txt
 const LOGO: &str = include_str!("assets/logo.txt");
@@ -799,6 +801,7 @@ pub enum CacheCommand {
 /// This is the only place where `process::exit` is called. All command implementations return `CliResult` and errors
 /// are handled here. Parse CLI arguments, execute the selected command, and exit the process.
 pub fn run() {
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_cli::run", input = ?std::env::args_os().skip(1).collect::<Vec<_>>()).entered();
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(err) => {
