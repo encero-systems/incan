@@ -408,6 +408,8 @@ pub struct ProviderPlan {
     /// This bootstrap-only grant disappears once the checked provider manifest is published and must never be
     /// populated by installed SDK consumers.
     bootstrap_sdk_namespace_roots: BTreeSet<String>,
+    /// Original compiler-selected source publication authority, separate from dependency namespace grants.
+    source_publication: Option<Arc<super::source_policy::TrustedStandardSourcePublication>>,
     /// Original issuer records produced by validated selection, never reconstructed from public record spelling.
     namespace_issuers: BTreeMap<String, Arc<ProviderRecord>>,
     /// Process-local identity assigned when this immutable record set is constructed.
@@ -494,6 +496,7 @@ impl ProviderPlan {
             checked_source_dependencies: BTreeMap::new(),
             checked_source_materialized: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
+            source_publication: None,
             namespace_issuers: BTreeMap::new(),
             semantic_projection_identity: next_provider_semantic_projection_identity(),
             semantic_projection_persistent_key: Some(semantic_projection_persistent_key),
@@ -1261,6 +1264,7 @@ impl ProviderPlan {
             checked_source_dependencies: BTreeMap::new(),
             checked_source_materialized: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
+            source_publication: None,
             namespace_issuers: BTreeMap::new(),
             semantic_projection_identity: next_provider_semantic_projection_identity(),
             semantic_projection_persistent_key: Some(semantic_projection_persistent_key),
@@ -1337,6 +1341,7 @@ impl ProviderPlan {
             checked_source_dependencies: BTreeMap::new(),
             checked_source_materialized: BTreeMap::new(),
             bootstrap_sdk_namespace_roots: BTreeSet::new(),
+            source_publication: None,
             namespace_issuers: BTreeMap::new(),
             semantic_projection_identity: next_provider_semantic_projection_identity(),
             semantic_projection_persistent_key: Some(semantic_projection_persistent_key),
@@ -1350,12 +1355,71 @@ impl ProviderPlan {
         self
     }
 
-    /// Return whether the current source-bootstrap component owns this canonical `std.*` module prefix.
+    /// Retain genuine own-source publication authority without granting installed namespaces or native routes.
+    /// The supplied project must be the original compiler-selected package, not an equal-byte copy elsewhere.
+    pub fn with_standard_source_publication(
+        mut self,
+        source: Arc<super::source_policy::TrustedStandardSourcePublication>,
+        project_root: &Path,
+        package_name: &str,
+        package_version: &str,
+    ) -> Result<Self, String> {
+        if self.source_publication.is_some() || !self.bootstrap_sdk_namespace_roots.is_empty() {
+            return Err("source publication has competing namespace authority".to_string());
+        }
+        let current_root = std::fs::canonicalize(project_root).map_err(|error| error.to_string())?;
+        if source.verified_package_root().map_err(|error| error.to_string())? != current_root {
+            return Err("source publication belongs to a different project".to_string());
+        }
+        let roots: BTreeSet<String> = source
+            .namespace_roots()
+            .iter()
+            .map(|root| (*root).to_string())
+            .collect();
+        if self.module_catalog.keys().any(|module| {
+            module.first().map(String::as_str) == Some("std") && module.get(1).is_some_and(|root| roots.contains(root))
+        }) {
+            return Err("source publication conflicts with an admitted namespace owner".to_string());
+        }
+        source
+            .validate_namespace_roots(package_name, package_version, &roots)
+            .map_err(|error| error.to_string())?;
+        let mut semantic_key = Sha256::new();
+        semantic_key.update(b"incan-provider-standard-source-v1\0");
+        semantic_key.update(self.semantic_projection_persistent_key()?.as_bytes());
+        semantic_key.update(source.verified_policy_bytes().map_err(|error| error.to_string())?);
+        self.semantic_projection_persistent_key = Some(Ok(format!("{:x}", semantic_key.finalize())));
+        self.semantic_projection_identity = next_provider_semantic_projection_identity();
+        self.source_publication = Some(source);
+        Ok(self)
+    }
+
+    /// Borrow the original source capability; projections preserve this same owner rather than reconstructing it.
+    pub fn standard_source_publication(&self) -> Option<&Arc<super::source_policy::TrustedStandardSourcePublication>> {
+        self.source_publication.as_ref()
+    }
+
+    /// Revalidate own-source authority at command handoffs before using cached module projections.
+    pub fn verify_standard_source_publication(&self) -> Result<(), String> {
+        if let Some(source) = &self.source_publication {
+            if !self.bootstrap_sdk_namespace_roots.is_empty() {
+                return Err("source publication contains competing SDK bootstrap authority".to_string());
+            }
+            source.verify().map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// Return whether this source publication owns the canonical `std.*` prefix, after command-boundary verification.
     pub fn bootstrap_owns_sdk_module(&self, module: &[String]) -> bool {
         module.first().map(String::as_str) == Some("std")
-            && module
-                .get(1)
-                .is_some_and(|root| self.bootstrap_sdk_namespace_roots.contains(root))
+            && module.get(1).is_some_and(|root| {
+                self.bootstrap_sdk_namespace_roots.contains(root)
+                    || self
+                        .source_publication
+                        .as_ref()
+                        .is_some_and(|source| source.namespace_roots().contains(&root.as_str()))
+            })
     }
 
     /// Return the source-bootstrap roots so a session can preserve them while refining module participation.
