@@ -1086,7 +1086,7 @@ fn prepare_library_project_with_context(
     record_timing(&mut timings_ms, "library_resolve_lock_payload", lock_start);
     let native_admission_start = Instant::now();
     let native_sdk_context = if let Some(preparation) = metadata_preparation.as_ref() {
-        preparation.native_context.clone()
+        preparation.native_context().cloned()
     } else if let Some(context) = &explicit_native_context {
         Some(Arc::clone(context))
     } else if normal_oven && native_sdk.is_none() {
