@@ -9,6 +9,9 @@ mod enum_alias_admission;
 #[path = "native_driver_project_tests/dev7_carrier_admission.rs"]
 mod dev7_carrier_admission;
 
+#[path = "native_driver_project_tests/ordinary_rust_dependencies.rs"]
+mod ordinary_rust_dependencies;
+
 use incan_test_support as support;
 use std::fs;
 use std::path::{Path, PathBuf};

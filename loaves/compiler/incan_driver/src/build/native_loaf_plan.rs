@@ -21,12 +21,13 @@ use crate::error::{CliError, CliResult};
 
 const DOMAIN: &str = "ordinary-native-consumer-plan";
 
-/// Select a compiler-tooling plan from its current ordinary declaration and explicit producer inputs.
+/// Select a native consumer plan from its current ordinary declaration, original intent and explicit producer inputs.
 ///
-/// This adapter keeps the Incan bootstrap on the same current-input and rooted-admission boundary as native tests.
-/// It returns measured native preparation facts alongside the existing plan, whose original execution owners stay
-/// leased through compilation. Dependencies and the consumer plan use the same supplied Store; the output directory
-/// carries only staging and mutable hints. The runtime engine remains separate supplemental source authority.
+/// This adapter keeps compiler tooling and declared Rust units on the same current-input and rooted-admission boundary
+/// as native tests. The original source receipt supplies the requested target and profile; no implicit debug dependency
+/// is prepared. It returns measured native preparation facts alongside the existing plan, whose original execution
+/// owners stay leased through compilation. Dependencies and the consumer plan use the same supplied Store; the output
+/// directory carries only staging and mutable hints. The runtime engine remains separate supplemental source authority.
 #[allow(clippy::too_many_arguments)]
 pub fn select_declared_native_loaf_plan(
     store: &OvenStore,
@@ -44,7 +45,6 @@ pub fn select_declared_native_loaf_plan(
         .ok_or_else(|| CliError::failure("ordinary native declaration has no owner"))?;
     let manifest = oven_model::manifest::ProjectManifest::load(&declaration).map_err(failure)?;
     let dependencies = manifest.rust_dependency_values();
-    let target = oven_rustc::rustc::rustc_host_target(rustc).map_err(failure)?;
     let prepared = oven_rustc::native_loaf::prepare_declared_native_loafs_in_store(
         &oven_rustc::native_loaf::NativeLoafConsumerRequest {
             graph,
@@ -52,8 +52,8 @@ pub fn select_declared_native_loaf_plan(
             blobs,
             output,
             rustc,
-            target: &target,
-            profile: "debug",
+            target: &source_receipt.intent.target,
+            profile: &source_receipt.intent.profile,
             dependencies: &dependencies,
             declaration_owner: owner,
             domain: "target",
