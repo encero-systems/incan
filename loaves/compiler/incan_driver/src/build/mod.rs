@@ -24,6 +24,7 @@ pub mod native_runtime_inputs;
 pub mod native_sdk;
 pub(crate) mod native_sdk_plan;
 pub use native_sdk_plan::NativeSdkCommandContext;
+pub(crate) mod ordinary_support;
 pub mod output_materialization;
 pub mod output_paths;
 mod output_publication;

@@ -403,7 +403,7 @@
     },
     "loaves/compiler/incan_driver/src/cargo_policy.rs": {
       "disposition": "retire",
-      "notes": "Two tests die with the Cargo command line (arg ordering, `INCAN_CARGO_ARGS`); the `INCAN_LOCKED/FROZEN/OFFLINE` env defaults, the `--no-locked/--no-offline/--no-frozen` negations and frozen ⇒ locked+offline survive as Oven lock-policy inputs (maintainer ruling, 2026-09-20) and are twinned by re-point CLI tests.",
+      "notes": "Two tests die with the Cargo command line (arg ordering, `INCAN_CARGO_ARGS`); the `INCAN_LOCKED/FROZEN/OFFLINE` env defaults, the `--no-locked/--no-offline/--no-frozen` negations and frozen \u21d2 locked+offline survive as Oven lock-policy inputs (maintainer ruling, 2026-09-20) and are twinned by re-point CLI tests.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -418,7 +418,7 @@
         },
         "cargo_policy_resolves_env_defaults_and_frozen_implication": {
           "twin": "loaves/toolchain/incan-cli/tests/cli_lock_policy_tests.rs::build_lock_policy_env_defaults_refuse_a_missing_lock",
-          "notes": "`INCAN_LOCKED=1` and `INCAN_FROZEN=1` (frozen ⇒ locked) refuse a project without `oven.lock` and create none; the `INCAN_CARGO_ARGS` half dies with the Cargo command line."
+          "notes": "`INCAN_LOCKED=1` and `INCAN_FROZEN=1` (frozen \u21d2 locked) refuse a project without `oven.lock` and create none; the `INCAN_CARGO_ARGS` half dies with the Cargo command line."
         },
         "cargo_policy_uses_cli_extra_args_before_env_extra_args": {
           "twin": "dies",
@@ -647,7 +647,7 @@
       "tests": {
         "explicitly_baked_project_reuses_release_json_authority_without_cargo": {
           "twin": "dies",
-          "dies": "the `sealed project output … no longer matches this source tree` warning after an edit dies (maintainer ruling, 2026-09-20: a stale bake is re-baked transparently, no explicit rebake — the DX requirement is recorded on #1142, slice 8, with its re-point CLI test). The other observables are carried: `reused sealed project Loaf` on `build --locked` after a bake by `rfc031_pub_import_integration_tests.rs`; `oven.lock is out of date` after a manifest edit by `cli_workspace_and_lock_tests.rs` and `cli_interop_target_tests.rs`; `incan test tests --fail-on-empty` on a baked `std.json` project (#1056) by no other test — folded into the #1142 requirement as well."
+          "dies": "the `sealed project output \u2026 no longer matches this source tree` warning after an edit dies (maintainer ruling, 2026-09-20: a stale bake is re-baked transparently, no explicit rebake \u2014 the DX requirement is recorded on #1142, slice 8, with its re-point CLI test). The other observables are carried: `reused sealed project Loaf` on `build --locked` after a bake by `rfc031_pub_import_integration_tests.rs`; `oven.lock is out of date` after a manifest edit by `cli_workspace_and_lock_tests.rs` and `cli_interop_target_tests.rs`; `incan test tests --fail-on-empty` on a baked `std.json` project (#1056) by no other test \u2014 folded into the #1142 requirement as well."
         }
       },
       "twin": "dies"
@@ -661,7 +661,7 @@
       "tests": {
         "a_package_projects_a_call_into_its_own_sibling_module": {
           "twin": "dies",
-          "dies": "asserts the RFC 120 `__incan_v1_` projected wrapper name, not the source spelling `c.bumped()`, in a package's generated `lib.rs` (#1174 emitted-name recoverability); the emitted-name projection and the legacy `incan_ir` lowering that required it die with generated Rust. The package-calls-its-own-sibling behavior is reachable only through a `--lib`/SDK component build, which is not a run the fixture format can express. The surviving observable — a package whose library calls a sibling module's method builds — is carried by the SDK provider prewarm every suite root performs."
+          "dies": "asserts the RFC 120 `__incan_v1_` projected wrapper name, not the source spelling `c.bumped()`, in a package's generated `lib.rs` (#1174 emitted-name recoverability); the emitted-name projection and the legacy `incan_ir` lowering that required it die with generated Rust. The package-calls-its-own-sibling behavior is reachable only through a `--lib`/SDK component build, which is not a run the fixture format can express. The surviving observable \u2014 a package whose library calls a sibling module's method builds \u2014 is carried by the SDK provider prewarm every suite root performs."
         },
         "generated_application_artifact_matches_baseline": {
           "twin": "dies",
@@ -5696,7 +5696,7 @@
         },
         "std_root_prelude_trait_import_is_refused": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_refusals/refused_prelude_trait_imported_from_the_std_root.incn",
-          "notes": "twinned by the test's program as a refusal: the std root exports only its submodules, so `from std import Debug, Eq, Clone, …` is refused at check time (INCAN-I0001) rather than emitting re-exports no standard-library facade defines (E0432) (#1767)."
+          "notes": "twinned by the test's program as a refusal: the std root exports only its submodules, so `from std import Debug, Eq, Clone, \u2026` is refused at check time (INCAN-I0001) rather than emitting re-exports no standard-library facade defines (E0432) (#1767)."
         },
         "std_serde_prelude_import_snapshot": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/codegen_models_and_collections/std_serde_prelude_surface.incn",
@@ -5744,7 +5744,7 @@
         },
         "string_len_spelling_emit_shared_runtime_semantics": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/codegen_models_and_collections/string_length_counts_scalars.incn",
-          "notes": "twinned by a program counting the scalars of `héllo` through `len()` and `.len()`; the `str_len` helper spelling dies."
+          "notes": "twinned by a program counting the scalars of `h\u00e9llo` through `len()` and `.len()`; the `str_len` helper spelling dies."
         }
       },
       "twin": ""
@@ -10043,13 +10043,13 @@
           "disposition": "retire",
           "twin": "dies",
           "notes": "libtest harness of the generated test crate",
-          "dies": "merges `[dependencies]` and `[dev-dependencies]` into the generated test-runner crate's Cargo dependency set (`promoted_oven_test_dependencies`); the generated crate dies with #654. Its user-visible half — a test file using a `[rust-dev-dependencies]` crate through `incan test` — is untwinned: no CLI test uses `rust-dev-dependencies`; it goes with #1337's interop spec (slice 7)."
+          "dies": "merges `[dependencies]` and `[dev-dependencies]` into the generated test-runner crate's Cargo dependency set (`promoted_oven_test_dependencies`); the generated crate dies with #654. Its user-visible half \u2014 a test file using a `[rust-dev-dependencies]` crate through `incan test` \u2014 is untwinned: no CLI test uses `rust-dev-dependencies`; it goes with #1337's interop spec (slice 7)."
         },
         "merge_test_runner_dependencies_unifies_normal_and_dev_features": {
           "disposition": "retire",
           "twin": "dies",
           "notes": "libtest harness of the generated test crate",
-          "dies": "unions Cargo feature lists and refuses a version conflict inside the generated test-runner crate's Cargo dependency set; the generated crate dies with #654. Its user-visible half — a normal/dev version conflict surfacing as an `incan test` failure naming the crate — is untwinned and goes with #1337's interop spec (slice 7)."
+          "dies": "unions Cargo feature lists and refuses a version conflict inside the generated test-runner crate's Cargo dependency set; the generated crate dies with #654. Its user-visible half \u2014 a normal/dev version conflict surfacing as an `incan test` failure naming the crate \u2014 is untwinned and goes with #1337's interop spec (slice 7)."
         },
         "native_test_outputs_do_not_alias_distinct_execution_groups": {
           "disposition": "retire",
@@ -11801,6 +11801,22 @@
       "disposition": "unaffected",
       "notes": "Oven tools command; the build_run hit is a Cargo config hint, not an Incan build.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/build/ordinary_support/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Actual executable-relative mandatory native declaration selection and original source member refusals; independent of generated Rust. Migrate this authority contract if its caller moves.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_rustc/src/native_loaf/preparation.rs": {
+      "disposition": "unaffected",
+      "notes": "Ordinary native producer debug/release profiles, real local library and host macro behavior, and unchanged per-profile reuse; tests the native toolchain rather than Incan generated Rust.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""
