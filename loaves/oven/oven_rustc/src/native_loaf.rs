@@ -244,7 +244,7 @@ impl SelectedNativeLoaf {
 
     /// Revalidate both original owners and the complete recipe/payload binding on each physical handoff.
     pub fn verify(&self) -> Result<()> {
-        verify_record(&self.record, &self.record_owner, &self.native_owner, self.read_only)
+        verify_record(&self.record, &self.record_owner, &self.native_owner)
     }
 
     /// Return the native output only after revalidating its original held owner.
@@ -602,7 +602,7 @@ fn load_forward(
     };
     let read_only = matches!(store, Store::Published(_));
     work.record_checks += 1;
-    verify_record(&record, &record_owner, &owner, read_only)?;
+    verify_record(&record, &record_owner, &owner)?;
     for edge in &record.dependencies {
         load_forward(store, &edge.record_identity, graph, native, visiting, work)?;
     }
@@ -620,7 +620,8 @@ fn load_forward(
     Ok(())
 }
 
-/// Acquire one exact identity using the ordinary canonical selector and preserve preparation misses explicitly.
+/// Acquire one exact descriptor, payload and lease through the canonical selector, preserving preparation misses.
+/// The record verifier owns complete inventory validation for this admission; selection must not walk it first.
 fn select_owner(store: Store<'_>, identity: &str) -> Result<Arc<OvenStoreExecutionPayload>> {
     let selected = match store {
         Store::Writable(store) => store.select_payloads_for_execution(&[identity.to_string()]),
@@ -646,7 +647,6 @@ fn select_owner(store: Store<'_>, identity: &str) -> Result<Arc<OvenStoreExecuti
     let owner = selected
         .pop()
         .ok_or_else(|| refused("exact native Loaf selection became empty"))?;
-    verify_owner(&owner, matches!(store, Store::Published(_)))?;
     Ok(Arc::new(owner))
 }
 
@@ -748,9 +748,8 @@ fn verify_record(
     record: &NativeLoafRecord,
     owner: &OvenStoreExecutionPayload,
     native: &OvenStoreExecutionPayload,
-    read_only: bool,
 ) -> Result<()> {
-    verify_owner(owner, read_only)?;
+    owner.verify_admitted_payload().map_err(failed)?;
     let payload = serde_json::to_vec(record).map_err(failed)?;
     let receipt = record_receipt(record, &payload)?;
     if record.schema != SCHEMA
@@ -854,15 +853,6 @@ fn source_origin(recipe: &OvenReceipt) -> Result<NativeLoafOrigin> {
         Some("registry") => Ok(NativeLoafOrigin::Registry),
         Some("local") => Ok(NativeLoafOrigin::Local),
         _ => Err(refused("native source preparation origin is unavailable")),
-    }
-}
-
-/// Preserve held integrity checks while keeping immutable published Stores free of closure-proof writes.
-fn verify_owner(owner: &OvenStoreExecutionPayload, read_only: bool) -> Result<()> {
-    if read_only {
-        owner.verify_admitted_payload().map_err(failed)
-    } else {
-        owner.verify_proven_native_payload().map_err(failed)
     }
 }
 

@@ -21,6 +21,98 @@ use std::sync::Arc;
 
 type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+/// Observe real inventory checks without adding production counters or changing Store admission.
+#[derive(Clone, Default)]
+pub(super) struct InventoryChecks {
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+    sequence: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl InventoryChecks {
+    /// Return actual inventory invocations observed within this controlled thread's dispatch.
+    pub(super) fn count(&self) -> usize {
+        self.calls.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl tracing::Subscriber for InventoryChecks {
+    /// Enable the existing invocation spans for this thread's controlled operation.
+    fn enabled(&self, _metadata: &tracing::Metadata<'_>) -> bool {
+        true
+    }
+
+    /// Count actual inventory entry, assigning unique IDs to all observed spans.
+    fn new_span(&self, attributes: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        use std::sync::atomic::Ordering;
+        if attributes.metadata().name() == "oven_store::verify_materialized_inventory" {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+        }
+        tracing::span::Id::from_u64(self.sequence.fetch_add(1, Ordering::Relaxed) + 1)
+    }
+
+    /// Field updates do not change the number of actual inventory entries.
+    fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+
+    /// Causal links do not affect this invocation counter.
+    fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {}
+
+    /// Events are deliberately excluded from inventory invocation counts.
+    fn event(&self, _event: &tracing::Event<'_>) {}
+
+    /// Entering an existing span is not another inventory invocation.
+    fn enter(&self, _span: &tracing::span::Id) {}
+
+    /// Exiting a span needs no state for entry counts.
+    fn exit(&self, _span: &tracing::span::Id) {}
+}
+
+/// Admission checks each original inventory once; later admissions and handoffs remain fresh.
+#[test]
+fn dev7_native_loaf_admission_checks_each_inventory_once() -> TestResult {
+    use std::sync::atomic::Ordering;
+    let temp = tempfile::tempdir()?;
+    let native = store(&temp.path().join("store"));
+    let mut graph = NativeLoafGraph::default();
+    let child = publish(temp.path(), &native, &mut graph, "child", &[], &[])?;
+    let parent = publish(temp.path(), &native, &mut graph, "parent", &[], &[("child", &child)])?;
+    let roots = [root(&graph, &parent, "first")?, root(&graph, &parent, "second")?];
+    let checks = InventoryChecks::default();
+    let selected = tracing::subscriber::with_default(checks.clone(), || NativeLoafClosure::admit(&native, &roots))?;
+    assert_eq!(selected.graph.units.len(), 2);
+    assert_eq!(
+        checks.calls.load(Ordering::Relaxed),
+        4,
+        "each of two record/native pairs needs one check"
+    );
+
+    let checks = InventoryChecks::default();
+    tracing::subscriber::with_default(checks.clone(), || selected.graph.select(&roots))?;
+    assert_eq!(
+        checks.calls.load(Ordering::Relaxed),
+        4,
+        "a later handoff must validate again"
+    );
+
+    let installed = temp.path().join("installed");
+    copy_tree(native.root(), &installed)?;
+    let installed = PublishedOvenStore::new(&installed);
+    let checks = InventoryChecks::default();
+    tracing::subscriber::with_default(checks.clone(), || {
+        NativeLoafClosure::admit_published(&installed, &roots)
+    })?;
+    assert_eq!(
+        checks.calls.load(Ordering::Relaxed),
+        4,
+        "published admission has the same work contract"
+    );
+
+    let child = selected.graph.units.get(&child).ok_or("child missing")?;
+    replace_owned_fixture(&child.output()?, b"changed native bytes")?;
+    assert!(NativeLoafClosure::admit(&native, &roots).is_err());
+    assert!(selected.graph.select(&roots).is_err());
+    Ok(())
+}
+
 /// Publish a real native Engine recipe and its ordinary record, retaining original leases.
 fn publish(
     root: &Path,
@@ -809,7 +901,7 @@ fn dev7_native_loaf_refuses_substituted_and_injected_physical_edges() -> TestRes
     )?;
     let mut recipe = unit.record.clone();
     recipe.recipe.intent.target = "substituted-target".to_string();
-    assert!(verify_record(&recipe, &unit.record_owner, &unit.native_owner, false).is_err());
+    assert!(verify_record(&recipe, &unit.record_owner, &unit.native_owner).is_err());
     Ok(())
 }
 
