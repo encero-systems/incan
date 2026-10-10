@@ -7,10 +7,12 @@ use incan_lang::lang::generated_support::SUPPORT_CRATES_EVERY_PROGRAM_LINKS;
 use incan_lang::lang::standard_packages::standard_package_namespace_policy;
 use oven_model::manifest::DependencySource;
 
-use super::{CompilerSupportSources, DERIVE_DECLARATION};
+use super::CompilerSupportSources;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 const CHILD: &str = "INCAN_DEV7_ORDINARY_SUPPORT_CHILD";
+// Real authored identity and proc-macro declaration used by the pinned core dependency.
+const DERIVE_DECLARATION: &str = "[project]\nname='incan_derive'\nversion='0.6.0-dev.6'\n[rust]\nname='incan_derive'\ntype='proc-macro'\nedition='2024'\n";
 
 /// Exercise real executable geometry while all ambient source/catalog selectors point at a productive decoy.
 fn child(mode: &str) -> TestResult {
@@ -30,6 +32,16 @@ fn child(mode: &str) -> TestResult {
         fs::write(
             root.path().join("stdlib/core/loaf.toml"),
             format!("{}\n# changed\n", core.declaration),
+        )?;
+    }
+    if matches!(mode, "wrong-version" | "wrong-role") {
+        fs::write(
+            root.path().join("stdlib/derive/incan_derive/loaf.toml"),
+            if mode == "wrong-version" {
+                DERIVE_DECLARATION.replace("0.6.0-dev.6", "2.0.0")
+            } else {
+                DERIVE_DECLARATION.replace("proc-macro", "lib")
+            },
         )?;
     }
     let executable = root.path().join("bin/incan");
@@ -85,13 +97,25 @@ fn ordinary_support_refuses_unpinned_declaration() -> TestResult {
     child("unpinned")
 }
 
+/// A genuine executable-relative derive package must meet the pinned core's actual version requirement.
+#[test]
+fn ordinary_support_refuses_incompatible_derive_version() -> TestResult {
+    child("wrong-version")
+}
+
+/// A library at the derive source coordinate cannot supply the required host proc-macro role.
+#[test]
+fn ordinary_support_refuses_wrong_derive_role() -> TestResult {
+    child("wrong-role")
+}
+
 /// Select from the actual child executable and exercise original member ownership at each dependency handoff.
 #[test]
 fn ordinary_support_actual_executable_child() -> TestResult {
     let Some(mode) = std::env::var_os(CHILD) else {
         return Ok(());
     };
-    if mode == "unpinned" {
+    if matches!(mode.to_str(), Some("unpinned" | "wrong-version" | "wrong-role")) {
         assert!(CompilerSupportSources::discover().is_err());
         return Ok(());
     }

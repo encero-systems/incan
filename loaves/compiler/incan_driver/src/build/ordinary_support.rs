@@ -14,8 +14,6 @@ use oven_model::toolchain_layout::{CompilerOwnedSourceLayout, CompilerOwnedSourc
 
 use crate::error::{CliError, CliResult};
 
-const DERIVE_DECLARATION: &str = include_str!("../../../../stdlib/derive/incan_derive/loaf.toml");
-
 /// Original executable-relative core/derive declarations and their actual implicit dependency requests.
 ///
 /// Discovery has no environment or caller-selected path fallback. Installed source-free package selection must
@@ -29,7 +27,7 @@ pub(crate) struct CompilerSupportSources {
 }
 
 impl CompilerSupportSources {
-    /// Select pinned mandatory declarations beside the actual canonical executable, refusing present invalid input.
+    /// Select the pinned core declaration and its actual derive dependency beside the canonical executable.
     pub(crate) fn discover() -> CliResult<Option<Self>> {
         let Some(layout) = CompilerOwnedSourceLayout::discover().map_err(failure)? else {
             return Ok(None);
@@ -43,15 +41,17 @@ impl CompilerSupportSources {
         let derive = layout
             .open_member(Path::new("derive/incan_derive/loaf.toml"))
             .map_err(failure)?;
-        if core.verified_bytes().map_err(failure)? != policy.declaration.as_bytes()
-            || derive.verified_bytes().map_err(failure)? != DERIVE_DECLARATION.as_bytes()
-        {
+        if core.verified_bytes().map_err(failure)? != policy.declaration.as_bytes() {
             return Err(failure(
                 "mandatory native source declarations differ from compiler-pinned bytes",
             ));
         }
         let core_manifest = ProjectManifest::from_str(policy.declaration, core.path()).map_err(failure)?;
-        let derive_manifest = ProjectManifest::from_str(DERIVE_DECLARATION, derive.path()).map_err(failure)?;
+        let derive_manifest = ProjectManifest::from_str(
+            std::str::from_utf8(derive.verified_bytes().map_err(failure)?).map_err(failure)?,
+            derive.path(),
+        )
+        .map_err(failure)?;
         let core_root = parent(core.path())?;
         let derive_root = parent(derive.path())?;
         let core_project = core_manifest
@@ -98,6 +98,27 @@ impl CompilerSupportSources {
         let DependencySource::Path { path } = &derive_dependency.source else {
             return Err(failure("core derive dependency is not its compiler-owned source"));
         };
+        let version = derive_project
+            .version
+            .as_deref()
+            .ok_or_else(|| failure("derive version missing"))?;
+        let requirement = derive_dependency
+            .version
+            .as_deref()
+            .ok_or_else(|| failure("core derive version missing"))?;
+        if !semver::VersionReq::parse(requirement)
+            .map_err(failure)?
+            .matches(&semver::Version::parse(version).map_err(failure)?)
+            || derive_dependency
+                .package
+                .as_deref()
+                .unwrap_or(&derive_dependency.crate_name)
+                != DERIVE_CRATE
+        {
+            return Err(failure(
+                "derive source identity does not satisfy the pinned core dependency",
+            ));
+        }
         if std::fs::canonicalize(core_root.join(path)).map_err(failure)? != derive_root || derive_dependency.optional {
             return Err(failure(
                 "core derive dependency differs from its original mandatory source",
