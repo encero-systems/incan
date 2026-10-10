@@ -6087,6 +6087,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/provider/plan/checked_routes_tests.rs": {
+      "disposition": "keep",
+      "notes": "Checked nominal semantic routes across fresh source and ordinary materialized dependencies preserve original owners, exact directed aliases and namespace/native exposure boundaries.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/provider/sdk.rs": {
       "disposition": "keep",
       "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics.",
