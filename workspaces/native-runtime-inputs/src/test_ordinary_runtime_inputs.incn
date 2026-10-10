@@ -1,7 +1,15 @@
 """Exercise the production ordinary physical identity projection and malformed wire refusals."""
 
 from std.json import JsonValue
-from runtime_inputs import project, digest
+from std.collections import OrdinalKey
+from std.encoding.hex import hexlify
+from std.hash import sha256
+from runtime_inputs import project
+
+
+def digest[T with OrdinalKey](value: T) -> str:
+    """Independently check the public wire digest without exposing a private engine helper."""
+    return "sha256:" + hexlify(sha256.digest(value.ordinal_bytes()))
 
 
 def ordinary_record_identity() -> str:

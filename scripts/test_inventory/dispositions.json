@@ -256,6 +256,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/build/native_runtime_inputs/tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Actual receipt-bound ordinary Incan identity exchange retains original producer native owners, checks roots/records/intent/compiler and refuses missing original bytes; physical identity does not grant semantic, macro or namespace authority.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/build/native_sdk.rs": {
       "disposition": "unaffected",
       "notes": "Native SDK facet version/feature selection and canonical receipt catalog binding; no Cargo resolution.",
@@ -550,6 +558,14 @@
     "loaves/compiler/incan_driver/src/session/source_publication_tests.rs": {
       "disposition": "unaffected",
       "notes": "Genuine standard-source capability retention in ordinary sessions and refusal of copied projects, foreign namespaces, mixed authority and stale declarations.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_driver/src/source_authority_stage_tests.rs": {
+      "disposition": "unaffected",
+      "notes": "Layering controls carry genuine original source context through stage setters, cache clones, lowering and emission; hostile ambient and stale owners refuse. Temporary emission APIs require corresponding authority controls when backend callers migrate.",
       "owner": 1337,
       "split_required": false,
       "split_target": "",
