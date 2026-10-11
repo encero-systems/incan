@@ -1085,6 +1085,56 @@ fn bake_driver_fixture() -> Result<DriverFixture, Box<dyn std::error::Error>> {
     })
 }
 
+/// A library naming one public item of each stdlib SDK component the runtime does not already link.
+///
+/// Legacy links each stdlib component a program uses. Direct-route project tests and the census link every component
+/// crate a bake of this library selects from the fixture Store, so a program reaches the same compiled stdlib items
+/// legacy calls.
+const SDK_CLOSURE_MANIFEST: &str = "[project]\nname = \"sdk_closure\"\nversion = \"0.1.0\"\n";
+const SDK_CLOSURE_SOURCE: &str = "\"\"\"Name one public item of each stdlib component, so its bake links them all.\"\"\"
+
+from std.uuid import UuidError
+from std.io import IoError
+from std.encoding.bech32 import Decoded
+from std.compression import CompressionError
+from std.interop import BindingDeclaration
+from std.logging import Logger
+
+
+pub def data_item(value: UuidError) -> UuidError:
+    return value
+
+
+pub def system_item(value: IoError) -> IoError:
+    return value
+
+
+pub def codecs_item(value: Decoded) -> Decoded:
+    return value
+
+
+pub def compression_item(value: CompressionError) -> CompressionError:
+    return value
+
+
+pub def interop_item(value: BindingDeclaration) -> BindingDeclaration:
+    return value
+
+
+pub def observability_item(value: Logger) -> Logger:
+    return value
+";
+
+/// Bake the SDK closure library beside the runtime, reusing an unchanged earlier bake.
+fn sdk_closure(fixture: &DriverFixture) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let project = fixture.root.join("sdk-closure");
+    fs::create_dir_all(project.join("src"))?;
+    fs::write(project.join("loaf.toml"), SDK_CLOSURE_MANIFEST)?;
+    fs::write(project.join("src/lib.incn"), SDK_CLOSURE_SOURCE)?;
+    bake(&project, &fixture.home)?;
+    Ok(project)
+}
+
 /// Transport runtime preparation to Incan until the native test kernel has an Incan fixture hook (#1698).
 ///
 /// The returned root owns the library and receipt; preparation no longer depends on a generated Rust caller.
@@ -5743,7 +5793,8 @@ fn check_project_modules_case(
         fs::write(source.join(file), module)?;
     }
     let native = root.join("native");
-    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let mut closure = corpus::runtime_closure(&fixture.formatting)?;
+    closure.extend_with(&sdk_closure(fixture)?)?;
     let mut command = corpus::source_command(
         &fixture.driver_binary("debug"),
         &main,
@@ -5763,6 +5814,41 @@ fn check_project_modules_case(
     assert_eq!(actual.stdout, expected.stdout);
     assert_eq!(actual.stdout, expected_stdout);
     Ok(())
+}
+
+/// A stdlib model is the SDK crate's own type: constructed, returned as a Result error, read by field and asked a
+/// method, while stdlib functions and methods run in the crates that compiled them.
+#[test]
+fn stdlib_layouts_and_crate_calls_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "stdlib_layouts_and_crate_calls",
+        r#"from std.uuid import UuidError
+from std.datetime.civil.naive import ordinal_key_byte
+
+
+def check(text: str) -> Result[int, UuidError]:
+    if len(text) < 3:
+        return Err(UuidError(kind="invalid_length", detail="short"))
+    return Ok(len(text))
+
+
+def describe(error: UuidError) -> str:
+    return f"{error.kind}: {error.detail}"
+
+
+def main() -> None:
+    match check("ab"):
+        Ok(count) => println(f"ok {count}")
+        Err(error) => println(describe(error))
+    match check("abc"):
+        Ok(count) => println(f"ok {count}")
+        Err(error) => println(describe(error))
+    error = UuidError(kind="invalid_bytes", detail="raw input")
+    println(error.message())
+    println(len(ordinal_key_byte(7)))
+"#,
+        b"invalid_length: short\nok 3\nraw input\n1\n",
+    )
 }
 
 /// The adopted math unit is an explicit receipt-selected dependency on both native routes.

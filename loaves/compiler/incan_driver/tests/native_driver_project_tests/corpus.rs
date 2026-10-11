@@ -265,6 +265,29 @@ pub(super) struct NativeClosure {
     externs: Vec<(String, PathBuf)>,
     directories: Vec<PathBuf>,
     _plan: oven_rustc::plan::OvenDirectRustcPlanSelection,
+    _extensions: Vec<oven_rustc::plan::OvenDirectRustcPlanSelection>,
+}
+
+impl NativeClosure {
+    /// Add every crate another baked Loaf's receipt selects that this closure does not already name.
+    ///
+    /// Both receipts select from the one fixture Store, so a crate both name is the same artifact; the runtime's
+    /// binding is kept.
+    pub(super) fn extend_with(&mut self, project: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        let plan = runtime_plan(project)?;
+        for (name, artifact) in &plan.artifact_plan().externs {
+            if !self.externs.iter().any(|(known, _)| known == name) {
+                self.externs.push((name.clone(), artifact.clone()));
+            }
+        }
+        for directory in &plan.artifact_plan().dependency_search_paths {
+            if !self.directories.contains(directory) {
+                self.directories.push(directory.clone());
+            }
+        }
+        self._extensions.push(plan);
+        Ok(())
+    }
 }
 
 /// Select exactly one published profile, without discovering similarly named ambient rlibs.
@@ -282,6 +305,7 @@ pub(super) fn runtime_closure(runtime: &Path) -> Result<NativeClosure, Box<dyn s
         externs,
         directories: closure.artifact_plan().dependency_search_paths.clone(),
         _plan: closure,
+        _extensions: Vec::new(),
     })
 }
 
