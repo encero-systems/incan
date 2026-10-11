@@ -2723,6 +2723,83 @@ fn chained_literal_output_matches_legacy() -> Result<(), Box<dyn std::error::Err
     )
 }
 
+/// Prove tuples holding a list, an `Option` or another tuple byte-identical to legacy: a list element changes in place
+/// through a constant index, including inside a nested tuple, a class field and an indexed write, and is read,
+/// measured and passed with its tuple; an `Option` element is matched; a copied tuple stays independent; a returned
+/// tuple keeps its `None`; and each tuple displays as legacy spells it.
+#[test]
+fn tuple_carrier_element_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("tuple-carrier-element")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"class Holder:
+    pub pair: tuple[list[int], int]
+
+    def add(mut self, value: int) -> None:
+        self.pair[0].append(value)
+
+def total(pair: tuple[list[int], int]) -> int:
+    return len(pair[0]) + pair[1]
+
+def label(entry: tuple[Option[str], int]) -> str:
+    match entry[0]:
+        Some(text) => return f"{text} {entry[1]}"
+        None => return f"missing {entry[1]}"
+
+def make(count: int) -> tuple[list[int], Option[str]]:
+    mut items: list[int] = []
+    for index in range(count):
+        items.append(index + 1)
+    return (items, None)
+
+def main() -> None:
+    mut pair: tuple[list[int], int] = ([], 3)
+    pair[0].append(1)
+    pair[0].append(2)
+    println(len(pair[0]))
+    println(pair[0][1])
+    println(total(pair))
+    println(pair)
+    named: tuple[Option[str], int] = (Some("a"), 1)
+    println(label(named))
+    missing: tuple[Option[str], int] = (None, 2)
+    println(label(missing))
+    println(named)
+    counted: tuple[Option[int], bool] = (Some(4), true)
+    println(counted)
+    mut first: tuple[list[int], int] = ([1], 0)
+    second = first
+    first[0].append(2)
+    println(f"{first} {second}")
+    made = make(3)
+    match made[1]:
+        Some(text) => println(text)
+        None => println(f"{len(made[0])} none")
+    println(made)
+    mut outer: tuple[int, tuple[list[int], int]] = (0, ([], 0))
+    outer[1][0].append(3)
+    println(outer[1][0][0])
+    println(outer)
+    nested: tuple[tuple[Option[int], int], int] = ((None, 1), 2)
+    match nested[0][0]:
+        Some(value) => println(value)
+        None => println(f"inner missing {nested[1]}")
+    println(nested)
+    mut items: tuple[list[int], int] = ([0, 2], 0)
+    items[0][0] = 5
+    items[0][0] += 1
+    println(items)
+    mut holder = Holder(pair=([], 0))
+    holder.add(7)
+    holder.pair[0].append(8)
+    println(f"{len(holder.pair[0])} {holder.pair[0][1]}")
+"#,
+    )
+}
+
 /// Measure the actual unchanged graph with expensive fallback forbidden and retain numeric parity evidence.
 #[test]
 #[ignore = "machine-local diagnostic of the 50 ms completed fixture graph reuse budget"]
