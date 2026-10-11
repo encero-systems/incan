@@ -1297,6 +1297,18 @@ fn direct_route_nested_empty_lists_match_legacy() -> Result<(), Box<dyn std::err
     )
 }
 
+/// Reassigning collection literals injects the checked Option or union payload and preserves legacy output.
+#[test]
+fn direct_route_optional_collection_assignment_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    assert_native_legacy_bytes(
+        "optional_collection_assignment",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/cli_values_and_calls/empty_list_assigned_to_optional_binding_is_wrapped.incn"
+        ),
+        b"1\nsome 0\nsome 1\nlist 0\n0\n",
+    )
+}
+
 /// Contextual None payloads construct nested intrinsic carriers with their proven types.
 #[test]
 fn direct_route_contextual_none_payloads_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
@@ -3484,11 +3496,18 @@ def main() -> None:
     assert_eq!(actual.stdout, expected.stdout);
     assert_eq!(actual.stdout, b"1\n1\n2\n1\n2\n42\n-1\nnumber\npayload\n5\n10\n");
 
-    // ---- Unadmitted payload types stay a named refusal ----
+    // ---- Admitted list payloads preserve their values at the same boundary ----
+    assert_native_legacy_bytes(
+        "source_union_list_payload",
+        "def accept(value: int | list[int]) -> int:\n    if isinstance(value, int):\n        return 1\n    return 2\n\ndef main() -> None:\n    values = [1, 2]\n    println(accept(7))\n    println(accept(values))\n    println(len(values))\n",
+        b"1\n2\n2\n",
+    )?;
+
+    // ---- Unadmitted tuple payload types stay a named refusal ----
     let refused_source = root.join("unadmitted_union.incn");
     fs::write(
         &refused_source,
-        "def accept(value: int | list[int]) -> None:\n    pass\n\ndef main() -> None:\n    accept(7)\n",
+        "def accept(value: int | tuple[int, int]) -> None:\n    pass\n\ndef main() -> None:\n    accept(7)\n",
     )?;
     let refused_binary = root.join("refused-union");
     let refusal = corpus::source_command(
@@ -3501,7 +3520,7 @@ def main() -> None:
     .output()?;
     assert!(!refusal.status.success());
     assert!(
-        String::from_utf8_lossy(&refusal.stderr).contains("List[int]"),
+        String::from_utf8_lossy(&refusal.stderr).contains("unsupported Body IR union member"),
         "{}",
         String::from_utf8_lossy(&refusal.stderr)
     );

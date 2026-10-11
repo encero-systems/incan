@@ -148,7 +148,7 @@ from unions import (
     test_union_tag,
     union_members,
     union_projection,
-    union_injection,
+    carrier_injection,
 )
 from tuples import is_tuple_type, tuple_has_owners, tuple_aggregate, clone_tuple_operand, display_tuple, tuple_fields
 from text_plan import format_parts, clone_text, owned_literal
@@ -1170,7 +1170,7 @@ def lower_local_assignment(
                         return Err("unsupported Body IR nonnumeric implicit conversion")
                     operation = RvalueKind.NumericCast(operand, source_type, ty)
             else:
-                operation = union_injection(
+                operation = carrier_injection(
                     builder.nominals,
                     builder.enums,
                     builder.unions,
@@ -5309,7 +5309,7 @@ def boundary_plan_operand(mut builder: Builder, value: Operand, target: PlanType
                         text = display_plan_operand(builder, operand, span)?
                         operand = read_place(text, true, span)
             _ => pass
-    operation = union_injection(
+    operation = carrier_injection(
         builder.nominals,
         builder.enums,
         builder.unions,

@@ -244,7 +244,7 @@ pub def union_test_slot(
     return Ok(-1)
 
 
-pub def union_injection(
+pub def carrier_injection(
     nominals: list[NominalDeclaration],
     enums: list[RustEnumDeclaration],
     unions: list[RustType],
@@ -253,7 +253,7 @@ pub def union_injection(
     target: PlanType,
     intrinsics: list[EnumDeclaration],
 ) -> Result[RvalueKind, str]:
-    """Reuse enum construction for one member at an assignment, argument or return boundary."""
+    """Inject an exact checked Option payload or union member at the shared assignment, argument and return boundary."""
     match target:
         PlanType.Enum(owner, _name) =>
             if owner < len(enums) or source == target:
@@ -261,6 +261,10 @@ pub def union_injection(
             index = owner - len(enums)
             if index >= len(intrinsics):
                 return Err("invalid Body IR union destination owner")
+            if intrinsics[index].carrier == "Option":
+                if intrinsics[index].variants[1].fields != [source]:
+                    return Err("unsupported Body IR implicit Option payload type")
+                return Ok(RvalueKind.Enum(owner, 1, [operand]))
             if intrinsics[index].carrier != "":
                 return Ok(RvalueKind.Use(operand))
             slot = union_slot(nominals, enums, unions, owner, source, intrinsics)?
