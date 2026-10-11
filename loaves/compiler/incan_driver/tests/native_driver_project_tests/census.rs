@@ -6,7 +6,14 @@ use std::process::Stdio;
 use std::time::{Duration, Instant};
 use support::behavior_fixtures::{self as fixtures, BehaviorFixture, Expectation, FixtureLayout};
 
+/// The driver's environment variable naming its refusal report, and the report's file name in a fixture's scratch.
+const REFUSAL_REPORT: &str = "INCAN_DIRECT_REFUSAL_REPORT";
+const REFUSAL_FILE: &str = "refusals.txt";
+
 /// A fixture's exclusive census class and its independently retained observed result.
+///
+/// `refusals` lists every body's first refusal, as the driver reports them, so a fixture refused for several reasons
+/// shows all of them rather than only `detail`, the first; it is empty when the compilation reported none.
 #[derive(serde::Serialize)]
 struct Record {
     area: String,
@@ -14,9 +21,23 @@ struct Record {
     class: String,
     observed: String,
     detail: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    refusals: Vec<String>,
     pending_reason: Option<String>,
     formerly_multi_module: bool,
     elapsed_ms: u128,
+}
+
+/// Read the refusals the driver reported for one fixture, one per line; none when it wrote no report.
+fn reported_refusals(scratch: &Path) -> Vec<String> {
+    fs::read_to_string(scratch.join(REFUSAL_FILE))
+        .map(|text| {
+            text.lines()
+                .filter(|line| !line.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Run a child with file-backed streams so pipe capacity cannot defeat the deadline.
@@ -144,6 +165,7 @@ fn measure(
     let binary = scratch.join("native");
     let mut command = corpus::source_command(driver, &source, &binary, sysroot, closure);
     command.current_dir(scratch);
+    command.env(REFUSAL_REPORT, scratch.join(REFUSAL_FILE));
     let Some(output) = bounded(&mut command, scratch, deadline)? else {
         return Ok(("driver-error".into(), "compile timeout".into()));
     };
@@ -389,12 +411,18 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
                     } else {
                         observed.clone()
                     };
+                    let refusals = if observed == "refused" {
+                        reported_refusals(scratch.path())
+                    } else {
+                        Vec::new()
+                    };
                     records.push(Record {
                         area: area.clone(),
                         name: fixture.name.clone(),
                         class,
                         observed,
                         detail,
+                        refusals,
                         pending_reason: fixture.header.pending.clone(),
                         formerly_multi_module: fixture.layout != FixtureLayout::SingleFile
                             && fixture.header.pending.is_none()
@@ -490,6 +518,7 @@ fn acceptance_record(name: &str, observed: &str, pending: bool) -> Record {
         class: if pending { "pending".into() } else { observed.into() },
         observed: observed.into(),
         detail: "retained diagnostic".into(),
+        refusals: Vec::new(),
         pending_reason: pending.then(|| "tracked semantic limitation".into()),
         formerly_multi_module: false,
         elapsed_ms: 1,
