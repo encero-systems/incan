@@ -173,6 +173,22 @@ pub fn pinned_link_closure_identity(rustc: &Path, target: &str) -> Result<Option
     Ok(pinned_link(rustc, target)?.map(|link| link.identity))
 }
 
+/// Configure an embedded compiler invocation with the ordinary native linker policy and return its input identity.
+///
+/// The caller consumes the command's arguments and launches its compiler under the command's explicit environment.
+/// No second platform policy is reconstructed at the embedded rustc boundary. Unsupported targets return `None`.
+pub fn configure_pinned_native_link(
+    command: &mut Command,
+    rustc: &Path,
+    target: &str,
+) -> Result<Option<String>, OvenRustcError> {
+    let Some(link) = pinned_link(rustc, target)? else {
+        return Ok(None);
+    };
+    link.apply(command);
+    Ok(Some(link.identity))
+}
+
 /// Bind the authorized driver's native SDK requirements without changing ordinary units' link closure.
 pub fn pinned_driver_link_closure_identity(rustc: &Path, target: &str) -> Result<Option<String>, OvenRustcError> {
     Ok(pinned_unit_link(rustc, target, true)?.map(|link| link.identity))

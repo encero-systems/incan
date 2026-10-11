@@ -111,6 +111,35 @@ pub(super) fn directory_entries(path: &Path) -> io::Result<(Vec<PathBuf>, FileSt
     directory_entries_in(path, cache_root().as_deref())
 }
 
+/// Digest the immediate files of a native search directory through existing file and child-list observations.
+///
+/// Pinned rustc searches immediate candidates, not archived source or arbitrary descendant directories. File links
+/// are resolved and byte-checked on every invocation; directory topology is rechecked after reconciliation.
+pub(super) fn digest_native_directory(path: &Path) -> io::Result<String> {
+    let mut records = std::collections::BTreeMap::new();
+    let (children, before) = directory_entries(path)?;
+    for child in children {
+        let input = path.join(&child);
+        match fs::metadata(&input) {
+            Ok(metadata) if metadata.is_file() => {
+                let original = input.canonicalize()?;
+                let digest = digest_file(&original)?;
+                records.insert(child, (original, digest));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    if stat_directory(path)? != before {
+        return Err(io::Error::other(
+            "native search directory changed during reconciliation",
+        ));
+    }
+    let bytes = serde_json::to_vec(&records).map_err(io::Error::other)?;
+    Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
+}
+
 /// Read one directory observation using an explicit cache root for isolated tests.
 fn directory_entries_in(path: &Path, cache: Option<&Path>) -> io::Result<(Vec<PathBuf>, FileStamp)> {
     let before = stat_directory(path)?;

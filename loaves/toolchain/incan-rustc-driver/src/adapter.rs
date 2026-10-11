@@ -325,6 +325,7 @@ pub fn compile(
     sysroot: &Path,
     externs: &[(String, PathBuf)],
     dependency_search_paths: &[PathBuf],
+    native_link: &std::process::Command,
 ) -> Result<(), DriverError> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::native_compile", input = %output.display(), functions = plan.functions.len()).entered();
     validation::validate(&plan)?;
@@ -368,6 +369,7 @@ pub fn compile(
         args.push("-L".into());
         args.push(format!("dependency={}", path.display()));
     }
+    args.extend(native_link.get_args().map(|arg| arg.to_string_lossy().into_owned()));
     let result = rustc_driver::catch_fatal_errors(|| rustc_driver::run_compiler(&args, &mut Callbacks { plan }));
     *PLAN.lock().map_err(|_| DriverError::State)? = None;
     if let Some(error) = FAILURE.lock().map_err(|_| DriverError::State)?.take() {

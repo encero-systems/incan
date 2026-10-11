@@ -53,6 +53,111 @@ fn bake(project: &Path, home: &Path) -> Result<(), Box<dyn std::error::Error>> {
     bake_with_reuse_requirement(project, home, false)
 }
 
+/// A manifest-backed Body IR executable skips frontend/lowering/native work, restores outputs and rejects edits.
+#[test]
+fn native_source_completed_output_reuses_before_frontend() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("native-source-completed-output")?.canonicalize()?;
+    fs::create_dir_all(root.join("src"))?;
+    fs::create_dir_all(root.join("target/native"))?;
+    fs::write(
+        root.join("loaf.toml"),
+        "[project]\nname='native_source_completed'\nversion='0.1.0'\n",
+    )?;
+    let source = root.join("src/main.incn");
+    let original = "def main() -> None:\n    println(42)\n";
+    fs::write(&source, original)?;
+    let native = root.join("target/native/program");
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let driver = fixture.driver_binary("debug");
+    let compile = |required: bool, trace: bool| {
+        let mut command = corpus::source_command(&driver, &source, &native, &fixture.sysroot, &closure);
+        command.env_remove("INCAN_TEST_REQUIRE_COMPLETED_PROJECT_REUSE");
+        command.env_remove("INCAN_TRACE_DIR").env_remove("INCAN_TRACE_PARENT");
+        #[cfg(target_os = "macos")]
+        command
+            .env("MACOSX_DEPLOYMENT_TARGET", "12.0")
+            .env("SDKROOT", "/nonexistent-incan-native-reuse-sdk");
+        if required {
+            command.env("INCAN_TEST_REQUIRE_COMPLETED_PROJECT_REUSE", "1");
+        }
+        if trace {
+            command.env("INCAN_TRACE_DIR", root.join("target/reuse-trace"));
+        }
+        command.output()
+    };
+    success(&compile(false, false)?, "first native source compilation");
+    let before = fs::metadata(&native)?;
+    let bytes = fs::read(&native)?;
+    #[cfg(target_os = "macos")]
+    {
+        let headers = Command::new("otool").arg("-l").arg(&native).output()?;
+        success(&headers, "native source pinned platform metadata");
+        let headers = String::from_utf8(headers.stdout)?;
+        assert!(headers.contains("minos 11.0"));
+        assert!(headers.contains("sdk 26.5"));
+    }
+    success(&compile(true, true)?, "unchanged native source reuse before frontend");
+    let after = fs::metadata(&native)?;
+    assert_eq!(bytes, fs::read(&native)?);
+    assert_eq!(before.modified()?, after.modified()?);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        assert_eq!(before.ino(), after.ino());
+    }
+    let mut hits = 0;
+    for entry in fs::read_dir(root.join("target/reuse-trace"))? {
+        for line in fs::read_to_string(entry?.path())?.lines() {
+            let event: serde_json::Value = serde_json::from_str(line)?;
+            if event["kind"] != "begin" {
+                continue;
+            }
+            let name = event["function"].as_str().ok_or("trace function missing")?;
+            hits += usize::from(name == "incan_driver::reuse_native_source_output");
+            assert!(
+                ![
+                    "incan_rustc_driver::checked_modules",
+                    "incan_rustc_driver::analyze_modules",
+                    "incan_rustc_driver::lower_program",
+                    "incan_rustc_driver::native_compile",
+                ]
+                .contains(&name),
+                "unchanged native source entered {name}"
+            );
+        }
+    }
+    assert_eq!(hits, 1);
+    fs::remove_file(&native)?;
+    success(&compile(true, false)?, "native source projection recovery");
+    let run = Command::new(&native).output()?;
+    success(&run, "recovered native source execution");
+    assert_eq!(run.stdout, b"42\n");
+    fs::write(&source, "def main() -> None:\n    println(47)\n")?;
+    let refused = compile(true, false)?;
+    if refused.status.success() {
+        // A previous suite run may already have compiled this exact generation; JEC should reuse it.
+        let run = Command::new(&native).output()?;
+        success(&run, "cached changed native source execution");
+        assert_eq!(run.stdout, b"47\n");
+        assert_ne!(bytes, fs::read(&native)?);
+    } else {
+        assert!(
+            String::from_utf8_lossy(&refused.stderr)
+                .contains("completed project reuse missed before frontend preparation")
+        );
+        assert_eq!(bytes, fs::read(&native)?);
+    }
+    success(&compile(false, false)?, "changed native source compilation");
+    let run = Command::new(&native).output()?;
+    success(&run, "changed native source execution");
+    assert_eq!(run.stdout, b"47\n");
+    fs::write(&source, original)?;
+    success(&compile(true, false)?, "exact source restoration native reuse");
+    assert_eq!(bytes, fs::read(native)?);
+    Ok(())
+}
+
 /// Shared Rust caller generations replace read-only projections without modifying aliases or invoking compilation.
 #[cfg(unix)]
 #[test]
@@ -685,6 +790,7 @@ fn prepare_source_driver(root: &Path, repo: &Path) -> Result<std::path::PathBuf,
     let language = fixture_dependency_path(&lowering, &repo.join("loaves/kernel/incan_lang"))?;
     let compiler = fixture_dependency_path(&driver, &repo.join("loaves/compiler/incan_driver"))?;
     let oven_cli = fixture_dependency_path(&driver, &repo.join("loaves/toolchain/oven-cli"))?;
+    let oven_rustc = fixture_dependency_path(&driver, &repo.join("loaves/oven/oven_rustc"))?;
     let manifest = fs::read_to_string(repo.join("loaves/compiler/incan_mir_lowering/loaf.toml"))?
         .replace("../incan_mir_plan", "../library")
         .replace("../../kernel/incan_semantics_core", &core)
@@ -700,6 +806,7 @@ fn prepare_source_driver(root: &Path, repo: &Path) -> Result<std::path::PathBuf,
         .replace("../../kernel/incan_semantics_core", &core)
         .replace("../../compiler/incan_frontend", &frontend)
         .replace("../../compiler/incan_driver", &compiler)
+        .replace("../../oven/oven_rustc", &oven_rustc)
         .replace("../oven-cli", &oven_cli);
     fs::write(driver.join("loaf.toml"), manifest)?;
     Ok(driver)
