@@ -16,6 +16,13 @@ pub from generators import (
     int_step_generator,
     float_step_generator,
     bool_step_generator,
+    take_generator,
+    map_int_generator,
+    map_float_generator,
+    map_bool_generator,
+    filter_int_generator,
+    filter_float_generator,
+    filter_bool_generator,
 )
 pub from pattern_assertions import (
     missing_some,

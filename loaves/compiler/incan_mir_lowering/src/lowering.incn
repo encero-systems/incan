@@ -141,6 +141,7 @@ from generators import (
     is_generator_reference,
 )
 from generator_expressions import first_clause_item, source_generator, source_item, construct_chain, step_result
+from generator_adapters import is_generator_adapter, generator_adapter
 from project import project_context
 from nominal_instances import specialize_nominals
 from traits import method_index, owner_method_index, specialize_traits, validate_static_receiver
@@ -4852,6 +4853,28 @@ def numeric_receiver(
     return argument_value(builder, arguments, 0, span)
 
 
+def lower_generator_adapter(
+    mut builder: Builder,
+    member: str,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    receiver_ty: PlanType,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Move the owned generator receiver into one lazy runtime adapter, as legacy's adapter consumes its receiver."""
+    if len(arguments) != 2:
+        return Err(f"invalid Body IR generator {member} arguments")
+    receiver = argument_place(builder, arguments, 0, span)?
+    if receiver.projection != Projection.Whole or place_type(builder.locals, receiver) != receiver_ty:
+        return Err("unsupported Body IR generator adapter receiver")
+    argument = argument_value(builder, arguments, 1, span)?
+    output = call_destination(builder, destination, receiver_ty, span)?
+    drop_owned(builder, output.local, span)
+    generator_adapter(builder, member, read_place(receiver, true, span), argument, output, span)?
+    builder.owned.append(output.local)
+    return Ok(None)
+
+
 def lower_list_method(
     mut builder: Builder,
     member: str,
@@ -4863,6 +4886,8 @@ def lower_list_method(
     receiver_ty = argument_type(builder, arguments, 0, span)?
     match generator_shape(receiver_ty):
         Some((leaf, depth)) =>
+            if is_generator_adapter(member):
+                return lower_generator_adapter(builder, member, arguments, destination, receiver_ty, span)
             if member != "Generator.collect" and member != "Iterator.collect":
                 return Err(f"unsupported Body IR generator Method {member}")
             if len(arguments) != 1:

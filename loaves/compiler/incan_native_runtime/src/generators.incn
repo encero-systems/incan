@@ -54,3 +54,38 @@ pub def bool_step_generator[T with (Clone, Static)](
 ) -> Generator[T]:
     """Expand each boolean source item through a generator-expression step, drawing both only when polled."""
     return (value for item in source for value in step(item))
+
+
+pub def take_generator[T with (Clone, Static)](values: Generator[T], count: int) -> Generator[T]:
+    """Stop after at most `count` items, drawing each only when polled; a negative count yields nothing."""
+    return values.take(count)
+
+
+pub def map_int_generator[U with (Clone, Static)](values: Generator[int], transform: (int) -> U) -> Generator[U]:
+    """Transform each integer item when it is polled."""
+    return (transform(value) for value in values)
+
+
+pub def map_float_generator[U with (Clone, Static)](values: Generator[float], transform: (float) -> U) -> Generator[U]:
+    """Transform each float item when it is polled."""
+    return (transform(value) for value in values)
+
+
+pub def map_bool_generator[U with (Clone, Static)](values: Generator[bool], transform: (bool) -> U) -> Generator[U]:
+    """Transform each boolean item when it is polled."""
+    return (transform(value) for value in values)
+
+
+pub def filter_int_generator(values: Generator[int], predicate: (int) -> bool) -> Generator[int]:
+    """Keep the integer items the predicate accepts, testing each when it is polled."""
+    return (value for value in values if predicate(value))
+
+
+pub def filter_float_generator(values: Generator[float], predicate: (float) -> bool) -> Generator[float]:
+    """Keep the float items the predicate accepts, testing each when it is polled."""
+    return (value for value in values if predicate(value))
+
+
+pub def filter_bool_generator(values: Generator[bool], predicate: (bool) -> bool) -> Generator[bool]:
+    """Keep the boolean items the predicate accepts, testing each when it is polled."""
+    return (value for value in values if predicate(value))

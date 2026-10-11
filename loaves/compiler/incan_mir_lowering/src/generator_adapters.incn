@@ -1,0 +1,153 @@
+"""Lazy generator adapters: `take`, `map` and `filter` chained onto an owned generator through the runtime."""
+
+from pub::incan_mir_plan import Operand, Place, PlanType, RvalueKind, SourceSpan
+from pub::incan_mir_plan import assign as plan_assign
+from frame import Builder, temporary, read_place, value_type, external_call
+from generators import generator_shape, generator_element, generator_runtime_call
+
+
+pub def is_generator_adapter(member: str) -> bool:
+    """Name the lazy generator members this module chains; `collect` consumes instead."""
+    return member == "Generator.take" or member == "Generator.map" or member == "Generator.filter"
+
+
+pub def generator_adapter(
+    mut builder: Builder,
+    member: str,
+    source: Operand,
+    argument: Operand,
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Chain one lazy adapter onto the owned source; nothing is drawn until a consumer polls the result."""
+    match generator_shape(value_type(builder, source)?):
+        Some((leaf, depth)) =>
+            source_type = PlanType.Generator(leaf, depth)
+            if member == "Generator.take":
+                return take_adapter(builder, source, source_type, argument, output, span)
+            if member == "Generator.filter":
+                return filter_adapter(builder, source, source_type, argument, output, span)
+            if member == "Generator.map":
+                return map_adapter(builder, source, source_type, argument, output, span)
+            return Err(f"unsupported Body IR generator Method {member}")
+        None => return Err("unsupported Body IR generator adapter receiver")
+
+
+def take_adapter(
+    mut builder: Builder,
+    source: Operand,
+    source_type: PlanType,
+    count: Operand,
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Stop after at most `count` items, as legacy's runtime `take` does."""
+    if builder.locals[output.local].ty != source_type or value_type(builder, count)? != PlanType.Int:
+        return Err("unsupported Body IR generator take types")
+    element = source_element(source_type)?
+    generator_runtime_call(
+        builder,
+        "take_generator",
+        element,
+        [source_type, PlanType.Int],
+        source_type,
+        [source, count],
+        output,
+        span,
+    )
+    return Ok(None)
+
+
+def filter_adapter(
+    mut builder: Builder,
+    source: Operand,
+    source_type: PlanType,
+    predicate: Operand,
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Keep the items a function value accepts, testing each when it is polled."""
+    if builder.locals[output.local].ty != source_type:
+        return Err("unsupported Body IR generator filter types")
+    element = source_element(source_type)?
+    signature = [element, PlanType.Bool]
+    pointer = adapter_callable(builder, predicate, signature, span)?
+    path = f"incan_native_runtime::filter_{element_family(element)?}_generator"
+    external_call(
+        builder,
+        path,
+        [source_type, PlanType.FunctionPointer(signature)],
+        source_type,
+        [source, pointer],
+        output,
+        span,
+    )
+    return Ok(None)
+
+
+def map_adapter(
+    mut builder: Builder,
+    source: Operand,
+    source_type: PlanType,
+    transform: Operand,
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Transform each item with a function value when it is polled."""
+    result = builder.locals[output.local].ty
+    mapped = source_element(result)?
+    element = source_element(source_type)?
+    signature = [element, mapped]
+    pointer = adapter_callable(builder, transform, signature, span)?
+    name = f"map_{element_family(element)?}_generator"
+    generator_runtime_call(
+        builder,
+        name,
+        mapped,
+        [source_type, PlanType.FunctionPointer(signature)],
+        result,
+        [source, pointer],
+        output,
+        span,
+    )
+    return Ok(None)
+
+
+def source_element(ty: PlanType) -> Result[PlanType, str]:
+    """Read the element an owned generator yields."""
+    match generator_shape(ty):
+        Some((leaf, depth)) =>
+            if ty != PlanType.Generator(leaf, depth):
+                return Err("unsupported Body IR borrowed generator adapter value")
+            return Ok(generator_element(leaf, depth))
+        None => return Err("unsupported Body IR generator adapter result outside generators")
+
+
+def element_family(element: PlanType) -> Result[str, str]:
+    """Name the runtime adapter whose function value takes this element by value, as legacy's callable ABI does."""
+    match element:
+        PlanType.Int => return Ok("int")
+        PlanType.Float => return Ok("float")
+        PlanType.Bool => return Ok("bool")
+        _ => return Err("unsupported Body IR generator adapter element outside int, float and bool")
+
+
+def adapter_callable(
+    mut builder: Builder,
+    value: Operand,
+    signature: list[PlanType],
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Pass a function value as the pointer legacy's adapter calls; a capturing closure keeps its named refusal."""
+    match value_type(builder, value)?:
+        PlanType.FunctionPointer(found) =>
+            if found != signature:
+                return Err("unsupported Body IR generator adapter callable signature")
+            return Ok(value)
+        PlanType.FunctionItem(_name, found) =>
+            if found != signature:
+                return Err("unsupported Body IR generator adapter callable signature")
+            pointer = temporary(builder, PlanType.FunctionPointer(signature), span)
+            builder.emit(plan_assign(pointer, RvalueKind.ReifyFunction(value), span))
+            return Ok(read_place(pointer, false, span))
+        _ => return Err("unsupported Body IR generator adapter callable outside function values")
