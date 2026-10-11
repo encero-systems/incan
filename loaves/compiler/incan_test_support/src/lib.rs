@@ -232,6 +232,17 @@ pub fn configure_explicit_oven_bake_command(command: &mut Command) -> std::io::R
     Ok(())
 }
 
+/// Return the checkout-owned directory, kept across suite runs, that the suite grants this explicit-bake root.
+///
+/// A root that bakes the same fixture graph on every run bakes into this directory so Oven reuses the previous run's
+/// state, the way Cargo reuses a target directory. `None` outside the suite or without the grant: callers then bake
+/// into a fresh temporary directory.
+pub fn explicit_bake_workspace() -> Option<PathBuf> {
+    std::env::var_os("INCAN_INTERNAL_OVEN_EXPLICIT_BAKE_WORKSPACE")
+        .filter(|value| !value.is_empty())
+        .map(|value| anchor_harness_path(PathBuf::from(value)))
+}
+
 /// Return the generated Cargo target selected by the outer test harness.
 ///
 /// `make` and CI preheat one task-local target before starting nextest. Subprocess helpers must preserve that

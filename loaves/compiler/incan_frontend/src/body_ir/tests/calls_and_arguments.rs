@@ -150,7 +150,7 @@ fn construction_records_an_omitted_field_default_as_an_explicit_slot() -> Result
 #[test]
 fn source_local_model_construction_retains_its_declaration_identity_and_canonical_field_layout()
 -> Result<(), Box<dyn std::error::Error>> {
-    let source = "model Pair:\n  left: int\n  right: int\n\ndef main() -> int:\n  pair = Pair(right=2, left=40)\n  return pair.left + pair.right\n";
+    let source = "model Pair:\n  pub left: int\n  right: int\n\ndef main() -> int:\n  pair = Pair(right=2, left=40)\n  return pair.left + pair.right\n";
     let module = build(source, &["m", "nominal_identity"])?;
     let declaration = match module.nominal_declarations.as_slice() {
         [declaration] => declaration,
@@ -161,6 +161,11 @@ fn source_local_model_construction_retains_its_declaration_identity_and_canonica
     assert_eq!(declaration.name, "Pair");
     assert_eq!(declaration.fields, vec!["left", "right"]);
     assert_eq!(declaration.type_parameter_count, 0);
+    assert_eq!(declaration.field_public, vec![true, false]);
+    assert!(!declaration.public);
+    assert!(!declaration.has_field_defaults);
+    assert_eq!(declaration.derives, incan_lang::lang::derives::plain_model_derives());
+    assert!(module.is_well_formed_nominal_declaration(declaration));
     assert_eq!(
         declaration.canonical.kind,
         SemanticSourceTargetKind::Model,
@@ -1167,6 +1172,49 @@ fn a_module_qualified_stdlib_call_carries_the_selected_declaration() -> Result<(
     assert!(
         sqrt.canonical.is_some(),
         "the stdlib callee must keep its identity: {rendered}"
+    );
+    let delegation = module
+        .stdlib_delegations
+        .iter()
+        .find(|delegation| Some(&delegation.canonical) == sqrt.canonical.as_ref())
+        .ok_or("sqrt must retain its checked transparent delegation")?;
+    assert_eq!(delegation.rust_path().as_deref(), Some("libm::sqrt"));
+    assert_eq!(
+        delegation.parameters,
+        vec![IncanType::Primitive(IncanPrimitiveType::Float)]
+    );
+    assert_eq!(delegation.return_type, IncanType::Primitive(IncanPrimitiveType::Float));
+    Ok(())
+}
+
+/// Imported aliases carry the same delegation, while a local shadow has no stdlib delegation.
+#[test]
+fn stdlib_delegations_follow_aliases_and_preserve_local_shadowing() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "from std.math import gcd as common\n\ndef gcd(a: int, b: int) -> int:\n  return a + b\n\ndef main() -> int:\n  return common(b=18, a=48) + gcd(4, 6)\n",
+        &["m", "import_alias"],
+    )?;
+    let targets = named_targets(&module, "main");
+    let imported = targets
+        .iter()
+        .find(|target| target.name == "common")
+        .ok_or("missing imported call")?;
+    let local = targets
+        .iter()
+        .find(|target| target.name == "gcd")
+        .ok_or("missing local call")?;
+    assert!(
+        module
+            .stdlib_delegations
+            .iter()
+            .any(|delegation| Some(&delegation.canonical) == imported.canonical.as_ref()
+                && delegation.rust_path().as_deref() == Some("incan_std_core::num::gcd_i64"))
+    );
+    assert!(
+        !module
+            .stdlib_delegations
+            .iter()
+            .any(|delegation| Some(&delegation.canonical) == local.canonical.as_ref())
     );
     Ok(())
 }

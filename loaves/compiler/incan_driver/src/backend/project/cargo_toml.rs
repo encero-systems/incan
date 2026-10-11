@@ -35,6 +35,8 @@ struct CargoManifest {
     package: PackageSection,
     workspace: toml::Table,
     dependencies: toml::Table,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    patch: Option<toml::Table>,
     #[serde(rename = "dev-dependencies", skip_serializing_if = "Option::is_none")]
     dev_dependencies: Option<toml::Table>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -325,6 +327,7 @@ impl ProjectGenerator {
             },
             workspace: toml::Table::new(), // empty — opt out of parent workspace
             dependencies: deps,
+            patch: self.compiler_closure_patches()?,
             dev_dependencies: dev_deps,
             features,
             bin,

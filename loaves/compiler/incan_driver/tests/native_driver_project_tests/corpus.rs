@@ -2,6 +2,47 @@
 
 use super::*;
 
+/// Prove constants, shared parameters, owned returns, concatenation, comparison, and display against legacy.
+pub(super) fn check_strings(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    runtime: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let project = root.join("strings");
+    fs::create_dir_all(&project)?;
+    let source = project.join("strings.incn");
+    fs::write(
+        &source,
+        "const PREFIX: str = \"hello\"\n\ndef greet(value: str) -> str:\n    \"\"\"Return the greeting.\"\"\"\n    return value + \" world\"\n\ndef identity(value: str) -> str:\n    return value\n\ndef main() -> None:\n    \"\"\"Exercise owned string boundaries.\"\"\"\n    \"discarded text\"\n    text = greet(PREFIX)\n    same = identity(text)\n    same\n    println(text == same)\n    println(text < \"z\")\n    println(text)\n    println(f\"result={same}\")\n    mut changing = same\n    changing += \"!\"\n    changing = identity(changing)\n    println(changing)\n",
+    )?;
+    let native = project.join("native");
+    success(
+        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime, "debug")?)?,
+        "native strings compilation",
+    );
+    let legacy_output = project.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&project)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_output)
+            .output()?,
+        "legacy strings compilation",
+    );
+    let expected = Command::new(legacy_output.join("oven/release/strings")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy strings execution");
+    success(&actual, "native strings execution");
+    assert_eq!(actual.stdout, expected.stdout, "string output must be byte-identical");
+    assert_eq!(
+        actual.stdout,
+        b"true\ntrue\nhello world\nresult=hello world\nhello world!\n"
+    );
+    Ok(())
+}
+
 /// Explicit runtime artifacts and metadata search paths retained by its publisher receipt.
 pub(super) struct NativeClosure {
     externs: Vec<(String, PathBuf)>,
@@ -77,7 +118,7 @@ pub(super) fn check_benchmark(
     runtime: &Path,
     name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let closure = runtime_closure(runtime, "release")?;
+    let closure = runtime_closure(runtime, "debug")?;
     let original = support::repo_root()
         .join("workspaces/benchmarks/compute")
         .join(name)
@@ -109,6 +150,62 @@ pub(super) fn check_benchmark(
     println!(
         "benchmark {name}: pass, unchanged source, byte-identical stdout {:?}",
         String::from_utf8_lossy(&actual.stdout)
+    );
+    Ok(())
+}
+
+/// Exercise the plain nominal contract with reversed written field order and a returned model.
+pub(super) fn check_plain_model(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    runtime: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let closure = runtime_closure(runtime, "debug")?;
+    let project = root.join("plain-model");
+    fs::create_dir_all(&project)?;
+    let source = project.join("plain_model.incn");
+    fs::write(
+        &source,
+        "model Point:\n  x: int\n  y: int\n  label: str\n\ndef shifted(point: Point) -> Point:\n  return Point(label=point.label, y=point.y, x=point.x + 2)\n\ndef main() -> None:\n  mut point = Point(label=\"model\", y=7, x=3)\n  point.x += 4\n  point.label = \"updated\"\n  next = shifted(point)\n  println(point.x)\n  println(next.x)\n  println(next.y)\n  println(next.label)\n",
+    )?;
+    let native = project.join("native");
+    success(
+        &compile_source(driver, &source, &native, sysroot, &closure)?,
+        "plain model native compilation",
+    );
+    let legacy_output = project.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&project)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_output)
+            .output()?,
+        "plain model legacy compilation",
+    );
+    let expected = Command::new(legacy_output.join("oven/release/plain_model")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "plain model legacy execution");
+    success(&actual, "plain model native execution");
+    assert_eq!(
+        actual.stdout, expected.stdout,
+        "plain model output must be byte-identical"
+    );
+    assert_eq!(actual.stdout, b"7\n9\n7\nupdated\n");
+
+    // A newly admitted model must not let an unadmitted numeric coercion escape as an invalid plan.
+    let division = project.join("integer_division.incn");
+    fs::write(
+        &division,
+        "model Reading:\n  value: int\n\ndef main() -> None:\n  reading = Reading(value=10)\n  println(str(reading.value / 2))\n",
+    )?;
+    let refused = compile_source(driver, &division, &project.join("division"), sysroot, &closure)?;
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("unsupported Body IR non-float true division operands"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
     );
     Ok(())
 }

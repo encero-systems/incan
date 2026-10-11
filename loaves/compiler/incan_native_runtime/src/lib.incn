@@ -1,6 +1,15 @@
 """Monomorphic language runtime calls used by the direct scalar native route."""
 
 from rust::incan_std_core::iter import range as runtime_range
+pub from strings import (
+    concat_text,
+    equal_text,
+    unequal_text,
+    less_text,
+    less_equal_text,
+    greater_text,
+    greater_equal_text,
+)
 
 
 pub def format_int(value: int) -> str:

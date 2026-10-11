@@ -165,6 +165,9 @@ fn retain_suite_output(request: &RetentionRequest, heartbeat_interval: Duration)
         }
     } else {
         eprintln!("Oven suite output retained at {}", request.output.display());
+        if let Err(error) = remove_earlier_retained_outputs(&request.output) {
+            eprintln!("Oven could not remove earlier retained outputs: {error}");
+        }
     }
 
     if let Some(path) = &timing_path
@@ -184,6 +187,33 @@ fn retain_suite_output(request: &RetentionRequest, heartbeat_interval: Duration)
         &format!("{:.3}s, exit {status}", elapsed as f64 / 1_000_000_000.0),
     );
     Ok(status)
+}
+
+/// Keep only the newest retained output of one kind: remove sibling directories that share this output's
+/// `mktemp` prefix (`oven-test-one.`, `oven-compiler-suite-output.`).
+///
+/// A failed or interrupted run is retained for diagnosis, and each one holds about 1.6 GB; only the latest failure is
+/// worth diagnosing, so earlier ones are removed instead of accumulating across iterations. One suite runs per
+/// checkout at a time, so no sibling is still in use.
+fn remove_earlier_retained_outputs(output: &Path) -> io::Result<()> {
+    let (Some(parent), Some(name)) = (output.parent(), output.file_name().and_then(|name| name.to_str())) else {
+        return Ok(());
+    };
+    let Some((prefix, _)) = name.rsplit_once('.') else {
+        return Ok(());
+    };
+    let prefix = format!("{prefix}.");
+    for entry in fs::read_dir(parent)?.flatten() {
+        let path = entry.path();
+        let is_sibling = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|sibling| sibling.starts_with(&prefix) && sibling != name);
+        if is_sibling && path.is_dir() {
+            fs::remove_dir_all(&path)?;
+        }
+    }
+    Ok(())
 }
 
 /// Remove stale retained artifacts without accepting a directory in place of an artifact file.
@@ -492,6 +522,28 @@ fn announce(state: &str, subject: &str, detail: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Retaining a run removes earlier retained runs of the same kind and leaves other directories alone.
+    #[test]
+    fn retained_output_replaces_earlier_retained_runs() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        for name in [
+            "oven-test-one.old1",
+            "oven-test-one.old2",
+            "oven-test-one.current",
+            "oven-compiler-suite-output.x",
+            "debug",
+        ] {
+            fs::create_dir_all(root.path().join(name))?;
+        }
+        remove_earlier_retained_outputs(&root.path().join("oven-test-one.current"))?;
+        let mut left = fs::read_dir(root.path())?
+            .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().into_owned()))
+            .collect::<Result<Vec<_>, _>>()?;
+        left.sort();
+        assert_eq!(left, ["debug", "oven-compiler-suite-output.x", "oven-test-one.current"]);
+        Ok(())
+    }
 
     /// Build one representative replay output and request.
     fn fixture(succeeded: bool, report_exists: bool) -> io::Result<(tempfile::TempDir, RetentionRequest)> {

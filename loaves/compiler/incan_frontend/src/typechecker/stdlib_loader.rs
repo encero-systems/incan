@@ -144,6 +144,64 @@ pub struct StdlibAstCache {
 }
 
 impl StdlibAstCache {
+    /// Recover the source identity only when the full canonical declaration matches the catalog-owned SDK package.
+    /// Package paths are relative to their catalog-granted namespace; names, kinds, scopes and provenance spans must
+    /// still match after rebasing the source's `std` root.
+    pub(crate) fn callable_source_identity(&mut self, identity: &CanonicalSymbolId) -> Option<CanonicalSymbolId> {
+        use incan_semantics_core::SymbolOrigin;
+        let path = match &identity.origin {
+            SymbolOrigin::Module(path) => path.clone(),
+            SymbolOrigin::Package { module_path, .. } => std::iter::once(stdlib::STDLIB_ROOT.to_string())
+                .chain(module_path.iter().cloned())
+                .collect(),
+            _ => return None,
+        };
+        if !stdlib::is_any_stdlib_path(&path) {
+            return None;
+        }
+        let source = self.lookup_identity(&path, &identity.declaration_name)?;
+        let mut published = source.clone();
+        if let SymbolOrigin::Package { library, module_path } = &identity.origin {
+            let sources = crate::provider::stdlib_sources::StdlibSources::discover()?;
+            let owner = sources.owner_of(path.get(1)?)?;
+            let manifest: toml::Value =
+                toml::from_str(&std::fs::read_to_string(owner.project_root.join("loaf.toml")).ok()?).ok()?;
+            let name = manifest.get("project")?.get("name")?.as_str()?;
+            if name != library {
+                return None;
+            }
+            published.origin = SymbolOrigin::Package {
+                library: library.clone(),
+                module_path: module_path.clone(),
+            };
+        }
+        (published == *identity).then_some(source)
+    }
+
+    /// Load the declaring source for an exact stdlib function identity, retaining imports and only its selected
+    /// function. Re-exports are followed by identity before this boundary; overloads or stale spans are refused.
+    pub fn callable_program(&mut self, identity: &CanonicalSymbolId) -> Option<ast::Program> {
+        let source_identity = self.callable_source_identity(identity)?;
+        let incan_semantics_core::SymbolOrigin::Module(path) = &source_identity.origin else {
+            return None;
+        };
+        let relative = stdlib::stdlib_stub_path(path)?;
+        let file = find_stdlib_file(&relative)?;
+        let source = std::fs::read_to_string(file).ok()?;
+        let tokens = crate::lexer::lex(&source).ok()?;
+        let mut program = crate::parser::parse(&tokens).ok()?;
+        program.declarations.retain(|declaration| match &declaration.node {
+            ast::Declaration::Import(_) => true,
+            ast::Declaration::Function(function) => {
+                function.name == identity.declaration_name
+                    && declaration.span.start == identity.declaration_span.start
+                    && declaration.span.end == identity.declaration_span.end
+            }
+            _ => false,
+        });
+        Some(program)
+    }
+
     pub fn new() -> Self {
         Self { cache: HashMap::new() }
     }
