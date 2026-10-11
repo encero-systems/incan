@@ -4,7 +4,7 @@
 //! members and retains original execution owners without admitting a separate SDK or copying dependency bytes.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use oven_rustc::native_loaf::NativeLoafClosure;
 use oven_rustc::plan::OvenDirectRustcPlanSelection;
@@ -20,6 +20,71 @@ use oven_store::{OvenReceipt, receipt_with_build_unit_input};
 use crate::error::{CliError, CliResult};
 
 const DOMAIN: &str = "ordinary-native-consumer-plan";
+
+/// Explicit producer coordinates shared by Rust-unit builds and ordinary executable inspection.
+/// These are inputs to the existing native producer, never an SDK catalog or independent source authority.
+pub(crate) struct ConfiguredNativeLoafInputs {
+    pub(crate) graph: PathBuf,
+    pub(crate) index: PathBuf,
+    pub(crate) blobs: PathBuf,
+}
+
+impl ConfiguredNativeLoafInputs {
+    /// Read the existing source-toolchain transport; a configured graph requires both producer inputs.
+    /// SDK-prefixed environment spellings remain removable transport debt under #1698.
+    pub(crate) fn discover() -> CliResult<Option<Self>> {
+        Self::from_values(|name| std::env::var_os(name))
+    }
+
+    /// Parse one explicit coordinate set without consulting process-global state in refusal controls.
+    fn from_values(value: impl Fn(&str) -> Option<std::ffi::OsString>) -> CliResult<Option<Self>> {
+        let Some(graph) = value("INCAN_SDK_NATIVE_COMPILER_GRAPH").filter(|value| !value.is_empty()) else {
+            return Ok(None);
+        };
+        let required = |name: &str| {
+            value(name)
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+                .ok_or_else(|| CliError::failure(format!("configured native graph requires {name}")))
+        };
+        Ok(Some(Self {
+            graph: graph.into(),
+            index: required("INCAN_SDK_NATIVE_INDEX")?,
+            blobs: required("INCAN_SDK_NATIVE_BLOBS")?,
+        }))
+    }
+
+    /// Retain the complete original producer request for source inspection, including non-linked units.
+    /// A rooted execution hint cannot substitute for this semantic source capability. Configured failures propagate
+    /// instead of falling through to an older SDK generation; the existing producer owns all compilation decisions.
+    #[cfg(feature = "rust_inspect")]
+    pub(crate) fn prepare_inspection(
+        &self,
+        store: &OvenStore,
+        rustc: &Path,
+        target: &str,
+        profile: &str,
+        output: &Path,
+    ) -> CliResult<oven_rustc::native_loaf::NativeLoafRequestObservation> {
+        let prepared = oven_rustc::native_loaf::prepare_resolved_native_loafs_in_store(
+            &self.graph,
+            &self.index,
+            &self.blobs,
+            output,
+            rustc,
+            target,
+            profile,
+            store,
+        )
+        .map_err(failure)?;
+        std::fs::write(
+            output.join("native-inspection-preparation.json"),
+            serde_json::to_vec(prepared.report()).map_err(failure)?,
+        )
+        .map_err(failure)?;
+        prepared.request_observation().map_err(failure)
+    }
+}
 
 /// Select a native consumer plan from its current ordinary declaration, original intent and explicit producer inputs.
 ///
@@ -98,8 +163,46 @@ pub fn select_native_loaf_plan(
     }
     let mut artifacts = empty_manifest(&receipt);
     let mut shared_roots = Vec::new();
+    append_native_loaf_closure(closure, &receipt, &mut artifacts, &mut shared_roots, "units")?;
+    seal_source_roles(&receipt, &mut artifacts);
+    artifacts.validate_shape(&receipt.intent).map_err(failure)?;
+    let payload = if shared_roots.is_empty() {
+        serde_json::to_vec(&artifacts)
+    } else {
+        serde_json::to_vec(&OvenSharedNativePlan {
+            artifacts,
+            shared_native_roots: shared_roots,
+        })
+    }
+    .map_err(failure)?;
+    store
+        .publish(&OvenArtifactPublishRequest {
+            receipt: receipt.clone(),
+            domain: DOMAIN.to_string(),
+            kind: OvenArtifactKind::DirectRustcPlan,
+            payload,
+            materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
+        })
+        .map_err(failure)?;
+    let plan =
+        select_receipt_direct_rustc_execution_plan_with_native_owners_for_domain(store, &receipt, &owners, DOMAIN)
+            .map_err(failure)?
+            .ok_or_else(|| CliError::failure("published ordinary native consumer plan is unavailable"))?;
+    Ok((receipt, OvenDirectRustcPlanSelection::Stored(Box::new(plan))))
+}
+
+/// Append one original ordinary closure to an existing physical manifest without copying its native members.
+/// The enclosing receipt must bind these roots; aliases cannot replace another authority's direct externs.
+pub(crate) fn append_native_loaf_closure(
+    closure: &NativeLoafClosure,
+    receipt: &OvenReceipt,
+    artifacts: &mut OvenRustcArtifactManifest,
+    shared_roots: &mut Vec<oven_rustc::plan::shared::OvenSharedNativeRoot>,
+    prefix: &str,
+) -> CliResult<()> {
     for (index, (identity, unit)) in closure.graph().units().iter().enumerate() {
-        let prefix = format!("units/{index}");
+        let prefix = format!("{prefix}/{index}");
         let (shared_root, members) = unit.plan_members(&prefix).map_err(failure)?;
         let record = unit.record();
         if record.recipe.intent.toolchain != receipt.intent.toolchain
@@ -115,6 +218,11 @@ pub fn select_native_loaf_plan(
         shared_roots.push(shared_root);
         for (alias, root_identity) in closure.roots() {
             if root_identity == identity {
+                if artifacts.externs.iter().any(|external| external.crate_name == *alias) {
+                    return Err(CliError::failure(format!(
+                        "ordinary native root `{alias}` conflicts with an existing extern"
+                    )));
+                }
                 artifacts.externs.push(OvenRustcArtifactExtern {
                     crate_name: alias.clone(),
                     relative_path: format!("{prefix}/{}", record.native.relative_path),
@@ -152,32 +260,7 @@ pub fn select_native_loaf_plan(
     }
     artifacts.native_search_paths.sort();
     artifacts.native_search_paths.dedup();
-    seal_source_roles(&receipt, &mut artifacts);
-    artifacts.validate_shape(&receipt.intent).map_err(failure)?;
-    let payload = if shared_roots.is_empty() {
-        serde_json::to_vec(&artifacts)
-    } else {
-        serde_json::to_vec(&OvenSharedNativePlan {
-            artifacts,
-            shared_native_roots: shared_roots,
-        })
-    }
-    .map_err(failure)?;
-    store
-        .publish(&OvenArtifactPublishRequest {
-            receipt: receipt.clone(),
-            domain: DOMAIN.to_string(),
-            kind: OvenArtifactKind::DirectRustcPlan,
-            payload,
-            materialized_files: Vec::new(),
-            materialized_directories: Vec::new(),
-        })
-        .map_err(failure)?;
-    let plan =
-        select_receipt_direct_rustc_execution_plan_with_native_owners_for_domain(store, &receipt, &owners, DOMAIN)
-            .map_err(failure)?
-            .ok_or_else(|| CliError::failure("published ordinary native consumer plan is unavailable"))?;
-    Ok((receipt, OvenDirectRustcPlanSelection::Stored(Box::new(plan))))
+    Ok(())
 }
 
 /// Construct the existing direct-Rustc manifest without adding ambient dependency or source authority.

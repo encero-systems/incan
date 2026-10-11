@@ -45,9 +45,6 @@ finish_command() {
     fi
     if [ "$command_status" -ne 0 ]; then
         echo "Compiler-development evidence: $command_evidence" >&2
-        if [ -f "$command_evidence/bootstrap-preparation.stderr" ]; then
-            cat "$command_evidence/bootstrap-preparation.stderr" >&2
-        fi
         if [ -f "$command_evidence/compiler-bootstrap.json" ]; then
             cat "$command_evidence/compiler-bootstrap.json" >&2
         fi
@@ -72,8 +69,6 @@ if [ -z "${INCAN_SDK_INVENTORY:-}" ]; then
     export INCAN_SDK_INVENTORY
 fi
 cd "$source_root/workspaces/compiler-bootstrap"
-"$stage_zero" oven bake --project "$source_root/workspaces/compiler-bootstrap" --format json \
-    > "$command_evidence/bootstrap-preparation.json" 2> "$command_evidence/bootstrap-preparation.stderr"
 export INCAN_COMPILER_STAGE_ZERO="$stage_zero"
 if [ "$mode" = test ]; then
     report=$3

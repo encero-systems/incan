@@ -58,6 +58,65 @@ fn ordinary_standard_rust_interop_run_reuses_and_invalidates() -> TestResult {
     Ok(())
 }
 
+/// Fresh Rust interop inspects the current ordinary native request and needs no prior explicit project bake.
+#[test]
+fn ordinary_rust_interop_uses_current_native_sources_without_manual_bake() -> TestResult {
+    let fixture = tempfile::tempdir()?;
+    let root = fixture.path().canonicalize()?;
+    for directory in ["src", "probe_leaf/src"] {
+        fs::create_dir_all(root.join(directory))?;
+    }
+    for (relative, contents) in [
+        (
+            "loaf.toml",
+            "[project]\nname='ordinary_native_interop'\nversion='1.0.0'\n[dependencies]\nprobe_leaf={loaf='probe_leaf',path='probe_leaf'}\n",
+        ),
+        (
+            "src/main.incn",
+            "from rust::probe_leaf import answer\n\ndef main() -> None:\n    println(answer())\n",
+        ),
+        (
+            "probe_leaf/loaf.toml",
+            "[project]\nname='probe_leaf'\nversion='1.0.0'\n[rust]\nname='probe_leaf'\ntype='lib'\nedition='2024'\n",
+        ),
+        ("probe_leaf/src/lib.rs", "pub fn answer() -> i64 { 42 }\n"),
+        ("lock.json", r#"{"schema":"incan.oven.loaf-resolution/2","units":[]}"#),
+        (
+            "graph.json",
+            r#"{"index_commit":"0000000000000000000000000000000000000000","registry_lock":"lock.json","facets":[{"project":"probe_leaf","features":[],"domain":"target"}]}"#,
+        ),
+    ] {
+        fs::write(root.join(relative), contents)?;
+    }
+    let run = |require_reuse: bool| -> TestResult<Output> {
+        let mut command = support::cli_project::configured_incan_command(&root, &["run", "src/main.incn"]);
+        support::configure_explicit_oven_bake_command(&mut command)?;
+        command
+            .env("INCAN_SDK_NATIVE_COMPILER_GRAPH", root.join("graph.json"))
+            .env("INCAN_SDK_NATIVE_INDEX", &root)
+            .env("INCAN_SDK_NATIVE_BLOBS", &root);
+        if require_reuse {
+            command.env("INCAN_TEST_REQUIRE_COMPLETED_PROJECT_REUSE", "1");
+        }
+        Ok(command.output()?)
+    };
+    let first = run(false)?;
+    success(&first, "ordinary Rust interop without explicit baking");
+    assert_eq!(first.stdout, b"42\n");
+    let repeat = run(true)?;
+    success(&repeat, "ordinary native interop completed-output reuse");
+    assert_eq!(repeat.stdout, b"42\n");
+    fs::write(root.join("probe_leaf/src/lib.rs"), "pub fn answer() -> i64 { 47 }\n")?;
+    let changed = run(false)?;
+    success(&changed, "ordinary Rust interop observes changed native source");
+    assert_eq!(changed.stdout, b"47\n");
+    fs::write(root.join("probe_leaf/src/lib.rs"), "pub fn answer() -> i64 { 42 }\n")?;
+    let restored = run(true)?;
+    success(&restored, "ordinary native interop restores exact completed output");
+    assert_eq!(restored.stdout, b"42\n");
+    Ok(())
+}
+
 /// A caller links its own native loaf, reuses completed output, and observes native edits and restored inputs.
 #[test]
 fn ordinary_rust_caller_dependencies_execute_reuse_and_invalidate() -> TestResult {
@@ -136,10 +195,7 @@ fn ordinary_rust_caller_dependencies_execute_reuse_and_invalidate() -> TestResul
     );
     let refused = bake(&caller, false, true)?;
     assert!(!refused.status.success());
-    assert!(
-        String::from_utf8(refused.stderr)?
-            .contains("configured Rust-unit native graph requires INCAN_SDK_NATIVE_INDEX")
-    );
+    assert!(String::from_utf8(refused.stderr)?.contains("configured native graph requires INCAN_SDK_NATIVE_INDEX"));
     assert_eq!(
         fs::read(&native)?,
         original_output,

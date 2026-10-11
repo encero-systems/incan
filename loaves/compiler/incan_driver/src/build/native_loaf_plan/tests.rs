@@ -11,9 +11,66 @@ use std::path::Path;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
+/// Configured native inputs require one complete coordinate set without silently borrowing an SDK fallback.
+#[test]
+fn configured_native_inputs_require_complete_coordinates() -> TestResult {
+    use super::ConfiguredNativeLoafInputs;
+    use std::collections::BTreeMap;
+    use std::ffi::OsString;
+
+    let mut values = BTreeMap::<&str, OsString>::new();
+    assert!(ConfiguredNativeLoafInputs::from_values(|name| values.get(name).cloned())?.is_none());
+    values.insert("INCAN_SDK_NATIVE_COMPILER_GRAPH", "graph.json".into());
+    assert!(
+        ConfiguredNativeLoafInputs::from_values(|name| values.get(name).cloned())
+            .err()
+            .ok_or("missing index accepted")?
+            .to_string()
+            .contains("INCAN_SDK_NATIVE_INDEX")
+    );
+    values.insert("INCAN_SDK_NATIVE_INDEX", "index".into());
+    assert!(
+        ConfiguredNativeLoafInputs::from_values(|name| values.get(name).cloned())
+            .err()
+            .ok_or("missing blobs accepted")?
+            .to_string()
+            .contains("INCAN_SDK_NATIVE_BLOBS")
+    );
+    values.insert("INCAN_SDK_NATIVE_BLOBS", "blobs".into());
+    let inputs = ConfiguredNativeLoafInputs::from_values(|name| values.get(name).cloned())?
+        .ok_or("complete native coordinates missing")?;
+    assert_eq!(inputs.graph, Path::new("graph.json"));
+    assert_eq!(inputs.index, Path::new("index"));
+    assert_eq!(inputs.blobs, Path::new("blobs"));
+    values.insert("INCAN_SDK_NATIVE_INDEX", OsString::new());
+    assert!(ConfiguredNativeLoafInputs::from_values(|name| values.get(name).cloned()).is_err());
+    Ok(())
+}
+
 /// Source-current bootstrap plans share native generations while output relocation reuses the executable.
 #[test]
 fn declared_bootstrap_dependencies_share_command_store() -> TestResult {
+    // This fixture deliberately starts with a new Store before proving reuse inside that Store. Keep the enclosing
+    // test-root reuse guard intact and isolate the fixture's intentional first compilation in its exact child.
+    if std::env::var_os("INCAN_TEST_REQUIRE_STORED_NATIVE_REUSE").is_some() {
+        let output = std::process::Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "build::native_loaf_plan::tests::declared_bootstrap_dependencies_share_command_store",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env_remove("INCAN_TEST_REQUIRE_STORED_NATIVE_REUSE")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+        return Ok(());
+    }
     let fixture = tempfile::tempdir()?;
     let root = fixture.path().canonicalize()?;
     let rustc = resolve_active_rustc()?;

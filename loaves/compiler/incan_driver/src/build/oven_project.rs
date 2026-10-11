@@ -396,14 +396,45 @@ pub fn prepare_oven_project(
     lap = Instant::now();
     let oven_store = open_default_oven_store()?;
 
+    #[allow(unused_mut)]
+    let mut ordinary_native: Option<oven_rustc::native_loaf::NativeLoafClosure> = None;
     #[cfg(feature = "rust_inspect")]
     let rust_inspect_manifest_dir = {
         let metadata_query_paths = loaf_rust_inspect_query_paths(&modules, &compilation_session)?;
+        // Reuse the ordinary library inspector's full producer authority for current executable dependencies.
+        // A static SDK publication cannot authorize an edited compiler companion merely by its package name.
+        let ordinary_observation = if !metadata_query_paths.is_empty() && !inspection_dependencies.is_empty() {
+            super::native_loaf_plan::ConfiguredNativeLoafInputs::discover()?
+                .map(|inputs| {
+                    inputs.prepare_inspection(
+                        &oven_store,
+                        &rustc,
+                        &rustc_target,
+                        profile,
+                        &generator.output_dir().join("oven/native-inspection"),
+                    )
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        if let Some(observation) = ordinary_observation.as_ref() {
+            let graph = observation.graph();
+            let roots = graph
+                .select_dependency_roots(&inline_path_dependencies, &project_root, "target")
+                .map_err(|error| CliError::failure(error.to_string()))?;
+            ordinary_native = Some(
+                graph
+                    .select(&roots)
+                    .map_err(|error| CliError::failure(error.to_string()))?,
+            );
+        }
         let prepared_project_source_authorities = if oven_plan_mode == OvenProjectPlanMode::ConsumeOnly
             && !loaf_codegen_mode()
             && manifest.is_some()
             && !metadata_query_paths.is_empty()
             && !inspection_dependencies.is_empty()
+            && ordinary_observation.is_none()
         {
             let authority = load_current_project_registry_source_authorities(&oven_store, &project_root)?
                 .ok_or_else(|| {
@@ -420,39 +451,50 @@ pub fn prepare_oven_project(
         } else {
             None
         };
-        let rust_inspect_manifest_dir = crate::lock::rust_inspect::prepare_rust_inspect_workspace_with_native_sdk(
-            RustInspectWorkspaceRequest {
-                project_root: &project_root,
-                project_name: project_name.as_str(),
-                cargo_package_name: project_name.as_str(),
-                rust_edition: Some(rust_edition.clone()),
-                resolved: &resolved,
-                project_requirements: &project_requirements,
-                lock_payload: None,
-                cargo_lock_projection_root: None,
-                clear_cargo_lock: false,
-                cargo_policy_flags: Vec::new(),
-                cargo_target_dir: &generator.output_dir().join("oven").join("rust-inspect"),
-                rust_inspect_query_paths: &metadata_query_paths,
-                rust_derive_probe_paths: &collect_rust_inspect_derive_probe_paths(&modules),
-                prepare_when_empty: false,
-                direct_oven_inspection: true,
-                force_direct_prewarm: loaf_codegen_mode(),
-                oven_source_authority: Some(OvenRustInspectSourceAuthorityRequest {
-                    project_version: &project_version,
-                    target: &rustc_target,
-                    toolchain: &rustc_toolchain,
-                    profile,
-                    features: &cargo_features.cargo_features,
-                    build_unit_inputs: &oven_build_inputs,
-                    registry_dependencies: &inspection_dependencies,
-                }),
-                prepared_project_source_authorities,
-                explicit_oven_bake: oven_plan_mode == OvenProjectPlanMode::ExplicitBake,
-            },
-            native_sdk_context.as_deref(),
-        )?;
+        let derives = collect_rust_inspect_derive_probe_paths(&modules);
+        let request = RustInspectWorkspaceRequest {
+            project_root: &project_root,
+            project_name: project_name.as_str(),
+            cargo_package_name: project_name.as_str(),
+            rust_edition: Some(rust_edition.clone()),
+            resolved: &resolved,
+            project_requirements: &project_requirements,
+            lock_payload: None,
+            cargo_lock_projection_root: None,
+            clear_cargo_lock: false,
+            cargo_policy_flags: Vec::new(),
+            cargo_target_dir: &generator.output_dir().join("oven").join("rust-inspect"),
+            rust_inspect_query_paths: &metadata_query_paths,
+            rust_derive_probe_paths: &derives,
+            prepare_when_empty: false,
+            direct_oven_inspection: true,
+            force_direct_prewarm: loaf_codegen_mode(),
+            oven_source_authority: Some(OvenRustInspectSourceAuthorityRequest {
+                project_version: &project_version,
+                target: &rustc_target,
+                toolchain: &rustc_toolchain,
+                profile,
+                features: &cargo_features.cargo_features,
+                build_unit_inputs: &oven_build_inputs,
+                registry_dependencies: &inspection_dependencies,
+            }),
+            prepared_project_source_authorities,
+            explicit_oven_bake: oven_plan_mode == OvenProjectPlanMode::ExplicitBake,
+        };
+        let rust_inspect_manifest_dir = match ordinary_observation {
+            Some(observation) => crate::lock::rust_inspect::prepare_rust_inspect_workspace_with_ordinary_native(
+                request,
+                observation,
+                &rustc,
+                None,
+            )?,
+            None => crate::lock::rust_inspect::prepare_rust_inspect_workspace_with_native_sdk(
+                request,
+                native_sdk_context.as_deref(),
+            )?,
+        };
         if let Some(manifest_dir) = rust_inspect_manifest_dir.as_ref() {
+            manifest_dir.verify_ordinary_native()?;
             codegen.set_rust_inspect_manifest_dir(manifest_dir.manifest_dir().to_path_buf());
         }
         rust_inspect_manifest_dir
@@ -469,6 +511,10 @@ pub fn prepare_oven_project(
                 .map(|workspace| workspace.manifest_dir()),
         )
         .map_err(|failure| CliError::failure(failure.render_human()))?;
+    #[cfg(feature = "rust_inspect")]
+    if let Some(workspace) = rust_inspect_manifest_dir.as_ref() {
+        workspace.verify_ordinary_native()?;
+    }
     let main_type_info = analysis
         .type_info_for_path(&main_module.file_path)
         .cloned()
@@ -584,7 +630,16 @@ pub fn prepare_oven_project(
     {
         receipt_request = receipt_request.with_build_unit_input("link-closure", identity);
     }
-    let receipt = receipt_generated_project(&receipt_request).map_err(|error| CliError::failure(error.to_string()))?;
+    let mut receipt =
+        receipt_generated_project(&receipt_request).map_err(|error| CliError::failure(error.to_string()))?;
+    if let Some(closure) = ordinary_native.as_ref() {
+        receipt = oven_store::receipt_with_build_unit_input(
+            &receipt,
+            "ordinary-native-roots",
+            super::native_runtime_inputs::ordinary_roots_digest(closure.roots())?,
+        )
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    }
     let receipt_path =
         prepared_oven_receipt_path(&project_root, oven_plan_mode, &receipt.intent.target, path, profile)?;
     write_receipt(&receipt, &receipt_path).map_err(|error| CliError::failure(error.to_string()))?;
@@ -612,12 +667,21 @@ pub fn prepare_oven_project(
     } else {
         None
     };
+    let ordinary_plan_selected = packaged_provider_selection.is_none() && ordinary_native.is_some();
     let plan_preparation = if let Some(selection) = packaged_provider_selection {
         Some(OvenDirectRustcPlanPreparation {
             plan_selection: selection,
             materialization: OvenToolchainMaterialization::Reused,
             cargo_process_started: false,
         })
+    } else if let Some(closure) = ordinary_native.as_ref() {
+        super::native_sdk_plan::select_native_sdk_plan_with_ordinary(
+            &oven_store,
+            &receipt,
+            &oven_plan_dependencies,
+            native_sdk_context.as_deref(),
+            Some(closure),
+        )?
     } else {
         super::plan_selection::select_or_bake_generated_project_plan_with_native_sdk(
             oven_plan_mode,
@@ -653,8 +717,18 @@ pub fn prepare_oven_project(
     let artifact_plan = plan_selection
         .source_artifact_plan("generated-root")
         .map_err(oven_rustc_error)?;
+    let remaining_dependencies = oven_plan_dependencies
+        .iter()
+        .filter(|dependency| {
+            !(ordinary_plan_selected
+                && ordinary_native
+                    .as_ref()
+                    .is_some_and(|closure| closure.roots().contains_key(&dependency.crate_name.replace('-', "_"))))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
     super::plan_authority::validate_selected_plan_registry_dependencies_with_native_sdk(
-        &oven_plan_dependencies,
+        &remaining_dependencies,
         &artifact_plan,
         registry_authority.as_ref(),
         profile,

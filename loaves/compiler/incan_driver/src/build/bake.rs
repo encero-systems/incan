@@ -1264,25 +1264,17 @@ fn select_configured_rust_unit_native_plan(
     receipt: &oven_store::OvenReceipt,
     generated: &Path,
 ) -> CliResult<Option<(oven_store::OvenReceipt, OvenDirectRustcPlanSelection)>> {
-    let Some(graph) = std::env::var_os("INCAN_SDK_NATIVE_COMPILER_GRAPH").filter(|value| !value.is_empty()) else {
+    let Some(inputs) = super::native_loaf_plan::ConfiguredNativeLoafInputs::discover()? else {
         return Ok(None);
     };
-    let required = |name: &str| {
-        std::env::var_os(name)
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-            .ok_or_else(|| CliError::failure(format!("configured Rust-unit native graph requires {name}")))
-    };
-    let index = required("INCAN_SDK_NATIVE_INDEX")?;
-    let blobs = required("INCAN_SDK_NATIVE_BLOBS")?;
     let (receipt, selection, report) = crate::build::native_loaf_plan::select_declared_native_loaf_plan(
         store,
         receipt,
         context.manifest.path(),
         context.rustc,
-        &PathBuf::from(graph),
-        &index,
-        &blobs,
+        &inputs.graph,
+        &inputs.index,
+        &inputs.blobs,
         generated,
     )?;
     fs::write(generated.join("native-loaf-preparation.json"), report)
