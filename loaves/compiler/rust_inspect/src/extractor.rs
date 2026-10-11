@@ -17,6 +17,7 @@ use ra_ap_hir::{
     HasSource, HasVisibility, HirDisplay, Impl, Module, ModuleDef, Mutability, Name, ScopeDef, Semantics,
     Static as HirStatic, Trait, Type, Variant, VariantDef, Visibility, attach_db,
 };
+use ra_ap_hir_ty::method_resolution::TraitImpls;
 use ra_ap_ide_db::RootDatabase;
 use ra_ap_syntax::{
     AstNode, SyntaxNode,
@@ -1513,18 +1514,40 @@ fn trace_type_metadata_phase<T>(phase: &'static str, collect: impl FnOnce() -> T
 struct TraitImplementationWork {
     trait_candidates: usize,
     authorized_candidates: usize,
-    unique_authorized_traits: HashSet<Trait>,
     solver_calls: usize,
     solver_elapsed: Duration,
     accepted_candidates: usize,
 }
 
+/// Query the existing analyzer trait index only in the Rust surface's authorized dependency closure.
+///
+/// This uses the same shallow receiver fingerprint and non-blanket index as `Impl::all_for_type`, including
+/// built-in derives and implementations emitted inside unnamed constants. Inherent implementations cannot supply
+/// trait metadata. Exported surface types cannot be function-local types, so their candidates need no lexical
+/// block search. Only implementations available from the queried surface and its dependencies belong in exported
+/// metadata; loading an additional downstream crate must not enlarge that implementation authority.
+fn surface_trait_candidates(ty: &Type<'_>, authorized_trait_crates: &HashSet<Crate>, db: &RootDatabase) -> Vec<Impl> {
+    let Some(fingerprint) = ty.fingerprint_for_trait_impl() else {
+        return Vec::new();
+    };
+    let mut candidates = Vec::new();
+    for krate in authorized_trait_crates {
+        TraitImpls::for_crate(db, krate.base()).for_self_ty(&fingerprint, |implementations| {
+            candidates.extend(
+                implementations
+                    .factor_into_iter()
+                    .map(|implementation| implementation.either(|id| Impl::from(*id), |id| Impl::from(*id))),
+            );
+        });
+    }
+    candidates
+}
+
 /// Collect non-blanket trait impls whose traits belong to the queried Rust surface dependency closure.
 ///
-/// `Impl::all_for_type` scans the entire loaded rust-analyzer graph. Rust's orphan rules allow a downstream crate to
-/// define its own trait and implement it for an imported type, but that trait is not part of the queried crate's API.
-/// Restricting the trait's defining crate preserves intrinsic dependency traits while excluding ambient downstream
-/// impls whose presence varies with workspace, cache, and host-platform graph shape.
+/// Candidate acquisition stays inside that closure rather than expanding every loaded analyzer crate. The trait's
+/// defining crate is checked separately, and each distinct trait is solved once for this receiver/environment;
+/// multiple concrete implementations of that trait cannot change the answer to the identical solver obligation.
 fn collect_implemented_traits(
     ty: Type<'_>,
     authorized_trait_crates: &HashSet<Crate>,
@@ -1540,16 +1563,18 @@ fn collect_implemented_traits(
     .entered();
     let collection_started = observe.then(Instant::now);
     let candidates_started = observe.then(Instant::now);
-    let candidates = Impl::all_for_type(db, ty.clone());
+    let candidates = surface_trait_candidates(&ty, authorized_trait_crates, db);
     if let Some(started) = candidates_started {
         tracing::debug!(
             candidate_acquisitions = 1,
+            queried_crates = authorized_trait_crates.len(),
             candidates = candidates.len(),
             elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
             "trait implementation candidates acquired"
         );
     }
     let mut work = TraitImplementationWork::default();
+    let mut unique_authorized_traits = HashSet::new();
     let mut traits = BTreeMap::new();
     for impl_def in candidates {
         let Some(trait_def) = impl_def.trait_(db) else {
@@ -1563,7 +1588,11 @@ fn collect_implemented_traits(
         }
         if observe {
             work.authorized_candidates += 1;
-            work.unique_authorized_traits.insert(trait_def);
+        }
+        if !unique_authorized_traits.insert(trait_def) {
+            continue;
+        }
+        if observe {
             work.solver_calls += 1;
         }
         let solver_started = observe.then(Instant::now);
@@ -1591,7 +1620,7 @@ fn collect_implemented_traits(
         tracing::debug!(
             trait_candidates = work.trait_candidates,
             authorized_candidates = work.authorized_candidates,
-            unique_authorized_traits = work.unique_authorized_traits.len(),
+            unique_authorized_traits = unique_authorized_traits.len(),
             solver_calls = work.solver_calls,
             solver_elapsed_ms = work.solver_elapsed.as_secs_f64() * 1000.0,
             accepted_candidates = work.accepted_candidates,
@@ -1604,18 +1633,39 @@ fn collect_implemented_traits(
 }
 
 /// Collect persisted direct and mutable-reference trait implementations for one concrete Rust type.
+///
+/// A re-exported concrete type must be solved in the queried surface's crate, where legal surface-local traits
+/// are visible. The analyzer's public tuple round-trip changes only that environment. A missing surface crate
+/// preserves a generic declaration's original parameter environment, including lifetime-only bounds that
+/// `Type::generic_params` does not report.
 fn collect_type_implemented_traits(
     ty: Type<'_>,
+    surface_crate: Option<Crate>,
     authorized_trait_crates: &HashSet<Crate>,
     db: &RootDatabase,
 ) -> Vec<RustImplementedTrait> {
-    let mut implementations = collect_implemented_traits(ty.clone(), authorized_trait_crates, false, db);
-    implementations.extend(collect_implemented_traits(
-        ty.add_reference(Mutability::Mut),
-        authorized_trait_crates,
-        true,
-        db,
-    ));
+    let surface_types = if let Some(surface_crate) = surface_crate
+        && ty.generic_params(db).is_empty()
+    {
+        Type::new_tuple(surface_crate.base(), &[ty]).tuple_fields(db)
+    } else {
+        vec![ty]
+    };
+    let mut implementations = Vec::new();
+    for ty in surface_types {
+        implementations.extend(collect_implemented_traits(
+            ty.clone(),
+            authorized_trait_crates,
+            false,
+            db,
+        ));
+        implementations.extend(collect_implemented_traits(
+            ty.add_reference(Mutability::Mut),
+            authorized_trait_crates,
+            true,
+            db,
+        ));
+    }
     implementations
         .sort_by(|left, right| (&left.path, left.mutable_reference).cmp(&(&right.path, right.mutable_reference)));
     implementations.dedup();
@@ -2077,7 +2127,8 @@ fn extract_rust_item_inner(
                 metadata_completeness: Default::default(),
                 methods: trace_type_metadata_phase("inherent_methods", || collect_inherent_methods(ty.clone(), db, dt)),
                 implemented_traits: trace_type_metadata_phase("implemented_traits", || {
-                    collect_type_implemented_traits(ty.clone(), &authorized_trait_crates, db)
+                    let surface = GenericDef::Adt(adt).params(db).is_empty().then_some(krate);
+                    collect_type_implemented_traits(ty.clone(), surface, &authorized_trait_crates, db)
                 }),
                 fields: trace_type_metadata_phase("public_fields", || {
                     collect_public_fields(ty.clone(), db, dt, crate_name)
@@ -2100,7 +2151,7 @@ fn extract_rust_item_inner(
                 metadata_completeness: Default::default(),
                 methods: trace_type_metadata_phase("inherent_methods", || collect_inherent_methods(ty.clone(), db, dt)),
                 implemented_traits: trace_type_metadata_phase("implemented_traits", || {
-                    collect_type_implemented_traits(ty.clone(), &authorized_trait_crates, db)
+                    collect_type_implemented_traits(ty.clone(), Some(krate), &authorized_trait_crates, db)
                 }),
                 fields: trace_type_metadata_phase("public_fields", || collect_public_fields(ty, db, dt, crate_name)),
                 variants: Vec::new(),
@@ -2137,7 +2188,8 @@ fn extract_rust_item_inner(
                 metadata_completeness: Default::default(),
                 methods: trace_type_metadata_phase("inherent_methods", || collect_inherent_methods(ty.clone(), db, dt)),
                 implemented_traits: trace_type_metadata_phase("implemented_traits", || {
-                    collect_type_implemented_traits(ty.clone(), &authorized_trait_crates, db)
+                    let surface = GenericDef::TypeAlias(a).params(db).is_empty().then_some(krate);
+                    collect_type_implemented_traits(ty.clone(), surface, &authorized_trait_crates, db)
                 }),
                 fields: trace_type_metadata_phase("public_fields", || collect_public_fields(ty, db, dt, crate_name)),
                 variants: Vec::new(),
@@ -2157,6 +2209,10 @@ fn extract_rust_item_inner(
         kind,
     })
 }
+
+#[cfg(test)]
+#[path = "extractor/trait_candidates_tests.rs"]
+mod trait_candidates_tests;
 
 #[cfg(test)]
 mod tests {
@@ -3028,7 +3084,8 @@ impl Labeled for Thing {}
         Ok(())
     }
 
-    /// Proves ambient downstream impl crates cannot change ADT or alias metadata for an upstream Rust surface.
+    /// Proves downstream local traits and legal foreign-trait impls with local arguments cannot change surface
+    /// metadata.
     #[test]
     fn type_metadata_ignores_traits_from_loaded_downstream_crates() -> Result<(), Box<dyn std::error::Error>> {
         // ---- Fixture: upstream API plus an unrelated loaded downstream impl ----
@@ -3060,7 +3117,10 @@ type = "lib"
                 .with_file_name(crate::loader::OVEN_DIRECT_INSPECTION_MARKER),
             b"direct\n",
         )?;
-        fs::write(trait_api.join("src/lib.rs"), "pub trait Intrinsic {}\n")?;
+        fs::write(
+            trait_api.join("src/lib.rs"),
+            "pub trait Intrinsic {}\npub struct ForeignThing;\n",
+        )?;
         fs::write(
             surface_api.join("loaf.toml"),
             r#"[project]
@@ -3084,7 +3144,9 @@ type = "lib"
         )?;
         fs::write(
             surface_api.join("src/lib.rs"),
-            "pub struct Thing;\npub type ThingAlias = Thing;\n\nimpl trait_api::Intrinsic for Thing {}\n",
+            "pub struct Thing;\npub type ThingAlias = Thing;\n\nimpl trait_api::Intrinsic for Thing {}\n\
+             pub use trait_api::ForeignThing as Reexported;\npub trait SurfaceIntrinsic {}\n\
+             impl SurfaceIntrinsic for trait_api::ForeignThing {}\n",
         )?;
         fs::write(
             downstream_api.join("loaf.toml"),
@@ -3109,7 +3171,11 @@ type = "lib"
         )?;
         fs::write(
             downstream_api.join("src/lib.rs"),
-            "pub trait Ambient {}\n\nimpl Ambient for surface_api::Thing {}\n",
+            "pub trait Ambient {}\n\nimpl Ambient for surface_api::Thing {}\n\
+             pub struct AmbientInput(pub &'static mut surface_api::Thing);\n\
+             impl From<AmbientInput> for &'static mut surface_api::Thing {\n\
+                 fn from(input: AmbientInput) -> Self { input.0 }\n\
+             }\n",
         )?;
         fs::write(
             clean_probe.join("loaf.toml"),
@@ -3192,6 +3258,17 @@ type = "lib"
             clean_alias, polluted_alias,
             "loaded downstream crates must not change type-alias metadata"
         );
+
+        // ---- Re-export: use the queried surface closure, not only the type's defining crate ----
+        let clean_reexport = extract_rust_item(&clean_workspace, "surface_api::Reexported")?;
+        let polluted_reexport = extract_rust_item(&polluted_workspace, "surface_api::Reexported")?;
+        assert_eq!(clean_reexport, polluted_reexport);
+        let RustItemKind::Type(reexport_info) = polluted_reexport.kind else {
+            return Err(std::io::Error::other("expected re-exported type metadata").into());
+        };
+        assert!(reexport_info.implemented_traits.iter().any(|implementation| {
+            implementation.path == "surface_api::SurfaceIntrinsic" && !implementation.mutable_reference
+        }));
         Ok(())
     }
 
