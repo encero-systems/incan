@@ -2435,6 +2435,38 @@ def main() -> None:
     )
 }
 
+/// Prove mixed numeric carriers in `**` and comparisons byte-identical to legacy: an exact-width integer base keeps
+/// its carrier under a literal exponent, an `f32` base widens under a float exponent, and mixed comparisons read both
+/// operands at the common carrier.
+#[test]
+fn numeric_operator_carrier_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("numeric-operator-carrier")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def signed(a: i8, b: i8) -> str:
+    return f"{a ** 2} {a * b}"
+
+def compare(narrow: f32, wide: f64, whole: int, small: i8, byte: u8) -> str:
+    return f"{narrow < wide} {narrow == whole} {small < byte} {whole > small}"
+
+def main() -> None:
+    println(signed(-7, 3))
+    small: u8 = 15
+    println(small ** 2)
+    deep: i128 = -7
+    println(deep ** 3)
+    println(2 ** 3)
+    narrow: f32 = 2.5
+    exact: f64 = 2.0
+    println(narrow ** exact)
+    println(compare(narrow, 3.0, 2, -1, 200))
+"#,
+    )
+}
+
 /// Measure the actual unchanged graph with expensive fallback forbidden and retain numeric parity evidence.
 #[test]
 #[ignore = "machine-local diagnostic of the 50 ms completed fixture graph reuse budget"]
