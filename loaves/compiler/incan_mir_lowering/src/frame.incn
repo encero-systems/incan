@@ -7,6 +7,7 @@ from pub::incan_mir_plan import (
     CalleeKind,
     Constant,
     ExternalFunction,
+    FieldProjection,
     Function,
     Local,
     Operand,
@@ -229,6 +230,31 @@ pub def place_type(locals: list[Local], value: Place) -> PlanType:
         Projection.Overflow => return PlanType.Bool
         Projection.Deref(ty) => return ty
         Projection.Whole => return locals[value.local].ty
+
+
+pub def appended_field(source: Place, field: FieldProjection, span: SourceSpan) -> Result[Place, str]:
+    """Append one exact payload or field step without discarding the preceding checked projection path."""
+    mut fields: list[FieldProjection] = []
+    mut dereference = false
+    match source.projection:
+        Projection.Whole => pass
+        Projection.Field(slot, ty) => fields.append(FieldProjection(slot=slot, ty=ty))
+        Projection.VariantField(variant, slot, ty) => fields.append(FieldProjection(slot=slot, ty=ty, variant=variant))
+        Projection.Fields(path) =>
+            fields = path
+        Projection.Deref(_ty) =>
+            dereference = true
+        Projection.DerefField(slot, ty) =>
+            dereference = true
+            fields.append(FieldProjection(slot=slot, ty=ty))
+        Projection.DerefFields(path) =>
+            dereference = true
+            fields = path
+        _ => return Err("invalid Body IR carrier projection prefix")
+    fields.append(field)
+    if dereference:
+        return Ok(Place(local=source.local, projection=Projection.DerefFields(fields), span=span))
+    return Ok(Place(local=source.local, projection=Projection.Fields(fields), span=span))
 
 
 pub def external_call(

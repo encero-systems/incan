@@ -1,11 +1,21 @@
-"""Checked primitive and flat tuple pattern tests for direct-route match dispatch."""
+"""Checked primitive, tuple and source-local model pattern tests for direct-route match dispatch."""
 
-from rust::incan_semantics_core::body_ir import Pattern as RustPattern, Constant as RustConstant
-from pub::incan_mir_plan import PlanType, Place, SourceSpan, RvalueKind, BinaryOp, Constant, TerminatorKind
+from rust::incan_semantics_core::body_ir import Pattern as RustPattern, Constant as RustConstant, NominalPatternTarget
+from pub::incan_mir_plan import (
+    PlanType,
+    Place,
+    SourceSpan,
+    RvalueKind,
+    BinaryOp,
+    Constant,
+    TerminatorKind,
+    FieldProjection,
+)
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, temporary, place_type, read_place, literal, external_call, drop_owned
+from frame import Builder, temporary, place_type, read_place, literal, external_call, drop_owned, appended_field
 from tuples import tuple_fields, is_tuple_type
 from text_plan import owned_literal
+from layout_types import native_source_type as retained_type
 
 
 pub def pattern_tests(
@@ -35,8 +45,82 @@ pub def pattern_tests(
                 pattern_tests(builder, fields[index], items[index], next_component, rejected, span)?
                 builder.current = next_component
             builder.finish(TerminatorKind.Goto(selected), span)
+        RustPattern.Nominal(target=target, fields=fields) =>
+            # Named fields are tested in written order, each against its own field of the borrowed scrutinee.
+            for name, field_pattern in fields:
+                next_field = builder.new_block(span)
+                field = nominal_field(builder, source, target, str(name), span)?
+                pattern_tests(builder, field, field_pattern, next_field, rejected, span)?
+                builder.current = next_field
+            builder.finish(TerminatorKind.Goto(selected), span)
+        RustPattern.Or(alternatives) =>
+            # An alternation that binds nothing selects on its first matching alternative; each failure tries the next.
+            if pattern_binds(pattern):
+                return Err("unsupported Body IR binding alternation")
+            for alternative in alternatives:
+                next_alternative = builder.new_block(span)
+                pattern_tests(builder, source, alternative, selected, next_alternative, span)?
+                builder.current = next_alternative
+            builder.finish(TerminatorKind.Goto(rejected), span)
         _ => return Err("unsupported Body IR structural match pattern")
     return Ok(None)
+
+
+pub def pattern_binds(pattern: &RustPattern) -> bool:
+    """Report whether any position of a pattern binds a name."""
+    match pattern:
+        RustPattern.Var(_binding) => return true
+        RustPattern.Tuple(items) => return any_pattern_binds(items)
+        RustPattern.Or(alternatives) => return any_pattern_binds(alternatives)
+        RustPattern.Enum(canonical=_identity, name=_name, variant=_variant, fields=fields) =>
+            return any_pattern_binds(fields)
+        RustPattern.Result(variant=_variant, fields=fields) => return any_pattern_binds(fields)
+        RustPattern.UnionMember(ty=_ty, fields=fields) => return any_pattern_binds(fields)
+        RustPattern.Nominal(target=_target, fields=fields) =>
+            for _name, field_pattern in fields:
+                if pattern_binds(field_pattern):
+                    return true
+        RustPattern.Struct(canonical=_identity, name=_name, fields=fields) =>
+            for _name, field_pattern in fields:
+                if pattern_binds(field_pattern):
+                    return true
+        _ => pass
+    return false
+
+
+def any_pattern_binds(patterns: &list[RustPattern]) -> bool:
+    """Report whether any of several patterns binds a name."""
+    for pattern in patterns:
+        if pattern_binds(pattern):
+            return true
+    return false
+
+
+pub def nominal_field(
+    builder: Builder,
+    source: Place,
+    target: &NominalPatternTarget,
+    name: str,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Project one canonical field of a model scrutinee once the pattern proves it names the scrutinee's declaration."""
+    match place_type(builder.locals, source):
+        PlanType.Model(owner, _name) =>
+            declaration = builder.nominals[owner]
+            if target.direct_declaration_id != declaration.direct_declaration_id or target.canonical != declaration.canonical:
+                return Err("invalid Body IR nominal pattern target")
+            for slot in range(len(declaration.fields)):
+                if declaration.fields[slot] == name:
+                    ty = retained_type(
+                        builder.nominals,
+                        builder.enums,
+                        builder.unions,
+                        declaration.field_types[slot],
+                        builder.intrinsics,
+                    )?
+                    return appended_field(source, FieldProjection(slot=slot, ty=ty), span)
+            return Err("invalid Body IR nominal pattern field")
+        _ => return Err("invalid Body IR nominal pattern carrier")
 
 
 def literal_test(mut builder: Builder, source: Place, value: &RustConstant, span: SourceSpan) -> Result[Place, str]:

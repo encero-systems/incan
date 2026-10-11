@@ -180,7 +180,7 @@ from numerics import (
 )
 from builtins import scalar_builtin, list_call, emit_boolean_operator, emit_power_operator
 from strings import text_helper, emit_text_helper, text_helper_arity, text_method
-from patterns import pattern_tests
+from patterns import pattern_tests, pattern_binds, nominal_field
 from resize import resize_policy, emit_resize
 from equality import emit_collection_equality, equality_shape
 from frame import (
@@ -200,6 +200,7 @@ from frame import (
     literal,
     text_literal,
     finish_fallthrough,
+    appended_field,
 )
 from collections import (
     dictionary_method_signature,
@@ -3843,29 +3844,6 @@ def read_element_field(
     return Ok(output)
 
 
-def appended_field(source: Place, field: FieldProjection, span: SourceSpan) -> Result[Place, str]:
-    """Append one exact payload or field step without discarding the preceding checked projection path."""
-    mut fields: list[FieldProjection] = []
-    mut dereference = false
-    match source.projection:
-        Projection.Whole => pass
-        Projection.Field(slot, ty) => fields.append(FieldProjection(slot=slot, ty=ty))
-        Projection.VariantField(variant, slot, ty) => fields.append(FieldProjection(slot=slot, ty=ty, variant=variant))
-        Projection.Fields(path) => fields = path
-        Projection.Deref(_ty) => dereference = true
-        Projection.DerefField(slot, ty) =>
-            dereference = true
-            fields.append(FieldProjection(slot=slot, ty=ty))
-        Projection.DerefFields(path) =>
-            dereference = true
-            fields = path
-        _ => return Err("invalid Body IR carrier projection prefix")
-    fields.append(field)
-    if dereference:
-        return Ok(Place(local=source.local, projection=Projection.DerefFields(fields), span=span))
-    return Ok(Place(local=source.local, projection=Projection.Fields(fields), span=span))
-
-
 def slice_bound(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[list[Operand], str]:
     """Pass a written slice bound or step as a present int component, presence flag first as `slice_list` takes it."""
     operand = scalar_operand(builder, value, span)?
@@ -4916,8 +4894,6 @@ def lower_enum_match(
                 slot = union_pattern_slot(builder.nominals, builder.enums, builder.unions, owner, arm.pattern, builder.intrinsics)?
             else:
                 slot = intrinsic_pattern(builder.intrinsics[owner - len(builder.enums)], arm.pattern)?
-        if arm.guard.is_some():
-            return Err("unsupported Body IR guarded enum match")
         selected = builder.new_block(span)
         next_arm = builder.new_block(span)
         if slot < 0:
@@ -4935,6 +4911,7 @@ def lower_enum_match(
         builder.current = selected
         builder.owned = owners
         bind_enum_payload(builder, source, slot, arm.pattern, span)?
+        lower_arm_guard(module, builder, arm, owners, next_arm, span)?
         lower_enum_arm_body(module, builder, arm)?
         if not builder.closed[builder.current]:
             value = boundary_operand(builder, arm.result, place_type(builder.locals, target), span)?
@@ -4949,7 +4926,8 @@ def lower_enum_match(
             arm_owners.append(builder.owned)
         builder.current = next_arm
         builder.owned = owners
-        if slot < 0:
+        # A catch-all arm ends the dispatch unless its guard can still reject.
+        if slot < 0 and arm.guard.is_none():
             break
     builder.finish(TerminatorKind.Unreachable, span)
     join_owners = join_arm_owners(builder, join, arm_ends, arm_owners, span)?
@@ -4971,24 +4949,23 @@ def lower_structural_match(
     arms: &list[RustMatchArm],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Dispatch primitive and flat tuple patterns in source order with branch-local owned bindings."""
+    """Dispatch primitive, tuple and source-local model patterns in source order with branch-local owned bindings."""
     source_type = place_type(builder.locals, source)
     if source_type not in [PlanType.Int, PlanType.Float, PlanType.Bool, PlanType.Unit, PlanType.String] and not is_tuple_type(
         source_type,
-    ):
+    ) and not is_model_type(source_type):
         return Err("unsupported Body IR nonprimitive structural match scrutinee")
     result_type = place_type(builder.locals, target)
     join = builder.new_block(span)
     owners = builder.owned
     mut reaches_join = false
     for arm in arms:
-        if arm.guard.is_some():
-            return Err("unsupported Body IR guarded structural match")
         selected = builder.new_block(span)
         next_arm = builder.new_block(span)
         pattern_tests(builder, source, arm.pattern, selected, next_arm, span)?
         builder.current = selected
         bind_structural_pattern(builder, source, arm.pattern, span)?
+        lower_arm_guard(module, builder, arm, owners, next_arm, span)?
         lower_enum_arm_body(module, builder, arm)?
         if not builder.closed[builder.current]:
             reaches_join = true
@@ -5009,6 +4986,51 @@ def lower_structural_match(
         result_type,
     )):
         builder.owned.append(target.local)
+    return Ok(None)
+
+
+def is_model_type(ty: PlanType) -> bool:
+    """Report whether a scrutinee is a plain model, whose patterns name its fields."""
+    match ty:
+        PlanType.Model(_owner, _name) => return true
+        _ => return false
+
+
+def lower_arm_guard(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    arm: &RustMatchArm,
+    incoming: list[int],
+    rejected: int,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Run a matched arm's guard after its pattern bound, falling through to `rejected` when the guard is false.
+
+    The guard reads the arm's bindings and the incoming owners. It must leave every incoming owner live, because the
+    next arm tests the same scrutinee. A rejecting guard releases the bindings and guard temporaries it owns before
+    falling through; an admitting guard keeps them for the arm's body.
+    """
+    match arm.guard:
+        Some(guard) =>
+            for statement in arm.guard_stmts:
+                lower_statement(module, builder, statement)?
+                if builder.closed[builder.current]:
+                    return Err("unsupported Body IR diverging match guard")
+            for local in incoming:
+                if local not in builder.owned:
+                    return Err("unsupported Body IR match guard consuming an owner")
+            condition = scalar_operand(builder, guard, span)?
+            admitted = builder.new_block(span)
+            refused = builder.new_block(span)
+            builder.finish(TerminatorKind.SwitchBool(condition, refused, admitted), span)
+            kept = builder.owned
+            builder.current = refused
+            release_match_scratch(builder, incoming, span)
+            builder.finish(TerminatorKind.Goto(rejected), span)
+            builder.current = admitted
+            builder.owned = kept
+        None => pass
     return Ok(None)
 
 
@@ -5055,10 +5077,28 @@ def bind_structural_pattern(
                 return Err("invalid Body IR tuple pattern binding layout")
             for index in range(len(items)):
                 bind_structural_pattern(builder, fields[index], items[index], span)?
+        RustPattern.Nominal(target=target, fields=fields) =>
+            for name, field_pattern in fields:
+                field = nominal_field(builder, source, target, str(name), span)?
+                # A field binding reads out of the borrowed scrutinee, so it may only copy the value or clone text.
+                match field_pattern:
+                    RustPattern.Var(_binding) =>
+                        if not structural_binding_carrier(place_type(builder.locals, field)):
+                            return Err("unsupported Body IR owned model field pattern binding")
+                    _ => pass
+                bind_structural_pattern(builder, field, field_pattern, span)?
+        RustPattern.Or(_alternatives) =>
+            if pattern_binds(pattern):
+                return Err("unsupported Body IR binding alternation")
         RustPattern.Wildcard => pass
         RustPattern.Literal(_value) => pass
         _ => return Err("unsupported Body IR structural pattern binding")
     return Ok(None)
+
+
+def structural_binding_carrier(ty: PlanType) -> bool:
+    """Report whether a binding copies its matched value or clones it as text."""
+    return numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit or ty == PlanType.String
 
 
 def join_arm_owners(
