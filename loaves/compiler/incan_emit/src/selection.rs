@@ -1,8 +1,8 @@
 //! Backend-selection identity and execution receipt: which route produced a build's output.
 //!
-//! Incan has one execution route. Today it is the Rust-emission backend (`IrCodegen`, the `incan_ir` and `incan_emit`
-//! crates), named `legacy` here; the direct route of #1337, which lowers Body IR inside the pinned `rustc`, replaces it
-//! as that one route. A build still declares its backend before it runs and records the backend that ran, so a reader
+//! Ordinary commands currently use Rust emission (`IrCodegen`, the `incan_ir` and `incan_emit` crates), named
+//! `legacy` here. The pinned native driver lowers Body IR directly and records `body_ir`; it does not fall back to
+//! Rust emission. A build declares its backend before it runs and records the backend that ran, so a reader
 //! of a persisted receipt can tell which route produced the output beside it, including after a completed-output reuse.
 //!
 //! This module owns two boundary types:
@@ -39,6 +39,9 @@ pub const BACKEND_SELECTION_SCHEMA_VERSION: u32 = 3;
 /// invalidate.
 pub const LEGACY_BACKEND_REVISION: u32 = 1;
 
+/// Implementation revision of the pinned Body IR to native compiler boundary.
+pub const BODY_IR_BACKEND_REVISION: u32 = 1;
+
 /// The compiler backend that produced a build's output.
 ///
 /// This is the codegen-execution axis tracked by #652/#986. See the module docs for how it differs from Oven's
@@ -48,6 +51,8 @@ pub const LEGACY_BACKEND_REVISION: u32 = 1;
 pub enum BackendKind {
     /// The Rust-source-emission pipeline (`IrCodegen`; the `incan_ir` and `incan_emit` crates).
     Legacy,
+    /// Canonical Body IR lowered to a native plan and compiled inside the pinned Rust compiler.
+    BodyIr,
 }
 
 impl BackendKind {
@@ -56,6 +61,7 @@ impl BackendKind {
     pub fn implementation_revision(self) -> u32 {
         match self {
             BackendKind::Legacy => LEGACY_BACKEND_REVISION,
+            BackendKind::BodyIr => BODY_IR_BACKEND_REVISION,
         }
     }
 }

@@ -372,10 +372,37 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     // ---- Checked source and Incan plan ----
     let source_path = PathBuf::from(&arguments[0]);
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::compile_source", input = %source_path.display()).entered();
+    let identity = crate::identity::verify(Path::new(&arguments[3]))?;
+    let (native_link, link_identity) = crate::native_link(&identity)?;
+    let output = Path::new(&arguments[2]);
+    let dependencies = dependencies(&arguments[4..])?;
+    let reuse = incan_driver::build::native_source_output::NativeSourceOutput::observe(
+        incan_driver::build::native_source_output::NativeSourceOutputRequest {
+            source: &source_path,
+            output,
+            crate_name: &arguments[1],
+            sysroot: &identity.sysroot,
+            target: &identity.target,
+            toolchain: &identity.toolchain,
+            link_identity: &link_identity,
+            externs: &dependencies.externs,
+            search_paths: &dependencies.directories,
+        },
+    )?;
+    if let Some(reuse) = &reuse
+        && reuse.try_reuse()?
+    {
+        return Ok(());
+    }
+    if std::env::var_os("INCAN_TEST_REQUIRE_COMPLETED_PROJECT_REUSE").is_some() {
+        return Err("required completed project reuse missed before frontend preparation".into());
+    }
+    crate::relaunch_with_native_environment(&native_link)?;
+    let checked_source = source_path.clone();
     let parent = tracing::Span::current();
     let program = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
         let _parent = parent.enter();
-        checked_modules(&source_path)
+        checked_modules(&checked_source)
     })?;
     let plan = {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::lower_program", modules = program.modules.len()).entered();
@@ -388,7 +415,6 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // ---- Explicit native dependencies ----
-    let dependencies = dependencies(&arguments[4..])?;
     for external in &plan.externals {
         let root = external
             .path
@@ -410,6 +436,13 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         Path::new(&arguments[3]),
         &dependencies.externs,
         &dependencies.directories,
+        &native_link,
     )?;
+    if let Some(reuse) = reuse {
+        if crate::native_link(&identity)?.1 != link_identity {
+            return Err("native link inputs changed during compilation; completed output was not published".into());
+        }
+        reuse.publish()?
+    }
     Ok(())
 }

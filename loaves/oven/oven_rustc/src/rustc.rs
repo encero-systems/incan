@@ -12,7 +12,7 @@ pub mod driver_grant;
 mod inspection;
 mod inspection_toolchain;
 pub(crate) mod linking;
-pub use linking::{pinned_driver_link_closure_identity, pinned_link_closure_identity};
+pub use linking::{configure_pinned_native_link, pinned_driver_link_closure_identity, pinned_link_closure_identity};
 pub mod direct_compiler;
 mod manifest_cohort;
 mod manifest_materialize;

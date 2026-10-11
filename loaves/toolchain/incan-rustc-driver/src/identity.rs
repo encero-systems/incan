@@ -25,6 +25,10 @@ pub enum IdentityError {
 pub struct DriverIdentity {
     /// Canonical sysroot whose compiler and loaded driver library match the build evidence.
     pub sysroot: PathBuf,
+    /// Complete compiler identity checked against the embedded build evidence.
+    pub toolchain: String,
+    /// Host target reported by that exact pinned compiler.
+    pub target: String,
 }
 
 /// Dynamic loader metadata for the library owning the embedded rustc entry point (Unix ABI).
@@ -127,5 +131,13 @@ pub fn verify(sysroot: &Path) -> Result<DriverIdentity, IdentityError> {
             "rustc_driver shared-library bytes differ from the build identity".into(),
         ));
     }
-    Ok(DriverIdentity { sysroot: root })
+    let target = compiler
+        .lines()
+        .find_map(|line| line.strip_prefix("host: ").map(str::to_owned))
+        .ok_or_else(|| IdentityError::Mismatch("pinned compiler identity has no host target".into()))?;
+    Ok(DriverIdentity {
+        sysroot: root,
+        toolchain: compiler.into_owned(),
+        target,
+    })
 }

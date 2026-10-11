@@ -500,32 +500,49 @@ pub fn publish_ordinary_project_output(
         .backend
         .clone()
         .ok_or_else(|| CliError::failure("ordinary build has no backend receipt"))?;
-    let mut payload = project_output_payload_for_bake(OvenProjectOutputBakeRequest {
-        project_root: &prepared.project_root,
-        entrypoint: &prepared.entrypoint,
-        target: OvenBakeProjectTarget::Executable,
-        receipt: &prepared.receipt,
-        plan_identity: prepared.plan_selection.report_identity(),
-        profile: &prepared.receipt.intent.profile,
-        source_authority_digest: source_authority,
-        lock_dependencies_fingerprint: baked_project_lock_dependencies_fingerprint(&prepared.project_root)?,
-        files: files.clone(),
-        inspection_authority: None,
-        required_project_loafs: Vec::new(),
-        package_loaf_store_relative_path: None,
-        backend_receipt,
-        build_report: Some(project_output_report_snapshot(&prepared.project_root, report)?),
-    })?;
-    payload.preparation_identity_digest = Some(preparation_identity.to_string());
-    let output = publish_project_output_loaf(&open_default_oven_store()?, &prepared.receipt, &payload, &files)?;
-    let receipt_path = project_bake_receipt_path(
-        &prepared.project_root,
-        OvenBakeProjectTarget::Executable,
-        &prepared.entrypoint,
-        &prepared.receipt.intent.profile,
+    publish_prepared_project_output(
+        OvenProjectOutputBakeRequest {
+            project_root: &prepared.project_root,
+            entrypoint: &prepared.entrypoint,
+            target: OvenBakeProjectTarget::Executable,
+            receipt: &prepared.receipt,
+            plan_identity: prepared.plan_selection.report_identity(),
+            profile: &prepared.receipt.intent.profile,
+            source_authority_digest: source_authority,
+            lock_dependencies_fingerprint: baked_project_lock_dependencies_fingerprint(&prepared.project_root)?,
+            files,
+            inspection_authority: None,
+            required_project_loafs: Vec::new(),
+            package_loaf_store_relative_path: None,
+            backend_receipt,
+            build_report: Some(project_output_report_snapshot(&prepared.project_root, report)?),
+        },
+        preparation_identity,
     )?;
-    remember_project_output(&receipt_path, &output.identity);
     Ok(())
+}
+
+/// Publish a prepared backend result through the shared completed-output payload, Store and exact locator.
+///
+/// Callers must re-observe their complete source and invocation authority before entering this boundary. Both
+/// ordinary Rust emission and the pinned native driver use the same publication and materialization contracts.
+pub fn publish_prepared_project_output(
+    request: OvenProjectOutputBakeRequest<'_>,
+    preparation_identity: &str,
+) -> CliResult<super::OvenStoredProjectOutput> {
+    let receipt_path = project_bake_receipt_path(
+        request.project_root,
+        request.target,
+        request.entrypoint,
+        request.profile,
+    )?;
+    let receipt = request.receipt;
+    let files = request.files.clone();
+    let mut payload = project_output_payload_for_bake(request)?;
+    payload.preparation_identity_digest = Some(preparation_identity.to_string());
+    let output = publish_project_output_loaf(&open_default_oven_store()?, receipt, &payload, &files)?;
+    remember_project_output(&receipt_path, &output.identity);
+    Ok(output)
 }
 
 /// Select the default sealed release output without entering frontend or report reconstruction.
