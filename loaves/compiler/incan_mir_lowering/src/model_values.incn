@@ -1,11 +1,12 @@
 """Derived nominal formatting and comparisons over the retained source field layout."""
 
-from rust::incan_semantics_core::body_ir import Operand as RustOperand, BinOp, MethodTarget
+from rust::incan_semantics_core::body_ir import Operand as RustOperand, BinOp, MethodTarget, BodyIrModule, Body
 from rust::incan_semantics_core import SymbolOrigin, SemanticSourceTargetKind
 from pub::incan_mir_plan import PlanType, Place, Operand, RvalueKind, ExternalFunction, CalleeKind, SourceSpan
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, temporary, read_place, terminate_call, place_type
 from models import model_place
+from classes import frame_type
 
 
 def nominal_place(builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Option[Place], str]:
@@ -188,3 +189,41 @@ pub def is_json_serialize_method(target: &MethodTarget) -> bool:
                     return library == "incan_stdlib_data" and len(path) == 2 and path[0] == "serde" and path[1] == "json"
                 _ => return false
         None => return false
+
+
+pub def refuse_overridden_json_default(
+    module: &BodyIrModule,
+    builder: Builder,
+    receiver: PlanType,
+) -> Result[None, str]:
+    """
+    Refuse the serde protocol default for a model receiver that has its own `to_json` method body.
+
+    A call that reaches the protocol default through a type parameter must run the adopter's own `to_json` instead,
+    and Body IR records no implementation slot for an imported protocol trait, so that dispatch stays refused.
+    """
+    match receiver:
+        PlanType.Model(owner, _name) =>
+            for body in module.bodies:
+                if is_own_json_method(module, builder, body, owner):
+                    return Err("unsupported Body IR JSON protocol default over an adopter's own to_json")
+        _ => pass
+    return Ok(None)
+
+
+def is_own_json_method(module: &BodyIrModule, builder: Builder, body: &Body, owner: int) -> bool:
+    """Whether a body is a method spelled `to_json` whose receiver is the model `owner`, as an adopter's override is."""
+    if len(body.locals) == 0:
+        return false
+    match body.canonical:
+        Some(identity) =>
+            if identity.kind != SemanticSourceTargetKind.Method or identity.declaration_name != "to_json":
+                return false
+        None => return false
+    match frame_type(module, body.locals[0], builder.intrinsics):
+        Ok(receiver) =>
+            match receiver:
+                PlanType.ModelRef(index, _name) => return index == owner
+                PlanType.ModelMutRef(index, _name) => return index == owner
+                _ => return false
+        Err(_reason) => return false

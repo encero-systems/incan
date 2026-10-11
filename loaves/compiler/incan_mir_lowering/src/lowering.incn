@@ -148,6 +148,7 @@ from model_values import (
     display_model_operand,
     serialize_model_operand,
     is_json_serialize_method,
+    refuse_overridden_json_default,
     compare_models,
 )
 from enums import lower_enum_declarations, enum_owner, variant_index, unit_variant, pattern_variant
@@ -1755,6 +1756,8 @@ def lower_method_call(
     if len(arguments) == 0:
         return Err("invalid Body IR Method missing receiver")
     if is_json_serialize_method(target):
+        receiver = argument_type(builder, arguments, 0, span)?
+        refuse_overridden_json_default(module, builder, receiver)?
         return lower_model_json_builtin(builder, arguments, destination, span)
     if is_derived_clone(target):
         return lower_derived_clone(builder, arguments, destination, span)

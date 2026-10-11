@@ -3631,6 +3631,7 @@ impl TypeChecker {
         }
         let adoptions = self.nominal_trait_adoptions(&model.name);
         self.refuse_members_without_json_form("model", &model.name, &adoptions, &json_members);
+        self.record_adopted_json_derives(&model.name, &adoptions);
 
         // Check methods
         let active_model_methods = model
