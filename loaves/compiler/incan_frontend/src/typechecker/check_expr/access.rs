@@ -6662,7 +6662,9 @@ impl TypeChecker {
             };
         }
 
-        // Builtin methods for builtin types (so we don't report missing methods).
+        // Builtin methods for builtin types (so we don't report missing methods). Every float member but the predicates
+        // returns its receiver's own float type, as the carrier's method does: an `f32` member is an `f32`, not a
+        // `float`.
         if matches!(
             base_ty,
             ResolvedType::Float | ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::F32)
@@ -6671,7 +6673,7 @@ impl TypeChecker {
             use float_methods::FloatMethodId as M;
             match id {
                 M::IsNan | M::IsInfinite | M::IsFinite => return ResolvedType::Bool,
-                _ => return ResolvedType::Float,
+                _ => return base_ty.clone(),
             }
         }
         if matches!(base_ty, ResolvedType::Bytes) && method == "as_slice" && args.is_empty() {

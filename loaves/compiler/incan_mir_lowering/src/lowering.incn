@@ -4160,10 +4160,6 @@ def lower_builtin_method(
                     return emit_resize(builder, policy, receiver_type, operand, output, span)
                 None => return Err("unsupported Body IR resize without checked destination")
         None => pass
-    # The checker types every non-predicate float member as `float`, but an `f32` receiver's own `powf` returns `f32`.
-    # Lowering either width would disagree with one of them, so the member stays refused until they agree.
-    if member == "f32.powf":
-        return Err("unsupported Body IR f32 powf: its checked float result differs from the carrier's f32 powf")
     match float_method(member, receiver_type):
         Some((name, parameters, result)) =>
             return lower_float_method(builder, name, parameters, result, arguments, destination, span)
@@ -4172,7 +4168,11 @@ def lower_builtin_method(
 
 
 def float_method(member: str, receiver: PlanType) -> Option[tuple[str, list[PlanType], PlanType]]:
-    """Select the runtime boundary for a builtin float member; `powf` is the same `powf` legacy emits for `**`."""
+    """
+    Select the runtime boundary for a builtin float member; `powf` is the same `powf` legacy emits for `**`.
+
+    A member other than a predicate returns its receiver's own float type, as the checker types it.
+    """
     mut width = ""
     if receiver == PlanType.F32:
         width = "f32"
@@ -4180,8 +4180,8 @@ def float_method(member: str, receiver: PlanType) -> Option[tuple[str, list[Plan
         width = "f64"
     else:
         return None
-    if member == "f64.powf":
-        return Some(("power_f64", [receiver, receiver], receiver))
+    if member == f"{width}.powf":
+        return Some((f"power_{width}", [receiver, receiver], receiver))
     if member == f"{width}.is_finite":
         return Some((f"is_finite_{width}", [receiver], PlanType.Bool))
     if member == f"{width}.is_nan":
