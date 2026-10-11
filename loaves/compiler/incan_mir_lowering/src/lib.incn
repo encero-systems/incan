@@ -10,6 +10,7 @@ from lowering import (
     is_continue as checked_is_continue,
     lower_module as lower_checked_module,
     lower_program as lower_checked_program,
+    program_refusals as checked_program_refusals,
 )
 pub from pub::incan_mir_plan import (
     BasicBlock,
@@ -77,3 +78,13 @@ pub def lower_program(
 ) -> Result[Plan, str]:
     """Delegate project lowering while preserving the canonical caller boundary and source provenance."""
     return lower_checked_program(modules, sources, files, entry)
+
+
+pub def program_refusals(
+    modules: &list[BodyIrModule],
+    sources: list[str],
+    files: list[str],
+    entry: int,
+) -> list[str]:
+    """Delegate the census's per-body refusal collection through the canonical caller boundary."""
+    return checked_program_refusals(modules, sources, files, entry)

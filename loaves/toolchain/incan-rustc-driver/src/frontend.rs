@@ -3,7 +3,26 @@
 use std::path::{Path, PathBuf};
 
 use incan_driver::{modules::collect_modules_detailed_with_session, session::CompilationSession};
-use incan_mir_lowering::caller::incan::lower_program;
+use incan_mir_lowering::caller::incan::{lower_program, program_refusals};
+
+/// Environment variable naming the file where the census receives every refusal of one compilation, one per line.
+///
+/// Unset, compilation reports only its first refusal, as it always has. Set, the driver also lowers every body on its
+/// own and writes each body's first refusal there before compiling as usual, so one refused body cannot hide another.
+const REFUSAL_REPORT: &str = "INCAN_DIRECT_REFUSAL_REPORT";
+
+/// Write refusals to the file [`REFUSAL_REPORT`] names, one per line; without the variable this does nothing.
+fn write_refusal_report(refusals: &[String]) -> Result<(), std::io::Error> {
+    let Some(path) = std::env::var_os(REFUSAL_REPORT) else {
+        return Ok(());
+    };
+    let mut text = String::new();
+    for refusal in refusals {
+        text.push_str(&refusal.replace('\n', " "));
+        text.push('\n');
+    }
+    std::fs::write(path, text)
+}
 use incan_semantics_core::body_ir::BodyIrModule;
 
 /// Checked owning modules and their source provenance, with one explicit native entry module.
@@ -400,10 +419,26 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     crate::relaunch_with_native_environment(&native_link)?;
     let checked_source = source_path.clone();
     let parent = tracing::Span::current();
-    let program = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
+    let checked = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
         let _parent = parent.enter();
         checked_modules(&checked_source)
-    })?;
+    });
+    let program = match checked {
+        Ok(program) => program,
+        Err(error) => {
+            write_refusal_report(std::slice::from_ref(&error))?;
+            return Err(error.into());
+        }
+    };
+    if std::env::var_os(REFUSAL_REPORT).is_some() {
+        let refusals = program_refusals(
+            &program.modules,
+            program.sources.clone(),
+            program.files.clone(),
+            program.entry.try_into()?,
+        );
+        write_refusal_report(&refusals)?;
+    }
     let plan = {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::lower_program", modules = program.modules.len()).entered();
         lower_program(
