@@ -234,13 +234,61 @@ pub(crate) fn select_native_sdk_plan_with_context(
     dependencies: &[DependencySpec],
     context: Option<&NativeSdkCommandContext>,
 ) -> CliResult<Option<OvenDirectRustcPlanPreparation>> {
+    select_native_sdk_plan_with_ordinary(store, receipt, dependencies, context, None)
+}
+
+/// Compose current ordinary roots with the transitional published runtime in the existing direct plan.
+/// Original record-bound owners supply project externs; SDK owners supply the remaining runtime members.
+/// The receipt binds the ordinary roots, and mandatory runtime support cannot be replaced across generations.
+pub(crate) fn select_native_sdk_plan_with_ordinary(
+    store: &OvenStore,
+    receipt: &oven_store::OvenReceipt,
+    dependencies: &[DependencySpec],
+    context: Option<&NativeSdkCommandContext>,
+    ordinary: Option<&oven_rustc::native_loaf::NativeLoafClosure>,
+) -> CliResult<Option<OvenDirectRustcPlanPreparation>> {
     let Some(context) = context else {
         return Ok(None);
     };
     context.verify_receipt(receipt)?;
     let inventory = &context.inventory;
     let selection = &context.selection;
-    for dependency in dependencies {
+    let ordinary_roots = ordinary.map(|closure| closure.roots());
+    if let Some(closure) = ordinary {
+        let digest = super::native_runtime_inputs::ordinary_roots_digest(closure.roots())?;
+        if receipt.sources.build_unit_inputs.get("ordinary-native-roots") != Some(&digest) {
+            return Err(CliError::failure(
+                "ordinary execution roots differ from the consumer receipt",
+            ));
+        }
+        if incan_lang::lang::generated_support::SUPPORT_CRATES_EVERY_PROGRAM_LINKS
+            .iter()
+            .any(|alias| closure.roots().contains_key(*alias))
+        {
+            return Err(CliError::failure(
+                "ordinary project roots cannot replace transitional runtime support",
+            ));
+        }
+    }
+    let sdk_dependencies = dependencies
+        .iter()
+        .filter(|dependency| {
+            !ordinary_roots.is_some_and(|roots| roots.contains_key(&dependency.crate_name.replace('-', "_")))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let ordinary_owners = ordinary
+        .map(|closure| {
+            let owners = oven_rustc::plan::shared::OvenSharedNativeOwners::from_selected(&selection.owners)
+                .map_err(crate::error::oven_plan_error)?;
+            let original = closure
+                .shared_owners()
+                .map_err(|error| CliError::failure(error.to_string()))?;
+            owners.merge(original).map_err(crate::error::oven_plan_error)
+        })
+        .transpose()?;
+    let owners = ordinary_owners.as_ref().unwrap_or(&context.shared_owners);
+    for dependency in &sdk_dependencies {
         if !incan_provider::sdk_native::sdk_native_dependency_is_covered(inventory, selection, dependency)? {
             return Err(CliError::failure(format!(
                 "native SDK plan does not cover dependency `{}`; publish its own native authority first",
@@ -252,12 +300,44 @@ pub(crate) fn select_native_sdk_plan_with_context(
         store,
         receipt,
         OvenToolchainMaterialization::Reused,
-        Some(&context.shared_owners),
+        Some(owners),
     )? {
         return Ok(Some(plan));
     }
-    let (mut manifest, mut files) = native_unit_manifest(receipt, selection, dependencies)?;
+    let (mut manifest, mut files) = native_unit_manifest(receipt, selection, &sdk_dependencies)?;
     add_native_providers(inventory, &mut manifest, &mut files)?;
+    let mut shared_native_roots = selection
+        .units
+        .iter()
+        .zip(&selection.owners)
+        .enumerate()
+        .map(|(index, (unit, owner))| {
+            Ok(oven_rustc::plan::shared::OvenSharedNativeRoot {
+                store: owner
+                    .artifact_root
+                    .parent()
+                    .and_then(Path::parent)
+                    .and_then(Path::parent)
+                    .ok_or_else(|| CliError::failure("native unit has no store root"))?
+                    .to_path_buf(),
+                identity: unit.store_identity.clone(),
+                receipt_identity: unit.receipt_identity.clone(),
+                prefix: format!("units/{index}"),
+            })
+        })
+        .collect::<CliResult<Vec<_>>>()?;
+    if let Some(closure) = ordinary {
+        manifest
+            .externs
+            .retain(|external| !closure.roots().contains_key(&external.crate_name));
+        super::native_loaf_plan::append_native_loaf_closure(
+            closure,
+            receipt,
+            &mut manifest,
+            &mut shared_native_roots,
+            "ordinary/units",
+        )?;
+    }
     seal_source_roles(receipt, &mut manifest);
     manifest
         .validate_shape(&receipt.intent)
@@ -269,26 +349,7 @@ pub(crate) fn select_native_sdk_plan_with_context(
             kind: OvenArtifactKind::DirectRustcPlan,
             payload: serde_json::to_vec(&oven_rustc::plan::shared::OvenSharedNativePlan {
                 artifacts: manifest,
-                shared_native_roots: selection
-                    .units
-                    .iter()
-                    .zip(&selection.owners)
-                    .enumerate()
-                    .map(|(index, (unit, owner))| {
-                        Ok(oven_rustc::plan::shared::OvenSharedNativeRoot {
-                            store: owner
-                                .artifact_root
-                                .parent()
-                                .and_then(Path::parent)
-                                .and_then(Path::parent)
-                                .ok_or_else(|| CliError::failure("native unit has no store root"))?
-                                .to_path_buf(),
-                            identity: unit.store_identity.clone(),
-                            receipt_identity: unit.receipt_identity.clone(),
-                            prefix: format!("units/{index}"),
-                        })
-                    })
-                    .collect::<CliResult<Vec<_>>>()?,
+                shared_native_roots,
             })
             .map_err(|error| CliError::failure(error.to_string()))?,
             materialized_files: files,
@@ -299,7 +360,7 @@ pub(crate) fn select_native_sdk_plan_with_context(
         store,
         receipt,
         OvenToolchainMaterialization::Reused,
-        Some(&context.shared_owners),
+        Some(owners),
     )
 }
 

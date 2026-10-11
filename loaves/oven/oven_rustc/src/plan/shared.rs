@@ -103,6 +103,29 @@ impl OvenSharedNativeOwners {
         })
     }
 
+    /// Combine two already admitted owner sets while preserving their record-bound native domain grants.
+    /// Coordinates remain original leased owners; merging never admits a descriptor or upgrades an SDK-only owner.
+    /// Read-only and writable handoff policies must agree rather than silently weakening either side.
+    pub fn merge(mut self, other: Self) -> OvenPlanResult<Self> {
+        if self.read_only != other.read_only {
+            return Err(OvenPlanError::selection("shared native owner policies differ"));
+        }
+        for (key, domain) in other.record_bound_domains {
+            if self
+                .record_bound_domains
+                .get(&key)
+                .is_some_and(|existing| existing != &domain)
+            {
+                return Err(OvenPlanError::selection("shared native owner domains conflict"));
+            }
+            self.record_bound_domains.insert(key, domain);
+        }
+        for (key, owner) in other.owners {
+            self.owners.entry(key).or_insert(owner);
+        }
+        Ok(self)
+    }
+
     /// Borrow only the explicitly supplied owner set, refusing missing coordinates rather than reacquiring them.
     fn select(
         &self,
@@ -584,6 +607,58 @@ mod tests {
             artifacts,
             payload,
         })
+    }
+
+    /// Merging independent native capabilities preserves original leases, domain grants and witness revalidation.
+    #[test]
+    fn native_owner_merge_retains_each_capability_and_refuses_policy_changes() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let first = fixture()?;
+        let second = fixture()?;
+        let owners = OvenSharedNativeOwners::from_selected(&[Arc::clone(&first.owner)])?.merge(
+            OvenSharedNativeOwners::from_record_bound(&[Arc::clone(&second.owner)], false)?,
+        )?;
+        assert_eq!(owners.owners.len(), 2);
+        assert_eq!(owners.record_bound_domains.len(), 1);
+        for f in [&first, &second] {
+            let (_, held, _) = materialize_with_owners(
+                &f.payload,
+                &f.artifacts,
+                f.root.path(),
+                &f.receipt.intent,
+                Some(&owners),
+            )?
+            .ok_or("merged owner materialization missing")?;
+            assert!(Arc::ptr_eq(
+                &f.owner,
+                held.first().ok_or("merged original owner missing")?
+            ));
+        }
+        assert!(
+            OvenSharedNativeOwners::from_selected(&[Arc::clone(&first.owner)])?
+                .merge(OvenSharedNativeOwners::from_selected_read_only(&[Arc::clone(
+                    &second.owner
+                )])?)
+                .is_err()
+        );
+        let witness = first
+            .owner
+            .artifact_root
+            .parent()
+            .ok_or("owner entry missing")?
+            .join("native-receipt.json");
+        fs::write(witness, b"changed merged receipt witness")?;
+        assert!(
+            materialize_with_owners(
+                &first.payload,
+                &first.artifacts,
+                first.root.path(),
+                &first.receipt.intent,
+                Some(&owners)
+            )
+            .is_err()
+        );
+        Ok(())
     }
 
     /// A consumer shares the original owner and retains its lease after its command index has been dropped.
