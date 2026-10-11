@@ -139,6 +139,7 @@ from decls import lower_model_declarations, static_slot, static_accessors
 from model_lists import model_list_read, structural_prefix, prefix_place
 from element_places import is_element_place, element_place_type
 from element_borrows import element_method_owner, element_method_receiver, borrow_element_mut
+from option_tests import is_option_carrier, option_isinstance, option_union_payload, enum_tag
 from models import field_projection
 from models import model_type, model_place, constructor_index, field_slot
 from model_values import (
@@ -5688,6 +5689,13 @@ def boundary_plan_operand(mut builder: Builder, value: Operand, target: PlanType
                         text = display_plan_operand(builder, operand, span)?
                         operand = read_place(text, true, span)
             _ => pass
+    # An Option of a union wraps a bare member in that union first, as legacy's `Some(Union::Vn(value))` does.
+    match option_union_payload(builder, target):
+        Some(payload) =>
+            source = operand_type(builder, operand)?
+            if source != target and source != payload:
+                operand = boundary_plan_operand(builder, operand, payload, span)?
+        None => pass
     operation = carrier_injection(
         builder.nominals,
         builder.enums,
@@ -5735,7 +5743,7 @@ def lower_union_isinstance(
     target: &RustType,
     span: SourceSpan,
 ) -> Result[RvalueKind, str]:
-    """Inspect an ordinary union's tag without consuming the tested value."""
+    """Inspect an ordinary union's or an Option's tag without consuming the tested value."""
     source_ty = native_source_type(builder.nominals, builder.enums, builder.unions, ty, builder.intrinsics)?
     member = native_source_type(builder.nominals, builder.enums, builder.unions, target, builder.intrinsics)?
     match source_ty:
@@ -5748,17 +5756,21 @@ def lower_union_isinstance(
             return Ok(RvalueKind.Use(literal(Constant.Bool(member in [PlanType.String, PlanType.FrozenStr]), span)))
         _ => pass
     owner = enum_owner(source_ty)?
+    if is_option_carrier(builder, owner):
+        option = isinstance_place(builder, value, span)?
+        return option_isinstance(builder, option, owner, member, span)
     slots = union_test_slots(builder.nominals, builder.enums, builder.unions, owner, member, builder.intrinsics)?
     if len(slots) == 0:
         return Ok(RvalueKind.Use(literal(Constant.Bool(false), span)))
+    source = isinstance_place(builder, value, span)?
+    tag = enum_tag(builder, source, span)
+    return Ok(test_union_tag(builder, tag, slots, span))
+
+
+def isinstance_place(builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+    """The storage whose tag `isinstance` reads in place."""
     match value:
-        RustOperand.Place(read) =>
-            source = scalar_place(builder, read.place, span)?
-            raw_tag = temporary(builder, PlanType.EnumTag, span)
-            tag = temporary(builder, PlanType.Int, span)
-            builder.emit(plan_assign(raw_tag, RvalueKind.Discriminant(source), span))
-            builder.emit(plan_assign(tag, RvalueKind.TagToInt(read_place(raw_tag, false, span)), span))
-            return Ok(test_union_tag(builder, tag, slots, span))
+        RustOperand.Place(read) => return scalar_place(builder, read.place, span)
         _ => return Err("unsupported Body IR nonplace union isinstance")
 
 

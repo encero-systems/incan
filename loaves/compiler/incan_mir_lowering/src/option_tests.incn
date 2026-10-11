@@ -1,0 +1,120 @@
+"""
+`isinstance` over an Option carrier, as legacy matches it: true only for a present payload of the target type.
+
+A payload that is itself a union is tested by its member tag after the Option's own tag proves it present, so the
+union payload is never inspected through an absent Option.
+"""
+
+from pub::incan_mir_plan import (
+    BinaryOp,
+    Constant,
+    FieldProjection,
+    Place,
+    PlanType,
+    RvalueKind,
+    SourceSpan,
+    TerminatorKind,
+)
+from pub::incan_mir_plan import assign as plan_assign
+from frame import Builder, temporary, read_place, literal, appended_field
+from unions import union_test_slots, test_union_tag
+
+
+pub def is_option_carrier(builder: Builder, owner: int) -> bool:
+    """Whether a retained enum owner is the intrinsic Option carrier rather than a source enum or a union."""
+    index = owner - len(builder.enums)
+    return index >= 0 and index < len(builder.intrinsics) and builder.intrinsics[index].carrier == "Option"
+
+
+pub def option_isinstance(
+    mut builder: Builder,
+    source: Place,
+    owner: int,
+    member: PlanType,
+    span: SourceSpan,
+) -> Result[RvalueKind, str]:
+    """Test a present Option payload against the checked target type without consuming the Option."""
+    payload = builder.intrinsics[owner - len(builder.enums)].variants[1].fields[0]
+    match payload:
+        PlanType.Enum(inner, _name) =>
+            if is_union_carrier(builder, inner):
+                return union_payload_test(builder, source, payload, inner, member, span)
+        _ => pass
+    if not same_isinstance_type(payload, member):
+        return Ok(RvalueKind.Use(literal(Constant.Bool(false), span)))
+    tag = enum_tag(builder, source, span)
+    # Option's Some is variant 1, so a present payload of the target type is exactly tag 1.
+    return Ok(test_union_tag(builder, tag, [1], span))
+
+
+pub def option_union_payload(builder: Builder, target: PlanType) -> Option[PlanType]:
+    """The union an Option carrier holds, when `target` is such an Option; `None` for any other type."""
+    match target:
+        PlanType.Enum(owner, _name) =>
+            if not is_option_carrier(builder, owner):
+                return None
+            payload = builder.intrinsics[owner - len(builder.enums)].variants[1].fields[0]
+            match payload:
+                PlanType.Enum(inner, _inner_name) =>
+                    if is_union_carrier(builder, inner):
+                        return Some(payload)
+                _ => pass
+        _ => pass
+    return None
+
+
+pub def enum_tag(mut builder: Builder, source: Place, span: SourceSpan) -> Place:
+    """Read an enum's variant index as an int without moving or copying its payload."""
+    raw_tag = temporary(builder, PlanType.EnumTag, span)
+    tag = temporary(builder, PlanType.Int, span)
+    builder.emit(plan_assign(raw_tag, RvalueKind.Discriminant(source), span))
+    builder.emit(plan_assign(tag, RvalueKind.TagToInt(read_place(raw_tag, false, span)), span))
+    return tag
+
+
+def union_payload_test(
+    mut builder: Builder,
+    source: Place,
+    payload: PlanType,
+    inner: int,
+    member: PlanType,
+    span: SourceSpan,
+) -> Result[RvalueKind, str]:
+    """Test the union member tag only on the branch where the Option's tag proved its payload present."""
+    slots = union_test_slots(builder.nominals, builder.enums, builder.unions, inner, member, builder.intrinsics)?
+    if len(slots) == 0:
+        return Ok(RvalueKind.Use(literal(Constant.Bool(false), span)))
+    output = temporary(builder, PlanType.Bool, span)
+    builder.emit(plan_assign(output, RvalueKind.Use(literal(Constant.Bool(false), span)), span))
+    tag = enum_tag(builder, source, span)
+    present = temporary(builder, PlanType.Bool, span)
+    builder.emit(
+        plan_assign(
+            present,
+            RvalueKind.Binary(BinaryOp.Equal, read_place(tag, false, span), literal(Constant.Int(1), span)),
+            span,
+        ),
+    )
+    inspected = builder.new_block(span)
+    joined = builder.new_block(span)
+    builder.finish(TerminatorKind.SwitchBool(read_place(present, false, span), joined, inspected), span)
+    builder.current = inspected
+    member_place = appended_field(source, FieldProjection(slot=0, ty=payload, variant=1), span)?
+    member_tag = enum_tag(builder, member_place, span)
+    matched = test_union_tag(builder, member_tag, slots, span)
+    builder.emit(plan_assign(output, matched, span))
+    builder.finish(TerminatorKind.Goto(joined), span)
+    builder.current = joined
+    return Ok(RvalueKind.Use(read_place(output, false, span)))
+
+
+def is_union_carrier(builder: Builder, owner: int) -> bool:
+    """Whether a retained enum owner is an anonymous union, the intrinsic carrier without a standard name."""
+    index = owner - len(builder.enums)
+    return index >= 0 and index < len(builder.intrinsics) and builder.intrinsics[index].carrier == ""
+
+
+def same_isinstance_type(payload: PlanType, member: PlanType) -> bool:
+    """Match the target exactly, treating owned and frozen text as the one `str` identity as union tests do."""
+    texts = [PlanType.String, PlanType.FrozenStr]
+    return payload == member or (payload in texts and member in texts)
