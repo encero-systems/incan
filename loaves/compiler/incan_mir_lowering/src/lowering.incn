@@ -134,10 +134,11 @@ from generators import (
 )
 from project import project_context
 from nominal_instances import specialize_nominals
-from traits import method_index, specialize_traits, validate_static_receiver
+from traits import method_index, owner_method_index, specialize_traits, validate_static_receiver
 from decls import lower_model_declarations, static_slot, static_accessors
 from model_lists import model_list_read, structural_prefix, prefix_place
 from element_places import is_element_place, element_place_type
+from element_borrows import element_method_owner, element_method_receiver, borrow_element_mut
 from models import field_projection
 from models import model_type, model_place, constructor_index, field_slot
 from model_values import (
@@ -1103,10 +1104,10 @@ def lower_assignment(
             return dictionary_index_assignment(builder, destination, value, span)
         if is_list(ty):
             return indexed_assignment(builder, destination, value, span)
-        # A list held by a tuple element is written at its list indexes after the tuple prefix.
+        # A list held by a model field or tuple element is written at its list indexes after that structural prefix.
         match structural_prefix(builder, destination)?:
-            Some((count, through_tuple)) =>
-                if through_tuple and count > 0 and count < len(destination.projection):
+            Some((count, _through_tuple)) =>
+                if count > 0 and count < len(destination.projection):
                     return indexed_assignment_at(builder, destination, count, value, span)
             None => pass
     target = scalar_place(builder, destination, span)?
@@ -1719,6 +1720,13 @@ def lower_method_call(
         return lower_model_json_builtin(builder, arguments, destination, span)
     if is_derived_clone(target):
         return lower_derived_clone(builder, arguments, destination, span)
+    # A list or dictionary element receiver is reborrowed in its container; no native place names it.
+    match element_method_owner(builder, arguments[0])?:
+        Some(owner) =>
+            index = owner_method_index(module, target, owner, builder.intrinsics)?
+            reference = element_method_receiver(module, builder, index, arguments[0], span)?
+            return call_method_body(module, builder, target, index, reference, arguments, destination, span)
+        None => pass
     match value_method_owner(
         module, target, builder.locals[builder.local_offset:], arguments[0], span, builder.unions, builder.intrinsics,
     )?:
@@ -1727,14 +1735,6 @@ def lower_method_call(
     index = method_index(
         module, target, builder.locals[builder.local_offset:], arguments[0], span, builder.unions, builder.intrinsics,
     )?
-    mut body = module.bodies[index].clone()
-    if len(body.type_parameters) != 0:
-        closed = checked_type_arguments(builder, target.type_args)?
-        builder.instances.append(Instance(body=body.clone(), arguments=closed))
-        body = instantiate(body, closed)?
-    else:
-        if len(target.type_args) != 0:
-            return Err("unsupported Body IR type arguments on a method without type parameters")
     receiver_type, borrow = method_receiver(
         module,
         builder.locals[builder.local_offset:],
@@ -1747,9 +1747,31 @@ def lower_method_call(
     )?
     reference = temporary(builder, receiver_type, span)
     builder.emit(plan_assign(reference, borrow, span))
+    return call_method_body(module, builder, target, index, reference, arguments, destination, span)
+
+
+def call_method_body(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    index: int,
+    reference: Place,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Call the selected method body with its already borrowed receiver and the bound ordinary arguments."""
+    mut body = module.bodies[index].clone()
+    if len(body.type_parameters) != 0:
+        closed = checked_type_arguments(builder, target.type_args)?
+        builder.instances.append(Instance(body=body.clone(), arguments=closed))
+        body = instantiate(body, closed)?
+    else:
+        if len(target.type_args) != 0:
+            return Err("unsupported Body IR type arguments on a method without type parameters")
     mut types: list[PlanType] = []
-    for index in range(1, len(body.params)):
-        parameter = body.params[index]
+    for position in range(1, len(body.params)):
+        parameter = body.params[position]
         if parameter.mutable:
             return Err("unsupported Body IR mutable Method argument")
         declared = native_source_type(builder.nominals, builder.enums, builder.unions, parameter.ty, builder.intrinsics)?
@@ -3822,7 +3844,7 @@ def checked_list_argument(
         _ => return Err("unsupported Body IR constant list argument")
 
 
-def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+pub def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
     """Materialize owned list and string values using each checked read's fact."""
     match value:
         RustOperand.Constant(constant) =>
@@ -3901,13 +3923,27 @@ def indexed_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> 
     """Use the retained list projection and legacy negative-index error behavior; a final slice copies a new list."""
     if len(source.projection) == 0:
         return Err("unsupported Body IR list read without index")
-    mut place = list_base_place(builder, source, span)?
-    last = len(source.projection) - 1
-    for slot in range(len(source.projection)):
+    container = list_base_place(builder, source, span)?
+    return projected_element_read(builder, source, container, 0, span)
+
+
+pub def projected_element_read(
+    mut builder: Builder,
+    source: &RustPlace,
+    container: Place,
+    start: int,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """
+    Copy the value the indexes, slices and element fields after `start` steps select out of `container`.
+
+    Each index clones its element and each slice copies a new list, so the container stays whole; a field of a copied
+    element is read from that copy.
+    """
+    mut place = container
+    for slot in range(start, len(source.projection)):
         match source.projection[slot]:
             PlaceElem.Slice(start=_start, end=_end, step=_step) =>
-                if slot != last:
-                    return Err("unsupported Body IR projection after list slice")
                 place = read_list_slice(builder, place, source.projection[slot], span)?
             PlaceElem.Field(name=_name, canonical=_canonical, structural=_structural) =>
                 place = read_element_field(builder, place, source.projection[slot], span)?
@@ -4231,7 +4267,7 @@ def shared_receiver_place(
     return argument_place(builder, arguments, index, span)
 
 
-def materialized_receiver(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+pub def materialized_receiver(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Place, str]:
     """Copy a list or dictionary element into an owned temporary that a shared receiver borrow can read."""
     match element_read(builder, source, span)?:
         Some(item) =>
@@ -4602,7 +4638,7 @@ def indexed_assignment_at(
         receiver = prefix_place(builder, destination, start, span)?
     for slot in range(start, len(destination.projection) - 1):
         index = list_index_operand(builder, destination, slot, span)?
-        receiver = borrow_nested_list(builder, receiver, index, span)?
+        receiver = borrow_element_mut(builder, receiver, index, span)?
     leaf, depth = require_list_shape(
         place_type(builder.locals, receiver),
         "unsupported Body IR indexed assignment on non-list",
@@ -4625,27 +4661,6 @@ def indexed_assignment_at(
         span,
     )
     return Ok(None)
-
-
-def borrow_nested_list(mut builder: Builder, receiver: Place, index: Operand, span: SourceSpan) -> Result[Place, str]:
-    """Keep nested writes on caller storage through legacy checked element reborrows."""
-    leaf, depth = require_list_shape(place_type(builder.locals, receiver), "unsupported Body IR nested indexing non-list")?
-    if depth <= 1:
-        return Err("unsupported Body IR nested index on scalar list element")
-    reference = list_borrow(builder, receiver, true, span)?
-    result = PlanType.ListMutRef(leaf, depth - 1)
-    output = temporary(builder, result, span)
-    list_call(
-        builder,
-        "borrow_list_mut",
-        list_element(leaf, depth),
-        [PlanType.ListMutRef(leaf, depth), PlanType.Int],
-        result,
-        [reference, index],
-        output,
-        span,
-    )
-    return Ok(output)
 
 
 def assignment_value(mut builder: Builder, value: &RustRvalue, span: SourceSpan) -> Result[Operand, str]:
@@ -4922,9 +4937,9 @@ def collection_contains(
 
 
 def dictionary_index_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Operand, str]:
-    """Clone a checked dictionary element through legacy indexing and error behavior."""
-    if len(source.projection) != 1:
-        return Err("unsupported Body IR nested dictionary projection")
+    """Clone a checked dictionary element through legacy indexing and error behavior, then read what follows from it."""
+    if len(source.projection) == 0:
+        return Err("unsupported Body IR dictionary read without key")
     receiver = list_base_place(builder, source, span)?
     ty = place_type(builder.locals, receiver)
     types = collection_arguments(ty)
@@ -4952,7 +4967,10 @@ def dictionary_index_read(mut builder: Builder, source: &RustPlace, span: Source
         output,
         span,
     )?
-    return Ok(read_place(output, types[1] == PlanType.String, span))
+    # A cloned nominal value is a new owner, like a cloned list element.
+    if is_nominal_type(types[1]):
+        builder.owned.append(output.local)
+    return projected_element_read(builder, source, output, 1, span)
 
 
 def dictionary_index_assignment(

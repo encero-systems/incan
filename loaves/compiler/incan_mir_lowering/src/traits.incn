@@ -155,10 +155,20 @@ pub def method_index(
     intrinsics: list[EnumDeclaration],
 ) -> Result[int, str]:
     """Select the checked implementation using the concrete receiver's retained layout identity."""
+    owner = receiver_owner(module, locals, argument, span, unions, intrinsics)?
+    return owner_method_index(module, target, owner, intrinsics)
+
+
+pub def owner_method_index(
+    module: &BodyIrModule,
+    target: &MethodTarget,
+    owner: int,
+    intrinsics: list[EnumDeclaration],
+) -> Result[int, str]:
+    """Select the checked implementation for a receiver whose retained nominal owner is already known."""
     match target.canonical:
         None => return Err("unsupported Body IR unproven Method")
         Some(_identity) => pass
-    owner = receiver_owner(module, locals, argument, span, unions, intrinsics)?
     mut canonical = target.canonical.clone()
     for implementation in module.trait_implementations:
         if implementation.owner == module.nominal_declarations[owner].canonical and Some(implementation.method) == canonical:

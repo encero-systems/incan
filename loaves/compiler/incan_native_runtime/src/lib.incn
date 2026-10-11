@@ -46,6 +46,7 @@ pub from collections import (
     contains_dict,
     clone_dict,
     get_dict,
+    borrow_mut_dict,
     optional_dict,
     keys_dict,
     values_dict,

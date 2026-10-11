@@ -1,0 +1,214 @@
+"""
+Borrow a list or dictionary element in place, as legacy's checked `list_get_mut` and `dict_get_mut` reborrows do.
+
+A read of an element copies it; a `mut self` method or a write through a field must change the stored element
+instead. Each index here reborrows the element through the runtime's checked accessor, and the fields after it
+project through the resulting reference, so the change lands in the container.
+"""
+
+from rust::incan_semantics_core::body_ir import (
+    BodyIrModule,
+    ArgumentElement as RustArgumentElement,
+    Place as RustPlace,
+    PlaceElem,
+    Operand as RustOperand,
+    OwnershipFact,
+)
+from pub::incan_mir_plan import Operand, PlanType, Place, Projection, RvalueKind, SourceSpan
+from pub::incan_mir_plan import assign as plan_assign, place as plan_place
+from frame import Builder, place_type, temporary, appended_field
+from models import field_projection
+from lists import require_list_shape, list_element, is_list
+from collections import is_collection, collection_arguments, collection_reference, collection_call, borrow_collection
+from builtins import list_call
+from model_lists import structural_prefix, prefix_place
+from element_places import is_element_place, element_place_type
+from classes import frame_type
+from lowering import list_borrow, scalar_operand, value_operand, materialized_receiver
+
+
+pub def element_method_owner(builder: Builder, argument: &RustArgumentElement) -> Result[Option[int], str]:
+    """The nominal owner of a list or dictionary element receiver; `None` for a receiver a native place names."""
+    match argument.as_one():
+        Some(RustOperand.Place(read)) =>
+            if not is_element_place(builder, read.place)?:
+                return Ok(None)
+            match element_place_type(builder, read.place)?:
+                PlanType.Model(owner, _name) => return Ok(Some(owner))
+                _ => return Err("unsupported Body IR Method on a non-nominal collection element")
+        _ => return Ok(None)
+
+
+pub def element_method_receiver(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    index: int,
+    argument: &RustArgumentElement,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Borrow a list or dictionary element as the selected method's receiver: in place when `mut self` changes it."""
+    receiver_type = frame_type(module, module.bodies[index].locals[0], builder.intrinsics)?
+    match argument.as_one():
+        Some(RustOperand.Place(read)) =>
+            # Body IR borrows every source receiver; the selected body's `mut self` decides the borrow's exclusivity.
+            if read.fact != OwnershipFact.Borrow and read.fact != OwnershipFact.MutBorrow:
+                return Err("unsupported Body IR Method receiver ownership")
+            match receiver_type:
+                PlanType.ModelMutRef(_owner, _name) => return mutable_element_reference(builder, read.place, span)
+                PlanType.ModelRef(_owner, _name) =>
+                    # A shared receiver reads a copy of the element, as any other element read does.
+                    copied = materialized_receiver(builder, read.place, span)?
+                    reference = temporary(builder, receiver_type, span)
+                    builder.emit(plan_assign(reference, RvalueKind.Borrow(copied), span))
+                    return Ok(reference)
+                _ => return Err("invalid Body IR Method receiver type")
+        _ => return Err("unsupported Body IR Method nonplace or spread receiver")
+
+
+pub def mutable_element_reference(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+    """Reborrow the nominal element, or a nominal field inside it, that a list or dictionary place selects."""
+    start = element_start(builder, source)?
+    mut place = local_root(builder, source, span)?
+    if start > 0:
+        place = prefix_place(builder, source, start, span)?
+    for position in range(start, len(source.projection)):
+        match source.projection[position]:
+            PlaceElem.Index(index) =>
+                place = borrow_element(builder, place, index, span)?
+            PlaceElem.Slice(start=_start, end=_end, step=_step) =>
+                return Err("unsupported Body IR mutable borrow through a list slice")
+            _ =>
+                owner = dereferenced(builder, place)
+                field = field_projection(
+                    builder.nominals,
+                    place_type(builder.locals, owner),
+                    source.projection[position],
+                    builder.enums,
+                    builder.unions,
+                    builder.intrinsics,
+                )?
+                place = appended_field(owner, field, span)?
+    return model_reference(builder, place, span)
+
+
+pub def borrow_element_mut(
+    mut builder: Builder,
+    receiver: Place,
+    index: Operand,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Reborrow one nested list or nominal list element through the legacy negative-index and bounds checks."""
+    leaf, depth = require_list_shape(place_type(builder.locals, receiver), "unsupported Body IR indexing non-list")?
+    element = list_element(leaf, depth)
+    result = mutable_reference_type(element)?
+    reference = list_borrow(builder, receiver, true, span)?
+    output = temporary(builder, result, span)
+    list_call(
+        builder,
+        "borrow_list_mut",
+        element,
+        [PlanType.ListMutRef(leaf, depth), PlanType.Int],
+        result,
+        [reference, index],
+        output,
+        span,
+    )
+    return Ok(output)
+
+
+def element_start(builder: Builder, source: &RustPlace) -> Result[int, str]:
+    """Count the structural steps before the first element index; a list or dictionary root has none."""
+    match source.local_id():
+        None => return Err("unsupported Body IR mutable borrow of a static element")
+        Some(local) =>
+            root = builder.locals[int(local.index()) + 1 + builder.local_offset].ty
+            if is_list(root) or is_collection(root):
+                return Ok(0)
+    match structural_prefix(builder, source)?:
+        Some((count, _through_tuple)) =>
+            if count > 0 and count < len(source.projection):
+                return Ok(count)
+        None => pass
+    return Err("unsupported Body IR mutable borrow of a non-element place")
+
+
+def local_root(builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+    """Map the place's frame local; static storage is a snapshot, so a borrow of it could never change the static."""
+    match source.local_id():
+        Some(local) => return Ok(plan_place(int(local.index()) + 1 + builder.local_offset, span))
+        None => return Err("unsupported Body IR mutable borrow of a static element")
+
+
+def borrow_element(mut builder: Builder, container: Place, index: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+    """Evaluate the index or key first, then reborrow the selected list element or dictionary value."""
+    if is_collection(place_type(builder.locals, container)):
+        return borrow_dictionary_value(builder, container, index, span)
+    argument = scalar_operand(builder, index, span)?
+    return borrow_element_mut(builder, container, argument, span)
+
+
+def borrow_dictionary_value(
+    mut builder: Builder,
+    container: Place,
+    index: &RustOperand,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Reborrow a stored dictionary value through legacy's missing-key diagnostic."""
+    if container.projection != Projection.Whole:
+        return Err("unsupported Body IR mutable borrow of a projected dictionary value")
+    ty = place_type(builder.locals, container)
+    types = collection_arguments(ty)
+    if len(types) != 2:
+        return Err("unsupported Body IR set indexing")
+    # Legacy dictionary indexing requires Display for its missing-key diagnostic; tuples and unit lack that bound.
+    match types[0]:
+        PlanType.Tuple(_elements) => return Err("unsupported Body IR tuple dictionary key lookup: legacy Display bound")
+        PlanType.Unit => return Err("unsupported Body IR unit dictionary key lookup: legacy Display bound")
+        _ => pass
+    result = mutable_reference_type(types[1])?
+    key = value_operand(builder, index, span)?
+    reference = borrow_collection(builder, container, true, span)?
+    output = temporary(builder, result, span)
+    collection_call(
+        builder,
+        ty,
+        "borrow_mut",
+        [collection_reference(ty, true), types[0]],
+        result,
+        [reference, key],
+        output,
+        span,
+    )?
+    return Ok(output)
+
+
+def mutable_reference_type(element: PlanType) -> Result[PlanType, str]:
+    """The exclusive reference a reborrowed element takes; scalar elements are written by index instead."""
+    match element:
+        PlanType.List(leaf, depth) => return Ok(PlanType.ListMutRef(leaf, depth))
+        PlanType.Model(owner, name) => return Ok(PlanType.ModelMutRef(owner, name))
+        _ => return Err("unsupported Body IR mutable borrow of a scalar collection element")
+
+
+def dereferenced(builder: Builder, place: Place) -> Place:
+    """Project through a whole nominal reference so its fields append to the referent rather than the reference."""
+    if place.projection != Projection.Whole:
+        return place
+    match builder.locals[place.local].ty:
+        PlanType.ModelMutRef(owner, name) =>
+            return Place(local=place.local, projection=Projection.Deref(PlanType.Model(owner, name)), span=place.span)
+        _ => return place
+
+
+def model_reference(mut builder: Builder, place: Place, span: SourceSpan) -> Result[Place, str]:
+    """Return the element's exclusive reference, reborrowing a field path inside it as a reference of its own."""
+    match place_type(builder.locals, place):
+        PlanType.ModelMutRef(_owner, _name) =>
+            if place.projection == Projection.Whole:
+                return Ok(place)
+        PlanType.Model(owner, name) =>
+            reference = temporary(builder, PlanType.ModelMutRef(owner, name), span)
+            builder.emit(plan_assign(reference, RvalueKind.MutBorrow(place), span))
+            return Ok(reference)
+        _ => pass
+    return Err("unsupported Body IR mutable Method receiver on a non-nominal element")

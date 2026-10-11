@@ -944,7 +944,8 @@ fn source_signature_type(ty: &Scalar) -> bool {
         )
 }
 
-/// Runtime signatures additionally admit shared text and slice views, whose regions metadata checking erases.
+/// Runtime signatures additionally admit shared text and slice views, whose regions metadata checking erases, and
+/// the exclusive nominal reference a checked element reborrow returns.
 fn external_signature_type(ty: &Scalar) -> bool {
     source_signature_type(ty)
         || matches!(
@@ -956,6 +957,7 @@ fn external_signature_type(ty: &Scalar) -> bool {
                 | Scalar::StrSlice
                 | Scalar::EnumRef(_)
                 | Scalar::ModelRef(_)
+                | Scalar::ModelMutRef(_)
                 | Scalar::GeneratorYieldRef(_, _)
         )
 }
@@ -1088,10 +1090,10 @@ fn validate_array_length(function: &Function, ty: Scalar) -> Result<(), PlanErro
         | Scalar::SetMutRef(Leaf::Model(_))
         | Scalar::Dict(Leaf::Model(_), _)
         | Scalar::DictRef(Leaf::Model(_), _)
-        | Scalar::DictMutRef(Leaf::Model(_), _)
-        | Scalar::Dict(_, Leaf::Model(_))
-        | Scalar::DictRef(_, Leaf::Model(_))
-        | Scalar::DictMutRef(_, Leaf::Model(_)) => Err(invalid(function, "model leaves are admitted only in lists")),
+        | Scalar::DictMutRef(Leaf::Model(_), _) => Err(invalid(
+            function,
+            "model hashed keys require retained Eq and Hash authority",
+        )),
         Scalar::Set(Leaf::Float)
         | Scalar::SetRef(Leaf::Float)
         | Scalar::SetMutRef(Leaf::Float)
