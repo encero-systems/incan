@@ -3761,6 +3761,51 @@ def main() -> None:
     )
 }
 
+/// Prove generator expressions byte-identical to legacy: a filtered expression over a builtin range collects its
+/// accepted elements; an unconsumed expression never evaluates its element; an expression over a list draws each
+/// element only when a loop polls it; and float, boolean, text and list-snapshot expressions collect in order.
+#[test]
+fn generator_expression_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("generator-expression")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r##"def note(value: int) -> int:
+    println(f"note {value}")
+    return value
+
+def positives(values: list[int]) -> Generator[int]:
+    return (note(x) for x in values if x > 0)
+
+def scaled(limit: int) -> list[int]:
+    return (value * 10 for value in range(1, limit) if value > 2).collect()
+
+def main() -> None:
+    collected = (value * 10 for value in range(1, 5) if value > 2).collect()
+    println(collected[0] + collected[1])
+    unused = (value // 0 for value in range(1, 2))
+    lazy = positives([-1, 2, 3])
+    println("constructed")
+    for item in lazy:
+        println(item)
+    println(len(scaled(6)))
+    halves = (x * 0.5 for x in [1.0, 3.0]).collect()
+    println(halves[1])
+    flipped = (not flag for flag in [true, false]).collect()
+    println(flipped[0])
+    stepped = (v for v in range(10, 0, -3)).collect()
+    println(len(stepped))
+    labels = (f"#{v}" for v in range(2)).collect()
+    println(labels[1])
+    values = [4, 5]
+    doubled = (v * 2 for v in values).collect()
+    println(doubled[0] + values[1])
+"##,
+    )
+}
+
 /// Prove unit and payload construction, enum passing/returning, and variant-bound match output against legacy.
 #[test]
 fn source_enum_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
