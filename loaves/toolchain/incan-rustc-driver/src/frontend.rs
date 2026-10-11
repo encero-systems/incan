@@ -347,14 +347,16 @@ fn class_refusal_feature(class: &incan_frontend::ast::ClassDecl) -> String {
     if class.extends.is_some() {
         return "inheritance".to_owned();
     }
-    if !class.type_params.is_empty() && class.traits.iter().any(|adoption| !adoption.node.type_args.is_empty()) {
-        return "type parameters with generic trait adoption".to_owned();
+    let open_features = [
+        !class.type_params.is_empty(),
+        class.traits.iter().any(|adoption| !adoption.node.type_args.is_empty()),
+        !class.method_aliases.is_empty(),
+    ];
+    if open_features.iter().filter(|present| **present).count() > 1 {
+        return "type parameters, generic trait adoption and method aliases combined".to_owned();
     }
 
     // ---- Member binding features ----
-    if !class.method_aliases.is_empty() {
-        return "method aliases".to_owned();
-    }
     if !class.method_partials.is_empty() {
         return "method partials".to_owned();
     }
@@ -389,9 +391,10 @@ fn has_refused_method_decorator(methods: &[incan_frontend::ast::Spanned<incan_fr
 fn refused_decorator_feature(
     decorators: &[incan_frontend::ast::Spanned<incan_frontend::ast::Decorator>],
 ) -> Option<String> {
-    let decorator = decorators
-        .iter()
-        .find(|decorator| !incan_frontend::body_ir::is_direct_replacement_model_derive(&decorator.node))?;
+    let decorator = decorators.iter().find(|decorator| {
+        !incan_frontend::body_ir::is_direct_replacement_model_derive(&decorator.node)
+            && !incan_frontend::body_ir::is_lint_suppression_decorator(&decorator.node)
+    })?;
     let arguments = decorator
         .node
         .args

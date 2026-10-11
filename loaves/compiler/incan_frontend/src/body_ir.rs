@@ -490,9 +490,10 @@ fn has_checked_native_derives(decorators: &[ast::Spanned<ast::Decorator>], selec
         return false;
     };
     decorators.iter().all(|decorator| {
-        decorator.node.name == "derive"
-            && decorator.node.path.segments == ["derive"]
-            && decorator.node.type_args.is_empty()
+        is_lint_suppression_decorator(&decorator.node)
+            || (decorator.node.name == "derive"
+                && decorator.node.path.segments == ["derive"]
+                && decorator.node.type_args.is_empty())
     }) && names.iter().all(|name| {
         matches!(
             name.as_str(),
@@ -513,21 +514,43 @@ fn has_checked_native_derives(decorators: &[ast::Spanned<ast::Decorator>], selec
     })
 }
 
-/// Admit only the builtin `@staticmethod` and `@classmethod` method markers.
+/// Admit only the builtin `@staticmethod` and `@classmethod` method markers and `@rust.allow` lint suppressions.
 ///
-/// Checking already reflects both in the method's facts: a static method has no receiver, and a classmethod's `cls`
-/// is a checked type token whose constructions resolve to the owner. Every other method decorator rebinds or wraps
-/// the method and stays refused.
+/// Checking already reflects both markers in the method's facts: a static method has no receiver, and a
+/// classmethod's `cls` is a checked type token whose constructions resolve to the owner. Every other method decorator
+/// rebinds or wraps the method and stays refused.
 pub fn is_direct_replacement_method_decorator(decorator: &ast::Decorator) -> bool {
-    decorator.args.is_empty()
-        && decorator.type_args.is_empty()
-        && matches!(
-            incan_lang::lang::decorators::from_segments(&decorator.path.segments),
-            Some(
-                incan_lang::lang::decorators::DecoratorId::StaticMethod
-                    | incan_lang::lang::decorators::DecoratorId::ClassMethod
-            )
-        )
+    is_lint_suppression_decorator(decorator)
+        || (decorator.args.is_empty()
+            && decorator.type_args.is_empty()
+            && matches!(
+                incan_lang::lang::decorators::from_segments(&decorator.path.segments),
+                Some(
+                    incan_lang::lang::decorators::DecoratorId::StaticMethod
+                        | incan_lang::lang::decorators::DecoratorId::ClassMethod
+                )
+            ))
+}
+
+/// Determine whether a decorator is an `@rust.allow` lint suppression.
+///
+/// A suppression only silences Rust lints on the item legacy emits. It changes no runtime behavior, and the direct
+/// route emits no Rust source item for it to apply to, so it never blocks a declaration's admission.
+pub fn is_lint_suppression_decorator(decorator: &ast::Decorator) -> bool {
+    incan_lang::lang::decorators::from_segments(&decorator.path.segments)
+        == Some(incan_lang::lang::decorators::DecoratorId::RustAllow)
+}
+
+/// Determine whether a nominal declaration uses at most one of type parameters, a generic trait adoption and method
+/// aliases.
+///
+/// Each has parity evidence alone; any two together stay refused until that combination does.
+fn has_at_most_one_open_shape_feature(type_parameters: bool, generic_adoption: bool, aliases: bool) -> bool {
+    [type_parameters, generic_adoption, aliases]
+        .iter()
+        .filter(|present| **present)
+        .count()
+        <= 1
 }
 
 /// Determine whether every decorator on one method is a builtin marker [`is_direct_replacement_method_decorator`]
@@ -543,17 +566,11 @@ fn has_direct_replacement_method_decorators(method: &ast::MethodDecl) -> bool {
 /// Same-type method aliases keep the checked target identity and use its retained method body; they add no native
 /// layout or wrapper declaration. Methods may carry only the builtin static and class method markers.
 fn has_direct_replacement_model_shape(model: &ast::ModelDecl) -> bool {
-    let generic_model = !model.type_params.is_empty();
-    let generic_adoption = model.traits.iter().any(|adoption| !adoption.node.type_args.is_empty());
-    let aliases = !model.method_aliases.is_empty();
-    // Generic models, method aliases and generic trait adoptions each have parity evidence alone; any two together
-    // stay refused until that combination does.
-    [generic_model, generic_adoption, aliases]
-        .iter()
-        .filter(|present| **present)
-        .count()
-        <= 1
-        && model.method_partials.is_empty()
+    has_at_most_one_open_shape_feature(
+        !model.type_params.is_empty(),
+        model.traits.iter().any(|adoption| !adoption.node.type_args.is_empty()),
+        !model.method_aliases.is_empty(),
+    ) && model.method_partials.is_empty()
         && model.properties.is_empty()
         && model
             .methods
@@ -577,39 +594,58 @@ pub fn is_direct_replacement_model_derive(decorator: &ast::Decorator) -> bool {
 /// Admit concrete tuple wrappers with builtin derives, ordinary methods, and trait adoptions.
 ///
 /// A trait adopted with type arguments is instantiated from the checker-recorded arguments. Checked construction hooks
-/// and constraints remain refused by the declaration collector; aliases, interop edges, associated types, and generic
+/// and constraints remain refused by the declaration collector. Same-type method aliases, and short rebindings naming
+/// one of the newtype's own methods, keep the checked target identity, as aliases on models do, unless combined with a
+/// generic trait adoption; lint suppressions change nothing at run time. Interop edges, associated types, and generic
 /// methods require additional representation facts and remain outside this profile.
 pub fn is_direct_replacement_plain_newtype(newtype: &ast::NewtypeDecl) -> bool {
     !newtype.is_rusttype
-        && newtype
-            .decorators
-            .iter()
-            .all(|decorator| is_direct_replacement_model_derive(&decorator.node))
+        && newtype.decorators.iter().all(|decorator| {
+            is_direct_replacement_model_derive(&decorator.node) || is_lint_suppression_decorator(&decorator.node)
+        })
         && newtype.type_params.is_empty()
-        && newtype.rebindings.is_empty()
-        && newtype.method_aliases.is_empty()
+        && newtype.rebindings.iter().all(|rebinding| {
+            matches!(&rebinding.node.target.node, ast::Expr::Ident(target)
+                if newtype.methods.iter().any(|method| method.node.name == *target))
+        })
+        && has_at_most_one_open_shape_feature(
+            false,
+            newtype
+                .traits
+                .iter()
+                .any(|adoption| !adoption.node.type_args.is_empty()),
+            !newtype.method_aliases.is_empty() || !newtype.rebindings.is_empty(),
+        )
         && newtype.method_partials.is_empty()
         && newtype.associated_types.is_empty()
         && newtype.interop_edges.is_empty()
-        && newtype
-            .methods
-            .iter()
-            .all(|method| method.node.type_params.is_empty() && method.node.decorators.is_empty())
+        && newtype.methods.iter().all(|method| {
+            method.node.type_params.is_empty()
+                && method
+                    .node
+                    .decorators
+                    .iter()
+                    .all(|decorator| is_lint_suppression_decorator(&decorator.node))
+        })
 }
 
 /// Admit source classes whose fields and method bodies have complete direct-route facts.
 ///
 /// Ordered owner parameters and method parameters are retained for checked instance scheduling, and trait
-/// adoptions, including ones with checked type arguments, are retained in the implementation registry. A class with
-/// both its own type parameters and a generic trait adoption stays refused until that combination has parity
-/// evidence. Derives use the checked selection shared with models, field defaults the declaration-owned deferred
-/// computations models use, and builtin `@staticmethod` and `@classmethod` markers the checker's method facts.
-/// Inheritance, properties, aliases, partials and user-defined decorators remain refused.
+/// adoptions, including ones with checked type arguments, are retained in the implementation registry. Type
+/// parameters, a generic trait adoption and same-type method aliases (which keep the checked target identity, as on
+/// models) are admitted one at a time; combinations stay refused until they have parity evidence. Derives use the
+/// checked selection shared with models, field defaults the declaration-owned deferred computations models use, and
+/// builtin `@staticmethod` and `@classmethod` markers the checker's method facts; lint suppressions change nothing at
+/// run time. Inheritance, properties, partials and user-defined decorators remain refused.
 pub fn is_direct_replacement_checked_class(class: &ast::ClassDecl, type_info: &TypeCheckInfo) -> bool {
     has_checked_native_derives(&class.decorators, type_info.declarations.class_derives.get(&class.name))
-        && (class.type_params.is_empty() || class.traits.iter().all(|adoption| adoption.node.type_args.is_empty()))
+        && has_at_most_one_open_shape_feature(
+            !class.type_params.is_empty(),
+            class.traits.iter().any(|adoption| !adoption.node.type_args.is_empty()),
+            !class.method_aliases.is_empty(),
+        )
         && class.extends.is_none()
-        && class.method_aliases.is_empty()
         && class.method_partials.is_empty()
         && class.properties.is_empty()
         && class.declarative_members.is_empty()
@@ -641,7 +677,7 @@ pub fn is_direct_replacement_fieldless_enum(enum_decl: &ast::EnumDecl) -> bool {
 /// Admit normal enum layouts and plain value-enum layouts without methods, aliases, or generic substitution.
 ///
 /// A value enum also retains its separate canonical raw-value registry; its unit layout alone never authorizes scalar
-/// extraction.
+/// extraction. Lint suppressions change nothing at run time.
 pub fn is_direct_native_enum(value: &ast::EnumDecl) -> bool {
     is_direct_replacement_value_enum(value)
         || (value.type_params.is_empty()
@@ -649,7 +685,10 @@ pub fn is_direct_native_enum(value: &ast::EnumDecl) -> bool {
             && value.traits.is_empty()
             && value.variant_aliases.is_empty()
             && value.methods.is_empty()
-            && value.decorators.iter().all(|decorator| decorator.node.name == "derive"))
+            && value
+                .decorators
+                .iter()
+                .all(|decorator| decorator.node.name == "derive" || is_lint_suppression_decorator(&decorator.node)))
 }
 
 /// Determine whether an enum carries the narrow source-local RFC 032 scalar declaration fact.
