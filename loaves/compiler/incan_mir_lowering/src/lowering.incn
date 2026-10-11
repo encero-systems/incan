@@ -1778,12 +1778,13 @@ def call_method_body(
             return Err("unsupported Body IR type arguments on a method without type parameters")
     mut types: list[PlanType] = []
     for position in range(1, len(body.params)):
-        parameter = body.params[position]
-        if parameter.mutable:
-            return Err("unsupported Body IR mutable Method argument")
-        declared = native_source_type(builder.nominals, builder.enums, builder.unions, parameter.ty, builder.intrinsics)?
-        types.append(parameter_representation(body, int(parameter.local.index()), declared)?)
-    ordinary = ordered_slot_operands(builder, target.binding, arguments, types, span, 1)?
+        types.append(call_parameter_type(builder, body, body.params[position])?)
+    mut ordinary: list[Operand] = []
+    if has_defaulted_slots(target.binding):
+        # The receiver is bound separately, so the ordinary slots start after it in the declaration's frame.
+        ordinary = default_arguments(module, builder, target.binding, arguments[1:], body, types, span, 1)?
+    else:
+        ordinary = ordered_slot_operands(builder, target.binding, arguments, types, span, 1)?
     mut operands = [read_place(reference, true, span)]
     for operand in ordinary:
         operands.append(operand)
@@ -2154,19 +2155,33 @@ def ordered_arguments(
             _ => pass
     mut types: list[PlanType] = []
     for parameter in body.params:
-        declared = native_source_type(builder.nominals, builder.enums, builder.unions, parameter.ty, builder.intrinsics)?
-        ty = parameter_representation(body, int(parameter.local.index()), declared)?
-        if is_nominal_type(ty) and parameter.mutable and not is_generator_type(ty):
-            return Err("unsupported Body IR mutable model parameter")
-        if ty == PlanType.String and parameter.mutable:
-            return Err("unsupported Body IR mutable String argument")
-        types.append(list_parameter_type(ty, parameter.mutable))
-    match binding:
-        RustArgumentBinding.Resolved(arguments=_arguments, defaulted_slots=defaults) =>
-            if len(defaults) != 0:
-                return default_arguments(module, builder, binding, elements, body, types, span)
-        _ => pass
+        types.append(call_parameter_type(builder, body, parameter)?)
+    if has_defaulted_slots(binding):
+        return default_arguments(module, builder, binding, elements, body, types, span, 0)
     return ordered_slot_operands(builder, binding, elements, types, span, 0)
+
+
+def call_parameter_type(builder: Builder, body: &RustBody, parameter: &RustCallableParam) -> Result[PlanType, str]:
+    """
+    The representation a call passes for one declared parameter, shared by functions and methods.
+
+    A list, set or dictionary parameter takes a shared or, when `mut`, an exclusive reference to the caller's storage;
+    a `mut` scalar is the callee's own copy. Mutable text and nominal parameters stay refused by name.
+    """
+    declared = native_source_type(builder.nominals, builder.enums, builder.unions, parameter.ty, builder.intrinsics)?
+    ty = parameter_representation(body, int(parameter.local.index()), declared)?
+    if is_nominal_type(ty) and parameter.mutable and not is_generator_type(ty):
+        return Err("unsupported Body IR mutable model parameter")
+    if ty == PlanType.String and parameter.mutable:
+        return Err("unsupported Body IR mutable String argument")
+    return Ok(list_parameter_type(ty, parameter.mutable))
+
+
+def has_defaulted_slots(binding: &RustArgumentBinding) -> bool:
+    """Report whether a resolved call leaves at least one declared slot to its default."""
+    match binding:
+        RustArgumentBinding.Resolved(arguments=_arguments, defaulted_slots=defaults) => return len(defaults) != 0
+        _ => return false
 
 
 def ordered_slot_operands(
@@ -3095,9 +3110,14 @@ def display_string_operand(mut builder: Builder, operand: Operand, span: SourceS
 
 
 def clone_display_place(mut builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
-    """Clone borrowed owned text for display; copyable decimal and frozen carriers keep their exact values."""
+    """
+    Clone borrowed owned text for display; copyable decimal, frozen and scalar carriers keep their exact values.
+
+    A field of a type parameter is read by borrow; once its frame is closed over a scalar, the copy displays it.
+    """
     place = scalar_place(builder, value, span)?
-    if place_type(builder.locals, place) in [PlanType.Decimal, PlanType.FrozenStr]:
+    ty = place_type(builder.locals, place)
+    if ty in [PlanType.Decimal, PlanType.FrozenStr, PlanType.Bool] or numeric_carrier(ty):
         return display_plan_operand(builder, read_place(place, false, span), span)
     if place_type(builder.locals, place) != PlanType.String:
         return Err("unsupported Body IR nonscalar display borrow")
@@ -3845,20 +3865,29 @@ def checked_list_argument(
     mutable: bool,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Preserve checked exclusive-access authority before borrowing a local for an Incan parameter."""
+    """
+    Preserve checked exclusive-access authority before borrowing a local for an Incan parameter.
+
+    A `mut` parameter borrows a value the caller last uses (a list literal, a temporary) in place, since nothing reads
+    it again. A loop variable, or a field of one, reaches it as a fresh copy, as legacy passes it, so the callee's
+    changes never reach the iterated list.
+    """
     match value:
         RustOperand.Place(read) =>
             if mutable:
                 match read.place.global():
                     Some(_global) => return Err("unsupported Body IR mutable static borrow through source function")
                     None => pass
-            if mutable and read.fact != OwnershipFact.MutBorrow:
+            if mutable and read.fact != OwnershipFact.MutBorrow and read.fact != OwnershipFact.Move:
                 return Err("unsupported Body IR list argument without mutable borrow fact")
             # A shared parameter reads an indexed or sliced list through a copy that stays owned until its scope ends.
             if not mutable and is_element_place(builder, read.place)?:
                 copied = materialized_receiver(builder, read.place, span)?
                 return list_borrow(builder, copied, false, span)
             root = list_root_place(builder, read.place, span)?
+            if mutable and root.local in builder.borrowed_items and is_list(place_type(builder.locals, root)):
+                copy = cloned_list(builder, root, span)?
+                return list_borrow(builder, copy, true, span)
             return list_borrow(builder, root, mutable, span)
         RustOperand.Constant(constant) =>
             match constant:
@@ -3869,6 +3898,24 @@ def checked_list_argument(
                     return list_borrow(builder, literal_place, false, span)
                 _ => return Err("unsupported Body IR constant list argument")
         _ => return Err("unsupported Body IR constant list argument")
+
+
+def cloned_list(mut builder: Builder, source: Place, span: SourceSpan) -> Result[Place, str]:
+    """Copy a list into a new owned temporary, which drops when its scope ends."""
+    leaf, depth = require_list_shape(place_type(builder.locals, source), "unsupported Body IR non-list borrow")?
+    reference = list_borrow(builder, source, false, span)?
+    output = temporary(builder, PlanType.List(leaf, depth), span)
+    list_call(
+        builder,
+        "clone_list",
+        list_element(leaf, depth),
+        [PlanType.ListRef(leaf, depth)],
+        PlanType.List(leaf, depth),
+        [reference],
+        output,
+        span,
+    )
+    return Ok(output)
 
 
 pub def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
@@ -3909,19 +3956,7 @@ pub def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpa
                         return Ok(read_place(place, true, span))
                     if read.fact != OwnershipFact.Clone and read.fact != OwnershipFact.Borrow:
                         return Err("unsupported Body IR list value ownership")
-                    reference = list_borrow(builder, place, false, span)?
-                    output = temporary(builder, PlanType.List(leaf, depth), span)
-                    list_call(
-                        builder,
-                        "clone_list",
-                        list_element(leaf, depth),
-                        [PlanType.ListRef(leaf, depth)],
-                        PlanType.List(leaf, depth),
-                        [reference],
-                        output,
-                        span,
-                    )
-                    return Ok(read_place(output, true, span))
+                    return Ok(read_place(cloned_list(builder, place, span)?, true, span))
                 None => pass
             if ty == PlanType.String:
                 if read.fact == OwnershipFact.Move:
