@@ -683,9 +683,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
     }
 
-    /// Lower `x = y = z = value` into `z = value; y = <read z>; x = <read y>` (rightmost target first), matching
-    /// the direction the existing Rust-emission backend already chose for this same desugar
-    /// (`loaves/compiler/incan_ir/src/lower/stmt.rs`'s `ChainedAssignment` arm).
+    /// Lower `x = y = z = value` into `z = value; y = <read z>; x = <read y>` (rightmost target first) when the value is
+    /// shared by every target. A value the checker recorded as written per target is instead evaluated once per
+    /// target, at that target's type (see [`Self::lower_chained_per_target`]).
     pub(super) fn lower_chained_assignment(
         &mut self,
         chained_assignment: &ast::ChainedAssignmentStmt,
@@ -700,6 +700,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 span,
                 out,
             );
+            return;
+        }
+        if self
+            .type_info
+            .chained_value_is_written_per_target(chained_assignment.value.span)
+        {
+            self.lower_chained_per_target(chained_assignment, remaining, scope, span, out);
             return;
         }
         let Some((last_name, last_span)) = chained_assignment
@@ -778,6 +785,151 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
     }
 
+    /// Lower a chained assignment whose value the checker recorded as written per target: each target, left to right,
+    /// gets its own evaluation of the value at that target's type, as a single `target = value` writes it, matching
+    /// the legacy backend's `lower_chained_literal` (`loaves/compiler/incan_ir/src/lower/assignment_targets.rs`).
+    ///
+    /// The checker records this only for a value built from literals and builtin empty constructors over bound
+    /// targets of different types (`n = f = 1` over an `int` and a `float`), so evaluating it once per target observes
+    /// nothing more than evaluating it once. The checker checked the value once per target but keeps one type per
+    /// source span, so each evaluation first installs its target's types for the value's nodes (see
+    /// [`Self::chained_value_types`]). A name the chain declares takes the value checked without a destination, where
+    /// an integer literal is an `int`.
+    fn lower_chained_per_target(
+        &mut self,
+        chained_assignment: &ast::ChainedAssignmentStmt,
+        remaining: &[ast::Spanned<ast::Statement>],
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) {
+        let value = &chained_assignment.value;
+        for (name, target_span) in chained_assignment.targets.iter().zip(&chained_assignment.target_spans) {
+            let bound = match self.chained_bound_type(name, chained_assignment.binding, *target_span) {
+                Ok(bound) => bound,
+                Err(reason) => {
+                    self.push_unsupported_stmt(reason, span, out);
+                    return;
+                }
+            };
+            let mut overrides = HashMap::new();
+            match &bound {
+                Some(target_ty) => self.chained_value_types(value, target_ty, &mut overrides),
+                None => {
+                    chained_integer_literal_types(value, &IncanType::Primitive(IncanPrimitiveType::Int), &mut overrides)
+                }
+            }
+            self.type_overrides = overrides;
+            let value_ty = self.resolve_ty(value.span);
+            let operand = self.lower_expr_to_operand(value, scope, out);
+            self.type_overrides.clear();
+            let place = match self.bind_multi_target_name(
+                name,
+                value_ty,
+                chained_assignment.binding,
+                scope,
+                *target_span,
+                remaining,
+            ) {
+                Ok(place) => place,
+                Err(reason) => {
+                    self.push_unsupported_stmt(reason, span, out);
+                    return;
+                }
+            };
+            out.push(bir::Statement {
+                kind: bir::StatementKind::Assign {
+                    place,
+                    rvalue: bir::Rvalue::Use(operand),
+                },
+                span,
+            });
+        }
+    }
+
+    /// Return the type a chained-assignment target already has, or `None` for a name the chain declares, the way
+    /// [`Self::bind_multi_target_name`] resolves the same target. Module storage is refused: its place carries no
+    /// declared type here to retype the value for.
+    fn chained_bound_type(
+        &self,
+        name: &str,
+        binding: ast::BindingKind,
+        target_span: ast::Span,
+    ) -> Result<Option<IncanType>, String> {
+        if matches!(binding, ast::BindingKind::Let | ast::BindingKind::Mutable) {
+            return Ok(None);
+        }
+        let local = match self.type_info.resolved_write_identity(target_span, name) {
+            Some(identity) => match self.identity_bindings.get(identity) {
+                Some(&local) => local,
+                None if matches!(
+                    identity.kind,
+                    SemanticSourceTargetKind::Static | SemanticSourceTargetKind::Const
+                ) =>
+                {
+                    return Err(format!(
+                        "chained assignment written per target to module storage `{}`",
+                        identity.render_compact()
+                    ));
+                }
+                None => return Ok(None),
+            },
+            None => match self.bindings.get(name) {
+                Some(&local) => local,
+                None => return Ok(None),
+            },
+        };
+        Ok(self.locals.get(local.index()).map(|declaration| declaration.ty.clone()))
+    }
+
+    /// Record the type one evaluation of a chained value gives each of its nodes for one bound target, as the legacy
+    /// backend's `retype_literal` and `retype_chained_integer_literals` retype them.
+    ///
+    /// A node of the target's own container kind, or of unknown type, takes the target's type, and its elements take
+    /// the element types; an integer literal, negated or not, takes a numeric target's type. Any other scalar keeps the
+    /// type the checker recorded, so the conversion a single assignment applies (`5` into an `Option[int]`) still
+    /// applies.
+    fn chained_value_types(
+        &self,
+        value: &ast::Spanned<ast::Expr>,
+        target: &IncanType,
+        overrides: &mut HashMap<(usize, usize), IncanType>,
+    ) {
+        let recorded = self.resolve_ty(value.span);
+        if recorded == IncanType::Unknown || same_container_kind(&recorded, target) {
+            overrides.insert((value.span.start, value.span.end), target.clone());
+        }
+        match (&value.node, target) {
+            (ast::Expr::Paren(inner), _) => self.chained_value_types(inner, target, overrides),
+            (ast::Expr::List(entries), IncanType::Generic { base, args }) if base == "List" && args.len() == 1 => {
+                for entry in entries {
+                    if let ast::ListEntry::Element(item) = entry {
+                        self.chained_value_types(item, &args[0], overrides);
+                    }
+                }
+            }
+            (ast::Expr::Set(items), IncanType::Generic { base, args }) if base == "Set" && args.len() == 1 => {
+                for item in items {
+                    self.chained_value_types(item, &args[0], overrides);
+                }
+            }
+            (ast::Expr::Tuple(items), IncanType::Tuple(types)) if items.len() == types.len() => {
+                for (item, ty) in items.iter().zip(types) {
+                    self.chained_value_types(item, ty, overrides);
+                }
+            }
+            (ast::Expr::Dict(entries), IncanType::Generic { base, args }) if base == "Dict" && args.len() == 2 => {
+                for entry in entries {
+                    if let ast::DictEntry::Pair(key, item) = entry {
+                        self.chained_value_types(key, &args[0], overrides);
+                        self.chained_value_types(item, &args[1], overrides);
+                    }
+                }
+            }
+            _ => chained_integer_literal_types(value, target, overrides),
+        }
+    }
+
     /// Lower a `break` / `break value` statement. A value routes into the innermost enclosing loop's result place
     /// when that loop is a value-producing `loop:` expression (see [`Self::lower_loop_expr`]) -- otherwise it stays
     /// on the `Break` statement itself, matching [`bir::StatementKind::Break`]'s documented default. The innermost
@@ -843,5 +995,46 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.record_runtime_requirement(AbiV0RuntimeRequirement::RuntimeHelper("generator".to_string()));
         self.record_runtime_requirement(AbiV0RuntimeRequirement::HostedStd);
         self.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
+    }
+}
+
+/// Record a numeric target's type for an integer literal, negated or parenthesized or not, as the legacy backend's
+/// `retype_chained_integer_literals` rewrites one evaluation of a chained value: `n = f = 1` writes `1` to the `int`
+/// and `1.0` to the `float`. Any other node, and any non-numeric target, keeps the checker's recorded type.
+fn chained_integer_literal_types(
+    value: &ast::Spanned<ast::Expr>,
+    target: &IncanType,
+    overrides: &mut HashMap<(usize, usize), IncanType>,
+) {
+    if !matches!(
+        target,
+        IncanType::Primitive(IncanPrimitiveType::Int | IncanPrimitiveType::Float | IncanPrimitiveType::Numeric(_))
+    ) {
+        return;
+    }
+    match &value.node {
+        ast::Expr::Paren(inner) => chained_integer_literal_types(inner, target, overrides),
+        ast::Expr::Literal(ast::Literal::Int(_)) => {
+            overrides.insert((value.span.start, value.span.end), target.clone());
+        }
+        ast::Expr::Unary(ast::UnaryOp::Neg, operand)
+            if matches!(operand.node, ast::Expr::Literal(ast::Literal::Int(_))) =>
+        {
+            overrides.insert((value.span.start, value.span.end), target.clone());
+            overrides.insert((operand.span.start, operand.span.end), target.clone());
+        }
+        _ => {}
+    }
+}
+
+/// Return whether two types are the same kind of container: both `Option`, `List`, `Set` or `Dict`, or tuples of one
+/// length, the only nodes a chained value's per-target evaluation retypes wholesale.
+fn same_container_kind(left: &IncanType, right: &IncanType) -> bool {
+    match (left, right) {
+        (IncanType::Generic { base: left, .. }, IncanType::Generic { base: right, .. }) => {
+            left == right && matches!(left.as_str(), "Option" | "List" | "Set" | "Dict")
+        }
+        (IncanType::Tuple(left), IncanType::Tuple(right)) => left.len() == right.len(),
+        _ => false,
     }
 }
