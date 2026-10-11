@@ -1314,8 +1314,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 name: name.to_string(),
                 intrinsic_carrier: match self.resolve_ty(recv.span) {
                     IncanType::Generic { base, .. }
-                        if (base == "Option" && matches!(name, "is_some" | "is_none" | "unwrap_or"))
-                            || (base == "Result" && matches!(name, "is_ok" | "is_err" | "unwrap_or")) =>
+                        if (base == "Option" && matches!(name, "is_some" | "is_none" | "unwrap" | "unwrap_or"))
+                            || (base == "Result" && matches!(name, "is_ok" | "is_err" | "unwrap" | "unwrap_or")) =>
                     {
                         Some(base)
                     }

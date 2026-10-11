@@ -361,11 +361,80 @@ pub def lower_carrier_method_plan(
         condition = variant_condition(builder, source, present, span)
         builder.emit(plan_assign(target, RvalueKind.Use(condition), span))
         return Ok(None)
+    if name == "unwrap":
+        return lower_carrier_unwrap(builder, declaration, present, source, target, span)
     if name != "unwrap_or":
         return Err(f"unsupported Body IR intrinsic carrier method {name}")
     match fallback:
         Some(value) => return lower_carrier_default(builder, declaration, present, source, target, value, span)
         None => return Err("unsupported Body IR carrier missing default")
+
+
+def lower_carrier_unwrap(
+    mut builder: Builder,
+    declaration: EnumDeclaration,
+    present: int,
+    source: Place,
+    target: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Select the active borrowed payload, or fail through the runtime exactly as legacy's `unwrap` does."""
+    payload_type = declaration.variants[present].fields[0]
+    selected = builder.new_block(span)
+    missing = builder.new_block(span)
+    incoming = builder.owned
+    condition = variant_condition(builder, source, present, span)
+    builder.finish(TerminatorKind.SwitchBool(condition, missing, selected), span)
+    # `None` fails with the standard message; `Err` passes a clone of its payload so the message renders it as Debug.
+    builder.current = missing
+    unit = temporary(builder, PlanType.Unit, span)
+    if declaration.carrier == "Option":
+        unwrap_failure(builder, "unwrap_none", [], [], unit, span)
+    else:
+        error_type = declaration.variants[1 - present].fields[0]
+        error_place = Place(
+            local=source.local,
+            projection=Projection.VariantField(1 - present, 0, error_type),
+            span=span,
+        )
+        error = carrier_payload_value(builder, error_place, span)?
+        unwrap_failure(builder, "unwrap_err", [error_type], [error], unit, span)
+    builder.finish(TerminatorKind.Unreachable, span)
+    builder.current = selected
+    builder.owned = incoming
+    projected = Place(local=source.local, projection=Projection.VariantField(present, 0, payload_type), span=span)
+    payload = carrier_payload_value(builder, projected, span)?
+    track_rvalue_moves(builder, RvalueKind.Use(payload))
+    builder.emit(plan_assign(target, RvalueKind.Use(payload), span))
+    if not numeric_carrier(payload_type) and payload_type != PlanType.Bool and payload_type != PlanType.Unit:
+        builder.owned.append(target.local)
+    return Ok(None)
+
+
+def unwrap_failure(
+    mut builder: Builder,
+    name: str,
+    type_arguments: list[PlanType],
+    arguments: list[Operand],
+    destination: Place,
+    span: SourceSpan,
+) -> None:
+    """Call the runtime failure for an absent carrier payload; its type argument is the `Err` payload's carrier."""
+    path = f"incan_native_runtime::{name}"
+    builder.externals.append(
+        ExternalFunction(
+            path=path,
+            type_arguments=type_arguments,
+            parameters=type_arguments,
+            return_type=PlanType.Unit,
+            span=span,
+        ),
+    )
+    # A generic runtime function is called through its one explicit instantiation, as `list_call` does.
+    mut callee = CalleeKind.External(path)
+    if len(type_arguments) == 1:
+        callee = CalleeKind.Instantiated(path, type_arguments[0])
+    terminate_call(builder, callee, arguments, destination, span)
 
 
 def lower_carrier_default(
