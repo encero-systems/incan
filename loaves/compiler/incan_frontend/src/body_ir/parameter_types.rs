@@ -1,6 +1,6 @@
 //! Preserve declaration-bound placeholders while projecting checked types into Body IR.
 
-use super::{BodyBuilder, IncanType, TypeCheckInfo, ast, bir, semantic_type_from_resolved};
+use super::{BodyBuilder, IncanType, SemanticSourceTargetKind, TypeCheckInfo, ast, bir, semantic_type_from_resolved};
 
 /// Project checked nominal spellings onto their declaring carrier names, without resolving source syntax again.
 ///
@@ -87,27 +87,52 @@ impl BodyBuilder<'_, '_> {
         retain_parameter_type(checked_semantic_type(ty, self.type_info), &self.type_parameters)
     }
 
-    /// Retain an owned value read from an open parameter field at a return or by-value argument boundary.
+    /// Retain an owned value read from a field at a return or by-value argument boundary.
     ///
-    /// Generic field projections cannot move from their borrowed owner. The legacy ownership policy clones them
-    /// in value position; concrete Copy instances can later implement that clone as a copy. Formatting and mutable
-    /// argument boundaries retain their distinct borrow facts rather than being converted by this helper.
+    /// A field projection cannot move from its owner, which is often borrowed. The legacy ownership policy clones it in
+    /// value position: an open parameter field, whose concrete Copy instances can later implement that clone as a
+    /// copy, and a model or class field reached through field projections alone (#241), whose checked derives include
+    /// Clone. Formatting and mutable argument boundaries retain their distinct borrow facts rather than being converted
+    /// by this helper.
     pub(super) fn owned_parameter_operand(
         &self,
         expr: &ast::Spanned<ast::Expr>,
         operand: bir::Operand,
     ) -> bir::Operand {
-        if !matches!(self.resolve_ty(expr.span), IncanType::TypeVar(_)) {
-            return operand;
-        }
+        let ty = self.resolve_ty(expr.span);
         match operand {
             bir::Operand::Place(mut read)
-                if read.fact == bir::OwnershipFact::Borrow && !read.place.projection.is_empty() =>
+                if read.fact == bir::OwnershipFact::Borrow
+                    && !read.place.projection.is_empty()
+                    && (matches!(ty, IncanType::TypeVar(_)) || self.clones_nominal_field_read(&read.place, &ty)) =>
             {
                 read.fact = bir::OwnershipFact::Clone;
                 bir::Operand::Place(read)
             }
             operand => operand,
         }
+    }
+
+    /// Whether a by-value read of `place` clones a retained model or class value whose checked derives include Clone.
+    ///
+    /// Only a path of field projections qualifies; an element or payload read keeps its own representation path.
+    fn clones_nominal_field_read(&self, place: &bir::Place, ty: &IncanType) -> bool {
+        let name = match ty {
+            IncanType::Named(name) => name,
+            IncanType::Generic { base, .. } => base,
+            _ => return false,
+        };
+        place
+            .projection
+            .iter()
+            .all(|element| matches!(element, bir::PlaceElem::Field { .. }))
+            && self.local_nominal_declarations.values().any(|declaration| {
+                declaration.name == *name
+                    && matches!(
+                        declaration.canonical.kind,
+                        SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class
+                    )
+                    && declaration.derives.iter().any(|derive| derive == "Clone")
+            })
     }
 }
