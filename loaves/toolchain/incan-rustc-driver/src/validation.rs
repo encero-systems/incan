@@ -904,8 +904,14 @@ fn source_signature_type(ty: &Scalar) -> bool {
         return elements.iter().all(|element| {
             matches!(
                 element,
-                Scalar::Int | Scalar::Float | Scalar::Bool | Scalar::Unit | Scalar::String
-            )
+                Scalar::Int
+                    | Scalar::Float
+                    | Scalar::Bool
+                    | Scalar::Unit
+                    | Scalar::String
+                    | Scalar::List(_, _)
+                    | Scalar::Enum(_)
+            ) || (matches!(element, Scalar::Tuple(_)) && source_signature_type(element))
         });
     }
     sized_numeric(ty).is_some()
@@ -1487,12 +1493,17 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
             validate_model_type(plan, &list_leaf_type(key.clone()))?;
             validate_model_type(plan, &list_leaf_type(value.clone()))?;
         }
+        PlanType::Tuple(elements) => {
+            for element in elements {
+                validate_model_type(plan, &tuple_element_type(element.clone()))?;
+            }
+        }
         _ => {}
     }
     if matches!(ty, PlanType::Tuple(_)) && !source_signature_type(&scalar(ty)) {
         return Err(PlanError::Invalid {
             function: "tuple".into(),
-            reason: "tuple elements must be admitted scalars or owned text".into(),
+            reason: "tuple elements must be admitted scalars, owned text, lists or enum carriers".into(),
         });
     }
     if let PlanType::Enum(index, name) | PlanType::EnumRef(index, name) = ty {
