@@ -1309,6 +1309,18 @@ fn direct_route_optional_collection_assignment_matches_legacy() -> Result<(), Bo
     )
 }
 
+/// Tuple annotations and tuple literals share one Result carrier through construction, propagation and matching.
+#[test]
+fn direct_route_tuple_result_identity_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    assert_native_legacy_bytes(
+        "tuple_result_identity",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/execution_calls_types_and_modules/result_routing_through_try_and_match.incn"
+        ),
+        b"2\n0\n42\n",
+    )
+}
+
 /// Contextual None payloads construct nested intrinsic carriers with their proven types.
 #[test]
 fn direct_route_contextual_none_payloads_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
