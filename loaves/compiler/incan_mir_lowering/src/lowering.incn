@@ -59,6 +59,7 @@ from bytes_plan import bytes_literal
 from text_ownership import drop_borrowed_text_temporaries
 from decimal_plan import decimal_literal, decimal_comparison, is_decimal_literal
 from frozen_plan import frozen_literal, literal_text
+from loop_exits import exits_to
 # ---- The checked Body IR, read through Rust interop ----
 from rust::incan_semantics_core import IncanType as RustType, HirSourceSpan as RustSpan
 from rust::incan_semantics_core::body_ir import (
@@ -1579,6 +1580,8 @@ def lower_loop(module: &BodyIrModule, mut builder: Builder, body: &RustBlock, sp
     finish_fallthrough(builder, header, span)
     builder.owned = incoming
     builder.current = after
+    # A loop nothing leaves (`loop:` or `while true:` without `break`) never falls through to what follows it.
+    builder.closed[after] = not exits_to(builder.blocks, header, after)
     return Ok(None)
 # =====================================================================================================================
 # Calls

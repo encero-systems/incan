@@ -422,6 +422,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// not yet modeled by v0 — lowers to an explicit unsupported placeholder instead of the real loop.
     ///
     /// The condition is lowered *inside* the loop body, in `loop_scope`, so it is re-evaluated every iteration.
+    ///
+    /// A literal `true` condition is the infinite loop `loop:` spells, and lowers exactly as that statement does, with
+    /// no exit test: only the body's own `break` or `return` leaves it. Legacy emission makes the same decision (it
+    /// emits Rust's `loop` for a literal `true`), so a value-returning body that ends in such a loop has no
+    /// fallthrough.
     pub(super) fn lower_while(
         &mut self,
         while_stmt: &ast::WhileStmt,
@@ -436,6 +441,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 return;
             }
         };
+        if matches!(cond_expr.node, ast::Expr::Literal(ast::Literal::Bool(true))) {
+            let loop_scope = self.new_scope(Some(scope), span);
+            self.push_loop(loop_scope, None, span, out, |builder, loop_scope, body_stmts| {
+                builder.lower_block_into(&while_stmt.body, loop_scope, body_stmts)
+            });
+            return;
+        }
 
         let loop_scope = self.new_scope(Some(scope), span);
         // `while` never produces a value from `break`, so the break target is `None` -- see `Self::push_loop`.
