@@ -1,0 +1,77 @@
+"""
+Recognize and type checked places that select a list or dictionary element.
+
+No native place projection can name such an element: the runtime reaches it through a call. A read of one therefore
+materializes a copy, and code that only needs its type must compute it here instead of projecting the place.
+"""
+
+from rust::incan_semantics_core::body_ir import Place as RustPlace, PlaceElem
+from pub::incan_mir_plan import PlanType
+from frame import Builder
+from models import field_projection
+from lists import list_shape, list_element, is_list
+from collections import is_collection, collection_arguments
+from model_lists import structural_prefix
+
+
+pub def is_element_place(builder: Builder, source: &RustPlace) -> Result[bool, str]:
+    """
+    Whether a local place selects a list or dictionary element rather than storage a native place can name.
+
+    Such a place is rooted at a list or dictionary, or indexes a list after a structural field, payload or tuple
+    element prefix. A global place keeps its static read path and is never an element place here.
+    """
+    if len(source.projection) == 0:
+        return Ok(false)
+    match source.local_id():
+        None => return Ok(false)
+        Some(local) =>
+            root = builder.locals[int(local.index()) + 1 + builder.local_offset].ty
+            if is_list(root) or is_collection(root):
+                return Ok(true)
+    match structural_prefix(builder, source)?:
+        Some((count, _through_tuple)) => return Ok(count < len(source.projection))
+        None => return Ok(false)
+
+
+pub def element_place_type(builder: Builder, source: &RustPlace) -> Result[PlanType, str]:
+    """Follow an element place's projections to the type of the value its read materializes, emitting nothing."""
+    match source.local_id():
+        None => return Err("unsupported Body IR global element place")
+        Some(local) =>
+            mut ty = builder.locals[int(local.index()) + 1 + builder.local_offset].ty
+            # A receiver reference projects its model's fields.
+            match ty:
+                PlanType.ModelRef(owner, name) =>
+                    ty = PlanType.Model(owner, name)
+                PlanType.ModelMutRef(owner, name) =>
+                    ty = PlanType.Model(owner, name)
+                _ => pass
+            for projection in source.projection:
+                ty = projected_type(builder, ty, projection)?
+            return Ok(ty)
+
+
+def projected_type(builder: Builder, ty: PlanType, projection: &PlaceElem) -> Result[PlanType, str]:
+    """Select one step's type: a list or dictionary element, a list slice, or a structural field or tuple element."""
+    match projection:
+        PlaceElem.Index(_index) =>
+            match list_shape(ty):
+                Some((leaf, depth)) => return Ok(list_element(leaf, depth))
+                None => pass
+            if is_collection(ty):
+                return dictionary_value_type(ty)
+        PlaceElem.Slice(start=_start, end=_end, step=_step) =>
+            match list_shape(ty):
+                Some((leaf, depth)) => return Ok(PlanType.List(leaf, depth))
+                None => return Err("unsupported Body IR slicing non-list")
+        _ => pass
+    return Ok(field_projection(builder.nominals, ty, projection, builder.enums, builder.unions, builder.intrinsics)?.ty)
+
+
+def dictionary_value_type(ty: PlanType) -> Result[PlanType, str]:
+    """A dictionary index selects its value type; a set has no indexable elements."""
+    arguments = collection_arguments(ty)
+    if len(arguments) != 2:
+        return Err("unsupported Body IR set indexing")
+    return Ok(arguments[1])

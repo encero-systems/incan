@@ -137,6 +137,7 @@ from nominal_instances import specialize_nominals
 from traits import method_index, specialize_traits, validate_static_receiver
 from decls import lower_model_declarations, static_slot, static_accessors
 from model_lists import model_list_read, structural_prefix, prefix_place
+from element_places import is_element_place, element_place_type
 from models import field_projection
 from models import model_type, model_place, constructor_index, field_slot
 from model_values import (
@@ -412,7 +413,13 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
     match value.global():
         Some(global) => return read_static(builder, value, global, fact, span)
         None => pass
-    match model_list_read(builder, value, span)?:
+    # An element read materializes a copy, which would silently drop a write through a mutable borrow.
+    match fact:
+        OwnershipFact.MutBorrow =>
+            if is_element_place(builder, value)?:
+                return Err("unsupported Body IR mutable list element borrow")
+        _ => pass
+    match element_read(builder, value, span)?:
         Some(operand) => return Ok(operand)
         None => pass
     target = scalar_place(builder, value, span)?
@@ -2771,6 +2778,10 @@ def checked_aggregate(
                                         operands.append(read_place(owned_literal(builder, str(text), span), true, span))
                                     _ => operands.append(scalar_operand(builder, value, span)?)
                             RustOperand.Place(read) =>
+                                # A list or dictionary element is already a materialized copy the tuple can own.
+                                if is_element_place(builder, read.place)?:
+                                    operands.append(value_operand(builder, value, span)?)
+                                    continue
                                 target = scalar_place(builder, read.place, span)?
                                 if place_type(builder.locals, target) == PlanType.String:
                                     operands.append(read_place(display_operand(builder, value, span)?, true, span))
@@ -2939,21 +2950,12 @@ pub def display_operand(mut builder: Builder, value: &RustOperand, span: SourceS
                     operand = value_operand(builder, value, span)?
                     return display_plan_operand(builder, operand, span)
                 None => pass
-            match model_list_read(builder, read.place, span)?:
+            match element_read(builder, read.place, span)?:
                 Some(item) => return display_plan_operand(builder, item, span)
                 None => pass
             match display_tuple_place(builder, read.place, span)?:
                 Some(text) => return Ok(text)
                 None => pass
-            if len(read.place.projection) != 0:
-                base = list_base_place(builder, read.place, span)?
-                ty = builder.locals[base.local].ty
-                if is_collection(ty):
-                    item = dictionary_index_read(builder, read.place, span)?
-                    return display_plan_operand(builder, item, span)
-                if is_list(ty):
-                    operand = indexed_read(builder, read.place, span)?
-                    return display_plan_operand(builder, operand, span)
         _ => pass
     match value:
         RustOperand.Place(read) =>
@@ -3115,6 +3117,8 @@ def borrow_text_operand(mut builder: Builder, value: &RustOperand, span: SourceS
                             return Ok(read_place(reference, false, span))
                         _ => return Err("unsupported Body IR non-string static text operand")
                 None => pass
+            if is_element_place(builder, read.place)?:
+                return borrow_element_text(builder, value, read.fact, span)
             place = scalar_place(builder, read.place, span)?
             if place_type(builder.locals, place) == PlanType.FrozenStr:
                 if read.fact == OwnershipFact.MutBorrow or read.fact == OwnershipFact.Unknown:
@@ -3140,6 +3144,27 @@ def borrow_text_operand(mut builder: Builder, value: &RustOperand, span: SourceS
                     builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))
                     return Ok(read_place(reference, false, span))
                 None => return Err("unsupported Body IR non-string text constant")
+
+
+def borrow_element_text(
+    mut builder: Builder,
+    value: &RustOperand,
+    fact: &OwnershipFact,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Borrow a materialized copy of a list or dictionary text element; the copy is a new owner its caller releases."""
+    match fact:
+        OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable String borrow")
+        OwnershipFact.Unknown => return Err("unsupported Body IR unknown String ownership")
+        _ => pass
+    match value_operand(builder, value, span)?.kind:
+        OperandKind.Move(owner) =>
+            if place_type(builder.locals, owner) != PlanType.String:
+                return Err("unsupported Body IR non-string text operand")
+            reference = temporary(builder, PlanType.StringRef, span)
+            builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))
+            return Ok(read_place(reference, false, span))
+        _ => return Err("unsupported Body IR non-string text operand")
 
 
 def lower_text_helper(
@@ -3780,10 +3805,10 @@ def checked_list_argument(
                     None => pass
             if mutable and read.fact != OwnershipFact.MutBorrow:
                 return Err("unsupported Body IR list argument without mutable borrow fact")
-            if not mutable and len(read.place.projection) != 0:
-                base = list_base_place(builder, read.place, span)?
-                if is_list(builder.locals[base.local].ty):
-                    return projected_list_argument(builder, read.place, span)
+            # A shared parameter reads an indexed or sliced list through a copy that stays owned until its scope ends.
+            if not mutable and is_element_place(builder, read.place)?:
+                copied = materialized_receiver(builder, read.place, span)?
+                return list_borrow(builder, copied, false, span)
             root = list_root_place(builder, read.place, span)?
             return list_borrow(builder, root, mutable, span)
         RustOperand.Constant(constant) =>
@@ -3795,13 +3820,6 @@ def checked_list_argument(
                     return list_borrow(builder, literal_place, false, span)
                 _ => return Err("unsupported Body IR constant list argument")
         _ => return Err("unsupported Body IR constant list argument")
-
-
-def projected_list_argument(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Operand, str]:
-    """Copy an indexed or sliced list out for a shared list parameter; the copy stays owned until its scope ends."""
-    match indexed_read(builder, source, span)?.kind:
-        OperandKind.Move(place) => return list_borrow(builder, place, false, span)
-        _ => return Err("unsupported Body IR projected non-list argument")
 
 
 def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
@@ -3820,15 +3838,12 @@ def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -
             match read.place.global():
                 Some(global) => return read_static(builder, read.place, global, read.fact, span)
                 None => pass
-            match model_list_read(builder, read.place, span)?:
+            match element_read(builder, read.place, span)?:
                 Some(item) => return Ok(item)
                 None => pass
             base = list_base_place(builder, read.place, span)?
-            root_type = builder.locals[base.local].ty
-            if is_collection(root_type):
+            if is_collection(builder.locals[base.local].ty):
                 return collection_value(builder, read, span)
-            if len(read.place.projection) != 0 and is_list(root_type):
-                return indexed_read(builder, read.place, span)
             place = scalar_place(builder, read.place, span)?
             ty = place_type(builder.locals, place)
             match zip_shape(ty):
@@ -3867,6 +3882,19 @@ def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -
                     return Ok(read_place(text_place, true, span))
                 return Err("unsupported Body IR string list element ownership")
             return scalar_operand(builder, value, span)
+
+
+def element_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Option[Operand], str]:
+    """Materialize a list or dictionary element as a copy that leaves its container whole; `None` for other places."""
+    match model_list_read(builder, source, span)?:
+        Some(item) => return Ok(Some(item))
+        None => pass
+    if not is_element_place(builder, source)?:
+        return Ok(None)
+    base = list_base_place(builder, source, span)?
+    if is_collection(builder.locals[base.local].ty):
+        return Ok(Some(dictionary_index_read(builder, source, span)?))
+    return Ok(Some(indexed_read(builder, source, span)?))
 
 
 def indexed_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Operand, str]:
@@ -4186,6 +4214,34 @@ def argument_place(
         None => return Err("unsupported Body IR list spread argument")
 
 
+def shared_receiver_place(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    index: int,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Like `argument_place` for a receiver read only through a shared borrow, materializing a list element first."""
+    if index >= len(arguments):
+        return Err("invalid Body IR list call arity")
+    match arguments[index].as_one():
+        Some(RustOperand.Place(read)) =>
+            if is_element_place(builder, read.place)?:
+                return materialized_receiver(builder, read.place, span)
+        _ => pass
+    return argument_place(builder, arguments, index, span)
+
+
+def materialized_receiver(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+    """Copy a list or dictionary element into an owned temporary that a shared receiver borrow can read."""
+    match element_read(builder, source, span)?:
+        Some(item) =>
+            match item.kind:
+                OperandKind.Move(place) => return Ok(place)
+                _ => pass
+        None => pass
+    return Err("unsupported Body IR projected non-list receiver")
+
+
 def argument_value(
     mut builder: Builder,
     arguments: &list[RustArgumentElement],
@@ -4315,7 +4371,8 @@ def numeric_receiver(
     """Read a canonical numeric method's shared receiver without consuming its Copy storage."""
     match arguments[0].as_one():
         Some(RustOperand.Place(read)) =>
-            if read.fact == OwnershipFact.Borrow:
+            # A list or dictionary element has no storage to copy from; its materialized value is read below.
+            if read.fact == OwnershipFact.Borrow and not is_element_place(builder, read.place)?:
                 place = scalar_place(builder, read.place, span)?
                 if not numeric_carrier(place_type(builder.locals, place)):
                     return Err("invalid Body IR numeric receiver outside numeric storage")
@@ -4469,7 +4526,7 @@ def lower_list_builtin(
     ty = argument_type(builder, arguments, 0, span)?
     if ty in [PlanType.String, PlanType.StringRef, PlanType.FrozenStr]:
         return lower_text_helper(builder, "length_text", PlanType.Int, arguments, destination, span)
-    receiver = argument_place(builder, arguments, 0, span)?
+    receiver = shared_receiver_place(builder, arguments, 0, span)?
     if is_collection(place_type(builder.locals, receiver)):
         return collection_length(builder, receiver, destination, span)
     leaf, depth = require_list_shape(place_type(builder.locals, receiver), "unsupported Body IR len on non-list")?
@@ -6032,6 +6089,8 @@ def argument_type(
             match read.place.global():
                 Some(global) => return model_type(builder.nominals, global.ty)
                 None => pass
+            if is_element_place(builder, read.place)?:
+                return element_place_type(builder, read.place)
             place = scalar_place(builder, read.place, span)?
             return Ok(place_type(builder.locals, place))
         Some(RustOperand.Constant(RustConstant.Str(_text))) => return Ok(PlanType.String)
