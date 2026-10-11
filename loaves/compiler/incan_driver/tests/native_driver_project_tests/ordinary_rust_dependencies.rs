@@ -63,6 +63,7 @@ fn ordinary_standard_rust_interop_run_reuses_and_invalidates() -> TestResult {
 fn ordinary_rust_interop_uses_current_native_sources_without_manual_bake() -> TestResult {
     let fixture = tempfile::tempdir()?;
     let root = fixture.path().canonicalize()?;
+    let native_inputs = tempfile::tempdir()?;
     for directory in ["src", "probe_leaf/src"] {
         fs::create_dir_all(root.join(directory))?;
     }
@@ -80,19 +81,28 @@ fn ordinary_rust_interop_uses_current_native_sources_without_manual_bake() -> Te
             "[project]\nname='probe_leaf'\nversion='1.0.0'\n[rust]\nname='probe_leaf'\ntype='lib'\nedition='2024'\n",
         ),
         ("probe_leaf/src/lib.rs", "pub fn answer() -> i64 { 42 }\n"),
-        ("lock.json", r#"{"schema":"incan.oven.loaf-resolution/2","units":[]}"#),
-        (
-            "graph.json",
-            r#"{"index_commit":"0000000000000000000000000000000000000000","registry_lock":"lock.json","facets":[{"project":"probe_leaf","features":[],"domain":"target"}]}"#,
-        ),
     ] {
         fs::write(root.join(relative), contents)?;
     }
+    let resolution = r#"{"schema":"incan.oven.loaf-resolution/2","units":[]}"#;
+    let lock = native_inputs.path().join("lock.json");
+    fs::write(&lock, resolution)?;
+    fs::write(
+        native_inputs.path().join("graph.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "index_commit":"0000000000000000000000000000000000000000",
+            "registry_lock":"lock.json",
+            "facets":[{"project":root.join("probe_leaf"),"features":[],"domain":"target"}]
+        }))?,
+    )?;
     let run = |require_reuse: bool| -> TestResult<Output> {
         let mut command = support::cli_project::configured_incan_command(&root, &["run", "src/main.incn"]);
         support::configure_explicit_oven_bake_command(&mut command)?;
         command
-            .env("INCAN_SDK_NATIVE_COMPILER_GRAPH", root.join("graph.json"))
+            .env(
+                "INCAN_SDK_NATIVE_COMPILER_GRAPH",
+                native_inputs.path().join("graph.json"),
+            )
             .env("INCAN_SDK_NATIVE_INDEX", &root)
             .env("INCAN_SDK_NATIVE_BLOBS", &root);
         if require_reuse {
@@ -106,6 +116,20 @@ fn ordinary_rust_interop_uses_current_native_sources_without_manual_bake() -> Te
     let repeat = run(true)?;
     success(&repeat, "ordinary native interop completed-output reuse");
     assert_eq!(repeat.stdout, b"42\n");
+    fs::write(&lock, b"invalid external native resolution")?;
+    let changed_resolution = run(true)?;
+    assert!(!changed_resolution.status.success());
+    assert!(
+        String::from_utf8_lossy(&changed_resolution.stderr)
+            .contains("required completed project reuse missed before frontend preparation")
+    );
+    fs::write(&lock, resolution)?;
+    let restored_resolution = run(true)?;
+    success(
+        &restored_resolution,
+        "restored external native resolution reuses exact output",
+    );
+    assert_eq!(restored_resolution.stdout, b"42\n");
     fs::write(root.join("probe_leaf/src/lib.rs"), "pub fn answer() -> i64 { 47 }\n")?;
     let changed = run(false)?;
     success(&changed, "ordinary Rust interop observes changed native source");

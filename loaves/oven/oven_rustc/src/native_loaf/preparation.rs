@@ -138,6 +138,15 @@ pub(super) fn read_resolved_native_graph(graph: &Path) -> Result<(PathBuf, Resol
     Ok((owner, selection, document.digest().to_string()))
 }
 
+/// Return the canonical graph owner and its referenced resolution file using the producer's existing parser.
+/// These coordinates let ordinary output lookup observe configuration freshness without preparing native units.
+/// They confer no source, metadata or execution authority; the producer still validates the complete request.
+pub fn resolved_native_graph_coordinates(graph: &Path) -> Result<(PathBuf, PathBuf)> {
+    let (_, owner, selection) = read_resolved_native_graph_inputs(graph)?;
+    let lock = owner.join(selection.registry_lock);
+    Ok((owner, lock))
+}
+
 /// Parse the retained actual graph bytes once, preserving its original relative-path owner for producer observation.
 fn read_resolved_native_graph_inputs(graph: &Path) -> Result<(RequestFile, PathBuf, ResolvedNativeGraph)> {
     let document = RequestFile::read(graph)?;

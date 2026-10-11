@@ -15,13 +15,13 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | keep | 3569 | 245 | 431 |
 | re-point | 1487 | 91 | 1058 |
 | retire | 1507 | 153 | 0 |
-| unaffected | 1972 | 211 | 5 |
+| unaffected | 1974 | 211 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8535** | **700** | **1494** |
+| **Total** | **8537** | **700** | **1494** |
 
 - Retire-class tests: 1507, of which twinned 1022, dies 295, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
-- Files whose test region exceeds the split threshold of 1500 lines: 24, of which 4 in the durable corpus (keep or re-point).
+- Files whose test region exceeds the split threshold of 1500 lines: 25, of which 4 in the durable corpus (keep or re-point).
 - Unreviewed files: 0.
 
 ## Dispositions
@@ -127,7 +127,7 @@ The collector counts these in the text of each test function and of the file-loc
 
 `Lines` is the file length; `Test lines` is the test region the split threshold applies to: the `#[cfg(test)]` modules when the file has any, otherwise the whole file. `Twins` is `twinned/retire-class` and `Dies` the number recorded `dies`, for files with retire-class tests. Per-test rows follow a file only when it carries per-test overrides.
 
-### `loaves/compiler/incan_driver` (687 tests in 95 files: keep 314, re-point 19, retire 104, unaffected 250)
+### `loaves/compiler/incan_driver` (689 tests in 95 files: keep 314, re-point 19, retire 104, unaffected 252)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -178,7 +178,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/build/publication.rs` | 1 | 1065 | 63 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/reuse.rs` | 6 | 1269 | 311 | unaffected | - | - | - | #1561 | checker 2 | Build orchestration over Oven; evicted inspection constituents decline explicit-bake cache reuse while damaged entries fail closed. |
 | `loaves/compiler/incan_driver/src/build/rust_bake_reuse.rs` | 2 | 408 | 95 | unaffected | - | - | - | #1337 | - | Receipt-bound Oven bake reuse for Rust caller projects; shared build infrastructure. |
-| `loaves/compiler/incan_driver/src/build/source_authority.rs` | 26 | 2448 | 1462 | unaffected | - | - | - | #1561 | codegen 1, checker 1, parser 21 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
+| `loaves/compiler/incan_driver/src/build/source_authority.rs` | 28 | 2540 | 1521 | unaffected | - | - | required | #1561 | codegen 1, checker 1, parser 21 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build_unit.rs` | 1 | 299 | 27 | unaffected | - | - | - | #1561 | checker 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/cargo_policy.rs` | 5 | 306 | 111 | retire (retire 5) | 2/5 | 2 | - | #1561 | - | Two tests die with the Cargo command line (arg ordering, `INCAN_CARGO_ARGS`); the `INCAN_LOCKED/FROZEN/OFFLINE` env defaults, the `--no-locked/--no-offline/--no-frozen` negations and frozen ⇒ locked+offline survive as Oven lock-policy inputs (maintainer ruling, 2026-09-20) and are twinned by re-point CLI tests. |
 | `loaves/compiler/incan_driver/src/generated_cache.rs` | 18 | 1481 | 447 | retire | 0/18 | 18 | - | #1561 | - | generated-project cache identity and pruning; dies with the generated-project route. |
@@ -218,7 +218,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/tests/native_driver_project_tests/census.rs` | 5 | 561 | 561 | keep | - | - | - | #1337 | - | Direct-route census refusal grouping and bounded process capture; route-independent measurement support |
 | `loaves/compiler/incan_driver/tests/native_driver_project_tests/dev7_carrier_admission.rs` | 1 | 70 | 70 | keep | - | - | - | #1337 | run 1 | Real frontend and Incan lower_module accept nested carrier layouts; actual native validation rejects independent malformed payload paths, layouts, collection identities and by-value recursion. |
 | `loaves/compiler/incan_driver/tests/native_driver_project_tests/enum_alias_admission.rs` | 1 | 47 | 47 | keep | - | - | - | #1337 | run 1 | Actual Incan lower_module accepts checked aliases and rejects independently corrupted canonical enum targets, payloads and bindings. |
-| `loaves/compiler/incan_driver/tests/native_driver_project_tests/ordinary_rust_dependencies.rs` | 3 | 231 | 231 | keep | - | - | - | #1698 | run 3 | Normal Rust caller links declaration-selected ordinary native dependencies absent from SDK coverage; runtime, selected work, completed-output reuse, native source edits, missing configured input refusal and rollback retain the original output. |
+| `loaves/compiler/incan_driver/tests/native_driver_project_tests/ordinary_rust_dependencies.rs` | 3 | 255 | 255 | keep | - | - | - | #1698 | run 3 | Normal Rust caller links declaration-selected ordinary native dependencies absent from SDK coverage; runtime, selected work, completed-output reuse, native source edits, missing configured input refusal and rollback retain the original output. |
 | `loaves/compiler/incan_driver/tests/native_driver_project_tests/tail.rs` | 10 | 400 | 400 | keep | - | - | - | #1337 | run 10 | Direct-route small statements, operators and places compared byte for byte with legacy output |
 | `loaves/compiler/incan_driver/tests/native_library_projection_publication_tests.rs` | 2 | 260 | 260 | keep | - | - | - | #1698 | codegen 2, replacement 2 | Completed library publication rollback restores changed and absent local projection markers without losing retained package caches. |
 | `loaves/compiler/incan_driver/tests/native_rust_source_authority_tests.rs` | 11 | 757 | 757 | keep | - | - | - | #1698 | checker 3 | Cargo-independent Loaf source authority, sealed provider integrity and generated-root semantic lock bookkeeping; authored, transitive, target and nested inputs remain bound. |
@@ -2607,7 +2607,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
 | `loaves/oven/oven_rustc/src/loaf.rs` | 30 | 4842 | 1427 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 | `loaves/oven/oven_rustc/src/loaf_mirror.rs` | 9 | 758 | 429 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-| `loaves/oven/oven_rustc/src/native_loaf/preparation.rs` | 1 | 433 | 169 | unaffected | - | - | - | #1337 | - | Ordinary native producer debug/release profiles, real local library and host macro behavior, and unchanged per-profile reuse; tests the native toolchain rather than Incan generated Rust. |
+| `loaves/oven/oven_rustc/src/native_loaf/preparation.rs` | 1 | 442 | 169 | unaffected | - | - | - | #1337 | - | Ordinary native producer debug/release profiles, real local library and host macro behavior, and unchanged per-profile reuse; tests the native toolchain rather than Incan generated Rust. |
 | `loaves/oven/oven_rustc/src/native_loaf/prepared/projection_registry_tests.rs` | 1 | 198 | 198 | unaffected | - | - | - | #1698 | - | Real ordinary registry archives retain exact native edges and codegen receipts, execute selected consumers, skip unrelated failing units and refuse missing or ambiguous locked dependencies. |
 | `loaves/oven/oven_rustc/src/native_loaf/prepared/projection_tests.rs` | 4 | 257 | 257 | unaffected | - | - | - | #1698 | - | Cold ordinary native preparation compiles only the declared forward closure; real edits and restoration preserve runtime results, ambiguity and missing authority refuse, and physical subsets cannot grant complete semantic producer observation. |
 | `loaves/oven/oven_rustc/src/native_loaf/prepared/tests.rs` | 9 | 956 | 956 | unaffected | - | - | - | #1698 | - | Ordinary rooted native reuse verifies current source/compiler/lock/facts, records actual work, refuses corrupted authority and bypasses empty declarations. |
