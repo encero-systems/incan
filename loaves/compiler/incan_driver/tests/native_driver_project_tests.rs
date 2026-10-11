@@ -5701,3 +5701,53 @@ def main() -> None:
 "#,
     )
 }
+
+/// `isinstance` over an Option is true only for a present payload of the target type, through a union payload too.
+#[test]
+fn option_isinstance_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("option-isinstance")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"const NAME: FrozenStr = "frozen"
+
+def maybe(flag: bool) -> Option[str]:
+    if flag:
+        return Some("text")
+    return None
+
+def maybe_frozen(flag: bool) -> Option[FrozenStr]:
+    if flag:
+        return Some(NAME)
+    return None
+
+def frozen_or_int(flag: bool) -> FrozenStr | int:
+    if flag:
+        return NAME
+    return 7
+
+def maybe_union(flag: bool, text: bool) -> Option[FrozenStr | int]:
+    if flag:
+        return Some(frozen_or_int(text))
+    return None
+
+def number(value: int | FrozenStr | None) -> bool:
+    return isinstance(value, int)
+
+def main() -> None:
+    println(number(5))
+    println(number(NAME))
+    println(number(None))
+    println(isinstance(maybe(true), str))
+    println(isinstance(maybe(false), str))
+    println(isinstance(maybe_frozen(true), str))
+    println(isinstance(maybe_frozen(false), str))
+    println(isinstance(maybe_union(true, true), str))
+    println(isinstance(maybe_union(true, false), str))
+    println(isinstance(maybe_union(true, false), int))
+    println(isinstance(maybe_union(false, true), str))
+"#,
+    )
+}
