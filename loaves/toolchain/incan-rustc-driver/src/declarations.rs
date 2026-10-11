@@ -1,6 +1,6 @@
 //! Declarations enter as AST items; only MIR supplies executable bodies.
 
-use crate::plan::{Function, PlanType};
+use crate::plan::{Function, ListLeaf, PlanType, SizedNumeric};
 use rustc_ast as ast;
 use rustc_span::{Ident, Span, Symbol};
 use thin_vec::{ThinVec, thin_vec};
@@ -10,15 +10,86 @@ fn ident(name: &str, span: Span) -> Ident {
     Ident::new(Symbol::intern(name), span)
 }
 
-/// Construct an admitted scalar or model AST type without generating or parsing Rust source.
+/// Construct an admitted scalar, model, or list AST type without generating or parsing Rust source.
 fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
     let kind = match kind {
+        PlanType::List(leaf, depth) => {
+            let mut element = ty(
+                &match leaf {
+                    ListLeaf::Int => PlanType::Int,
+                    ListLeaf::Float => PlanType::Float,
+                    ListLeaf::Bool => PlanType::Bool,
+                    ListLeaf::Str => PlanType::String,
+                },
+                span,
+            );
+            for _ in 0..*depth {
+                let mut path = ast::Path::from_ident(ident("Vec", span));
+                path.segments[0].args = Some(Box::new(ast::GenericArgs::AngleBracketed(
+                    ast::AngleBracketedArgs {
+                        span,
+                        args: thin_vec![ast::AngleBracketedArg::Arg(ast::GenericArg::Type(
+                            element
+                        ))],
+                    },
+                )));
+                element = Box::new(ast::Ty {
+                    id: ast::DUMMY_NODE_ID,
+                    kind: ast::TyKind::Path(None, path),
+                    span,
+                    tokens: None,
+                });
+            }
+            return element;
+        }
+        PlanType::ListRef(leaf, depth) | PlanType::ListMutRef(leaf, depth) => ast::TyKind::Ref(
+            None,
+            ast::MutTy {
+                ty: ty(&PlanType::List(leaf.clone(), *depth), span),
+                mutbl: if matches!(kind, PlanType::ListMutRef(_, _)) {
+                    ast::Mutability::Mut
+                } else {
+                    ast::Mutability::Not
+                },
+            },
+        ),
         PlanType::Unit => ast::TyKind::Tup(ThinVec::new()),
-        PlanType::CheckedInt => ast::TyKind::Tup(thin_vec![ty(&PlanType::Int, span), ty(&PlanType::Bool, span)]),
+        PlanType::ModelRef(index, name) | PlanType::ModelMutRef(index, name) => ast::TyKind::Ref(
+            None,
+            ast::MutTy {
+                ty: ty(&PlanType::Model(*index, name.clone()), span),
+                mutbl: if matches!(kind, PlanType::ModelMutRef(..)) {
+                    ast::Mutability::Mut
+                } else {
+                    ast::Mutability::Not
+                },
+            },
+        ),
+        PlanType::CheckedNumeric(kind) => {
+            ast::TyKind::Tup(thin_vec![numeric_ty(kind, span), ty(&PlanType::Bool, span)])
+        }
+        PlanType::CheckedInt => ast::TyKind::Tup(thin_vec![
+            ty(&PlanType::Int, span),
+            ty(&PlanType::Bool, span)
+        ]),
         other => {
             let name = match other {
+                PlanType::ISize => "isize",
+                PlanType::USize => "usize",
                 PlanType::Int => "i64",
                 PlanType::Float => "f64",
+                PlanType::I8 => "i8",
+                PlanType::I16 => "i16",
+                PlanType::I32 => "i32",
+                PlanType::I128 => "i128",
+                PlanType::U8 => "u8",
+                PlanType::U16 => "u16",
+                PlanType::U32 => "u32",
+                PlanType::U64 => "u64",
+                PlanType::U128 => "u128",
+                PlanType::F32 => "f32",
+                PlanType::F64 => "f64",
+
                 PlanType::String => "String",
                 PlanType::Model(_, name) => name.as_str(),
                 _ => "bool",
@@ -73,7 +144,11 @@ pub fn function(function: &Function, span: Span) -> Box<ast::Item> {
             ty: ty(&parameter.ty, span),
             pat: Box::new(ast::Pat {
                 id: ast::DUMMY_NODE_ID,
-                kind: ast::PatKind::Ident(ast::BindingMode::NONE, ident(&parameter.name, span), None),
+                kind: ast::PatKind::Ident(
+                    ast::BindingMode::NONE,
+                    ident(&parameter.name, span),
+                    None,
+                ),
                 span,
                 tokens: None,
             }),
@@ -164,9 +239,14 @@ pub fn model(model: &crate::plan::ModelDeclaration, span: Span) -> Box<ast::Item
 }
 
 /// Retain the injected declaration's tokens for procedural derives, without parsing or generating source text.
-fn model_tokens(model: &crate::plan::ModelDeclaration, span: Span) -> ast::tokenstream::LazyAttrTokenStream {
+fn model_tokens(
+    model: &crate::plan::ModelDeclaration,
+    span: Span,
+) -> ast::tokenstream::LazyAttrTokenStream {
     use ast::token::{Delimiter, TokenKind};
-    use ast::tokenstream::{AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, LazyAttrTokenStream, Spacing};
+    use ast::tokenstream::{
+        AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, LazyAttrTokenStream, Spacing,
+    };
     let mut fields = Vec::new();
     for (field, public) in model.fields.iter().zip(&model.field_public) {
         if *public {
@@ -261,10 +341,15 @@ fn visibility(public: bool, span: Span) -> ast::Visibility {
 }
 
 /// Build derive path tokens directly from the admitted registry names, including compiler-owned proc macros.
-pub fn derive_attribute(generator: &ast::attr::AttrIdGenerator, name: &str, span: Span) -> ast::Attribute {
+pub fn derive_attribute(
+    generator: &ast::attr::AttrIdGenerator,
+    name: &str,
+    span: Span,
+) -> ast::Attribute {
     use ast::token::{Delimiter, Token, TokenKind};
     use ast::tokenstream::{
-        AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, LazyAttrTokenStream, Spacing, TokenStream,
+        AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, LazyAttrTokenStream, Spacing,
+        TokenStream,
     };
     let mut tokens = Vec::new();
     if matches!(name, "FieldInfo" | "IncanClass") {
@@ -315,4 +400,24 @@ pub fn derive_attribute(generator: &ast::attr::AttrIdGenerator, name: &str, span
         ast::AttrStyle::Outer,
         span,
     )
+}
+
+/// Construct the type of an admitted overflow-pair value.
+fn numeric_ty(kind: &SizedNumeric, span: Span) -> Box<ast::Ty> {
+    let kind = match kind {
+        SizedNumeric::I8 => PlanType::I8,
+        SizedNumeric::I16 => PlanType::I16,
+        SizedNumeric::I32 => PlanType::I32,
+        SizedNumeric::I128 => PlanType::I128,
+        SizedNumeric::U8 => PlanType::U8,
+        SizedNumeric::U16 => PlanType::U16,
+        SizedNumeric::U32 => PlanType::U32,
+        SizedNumeric::U64 => PlanType::U64,
+        SizedNumeric::U128 => PlanType::U128,
+        SizedNumeric::F32 => PlanType::F32,
+        SizedNumeric::F64 => PlanType::F64,
+        SizedNumeric::ISize => PlanType::ISize,
+        SizedNumeric::USize => PlanType::USize,
+    };
+    ty(&kind, span)
 }

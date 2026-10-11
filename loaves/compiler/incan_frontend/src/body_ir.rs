@@ -314,6 +314,8 @@ fn build_body_ir_module_v0_with_provider_operations(
         .collect::<Vec<_>>();
     apply_top_level_input_contract_refusal(program, &mut bodies);
     bir::BodyIrModule {
+        trait_declarations: collect::collect_local_trait_declarations(program, type_info),
+        trait_implementations: collect::collect_local_trait_implementations(program, type_info),
         stdlib_delegations: stdlib_delegations::collect(type_info),
         module_id,
         nominal_declarations,
@@ -364,13 +366,9 @@ type FunctionDefaultSources = HashMap<String, Vec<FunctionDefaultSource>>;
 /// small source-local map long enough to attach the chosen declaration identity to each named call.
 type LocalFunctionDeclarations = HashMap<String, Vec<ast::Span>>;
 
-/// Plain source-local models whose checked declaration layout is retained for direct nominal execution.
+/// Source-local plain models and non-generic classes with canonical checked layouts.
 ///
-/// This frontend map intentionally contains only non-generic, behavior-free models. It is used only while lowering
-/// a checked constructor call to attach the exact declaration identity and selected field layout. The direct executor
-/// compares that target snapshot with the resulting [`bir::NominalDeclaration`] before binding slots. Classes,
-/// trait-adopting models, and models carrying methods/properties/aliases are absent rather than being approximated
-/// as inert field bags.
+/// Unsupported inheritance, properties, and aliases never enter this constructor registry.
 type LocalNominalDeclarations = HashMap<String, bir::NominalDeclaration>;
 
 /// Source-local fieldless normal enums whose canonical unit variants are retained for direct comparison.
@@ -417,18 +415,44 @@ struct FunctionDefaultSource {
 /// Determine whether a model can carry the small direct-replacement declaration fact.
 ///
 /// This is deliberately a source-local data-model shape, not a general nominal-semantics predicate. The replacement
-/// runtime cannot execute model decorators, trait behavior, methods, field aliases, or generic substitution without
-/// facts that Body IR does not retain. Field defaults remain represented by each construction's checked binding, so a
-/// fully supplied construction may execute while any omitted default still refuses at that constructor's span.
+/// runtime cannot execute model decorators, field aliases, or generic substitution without facts that Body IR does not
+/// retain. Non-generic methods remain separate bodies; adopted trait slots are retained in the module implementation
+/// registry. Field defaults remain represented by each construction's checked binding, so a fully supplied construction
+/// may execute while any omitted default still refuses at that constructor's span.
 pub fn is_direct_replacement_plain_model(model: &ast::ModelDecl) -> bool {
     model.decorators.is_empty()
         && model.type_params.is_empty()
-        && model.traits.is_empty()
+        && model.traits.iter().all(|adoption| adoption.node.type_args.is_empty())
         && model.method_aliases.is_empty()
         && model.method_partials.is_empty()
         && model.properties.is_empty()
-        && model.methods.is_empty()
+        && model
+            .methods
+            .iter()
+            .all(|method| method.node.type_params.is_empty() && method.node.decorators.is_empty())
         && model.fields.iter().all(|field| field.node.metadata.alias.is_none())
+}
+
+/// Admit source classes whose fields and method bodies have complete direct-route facts.
+///
+/// Inheritance, generic substitution, decorators, properties, aliases, and defaults remain refused.
+pub fn is_direct_replacement_class(class: &ast::ClassDecl) -> bool {
+    class.decorators.is_empty()
+        && class.type_params.is_empty()
+        && class.traits.iter().all(|adoption| adoption.node.type_args.is_empty())
+        && class.extends.is_none()
+        && class.method_aliases.is_empty()
+        && class.method_partials.is_empty()
+        && class.properties.is_empty()
+        && class.declarative_members.is_empty()
+        && class
+            .fields
+            .iter()
+            .all(|field| field.node.metadata.alias.is_none() && field.node.default.is_none())
+        && class
+            .methods
+            .iter()
+            .all(|method| method.node.type_params.is_empty() && method.node.decorators.is_empty())
 }
 
 /// Determine whether an enum carries the narrow source-local fieldless normal-enum declaration fact.
@@ -802,9 +826,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// boundary, so moving a non-Copy value out of it would not even compile — the only sound way to produce an
     /// owned value from it is to clone (mirrors the existing backend ownership planner's treatment of non-Copy
     /// `self` reads in `loaves/compiler/incan_emit/src/ownership.rs`, which this module's own docs cite as precedent).
-    /// A bare read of a `mut` parameter in [`Self::borrowed_parameters`] never moves for the same reason: the caller
-    /// owns that storage and the callee holds a mutable borrow of it (RFC 129), so an owned value read from it is a
-    /// clone, and passing it on to another `mut` parameter turns that clone into a reborrow.
+    /// A bare read of caller-owned parameter storage, identified by [`Self::is_borrowed_parameter`], never moves for
+    /// the same reason: a list parameter is a shared binding, or a mutable borrow when declared `mut` (RFC 129).
+    /// An owned value read from it clones; passing it on to a `mut` parameter instead retains a reborrow fact.
     /// Every other bare local read decrements its remaining-reads countdown; reaching zero selects `Move` (and
     /// records the local as moved for [`Self::insert_scope_drops`]), otherwise `Clone`. A local with no tracked
     /// countdown (an [`bir::LocalOrigin::External`] reference) gets the explicit [`bir::OwnershipFact::Unknown`].
@@ -834,7 +858,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 false,
             );
         };
-        if self.is_receiver_local(local) || self.borrowed_parameters.contains(&local) {
+        if self.is_receiver_local(local) || self.is_borrowed_parameter(local) {
             let fact = if is_copy {
                 bir::OwnershipFact::Copy
             } else {
@@ -865,6 +889,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.locals
             .get(local.index())
             .is_some_and(|decl| matches!(decl.origin, bir::LocalOrigin::Receiver { .. }))
+    }
+
+    /// Identify caller-owned parameter storage, including shared list bindings (RFC 129).
+    ///
+    /// A list parameter never owns the caller's vector: its mutability selects the borrow kind, not ownership.
+    /// Reads that require an owned value therefore clone even at last use, and scope exit must not drop it.
+    fn is_borrowed_parameter(&self, local: bir::LocalId) -> bool {
+        self.borrowed_parameters.contains(&local)
+            || self.locals.get(local.index()).is_some_and(|decl| {
+                matches!(decl.origin, bir::LocalOrigin::Parameter)
+                    && matches!(&decl.ty, IncanType::Generic { base, .. } if collections::from_str(base) == Some(CollectionTypeId::List))
+            })
     }
 
     /// Build the operand for a freshly created temporary's single, immediate use.
@@ -906,7 +942,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .map(|local| local.id)
             .collect();
         for id in candidates {
-            if self.moved_out.contains(&id) || self.borrowed_parameters.contains(&id) {
+            if self.moved_out.contains(&id) || self.is_borrowed_parameter(id) {
                 continue;
             }
             stmts.push(bir::Statement {

@@ -1173,7 +1173,19 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.lower_expr_to_operand(recv, scope, out)
         } else {
             let recv_place = self.lower_expr_to_place(recv, scope, out);
-            bir::Operand::place(recv_place, bir::OwnershipFact::Borrow, false)
+            let builtin_list_receiver = self.type_info.resolved_identity(span).is_some_and(|identity| {
+                identity.origin == incan_semantics_core::SymbolOrigin::Builtin
+                    && identity.declaration_name.starts_with("List.")
+            });
+            let fact = if builtin_list_receiver
+                && incan_lang::lang::surface::list_methods::from_str(name)
+                    .is_some_and(incan_lang::lang::surface::list_methods::changes_receiver)
+            {
+                bir::OwnershipFact::MutBorrow
+            } else {
+                bir::OwnershipFact::Borrow
+            };
+            bir::Operand::place(recv_place, fact, false)
         };
 
         let (mut arg_operands, binding) =
@@ -1205,7 +1217,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.push_call_temp(
             bir::Callee::Method(bir::MethodTarget {
                 name: name.to_string(),
-                canonical: self.type_info.resolved_identity(span).cloned(),
+                canonical: self
+                    .type_info
+                    .resolved_identity(span)
+                    .or_else(|| {
+                        self.type_info
+                            .traits
+                            .self_method_identities
+                            .get(&(span.start, span.end))
+                    })
+                    .cloned(),
                 type_args: resolved_type_args,
                 binding,
             }),

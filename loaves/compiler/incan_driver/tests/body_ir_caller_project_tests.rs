@@ -30,9 +30,7 @@ fn copy_sources(source: &Path, destination: &Path) -> Result<(), Box<dyn std::er
 fn bake(project: &Path, home: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let mut command = support::repo_command();
     support::configure_explicit_oven_bake_command(&mut command)?;
-    // Tests need only the debug profile; a release build would double the bake.
     let output = command
-        .env("INCAN_OVEN_BAKE_PROFILES", "debug")
         .args(["oven", "bake", "--project"])
         .arg(project)
         .env("INCAN_HOME", home)
@@ -128,7 +126,7 @@ fn synthetic_body() -> Body {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut module = BodyIrModule {
         module_id: CompilerNodeId::module("fixture"), stdlib_delegations: vec![], nominal_declarations: vec![],
-        fieldless_enum_declarations: vec![], value_enum_declarations: vec![], bodies: vec![synthetic_body()],
+        fieldless_enum_declarations: vec![], value_enum_declarations: vec![], trait_declarations: vec![], trait_implementations: vec![], bodies: vec![synthetic_body()],
     };
     assert_eq!(validate_module(&module), Ok(1));
     assert_eq!(count_continues(&module), Ok(0));
@@ -148,6 +146,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     bake(&plan, &home)?;
     bake(&lowering, &home)?;
     bake(&caller, &home)?;
-    assert_success(&Command::new(caller.join("target/rust/debug/body-ir-caller")).output()?);
+    for profile in ["debug", "release"] {
+        assert_success(&Command::new(caller.join("target/rust").join(profile).join("body-ir-caller")).output()?);
+    }
     Ok(())
 }

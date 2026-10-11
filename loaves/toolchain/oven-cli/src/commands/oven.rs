@@ -866,11 +866,9 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
             proxy.explicit_bake_workspace = options
                 .explicit_bake_workspace
                 .as_ref()
-                .map(|workspace| select_explicit_bake_workspace(workspace, &suite.sdk_inventory_digest))
-                .transpose()?;
-            Ok::<_, CliError>(proxy)
-        })
-        .transpose()?;
+                .map(|workspace| workspace.join(suite.sdk_inventory_digest.replace(':', "-")));
+            proxy
+        });
     let stored_sdk_inventory = fs::canonicalize(compiler_suite_file(
         &artifact_root,
         &suite.sdk_inventory_relative_path,
