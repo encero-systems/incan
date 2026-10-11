@@ -5622,6 +5622,98 @@ def main() -> None:
     )
 }
 
+/// An explicit comparison dunder the checker selects from the standard library's Eq or Ord is the operator its derive
+/// implements, on a model, on `self`, on a model with type parameters and on a newtype; a fieldless enum deriving Ord
+/// orders its variants by declaration, through a dunder and through the operators.
+#[test]
+fn comparison_dunders_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "comparison_dunders",
+        r#"@derive(Eq, Ord)
+model Score:
+    points: int
+
+    def at_least(self, other: Score) -> bool:
+        return self.__ge__(other)
+
+
+@derive(Eq, Ord)
+enum Level:
+    Low
+    High
+
+
+@derive(Eq, Ord)
+model Pair[T]:
+    left: T
+    right: T
+
+
+@derive(Eq, Ord)
+type Rank = newtype int
+
+
+def main() -> None:
+    a = Score(points=2)
+    b = Score(points=3)
+    println(a.__ge__(b))
+    println(a.__le__(b))
+    println(a.__gt__(b))
+    println(a.__lt__(b))
+    println(a.__ne__(b))
+    println(a.__eq__(b))
+    println(a.__ge__(b) == (a >= b))
+    println(b.at_least(a))
+    println(Level.High.__gt__(Level.Low))
+    println(Level.Low < Level.High)
+    println(Level.High <= Level.Low)
+    println(Pair(left=1, right=2).__lt__(Pair(left=1, right=3)))
+    println(Rank(1).__ge__(Rank(2)))
+"#,
+        b"false\ntrue\nfalse\ntrue\ntrue\nfalse\ntrue\ntrue\ntrue\ntrue\nfalse\ntrue\nfalse\n",
+    )?;
+    // The checker chose the plain operator while the operand was a type parameter; at a text instantiation that
+    // operator needs a runtime operation it never selected, so the native route refuses by name.
+    check_project_refusal(
+        "comparison_dunder_text_instance",
+        r#"from std.derives.comparison import Ord
+
+
+def less[T with Ord](a: T, b: T) -> bool:
+    return a.__lt__(b)
+
+
+def main() -> None:
+    println(less("a", "b"))
+"#,
+        "unsupported Body IR binary operator on text or nominal operands",
+    )
+}
+
+/// Compile a single-module program in the minimal project layout and require the native route to refuse it by name.
+fn check_project_refusal(name: &str, text: &str, reason: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch(name)?;
+    let main = support::cli_project::write_minimal_project(&root, name, "")?;
+    fs::write(&main, text)?;
+    let native = root.join("native");
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let mut command = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &main,
+        &native,
+        &fixture.sysroot,
+        &closure,
+    );
+    command.current_dir(&root);
+    let refused = command.output()?;
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(!refused.status.success(), "{stderr}");
+    assert!(stderr.contains(reason), "{stderr}");
+    assert!(!native.exists());
+    Ok(())
+}
+
 /// Compare a single-module program in the minimal project layout behavior fixtures run in, pinning its output.
 ///
 /// The fixture harness runs a single-file program as `src/main.incn` of a minimal project through `incan run`, and

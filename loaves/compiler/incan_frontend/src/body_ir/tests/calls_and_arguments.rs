@@ -93,6 +93,22 @@ fn model_derives_retain_checked_native_selection() -> Result<(), Box<dyn std::er
     Ok(())
 }
 
+/// A fieldless enum's derived Ord retains the derives it implies, as a model's does, then the automatic ones.
+#[test]
+fn enum_derives_retain_implied_selections() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "@derive(Eq, Ord)\nenum Level:\n    Low\n    High\n\ndef main() -> bool:\n    return Level.Low < Level.High\n",
+        &["m", "enum_derives"],
+    )?;
+    let declaration = module.enum_declarations.first().ok_or("missing enum layout")?;
+    assert_eq!(
+        declaration.derives,
+        ["Eq", "Ord", "PartialEq", "PartialOrd", "Debug", "Clone"]
+    );
+    assert!(module.is_well_formed_native_enum_declaration(declaration));
+    Ok(())
+}
+
 /// Derived Display retains its checked selection and the Debug prerequisite for native formatting.
 #[test]
 fn model_display_retains_checked_selection() -> Result<(), Box<dyn std::error::Error>> {
