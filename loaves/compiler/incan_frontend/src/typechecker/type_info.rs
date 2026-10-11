@@ -3104,9 +3104,9 @@ fn semantic_type_from_function_binding(binding: &FunctionBindingInfo) -> IncanTy
 
 /// Convert the current typechecker type universe into the backend-neutral Incan semantic type model.
 ///
-/// `pub(crate)` rather than private: `loaves/compiler/incan_frontend/src/body_ir.rs` (Body IR v0's HIR/AST-to-Body-IR
-/// lowering) reuses this mapping for local/operand types instead of duplicating it, so both HIR's type facts and Body
-/// IR's locals stay on the same `ResolvedType -> IncanType` conversion as the typechecker's type universe evolves.
+/// HIR and Body IR reuse this mapping for facts, locals and operands instead of duplicating conversion policy.
+/// Builtin tuple annotations and inferred tuple literals have one structural semantic shape, including inside
+/// carriers and callable signatures. Generic nominal types retain their checked generic identity.
 pub fn semantic_type_from_resolved(ty: &ResolvedType) -> IncanType {
     match ty {
         ResolvedType::Never => IncanType::Never,
@@ -3132,6 +3132,9 @@ pub fn semantic_type_from_resolved(ty: &ResolvedType) -> IncanType {
         },
         ResolvedType::Unit => IncanType::Primitive(IncanPrimitiveType::Unit),
         ResolvedType::Named(name) => IncanType::Named(name.clone()),
+        ResolvedType::Generic(base, args) if collection_types::from_str(base) == Some(CollectionTypeId::Tuple) => {
+            IncanType::Tuple(args.iter().map(semantic_type_from_resolved).collect())
+        }
         ResolvedType::Generic(base, args)
             if incan_lang::lang::types::numerics::decimal_constructor_from_str(base).is_some() =>
         {

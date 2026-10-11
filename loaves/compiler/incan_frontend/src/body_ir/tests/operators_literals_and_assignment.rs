@@ -5,6 +5,57 @@
 
 use super::*;
 
+/// Annotation spellings and inferred tuple literals have one recursively shared semantic type identity.
+#[test]
+fn tuple_annotations_share_canonical_semantic_shape() {
+    use crate::symbols::ResolvedType;
+
+    let elements = vec![ResolvedType::Int, ResolvedType::Str];
+    let inferred = semantic_type_from_resolved(&ResolvedType::Tuple(elements.clone()));
+    assert!(matches!(inferred, IncanType::Tuple(_)));
+    for spelling in ["tuple", "Tuple"] {
+        let annotated = ResolvedType::Generic(spelling.to_string(), elements.clone());
+        assert_eq!(semantic_type_from_resolved(&annotated), inferred);
+        for carrier in ["Result", "List"] {
+            let mut annotated_args = vec![annotated.clone()];
+            let mut inferred_args = vec![ResolvedType::Tuple(elements.clone())];
+            if carrier == "Result" {
+                annotated_args.push(ResolvedType::Str);
+                inferred_args.push(ResolvedType::Str);
+            }
+            let annotation = ResolvedType::Generic(carrier.to_string(), annotated_args);
+            let literal = ResolvedType::Generic(carrier.to_string(), inferred_args);
+            assert_eq!(
+                semantic_type_from_resolved(&annotation),
+                semantic_type_from_resolved(&literal)
+            );
+        }
+    }
+    let nominal = semantic_type_from_resolved(&ResolvedType::Generic("Box".to_string(), elements));
+    assert!(matches!(nominal, IncanType::Generic { base, .. } if base == "Box"));
+}
+
+/// A checked Result constructor and its annotated return use the same tuple payload carrier.
+#[test]
+fn tuple_result_construction_retains_one_checked_carrier() -> Result<(), Box<dyn std::error::Error>> {
+    for spelling in ["tuple", "Tuple"] {
+        let source = format!("def pair() -> Result[{spelling}[int, int], str]:\n    return Ok((20, 22))\n");
+        let module = build(&source, &["tuple_result_identity"])?;
+        let body = body_named(&module, "pair")?;
+        let IncanType::Generic { base, args } = &body.return_type else {
+            return Err(format!("expected checked Result return, got {:?}", body.return_type).into());
+        };
+        assert_eq!(base, "Result");
+        assert!(matches!(args.first(), Some(IncanType::Tuple(_))));
+        for local in &body.locals {
+            if matches!(&local.ty, IncanType::Generic { base, .. } if base == "Result") {
+                assert_eq!(local.ty, body.return_type);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Checked integer helpers retain concrete receiver and result types in Body IR.
 #[test]
 fn checked_integer_helper_locals_retain_types() -> Result<(), Box<dyn std::error::Error>> {
