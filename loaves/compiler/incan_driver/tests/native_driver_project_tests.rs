@@ -2467,6 +2467,42 @@ def main() -> None:
     )
 }
 
+/// Prove builtin value methods byte-identical to legacy: `unwrap` on a direct and a nested Option, on a Result and on
+/// owned text leaves each receiver usable, `powf` runs on a `float`, and `is_finite` and `is_nan` run on both widths.
+/// A receiver projected out of a list element is the separate model index projection family.
+#[test]
+fn builtin_value_method_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("builtin-value-method")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def parse(text: str) -> Result[int, str]:
+    if text == "7":
+        return Ok(7)
+    return Err(f"bad {text}")
+
+def main() -> None:
+    maybe: Option[int] = Some(4)
+    println(maybe.unwrap())
+    println(maybe.unwrap_or(0))
+    nested: Option[Option[int]] = Some(Some(5))
+    println(nested.unwrap().unwrap_or(0))
+    println(parse("7").unwrap())
+    label: Option[str] = Some("text")
+    println(label.unwrap())
+    println(label.unwrap())
+    x: float = 1.5
+    println(x.powf(2.0))
+    narrow: f32 = 2.5
+    println(narrow.is_finite())
+    println(x.is_nan())
+    println(float("nan").is_nan())
+"#,
+    )
+}
+
 /// Measure the actual unchanged graph with expensive fallback forbidden and retain numeric parity evidence.
 #[test]
 #[ignore = "machine-local diagnostic of the 50 ms completed fixture graph reuse budget"]

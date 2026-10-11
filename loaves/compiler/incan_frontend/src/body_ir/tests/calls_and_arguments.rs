@@ -5,6 +5,30 @@
 
 use super::*;
 
+/// `unwrap` on Option and Result is an intrinsic carrier method, like `unwrap_or`, so the backend reads its payload
+/// through the carrier layout instead of treating the call as a builtin collection member.
+#[test]
+fn carrier_unwrap_is_an_intrinsic_carrier_method() -> Result<(), Box<dyn std::error::Error>> {
+    for (parameter, carrier) in [("value: Option[int]", "Option"), ("value: Result[int, str]", "Result")] {
+        let source = format!("def f({parameter}) -> int:\n  return value.unwrap()\n");
+        let module = build(&source, &["m", "carrier_unwrap"])?;
+        let body = body_named(&module, "f")?;
+        let marked = body.block.stmts.iter().any(|statement| {
+            matches!(
+                &statement.kind,
+                bir::StatementKind::Call { callee: bir::Callee::Method(target), .. }
+                    if target.intrinsic_carrier.as_deref() == Some(carrier) && target.name == "unwrap"
+            )
+        });
+        assert!(
+            marked,
+            "{carrier}.unwrap must carry its intrinsic carrier: {}",
+            body.render_snapshot()
+        );
+    }
+    Ok(())
+}
+
 /// Intrinsic Option construction is explicit, while an ordinary source function called Some keeps its call identity.
 #[test]
 fn option_constructor_retains_intrinsic_selection() -> Result<(), Box<dyn std::error::Error>> {
