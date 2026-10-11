@@ -58,6 +58,41 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
     }
 
+    /// Return the checked value a `const` read at `ty` stands for, so the read is that constant rather than a global.
+    ///
+    /// A constant a context module published keeps its retained value, whether it is read by a bare imported name or
+    /// through a module binding (`helpers.LABEL`). A constant this module declares takes the checker's evaluated value
+    /// once its identity proves the module and declaration kind, because the evaluation table is keyed by name. Any
+    /// other global, and a value the read's checked type does not admit, keeps its place.
+    fn checked_constant(&self, place: &bir::Place, ty: &IncanType) -> Option<bir::Constant> {
+        let global = place.global()?;
+        if global.identity.kind != SemanticSourceTargetKind::Const {
+            return None;
+        }
+        let float = IncanType::Primitive(IncanPrimitiveType::Float);
+        if let Some(value) = self.published_constants.get(&global.identity) {
+            return Some(match value {
+                bir::Constant::Int(number) if *ty == float => bir::Constant::Float(number.to_string()),
+                value => value.clone(),
+            });
+        }
+        if incan_semantics_core::canonical_module_identity(&global.identity).as_deref() != Some(self.module_identity) {
+            return None;
+        }
+        use crate::typechecker::ConstValue;
+        match self.type_info.const_value(&global.identity.declaration_name)? {
+            ConstValue::Int(number) if *ty == IncanType::Primitive(IncanPrimitiveType::Int) => {
+                Some(bir::Constant::Int(*number))
+            }
+            // Preserve the evaluated signed decimal value; the admitted float carrier parses it once.
+            ConstValue::Int(number) if *ty == float => Some(bir::Constant::Float(number.to_string())),
+            ConstValue::Float(number) if *ty == float => Some(bir::Constant::Float(number.to_string())),
+            ConstValue::Bool(flag) => Some(bir::Constant::Bool(*flag)),
+            ConstValue::FrozenStr(text) => Some(bir::Constant::FrozenStr(text.clone())),
+            _ => None,
+        }
+    }
+
     /// Lower one expression into an [`bir::Operand`], dispatching on its AST kind and, where evaluation has side
     /// effects or must be flattened (calls, binary/unary ops, aggregates), pushing supporting statements into `out`
     /// first. Expression kinds outside v0's covered subset fall through to [`Self::unsupported_operand`] rather than
@@ -105,46 +140,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         out,
                     );
                 };
-                if let Some(global) = place.global()
-                    && global.identity.kind == SemanticSourceTargetKind::Const
-                    && let Some(value) = self.published_constants.get(&global.identity)
-                {
-                    let constant = match value {
-                        bir::Constant::Int(number) if ty == IncanType::Primitive(IncanPrimitiveType::Float) => {
-                            bir::Constant::Float(number.to_string())
-                        }
-                        value => value.clone(),
-                    };
-                    return bir::Operand::Constant(constant);
-                }
-                // Retain the checker's evaluated scalar or text for a source-local constant. Identity must prove the
-                // module and declaration kind before the name-keyed const-evaluation table is consulted;
-                // imported globals and same-spelled locals keep their existing place representation.
-                if let Some(global) = place.global()
-                    && global.identity.kind == SemanticSourceTargetKind::Const
-                    && incan_semantics_core::canonical_module_identity(&global.identity).as_deref()
-                        == Some(self.module_identity)
-                    && let Some(value) = self.type_info.const_value(&global.identity.declaration_name)
-                {
-                    use crate::typechecker::ConstValue;
-                    let constant = match value {
-                        ConstValue::Int(number) if ty == IncanType::Primitive(IncanPrimitiveType::Int) => {
-                            bir::Constant::Int(*number)
-                        }
-                        ConstValue::Int(number) if ty == IncanType::Primitive(IncanPrimitiveType::Float) => {
-                            // Preserve the evaluated signed decimal value; the admitted float carrier parses it once.
-                            bir::Constant::Float(number.to_string())
-                        }
-                        ConstValue::Float(number) if ty == IncanType::Primitive(IncanPrimitiveType::Float) => {
-                            bir::Constant::Float(number.to_string())
-                        }
-                        ConstValue::Bool(flag) => bir::Constant::Bool(*flag),
-                        ConstValue::FrozenStr(text) => bir::Constant::FrozenStr(text.clone()),
-                        _ => {
-                            let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
-                            return bir::Operand::place(place, fact, last_use);
-                        }
-                    };
+                if let Some(constant) = self.checked_constant(&place, &ty) {
                     return bir::Operand::Constant(constant);
                 }
                 let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
@@ -199,6 +195,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 }
                 if let Some(place) = self.module_member_place(base, expr.span) {
                     let ty = self.resolve_ty(expr.span);
+                    if let Some(constant) = self.checked_constant(&place, &ty) {
+                        return bir::Operand::Constant(constant);
+                    }
                     let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
                     return bir::Operand::place(place, fact, last_use);
                 }
