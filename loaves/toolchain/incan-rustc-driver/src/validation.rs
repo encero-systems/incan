@@ -954,27 +954,41 @@ fn external_signature_type(ty: &Scalar) -> bool {
         )
 }
 
-/// Callable objects accept scalar/text inputs and shared collection views; their result remains scalar or owned text.
+/// Callable objects accept scalars of any numeric carrier, text and shared collection views as inputs; their result
+/// remains a scalar or owned text.
 fn callable_object_signature(signature: &[Scalar]) -> bool {
     let Some((result, inputs)) = signature.split_last() else {
         return false;
     };
+    callable_object_value(result)
+        && inputs.iter().all(|ty| {
+            callable_object_value(ty) || matches!(ty, Scalar::ListRef(_, _) | Scalar::SetRef(_) | Scalar::DictRef(_, _))
+        })
+}
+
+/// Report whether a value crosses a boxed closure's call boundary by value: a scalar of any numeric carrier, or text.
+fn callable_object_value(ty: &Scalar) -> bool {
     matches!(
-        result,
-        Scalar::Int | Scalar::Float | Scalar::Bool | Scalar::Unit | Scalar::String
-    ) && inputs.iter().all(|ty| {
-        matches!(
-            ty,
-            Scalar::Int
-                | Scalar::Float
-                | Scalar::Bool
-                | Scalar::Unit
-                | Scalar::String
-                | Scalar::ListRef(_, _)
-                | Scalar::SetRef(_)
-                | Scalar::DictRef(_, _)
-        )
-    })
+        ty,
+        Scalar::Int
+            | Scalar::Float
+            | Scalar::I8
+            | Scalar::I16
+            | Scalar::I32
+            | Scalar::I128
+            | Scalar::ISize
+            | Scalar::USize
+            | Scalar::U8
+            | Scalar::U16
+            | Scalar::U32
+            | Scalar::U64
+            | Scalar::U128
+            | Scalar::F32
+            | Scalar::F64
+            | Scalar::Bool
+            | Scalar::Unit
+            | Scalar::String
+    )
 }
 
 /// Pin a closure constructor to the one shape its native body implements: rustc builds that body from the injected
@@ -1005,10 +1019,20 @@ fn validate_closure_constructor(function: &Function) -> Result<(), PlanError> {
     let TerminatorKind::Call(_, arguments, destination, 1, Unwind::Continue) = &first.terminator.kind else {
         return Err(refused());
     };
+    // Each capture is forwarded from its own parameter: owned text moves into the environment, Copy scalars are copied.
     let forwarded = arguments.iter().enumerate().all(|(index, argument)| {
-        matches!(&argument.kind, OperandKind::Copy(place)
-            if matches!(place.projection, Projection::Whole)
-                && usize::try_from(place.local).ok() == Some(index + 1))
+        let (moved, place) = match &argument.kind {
+            OperandKind::Copy(place) => (false, place),
+            OperandKind::Move(place) => (true, place),
+            _ => return false,
+        };
+        let owned = function
+            .parameters
+            .get(index)
+            .is_some_and(|parameter| parameter.ty == PlanType::String);
+        moved == owned
+            && matches!(place.projection, Projection::Whole)
+            && usize::try_from(place.local).ok() == Some(index + 1)
     });
     if !forwarded
         || arguments.len() != function.parameters.len()
