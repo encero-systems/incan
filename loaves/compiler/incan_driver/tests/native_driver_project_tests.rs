@@ -2302,6 +2302,135 @@ fn source_class_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>
     )
 }
 
+/// Explicit class derives use the checked selection: repeated automatic derives, and Display through the value's
+/// Debug structure.
+#[test]
+fn class_derives_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("class-derives")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"@derive(Clone, Debug)
+class Counter:
+    value: int
+
+    def get(self) -> int:
+        return self.value
+
+    def bump(mut self) -> None:
+        self.value += 1
+
+
+@derive(Display)
+class Account:
+    pub owner: str
+    pub balance: int
+
+
+def describe(account: Account) -> str:
+    return f"<{account}>"
+
+
+def main() -> None:
+    mut counter = Counter(value=41)
+    println(counter.get())
+    counter.bump()
+    println(counter.get())
+    account = Account(owner="Ada", balance=3)
+    println(account)
+    println(f"{account}")
+    println(str(account))
+    println(describe(account))
+"#,
+    )
+}
+
+/// Omitted class fields evaluate their defaults once per construction; supplied fields suppress those effects.
+#[test]
+fn class_field_defaults_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("class-field-defaults")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def secret() -> int:
+    println(99)
+    return 7
+
+
+class Vault:
+    pub label: int
+    hidden: int = secret()
+    tag: str = "sealed"
+
+    def reveal(self) -> str:
+        return f"{self.label} {self.hidden} {self.tag}"
+
+
+def main() -> None:
+    first = Vault(label=1)
+    second = Vault(label=2, hidden=9, tag="open")
+    println(first.reveal())
+    println(second.reveal())
+"#,
+    )
+}
+
+/// Builtin staticmethod and classmethod markers on models and classes, including a classmethod constructing an
+/// explicitly instantiated generic owner, match legacy.
+#[test]
+fn builtin_method_markers_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("builtin-method-markers")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"class Factory:
+    @classmethod
+    def answer(cls) -> int:
+        return 42
+
+    @staticmethod
+    def twice(value: int) -> int:
+        return value * 2
+
+
+model Page:
+    n: int
+
+    @staticmethod
+    def make(n: int) -> Page:
+        return Page(n=n)
+
+    @classmethod
+    def build(cls, n: int) -> Self:
+        return cls(n=n)
+
+
+@derive(Clone)
+class FactoryBox[T with Clone]:
+    pub value: T
+
+    @classmethod
+    def make(cls, value: T) -> Self:
+        return cls(value=value)
+
+
+def main() -> None:
+    println(Factory.answer())
+    println(Factory.twice(21))
+    println(Page.make(3).n)
+    println(Page.build(5).n)
+    println(FactoryBox[int].make(1).value)
+    println(FactoryBox[str].make("two").value)
+"#,
+    )
+}
+
 /// Prove canonical scalar casts and default values byte-identical to legacy.
 #[test]
 fn numeric_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

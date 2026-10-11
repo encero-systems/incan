@@ -4,6 +4,100 @@
 
 use super::*;
 
+/// Class defaults retain declaration-owned computations with the same omission contract as model defaults.
+#[test]
+fn retains_class_field_default_computations() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build("class Vault:\n  value: int = 7\n", &["class_defaults"])?;
+    let declaration = module.nominal_declarations.first().ok_or("class declaration missing")?;
+    let body = declaration
+        .field_default_body
+        .as_ref()
+        .ok_or("class default frame missing")?;
+    assert!(matches!(body.params[0].default, bir::CallableParamDefault::Source(_)));
+    Ok(())
+}
+
+/// Associated methods retain owner parameters even without a receiver local, and resolve Self to the owner.
+#[test]
+fn retains_classmethod_owner_parameters_and_return_type() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "class Box[T]:\n  pub value: T\n  @classmethod\n  def make(cls, value: T) -> Self:\n    return cls(value=value)\n",
+        &["classmethods"],
+    )?;
+    let body = body_named(&module, "make")?;
+    assert_eq!(body.type_parameters, ["T"]);
+    assert!(matches!(&body.return_type, IncanType::Generic { base, .. } if base == "Box"));
+    Ok(())
+}
+
+/// Class derives use the checked selection models use: explicit names, the derives they imply, then the automatic set.
+#[test]
+fn retains_checked_class_derive_selection() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "@derive(Display)\nclass Account:\n  pub owner: str\n",
+        &["class_derives"],
+    )?;
+    let declaration = module
+        .nominal_declarations
+        .first()
+        .ok_or("derived class declaration missing")?;
+    assert_eq!(
+        declaration.derives,
+        ["Display", "Debug", "Clone", "FieldInfo", "IncanClass"]
+    );
+    Ok(())
+}
+
+/// A classmethod's `cls(...)` constructs its owner with the owner's own declaration identity and layout.
+#[test]
+fn classmethod_construction_retains_its_owner_declaration() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "class Cell:\n  pub v: int\n  @classmethod\n  def of(cls, v: int) -> Self:\n    return cls(v=v)\n",
+        &["classmethod_construction"],
+    )?;
+    let declaration = module.nominal_declarations.first().ok_or("class declaration missing")?;
+    let target = body_named(&module, "of")?
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::Constructor(target), _),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .ok_or("the classmethod construction must lower as a constructor aggregate")?;
+    assert_eq!(target.canonical.as_ref(), Some(&declaration.canonical));
+    assert_eq!(
+        target.direct_declaration_id.as_ref(),
+        Some(&declaration.direct_declaration_id)
+    );
+    Ok(())
+}
+
+/// A static call on an explicitly instantiated class keeps the applied owner type as its receiver.
+#[test]
+fn static_call_on_an_applied_class_keeps_its_owner_arguments() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "class Box[T]:\n  pub value: T\n  @classmethod\n  def make(cls, value: T) -> Self:\n    return cls(value=value)\n\ndef main() -> int:\n  return Box[int].make(1).value\n",
+        &["applied_static"],
+    )?;
+    let targets = named_targets(&module, "main");
+    let make = targets
+        .iter()
+        .find(|target| target.name.ends_with("make"))
+        .ok_or("no named call to `make`")?;
+    assert_eq!(
+        make.receiver_type,
+        Some(IncanType::Generic {
+            base: "Box".to_string(),
+            args: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
+        })
+    );
+    Ok(())
+}
+
 /// Explicit builtin derives survive collection of a newtype's checked nominal carrier.
 #[test]
 fn retains_explicit_newtype_derives() -> Result<(), Box<dyn std::error::Error>> {
