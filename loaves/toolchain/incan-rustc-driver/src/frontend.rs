@@ -347,8 +347,9 @@ fn refused_decorator_feature(
 /// Name the first trait feature the direct route cannot retain.
 ///
 /// Type parameters and supertraits declared in this module are retained: Body IR records each adopter's checked
-/// instantiation and the supertrait slots it fills. A supertrait from elsewhere is an obligation whose implementation
-/// facts Body IR does not carry, so it stays refused.
+/// instantiation and the supertrait slots it fills. A method's own type parameters are retained like any method's:
+/// each checked call schedules the adopter's default at its call-site arguments. A supertrait from elsewhere is an
+/// obligation whose implementation facts Body IR does not carry, so it stays refused.
 fn trait_refusal_feature(
     item: &incan_frontend::ast::TraitDecl,
     program: &incan_frontend::ast::Program,
@@ -364,9 +365,6 @@ fn trait_refusal_feature(
     }
     if !item.properties.is_empty() {
         return Some("properties");
-    }
-    if item.methods.iter().any(|method| !method.node.type_params.is_empty()) {
-        return Some("generic methods");
     }
     if item.methods.iter().any(|method| !method.node.decorators.is_empty()) {
         return Some("decorated methods");

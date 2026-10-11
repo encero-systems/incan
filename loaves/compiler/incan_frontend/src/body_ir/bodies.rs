@@ -266,6 +266,7 @@ pub(super) fn lower_method_body(
     let owner_return_type = binding
         .map(|binding| parameter_types::checked_semantic_type(&binding.return_type, lowering_facts.type_info))
         .map(|ty| parameter_types::retain_parameter_type(ty, &type_parameters))
+        .map(|ty| close_own_self(ty, receiver_ty))
         .unwrap_or(IncanType::Unknown);
 
     // Resolve a nominal Self return exactly as a Self parameter; trait defaults keep their open Self receiver.
@@ -428,6 +429,30 @@ pub(super) fn owner_self_type(owner_name: &str, owner_type_params: &[ast::TypePa
                 .map(|type_param| IncanType::TypeVar(type_param.name.clone()))
                 .collect(),
         }
+    }
+}
+
+/// Close `Self` in a declared type's own method signature to that type, as the checker reads it at every call site.
+///
+/// Only a trait default keeps `Self` open: its receiver type is `Self` itself, and trait specialization closes it for
+/// each adopter.
+fn close_own_self(ty: IncanType, receiver_ty: &IncanType) -> IncanType {
+    if *receiver_ty == IncanType::SelfType {
+        return ty;
+    }
+    match ty {
+        IncanType::SelfType => receiver_ty.clone(),
+        IncanType::Generic { base, args } => IncanType::Generic {
+            base,
+            args: args.into_iter().map(|arg| close_own_self(arg, receiver_ty)).collect(),
+        },
+        IncanType::Tuple(items) => IncanType::Tuple(
+            items
+                .into_iter()
+                .map(|item| close_own_self(item, receiver_ty))
+                .collect(),
+        ),
+        other => other,
     }
 }
 
