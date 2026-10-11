@@ -699,6 +699,10 @@ struct BodyBuilder<'type_info, 'source> {
     loop_continue_actions: Vec<Vec<bir::Statement>>,
     runtime_requirements: Vec<AbiV0RuntimeRequirement>,
     panic_facts: Vec<bir::PanicFact>,
+    /// Source-span types that replace the checker's recorded ones while one evaluation of a chained value written per
+    /// target is lowered. The checker checks such a value once per target but records one type per span, so each
+    /// evaluation installs its own target's types here and clears them afterwards; it is empty everywhere else.
+    type_overrides: HashMap<(usize, usize), IncanType>,
     next_local: u32,
     next_scope: u32,
 }
@@ -735,6 +739,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             loop_continue_actions: Vec::new(),
             runtime_requirements: Vec::new(),
             panic_facts: Vec::new(),
+            type_overrides: HashMap::new(),
             next_local: 0,
             next_scope: 0,
         }
@@ -762,7 +767,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Retain the checker's concrete executable constructor/call type when an open caller context masks it; otherwise
     /// use the contextual expression type. Missing facts remain [`IncanType::Unknown`], never inferred from operands.
+    /// While one evaluation of a chained value written per target is lowered, that target's types for the value's
+    /// nodes come first (see [`Self::type_overrides`]).
     fn resolve_ty(&self, span: ast::Span) -> IncanType {
+        if let Some(ty) = self.type_overrides.get(&(span.start, span.end)) {
+            return ty.clone();
+        }
         self.type_info
             .calls
             .inferred_constructor_types
@@ -1253,8 +1263,8 @@ mod refusals;
 
 mod reads;
 
-mod collect;
 mod carrier_projection;
+mod collect;
 mod static_aliases;
 
 mod bodies;
