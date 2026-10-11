@@ -3161,6 +3161,88 @@ def main() -> None:
     )
 }
 
+/// Prove patterns matched in place byte-identical to legacy: a `match`, `if let` or `while let` arm that changes a
+/// list or model its pattern binds from a `mut` local, a field of one or a field of `mut self` changes that place,
+/// an `int` bound beside a changed list stays a copy, and a match that only reads leaves its scrutinee alone.
+#[test]
+fn in_place_pattern_binding_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("in-place-pattern-binding")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"model Holder:
+    pub inner: Option[list[int]]
+
+model Counter:
+    pub count: int
+
+    def bump(mut self) -> None:
+        self.count += 1
+
+enum Slot:
+    Pair(list[int], int)
+    Empty
+
+enum Wrapper:
+    Held(Counter)
+    Nothing
+
+class Grid:
+    pub row: Option[list[int]]
+
+    def fill(mut self) -> None:
+        if let Some(xs) = self.row:
+            xs.append(7)
+
+def main() -> None:
+    mut box = Some([1])
+    match box:
+        Some(xs) => xs.append(2)
+        None => pass
+    if let Some(xs) = box:
+        xs.append(3)
+    println(box)
+    mut h = Holder(inner=Some([1]))
+    if let Some(xs) = h.inner:
+        xs.append(4)
+    println(h.inner)
+    mut s = Slot.Pair([1], 5)
+    match s:
+        Slot.Pair(items, n) =>
+            items.append(n)
+            println(len(items))
+        Slot.Empty => pass
+    match s:
+        Slot.Pair(items, n) => println(f"{items} {n}")
+        Slot.Empty => pass
+    mut w = Wrapper.Held(Counter(count=1))
+    match w:
+        Wrapper.Held(c) => c.bump()
+        Wrapper.Nothing => pass
+    match w:
+        Wrapper.Held(c) => println(c.count)
+        Wrapper.Nothing => pass
+    mut g = Grid(row=Some([1]))
+    g.fill()
+    println(g.row)
+    mut count = 0
+    mut queue = Some([1, 2, 3])
+    while let Some(items) = queue:
+        items.pop()
+        count += 1
+        if len(items) == 0:
+            break
+    println(f"{count} {queue}")
+    kept = Some([1])
+    match kept:
+        Some(xs) => println(len(xs))
+        None => pass
+"#,
+    )
+}
+
 /// Prove closure captures beyond `int`, `float` and `bool` byte-identical to legacy: an `f32` and an `i32` capture
 /// keep their carrier, and a captured `str` stays owned by the closure across repeated calls while the captured
 /// local is still read after the closure is built.

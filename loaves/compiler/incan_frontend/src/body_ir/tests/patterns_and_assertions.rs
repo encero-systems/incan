@@ -950,3 +950,75 @@ def capture(value: int | str) -> int:
     assert!(!snapshot.contains("unsupported("), "{snapshot}");
     Ok(())
 }
+
+// ---- #1561: a pattern whose arm changes part of a writable place binds that part in place ----
+
+#[test]
+fn in_place_match_bindings_borrow_the_changed_payload_mutably() -> Result<(), Box<dyn std::error::Error>> {
+    // Legacy matches `&mut box`, so each arm's change lands in `box`: `match`, `if let` and a field scrutinee alike.
+    let source = concat!(
+        "model Holder:\n",
+        "  pub inner: Option[list[int]]\n",
+        "\n",
+        "def change() -> None:\n",
+        "  mut box = Some([1])\n",
+        "  match box:\n",
+        "    Some(first) => first.append(2)\n",
+        "    None => pass\n",
+        "  if let Some(second) = box:\n",
+        "    second.append(3)\n",
+        "  mut h = Holder(inner=Some([1]))\n",
+        "  if let Some(third) = h.inner:\n",
+        "    third.append(4)\n",
+        "  println(box)\n",
+    );
+    let module = build(source, &["m", "in_place_bindings"])?;
+    for name in ["first", "second", "third"] {
+        let (_ty, fact) = bound_local_type_and_fact(&module, "change", name)?;
+        assert_eq!(
+            fact,
+            "mut_borrow",
+            "`{name}` is changed in place: {}",
+            module.render_snapshot()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn in_place_match_copies_a_copyable_payload_beside_a_changed_one() -> Result<(), Box<dyn std::error::Error>> {
+    // An `int` bound beside a changed list is still a copy, as legacy binds it through a dereference.
+    let source = concat!(
+        "enum Slot:\n",
+        "  Pair(list[int], int)\n",
+        "  Empty\n",
+        "\n",
+        "def change() -> None:\n",
+        "  mut s = Slot.Pair([1], 5)\n",
+        "  match s:\n",
+        "    Slot.Pair(items, n) => items.append(n)\n",
+        "    Slot.Empty => pass\n",
+    );
+    let module = build(source, &["m", "in_place_copy"])?;
+    let (_ty, items) = bound_local_type_and_fact(&module, "change", "items")?;
+    let (_ty, count) = bound_local_type_and_fact(&module, "change", "n")?;
+    assert_eq!(items, "mut_borrow", "{}", module.render_snapshot());
+    assert_eq!(count, "copy", "{}", module.render_snapshot());
+    Ok(())
+}
+
+#[test]
+fn a_match_that_only_reads_keeps_its_borrowed_binding() -> Result<(), Box<dyn std::error::Error>> {
+    // No arm changes `kept`, so its pattern binds a read of the payload rather than an exclusive borrow.
+    let source = concat!(
+        "def read() -> None:\n",
+        "  kept = Some([1])\n",
+        "  match kept:\n",
+        "    Some(xs) => println(len(xs))\n",
+        "    None => pass\n",
+    );
+    let module = build(source, &["m", "read_only_binding"])?;
+    let (_ty, fact) = bound_local_type_and_fact(&module, "read", "xs")?;
+    assert_eq!(fact, "borrow", "{}", module.render_snapshot());
+    Ok(())
+}
