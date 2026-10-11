@@ -2899,6 +2899,84 @@ def main() -> None:
     )
 }
 
+/// Prove method arguments byte-identical to legacy: a trait default method's `mut` list parameter changes the caller's
+/// list, takes a list literal and an unchanged immutable list, and its `mut` int parameter is the method's own copy; a
+/// method on a class or model with type parameters fills its default `str` parameter at positional and named call
+/// sites and displays a field of its scalar type parameter; a loop variable reaches a `mut` list parameter; and a list
+/// literal reaches a function's `mut` list parameter.
+#[test]
+fn method_mutable_and_default_arguments_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("method-mutable-and-default-arguments")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"trait Replacer:
+    def replace(self, mut items: list[int]) -> int:
+        items.append(9)
+        return len(items)
+
+    def measured(self, mut items: list[int]) -> int:
+        return len(items)
+
+    def bumped(self, mut n: int) -> int:
+        n += 1
+        return n
+
+model Widget with Replacer:
+    id: int
+
+class Box[T with Clone]:
+    pub value: T
+
+    def join(self, other: Box[T], suffix: str = "") -> Box[T]:
+        println(f"join{suffix}")
+        return other
+
+model Shelf[T with Display]:
+    item: T
+    label: str = ""
+
+    def relabel(self, suffix: str = "") -> Shelf[T]:
+        return Shelf(item=self.item, label=f"{self.item}-{suffix}")
+
+def width(mut row: list[int]) -> int:
+    return len(row)
+
+def doubled(mut items: list[int]) -> list[int]:
+    items.append(1)
+    return [x * 2 for x in items]
+
+def main() -> None:
+    mut items: list[int] = [1, 2]
+    println(Widget(id=1).replace(items))
+    println(len(items))
+    println(Widget(id=1).replace([5]))
+    fixed: list[int] = [1, 2, 3]
+    println(Widget(id=1).measured(fixed))
+    println(Widget(id=1).bumped(5))
+    println(len(items))
+    left = Box(value=1)
+    right = Box(value=2)
+    joined: Box[int] = left.join(right)
+    named: Box[int] = left.join(other=right, suffix="!")
+    println(joined.value + named.value)
+    shelf: Shelf[int] = Shelf(item=1)
+    println(shelf.relabel().label)
+    println(shelf.relabel(suffix="again").label)
+    rows: list[list[int]] = [[1], [2, 3]]
+    mut total = 0
+    for row in rows:
+        total += width(row)
+        total += len(row)
+    println(total)
+    println(rows)
+    println(doubled([2]))
+"#,
+    )
+}
+
 /// Prove closure captures beyond `int`, `float` and `bool` byte-identical to legacy: an `f32` and an `i32` capture
 /// keep their carrier, and a captured `str` stays owned by the closure across repeated calls while the captured
 /// local is still read after the closure is built.
