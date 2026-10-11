@@ -5189,6 +5189,156 @@ def main() -> None:
     )
 }
 
+/// An imported trait's defaults run for an adopter in another module: they construct and return the trait module's own
+/// model and enum, call the trait module's private helper and the adopter's own methods, and keep a local binding that
+/// shadows a model name. A local trait sharing an imported trait's short name keeps each adopter on its own trait.
+#[test]
+fn imported_trait_default_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_case(
+        "imported_trait_default",
+        r#"import protocol
+from shapes import Measured
+
+
+trait Same:
+    def value(self) -> Option[int]:
+        return Some(1)
+
+
+model Card with Measured:
+    side: int
+
+    def width(self) -> int:
+        return self.side
+
+    def height(self) -> int:
+        return self.side + 1
+
+
+model Local with Same:
+    amount: int
+
+
+model Remote with protocol.Same:
+    amount: int
+
+
+def show(label: str, value: Option[int]) -> None:
+    match value:
+        Some(inner) => println(f"{label} {inner}")
+        None => println(f"{label} none")
+
+
+def main() -> None:
+    card = Card(side=3)
+    println(card.extent().area())
+    println(card.is_top())
+    println(card.size().n)
+    println(card.count())
+    show("local", Local(amount=1).value())
+    show("remote", Remote(amount=2).value())
+"#,
+        &[
+            (
+                "shapes.incn",
+                r#"from units import Size
+
+
+pub model Extent:
+    pub width: int
+    pub height: int
+
+    def area(self) -> int:
+        return self.width * self.height
+
+
+pub enum Corner:
+    Top
+    Bottom
+
+
+def doubled(n: int) -> int:
+    return n * 2
+
+
+pub trait Measured:
+    def width(self) -> int: ...
+
+    def height(self) -> int: ...
+
+    def extent(self) -> Extent:
+        return Extent(width=self.width(), height=self.height())
+
+    def corner(self) -> Corner:
+        return Corner.Top
+
+    def is_top(self) -> bool:
+        match self.corner():
+            Corner.Top => return true
+            _ => return false
+
+    def size(self) -> Size:
+        return Size(n=doubled(self.width()))
+
+    def count(self) -> int:
+        Extent = 5
+        return Extent
+"#,
+            ),
+            ("units.incn", "pub model Size:\n    pub n: int\n"),
+            (
+                "protocol.incn",
+                "pub trait Same:\n    def value(self) -> Option[int]:\n        return None\n",
+            ),
+        ],
+        b"12\ntrue\n6\n5\nlocal 1\nremote none\n",
+    )
+}
+
+/// An explicit `clone()` the checker selects from the standard library's Clone copies a model, a class, an enum and a
+/// newtype through each one's derived implementation, on a value and on `self`, and the copy is independent.
+#[test]
+fn derived_clone_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "derived_clone",
+        r#"from std.derives.copying import Clone
+
+
+@derive(Clone)
+model Counter:
+    value: int
+    label: str
+
+    def copied(self) -> Counter:
+        return self.clone()
+
+
+class Box:
+    pub size: int
+
+
+enum Color:
+    Red
+    Blue
+
+
+type Name = newtype str
+
+
+def main() -> None:
+    original = Counter(value=1, label="a")
+    mut copy = original.clone()
+    copy.value = 5
+    println(f"{original.value} {copy.value} {copy.label}")
+    println(original.copied().value)
+    println(Box(size=2).clone().size)
+    println(Color.Red.clone() == Color.Red)
+    println(Name("n").clone().0)
+"#,
+        b"1 5 a\n1\n2\ntrue\nn\n",
+    )
+}
+
 /// Compare a single-module program in the minimal project layout behavior fixtures run in, pinning its output.
 ///
 /// The fixture harness runs a single-file program as `src/main.incn` of a minimal project through `incan run`, and
@@ -5196,10 +5346,27 @@ def main() -> None:
 /// supertrait's method on a concrete adopter as `crate::main::Trait::method`, which only resolves in the project
 /// layout.
 fn check_project_case(name: &str, text: &str, expected_stdout: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_case(name, text, &[], expected_stdout)
+}
+
+/// Compare a program of several modules in the minimal project layout, pinning its output.
+///
+/// `modules` names further source files beside `src/main.incn`, each with its text, as a multi-module behavior
+/// fixture lays them out.
+fn check_project_modules_case(
+    name: &str,
+    text: &str,
+    modules: &[(&str, &str)],
+    expected_stdout: &[u8],
+) -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     let root = fixture.scratch(name)?;
     let main = support::cli_project::write_minimal_project(&root, name, "")?;
     fs::write(&main, text)?;
+    let source = main.parent().ok_or("project main has no source directory")?;
+    for (file, module) in modules {
+        fs::write(source.join(file), module)?;
+    }
     let native = root.join("native");
     let closure = corpus::runtime_closure(&fixture.formatting)?;
     let mut command = corpus::source_command(

@@ -1025,3 +1025,54 @@ def use_str() -> int:
     }
     Ok(())
 }
+
+/// An adopter of an imported trait without type parameters retains each slot under the trait module's identity: its
+/// own method fills the required slot, and the slot's default, whose body the trait module retains, fills the other.
+#[test]
+fn imported_trait_slots_retain_the_trait_modules_identities() -> Result<(), Box<dyn std::error::Error>> {
+    let shapes = r#"
+pub trait Measured:
+    def width(self) -> int: ...
+
+    def doubled(self) -> int:
+        return self.width() * 2
+"#;
+    let consumer = r#"
+from shapes import Measured
+
+
+model Card with Measured:
+    side: int
+
+    def width(self) -> int:
+        return self.side
+"#;
+    let module = build_with_imports(consumer, &["consumer"], &[("shapes", &["shapes"], shapes)])?;
+    let slot = |name: &str| {
+        module
+            .trait_implementations
+            .iter()
+            .find(|implementation| implementation.method.declaration_name == name)
+            .ok_or_else(|| Box::<dyn std::error::Error>::from(format!("the imported slot `{name}` must be retained")))
+    };
+    let shapes_origin = incan_semantics_core::SymbolOrigin::Module(vec!["shapes".to_string()]);
+    let consumer_origin = incan_semantics_core::SymbolOrigin::Module(vec!["consumer".to_string()]);
+    assert_eq!(module.trait_implementations.len(), 2);
+
+    let width = slot("width")?;
+    assert_eq!(width.owner.declaration_name, "Card");
+    assert_eq!(width.method.origin, shapes_origin);
+    assert_eq!(width.implementation.origin, consumer_origin);
+    assert_ne!(width.implementation, width.method);
+    assert!(width.type_arguments.is_empty());
+
+    let doubled = slot("doubled")?;
+    assert_eq!(doubled.owner.declaration_name, "Card");
+    assert_eq!(doubled.method.origin, shapes_origin);
+    assert_eq!(
+        doubled.implementation, doubled.method,
+        "the default fills its own slot under the trait module's identity"
+    );
+    assert!(doubled.type_arguments.is_empty());
+    Ok(())
+}
