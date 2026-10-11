@@ -642,6 +642,10 @@ fn dev7_native_loaf_graph_verification_is_linear_and_fresh() -> TestResult {
 
     let installed = temp.path().join("installed");
     copy_tree(native.root(), &installed)?;
+    // Exact installed admission must never enumerate an unrelated entry, even one with a damaged descriptor.
+    let unrelated = installed.join("entries/unrelated");
+    std::fs::create_dir(&unrelated)?;
+    std::fs::write(unrelated.join("loaf.json"), b"invalid unrelated descriptor")?;
     let mut published = NativeLoafVerificationWork::default();
     let installed = PublishedOvenStore::new(&installed);
     let installed_closure = NativeLoafClosure::admit_published_with_work(&installed, &roots, &mut published)?;
