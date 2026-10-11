@@ -2503,6 +2503,112 @@ def main() -> None:
     )
 }
 
+/// Prove structural matching byte-identical to legacy: model patterns test and bind named fields, including a field
+/// named by its RFC 021 alias, a nested alternation
+/// that binds nothing tests each alternative, and a guard runs after its arm's pattern bound, falling through to the
+/// next arm when it rejects, whether the scrutinee is an `int`, a `bool`, a tuple or an `Option`.
+#[test]
+fn structural_match_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("structural-match")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"model Account:
+    tier: int
+    name: str
+
+model Pair:
+    left: int
+    right: int
+
+model Plan:
+    type_ [alias="type"]: str
+    name: str
+
+enum Signal:
+    Ready
+    Stop
+
+def describe(account: Account) -> str:
+    match account:
+        Account(tier=1) => return "premium"
+        Account(tier=2, name=label) => return f"basic {label}"
+        _ => return "other"
+
+def describe_plan(plan: Plan) -> str:
+    match plan:
+        Plan(type="premium") => return "premium plan"
+        _ => return "other plan"
+
+def classify(pair: Pair, signal: Signal) -> int:
+    match pair:
+        case Pair(left=40, right=2):
+            match signal:
+                case Signal.Ready:
+                    return 42
+                case Signal.Stop:
+                    return 0
+        case Pair(left=value):
+            return value
+    return 0
+
+def size(value: int) -> str:
+    match value:
+        case n if n < 10:
+            return "small"
+        case n if n < 20:
+            return "medium"
+        case _:
+            return "large"
+
+def answered(pair: tuple[int, str]) -> str:
+    match pair:
+        (n, "yes" | "no") if n > 0 => return "answered"
+        _ => return "open"
+
+def admits(value: list[str]) -> bool:
+    return len(value) > 0
+
+def keep(value: list[str], choose: bool) -> list[str]:
+    match choose:
+        case true if admits(value): return value
+        case _: return value
+
+def greet(name: Option[str]) -> str:
+    match name:
+        Some(word) if len(word) > 3 => return word
+        Some(word) => return f"short {word}"
+        None => return "nobody"
+
+def main() -> None:
+    println(describe(Account(tier=1, name="a")))
+    println(describe(Account(tier=2, name="b")))
+    println(describe(Account(tier=3, name="c")))
+    println(describe_plan(Plan(type="premium", name="a")))
+    println(describe_plan(Plan(type="basic", name="b")))
+    println(classify(Pair(left=40, right=2), Signal.Ready))
+    println(classify(Pair(left=40, right=2), Signal.Stop))
+    println(classify(Pair(left=7, right=2), Signal.Ready))
+    println(size(5))
+    println(size(15))
+    println(size(25))
+    yes: tuple[int, str] = (1, "yes")
+    println(answered(yes))
+    zero: tuple[int, str] = (0, "no")
+    println(answered(zero))
+    maybe: tuple[int, str] = (1, "maybe")
+    println(answered(maybe))
+    println(len(keep(["a", "b"], true)))
+    println(len(keep([], true)))
+    println(greet(Some("alice")))
+    println(greet(Some("bob")))
+    println(greet(None))
+"#,
+    )
+}
+
 /// Measure the actual unchanged graph with expensive fallback forbidden and retain numeric parity evidence.
 #[test]
 #[ignore = "machine-local diagnostic of the 50 ms completed fixture graph reuse budget"]
