@@ -61,7 +61,7 @@ from decimal_plan import decimal_literal, decimal_comparison, is_decimal_literal
 from frozen_plan import frozen_literal, literal_text
 from loop_exits import exits_to
 from trait_links import is_well_formed_project_implementation
-from derived_methods import is_derived_clone, lower_derived_clone
+from derived_methods import comparison_dunder, is_derived_clone, lower_comparison_dunder, lower_derived_clone
 # ---- The checked Body IR, read through Rust interop ----
 from rust::incan_semantics_core import IncanType as RustType, HirSourceSpan as RustSpan
 from rust::incan_semantics_core::body_ir import (
@@ -151,7 +151,7 @@ from model_values import (
     compare_models,
 )
 from enums import lower_enum_declarations, enum_owner, variant_index, unit_variant, pattern_variant
-from enums import validate_unit_comparison
+from enums import validate_unit_comparison, validate_unit_ordering
 from value_enums import value_variant, value_method_owner
 from unions import (
     native_source_type,
@@ -560,6 +560,16 @@ def is_bit_operator(operator: &BinOp) -> bool:
         _ => return false
 
 
+def is_ordering(operator: &BinOp) -> bool:
+    """Select the four ordering comparisons."""
+    match operator:
+        BinOp.Lt => return true
+        BinOp.Le => return true
+        BinOp.Gt => return true
+        BinOp.Ge => return true
+        _ => return false
+
+
 def bit_operation(
     operator: &BinOp,
     left: Operand,
@@ -591,8 +601,12 @@ def unit_enum_comparison(
     right: &RustOperand,
     span: SourceSpan,
 ) -> Result[RvalueKind, str]:
-    """Compare fieldless tags without consuming either receiver; payload and ordering operations stay refused."""
-    if operator != BinOp.Eq and operator != BinOp.Ne:
+    """
+    Compare fieldless tags without consuming either receiver; payload comparisons stay refused.
+
+    Ordering compares the tags too, which is the derived order: native discriminants are the source variant indices.
+    """
+    if operator != BinOp.Eq and operator != BinOp.Ne and not is_ordering(operator):
         return Err("unsupported Body IR enum BinaryOp")
     left_place = enum_comparison_place(builder, left, span)?
     right_place = enum_comparison_place(builder, right, span)?
@@ -601,6 +615,8 @@ def unit_enum_comparison(
         place_type(builder.locals, left_place),
         place_type(builder.locals, right_place),
     )?
+    if is_ordering(operator):
+        validate_unit_ordering(builder.enums, place_type(builder.locals, left_place))?
     left_tag = enum_comparison_tag(builder, left_place, span)
     right_tag = enum_comparison_tag(builder, right_place, span)
     return Ok(
@@ -724,6 +740,10 @@ def scalar_rvalue(
                 return Err("unsupported Body IR mixed numeric arithmetic without retained coercion")
             if left_type == PlanType.Decimal:
                 return Ok(RvalueKind.Use(decimal_comparison(builder, operator, left_operand, right_operand, span)?))
+            # A closed type-parameter instance can reach here with text or a nominal where the checker chose a plain
+            # operator for the open parameter; those need a runtime operation the checker never selected.
+            if is_text_or_nominal(left_type):
+                return Err("unsupported Body IR binary operator on text or nominal operands")
             return Ok(RvalueKind.Binary(binary_operator(operator)?, left_operand, right_operand))
         RustRvalue.IsInstance(value=value, value_ty=ty, target=target) =>
             return lower_union_isinstance(builder, value, ty, target.ty, span)
@@ -845,6 +865,17 @@ def is_nominal_type(ty: PlanType) -> bool:
         PlanType.ZipIterator(_left, _right) => return true
         PlanType.Generator(_leaf, _depth) => return true
         PlanType.Tuple(_elements) => return tuple_has_owners(ty)
+        _ => return false
+
+
+def is_text_or_nominal(ty: PlanType) -> bool:
+    """Text and source nominals compare only through runtime operations, never through a native binary operator."""
+    match ty:
+        PlanType.String => return true
+        PlanType.StringRef => return true
+        PlanType.StrRef => return true
+        PlanType.Model(_index, _name) => return true
+        PlanType.Enum(_index, _name) => return true
         _ => return false
 
 
@@ -1089,7 +1120,7 @@ def lower_yield(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> 
         _ => return Err("invalid native generator yield handle")
 
 
-def lower_assignment(
+pub def lower_assignment(
     module: &BodyIrModule,
     mut builder: Builder,
     destination: &RustPlace,
@@ -1727,6 +1758,9 @@ def lower_method_call(
         return lower_model_json_builtin(builder, arguments, destination, span)
     if is_derived_clone(target):
         return lower_derived_clone(builder, arguments, destination, span)
+    match comparison_dunder(target):
+        Some(operator) => return lower_comparison_dunder(module, builder, operator, arguments, destination, span)
+        None => pass
     # A list or dictionary element receiver is reborrowed in its container; no native place names it.
     match element_method_owner(builder, arguments[0])?:
         Some(owner) =>

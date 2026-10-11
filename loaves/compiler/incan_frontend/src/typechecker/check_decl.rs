@@ -5005,6 +5005,8 @@ impl TypeChecker {
         }
         if let Some(TypeInfo::Enum(info)) = self.lookup_type_info(&en.name).cloned() {
             let mut native_derives = derives.clone();
+            // A derive brings the derives it implies, as a model's does: a derived `Ord` needs `PartialOrd` natively.
+            Self::append_implied_derives(&mut native_derives);
             for automatic in ["Debug", "Clone"] {
                 if !native_derives.iter().any(|name| name == automatic) {
                     native_derives.push(automatic.to_owned());

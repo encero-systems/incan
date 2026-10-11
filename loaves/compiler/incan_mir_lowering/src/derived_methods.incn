@@ -1,16 +1,20 @@
 """Explicit calls of a standard-library derive's method on a source nominal, through the derive's own implementation."""
 
-from rust::incan_semantics_core import SymbolOrigin, SemanticSourceTargetKind
+from rust::incan_semantics_core import CanonicalSymbolId, SymbolOrigin, SemanticSourceTargetKind
 from rust::incan_semantics_core::body_ir import (
+    BodyIrModule,
+    BinOp,
     MethodTarget,
     ArgumentElement as RustArgumentElement,
     Operand as RustOperand,
     Place as RustPlace,
+    Rvalue as RustRvalue,
 )
 from pub::incan_mir_plan import CalleeKind, Place, PlanType, RvalueKind, SourceSpan
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, place_type, read_place, temporary
-from lowering import scalar_place, lower_callable_result
+from lowering import scalar_place, lower_callable_result, lower_assignment
+from trait_links import contains
 
 
 pub def is_derived_clone(target: &MethodTarget) -> bool:
@@ -95,3 +99,94 @@ def clone_into(
         None =>
             output = temporary(builder, ty, span)
     return lower_callable_result(builder, callee, [read_place(reference, false, span)], output, ty, span)
+
+
+pub def comparison_dunder(target: &MethodTarget) -> Option[BinOp]:
+    """Select the operator a dunder of the standard library's Eq or Ord names, never a same-name method."""
+    if is_std_derive_method(target, "comparison", "__eq__"):
+        return Some(BinOp.Eq)
+    if is_std_derive_method(target, "comparison", "__ne__"):
+        return Some(BinOp.Ne)
+    if is_std_derive_method(target, "comparison", "__lt__"):
+        return Some(BinOp.Lt)
+    if is_std_derive_method(target, "comparison", "__le__"):
+        return Some(BinOp.Le)
+    if is_std_derive_method(target, "comparison", "__gt__"):
+        return Some(BinOp.Gt)
+    if is_std_derive_method(target, "comparison", "__ge__"):
+        return Some(BinOp.Ge)
+    return None
+
+
+pub def lower_comparison_dunder(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    operator: BinOp,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Lower an explicit standard comparison dunder as the operator it names, through that operator's own lowering.
+
+    A derived Eq or Ord implements each dunder as its operator, so `a.__ge__(b)` is `a >= b`. A receiver whose type
+    declares any comparison dunder itself keeps refusing: its operators need not be the derived ones.
+    """
+    if len(arguments) != 2:
+        return Err("invalid Body IR comparison dunder arguments")
+    left = single_operand(arguments[0])?
+    right = single_operand(arguments[1])?
+    if declares_own_comparison(module, builder, left, span)?:
+        return Err("unsupported Body IR comparison dunder on a type with its own comparison methods")
+    match destination:
+        Some(place) =>
+            comparison: RustRvalue = RustRvalue.BinaryOp(operator, left, right)
+            return lower_assignment(module, builder, place, comparison, span)
+        None => return Err("unsupported Body IR discarded comparison dunder")
+
+
+def single_operand(argument: &RustArgumentElement) -> Result[RustOperand, str]:
+    """Read one positional argument's checked operand, refusing a spread."""
+    match argument.as_one():
+        Some(value) => return Ok(value.clone())
+        None => return Err("unsupported Body IR comparison dunder spread argument")
+
+
+def declares_own_comparison(
+    module: &BodyIrModule,
+    builder: Builder,
+    receiver: &RustOperand,
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Whether the receiver's source nominal or enum declares a comparison dunder or fills one from a source trait."""
+    match receiver:
+        RustOperand.Place(read) =>
+            source = scalar_place(builder, read.place, span)?
+            match place_type(builder.locals, source):
+                PlanType.Model(index, _name) => return Ok(owns_comparison(module, builder.nominals[index].canonical))
+                PlanType.Enum(index, _name) =>
+                    if index >= 0 and index < len(builder.enums):
+                        return Ok(owns_comparison(module, builder.enums[index].canonical))
+                    return Ok(false)
+                _ => return Ok(false)
+        _ => return Ok(false)
+
+
+def owns_comparison(module: &BodyIrModule, owner: &CanonicalSymbolId) -> bool:
+    """Whether a body inside the owner's declaration, or a source trait slot it adopts, is a comparison dunder."""
+    for body in module.bodies:
+        match body.canonical:
+            Some(identity) =>
+                name = str(identity.declaration_name)
+                if identity.origin == owner.origin and contains(owner, identity) and is_comparison_name(name):
+                    return true
+            None => pass
+    for implementation in module.trait_implementations:
+        if implementation.owner == owner.clone() and is_comparison_name(str(implementation.method.declaration_name)):
+            return true
+    return false
+
+
+def is_comparison_name(name: str) -> bool:
+    """The six comparison dunders of the standard library's Eq and Ord."""
+    return name in ["__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__"]

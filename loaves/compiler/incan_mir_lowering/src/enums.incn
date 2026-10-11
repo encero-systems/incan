@@ -191,3 +191,21 @@ pub def validate_unit_comparison(
         if len(variant.fields) != 0:
             return Err("unsupported Body IR payload enum comparison")
     return Ok(None)
+
+
+pub def validate_unit_ordering(declarations: list[RustEnumDeclaration], ty: PlanType) -> Result[None, str]:
+    """
+    Authorize tag ordering only for a fieldless owner whose checked derives select a derived order.
+
+    The checker retains an enum's written derives without their implications, so a derived `Ord` names the order
+    as well as a derived `PartialOrd`.
+    """
+    match ty:
+        PlanType.Enum(index, _name) =>
+            if index < 0 or index >= len(declarations):
+                return Err("unsupported Body IR non-source enum ordering")
+            derives = declarations[index].derives
+            if "PartialOrd" not in derives and "Ord" not in derives:
+                return Err("unsupported Body IR enum ordering without a derived order")
+            return Ok(None)
+        _ => return Err("unsupported Body IR nonenum ordering")

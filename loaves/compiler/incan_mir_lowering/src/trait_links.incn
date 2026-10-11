@@ -90,6 +90,6 @@ def module_retains_body(module: &BodyIrModule, identity: &CanonicalSymbolId) -> 
     return false
 
 
-def contains(owner: &CanonicalSymbolId, member: &CanonicalSymbolId) -> bool:
-    """Whether the owner's declaration span encloses the member's."""
+pub def contains(owner: &CanonicalSymbolId, member: &CanonicalSymbolId) -> bool:
+    """Whether the owner's declaration span encloses the member's; callers compare origins, as spans of files nest."""
     return owner.declaration_span.start <= member.declaration_span.start and member.declaration_span.end <= owner.declaration_span.end
