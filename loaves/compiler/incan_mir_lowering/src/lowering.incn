@@ -1568,24 +1568,28 @@ def lower_if(
     builder.finish(TerminatorKind.SwitchBool(condition_value, else_index, then_index), span)
 
     incoming = builder.owned
+    mut branch_ends: list[int] = []
+    mut branch_owners: list[list[int]] = []
     builder.current = then_index
     lower_block(module, builder, then_body)?
-    then_reaches = not builder.closed[builder.current]
-    verify_branch_owners(then_reaches, builder.owned, incoming)?
-    finish_fallthrough(builder, after, span)
+    if not builder.closed[builder.current]:
+        branch_ends.append(builder.current)
+        branch_owners.append(builder.owned)
 
     builder.owned = incoming
     builder.current = else_index
     match else_body:
         Some(body) => lower_block(module, builder, body)?
         None => pass
-    else_reaches = not builder.closed[builder.current]
-    verify_branch_owners(else_reaches, builder.owned, incoming)?
-    finish_fallthrough(builder, after, span)
+    if not builder.closed[builder.current]:
+        branch_ends.append(builder.current)
+        branch_owners.append(builder.owned)
 
     builder.owned = incoming
+    if len(branch_ends) != 0:
+        builder.owned = join_branch_owners(builder, after, branch_ends, branch_owners, span)?
     builder.current = after
-    builder.closed[after] = not (then_reaches or else_reaches)
+    builder.closed[after] = len(branch_ends) == 0
     return Ok(None)
 
 
@@ -5186,7 +5190,7 @@ def lower_enum_match(
         if slot < 0 and arm.guard.is_none():
             break
     builder.finish(TerminatorKind.Unreachable, span)
-    join_owners = join_arm_owners(builder, join, arm_ends, arm_owners, span)?
+    join_owners = join_branch_owners(builder, join, arm_ends, arm_owners, span)?
     reaches_join = len(arm_ends) != 0
     builder.current = join
     builder.closed[join] = not reaches_join
@@ -5357,7 +5361,7 @@ def structural_binding_carrier(ty: PlanType) -> bool:
     return numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit or ty == PlanType.String
 
 
-def join_arm_owners(
+def join_branch_owners(
     mut builder: Builder,
     join: int,
     ends: list[int],
@@ -5365,11 +5369,13 @@ def join_arm_owners(
     span: SourceSpan,
 ) -> Result[list[int], str]:
     """
-    Close each arm reaching the join, keeping live only the incoming owners that every such arm left live.
+    Close each `if` branch or match arm reaching the join, keeping live only the owners every such branch left live.
 
-    Body IR counts last uses across arms in source order, so one arm may move text that another only borrows. Rust
-    drops the surviving value at scope end through a drop flag; text has no observable drop, so releasing it at the
-    end of the arm that kept it is equivalent. Any other owner left live on only some paths stays refused.
+    Body IR counts last uses across branches in source order, so one branch may move a value that another only borrows,
+    and a branch's own temporaries (a condition's constructed model, a comparison's enum value) end with it. Rust drops
+    such a value at scope end through a drop flag. Destroying text, collections and nominal values only releases their
+    memory, so releasing the value at the end of the branch that kept it is equivalent. An owner of any other type
+    left live on only some paths stays refused.
     """
     mut live: list[int] = []
     if len(ends) != 0:
@@ -5382,11 +5388,22 @@ def join_arm_owners(
         for local in arm_owners[index]:
             if local in live:
                 continue
-            if builder.locals[local].ty != PlanType.String:
-                return Err("unsupported Body IR enum match branch ownership change")
+            if not releases_only_memory(builder.locals[local].ty):
+                return Err("unsupported Body IR owned-value branch merge")
             drop_owned(builder, local, span)
         finish_fallthrough(builder, join, span)
     return Ok(live)
+
+
+def releases_only_memory(ty: PlanType) -> bool:
+    """Report whether destroying an owner of this type only frees memory: text, owned collections and nominal values."""
+    if ty == PlanType.String or is_owned_collection(ty):
+        return true
+    match ty:
+        PlanType.Model(_index, _name) => return true
+        PlanType.Enum(_index, _name) => return true
+        PlanType.Tuple(_elements) => return true
+        _ => return false
 
 
 def kept_by_every_arm(local: int, arm_owners: list[list[int]]) -> bool:
