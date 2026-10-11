@@ -121,7 +121,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.identity_bindings = saved_identity_bindings;
         self.external_locals = saved_external_locals;
 
-        let refusal = first_unsupported_default_statement(&stmts)
+        // Expression lowering refuses every validated-newtype coercion; a default names that gap in its own terms.
+        let refusal = self
+            .type_info
+            .validated_newtype_coercion(default_expr.span)
+            .is_some()
+            .then(|| {
+                (
+                    hir_span(default_expr.span),
+                    "default requires a validated-newtype coercion Body IR does not yet represent".to_string(),
+                )
+            })
+            .or_else(|| first_unsupported_default_statement(&stmts))
             .or_else(|| {
                 (!unresolved_names.is_empty()).then(|| {
                     (
@@ -132,17 +143,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         ),
                     )
                 })
-            })
-            .or_else(|| {
-                self.type_info
-                    .validated_newtype_coercion(default_expr.span)
-                    .is_some()
-                    .then(|| {
-                        (
-                            hir_span(default_expr.span),
-                            "default requires a validated-newtype coercion Body IR does not yet represent".to_string(),
-                        )
-                    })
             })
             .or_else(|| {
                 matches!(
