@@ -5601,18 +5601,46 @@ def lower_power_operator(
     right: &RustOperand,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Bind exponentiation only when both operands retain the legacy scalar carrier."""
+    """Bind exponentiation to the checked result carrier, as legacy's `powf` and `pow` do."""
     mut operands = [scalar_operator_operand(builder, left, span)?, scalar_operator_operand(builder, right, span)?]
     target = place_type(builder.locals, destination)
-    # Expected float context is a retained checker fact: legacy coerces both power operands to that carrier.
+    # A float result is a retained checker fact: legacy converts every numeric operand to that carrier before `powf`,
+    # so an `int` exponent and an `f32` base both widen here.
     if target in [PlanType.Float, PlanType.F32, PlanType.F64]:
         for index in range(2):
             source = operand_type(builder, operands[index])?
-            if source != target and source != PlanType.Int:
+            if source != target and not numeric_carrier(source):
                 return Err("unsupported Body IR mixed Pow operands")
             operands[index] = coerce_numeric_operand(builder, operands[index], target, span)?
+    elif target != PlanType.Int and integer_carrier(target):
+        return lower_exact_integer_power(builder, destination, operands, target, span)
     emit_power_operator(builder, destination, operands, span)?
     validate_exact_float(builder, destination, span)
+    return Ok(None)
+
+
+def lower_exact_integer_power(
+    mut builder: Builder,
+    destination: Place,
+    operands: list[Operand],
+    target: PlanType,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Raise an exact-width integer base through the runtime power for its carrier."""
+    # The checked result keeps the base's carrier. Legacy calls that carrier's `pow` with the exponent cast to `u32`;
+    # the runtime helper takes an `int` exponent and truncates it the same way.
+    if operand_type(builder, operands[0])? != target:
+        return Err("unsupported Body IR mixed Pow operands")
+    exponent = coerce_numeric_operand(builder, operands[1], PlanType.Int, span)?
+    external_call(
+        builder,
+        f"incan_native_runtime::power_{numeric_name(target)}",
+        [target, PlanType.Int],
+        target,
+        [operands[0], exponent],
+        destination,
+        span,
+    )
     return Ok(None)
 
 

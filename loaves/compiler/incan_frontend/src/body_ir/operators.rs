@@ -1,6 +1,7 @@
 //! Lowering for binary operators, including dispatch to a user-defined operator method.
 
-use incan_lang::lang::types::numerics::NumericTypeId;
+use incan_lang::lang::types::numerics::{self, NumericTypeId};
+use incan_lang::numeric_values::common_lossless_integer_type;
 
 use super::args::*;
 use super::primitives::*;
@@ -220,7 +221,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// builtin collections with a [`collection_helper_for_binop`] mapping. Everything else becomes a plain
     /// [`bir::Rvalue::BinaryOp`], with a division/modulo panic fact recorded when [`bir::BinOp::may_panic`] holds. A
     /// primitive whose checked result is a float carrier first assigns each mixed operand to a temporary of that
-    /// carrier (see [`promotes_operands_to_float_result`]), so its operands and result share one checked type.
+    /// carrier (see [`promotes_operands_to_float_result`]), so its operands and result share one checked type; a mixed
+    /// numeric comparison reads both operands at their common carrier the same way (see [`comparison_carrier`]).
     ///
     /// Helper families are checked before the primitive path rather than after, because several operators map to
     /// both: `+` is a primitive on two ints and a concatenation on two lists, and only the operand types separate
@@ -295,13 +297,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             });
             self.record_runtime_requirement(AbiV0RuntimeRequirement::PanicStrategy);
         }
-        let (lhs_operand, rhs_operand) = if promotes_operands_to_float_result(bin_op, &result_ty) {
-            (
-                self.promote_operand(lhs_ty, lhs_operand, &result_ty, scope, span, out),
-                self.promote_operand(rhs_ty, rhs_operand, &result_ty, scope, span, out),
-            )
+        let operand_carrier = if promotes_operands_to_float_result(bin_op, &result_ty) {
+            Some(result_ty.clone())
         } else {
-            (lhs_operand, rhs_operand)
+            comparison_carrier(bin_op, lhs_ty, rhs_ty)
+        };
+        let (lhs_operand, rhs_operand) = match operand_carrier {
+            Some(carrier) => (
+                self.promote_operand(lhs_ty, lhs_operand, &carrier, scope, span, out),
+                self.promote_operand(rhs_ty, rhs_operand, &carrier, scope, span, out),
+            ),
+            None => (lhs_operand, rhs_operand),
         };
         self.push_assign_temp(
             bir::Rvalue::BinaryOp(bin_op, lhs_operand, rhs_operand),
@@ -349,6 +355,40 @@ fn promotes_operands_to_float_result(op: bir::BinOp, result_ty: &IncanType) -> b
             IncanPrimitiveType::Float | IncanPrimitiveType::Numeric(NumericTypeId::F32 | NumericTypeId::F64)
         )
     )
+}
+
+/// The carrier both operands of a mixed numeric comparison are read at, chosen as legacy's comparison plan does.
+///
+/// A comparison has a `bool` result, so the checker records no operand carrier for it. The rule is the language's:
+/// two different integer carriers compare at [`common_lossless_integer_type`], the narrowest integer type holding both,
+/// and a pair involving `float`, `f64` or `f32` compares as `float`, with an `int` side or a lone `f32` side widened.
+/// Same-carrier pairs, non-numeric operands and integer pairs no single type holds keep their operands.
+fn comparison_carrier(op: bir::BinOp, lhs_ty: &IncanType, rhs_ty: &IncanType) -> Option<IncanType> {
+    if !matches!(
+        op,
+        bir::BinOp::Eq | bir::BinOp::Ne | bir::BinOp::Lt | bir::BinOp::Le | bir::BinOp::Gt | bir::BinOp::Ge
+    ) || lhs_ty == rhs_ty
+    {
+        return None;
+    }
+    let (left, right) = (numeric_carrier_id(lhs_ty)?, numeric_carrier_id(rhs_ty)?);
+    if numerics::is_binary_float(left) || numerics::is_binary_float(right) {
+        return Some(IncanType::Primitive(IncanPrimitiveType::Float));
+    }
+    common_lossless_integer_type(left, right).map(|common| match common {
+        NumericTypeId::I64 => IncanType::Primitive(IncanPrimitiveType::Int),
+        other => IncanType::Primitive(IncanPrimitiveType::Numeric(other)),
+    })
+}
+
+/// The numeric identity of a checked carrier: `int` is `i64` and `float` is `f64`; `bool` and non-numerics have none.
+fn numeric_carrier_id(ty: &IncanType) -> Option<NumericTypeId> {
+    match ty {
+        IncanType::Primitive(IncanPrimitiveType::Int) => Some(NumericTypeId::I64),
+        IncanType::Primitive(IncanPrimitiveType::Float) => Some(NumericTypeId::F64),
+        IncanType::Primitive(IncanPrimitiveType::Numeric(id)) if *id != NumericTypeId::Bool => Some(*id),
+        _ => None,
+    }
 }
 
 /// Whether a checked type is a numeric carrier that a typed assignment may convert; `bool` is never promoted.
