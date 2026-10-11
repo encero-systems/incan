@@ -118,6 +118,7 @@ from classes import (
     method_receiver,
     static_type_arguments,
 )
+from ranges import range_aggregate
 from tuple_iterators import zip_shape, zip_call, clone_zip, zip_next, initialize_zip_iterator, enumerated_element
 from generators import (
     generator_shape,
@@ -462,7 +463,8 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
                 return Ok(read_place(target, false, span))
             # A checked clone of an open parameter becomes Rust's copy-valued Clone on concrete scalar instances.
             ty = place_type(builder.locals, target)
-            if numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit:
+            # A range value's four scalar fields own nothing, so its clone is a copy, as legacy's is.
+            if numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit or ty == PlanType.RangeValue:
                 return Ok(Operand(kind=OperandKind.Copy(target), span=span))
             if is_tuple_type(place_type(builder.locals, target)):
                 return clone_tuple_operand(builder, target, span)
@@ -2826,7 +2828,27 @@ def checked_aggregate(
                 _ => return Err("unsupported Body IR unresolved model constructor")
             operands = model_default_arguments(module, builder, index, target.binding, elements, span)?
             return Ok(RvalueKind.Model(index, operands))
+        RustAggregateKind.Range => return range_value(builder, elements, expected, span)
         _ => return Err("unsupported Body IR Aggregate outside plain models")
+
+
+def range_value(
+    mut builder: Builder,
+    elements: &list[RustArgumentElement],
+    expected: PlanType,
+    span: SourceSpan,
+) -> Result[RvalueKind, str]:
+    """Copy a source range's checked scalar fields, in Body IR's declared order, into its native layout."""
+    mut fields: list[Operand] = []
+    mut types: list[PlanType] = []
+    for element in elements:
+        match element.as_one():
+            Some(value) =>
+                field = scalar_operand(builder, value, span)?
+                fields.append(field)
+                types.append(operand_type(builder, field)?)
+            None => return Err("unsupported Body IR spread range field")
+    return range_aggregate(expected, fields, types)
 
 
 def model_field_operands(

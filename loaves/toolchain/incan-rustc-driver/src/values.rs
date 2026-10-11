@@ -289,7 +289,8 @@ pub fn rvalue<'tcx>(
             ),
             Box::new((operand(tcx, sources, left)?, operand(tcx, sources, right)?)),
         ),
-        RvalueKind::Tuple(elements) => mir::Rvalue::Aggregate(
+        // A range value's native layout is the tuple of its declared fields.
+        RvalueKind::Tuple(elements) | RvalueKind::Range(elements) => mir::Rvalue::Aggregate(
             Box::new(mir::AggregateKind::Tuple),
             IndexVec::from_raw(
                 elements

@@ -1,7 +1,7 @@
 //! Mapping admitted plan types to the pinned rustc representation.
 
 use crate::error::PlanError;
-use crate::plan::{ListLeaf, PlanType, SizedNumeric, list_leaf_type, tuple_element_type};
+use crate::plan::{ListLeaf, PlanType, SizedNumeric, list_leaf_type, range_field_types, tuple_element_type};
 use rustc_middle::ty::{Ty, TyCtxt};
 
 /// Translate admitted scalar, model, collection, and callable types to their canonical native representations.
@@ -44,6 +44,13 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
             &elements
                 .iter()
                 .map(|element| native_type(tcx, &tuple_element_type(element.clone())))
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        PlanType::RangeValue => Ty::new_tup(
+            tcx,
+            &range_field_types()
+                .iter()
+                .map(|field| native_type(tcx, field))
                 .collect::<Result<Vec<_>, _>>()?,
         ),
         PlanType::ModelMutRef(_, name) => Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, model_type(tcx, name)?),

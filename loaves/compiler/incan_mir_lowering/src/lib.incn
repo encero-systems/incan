@@ -28,6 +28,7 @@ pub from pub::incan_mir_plan import (
     SizedNumeric,
     TupleElement,
     tuple_element_type,
+    range_field_types,
     Local,
     ModelDeclaration,
     Operand,

@@ -1,0 +1,60 @@
+"""Native layout of source-local range values on the direct route."""
+
+from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive
+from rust::incan_semantics_core::body_ir import (
+    AggregateKind as RustAggregateKind,
+    LocalOrigin,
+    PlaceElem as RustPlaceElem,
+)
+from pub::incan_mir_plan import FieldProjection, Operand, PlanType, RvalueKind, range_field_types
+
+
+pub def range_value_local(ty: &RustType, origin: &LocalOrigin) -> bool:
+    """Admit an integer range only in a source binding or temporary, never at a signature or capture boundary."""
+    # Parameters, returns, captures and fields carry no proven four-field layout, so they keep their named refusal.
+    match origin:
+        LocalOrigin.UserBinding => pass
+        LocalOrigin.Temporary => pass
+        _ => return false
+    return integer_range(ty)
+
+
+def integer_range(ty: &RustType) -> bool:
+    """Recognize the checker's `Range[int]` value type."""
+    match ty:
+        RustType.Generic(base=base, args=arguments) =>
+            if base != "Range" or len(arguments) != 1:
+                return false
+            match arguments[0]:
+                RustType.Primitive(primitive) =>
+                    match primitive:
+                        Primitive.Int => return true
+                        _ => return false
+                _ => return false
+        _ => return false
+
+
+pub def range_field(projection: &RustPlaceElem) -> Result[FieldProjection, str]:
+    """Project one structural range field through Body IR's declared field order."""
+    match projection:
+        RustPlaceElem.Field(name=name, canonical=canonical, structural=structural) =>
+            if not structural.clone():
+                return Err("invalid Body IR nonstructural range field")
+            match canonical:
+                Some(_identity) => return Err("invalid Body IR nominal field on a structural range")
+                None => pass
+            fields = RustAggregateKind.RANGE_FIELDS
+            for slot in range(len(fields)):
+                if str(fields[slot]) == str(name):
+                    return Ok(FieldProjection(slot=slot, ty=range_field_types()[slot]))
+            return Err("invalid Body IR range field")
+        _ => return Err("unsupported Body IR range index or slice projection")
+
+
+pub def range_aggregate(expected: PlanType, fields: list[Operand], types: list[PlanType]) -> Result[RvalueKind, str]:
+    """Build a source-local range value from its four checked scalar fields in declared order."""
+    if expected != PlanType.RangeValue:
+        return Err("unsupported Body IR range value outside a source-local binding")
+    if types != range_field_types():
+        return Err("unsupported Body IR range field types")
+    return Ok(RvalueKind.Range(fields))

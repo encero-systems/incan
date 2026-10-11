@@ -91,6 +91,7 @@ pub enum PlanType:
     GeneratorMutRef advances caller-owned state. GeneratorYield and GeneratorYieldRef are producer-only runtime
     handles; they never represent source values or eagerly collected elements.
     ZipIterator retains two independent owned list snapshots; its reference variants retain shared read or exclusive poll authority.
+    RangeValue retains a source range value's start, end, step, and inclusivity scalar fields in Body IR's declared range field order; its field projections use that order.
     FunctionPointer retains its inputs followed by exactly one return entry; the vector is never empty, including for a zero-argument function. FunctionItem keeps that same signature and the proven source declaration's name; it remains distinct from a pointer until an explicit reification.
     Closure owns a boxed callable object with that signature layout, holding its captures by value; ClosureRef is the shared view a closure-holding parameter receives. CallableArguments is the body-internal argument tuple; it preserves each input's exact type, including caller-owned collection references, independently of source tuple layouts.
     """
@@ -144,6 +145,8 @@ pub enum PlanType:
     Dict(ListLeaf, ListLeaf)
     DictRef(ListLeaf, ListLeaf)
     DictMutRef(ListLeaf, ListLeaf)
+    # A source range value: four Copy scalar fields in declared range field order.
+    RangeValue
     # Lazy zip over independent owned list snapshots; references retain poll authority.
     ZipIterator(TupleElement, TupleElement)
     ZipIteratorRef(TupleElement, TupleElement)
@@ -175,6 +178,11 @@ pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
         ListLeaf.Decimal => return PlanType.Decimal
         ListLeaf.FrozenStr => return PlanType.FrozenStr
         ListLeaf.FunctionPointer(signature) => return PlanType.FunctionPointer(signature)
+
+
+pub def range_field_types() -> list[PlanType]:
+    """Return RangeValue's native field carriers in declared range field order: start, end, step, then inclusivity."""
+    return [PlanType.Int, PlanType.Int, PlanType.Int, PlanType.Bool]
 
 
 pub def tuple_element_type(element: TupleElement) -> PlanType:
@@ -319,6 +327,7 @@ pub enum RvalueKind:
     NumericCast retains both checked source and destination carriers. FloatToInt preserves Rust truncation and saturation; BoolToInt produces zero or one.
 
     Tuple preserves the ordered operand layout of its destination type.
+    Range preserves the four scalar operands in Body IR's declared range field order and requires a RangeValue destination.
     FrozenText wraps a static Text literal in the dependency-owned FrozenStr carrier; a dynamic text operand is refused.
     Array moves or copies its listed operands into a fixed array. Borrow creates
     a shared reference to a checked place; MutBorrow creates a mutable list or nominal receiver reference. UnsizeSlice converts an array reference
@@ -341,6 +350,7 @@ pub enum RvalueKind:
     TagToInt(Operand)
     Model(int, list[Operand])
     Tuple(list[Operand])
+    Range(list[Operand])
     Borrow(Place)
     MutBorrow(Place)
     UnsizeSlice(Operand)

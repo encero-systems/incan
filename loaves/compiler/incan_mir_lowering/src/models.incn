@@ -19,6 +19,7 @@ from nominal_instances import nominal_symbol
 from types import primitive_type
 from closures import function_pointer_type
 from layout_types import native_source_type as retained_type
+from ranges import range_field
 from unions import union_slot
 
 
@@ -176,6 +177,7 @@ pub def field_projection(
         PlanType.Tuple(elements) =>
             slot = tuple_slot(projection, len(elements))?
             return Ok(FieldProjection(slot=slot, ty=tuple_element_type(elements[slot])))
+        PlanType.RangeValue => return range_field(projection)
         _ => return Err("unsupported Body IR model index or slice projection")
 
 

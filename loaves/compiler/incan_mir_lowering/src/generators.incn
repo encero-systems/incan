@@ -156,6 +156,7 @@ def swap_rvalue(value: RvalueKind, handle: int) -> RvalueKind:
         RvalueKind.BoolToInt(value) => return RvalueKind.BoolToInt(swap_operand(value, handle))
         RvalueKind.Array(values) => return RvalueKind.Array(swap_operands(values, handle))
         RvalueKind.Tuple(values) => return RvalueKind.Tuple(swap_operands(values, handle))
+        RvalueKind.Range(values) => return RvalueKind.Range(swap_operands(values, handle))
         RvalueKind.Model(owner, values) => return RvalueKind.Model(owner, swap_operands(values, handle))
         RvalueKind.Enum(owner, variant, values) => return RvalueKind.Enum(owner, variant, swap_operands(values, handle))
         RvalueKind.Discriminant(place) => return RvalueKind.Discriminant(swap_place(place, handle))

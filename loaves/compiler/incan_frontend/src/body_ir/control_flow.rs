@@ -8,16 +8,18 @@ use super::*;
 
 /// Where one range-shaped `for` loop takes its bounds, step, and inclusivity from.
 ///
-/// Inline headers, materialized aggregates, and checker-proven builtin calls retain their own bound evaluation
-/// timing and layout authority while driving the same normalized counting loop.
-enum RangeLoopSource<'ast> {
-    /// An inline `start..end` / `start..=end` loop header, still holding its un-lowered bound expressions.
+/// Inline headers, materialized aggregates, and checker-proven builtin calls retain their own layout authority while
+/// driving the same normalized counting loop. Each evaluates its range once, before the first iteration, as legacy's
+/// native range does.
+enum RangeLoopSource {
+    /// An inline `start..end` / `start..=end` loop header: its start, evaluated first, and the local its end was
+    /// snapshotted into.
     Header {
-        start: &'ast ast::Spanned<ast::Expr>,
-        end: &'ast ast::Spanned<ast::Expr>,
+        start: bir::Operand,
+        end: bir::LocalId,
         inclusive: bool,
     },
-    /// A materialized [`bir::AggregateKind::Range`] value, read back through its own declared fields.
+    /// A snapshot of a materialized [`bir::AggregateKind::Range`] value, read back through its own declared fields.
     Value(bir::Place),
     /// Checked builtin range arguments, snapshotted in source order before the first iteration.
     Builtin(Box<BuiltinRangeBounds>),
@@ -30,11 +32,11 @@ struct BuiltinRangeBounds {
     step: bir::Operand,
 }
 
-/// Read a counting loop's index local.
+/// Read a counting loop's index local, or the local a header's end bound was snapshotted into.
 ///
-/// The index is a compiler-owned `int` temporary that the loop itself both writes and re-reads several times per
-/// iteration, so its reads are always plain [`bir::OwnershipFact::Copy`] and never a last use. Going through
-/// [`BodyBuilder::ownership_fact_for_place`] would consult a read countdown that was never seeded for a temporary.
+/// Both are compiler-owned scalar temporaries the loop re-reads several times per iteration, so their reads are always
+/// plain [`bir::OwnershipFact::Copy`] and never a last use. Going through [`BodyBuilder::ownership_fact_for_place`]
+/// would consult a read countdown that was never seeded for a temporary.
 fn index_read(idx_local: bir::LocalId) -> bir::Operand {
     bir::Operand::place(bir::Place::from_local(idx_local), bir::OwnershipFact::Copy, false)
 }
@@ -585,21 +587,28 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Classify a `for` header's iterable as a range the counting loop can drive, lowering it to a place when it
     /// is a range *value*, or `None` when the loop belongs on the general-iteration path.
     ///
-    /// An inline `start..end` header keeps its AST sub-expressions, because its bounds are still lowered directly
-    /// (and its `end` deliberately re-lowered per iteration -- see [`Self::lower_range_counting_loop`]). A bound
-    /// range needs an independently proven local [`bir::AggregateKind::Range`] producer. A `Range[T]` type spelling
-    /// alone cannot prove the aggregate layout: parameters, call results, imported values, and user declarations
-    /// may carry it without `start`/`end`/`step`/`inclusive` fields. Those cases refuse visibly rather than inventing
-    /// a private range ABI. A checker-proven inline `range()` call instead retains scalar bounds evaluated once and an
-    /// explicit constructor validation fact; an unproven same-spelled call keeps general iteration.
-    fn range_loop_source<'ast>(
+    /// Every range source is evaluated here, once, before the loop, as legacy's native range is: an inline
+    /// `start..end` header lowers its start and then snapshots its end, so the loop body reassigning a bound does not
+    /// move the end. A bound range needs an independently proven local [`bir::AggregateKind::Range`] producer, and the
+    /// loop iterates a snapshot of it, so reassigning the range inside the loop does not change the iteration. A
+    /// `Range[T]` type spelling alone cannot prove the aggregate layout: parameters, call results, imported values, and
+    /// user declarations may carry it without `start`/`end`/`step`/`inclusive` fields. Those cases refuse visibly
+    /// rather than inventing a private range ABI. A checker-proven inline `range()` call instead retains scalar bounds
+    /// evaluated once and an explicit constructor validation fact; an unproven same-spelled call keeps general
+    /// iteration.
+    fn range_loop_source(
         &mut self,
-        iter_expr: &'ast ast::Spanned<ast::Expr>,
+        iter_expr: &ast::Spanned<ast::Expr>,
         iter_ty: &IncanType,
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
-    ) -> Result<Option<RangeLoopSource<'ast>>, String> {
+    ) -> Result<Option<RangeLoopSource>, String> {
+        let span = hir_span(iter_expr.span);
         if let Some((start, end, inclusive)) = inline_range_parts(iter_expr) {
+            let start = self.lower_expr_to_operand(start, scope, out);
+            let end_ty = self.resolve_ty(end.span);
+            let end_operand = self.lower_expr_to_operand(end, scope, out);
+            let end = self.snapshot_local(end_operand, end_ty, scope, span, out);
             return Ok(Some(RangeLoopSource::Header { start, end, inclusive }));
         }
         if let Some(range) = self.builtin_range_loop_source(iter_expr, scope, out)? {
@@ -608,10 +617,34 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if range_value_element_type(iter_ty).is_none() {
             return Ok(None);
         }
-        let Some(place) = self.materialized_range_place(iter_expr) else {
+        let Some(local) = self.materialized_range_local(iter_expr) else {
             return Err("range value without a source-local Body IR range aggregate".to_string());
         };
-        Ok(Some(RangeLoopSource::Value(place)))
+        let place = bir::Place::from_local(local);
+        let range_ty = self.locals[local.index()].ty.clone();
+        let (fact, last_use) = self.ownership_fact_for_place(&place, &range_ty);
+        let snapshot = self.snapshot_local(bir::Operand::place(place, fact, last_use), range_ty, scope, span, out);
+        Ok(Some(RangeLoopSource::Value(bir::Place::from_local(snapshot))))
+    }
+
+    /// Copy a once-evaluated range bound or range value into a fresh compiler-owned local the loop re-reads.
+    fn snapshot_local(
+        &mut self,
+        value: bir::Operand,
+        ty: IncanType,
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::LocalId {
+        let local = self.new_temp(ty, scope, span);
+        out.push(bir::Statement {
+            kind: bir::StatementKind::Assign {
+                place: bir::Place::from_local(local),
+                rvalue: bir::Rvalue::Use(value),
+            },
+            span,
+        });
+        local
     }
 
     /// Normalize only a checker-proven builtin range call, retaining argument evaluation before iteration.
@@ -624,7 +657,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         expr: &ast::Spanned<ast::Expr>,
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
-    ) -> Result<Option<RangeLoopSource<'static>>, String> {
+    ) -> Result<Option<RangeLoopSource>, String> {
         if let ast::Expr::Paren(inner) = &expr.node {
             return self.builtin_range_loop_source(inner, scope, out);
         }
@@ -755,16 +788,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
     }
 
-    /// Return the plain local place for a range value whose layout provenance is still live.
-    fn materialized_range_place(&self, expr: &ast::Spanned<ast::Expr>) -> Option<bir::Place> {
+    /// Return the local holding a range value whose layout provenance is still live.
+    fn materialized_range_local(&self, expr: &ast::Spanned<ast::Expr>) -> Option<bir::LocalId> {
         match &expr.node {
-            ast::Expr::Paren(inner) => self.materialized_range_place(inner),
+            ast::Expr::Paren(inner) => self.materialized_range_local(inner),
             ast::Expr::Ident(name) => self
                 .bindings
                 .get(name)
                 .copied()
-                .filter(|local| self.materialized_range_locals.contains(local))
-                .map(bir::Place::from_local),
+                .filter(|local| self.materialized_range_locals.contains(local)),
             _ => None,
         }
     }
@@ -853,15 +885,22 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     }
 
     /// Retain the range's checked index update as operations shared by fallthrough and each `continue` edge.
+    ///
+    /// A source range advances by its unit step, so an index at the maximum integer has visited an inclusive range's
+    /// last item: the loop ends there, as legacy's native range does, instead of advancing past it. A builtin range
+    /// keeps its own runtime advancement contract.
     fn range_increment_steps(
         &mut self,
-        source: &RangeLoopSource<'_>,
+        source: &RangeLoopSource,
         idx_local: bir::LocalId,
         loop_scope: bir::ScopeId,
         span: HirSourceSpan,
     ) -> Vec<bir::Statement> {
         let int_ty = IncanType::Primitive(IncanPrimitiveType::Int);
         let mut body_stmts = Vec::new();
+        if !matches!(source, RangeLoopSource::Builtin(_)) {
+            self.push_range_maximum_exit(idx_local, loop_scope, span, &mut body_stmts);
+        }
         let step = match source {
             RangeLoopSource::Header { .. } => bir::Operand::Constant(bir::Constant::Int(RANGE_UNIT_STEP)),
             RangeLoopSource::Builtin(bounds) => bounds.step.clone(),
@@ -886,27 +925,62 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         body_stmts
     }
 
+    /// Break out of a unit-step counting loop whose index already holds the maximum integer, before it advances.
+    fn push_range_maximum_exit(
+        &mut self,
+        idx_local: bir::LocalId,
+        loop_scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) {
+        let exhausted = self.push_assign_temp(
+            bir::Rvalue::BinaryOp(
+                bir::BinOp::Eq,
+                index_read(idx_local),
+                bir::Operand::Constant(bir::Constant::Int(i64::MAX)),
+            ),
+            IncanType::Primitive(IncanPrimitiveType::Bool),
+            loop_scope,
+            span,
+            out,
+        );
+        let break_scope = self.new_scope(Some(loop_scope), span);
+        out.push(bir::Statement {
+            kind: bir::StatementKind::If {
+                cond: exhausted,
+                then_block: bir::Block {
+                    scope: break_scope,
+                    stmts: vec![bir::Statement {
+                        kind: bir::StatementKind::Break { value: None },
+                        span,
+                    }],
+                },
+                else_block: None,
+            },
+            span,
+        });
+    }
+
     /// Lower one range-shaped `for` loop into the normalized counting `Loop` both range spellings share: seed an
     /// index from the range's start, break once it reaches the end, bind the loop pattern from the index, run the
     /// body, then advance the index by the range's step.
     ///
     /// Where the two spellings get those three pieces from is the only difference, and each is taken from
-    /// `source`: an inline header lowers its own AST sub-expressions and knows its step and inclusivity
-    /// statically, while a range value reads them back off the place it was materialized into. The `end` bound is
-    /// evaluated *inside* the loop for the header and aggregate forms, preserving their established timing.
-    /// A checker-proven builtin call instead snapshots its arguments before iteration and uses signed exhaustion.
+    /// `source`: an inline header knows its step and inclusivity statically, while a range value reads them back off
+    /// its snapshot. [`Self::range_loop_source`] already evaluated the range once, before the loop, as legacy's native
+    /// range does; a checker-proven builtin call also retains signed exhaustion.
     fn lower_range_counting_loop(
         &mut self,
         for_stmt: &ast::ForStmt,
         item_ty: &IncanType,
-        source: &RangeLoopSource<'_>,
+        source: &RangeLoopSource,
         scope: bir::ScopeId,
         span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) {
         let int_ty = IncanType::Primitive(IncanPrimitiveType::Int);
         let start_operand = match source {
-            RangeLoopSource::Header { start, .. } => self.lower_expr_to_operand(start, scope, out),
+            RangeLoopSource::Header { start, .. } => start.clone(),
             RangeLoopSource::Builtin(bounds) => bounds.start.clone(),
             RangeLoopSource::Value(range) => {
                 self.read_range_field(range, bir::AggregateKind::RANGE_FIELD_START, &int_ty)
@@ -929,10 +1003,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
         let cond = match source {
             RangeLoopSource::Header { end, inclusive, .. } => {
-                let end_operand = self.lower_expr_to_operand(end, loop_scope, &mut body_stmts);
                 let cmp_op = if *inclusive { bir::BinOp::Gt } else { bir::BinOp::Ge };
                 self.push_assign_temp(
-                    bir::Rvalue::BinaryOp(cmp_op, index_read(idx_local), end_operand),
+                    bir::Rvalue::BinaryOp(cmp_op, index_read(idx_local), index_read(*end)),
                     IncanType::Primitive(IncanPrimitiveType::Bool),
                     loop_scope,
                     span,

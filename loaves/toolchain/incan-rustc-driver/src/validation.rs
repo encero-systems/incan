@@ -6,7 +6,7 @@ use crate::error::PlanError;
 use crate::plan::{
     BinaryOp, Callee, CalleeKind, Constant, Function, ListLeaf, Operand, OperandKind, Place, Plan, PlanType,
     Projection, RvalueKind, SizedNumeric, SourceSpan, StatementKind, TerminatorKind, UnaryOp, Unwind, list_leaf_type,
-    tuple_element_type,
+    range_field_types, tuple_element_type,
 };
 
 /// Copyable comparison mirror of the Incan-owned sized carrier enum.
@@ -96,6 +96,7 @@ enum Scalar {
     Dict(Leaf, Leaf),
     DictRef(Leaf, Leaf),
     DictMutRef(Leaf, Leaf),
+    RangeValue,
     ZipIterator(Leaf, Leaf),
     ZipIteratorRef(Leaf, Leaf),
     ZipIteratorMutRef(Leaf, Leaf),
@@ -182,6 +183,7 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::Dict(key, value) => Scalar::Dict(Leaf::of(key), Leaf::of(value)),
         PlanType::DictRef(key, value) => Scalar::DictRef(Leaf::of(key), Leaf::of(value)),
         PlanType::DictMutRef(key, value) => Scalar::DictMutRef(Leaf::of(key), Leaf::of(value)),
+        PlanType::RangeValue => Scalar::RangeValue,
         PlanType::CallableArguments(inputs) => Scalar::Tuple(inputs.iter().map(scalar).collect()),
         PlanType::Tuple(elements) => Scalar::Tuple(
             elements
@@ -431,10 +433,14 @@ fn projected_field(
                 .ok_or_else(|| invalid(function, "unknown model field"))?;
             scalar(&field.ty)
         }
+        Scalar::RangeValue => usize::try_from(slot)
+            .ok()
+            .and_then(|slot| range_field_types().get(slot).map(scalar))
+            .ok_or_else(|| invalid(function, "unknown range field"))?,
         _ => {
             return Err(invalid(
                 function,
-                "field projection requires a matching nominal or tuple owner",
+                "field projection requires a matching nominal, tuple or range owner",
             ));
         }
     };
@@ -804,6 +810,22 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
                 )?;
             }
             Ok(expected)
+        }
+        RvalueKind::Range(elements) => {
+            require(function, expected, Scalar::RangeValue, "range aggregate destination")?;
+            let fields = range_field_types();
+            if elements.len() != fields.len() {
+                return Err(invalid(function, "range aggregate requires every declared range field"));
+            }
+            for (element, field) in elements.iter().zip(&fields) {
+                require(
+                    function,
+                    operand(plan, function, element)?,
+                    &scalar(field),
+                    "range field",
+                )?;
+            }
+            Ok(Scalar::RangeValue)
         }
         RvalueKind::Model(index, elements) => {
             require(
