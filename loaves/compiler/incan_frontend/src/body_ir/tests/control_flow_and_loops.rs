@@ -527,6 +527,36 @@ fn a_statement_position_loop_lowers_to_the_same_loop_the_expression_spelling_pro
 }
 
 #[test]
+fn a_while_true_loop_lowers_to_the_statement_loop_without_an_exit_test() -> Result<(), Box<dyn std::error::Error>> {
+    // Legacy emits Rust's `loop` for a literal `true` condition, so only the body's own `return` leaves this loop and
+    // the value-returning function needs no return after it.
+    let source = concat!(
+        "def first_even(start: int) -> int:\n",
+        "  mut i = start\n",
+        "  while true:\n",
+        "    if i % 2 == 0:\n",
+        "      return i\n",
+        "    i = i + 1\n",
+    );
+    let module = build(source, &["m", "while_true"])?;
+    let snapshot = body_named(&module, "first_even")?.render_snapshot();
+
+    assert!(
+        !snapshot.contains("unsupported("),
+        "a `while true:` loop must lower rather than refuse: {snapshot}"
+    );
+    assert!(
+        snapshot.lines().any(|line| line.trim() == "loop:"),
+        "it must lower to Body IR's one normalized loop shape: {snapshot}"
+    );
+    assert!(
+        !snapshot.lines().any(|line| line.trim() == "break"),
+        "a literal `true` condition must not lower an exit test that breaks out of the loop: {snapshot}"
+    );
+    Ok(())
+}
+
+#[test]
 fn continue_inside_a_statement_loop_behaves_as_it_does_in_while_and_for() -> Result<(), Box<dyn std::error::Error>> {
     let source = concat!(
         "def odd_count(limit: int) -> int:\n",

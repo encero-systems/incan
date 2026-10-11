@@ -3001,6 +3001,65 @@ def main() -> None:
     )
 }
 
+/// Prove trait adoption arguments close nested collection frames and calls between default and required methods, and
+/// that a value-returning body ending in a `while true:` loop it leaves only by `return` has no fallthrough.
+#[test]
+fn trait_default_collection_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("trait-default-collection")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"trait Holder[T]:
+    def get(self) -> T: ...
+
+    def pair(self) -> list[T]:
+        return [self.get(), self.get()]
+
+model Number with Holder[int]:
+    value: int
+
+    def get(self) -> int:
+        return self.value
+
+trait Source[T with Clone]:
+    def pull(mut self) -> Option[T]: ...
+
+    def drain(mut self) -> list[T]:
+        mut items: list[T] = []
+        while true:
+            match self.pull():
+                Some(item) => items.append(item)
+                None => return items
+
+model Countdown with Source[list[int]]:
+    n: int
+
+    def pull(mut self) -> Option[list[int]]:
+        if self.n <= 0:
+            return None
+        self.n -= 1
+        return Some([self.n])
+
+def first_even(start: int) -> int:
+    mut i = start
+    while true:
+        if i % 2 == 0:
+            return i
+        i += 1
+
+def main() -> None:
+    println(Number(value=4).pair())
+    mut count = Countdown(n=3)
+    items = count.drain()
+    println(len(items))
+    println(items[0][0] * 10 + items[2][0])
+    println(first_even(7))
+"#,
+    )
+}
+
 /// Measure the actual unchanged graph with expensive fallback forbidden and retain numeric parity evidence.
 #[test]
 #[ignore = "machine-local diagnostic of the 50 ms completed fixture graph reuse budget"]
