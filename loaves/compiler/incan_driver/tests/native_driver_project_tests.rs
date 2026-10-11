@@ -2810,6 +2810,95 @@ def main() -> None:
     )
 }
 
+/// Prove branches that leave different owners live byte-identical to legacy: a fieldless enum compared inside `and`,
+/// a model constructed in an `elif` condition, a `str` parameter moved into a dictionary on one branch and read on the
+/// other, a moved loop item, and a model or tuple kept by one `match` arm or `if` branch while the other leaves it.
+#[test]
+fn owned_branch_merge_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("owned-branch-merge")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"enum Signal:
+    Ready
+    Stop
+
+model Reading:
+    value: int
+
+    def is_positive(self) -> bool:
+        return self.value > 0
+
+model Outer:
+    inner: Reading
+    values: list[int]
+
+def score(left: Signal, right: Signal) -> int:
+    if left == Signal.Ready and right != Signal.Ready:
+        return 42
+    return 0
+
+def bump(mut counts: dict[str, int], key: str) -> None:
+    if key in counts:
+        counts[key] += 1
+    else:
+        counts[key] = 1
+
+def keep_or_drop(flag: bool, text: str) -> list[str]:
+    mut kept: list[str] = []
+    if flag:
+        kept.append(text)
+    return kept
+
+def first_long(words: list[str]) -> str:
+    for word in words:
+        if len(word) > 2:
+            return word
+    return "none"
+
+def choose(signal: Signal, reading: Reading) -> int:
+    mut kept: list[Reading] = []
+    match signal:
+        Signal.Ready => kept.append(reading)
+        Signal.Stop => pass
+    return len(kept)
+
+def pair_or_zero(flag: bool, pair: tuple[str, int]) -> int:
+    mut total = 0
+    if flag:
+        mut held: list[tuple[str, int]] = []
+        held.append(pair)
+        total = len(held) + 2
+    return total
+
+def main() -> None:
+    println(score(Signal.Ready, Signal.Stop))
+    println(score(Signal.Stop, Signal.Stop))
+    mut counts: dict[str, int] = {}
+    bump(counts, "a")
+    bump(counts, "a")
+    bump(counts, "b")
+    a = counts["a"]
+    b = counts["b"]
+    println(f"{a} {b}")
+    if false:
+        println("wrong")
+    elif Outer(inner=Reading(value=3), values=[3]).inner.is_positive():
+        println("elif")
+    println(len(keep_or_drop(true, "x")))
+    println(len(keep_or_drop(false, "y")))
+    println(first_long(["a", "abc"]))
+    println(first_long(["a"]))
+    println(choose(Signal.Ready, Reading(value=1)))
+    println(choose(Signal.Stop, Reading(value=2)))
+    println(pair_or_zero(true, ("a", 1)))
+    println(pair_or_zero(false, ("b", 2)))
+"#,
+    )
+}
+
 /// Prove closure captures beyond `int`, `float` and `bool` byte-identical to legacy: an `f32` and an `i32` capture
 /// keep their carrier, and a captured `str` stays owned by the closure across repeated calls while the captured
 /// local is still read after the closure is built.
