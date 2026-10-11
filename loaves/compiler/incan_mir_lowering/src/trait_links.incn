@@ -1,0 +1,95 @@
+"""Project-level validation of trait implementation records whose trait another module declares."""
+
+from rust::incan_semantics_core import CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace
+from rust::incan_semantics_core::body_ir import BodyIrModule, TraitImplementation
+
+
+pub def is_well_formed_project_implementation(
+    module: &BodyIrModule,
+    implementation: &TraitImplementation,
+    modules: &list[BodyIrModule],
+) -> bool:
+    """
+    Validate one trait implementation record of `module` against every module of the project.
+
+    A record whose trait and filling body belong to this module is the module's own to validate. A record of an
+    imported trait without type parameters names a slot another module declares: it holds only when this module retains
+    the adopter's layout, the declaring module retains the trait around the slot, the adopter's own method or the slot's
+    own default fills it, and some module retains that body under its direct-call identity. Matching spellings never
+    establish any of these.
+    """
+    if module.is_well_formed_trait_implementation(implementation):
+        return true
+    if len(implementation.type_arguments) != 0 or not fills_its_slot(implementation):
+        return false
+    if not retains_owner(module, implementation.owner):
+        return false
+    if not declares_slot(modules, implementation.method):
+        return false
+    return retains_body(modules, implementation.implementation)
+
+
+def fills_its_slot(implementation: &TraitImplementation) -> bool:
+    """Require a member slot and a method of the same spelling: the adopter's own, or the slot's default itself."""
+    slot = implementation.method
+    filled = implementation.implementation
+    if slot.namespace != SymbolNamespace.Member or slot.kind != SemanticSourceTargetKind.Method:
+        return false
+    if filled.kind != SemanticSourceTargetKind.Method or filled.declaration_name != slot.declaration_name:
+        return false
+    if filled == slot:
+        return true
+    # The adopter's own method shares its module, and spans of different files may nest, so the origin is compared too.
+    return filled.origin == implementation.owner.origin and contains(implementation.owner, filled)
+
+
+def retains_owner(module: &BodyIrModule, owner: &CanonicalSymbolId) -> bool:
+    """Whether this module retains the adopter's well-formed layout."""
+    for declaration in module.nominal_declarations:
+        if declaration.canonical == owner.clone() and module.is_well_formed_nominal_declaration(declaration):
+            return true
+    return false
+
+
+def declares_slot(modules: &list[BodyIrModule], slot: &CanonicalSymbolId) -> bool:
+    """Whether the module that declares the slot's trait retains that trait around the slot."""
+    for module in modules:
+        if module_declares_slot(module, slot):
+            return true
+    return false
+
+
+def module_declares_slot(module: &BodyIrModule, slot: &CanonicalSymbolId) -> bool:
+    """Whether one module declares, as its own trait, the trait whose span encloses the slot."""
+    for declaration in module.trait_declarations:
+        if declaration.origin != slot.origin or not contains(declaration, slot):
+            continue
+        match module.declaration_id_for_canonical(
+            declaration,
+            SymbolNamespace.OrdinaryLexical,
+            SemanticSourceTargetKind.Trait,
+        ):
+            Some(_id) => return true
+            None => pass
+    return false
+
+
+def retains_body(modules: &list[BodyIrModule], identity: &CanonicalSymbolId) -> bool:
+    """Whether some module retains the filling body under its canonical direct-call identity."""
+    for module in modules:
+        if module_retains_body(module, identity):
+            return true
+    return false
+
+
+def module_retains_body(module: &BodyIrModule, identity: &CanonicalSymbolId) -> bool:
+    """Whether one module retains the body of `identity` with its span-derived direct-call identity."""
+    for body in module.bodies:
+        if body.canonical == Some(identity.clone()) and module.body_has_canonical_direct_call_id(body):
+            return true
+    return false
+
+
+def contains(owner: &CanonicalSymbolId, member: &CanonicalSymbolId) -> bool:
+    """Whether the owner's declaration span encloses the member's."""
+    return owner.declaration_span.start <= member.declaration_span.start and member.declaration_span.end <= owner.declaration_span.end

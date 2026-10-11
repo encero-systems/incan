@@ -750,13 +750,14 @@ fn slot_implementation(
     }
 }
 
-/// Retain local trait slots and their checked concrete implementation identities for each admitted adopter.
+/// Retain trait slots and their checked concrete implementation identities for each admitted adopter.
 ///
 /// Successful typechecking already proves adoption and method compatibility. This registry covers the adopter's local
 /// traits at their checked instantiations and every local supertrait those reach; each slot keeps the body that fills
-/// it and the type arguments that body's trait was adopted at. Imported traits, unrecorded instantiations, and
-/// overloaded implementations never gain a guessed target. A refused checked newtype constructor cannot contribute an
-/// implementation without its owner layout.
+/// it and the type arguments that body's trait was adopted at. Imported traits without type parameters keep their own
+/// slots under the checked provider identities (see [`imported_trait_implementations`]). Unrecorded
+/// instantiations and overloaded implementations never gain a guessed target. A refused checked newtype constructor
+/// cannot contribute an implementation without its owner layout.
 pub(super) fn collect_local_trait_implementations(
     program: &ast::Program,
     type_info: &TypeCheckInfo,
@@ -789,6 +790,9 @@ pub(super) fn collect_local_trait_implementations(
         {
             continue;
         }
+        implementations.extend(imported_trait_implementations(
+            program, type_info, adoptions, methods, owner,
+        ));
         let adopted = adopted_local_traits(program, type_info, adoptions);
         for slot_trait in &adopted {
             for slot in &slot_trait.declaration.methods {
@@ -820,4 +824,83 @@ pub(super) fn collect_local_trait_implementations(
         }
     }
     implementations
+}
+
+/// Retain the slots of one adopter's imported traits that have no type parameters, under checked provider identities.
+///
+/// Each slot keeps the body that fills it: the adopter's own method, or the imported trait's default, whose body lives
+/// in the module that declares the trait. Slots of standard-library traits and of the compiled SDK's traits are
+/// protocol contracts without project source bodies and get no record, nor do imported supertraits or imported traits
+/// with type parameters, so a call that needs one of those keeps refusing. The records are sorted by slot identity,
+/// so the module's Body IR does not depend on hash order.
+fn imported_trait_implementations(
+    program: &ast::Program,
+    type_info: &TypeCheckInfo,
+    adoptions: &[ast::Spanned<ast::TraitBound>],
+    methods: &[ast::Spanned<ast::MethodDecl>],
+    owner: &CanonicalSymbolId,
+) -> Vec<bir::TraitImplementation> {
+    let mut implementations: Vec<bir::TraitImplementation> = Vec::new();
+    for adoption in adoptions {
+        let name = &adoption.node.name;
+        if local_trait(program, name).is_some()
+            || !adoption.node.type_args.is_empty()
+            || !type_info.traits.type_params.get(name).is_some_and(Vec::is_empty)
+        {
+            continue;
+        }
+        for ((trait_name, slot_name), method) in &type_info.traits.method_identities {
+            if trait_name != name
+                || !is_executable_source_trait_slot(method)
+                || type_info.traits.sdk_method_identities.contains(method)
+                || implementations.iter().any(|existing| &existing.method == method)
+            {
+                continue;
+            }
+            if let Some(implementation) = imported_slot_implementation(type_info, method, slot_name, methods) {
+                implementations.push(bir::TraitImplementation {
+                    owner: owner.clone(),
+                    method: method.clone(),
+                    implementation,
+                    type_arguments: Vec::new(),
+                });
+            }
+        }
+    }
+    implementations.sort_by(|left, right| left.method.cmp(&right.method));
+    implementations
+}
+
+/// Select the body that fills one imported slot: the adopter's only method of that name, else the slot's default.
+fn imported_slot_implementation(
+    type_info: &TypeCheckInfo,
+    method: &CanonicalSymbolId,
+    slot_name: &str,
+    methods: &[ast::Spanned<ast::MethodDecl>],
+) -> Option<CanonicalSymbolId> {
+    let candidates = methods
+        .iter()
+        .filter(|candidate| candidate.node.name == slot_name)
+        .collect::<Vec<_>>();
+    match candidates.as_slice() {
+        [candidate] => type_info
+            .declarations
+            .method_bindings_by_span
+            .get(&(candidate.span.start, candidate.span.end))
+            .and_then(|binding| binding.identity.clone()),
+        [] if type_info.traits.default_method_identities.contains(method) => Some(method.clone()),
+        _ => None,
+    }
+}
+
+/// Whether a trait slot can be filled by a body of the project or of a package dependency.
+///
+/// The standard library's and Rust's protocols describe derive and runtime contracts, not bodies the project's modules
+/// supply. Ordinary project and package identities remain eligible; an import alias never changes this boundary.
+fn is_executable_source_trait_slot(identity: &CanonicalSymbolId) -> bool {
+    match &identity.origin {
+        incan_semantics_core::SymbolOrigin::Module(path) => !incan_lang::lang::stdlib::is_any_stdlib_path(path),
+        incan_semantics_core::SymbolOrigin::Package { .. } => true,
+        incan_semantics_core::SymbolOrigin::Builtin | incan_semantics_core::SymbolOrigin::RustCrate(_) => false,
+    }
 }

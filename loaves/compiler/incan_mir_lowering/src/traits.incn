@@ -18,6 +18,33 @@ from models import model_type, model_place, place_type
 
 pub def specialize_traits(module: &BodyIrModule) -> Result[BodyIrModule, str]:
     """Instantiate open default receivers only for frontend-retained concrete implementations."""
+    mut implementations: list[TraitImplementation] = []
+    append_records(implementations, module)
+    return specialize_for(module, implementations)
+
+
+pub def specialize_project_traits(module: &BodyIrModule, modules: &list[BodyIrModule]) -> Result[BodyIrModule, str]:
+    """
+    Instantiate this module's open defaults for every adopter of the project the frontend retained.
+
+    An imported trait's default lives in the module that declares the trait, while its adopter's implementation records
+    live in the adopter's module, so the records of every module are consulted. Each instance keeps the default's
+    canonical identity, and with it the declaring module's source provenance.
+    """
+    mut implementations: list[TraitImplementation] = []
+    for adopter in modules:
+        append_records(implementations, adopter)
+    return specialize_for(module, implementations)
+
+
+def append_records(mut records: list[TraitImplementation], module: &BodyIrModule) -> None:
+    """Copy one module's implementation records through the explicit interop clone the opaque Rust type needs."""
+    for implementation in module.trait_implementations:
+        records.append(implementation.clone())
+
+
+def specialize_for(module: &BodyIrModule, implementations: list[TraitImplementation]) -> Result[BodyIrModule, str]:
+    """Replace each open default of the module by one instance per adopter whose implementation it is."""
     mut result = module.clone()
     result.bodies.clear()
     for body in module.bodies:
@@ -27,7 +54,7 @@ pub def specialize_traits(module: &BodyIrModule) -> Result[BodyIrModule, str]:
         # One default can fill several slots of one adopter (its own and the supertrait slots it refines); the
         # adopter still receives a single instantiation of it.
         mut instantiated: list[TraitImplementation] = []
-        for implementation in module.trait_implementations:
+        for implementation in implementations:
             if body.canonical != Some(implementation.implementation):
                 continue
             if not first_instantiation(instantiated, implementation)?:

@@ -3679,6 +3679,7 @@ impl TypeChecker {
         self.type_info.traits.direct_supertraits.clear();
         self.type_info.traits.type_params.clear();
         self.type_info.traits.method_identities.clear();
+        self.type_info.traits.default_method_identities.clear();
         self.type_info.declarations.type_method_rebindings.clear();
         self.type_info.declarations.newtype_construction.clear();
         self.type_info.derivations.derivable_modules = self.dependency_derivable_modules.clone();
@@ -3698,12 +3699,7 @@ impl TypeChecker {
                         .type_params
                         .insert(sym.name.clone(), info.type_params.clone());
                     for (method_name, method) in &info.methods {
-                        if let Some(identity) = &method.identity {
-                            self.type_info
-                                .traits
-                                .method_identities
-                                .insert((sym.name.clone(), method_name.clone()), identity.clone());
-                        }
+                        self.type_info.traits.record_method(&sym.name, method_name, method);
                     }
                     method_rebindings.push((sym.name.clone(), info.method_aliases.clone()));
                 }
@@ -3742,39 +3738,27 @@ impl TypeChecker {
                     continue;
                 };
                 let local_name = item.alias.as_ref().unwrap_or(&item.name);
-                for (method_name, method) in info.methods {
-                    if let Some(identity) = method.identity {
-                        self.type_info
-                            .traits
-                            .method_identities
-                            .insert((local_name.clone(), method_name), identity);
-                    }
+                for (method_name, method) in &info.methods {
+                    self.type_info.traits.record_method(local_name, method_name, method);
                 }
             }
         }
         for (qualified_trait_name, info) in &self.dependency_module_traits {
             for (method_name, method) in &info.methods {
-                if let Some(identity) = &method.identity {
-                    self.type_info
-                        .traits
-                        .method_identities
-                        .insert((qualified_trait_name.clone(), method_name.clone()), identity.clone());
-                }
+                self.type_info
+                    .traits
+                    .record_method(qualified_trait_name, method_name, method);
             }
         }
         for adoption in adopted_traits {
             let Some(info) = self.lookup_trait_adoption_info(&adoption).cloned() else {
                 continue;
             };
-            for (method_name, method) in info.methods {
-                if let Some(identity) = method.identity {
-                    self.type_info
-                        .traits
-                        .method_identities
-                        .insert((adoption.name.clone(), method_name), identity);
-                }
+            for (method_name, method) in &info.methods {
+                self.type_info.traits.record_method(&adoption.name, method_name, method);
             }
         }
+        self.record_sdk_trait_methods();
         for (type_name, aliases) in method_rebindings {
             if !aliases.is_empty() {
                 self.type_info
@@ -3819,6 +3803,27 @@ impl TypeChecker {
                 },
             );
         }
+    }
+
+    /// Record which visible trait slots the active compiled SDK providers declare, after every slot is recorded.
+    ///
+    /// Aliases and facade imports keep a slot's provider identity, so the identity's origin decides; a slot of an
+    /// ordinary package dependency stays eligible for project trait implementations.
+    fn record_sdk_trait_methods(&mut self) {
+        let provider_plan = &self.provider_plan;
+        self.type_info.traits.sdk_method_identities = self
+            .type_info
+            .traits
+            .method_identities
+            .values()
+            .filter(|identity| match &identity.origin {
+                SymbolOrigin::Package { library, .. } => provider_plan
+                    .active_sdk_records()
+                    .any(|provider| &provider.identity.name == library),
+                _ => false,
+            })
+            .cloned()
+            .collect();
     }
 
     /// Snapshot checked class layouts for backend lowering.

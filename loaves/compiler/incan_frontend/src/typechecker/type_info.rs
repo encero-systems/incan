@@ -10,8 +10,8 @@ use sha2::{Digest, Sha256};
 use crate::ast::{Expr, ParamKind, Span, Spanned, Visibility};
 use crate::library_exports::{CheckedParamDefault, CheckedPresetValue};
 use crate::symbols::{
-    CallableParam, FunctionOverloadInfo, ImplementationTypeParamInfo, NewtypePrimitiveConstraint, ResolvedType,
-    TypeBoundInfo,
+    CallableParam, FunctionOverloadInfo, ImplementationTypeParamInfo, MethodInfo, NewtypePrimitiveConstraint,
+    ResolvedType, TypeBoundInfo,
 };
 use crate::testing_markers::TestingFixtureScope;
 use incan_lang::interop::{CoercionPolicy, RustFunctionSig};
@@ -666,6 +666,14 @@ pub struct TraitArtifacts {
     /// so lowering cannot look them up in the current module's span-keyed declaration table. This checked map carries
     /// the already-resolved identity across that boundary without reconstructing it from either spelling.
     pub method_identities: HashMap<(String, String), CanonicalSymbolId>,
+    /// Visible trait slots, local or imported, whose checked declaration supplies a default body.
+    ///
+    /// A consumer still requires that body's executable representation; this fact never supplies a missing body.
+    pub default_method_identities: HashSet<CanonicalSymbolId>,
+    /// Visible trait slots declared by the active compiled SDK providers, including through aliases and facades.
+    ///
+    /// Their protocol contracts do not imply executable source bodies among the project's modules.
+    pub sdk_method_identities: HashSet<CanonicalSymbolId>,
     /// Checked trait slots selected by calls on an open `Self` receiver, keyed by the whole call span.
     ///
     /// Body IR retains these declaration identities for concrete specialization. They remain separate from ordinary
@@ -676,6 +684,20 @@ pub struct TraitArtifacts {
     /// Body IR instantiates an adopted trait's default methods for a concrete adopter from these arguments, so no
     /// later stage re-resolves the written clause.
     pub adoption_type_args: HashMap<(usize, usize), Vec<ResolvedType>>,
+}
+
+impl TraitArtifacts {
+    /// Retain one visible slot's identity under its trait key, and whether its checked declaration has a default body.
+    pub(crate) fn record_method(&mut self, trait_name: &str, method_name: &str, method: &MethodInfo) {
+        let Some(identity) = &method.identity else {
+            return;
+        };
+        self.method_identities
+            .insert((trait_name.to_owned(), method_name.to_owned()), identity.clone());
+        if method.has_body {
+            self.default_method_identities.insert(identity.clone());
+        }
+    }
 }
 
 /// Derive expansion metadata imported from dependency modules and manifests.

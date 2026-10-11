@@ -1,0 +1,97 @@
+"""Explicit calls of a standard-library derive's method on a source nominal, through the derive's own implementation."""
+
+from rust::incan_semantics_core import SymbolOrigin, SemanticSourceTargetKind
+from rust::incan_semantics_core::body_ir import (
+    MethodTarget,
+    ArgumentElement as RustArgumentElement,
+    Operand as RustOperand,
+    Place as RustPlace,
+)
+from pub::incan_mir_plan import CalleeKind, Place, PlanType, RvalueKind, SourceSpan
+from pub::incan_mir_plan import assign as plan_assign
+from frame import Builder, place_type, read_place, temporary
+from lowering import scalar_place, lower_callable_result
+
+
+pub def is_derived_clone(target: &MethodTarget) -> bool:
+    """Recognize `clone` of the standard library's Clone in source and compiled SDK identities, never a same-name method."""
+    return is_std_derive_method(target, "copying", "clone")
+
+
+def is_std_derive_method(target: &MethodTarget, module: str, name: str) -> bool:
+    """Whether the checker selected `name` of a trait declared by the standard library's `std.derives.<module>`."""
+    match target.canonical:
+        Some(identity) =>
+            if identity.kind != SemanticSourceTargetKind.Method or identity.declaration_name != name:
+                return false
+            match identity.origin:
+                SymbolOrigin.Module(path) =>
+                    return len(path) == 3 and path[0] == "std" and path[1] == "derives" and path[2] == module
+                SymbolOrigin.Package(library=library, module_path=path) =>
+                    return library == "incan_stdlib_core" and len(path) == 2 and path[0] == "derives" and path[1] == module
+                _ => return false
+        None => return false
+
+
+pub def lower_derived_clone(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Copy the receiver through its real derived Clone implementation, as legacy's `.clone()` call does.
+
+    Models and classes always derive Clone; an enum's checked derives must name it. Any other receiver keeps refusing.
+    """
+    if len(arguments) != 1:
+        return Err("invalid Body IR Clone arguments")
+    match arguments[0].as_one():
+        Some(value) =>
+            match value:
+                RustOperand.Place(read) =>
+                    source = scalar_place(builder, read.place, span)?
+                    return clone_place(builder, source, destination, span)
+                _ => return Err("unsupported Body IR Clone of a nonplace receiver")
+        None => return Err("unsupported Body IR Clone spread receiver")
+
+
+def clone_place(
+    mut builder: Builder,
+    source: Place,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Select the nominal's own Clone implementation from its native carrier."""
+    ty = place_type(builder.locals, source)
+    match ty:
+        PlanType.Model(index, name) =>
+            reference = PlanType.ModelRef(index, name)
+            return clone_into(builder, source, reference, CalleeKind.CloneModel(index, name), ty, destination, span)
+        PlanType.Enum(index, name) =>
+            if index < 0 or index >= len(builder.enums) or "Clone" not in builder.enums[index].derives:
+                return Err("unsupported Body IR enum Clone without a derived Clone")
+            reference = PlanType.EnumRef(index, name)
+            return clone_into(builder, source, reference, CalleeKind.CloneEnum(index, name), ty, destination, span)
+        _ => return Err("unsupported Body IR Clone outside models and enums")
+
+
+def clone_into(
+    mut builder: Builder,
+    source: Place,
+    reference_type: PlanType,
+    callee: CalleeKind,
+    ty: PlanType,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Borrow the receiver and write the owned copy to the call's destination, replacing what it held."""
+    reference = temporary(builder, reference_type, span)
+    builder.emit(plan_assign(reference, RvalueKind.Borrow(source), span))
+    mut output = source
+    match destination:
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+        None =>
+            output = temporary(builder, ty, span)
+    return lower_callable_result(builder, callee, [read_place(reference, false, span)], output, ty, span)
