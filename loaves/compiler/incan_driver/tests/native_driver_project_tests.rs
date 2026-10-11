@@ -2609,6 +2609,41 @@ def main() -> None:
     )
 }
 
+/// Prove closure captures beyond `int`, `float` and `bool` byte-identical to legacy: an `f32` and an `i32` capture
+/// keep their carrier, and a captured `str` stays owned by the closure across repeated calls while the captured
+/// local is still read after the closure is built.
+#[test]
+fn closure_capture_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("closure-capture")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def tagged(prefix: str) -> str:
+    render: () -> str = () => prefix + "-item"
+    first = render()
+    second = render()
+    return first + " " + second + " " + prefix
+
+def main() -> None:
+    value: f32 = 1.23456789
+    show: () -> str = () => str(value)
+    println(show())
+    step: i32 = 100000
+    scale: (i32) -> i32 = (factor) => step * factor
+    println(scale(3))
+    println(scale(-2))
+    println(tagged("a"))
+    name = "carol"
+    greet: (int) -> str = (times) => f"{name} {times}"
+    println(greet(1))
+    println(greet(2))
+    println(name)
+"#,
+    )
+}
+
 /// Measure the actual unchanged graph with expensive fallback forbidden and retain numeric parity evidence.
 #[test]
 #[ignore = "machine-local diagnostic of the 50 ms completed fixture graph reuse budget"]
