@@ -207,9 +207,10 @@ fn validate_declarations(
                 continue;
             }
             Declaration::Class(class) => {
-                if !incan_frontend::body_ir::is_direct_replacement_class(class) {
+                if !incan_frontend::body_ir::is_direct_replacement_checked_class(class, type_info) {
                     return Err(format!(
-                        "unsupported source Class inheritance, type parameters, decorators, aliases, properties or defaults on {} on the native route",
+                        "unsupported source Class {} on {} on the native route",
+                        class_refusal_feature(class),
                         class.name
                     ));
                 }
@@ -268,32 +269,79 @@ fn model_refusal_feature(model: &incan_frontend::ast::ModelDecl) -> String {
     }
 
     // ---- Method facts ----
-    if model.methods.iter().any(|method| !method.node.decorators.is_empty()) {
+    if has_refused_method_decorator(&model.methods) {
         return "decorated methods".to_owned();
     }
 
     // ---- Decorator expansion ----
-    if let Some(decorator) = model
-        .decorators
-        .iter()
-        .find(|decorator| !incan_frontend::body_ir::is_direct_replacement_model_derive(&decorator.node))
-    {
-        let arguments = decorator
-            .node
-            .args
-            .iter()
-            .filter_map(|argument| match argument {
-                incan_frontend::ast::DecoratorArg::Positional(value) => match &value.node {
-                    incan_frontend::ast::Expr::Ident(name) => Some(name.as_str()),
-                    _ => None,
-                },
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        return format!("decorator @{}({arguments})", decorator.node.name);
+    refused_decorator_feature(&model.decorators).unwrap_or_else(|| "unsupported declaration shape".to_owned())
+}
+
+/// Name the first unsupported class feature without relaxing the frontend's declaration admission predicate.
+fn class_refusal_feature(class: &incan_frontend::ast::ClassDecl) -> String {
+    // ---- Structural declaration features ----
+    if class.extends.is_some() {
+        return "inheritance".to_owned();
     }
-    "unsupported declaration shape".to_owned()
+    if !class.type_params.is_empty() && class.traits.iter().any(|adoption| !adoption.node.type_args.is_empty()) {
+        return "type parameters with generic trait adoption".to_owned();
+    }
+
+    // ---- Member binding features ----
+    if !class.method_aliases.is_empty() {
+        return "method aliases".to_owned();
+    }
+    if !class.method_partials.is_empty() {
+        return "method partials".to_owned();
+    }
+    if !class.properties.is_empty() {
+        return "properties".to_owned();
+    }
+    if !class.declarative_members.is_empty() {
+        return "declarative members".to_owned();
+    }
+
+    // ---- Method facts ----
+    if has_refused_method_decorator(&class.methods) {
+        return "decorated methods".to_owned();
+    }
+
+    // ---- Decorator expansion ----
+    refused_decorator_feature(&class.decorators).unwrap_or_else(|| "unsupported declaration shape".to_owned())
+}
+
+/// Report whether any method carries a decorator other than the builtin markers the direct route admits.
+fn has_refused_method_decorator(methods: &[incan_frontend::ast::Spanned<incan_frontend::ast::MethodDecl>]) -> bool {
+    methods.iter().any(|method| {
+        method
+            .node
+            .decorators
+            .iter()
+            .any(|decorator| !incan_frontend::body_ir::is_direct_replacement_method_decorator(&decorator.node))
+    })
+}
+
+/// Name the first declaration decorator outside the bare builtin derive spelling, with its identifier arguments.
+fn refused_decorator_feature(
+    decorators: &[incan_frontend::ast::Spanned<incan_frontend::ast::Decorator>],
+) -> Option<String> {
+    let decorator = decorators
+        .iter()
+        .find(|decorator| !incan_frontend::body_ir::is_direct_replacement_model_derive(&decorator.node))?;
+    let arguments = decorator
+        .node
+        .args
+        .iter()
+        .filter_map(|argument| match argument {
+            incan_frontend::ast::DecoratorArg::Positional(value) => match &value.node {
+                incan_frontend::ast::Expr::Ident(name) => Some(name.as_str()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!("decorator @{}({arguments})", decorator.node.name))
 }
 
 /// Name the first trait feature the direct route cannot retain.

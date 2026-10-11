@@ -23,18 +23,14 @@ fn collection_method_changes_receiver(identity: &CanonicalSymbolId) -> bool {
     }
 }
 
-/// The type a `Type.member(..)` call is made on, when its receiver names a type rather than a value.
+/// The type a `Type.member(..)` call is made on, when its receiver identifier names a type rather than a value.
 ///
 /// A nominal type in the ordinary namespace (model, class, newtype, rusttype, enum, alias or trait) is that type; a
 /// generic parameter (`T.default()` under a `Default` bound) is the type variable, so a trait's associated function
 /// called on it keeps the type that selects the implementation. Anything else is a value, and `None`.
-fn static_receiver_type(recv: &ast::Spanned<ast::Expr>, identity: Option<&CanonicalSymbolId>) -> Option<IncanType> {
-    let ast::Expr::Ident(name) = &recv.node else {
-        return None;
-    };
-    let identity = identity?;
+fn named_static_receiver_type(name: &str, identity: &CanonicalSymbolId) -> Option<IncanType> {
     if identity.kind == SemanticSourceTargetKind::GenericBinder {
-        return Some(IncanType::TypeVar(name.clone()));
+        return Some(IncanType::TypeVar(name.to_owned()));
     }
     (identity.namespace == incan_semantics_core::SymbolNamespace::OrdinaryLexical
         && matches!(
@@ -47,10 +43,32 @@ fn static_receiver_type(recv: &ast::Spanned<ast::Expr>, identity: Option<&Canoni
                 | SemanticSourceTargetKind::TypeAlias
                 | SemanticSourceTargetKind::Trait
         ))
-    .then(|| IncanType::Named(name.clone()))
+    .then(|| IncanType::Named(name.to_owned()))
 }
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
+    /// The type a `Type.member(..)` call is made on, when its receiver is a type rather than a value.
+    ///
+    /// A bare identifier follows [`named_static_receiver_type`]. An explicitly instantiated nominal (`Box[int]`) is
+    /// the checker's applied type for the whole receiver, so an associated call closes the owner's type parameters at
+    /// exactly those arguments; an application the checker did not type as that nominal is a value receiver.
+    fn static_receiver_type(&self, recv: &ast::Spanned<ast::Expr>) -> Option<IncanType> {
+        match &recv.node {
+            ast::Expr::Ident(name) => named_static_receiver_type(name, self.type_info.resolved_identity(recv.span)?),
+            ast::Expr::Index(owner, _) => {
+                let ast::Expr::Ident(name) = &owner.node else {
+                    return None;
+                };
+                named_static_receiver_type(name, self.type_info.resolved_identity(owner.span)?)?;
+                match self.resolve_ty(recv.span) {
+                    IncanType::Generic { base, args } if base == *name => Some(IncanType::Generic { base, args }),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// Rewrite an argument bound to a `mut` parameter (#2022). A `mut` parameter of non-`Copy` type writes through to
     /// the caller, as the emitted route's `&mut T` does, so the argument is borrowed mutably instead of copied or
     /// moved: the caller keeps owning it (an operand that had selected a move is un-moved, so the caller still
@@ -365,6 +383,24 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         Ok(resolved.iter().map(|ty| self.checked_type(ty)).collect())
     }
 
+    /// Select the declaration identity a checked construction builds.
+    ///
+    /// An ordinary callee resolves to that declaration. A classmethod's `cls(...)` resolves its callee to the `cls`
+    /// receiver binding instead, while checking types the construction as the owner; the owner's declaration then
+    /// comes from the checker's module-scope nominal bindings for that type, never from the callee's spelling.
+    fn constructed_declaration_identity(&self, callee_span: ast::Span, span: ast::Span) -> Option<CanonicalSymbolId> {
+        let identity = self.type_info.resolved_identity(callee_span)?;
+        if identity.kind != SemanticSourceTargetKind::Receiver || identity.declaration_name != "cls" {
+            return Some(identity.clone());
+        }
+        let owner = match self.resolve_ty(span) {
+            IncanType::Named(name) => name,
+            IncanType::Generic { base, .. } => base,
+            _ => return None,
+        };
+        self.type_info.declarations.named_type_identities.get(&owner).cloned()
+    }
+
     /// Lower a `model`/`class` or plain-newtype construction into a [`bir::AggregateKind::Constructor`] aggregate.
     ///
     /// Models/classes bind named fields; a newtype binds its single positional argument to tuple slot zero. Lowering
@@ -465,7 +501,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // models admitted to this lowering context. Preserve the selected declaration's identity and layout together;
         // imported aliases use their original canonical identity, while absent or unsupported context retains
         // neither fact and is refused without guessing from `name`.
-        let canonical = self.type_info.resolved_identity(callee_span).cloned();
+        let canonical = self.constructed_declaration_identity(callee_span, span);
         let (direct_declaration_id, canonical_field_layout) = self
             .local_nominal_declarations
             .values()
@@ -1232,11 +1268,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if let Some(lowered) = self.lower_module_qualified_call(recv, name, type_args, args, span, scope, out) {
             return lowered;
         }
-        if self
-            .type_info
-            .resolved_identity(recv.span)
-            .is_some_and(|identity| static_receiver_type(recv, Some(identity)).is_some())
-        {
+        if self.static_receiver_type(recv).is_some() {
             return self.lower_static_method_call(recv, name, type_args, args, span, scope, out);
         }
         let helper = match self.checked_string_helper_for_method_call(recv, name, span) {
@@ -1411,7 +1443,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let ty = self.resolve_ty(span);
         self.push_call_temp(
             bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
-                receiver_type: static_receiver_type(recv, self.type_info.resolved_identity(recv.span)),
+                receiver_type: self.static_receiver_type(recv),
                 name: spelling,
                 direct_call_id,
                 canonical: Some(canonical),

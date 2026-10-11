@@ -234,7 +234,10 @@ pub(super) fn lower_function_body(
 /// The `self`/`mut self` receiver, when present, is declared as the body's first local (before ordinary
 /// parameters) via [`BodyBuilder::declare_receiver_local`], typed with the typechecker-equivalent `receiver_ty`.
 /// A method with `receiver: None` (a static/associated method) lowers with no receiver local at all, identically
-/// in shape to a free function's body; its ordinary parameters still resolve through the same binding lookup.
+/// in shape to a free function's body; its ordinary parameters still resolve through the same binding lookup. With
+/// no receiver frame to close a generic owner, such a body lists the owner's type parameters ahead of its own, and a
+/// call supplies the owner's arguments from its checked receiver type. A `Self` return names the owner, as a `Self`
+/// parameter does.
 pub(super) fn lower_method_body(
     method: &ast::MethodDecl,
     decl_span: ast::Span,
@@ -265,6 +268,12 @@ pub(super) fn lower_method_body(
         .map(|ty| parameter_types::retain_parameter_type(ty, &type_parameters))
         .unwrap_or(IncanType::Unknown);
 
+    // Resolve a nominal Self return exactly as a Self parameter; trait defaults keep their open Self receiver.
+    let owner_return_type = if owner_return_type == IncanType::SelfType {
+        receiver_ty.clone()
+    } else {
+        owner_return_type
+    };
     let mut builder = BodyBuilder::new(lowering_facts, owner_return_type.clone());
     builder.type_parameters = type_parameters;
     let root_scope = builder.new_scope(None, hir_span(decl_span));
@@ -356,11 +365,17 @@ pub(super) fn lower_method_body(
     }
 
     Some(bir::Body {
-        type_parameters: method
-            .type_params
-            .iter()
-            .map(|parameter| parameter.name.clone())
-            .collect(),
+        // Receiver frames close their owner through layout specialization. Associated methods have no receiver,
+        // so callable scheduling retains the ordered owner parameters alongside method parameters.
+        type_parameters: if method.receiver.is_none() {
+            builder.type_parameters.clone()
+        } else {
+            method
+                .type_params
+                .iter()
+                .map(|parameter| parameter.name.clone())
+                .collect()
+        },
         decl_id,
         direct_call_id,
         canonical: binding.and_then(|binding| binding.identity.clone()),

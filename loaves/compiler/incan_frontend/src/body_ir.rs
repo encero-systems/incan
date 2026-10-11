@@ -272,7 +272,7 @@ fn build_body_ir_module_v0_with_provider_operations(
         provider_operations,
         rust_module: program.rust_module_path.as_ref().map(|path| path.node.as_str()),
     };
-    defaults::attach_model_field_defaults(program, &mut nominal_declarations, &lowering_facts);
+    defaults::attach_nominal_field_defaults(program, &mut nominal_declarations, &lowering_facts);
     let mut bodies = program
         .declarations
         .iter()
@@ -452,10 +452,21 @@ pub fn is_direct_replacement_checked_model(model: &ast::ModelDecl, type_info: &T
     if is_direct_replacement_plain_model(model) {
         return true;
     }
-    let Some(names) = type_info.declarations.model_derives.get(&model.name) else {
+    has_checked_native_derives(&model.decorators, type_info.declarations.model_derives.get(&model.name))
+        && model.fields.iter().all(|field| field.node.metadata.alias.is_none())
+        && has_direct_replacement_model_shape(model)
+}
+
+/// Admit a model or class whose decorators are all the bare builtin `derive` and whose checked native selection
+/// names only derives the direct runtime retains.
+///
+/// Checking has already resolved module-qualified JSON protocol derives to their canonical serde paths, so the
+/// selection, not the decorator spelling, decides admission. A declaration without a checked selection stays refused.
+fn has_checked_native_derives(decorators: &[ast::Spanned<ast::Decorator>], selection: Option<&Vec<String>>) -> bool {
+    let Some(names) = selection else {
         return false;
     };
-    model.decorators.iter().all(|decorator| {
+    decorators.iter().all(|decorator| {
         decorator.node.name == "derive"
             && decorator.node.path.segments == ["derive"]
             && decorator.node.type_args.is_empty()
@@ -476,13 +487,38 @@ pub fn is_direct_replacement_checked_model(model: &ast::ModelDecl, type_info: &T
                 | "serde::Serialize"
                 | "serde::Deserialize"
         )
-    }) && model.fields.iter().all(|field| field.node.metadata.alias.is_none())
-        && has_direct_replacement_model_shape(model)
+    })
+}
+
+/// Admit only the builtin `@staticmethod` and `@classmethod` method markers.
+///
+/// Checking already reflects both in the method's facts: a static method has no receiver, and a classmethod's `cls`
+/// is a checked type token whose constructions resolve to the owner. Every other method decorator rebinds or wraps
+/// the method and stays refused.
+pub fn is_direct_replacement_method_decorator(decorator: &ast::Decorator) -> bool {
+    decorator.args.is_empty()
+        && decorator.type_args.is_empty()
+        && matches!(
+            incan_lang::lang::decorators::from_segments(&decorator.path.segments),
+            Some(
+                incan_lang::lang::decorators::DecoratorId::StaticMethod
+                    | incan_lang::lang::decorators::DecoratorId::ClassMethod
+            )
+        )
+}
+
+/// Determine whether every decorator on one method is a builtin marker [`is_direct_replacement_method_decorator`]
+/// admits.
+fn has_direct_replacement_method_decorators(method: &ast::MethodDecl) -> bool {
+    method
+        .decorators
+        .iter()
+        .all(|decorator| is_direct_replacement_method_decorator(&decorator.node))
 }
 
 /// Keep the structural admission boundary shared by builtin and checked serde derive selections.
 /// Same-type method aliases keep the checked target identity and use its retained method body; they add no native
-/// layout or wrapper declaration.
+/// layout or wrapper declaration. Methods may carry only the builtin static and class method markers.
 fn has_direct_replacement_model_shape(model: &ast::ModelDecl) -> bool {
     let generic_model = !model.type_params.is_empty();
     let generic_adoption = model.traits.iter().any(|adoption| !adoption.node.type_args.is_empty());
@@ -496,7 +532,10 @@ fn has_direct_replacement_model_shape(model: &ast::ModelDecl) -> bool {
         <= 1
         && model.method_partials.is_empty()
         && model.properties.is_empty()
-        && model.methods.iter().all(|method| method.node.decorators.is_empty())
+        && model
+            .methods
+            .iter()
+            .all(|method| has_direct_replacement_method_decorators(&method.node))
 }
 
 /// Admit only the bare builtin derive decorator whose complete native trait selection Body IR retains.
@@ -540,20 +579,22 @@ pub fn is_direct_replacement_plain_newtype(newtype: &ast::NewtypeDecl) -> bool {
 /// Ordered owner parameters and method parameters are retained for checked instance scheduling, and trait
 /// adoptions, including ones with checked type arguments, are retained in the implementation registry. A class with
 /// both its own type parameters and a generic trait adoption stays refused until that combination has parity
-/// evidence. Inheritance, decorators, properties, aliases, and defaults remain refused.
-pub fn is_direct_replacement_class(class: &ast::ClassDecl) -> bool {
-    class.decorators.is_empty()
+/// evidence. Derives use the checked selection shared with models, field defaults the declaration-owned deferred
+/// computations models use, and builtin `@staticmethod` and `@classmethod` markers the checker's method facts.
+/// Inheritance, properties, aliases, partials and user-defined decorators remain refused.
+pub fn is_direct_replacement_checked_class(class: &ast::ClassDecl, type_info: &TypeCheckInfo) -> bool {
+    has_checked_native_derives(&class.decorators, type_info.declarations.class_derives.get(&class.name))
         && (class.type_params.is_empty() || class.traits.iter().all(|adoption| adoption.node.type_args.is_empty()))
         && class.extends.is_none()
         && class.method_aliases.is_empty()
         && class.method_partials.is_empty()
         && class.properties.is_empty()
         && class.declarative_members.is_empty()
+        && class.fields.iter().all(|field| field.node.metadata.alias.is_none())
         && class
-            .fields
+            .methods
             .iter()
-            .all(|field| field.node.metadata.alias.is_none() && field.node.default.is_none())
-        && class.methods.iter().all(|method| method.node.decorators.is_empty())
+            .all(|method| has_direct_replacement_method_decorators(&method.node))
 }
 
 /// Determine whether an enum carries the narrow source-local fieldless normal-enum declaration fact.

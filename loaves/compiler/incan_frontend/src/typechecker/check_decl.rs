@@ -3432,19 +3432,14 @@ impl TypeChecker {
         }
     }
 
-    /// Validate a model declaration after collection, including decorators, trait conformance, fields, and methods.
-    fn check_model(&mut self, model: &ModelDecl) {
-        self.symbols.enter_scope(ScopeKind::Model);
-        self.refuse_unbounded_model_members(model);
-
-        self.validate_decorators_rejecting_user_defined(&model.decorators, "model");
-        self.reject_registry_description_decorators(&model.decorators, "model");
-        // Validate @derive decorators
-        self.validate_derives(&model.decorators);
-        self.validate_rust_derives(&model.decorators, "model", false, &model.traits);
-        let derives = self.extract_derive_names(&model.decorators);
+    /// Select the native derives of a model or class from its explicit derive names, in legacy emission order.
+    ///
+    /// Stdlib JSON protocol selections map to their canonical serde paths, the derives an explicit selection implies
+    /// follow, and the automatic Debug, Clone, FieldInfo and IncanClass derives every model and class receives come
+    /// last. Derived Display stays a semantic selection that consumers must not emit as a Rust macro.
+    fn native_derive_selection(&self, derives: &[String]) -> Vec<String> {
         let mut native_derives = Vec::new();
-        for derive in &derives {
+        for derive in derives {
             let selected = if self
                 .module_path_for_imported_name(derive)
                 .is_some_and(|path| incan_lang::lang::stdlib::is_stdlib_json_trait_module_path(&path))
@@ -3475,6 +3470,21 @@ impl TypeChecker {
                 native_derives.push(derive.to_owned());
             }
         }
+        native_derives
+    }
+
+    /// Validate a model declaration after collection, including decorators, trait conformance, fields, and methods.
+    fn check_model(&mut self, model: &ModelDecl) {
+        self.symbols.enter_scope(ScopeKind::Model);
+        self.refuse_unbounded_model_members(model);
+
+        self.validate_decorators_rejecting_user_defined(&model.decorators, "model");
+        self.reject_registry_description_decorators(&model.decorators, "model");
+        // Validate @derive decorators
+        self.validate_derives(&model.decorators);
+        self.validate_rust_derives(&model.decorators, "model", false, &model.traits);
+        let derives = self.extract_derive_names(&model.decorators);
+        let native_derives = self.native_derive_selection(&derives);
         self.type_info
             .declarations
             .model_derives
@@ -3955,6 +3965,11 @@ impl TypeChecker {
         self.validate_descriptor_derive_attachment(&class.decorators, "class");
         self.validate_rust_derives(&class.decorators, "class", false, &class.traits);
         let derives = self.extract_derive_names(&class.decorators);
+        let native_derives = self.native_derive_selection(&derives);
+        self.type_info
+            .declarations
+            .class_derives
+            .insert(class.name.clone(), native_derives);
 
         // Check base class exists
         if let Some(base) = &class.extends

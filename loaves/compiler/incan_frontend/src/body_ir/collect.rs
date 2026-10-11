@@ -262,7 +262,7 @@ pub(super) fn collect_local_nominal_declarations(
                         .collect::<Vec<_>>(),
                     None,
                 ),
-                ast::Declaration::Class(class) if is_direct_replacement_class(class) => (
+                ast::Declaration::Class(class) if is_direct_replacement_checked_class(class, type_info) => (
                     &class.name,
                     &class.fields,
                     class.visibility,
@@ -324,9 +324,7 @@ pub(super) fn collect_local_nominal_declarations(
                 has_field_defaults: fields.iter().any(|field| field.node.default.is_some()),
                 field_default_body: None,
                 derives: if class_layout.is_some() {
-                    incan_lang::lang::derives::plain_model_derives()
-                        .map(str::to_owned)
-                        .to_vec()
+                    type_info.declarations.class_derives.get(name)?.clone()
                 } else {
                     type_info.declarations.model_derives.get(name)?.clone()
                 },
@@ -770,7 +768,9 @@ pub(super) fn collect_local_trait_implementations(
             ast::Declaration::Model(model) if is_direct_replacement_checked_model(model, type_info) => {
                 (&model.traits, &model.methods)
             }
-            ast::Declaration::Class(class) if is_direct_replacement_class(class) => (&class.traits, &class.methods),
+            ast::Declaration::Class(class) if is_direct_replacement_checked_class(class, type_info) => {
+                (&class.traits, &class.methods)
+            }
             ast::Declaration::Newtype(newtype) if is_direct_replacement_plain_newtype(newtype) => {
                 (&newtype.traits, &newtype.methods)
             }

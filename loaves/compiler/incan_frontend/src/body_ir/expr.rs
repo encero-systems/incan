@@ -69,6 +69,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let span = hir_span(expr.span);
+        // Checking can convert this value into a validated newtype where it is used. Body IR has no form for that
+        // conversion yet, so refuse here rather than hand a consumer the unconverted underlying value.
+        if self.type_info.validated_newtype_coercion(expr.span).is_some() {
+            return self.unsupported_operand("validated-newtype coercion".to_string(), scope, span, out);
+        }
         match &expr.node {
             ast::Expr::Ident(name) => {
                 let ty = self.resolve_ty(expr.span);
