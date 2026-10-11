@@ -3,39 +3,87 @@
 from rust::incan_semantics_core::body_ir import Place as RustPlace, PlaceElem
 from pub::incan_mir_plan import PlanType, SourceSpan, Operand, Constant, Place as OperandPlace
 from frame import Builder, place_type, temporary, read_place, literal
-from models import model_prefix
+from models import model_prefix, field_projection
+from tuples import is_tuple_type
 from lists import require_list_shape, list_element, is_owned_list
 from lowering import scalar_operand, read_list_element, list_borrow
 from builtins import list_call
 
 
 pub def model_list_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Option[Operand], str]:
-    """Read an index or slice after a retained nominal field prefix, cloning its result instead of moving the parent."""
+    """Read an index or slice after a retained nominal field or tuple element prefix, cloning its result instead of moving the parent."""
+    match structural_prefix(builder, source)?:
+        None => return Ok(None)
+        Some((count, _through_tuple)) =>
+            if count == len(source.projection):
+                return Ok(None)
+            if count == 0:
+                return Err("unsupported Body IR model indexing without a field")
+            return Ok(Some(prefixed_list_read(builder, source, count, span)?))
+
+
+pub def structural_prefix(builder: Builder, source: &RustPlace) -> Result[Option[tuple[int, bool]], str]:
+    """
+    Count the leading field, payload and tuple-element steps of a place rooted at a model, enum or tuple.
+
+    The walk tracks each step's type, so a constant index into a tuple stays part of the prefix like a field, while the
+    first index into a list ends it. The flag reports whether the prefix passed through a tuple. A place rooted at
+    anything else has no structural prefix.
+    """
+    mut ty = PlanType.Unit
+    mut through_tuple = false
     match source.local_id():
         None => return Ok(None)
         Some(local) =>
             root = builder.locals[int(local.index()) + 1 + builder.local_offset].ty
             match root:
-                PlanType.Model(_owner, _name) => pass
-                PlanType.Enum(_owner, _name) => pass
-                PlanType.ModelRef(_owner, _name) => pass
-                PlanType.ModelMutRef(_owner, _name) => pass
+                PlanType.Model(_owner, _name) =>
+                    ty = root
+                PlanType.Enum(_owner, _name) =>
+                    ty = root
+                PlanType.Tuple(_elements) =>
+                    ty = root
+                PlanType.ModelRef(owner, name) =>
+                    ty = PlanType.Model(owner, name)
+                PlanType.ModelMutRef(owner, name) =>
+                    ty = PlanType.Model(owner, name)
                 _ => return Ok(None)
     mut count = 0
     for projection in source.projection:
+        if is_tuple_type(ty):
+            through_tuple = true
         match projection:
-            PlaceElem.Field(name=_name, canonical=_canonical, structural=_structural) => count += 1
-            PlaceElem.OptionPayload(option_type=_container, payload_type=_payload) => count += 1
-            PlaceElem.UnionMember(ty=_member) => count += 1
+            PlaceElem.Field(name=_name, canonical=_canonical, structural=_structural) => pass
+            PlaceElem.OptionPayload(option_type=_container, payload_type=_payload) => pass
+            PlaceElem.UnionMember(ty=_member) => pass
+            PlaceElem.Index(_index) =>
+                if not is_tuple_type(ty):
+                    break
             _ => break
-    if count == len(source.projection):
-        return Ok(None)
-    if count == 0:
-        return Err("unsupported Body IR model indexing without a field")
+        ty = field_projection(builder.nominals, ty, projection, builder.enums, builder.unions, builder.intrinsics)?.ty
+        count += 1
+    return Ok(Some((count, through_tuple)))
+
+
+pub def prefix_place(builder: Builder, source: &RustPlace, count: int, span: SourceSpan) -> Result[OperandPlace, str]:
+    """Project the first `count` structural steps of a place without reading or copying anything."""
     mut place = model_prefix(
-        builder.nominals, builder.locals[builder.local_offset:], source, count, span, builder.enums, builder.unions, builder.intrinsics,
+        builder.nominals,
+        builder.locals[builder.local_offset:],
+        source,
+        count,
+        span,
+        builder.enums,
+        builder.unions,
+        builder.intrinsics,
     )?
     place.local += builder.local_offset
+    return Ok(place)
+
+
+def prefixed_list_read(mut builder: Builder, source: &RustPlace, count: int, span: SourceSpan) -> Result[Operand, str]:
+    """Read the list indexes and slices that follow a structural prefix, cloning an owned result."""
+    mut place = prefix_place(builder, source, count, span)?
     for position in range(count, len(source.projection)):
         match source.projection[position]:
             PlaceElem.Index(index) =>
@@ -45,7 +93,7 @@ pub def model_list_read(mut builder: Builder, source: &RustPlace, span: SourceSp
                 place = sliced_list(builder, place, source.projection[position], span)?
             _ => return Err("unsupported Body IR model field after collection projection")
     ty = place_type(builder.locals, place)
-    return Ok(Some(read_place(place, ty == PlanType.String or is_owned_list(ty) or model_element(ty), span)))
+    return Ok(read_place(place, ty == PlanType.String or is_owned_list(ty) or model_element(ty), span))
 
 
 def model_element(ty: PlanType) -> bool:

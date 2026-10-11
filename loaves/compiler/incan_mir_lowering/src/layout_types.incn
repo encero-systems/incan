@@ -2,8 +2,10 @@
 
 from rust::incan_semantics_core import IncanType as RustType, IncanCallableParamKind
 from rust::incan_semantics_core::body_ir import NominalDeclaration, EnumDeclaration as RustEnumDeclaration
-from pub::incan_mir_plan import PlanType, ListLeaf, EnumDeclaration
+from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
+from pub::incan_mir_plan import PlanType, ListLeaf, EnumDeclaration, TupleElement
 from models import model_type
+from tuples import tuple_element
 from enums import enum_type
 from collections import primitive_leaf
 from closures import signature_input
@@ -42,8 +44,30 @@ pub def native_source_type(
                 key = primitive_leaf(arguments[0], true)?
                 value = native_source_type(nominals, enums, unions, arguments[1], intrinsics)?
                 return Ok(PlanType.Dict(key, collection_leaf(value)?))
+            match collection_type(str(base)):
+                Some(CollectionTypeId.Tuple) => return layout_tuple_type(nominals, enums, unions, arguments, intrinsics)
+                _ => pass
+        RustType.Tuple(elements) => return layout_tuple_type(nominals, enums, unions, elements, intrinsics)
         _ => pass
     return model_type(nominals, ty)
+
+
+def layout_tuple_type(
+    nominals: list[NominalDeclaration],
+    enums: list[RustEnumDeclaration],
+    unions: list[RustType],
+    elements: &list[RustType],
+    intrinsics: list[EnumDeclaration],
+) -> Result[PlanType, str]:
+    """Resolve each tuple element in the retained layout context, so a list or carrier element keeps its identity."""
+    # Legacy emits a singleton literal as a parenthesized scalar; do not admit a different native layout.
+    if len(elements) == 1:
+        return Err("unsupported Body IR singleton Tuple: legacy scalar emission")
+    mut types: list[TupleElement] = []
+    for element in elements:
+        resolved = native_source_type(nominals, enums, unions, element, intrinsics)?
+        types.append(tuple_element(resolved, element)?)
+    return Ok(PlanType.Tuple(types))
 
 
 pub def collection_leaf(ty: PlanType) -> Result[ListLeaf, str]:

@@ -126,7 +126,7 @@ from project import project_context
 from nominal_instances import specialize_nominals
 from traits import method_index, specialize_traits, validate_static_receiver
 from decls import lower_model_declarations, static_slot, static_accessors
-from model_lists import model_list_read
+from model_lists import model_list_read, structural_prefix, prefix_place
 from models import field_projection
 from models import model_type, model_place, constructor_index, field_slot
 from model_values import (
@@ -150,7 +150,16 @@ from unions import (
     union_projection,
     carrier_injection,
 )
-from tuples import is_tuple_type, tuple_has_owners, tuple_aggregate, clone_tuple_operand, display_tuple, tuple_fields
+from tuples import (
+    is_tuple_type,
+    tuple_has_owners,
+    tuple_aggregate,
+    display_tuple,
+    tuple_fields,
+    tuple_debug_formatted,
+    carrier_element,
+    owned_carrier,
+)
 from text_plan import format_parts, clone_text, owned_literal
 from options import (
     intrinsic_declarations,
@@ -164,6 +173,7 @@ from options import (
     format_carrier,
     carrier_payload_value,
     lower_carrier_method_plan,
+    clone_tuple_operand,
 )
 from numbers import float_operand
 from numerics import (
@@ -407,6 +417,11 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
                 place_type(builder.locals, target),
             )):
                 return Err("unsupported Body IR partial model move")
+            # The whole tuple stays an owner, so moving an owned element out of it would drop that element twice.
+            if target.projection != Projection.Whole and is_tuple_type(builder.locals[target.local].ty) and owned_carrier(
+                place_type(builder.locals, target),
+            ):
+                return Err("unsupported Body IR partial tuple move")
             return Ok(Operand(kind=OperandKind.Move(target), span=span))
         OwnershipFact.Clone =>
             if place_type(builder.locals, target) == PlanType.FrozenStr:
@@ -417,6 +432,8 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
                 return Ok(Operand(kind=OperandKind.Copy(target), span=span))
             if is_tuple_type(place_type(builder.locals, target)):
                 return clone_tuple_operand(builder, target, span)
+            if is_list(ty) and is_tuple_type(builder.locals[target.local].ty):
+                return carrier_payload_value(builder, target, span)
             if place_type(builder.locals, target) == PlanType.String:
                 cloned = clone_text(builder, target, span)?
                 return Ok(read_place(cloned, true, span))
@@ -426,6 +443,9 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
                 return Ok(read_place(target, false, span))
             if is_tuple_type(place_type(builder.locals, target)):
                 return clone_tuple_operand(builder, target, span)
+            # A list held by a tuple element is materialized by cloning it, leaving the owning tuple whole.
+            if is_list(place_type(builder.locals, target)) and is_tuple_type(builder.locals[target.local].ty):
+                return carrier_payload_value(builder, target, span)
             # A checked projected read borrows its parent. Materialize only the selected enum through its real
             # Clone implementation; copying or moving that field would invalidate the still-owned parent.
             match place_type(builder.locals, target):
@@ -1051,6 +1071,12 @@ def lower_assignment(
             return dictionary_index_assignment(builder, destination, value, span)
         if is_list(ty):
             return indexed_assignment(builder, destination, value, span)
+        # A list held by a tuple element is written at its list indexes after the tuple prefix.
+        match structural_prefix(builder, destination)?:
+            Some((count, through_tuple)) =>
+                if through_tuple and count > 0 and count < len(destination.projection):
+                    return indexed_assignment_at(builder, destination, count, value, span)
+            None => pass
     target = scalar_place(builder, destination, span)?
     match value:
         RustRvalue.Match(scrutinee=scrutinee, arms=arms) =>
@@ -2692,10 +2718,22 @@ def checked_aggregate(
                     None => return Err("unsupported Body IR spread enum payload")
             return Ok(RvalueKind.Enum(owner, variant, operands))
         RustAggregateKind.Tuple =>
+            mut element_types: list[TupleElement] = []
+            match expected:
+                PlanType.Tuple(types) =>
+                    element_types = types
+                _ => pass
             mut operands: list[Operand] = []
-            for element in elements:
+            for slot in range(len(elements)):
+                element = elements[slot]
                 match element.as_one():
                     Some(value) =>
+                        # A list or carrier element takes the destination element's exact carrier, `None` included.
+                        if slot < len(element_types) and carrier_element(element_types[slot]):
+                            operands.append(
+                                boundary_operand(builder, value, tuple_element_type(element_types[slot]), span)?,
+                            )
+                            continue
                         match value:
                             RustOperand.Constant(constant) =>
                                 match constant:
@@ -2847,8 +2885,13 @@ def display_tuple_place(mut builder: Builder, value: &RustPlace, span: SourceSpa
     if len(value.projection) != 0:
         return Ok(None)
     target = scalar_place(builder, value, span)?
-    if not is_tuple_type(place_type(builder.locals, target)):
+    ty = place_type(builder.locals, target)
+    if not is_tuple_type(ty):
         return Ok(None)
+    if tuple_debug_formatted(ty):
+        # A list or carrier element has no flat formatter; Debug of a snapshot spells the whole tuple as legacy does.
+        snapshot = clone_tuple_operand(builder, target, span)?
+        return Ok(Some(debug_plan_operand(builder, snapshot, span)?))
     return Ok(Some(display_tuple(builder, target, span)?))
 
 
@@ -4385,12 +4428,25 @@ def indexed_assignment(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Write one checked list element through the legacy mutable indexing helper."""
-    if len(destination.projection) == 0:
+    return indexed_assignment_at(builder, destination, 0, value, span)
+
+
+def indexed_assignment_at(
+    mut builder: Builder,
+    destination: &RustPlace,
+    start: int,
+    value: &RustRvalue,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Write one checked list element whose list is reached after `start` structural steps (zero for a bare list)."""
+    if len(destination.projection) <= start:
         return Err("unsupported Body IR list assignment without index")
     # Materialize the replacement before borrowing storage that its value might itself read.
     mut argument = assignment_value(builder, value, span)?
     mut receiver = list_base_place(builder, destination, span)?
-    for slot in range(len(destination.projection) - 1):
+    if start > 0:
+        receiver = prefix_place(builder, destination, start, span)?
+    for slot in range(start, len(destination.projection) - 1):
         index = list_index_operand(builder, destination, slot, span)?
         receiver = borrow_nested_list(builder, receiver, index, span)?
     leaf, depth = require_list_shape(
@@ -4551,14 +4607,39 @@ def iterator_assignment(
 
 
 pub def list_root_place(mut builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
-    """Borrow whole storage or an exact field/payload path; indexing retains its separate element-materialization route."""
+    """
+    Borrow whole storage or an exact field, payload or tuple element path.
+
+    A constant index selects a tuple element exactly like a structural field, so it stays on this path. Indexing a list
+    retains its separate element-materialization route.
+    """
     if len(value.projection) != 0:
-        for projection in value.projection:
-            match projection:
-                PlaceElem.Field(name=_name, canonical=_canonical, structural=_structural) => pass
-                PlaceElem.OptionPayload(option_type=_container, payload_type=_payload) => pass
-                PlaceElem.UnionMember(ty=_member) => pass
-                _ => return Err("unsupported Body IR list root projection")
+        match value.local_id():
+            None => return Err("unsupported Body IR global list root projection")
+            Some(local) =>
+                mut ty = builder.locals[int(local.index()) + 1 + builder.local_offset].ty
+                # A receiver reference projects its model's fields.
+                match ty:
+                    PlanType.ModelRef(owner, name) => ty = PlanType.Model(owner, name)
+                    PlanType.ModelMutRef(owner, name) => ty = PlanType.Model(owner, name)
+                    _ => pass
+                for projection in value.projection:
+                    match projection:
+                        PlaceElem.Field(name=_name, canonical=_canonical, structural=_structural) => pass
+                        PlaceElem.OptionPayload(option_type=_container, payload_type=_payload) => pass
+                        PlaceElem.UnionMember(ty=_member) => pass
+                        PlaceElem.Index(_index) =>
+                            if not is_tuple_type(ty):
+                                return Err("unsupported Body IR list root projection")
+                        _ => return Err("unsupported Body IR list root projection")
+                    ty = field_projection(
+                        builder.nominals,
+                        ty,
+                        projection,
+                        builder.enums,
+                        builder.unions,
+                        builder.intrinsics,
+                    )?.ty
         return scalar_place(builder, value, span)
     return list_base_place(builder, value, span)
 
@@ -5233,6 +5314,12 @@ def enum_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) ->
             base = list_base_place(builder, read.place, span)?
             if is_list(builder.locals[base.local].ty) or is_collection(builder.locals[base.local].ty):
                 return Ok(false)
+            # So does a list reached through a tuple element.
+            match structural_prefix(builder, read.place)?:
+                Some((count, through_tuple)) =>
+                    if through_tuple and count < len(read.place.projection):
+                        return Ok(false)
+                None => pass
             place = scalar_place(builder, read.place, span)?
             match place_type(builder.locals, place):
                 PlanType.Enum(_owner, _name) => return Ok(true)

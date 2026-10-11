@@ -3,8 +3,8 @@
 from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive
 from rust::incan_semantics_core::body_ir import PlaceElem, Operand, Constant
 from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
-from frame import Builder, temporary, read_place, track_rvalue_moves, external_call, place_type
-from text_plan import clone_text, format_parts
+from frame import Builder, temporary, read_place, external_call, place_type, appended_field
+from text_plan import format_parts
 from pub::incan_mir_plan import assign as plan_assign
 from pub::incan_mir_plan import (
     PlanType,
@@ -14,6 +14,7 @@ from pub::incan_mir_plan import (
     Projection,
     SourceSpan,
     RvalueKind,
+    FieldProjection,
     Operand as PlanOperand,
 )
 
@@ -77,6 +78,20 @@ pub def tuple_type(elements: &list[RustType]) -> Result[PlanType, str]:
     return Ok(PlanType.Tuple(types))
 
 
+pub def tuple_element(ty: PlanType, source: &RustType) -> Result[TupleElement, str]:
+    """Admit one resolved tuple element: a scalar, owned text, an owned list, an enum carrier, or a nested tuple."""
+    match ty:
+        PlanType.Int => return Ok(TupleElement.Int)
+        PlanType.Float => return Ok(TupleElement.Float)
+        PlanType.Bool => return Ok(TupleElement.Bool)
+        PlanType.Unit => return Ok(TupleElement.Unit)
+        PlanType.String => return Ok(TupleElement.String)
+        PlanType.List(leaf, depth) => return Ok(TupleElement.List(leaf, depth))
+        PlanType.Enum(owner, name) => return Ok(TupleElement.Enum(owner, name))
+        PlanType.Tuple(elements) => return Ok(TupleElement.Tuple(elements))
+        _ => return Err(f"unsupported Body IR tuple element type {type_name(source)}")
+
+
 pub def is_tuple_type(ty: PlanType) -> bool:
     """Identify tuple locals without guessing their layout from a source expression."""
     match ty:
@@ -111,25 +126,67 @@ pub def tuple_slot(projection: &PlaceElem, count: int) -> Result[int, str]:
 pub def tuple_has_owners(ty: PlanType) -> bool:
     """Track a tuple as one owner only when at least one element requires destruction."""
     match ty:
-        PlanType.Tuple(elements) => return TupleElement.String in elements
+        PlanType.Tuple(elements) =>
+            for element in elements:
+                if element_has_owner(element):
+                    return true
+            return false
+        _ => return false
+
+
+pub def tuple_debug_formatted(ty: PlanType) -> bool:
+    """Report whether a tuple holds a list, carrier or tuple element, which only a whole-tuple Debug can spell."""
+    match ty:
+        PlanType.Tuple(elements) =>
+            for element in elements:
+                if carrier_element(element):
+                    return true
+            return false
+        _ => return false
+
+
+pub def carrier_element(element: TupleElement) -> bool:
+    """Report whether a tuple element is an owned list, an enum carrier or a nested tuple rather than a scalar or text."""
+    match element:
+        TupleElement.List(_leaf, _depth) => return true
+        TupleElement.Enum(_owner, _name) => return true
+        TupleElement.Tuple(_elements) => return true
+        _ => return false
+
+
+pub def owned_carrier(ty: PlanType) -> bool:
+    """Report whether a value is an owned list or an enum carrier, the element kinds a tuple holds beyond scalars and text."""
+    match ty:
+        PlanType.List(_leaf, _depth) => return true
+        PlanType.Enum(_owner, _name) => return true
+        _ => return false
+
+
+pub def element_has_owner(element: TupleElement) -> bool:
+    """Report whether a tuple element may own storage: text, a list, an enum carrier, or a tuple holding one."""
+    match element:
+        TupleElement.String => return true
+        TupleElement.List(_leaf, _depth) => return true
+        TupleElement.Enum(_owner, _name) => return true
+        TupleElement.Tuple(elements) =>
+            for nested in elements:
+                if element_has_owner(nested):
+                    return true
+            return false
         _ => return false
 
 
 pub def tuple_fields(value: Place, ty: PlanType, span: SourceSpan) -> Result[list[Place], str]:
-    """Project the admitted flat tuple layout in canonical element order."""
-    if value.projection != Projection.Whole:
-        return Err("unsupported Body IR nested tuple projection")
+    """Project the admitted tuple layout in canonical element order, after any field path that reached the tuple."""
     mut fields: list[Place] = []
     match ty:
         PlanType.Tuple(elements) =>
             for slot in range(len(elements)):
-                fields.append(
-                    Place(
-                        local=value.local,
-                        projection=Projection.Field(slot, tuple_element_type(elements[slot])),
-                        span=span,
-                    ),
-                )
+                element = tuple_element_type(elements[slot])
+                if value.projection == Projection.Whole:
+                    fields.append(Place(local=value.local, projection=Projection.Field(slot, element), span=span))
+                else:
+                    fields.append(appended_field(value, FieldProjection(slot=slot, ty=element), span)?)
         _ => pass
     return Ok(fields)
 
@@ -162,24 +219,6 @@ pub def tuple_formatter(ty: PlanType) -> Result[tuple[str, PlanType], str]:
         PlanType.Unit => return Ok(("debug_unit", ty))
         PlanType.String => return Ok(("debug_text", PlanType.StringRef))
         _ => return Err("unsupported Body IR tuple display element")
-
-
-pub def clone_tuple_operand(mut builder: Builder, value: Place, span: SourceSpan) -> Result[PlanOperand, str]:
-    """Snapshot tuple elements without partially moving an owned tuple."""
-    ty = place_type(builder.locals, value)
-    mut operands: list[PlanOperand] = []
-    for field in tuple_fields(value, ty, span)?:
-        if place_type(builder.locals, field) == PlanType.String:
-            operands.append(read_place(clone_text(builder, field, span)?, true, span))
-        else:
-            operands.append(read_place(field, false, span))
-    result = temporary(builder, ty, span)
-    operation = tuple_aggregate(operands)
-    track_rvalue_moves(builder, operation)
-    builder.emit(plan_assign(result, operation, span))
-    if tuple_has_owners(ty):
-        builder.owned.append(result.local)
-    return Ok(read_place(result, true, span))
 
 
 pub def display_tuple(mut builder: Builder, value: Place, span: SourceSpan) -> Result[Place, str]:

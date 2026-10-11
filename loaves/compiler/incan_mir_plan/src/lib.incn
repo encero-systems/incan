@@ -9,13 +9,22 @@ location, including operands and places, so native diagnostics retain provenance
 
 @derive(Clone, PartialEq)
 pub enum TupleElement:
-    """The flat scalar and owned-text tuple layout, without recursive caller ABI types."""
+    """
+    One tuple element's layout: a scalar, owned text, an owned list, an enum carrier, or a nested tuple.
+
+    A list keeps its leaf and depth, an enum carrier (an `Option`, a `Result` or a source enum) keeps its retained
+    declaration index and name, and a nested tuple keeps its own element layout, exactly as the matching `PlanType`
+    does.
+    """
 
     Int
     Float
     Bool
     Unit
     String
+    List(ListLeaf, int)
+    Enum(int, str)
+    Tuple(list[TupleElement])
 
 
 @derive(Clone, PartialEq)
@@ -169,13 +178,16 @@ pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
 
 
 pub def tuple_element_type(element: TupleElement) -> PlanType:
-    """Recover a tuple field's exact local type from the admitted flat layout."""
+    """Recover a tuple field's exact local type from the admitted layout."""
     match element:
         TupleElement.Int => return PlanType.Int
         TupleElement.Float => return PlanType.Float
         TupleElement.Bool => return PlanType.Bool
         TupleElement.Unit => return PlanType.Unit
         TupleElement.String => return PlanType.String
+        TupleElement.List(leaf, depth) => return PlanType.List(leaf, depth)
+        TupleElement.Enum(owner, name) => return PlanType.Enum(owner, name)
+        TupleElement.Tuple(elements) => return PlanType.Tuple(elements)
 
 
 @derive(Clone, PartialEq)

@@ -40,6 +40,8 @@ from frame import (
 )
 from enums import validate_payload_patterns
 from layout_types import native_source_type
+from tuples import tuple_fields, tuple_aggregate, tuple_has_owners, is_tuple_type
+from text_plan import clone_text
 from numerics import numeric_carrier
 from unions import lower_union_declaration
 
@@ -177,6 +179,11 @@ def retain_carrier(
 ) -> Result[None, str]:
     """Retain one concrete standard layout once; nested carriers precede their containing carrier."""
     match ty:
+        RustType.Tuple(elements) =>
+            # A carrier held only as a tuple element still needs its own layout.
+            for element in elements:
+                retain_carrier(module, declarations, element, file)?
+            return Ok(None)
         RustType.Generic(base=base, args=arguments) =>
             for argument in arguments:
                 retain_carrier(module, declarations, argument, file)?
@@ -336,6 +343,27 @@ pub def carrier_payload_value(mut builder: Builder, place: Place, span: SourceSp
         _ => return Err("unsupported Body IR intrinsic payload clone type")
     output = borrowed_runtime_value(builder, "clone_carrier_payload", place, ty, reference_type, ty, span)
     return Ok(read_place(output, true, span))
+
+
+pub def clone_tuple_operand(mut builder: Builder, value: Place, span: SourceSpan) -> Result[Operand, str]:
+    """Snapshot tuple elements without partially moving an owned tuple, cloning each owned element in place."""
+    ty = frame_place_type(builder.locals, value)
+    mut operands: list[Operand] = []
+    for field in tuple_fields(value, ty, span)?:
+        if frame_place_type(builder.locals, field) == PlanType.String:
+            operands.append(read_place(clone_text(builder, field, span)?, true, span))
+        elif is_tuple_type(frame_place_type(builder.locals, field)):
+            operands.append(clone_tuple_operand(builder, field, span)?)
+        else:
+            # Scalars are copied; an owned list or enum carrier is cloned through its real Clone implementation.
+            operands.append(carrier_payload_value(builder, field, span)?)
+    result = temporary(builder, ty, span)
+    operation = tuple_aggregate(operands)
+    track_rvalue_moves(builder, operation)
+    builder.emit(plan_assign(result, operation, span))
+    if tuple_has_owners(ty):
+        builder.owned.append(result.local)
+    return Ok(read_place(result, true, span))
 
 
 pub def lower_carrier_method_plan(
