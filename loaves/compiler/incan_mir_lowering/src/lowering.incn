@@ -3905,7 +3905,7 @@ def list_assignment(
             for item in elements:
                 match item.as_one():
                     Some(value) =>
-                        argument = boundary_operand(builder, value, element, span)?
+                        argument = element_operand(builder, value, element, span)?
                         if operand_type(builder, argument)? != element:
                             return Err("unsupported Body IR list element coercion")
                         append_list_value(builder, output, argument, leaf, depth, span)?
@@ -4400,7 +4400,7 @@ def indexed_assignment(
     element = list_element(leaf, depth)
     match value:
         RustRvalue.Use(RustOperand.Constant(RustConstant.None)) => argument = none_operand(builder, element, span)?
-        _ => argument = boundary_plan_operand(builder, argument, element, span)?
+        _ => argument = element_plan_operand(builder, argument, element, span)?
     subscript = list_index_operand(builder, destination, len(destination.projection) - 1, span)?
     reference = list_borrow(builder, receiver, true, span)?
     unit = temporary(builder, PlanType.Unit, span)
@@ -4604,7 +4604,7 @@ def collection_assignment(
             for element in elements:
                 match element.as_one():
                     Some(value) =>
-                        argument = boundary_operand(builder, value, types[0], span)?
+                        argument = element_operand(builder, value, types[0], span)?
                         insert_collection(builder, output, [argument], span)?
                     None =>
                         match element:
@@ -4620,8 +4620,8 @@ def collection_assignment(
             for entry in entries:
                 match entry:
                     DictEntry.Pair(key, value) =>
-                        key_operand = boundary_operand(builder, key, types[0], span)?
-                        item_operand = boundary_operand(builder, value, types[1], span)?
+                        key_operand = element_operand(builder, key, types[0], span)?
+                        item_operand = element_operand(builder, value, types[1], span)?
                         insert_collection(builder, output, [key_operand, item_operand], span)?
                     DictEntry.Spread(spread) =>
                         source = value_operand(builder, spread.source, span)?
@@ -4730,14 +4730,15 @@ def dictionary_index_assignment(
     if len(destination.projection) != 1:
         return Err("unsupported Body IR nested dictionary mutation")
     receiver = list_base_place(builder, destination, span)?
-    if len(collection_arguments(place_type(builder.locals, receiver))) != 2:
+    types = collection_arguments(place_type(builder.locals, receiver))
+    if len(types) != 2:
         return Err("unsupported Body IR set indexing assignment")
     match value:
         RustRvalue.Use(value) =>
-            argument = value_operand(builder, value, span)?
+            argument = element_operand(builder, value, types[1], span)?
             match destination.projection[0]:
                 PlaceElem.Index(index) =>
-                    key = value_operand(builder, index, span)?
+                    key = element_operand(builder, index, types[0], span)?
                     return insert_collection(builder, receiver, [key, argument], span)
                 _ => return Err("unsupported Body IR dictionary mutation projection")
         _ => return Err("unsupported Body IR dictionary indexed rvalue")
@@ -4763,7 +4764,8 @@ def collection_method(
         require_mutable_receiver(arguments)?
         mut operands: list[Operand] = []
         for slot in range(len(types)):
-            operands.append(argument_value(builder, arguments, slot + 1, span)?)
+            argument = argument_value(builder, arguments, slot + 1, span)?
+            operands.append(element_plan_operand(builder, argument, types[slot], span)?)
         return insert_collection(builder, receiver, operands, span)
     if member == "Dict.get" and len(arguments) == 2:
         return optional_dictionary_get(builder, receiver, arguments, destination, span)
@@ -5369,6 +5371,37 @@ def boundary_operand(
         return frozen_operand(builder, value, span)
     operand = typed_carrier_operand(builder, value, target, span)?
     return boundary_plan_operand(builder, operand, target, span)
+
+
+def element_operand(
+    mut builder: Builder,
+    value: &RustOperand,
+    element: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """
+    Evaluate a collection element at the element's checked carrier.
+
+    The checker types each element against the collection, so a frozen `str` constant becomes owned text and a
+    narrower numeric carrier widens to the element's carrier, exactly as at any other typed boundary.
+    """
+    operand = boundary_operand(builder, value, element, span)?
+    return coerce_numeric_operand(builder, operand, element, span)
+
+
+def element_plan_operand(
+    mut builder: Builder,
+    value: Operand,
+    element: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Convert an already evaluated collection element to the element's checked carrier, as `element_operand` does."""
+    mut operand = value
+    if element == PlanType.String and operand_type(builder, operand)? == PlanType.FrozenStr:
+        text = display_plan_operand(builder, operand, span)?
+        operand = read_place(text, true, span)
+    operand = boundary_plan_operand(builder, operand, element, span)?
+    return coerce_numeric_operand(builder, operand, element, span)
 
 
 def boundary_plan_operand(mut builder: Builder, value: Operand, target: PlanType, span: SourceSpan) -> Result[Operand, str]:
