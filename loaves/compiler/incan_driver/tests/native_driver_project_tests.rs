@@ -3806,6 +3806,55 @@ def main() -> None:
     )
 }
 
+/// Prove the lazy generator adapters byte-identical to legacy: `map` and `filter` through annotated function values
+/// and through function names, over a generator expression and a yield-based generator; `take` drawing only the items
+/// it keeps, including a negative count; and `map` running its function only when the result is consumed.
+#[test]
+fn generator_adapter_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("generator-adapter")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def double(value: int) -> int:
+    return value * 2
+
+def is_even(value: int) -> bool:
+    return value % 2 == 0
+
+def halve(value: float) -> float:
+    return value / 2.0
+
+def numbers(limit: int) -> Generator[int]:
+    for value in range(limit):
+        yield value
+
+def note(value: int) -> int:
+    println(f"note {value}")
+    return value
+
+def main() -> None:
+    increment: (int) -> int = (value) => value + 1
+    accepted: (int) -> bool = (value) => value > 2
+    values = (value for value in range(1, 5)).map(increment).filter(accepted).collect()
+    println(values[0] * 10 + values[1])
+    println(len(numbers(6).map(double).filter(is_even).collect()))
+    println(len(numbers(6).take(2).collect()))
+    lazy = (note(v) for v in [1, 2, 3, 4]).take(2)
+    println("built")
+    for item in lazy:
+        println(item)
+    halves = (x for x in [1.0, 3.0]).map(halve).collect()
+    println(halves[1])
+    println(len(numbers(3).take(-1).collect()))
+    mapped = (v for v in [1, 2]).map(note)
+    println("mapped")
+    println(mapped.collect()[1])
+"#,
+    )
+}
+
 /// Prove unit and payload construction, enum passing/returning, and variant-bound match output against legacy.
 #[test]
 fn source_enum_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
