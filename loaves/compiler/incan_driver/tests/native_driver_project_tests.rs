@@ -2644,6 +2644,44 @@ def main() -> None:
     )
 }
 
+/// Prove collection elements byte-identical to legacy when the checker typed them against a wider element: narrower
+/// integers and `f32` values widen in list and dict literals and in indexed list and dict writes, and a frozen `str`
+/// constant becomes owned text in an indexed list or dict write.
+#[test]
+fn collection_element_coercion_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("collection-element-coercion")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"const GREETING: str = "hello"
+
+def main() -> None:
+    small: i8 = -5
+    byte: u8 = 250
+    mut values: list[int] = [small, 0]
+    values[1] = byte
+    println(values)
+    narrow: f32 = 1.5
+    floats: list[float] = [narrow, 2.0]
+    println(floats)
+    mut items: list[str] = ["initial"]
+    items[0] = GREETING
+    println(items[0])
+    mut table: dict[str, str] = {"message": "initial"}
+    table["message"] = GREETING
+    println(table["message"])
+    mut counts: dict[int, int] = {small: byte}
+    counts[byte] = small
+    println(counts[250])
+    println(counts[-5])
+    widths: dict[str, float] = {"narrow": narrow}
+    println(widths["narrow"])
+"#,
+    )
+}
+
 /// Measure the actual unchanged graph with expensive fallback forbidden and retain numeric parity evidence.
 #[test]
 #[ignore = "machine-local diagnostic of the 50 ms completed fixture graph reuse budget"]
