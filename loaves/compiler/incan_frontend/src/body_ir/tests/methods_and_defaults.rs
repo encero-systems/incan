@@ -98,6 +98,29 @@ fn static_call_on_an_applied_class_keeps_its_owner_arguments() -> Result<(), Box
     Ok(())
 }
 
+/// Method aliases, a newtype's short rebinding of its own method, and lint suppressions keep their declarations.
+#[test]
+fn retains_aliased_and_lint_suppressed_declarations() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "@rust.allow(\"non_camel_case_types\")\nclass Counter:\n  pub n: int\n  grow = add\n\n  @rust.allow(\"non_snake_case\")\n  def add(mut self) -> None:\n    self.n += 1\n\ntype Meters = newtype int:\n  def value(self) -> int:\n    return self.0\n  get = value\n\n@rust.allow(\"clippy::large_enum_variant\")\nenum Size:\n  Small\n  Large(str)\n",
+        &["aliases_and_lints"],
+    )?;
+    let retained = module
+        .nominal_declarations
+        .iter()
+        .map(|declaration| declaration.name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(retained, ["Counter", "Meters"]);
+    assert!(
+        module
+            .enum_declarations
+            .iter()
+            .any(|declaration| declaration.name == "Size"),
+        "a lint-suppressed enum keeps its native layout"
+    );
+    Ok(())
+}
+
 /// Explicit builtin derives survive collection of a newtype's checked nominal carrier.
 #[test]
 fn retains_explicit_newtype_derives() -> Result<(), Box<dyn std::error::Error>> {

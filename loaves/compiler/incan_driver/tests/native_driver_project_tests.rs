@@ -2553,6 +2553,71 @@ def main() -> None:
     )
 }
 
+/// Class method aliases, including one that fills a trait's required method, and a newtype's short rebinding call the
+/// methods they name, as legacy does.
+#[test]
+fn class_and_newtype_method_aliases_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("class-and-newtype-method-aliases")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"trait Renamable:
+    def where(self, value: int) -> int: ...
+
+
+class Example with Renamable:
+    where = alias filter
+
+    def filter(self, value: int) -> int:
+        return value
+
+
+class Counter:
+    pub n: int
+    grow = add
+
+    def add(mut self) -> None:
+        self.n += 1
+
+    def read(self) -> int:
+        return self.n
+
+    current = read
+
+
+type Meters = newtype int:
+    def value(self) -> int:
+        return self.0
+    get = value
+
+
+def main() -> None:
+    println(Example().where(7))
+    println(Example().filter(8))
+    mut counter = Counter(n=1)
+    counter.grow()
+    counter.grow()
+    println(counter.current())
+    println(Meters(3).get())
+"#,
+    )
+}
+
+/// Lint suppressions on models, classes, enums, newtypes, methods and functions change nothing legacy prints.
+#[test]
+fn lint_suppressions_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("lint-suppressions")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!("../../incan_test_support/fixtures/behavior/snapshots_stdlib/rust_allow_lint_suppressions.incn"),
+    )
+}
+
 /// Prove canonical scalar casts and default values byte-identical to legacy.
 #[test]
 fn numeric_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
