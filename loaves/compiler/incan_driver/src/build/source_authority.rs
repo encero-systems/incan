@@ -36,10 +36,20 @@ pub(super) fn current_compiler_identity_digest() -> CliResult<String> {
 /// Bind ordinary preparation to the current compiler and explicit process configuration without entering a session.
 ///
 /// Paths conservatively distinguish source/SDK selections. Named inventory and graph files additionally bind their
-/// bytes through the existing freshness store. Diagnostic and tracing switches are excluded because they do not
-/// affect generated code. No local observation is itself compiler authority.
+/// bytes, the graph's canonical owner and its referenced resolution through the existing freshness store. Diagnostic
+/// and tracing switches are excluded because they do not affect generated code. No local observation is itself compiler
+/// authority.
 pub fn ordinary_preparation_identity_digest() -> CliResult<String> {
-    let mut records = BTreeMap::from([("compiler".to_string(), current_compiler_identity_digest()?)]);
+    ordinary_preparation_identity_from_values(current_compiler_identity_digest()?, |name| std::env::var_os(name))
+}
+
+/// Observe explicit preparation inputs through the existing freshness store without changing global configuration.
+/// Referenced resolution bytes and the canonical graph owner matter even when the graph document itself is unchanged.
+fn ordinary_preparation_identity_from_values(
+    compiler: String,
+    value: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> CliResult<String> {
+    let mut records = BTreeMap::from([("compiler".to_string(), compiler)]);
     for name in [
         "INCAN_SOURCE_ROOT",
         "INCAN_STDLIB",
@@ -54,11 +64,34 @@ pub fn ordinary_preparation_identity_digest() -> CliResult<String> {
         "RUSTC",
         "INCAN_OVEN_LINK_OWNERS",
     ] {
-        if let Some(value) = std::env::var_os(name) {
+        if let Some(value) = value(name) {
             records.insert(name.to_string(), digest_bytes(value.as_os_str().as_encoded_bytes()));
             if matches!(name, "INCAN_SDK_INVENTORY" | "INCAN_SDK_NATIVE_COMPILER_GRAPH") {
                 let digest = super::file_freshness::digest_file(Path::new(&value))
                     .map_err(|error| CliError::failure(format!("cannot observe {name}: {error}")))?;
+                if name == "INCAN_SDK_NATIVE_COMPILER_GRAPH" {
+                    let (owner, lock) = oven_rustc::native_loaf::resolved_native_graph_coordinates(Path::new(&value))
+                        .map_err(|error| {
+                        CliError::failure(format!("cannot observe native graph inputs: {error}"))
+                    })?;
+                    records.insert(
+                        format!("{name}:owner"),
+                        digest_bytes(owner.as_os_str().as_encoded_bytes()),
+                    );
+                    records.insert(
+                        format!("{name}:resolution"),
+                        super::file_freshness::digest_file(&lock)
+                            .map_err(|error| CliError::failure(format!("cannot observe native resolution: {error}")))?,
+                    );
+                    if super::file_freshness::digest_file(Path::new(&value))
+                        .map_err(|error| CliError::failure(error.to_string()))?
+                        != digest
+                    {
+                        return Err(CliError::failure(
+                            "native graph changed during preparation identity observation",
+                        ));
+                    }
+                }
                 records.insert(format!("{name}:content"), digest);
             }
         }
@@ -1031,6 +1064,65 @@ mod tests {
     };
     use oven_store::store::{OvenArtifactKind, OvenArtifactPublishRequest, OvenStore};
     use oven_store::{OvenGeneratedProjectRequest, digest_bytes, receipt_generated_project, write_receipt};
+
+    /// External resolution edits invalidate ordinary reuse even when graph and project input bytes stay equal.
+    #[test]
+    fn ordinary_preparation_identity_binds_external_native_resolution() -> Result<(), Box<dyn std::error::Error>> {
+        let inputs = tempfile::tempdir()?;
+        let graph = inputs.path().join("graph.json");
+        let lock = inputs.path().join("lock.json");
+        fs::write(
+            &graph,
+            r#"{"index_commit":"fixture","registry_lock":"lock.json","facets":[]}"#,
+        )?;
+        fs::write(&lock, b"original resolution")?;
+        let identity = || {
+            ordinary_preparation_identity_from_values("compiler".to_string(), |name| {
+                (name == "INCAN_SDK_NATIVE_COMPILER_GRAPH").then(|| graph.as_os_str().to_os_string())
+            })
+        };
+        let original = identity()?;
+        assert_eq!(identity()?, original);
+        fs::write(&lock, b"modified resolution")?;
+        assert_ne!(identity()?, original);
+        fs::write(&lock, b"original resolution")?;
+        assert_eq!(identity()?, original);
+        fs::remove_file(&lock)?;
+        assert!(identity().is_err());
+        fs::write(&lock, b"original resolution")?;
+        fs::write(&graph, b"invalid graph")?;
+        assert!(identity().is_err());
+        Ok(())
+    }
+
+    /// Identical graph text under a different canonical owner can select different relative native facets.
+    #[cfg(unix)]
+    #[test]
+    fn ordinary_preparation_identity_binds_canonical_native_graph_owner() -> Result<(), Box<dyn std::error::Error>> {
+        let inputs = tempfile::tempdir()?;
+        let lock = inputs.path().join("shared-lock.json");
+        fs::write(&lock, b"shared resolution")?;
+        let document = serde_json::to_vec(&serde_json::json!({
+            "index_commit":"fixture", "registry_lock":lock,
+            "facets":[{"project":"relative-facet", "features":[], "domain":"target"}]
+        }))?;
+        for name in ["first", "second"] {
+            fs::create_dir(inputs.path().join(name))?;
+            fs::write(inputs.path().join(name).join("graph.json"), &document)?;
+        }
+        let selected = inputs.path().join("selected.json");
+        std::os::unix::fs::symlink(inputs.path().join("first/graph.json"), &selected)?;
+        let identity = || {
+            ordinary_preparation_identity_from_values("compiler".to_string(), |name| {
+                (name == "INCAN_SDK_NATIVE_COMPILER_GRAPH").then(|| selected.as_os_str().to_os_string())
+            })
+        };
+        let first = identity()?;
+        fs::remove_file(&selected)?;
+        std::os::unix::fs::symlink(inputs.path().join("second/graph.json"), &selected)?;
+        assert_ne!(identity()?, first);
+        Ok(())
+    }
 
     /// A changed or absent compiler identity misses before inspection; an exact identity proceeds to authority
     /// validation even when source-equivalent outputs from older compiler generations coexist in the store.

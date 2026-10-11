@@ -35,6 +35,7 @@ mod selection;
 pub use preparation::{
     NativeLoafFacet, NativeLoafPreparation, NativeLoafPreparationReport, NativeLoafPreparationRequest,
     prepare_native_loafs, prepare_resolved_native_loafs, prepare_resolved_native_loafs_in_store,
+    resolved_native_graph_coordinates,
 };
 pub use prepared::{
     NativeLoafConsumerPreparation, NativeLoafConsumerReport, NativeLoafConsumerRequest, prepare_declared_native_loafs,
