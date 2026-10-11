@@ -6224,3 +6224,68 @@ fn module_member_constant_output_matches_legacy() -> Result<(), Box<dyn std::err
         b"orders\n4\n6\nORDERS\n",
     )
 }
+
+/// Compile one program natively and pin its output to the bytes legacy records for it, as a behavior fixture does.
+fn check_native_case(name: &str, text: &str, expected_stdout: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch(name)?;
+    let source = root.join(format!("{name}.incn"));
+    fs::write(&source, text)?;
+    let native = root.join("native");
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("debug"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native compilation",
+    );
+    let actual = Command::new(native).output()?;
+    success(&actual, "native execution");
+    assert_eq!(actual.stdout, expected_stdout);
+    Ok(())
+}
+
+/// A model adopting the std.serde.json protocol traits with `with`, by imported or module-qualified name, serializes
+/// through serde as legacy's derived serde does and keeps its own static `from_json`.
+#[test]
+fn adopted_json_protocol_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_native_case(
+        "adopted_json_protocol",
+        r#"from std.serde import json
+from std.serde.json import Serialize, Deserialize
+
+
+model Payload with Serialize:
+    value: int
+
+
+model Tagged with json.Serialize:
+    label: str
+    count: int
+
+
+model Restored with Serialize, Deserialize:
+    value: int
+
+    def from_json(json_str: str) -> Result[Restored, str]:
+        return Ok(Restored(value=len(json_str)))
+
+
+def main() -> None:
+    println(Payload(value=1).to_json())
+    println(Tagged(label="x", count=2).to_json())
+    println(Restored(value=3).to_json())
+    match Restored.from_json("{}"):
+        case Ok(restored):
+            println(restored.value)
+        case Err(message):
+            println(message)
+"#,
+        b"{\"value\":1}\n{\"label\":\"x\",\"count\":2}\n{\"value\":3}\n2\n",
+    )
+}

@@ -182,6 +182,33 @@ fn model_json_retains_checked_selection() -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
+/// A model adopting a std.serde.json protocol trait with `with`, by imported or module-qualified name, retains serde's
+/// derive exactly as one deriving the trait does; a model adopting neither retains none.
+#[test]
+fn adopted_json_protocols_retain_serde_derives() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "from std.serde import json\nfrom std.serde.json import Serialize, Deserialize\n\nmodel Payload with Serialize, Deserialize:\n    value: int\n\n    def from_json(text: str) -> Result[Payload, str]:\n        return Err(text)\n\nmodel Tagged with json.Serialize:\n    label: str\n\nmodel Plain:\n    value: int\n",
+        &["m", "adopted_json"],
+    )?;
+    let derives = |name: &str| {
+        module
+            .nominal_declarations
+            .iter()
+            .find(|declaration| declaration.name == name)
+            .map(|declaration| declaration.derives.clone())
+            .ok_or(format!("missing retained model {name}"))
+    };
+    let payload = derives("Payload")?;
+    assert!(payload.iter().any(|name| name == "serde::Serialize"), "{payload:?}");
+    assert!(payload.iter().any(|name| name == "serde::Deserialize"), "{payload:?}");
+    let tagged = derives("Tagged")?;
+    assert!(tagged.iter().any(|name| name == "serde::Serialize"), "{tagged:?}");
+    assert!(!tagged.iter().any(|name| name == "serde::Deserialize"), "{tagged:?}");
+    let plain = derives("Plain")?;
+    assert!(!plain.iter().any(|name| name.starts_with("serde::")), "{plain:?}");
+    Ok(())
+}
+
 /// A plain newtype's slot and construction share the retained owner identity; hooks stay outside this profile.
 #[test]
 fn plain_newtype_retains_checked_tuple_layout() -> Result<(), Box<dyn std::error::Error>> {
