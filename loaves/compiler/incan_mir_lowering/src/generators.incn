@@ -315,7 +315,7 @@ pub def generator_reference(mut builder: Builder, receiver: Place, span: SourceS
         None => return Err("unsupported Body IR generator borrow receiver")
 
 
-def generator_runtime_call(
+pub def generator_runtime_call(
     mut builder: Builder,
     name: str,
     element: PlanType,
@@ -325,7 +325,7 @@ def generator_runtime_call(
     output: Place,
     span: SourceSpan,
 ) -> None:
-    """Retain one exact generic runtime signature alongside its poll-frame call."""
+    """Retain one exact runtime signature, generic over the generator element, alongside its call."""
     path = f"incan_native_runtime::{name}"
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=[element], parameters=parameters, return_type=result, span=span),

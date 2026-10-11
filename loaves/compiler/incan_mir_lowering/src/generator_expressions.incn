@@ -1,0 +1,177 @@
+"""Generator expressions as legacy's lazy adapter chain: an eager first source expanded item by item by a step."""
+
+from rust::incan_semantics_core::body_ir import (
+    GeneratorBody as RustGeneratorBody,
+    Operand as RustOperand,
+    Rvalue as RustRvalue,
+    StatementKind as RustStatementKind,
+)
+from pub::incan_mir_plan import Callee, CalleeKind, Operand, Place, PlanType, RvalueKind, SourceSpan
+from pub::incan_mir_plan import assign as plan_assign
+from frame import Builder, temporary, read_place, value_type
+from generators import generator_shape, generator_element, generator_runtime_call
+from lists import list_shape, list_element, is_builtin_iteration
+
+
+pub def first_clause_item(body: &RustGeneratorBody) -> Result[int, str]:
+    """
+    Return the Body IR local the deferred body polls each first-source item into.
+
+    Body IR materializes a builtin iterator from the captured first source, then loops, polling it first; everything
+    after that poll is one item's step. Any other deferred shape keeps a named refusal.
+    """
+    if len(body.stmts) != 2:
+        return Err("unsupported Body IR generator expression body shape")
+    iterator = source_iterator(body)?
+    match body.stmts[1].kind:
+        RustStatementKind.Loop(body=block) =>
+            if len(block.stmts) == 0:
+                return Err("unsupported Body IR generator expression without a source poll")
+            return polled_item(block.stmts[0].kind, iterator)
+        _ => return Err("unsupported Body IR generator expression body shape")
+
+
+def source_iterator(body: &RustGeneratorBody) -> Result[int, str]:
+    """Require the builtin iterator materialized from exactly the captured first source."""
+    match body.stmts[0].kind:
+        RustStatementKind.Assign(place=place, rvalue=value) =>
+            if len(place.projection) != 0 or not reads_local(value, int(body.source_local.index())):
+                return Err("unsupported Body IR generator expression source protocol")
+            match place.local_id():
+                Some(local) => return Ok(int(local.index()))
+                None => return Err("unsupported Body IR generator expression source protocol")
+        _ => return Err("unsupported Body IR generator expression source protocol")
+
+
+def reads_local(value: &RustRvalue, local: int) -> bool:
+    """Recognize a plain whole read of one Body IR local."""
+    match value:
+        RustRvalue.Use(operand) => return operand_reads(operand, local)
+        _ => return false
+
+
+def operand_reads(value: &RustOperand, local: int) -> bool:
+    """Recognize an operand reading one whole Body IR local."""
+    match value:
+        RustOperand.Place(read) =>
+            if len(read.place.projection) != 0:
+                return false
+            match read.place.local_id():
+                Some(found) => return int(found.index()) == local
+                None => return false
+        _ => return false
+
+
+def polled_item(kind: &RustStatementKind, iterator: int) -> Result[int, str]:
+    """Read the builtin poll of the source iterator into one whole item local."""
+    match kind:
+        RustStatementKind.IterNext(destination=destination, iterator=polled, protocol=protocol) =>
+            if not is_builtin_iteration(protocol) or len(destination.projection) != 0:
+                return Err("unsupported Body IR generator expression source poll")
+            if not operand_reads(polled, iterator):
+                return Err("unsupported Body IR generator expression source poll")
+            match destination.local_id():
+                Some(local) => return Ok(int(local.index()))
+                None => return Err("unsupported Body IR generator expression source poll")
+        _ => return Err("unsupported Body IR generator expression without a source poll")
+
+
+pub def source_generator(mut builder: Builder, value: Operand, span: SourceSpan) -> Result[Operand, str]:
+    """Hand the eagerly evaluated first source to the chain as an owned generator; a list yields its snapshot."""
+    ty = value_type(builder, value)?
+    match generator_shape(ty):
+        Some((leaf, depth)) =>
+            if ty != PlanType.Generator(leaf, depth):
+                return Err("unsupported Body IR borrowed generator expression source")
+            return Ok(value)
+        None => pass
+    match list_shape(ty):
+        Some((leaf, depth)) =>
+            if ty != PlanType.List(leaf, depth):
+                return Err("unsupported Body IR borrowed generator expression source")
+            result = PlanType.Generator(leaf, depth - 1)
+            output = temporary(builder, result, span)
+            generator_runtime_call(
+                builder,
+                "list_generator",
+                list_element(leaf, depth),
+                [ty],
+                result,
+                [value],
+                output,
+                span,
+            )
+            builder.owned.append(output.local)
+            return Ok(read_place(output, true, span))
+        None => return Err("unsupported Body IR generator expression source")
+
+
+pub def source_item(builder: Builder, source: Operand) -> Result[PlanType, str]:
+    """Read the item type the source generator yields to each step."""
+    match generator_shape(value_type(builder, source)?):
+        Some((leaf, depth)) => return Ok(generator_element(leaf, depth))
+        None => return Err("invalid native generator expression source")
+
+
+def step_helper(item: PlanType) -> Result[str, str]:
+    """Select the runtime chain whose step takes this first-source item by value, as legacy's callable ABI does."""
+    match item:
+        PlanType.Int => return Ok("int_step_generator")
+        PlanType.Float => return Ok("float_step_generator")
+        PlanType.Bool => return Ok("bool_step_generator")
+        _ => return Err("unsupported Body IR generator expression item outside int, float and bool")
+
+
+pub def construct_chain(
+    mut builder: Builder,
+    source: Operand,
+    step: str,
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Reify the lifted step and expand the source through it; nothing is polled until a consumer asks."""
+    item = source_item(builder, source)?
+    result = builder.locals[output.local].ty
+    match generator_shape(result):
+        Some((leaf, depth)) =>
+            helper = step_helper(item)?
+            signature = [item, result]
+            function = temporary(builder, PlanType.FunctionItem(step, signature), span)
+            builder.emit(
+                plan_assign(function, RvalueKind.FunctionItem(Callee(kind=CalleeKind.Planned(step), span=span)), span),
+            )
+            pointer = temporary(builder, PlanType.FunctionPointer(signature), span)
+            builder.emit(plan_assign(pointer, RvalueKind.ReifyFunction(read_place(function, false, span)), span))
+            generator_runtime_call(
+                builder,
+                helper,
+                generator_element(leaf, depth),
+                [value_type(builder, source)?, PlanType.FunctionPointer(signature)],
+                result,
+                [source, read_place(pointer, false, span)],
+                output,
+                span,
+            )
+            return Ok(None)
+        None => return Err("unsupported Body IR generator expression type")
+
+
+pub def step_result(mut builder: Builder, accepted: Option[Operand], span: SourceSpan) -> Result[Operand, str]:
+    """
+    Build a step's return value: a generator over its one accepted element, or an empty one for a filtered item.
+
+    The value moves straight into the return slot, so it never joins the frame's owners.
+    """
+    result = builder.locals[0].ty
+    match generator_shape(result):
+        Some((leaf, depth)) =>
+            element = generator_element(leaf, depth)
+            output = temporary(builder, result, span)
+            match accepted:
+                Some(value) =>
+                    if value_type(builder, value)? != element:
+                        return Err("unsupported Body IR generator expression element coercion")
+                    generator_runtime_call(builder, "once_generator", element, [element], result, [value], output, span)
+                None => generator_runtime_call(builder, "empty_generator", element, [], result, [], output, span)
+            return Ok(read_place(output, true, span))
+        None => return Err("invalid native generator expression step result")

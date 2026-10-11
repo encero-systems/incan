@@ -1,4 +1,4 @@
-"""Native layout of source-local range values on the direct route."""
+"""Source-local range values' native layout and builtin range call bounds on the direct route."""
 
 from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive
 from rust::incan_semantics_core::body_ir import (
@@ -6,7 +6,8 @@ from rust::incan_semantics_core::body_ir import (
     LocalOrigin,
     PlaceElem as RustPlaceElem,
 )
-from pub::incan_mir_plan import FieldProjection, Operand, PlanType, RvalueKind, range_field_types
+from pub::incan_mir_plan import Constant, FieldProjection, Operand, PlanType, RvalueKind, SourceSpan, range_field_types
+from frame import literal
 
 
 pub def range_value_local(ty: &RustType, origin: &LocalOrigin) -> bool:
@@ -49,6 +50,17 @@ pub def range_field(projection: &RustPlaceElem) -> Result[FieldProjection, str]:
                     return Ok(FieldProjection(slot=slot, ty=range_field_types()[slot]))
             return Err("invalid Body IR range field")
         _ => return Err("unsupported Body IR range index or slice projection")
+
+
+pub def builtin_range_bounds(arguments: list[Operand], span: SourceSpan) -> Result[list[Operand], str]:
+    """Complete a builtin `range` call's start, end and step, defaulting a missing start to 0 and step to 1."""
+    if len(arguments) == 1:
+        return Ok([literal(Constant.Int(0), span), arguments[0], literal(Constant.Int(1), span)])
+    if len(arguments) == 2:
+        return Ok([arguments[0], arguments[1], literal(Constant.Int(1), span)])
+    if len(arguments) == 3:
+        return Ok(arguments)
+    return Err("unsupported Body IR builtin range arity")
 
 
 pub def range_aggregate(expected: PlanType, fields: list[Operand], types: list[PlanType]) -> Result[RvalueKind, str]:

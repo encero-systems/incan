@@ -1,7 +1,8 @@
-"""Safe polling of the existing lazy runtime generator."""
+"""Safe polling of the existing lazy runtime generator, and the adapter chain generator expressions build on it."""
 
 from std.derives.collection import Iterator
 from std.derives.copying import Clone
+from std.rust import Static
 
 
 pub def poll_generator[T with Clone](mut values: Generator[T], mut output: list[T]) -> bool:
@@ -11,3 +12,45 @@ pub def poll_generator[T with Clone](mut values: Generator[T], mut output: list[
             output.append(value)
             return true
         None => return false
+
+
+pub def list_generator[T with (Clone, Static)](values: list[T]) -> Generator[T]:
+    """Yield an owned list snapshot's items lazily and in order, as a generator expression's first source."""
+    return (value for value in values)
+
+
+pub def range_generator(start: int, end: int, step: int) -> Generator[int]:
+    """Construct the builtin range now, rejecting a zero step, and yield its integers lazily."""
+    return (value for value in range(start, end, step))
+
+
+pub def once_generator[T with (Clone, Static)](value: T) -> Generator[T]:
+    """Yield one item a generator-expression step accepted."""
+    return (item for item in [value])
+
+
+pub def empty_generator[T with (Clone, Static)]() -> Generator[T]:
+    """Yield nothing for an item a generator-expression step filtered out."""
+    values: list[T] = []
+    return (item for item in values)
+
+
+pub def int_step_generator[T with (Clone, Static)](source: Generator[int], step: (int) -> Generator[T]) -> Generator[T]:
+    """Expand each integer source item through a generator-expression step, drawing both only when polled."""
+    return (value for item in source for value in step(item))
+
+
+pub def float_step_generator[T with (Clone, Static)](
+    source: Generator[float],
+    step: (float) -> Generator[T],
+) -> Generator[T]:
+    """Expand each float source item through a generator-expression step, drawing both only when polled."""
+    return (value for item in source for value in step(item))
+
+
+pub def bool_step_generator[T with (Clone, Static)](
+    source: Generator[bool],
+    step: (bool) -> Generator[T],
+) -> Generator[T]:
+    """Expand each boolean source item through a generator-expression step, drawing both only when polled."""
+    return (value for item in source for value in step(item))

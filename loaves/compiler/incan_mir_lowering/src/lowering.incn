@@ -88,6 +88,7 @@ from rust::incan_semantics_core::body_ir import (
     Constant as RustConstant,
     FormatPart as RustFormatPart,
     FormatStyle as RustFormatStyle,
+    GeneratorBody as RustGeneratorBody,
     HelperOp as RustHelper,
     NamedCallableTarget as RustNamedCallableTarget,
     LocalCallableTarget as RustLocalCallableTarget,
@@ -118,7 +119,7 @@ from classes import (
     method_receiver,
     static_type_arguments,
 )
-from ranges import range_aggregate
+from ranges import range_aggregate, builtin_range_bounds
 from tuple_iterators import zip_shape, zip_call, clone_zip, zip_next, initialize_zip_iterator, enumerated_element
 from generators import (
     generator_shape,
@@ -133,6 +134,7 @@ from generators import (
     is_generator_type,
     is_generator_reference,
 )
+from generator_expressions import first_clause_item, source_generator, source_item, construct_chain, step_result
 from project import project_context
 from nominal_instances import specialize_nominals
 from traits import method_index, owner_method_index, specialize_traits, validate_static_receiver
@@ -1111,6 +1113,17 @@ def lower_loop_exit(mut builder: Builder, repeat: bool, span: SourceSpan) -> Res
 
 def lower_yield(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[None, str]:
     """Apply the checked generator's element boundary conversion before transferring an owned yield."""
+    # A generator-expression step hands its one accepted element back to the chain instead of suspending.
+    match builder.step_element:
+        Some(element) =>
+            # A later `for` clause would yield many elements per item; one step returns exactly one.
+            if len(builder.loops) != 0:
+                return Err("unsupported Body IR generator expression with a later for clause")
+            operand = value_operand(builder, value, span)?
+            accepted = coerce_numeric_operand(builder, operand, element, span)?
+            result = step_result(builder, Some(accepted), span)?
+            return finish_return(builder, result, span)
+        None => pass
     if builder.generator_handle < 0:
         return Err("unsupported Body IR Yield outside generator producer")
     match builder.locals[builder.generator_handle].ty:
@@ -1188,6 +1201,8 @@ def lower_local_assignment(
                     closure.result,
                     span,
                 )
+        RustRvalue.Generator(source=source, captured_operands=captures, body=generator) =>
+            return lower_generator_expression(module, builder, target, source, captures, generator, span)
         RustRvalue.Use(operand) =>
             if callable_copy_type(place_type(builder.locals, target)):
                 callable = value_operand(builder, operand, span)?
@@ -1443,11 +1458,63 @@ def lift_closure(
     for index in range(len(signature) - 1):
         arguments.append(signature[index])
     count = len(arguments)
-    mut locals = [Local(ty=signature[-1], span=span)]
     mut lifted_parameters: list[Parameter] = []
     for index in range(count):
-        locals.append(Local(ty=arguments[index], span=span))
         lifted_parameters.append(Parameter(name=f"__incan_argument_{index}", ty=arguments[index], span=span))
+    mut lifted = lifted_frame(builder, name, arguments, signature[-1], span)
+    for index in range(count):
+        mut destination = 0
+        if index < len(captures):
+            destination = int(capture_locals[index].index()) + 1 + count
+        else:
+            destination = int(parameters[index - len(captures)].local.index()) + 1 + count
+        mut parameter_type = lifted.locals[destination].ty
+        if index >= len(captures):
+            parameter_type = list_parameter_type(parameter_type, false)
+        if parameter_type != arguments[index]:
+            return Err("invalid Body IR closure argument type")
+        lifted.locals[destination].ty = parameter_type
+        owned = arguments[index] == PlanType.String
+        lifted.emit(
+            plan_assign(
+                plan_place(destination, span),
+                RvalueKind.Use(read_place(plan_place(index + 1, span), owned, span)),
+                span,
+            ),
+        )
+        if owned:
+            lifted.owned.append(destination)
+    for statement in statements:
+        lower_statement(module, lifted, statement)?
+    if not lifted.closed[lifted.current]:
+        value = return_operand(lifted, result, span)?
+        finish_return(lifted, value, span)?
+    if len(lifted.synthesized) != 0:
+        return Err("unsupported Body IR closure nested in a closure")
+    adopt_lifted(builder, lifted)
+    return Ok(
+        Function(
+            name=name,
+            parameters=lifted_parameters,
+            return_type=signature[-1],
+            locals=lifted.locals,
+            blocks=lifted.blocks,
+            span=span,
+        ),
+    )
+
+
+def lifted_frame(builder: Builder, name: str, arguments: list[PlanType], result: PlanType, span: SourceSpan) -> Builder:
+    """
+    Start a lifted function's frame: its result slot, its arguments, then the enclosing frame's locals.
+
+    The enclosing locals keep their Body IR slots behind the arguments, so the lifted statements lower with the ordinary
+    local offset.
+    """
+    count = len(arguments)
+    mut locals = [Local(ty=result, span=span)]
+    for argument in arguments:
+        locals.append(Local(ty=argument, span=span))
     for index in range(1, len(builder.locals)):
         locals.append(builder.locals[index])
     mut pointer_locals: list[int] = []
@@ -1485,48 +1552,99 @@ def lift_closure(
         synthesized=[],
     )
     _ = lifted.new_block(span)
-    for index in range(count):
-        mut destination = 0
-        if index < len(captures):
-            destination = int(capture_locals[index].index()) + 1 + count
-        else:
-            destination = int(parameters[index - len(captures)].local.index()) + 1 + count
-        mut parameter_type = lifted.locals[destination].ty
-        if index >= len(captures):
-            parameter_type = list_parameter_type(parameter_type, false)
-        if parameter_type != arguments[index]:
-            return Err("invalid Body IR closure argument type")
-        lifted.locals[destination].ty = parameter_type
-        owned = arguments[index] == PlanType.String
-        lifted.emit(
-            plan_assign(
-                plan_place(destination, span),
-                RvalueKind.Use(read_place(plan_place(index + 1, span), owned, span)),
-                span,
-            ),
-        )
-        if owned:
-            lifted.owned.append(destination)
-    for statement in statements:
-        lower_statement(module, lifted, statement)?
-    if not lifted.closed[lifted.current]:
-        value = return_operand(lifted, result, span)?
-        finish_return(lifted, value, span)?
-    if len(lifted.synthesized) != 0:
-        return Err("unsupported Body IR closure nested in a closure")
+    return lifted
+
+
+def adopt_lifted(mut builder: Builder, lifted: Builder) -> None:
+    """Carry a lifted function's runtime signatures and checked instantiations into the enclosing plan."""
     for external in lifted.externals:
         builder.externals.append(external)
     builder.instances.extend(lifted.instances)
-    return Ok(
-        Function(
-            name=name,
-            parameters=lifted_parameters,
-            return_type=signature[-1],
-            locals=lifted.locals,
-            blocks=lifted.blocks,
-            span=span,
-        ),
-    )
+
+
+def lower_generator_expression(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: Place,
+    source: &RustOperand,
+    captures: &list[RustOperand],
+    body: &RustGeneratorBody,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Build a generator expression as legacy's lazy adapter chain over its eagerly evaluated first source.
+
+    The first source becomes an owned generator now. A lifted step receives each of its items only when a consumer polls
+    and returns that item's accepted element, or nothing, so no clause, filter or element runs before it is drawn.
+    """
+    if target.projection != Projection.Whole:
+        return Err("unsupported Body IR projected generator expression")
+    if builder.local_offset != 0:
+        return Err("unsupported Body IR generator expression inside a lifted or deferred frame")
+    if len(captures) != 0 or len(body.capture_locals) != 0:
+        return Err("unsupported Body IR generator expression capture")
+    item_local = first_clause_item(body)?
+    evaluated = value_operand(builder, source, span)?
+    first = source_generator(builder, evaluated, span)?
+    item = source_item(builder, first)?
+    name = f"__incan_generator_step_{builder.name}_{len(builder.synthesized)}"
+    match body.stmts[1].kind:
+        RustStatementKind.Loop(body=block) =>
+            step = lift_generator_step(module, builder, name, item, target, item_local, block, span)?
+            synthesize(builder, step)
+        _ => return Err("unsupported Body IR generator expression body shape")
+    drop_owned(builder, target.local, span)
+    construct_chain(builder, first, name, target, span)?
+    builder.owned.append(target.local)
+    return Ok(None)
+
+
+def lift_generator_step(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    name: str,
+    item: PlanType,
+    target: Place,
+    item_local: int,
+    block: &RustBlock,
+    span: SourceSpan,
+) -> Result[Function, str]:
+    """
+    Build one generator-expression step: from a first-source item to the generator of that item's accepted element.
+
+    The step binds the item to the local the deferred body polls into, then lowers every statement after that poll; a
+    yield returns its element and falling through returns an empty generator.
+    """
+    result = place_type(builder.locals, target)
+    match generator_shape(result):
+        Some((leaf, depth)) =>
+            mut lifted = lifted_frame(builder, name, [item], result, span)
+            lifted.step_element = Some(generator_element(leaf, depth))
+            binding = plan_place(item_local + 2, span)
+            if place_type(lifted.locals, binding) != item:
+                return Err("unsupported Body IR generator expression item binding")
+            lifted.emit(plan_assign(binding, RvalueKind.Use(read_place(plan_place(1, span), false, span)), span))
+            for index in range(1, len(block.stmts)):
+                lower_statement(module, lifted, block.stmts[index])?
+                if lifted.closed[lifted.current]:
+                    break
+            if not lifted.closed[lifted.current]:
+                filtered = step_result(lifted, None, span)?
+                finish_return(lifted, filtered, span)?
+            if len(lifted.synthesized) != 0:
+                return Err("unsupported Body IR closure nested in a generator expression")
+            adopt_lifted(builder, lifted)
+            return Ok(
+                Function(
+                    name=name,
+                    parameters=[Parameter(name="__incan_item", ty=item, span=span)],
+                    return_type=result,
+                    locals=lifted.locals,
+                    blocks=lifted.blocks,
+                    span=span,
+                ),
+            )
+        None => return Err("unsupported Body IR generator expression type")
 
 
 def negation_as_subtraction(operation: RvalueKind, span: SourceSpan) -> RvalueKind:
@@ -2547,7 +2665,45 @@ def lower_builtin(
         RustBuiltin.Int => return lower_scalar_conversion(builder, arguments, destination, true, span)
         RustBuiltin.Str => return lower_str_builtin(builder, arguments, destination, span)
         RustBuiltin.JsonStringify => return lower_model_json_builtin(builder, arguments, destination, span)
+        RustBuiltin.Range => return lower_range_builtin(builder, arguments, destination, span)
         _ => return Err(f"unsupported Body IR builtin {builtin:?}")
+
+
+def lower_range_builtin(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Construct a checked builtin `range` value as legacy's lazy integer range, rejecting a zero step now.
+
+    The checker types the call as a list, but legacy never materializes one: the value is a native range that only
+    iteration consumes. The call's fresh temporary therefore holds the runtime's integer generator, and a consumer that
+    needs a list keeps its named refusal.
+    """
+    bounds = builtin_range_bounds(fixed_arguments(builder, arguments, span)?, span)?
+    for bound in bounds:
+        if operand_type(builder, bound)? != PlanType.Int:
+            return Err("unsupported Body IR builtin range bound type")
+    output = call_destination(builder, destination, PlanType.List(ListLeaf.Int, 1), span)?
+    if output.projection != Projection.Whole or output.local in builder.owned:
+        return Err("unsupported Body IR builtin range value outside a fresh temporary")
+    if place_type(builder.locals, output) != PlanType.List(ListLeaf.Int, 1):
+        return Err("unsupported Body IR builtin range destination type")
+    result = PlanType.Generator(ListLeaf.Int, 0)
+    builder.locals[output.local].ty = result
+    external_call(
+        builder,
+        "incan_native_runtime::range_generator",
+        [PlanType.Int, PlanType.Int, PlanType.Int],
+        result,
+        bounds,
+        output,
+        span,
+    )
+    builder.owned.append(output.local)
+    return Ok(None)
 
 
 def lower_zip_builtin(
@@ -4329,6 +4485,9 @@ def list_assignment(
                     None => splice_list_spread(builder, output, item, leaf, depth, span)?
         RustRvalue.Use(value) =>
             argument = value_operand(builder, value, span)?
+            # The checker types a builtin range call as a list, but its value is a lazy range only iteration consumes.
+            if operand_type(builder, argument)? != ty:
+                return Err("unsupported Body IR list assignment from a non-list value")
             match argument.kind:
                 OperandKind.Move(place) => forget_owned(builder, place.local)
                 _ => pass
@@ -5855,6 +6014,12 @@ def boundary_operand(
     if target == PlanType.FrozenStr:
         return frozen_operand(builder, value, span)
     operand = typed_carrier_operand(builder, value, target, span)?
+    # The checker types a builtin range call as a list, but its value is a lazy range only iteration consumes.
+    match generator_shape(operand_type(builder, operand)?):
+        Some(_shape) =>
+            if is_list(target):
+                return Err("unsupported Body IR generator value at a list boundary")
+        None => pass
     return boundary_plan_operand(builder, operand, target, span)
 
 

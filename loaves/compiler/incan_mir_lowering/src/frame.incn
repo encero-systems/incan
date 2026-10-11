@@ -47,6 +47,7 @@ pub model Builder:
     `type_parameters` and `type_arguments` retain the current closed declaration binding; `instances` records checked calls that need their own concrete native function.
     `function_pointer_locals` lists the return slot, function-typed parameters, and explicitly annotated locals whose callables are stored as reified function pointers; other callable locals keep their inferred function-item type.
     `name` is the plan symbol of the function being built, which prefixes the functions its closures synthesize; `synthesized` collects those lifted bodies and constructors for the enclosing plan.
+    `step_element` is the element type of the generator expression whose lifted step this frame builds, or None in every other frame; a step's yield returns its one accepted element instead of suspending.
     """
 
     pub locals: list[Local]
@@ -78,6 +79,7 @@ pub model Builder:
     pub function_pointer_locals: list[int]
     pub name: str
     pub synthesized: list[Function]
+    pub step_element: Option[PlanType] = None
 
     def new_block(mut self, span: SourceSpan) -> int:
         """Allocate a block before connecting edges, preserving index stability."""
