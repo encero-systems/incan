@@ -5642,3 +5642,62 @@ def main() -> None:
 "#,
     )
 }
+
+/// Element writes after a model field and `mut self` calls on list and dictionary elements change the stored element,
+/// as legacy's in-place element borrows do, while a shared receiver reads a copy.
+#[test]
+fn list_element_mutation_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("list-element-mutations")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"class Counter:
+    pub count: int
+
+    def bump(mut self) -> None:
+        self.count += 1
+
+    def total(self) -> int:
+        return self.count
+
+class Grid:
+    pub cells: list[int]
+    pub counters: list[Counter]
+
+    def swap_cells(mut self) -> None:
+        self.cells[0], self.cells[1] = (self.cells[1], self.cells[0])
+
+    def bump_last(mut self) -> None:
+        self.counters[-1].bump()
+
+class Wrap:
+    pub inner: Counter
+
+def main() -> None:
+    mut grid = Grid(cells=[7, 8], counters=[Counter(count=0), Counter(count=5)])
+    grid.swap_cells()
+    println(grid.cells)
+    grid.cells[1] = 3
+    println(grid.cells[1])
+    grid.bump_last()
+    grid.counters[0].bump()
+    println(grid.counters[0].count)
+    println(grid.counters[1].total())
+    mut counters = [Counter(count=0)]
+    counters[0].bump()
+    counters[-1].bump()
+    println(counters[0].count)
+    mut wraps = [Wrap(inner=Counter(count=0))]
+    wraps[0].inner.bump()
+    println(wraps[0].inner.count)
+    mut table: dict[str, Counter] = {"a": Counter(count=0)}
+    table["a"].bump()
+    println(table["a"].count)
+    mut rows = [[Counter(count=1)]]
+    rows[0][0].bump()
+    println(rows[0][0].count)
+"#,
+    )
+}
