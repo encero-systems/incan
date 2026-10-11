@@ -5751,3 +5751,17 @@ def main() -> None:
 "#,
     )
 }
+
+/// A const read through a module binding is that module's value, read directly and passed on as an argument.
+#[test]
+fn module_member_constant_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_case(
+        "module_member_constants",
+        "import labels\n\n\ndef shout(text: str) -> str:\n    return text.upper()\n\n\ndef main() -> None:\n    println(labels.DEFAULT_LABEL)\n    println(labels.LIMIT + 1)\n    println(labels.width())\n    println(shout(labels.DEFAULT_LABEL))\n",
+        &[(
+            "labels.incn",
+            "pub const DEFAULT_LABEL: str = \"orders\"\npub const LIMIT: int = 3\n\n\npub def width() -> int:\n    return len(DEFAULT_LABEL)\n",
+        )],
+        b"orders\n4\n6\nORDERS\n",
+    )
+}

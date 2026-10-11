@@ -17,6 +17,17 @@ fn build_with_imports(
     module_path: &[&str],
     imports: &[(&str, &[&str], &str)],
 ) -> Result<bir::BodyIrModule, Box<dyn std::error::Error>> {
+    build_with_published_imports(source, module_path, imports, &[])
+}
+
+/// Like [`build_with_imports`], with the already lowered `context` modules a project build publishes beside it, so
+/// their retained facts (published constants among them) reach the consumer as they do in a project compilation.
+fn build_with_published_imports(
+    source: &str,
+    module_path: &[&str],
+    imports: &[(&str, &[&str], &str)],
+    context: &[bir::BodyIrModule],
+) -> Result<bir::BodyIrModule, Box<dyn std::error::Error>> {
     let mut import_programs = Vec::new();
     for (name, segments, import_source) in imports {
         let tokens = lexer::lex(import_source).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
@@ -42,7 +53,50 @@ fn build_with_imports(
     checker
         .check_with_imports(&program, &import_refs)
         .map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
-    Ok(build_body_ir_module_v0(&program, &module_path, checker.type_info()))
+    Ok(build_body_ir_module_v0_with_executable_context(
+        &program,
+        &module_path,
+        checker.type_info(),
+        context,
+    ))
+}
+
+/// A const read through a module binding is the providing module's published value, as a bare imported name read is,
+/// so no global storage is left for it.
+#[test]
+fn module_member_constants_read_their_published_values() -> Result<(), Box<dyn std::error::Error>> {
+    let provider_source = r#"
+pub const LABEL: str = "orders"
+pub const LIMIT: int = 3
+"#;
+    let consumer_source = r#"
+import provider
+
+def read() -> int:
+  println(provider.LABEL)
+  return provider.LIMIT
+"#;
+    let provider = build(provider_source, &["provider"])?;
+    let module = build_with_published_imports(
+        consumer_source,
+        &["consumer"],
+        &[("provider", &["provider"], provider_source)],
+        &[provider],
+    )?;
+    let snapshot = body_named(&module, "read")?.render_snapshot();
+    assert!(
+        !snapshot.contains("@const:provider::"),
+        "a published constant must not stay a global read: {snapshot}"
+    );
+    assert!(
+        snapshot.contains("const(3)"),
+        "missing published integer constant: {snapshot}"
+    );
+    assert!(
+        snapshot.contains("orders"),
+        "missing published text constant: {snapshot}"
+    );
+    Ok(())
 }
 
 #[test]
