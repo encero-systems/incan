@@ -35,8 +35,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Lower a `match` expression (`ast::Expr::Match`) into a single [`bir::Rvalue::Match`], mirroring the existing
     /// Rust-emission backend's own `IrExprKind::Match { scrutinee, arms }` node -- see [`bir::Rvalue::Match`]'s docs
     /// for why matching stays one structured node rather than being decomposed into a chain of `If` statements, and
-    /// [`bir::Pattern`]'s docs for the closed pattern vocabulary this mirrors and its two deliberate v0 gaps (no
-    /// union-type pattern narrowing, no RFC 021 field-alias resolution).
+    /// [`bir::Pattern`]'s docs for the closed pattern vocabulary, retained union member targets, and the remaining
+    /// RFC 021 field-alias refinement gap.
     ///
     /// Bails the whole expression to an explicit unsupported placeholder *before* lowering the scrutinee when any
     /// arm's pattern contains a byte-string literal (a pattern form outside Body IR's current closed matching
@@ -307,6 +307,34 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 bir::Pattern::Tuple(fields)
             }
             ast::Pattern::Constructor(name, args) => {
+                // Pattern checking records the selected union member at the constructor span. Keep that fact separate
+                // from generic enum spelling.
+                let target_ty = self.resolve_ty(name.span);
+                let subject_ty = self.resolve_ty(pattern.span);
+                if matches!(&subject_ty, IncanType::Generic { base, .. } if base == "Union")
+                    && !matches!(target_ty, IncanType::Unknown)
+                    && args.iter().all(|arg| matches!(arg, ast::PatternArg::Positional(_)))
+                {
+                    let mut fields = Vec::new();
+                    for arg in args {
+                        if let ast::PatternArg::Positional(payload) = arg {
+                            let mut payload_place = place.clone();
+                            payload_place
+                                .projection
+                                .push(bir::PlaceElem::UnionMember { ty: target_ty.clone() });
+                            fields.push(self.lower_match_pattern(
+                                payload,
+                                &target_ty,
+                                &payload_place,
+                                arm_scope,
+                                reads,
+                                seen,
+                                saved_bindings,
+                            ));
+                        }
+                    }
+                    return bir::Pattern::UnionMember { ty: target_ty, fields };
+                }
                 // Retain the checked pattern target from local or imported declaration context. Source aliases
                 // never participate in declaration or layout equality. The direct profile accepts only canonical
                 // named fields of a plain model; every other structurally lowered constructor remains the

@@ -241,6 +241,7 @@ impl<'a> PublicationAudit<'a> {
                     ..
                 } => {}
                 PlaceElem::Field { .. } => return Err(CoverageReason::UnresolvedReference),
+                PlaceElem::UnionMember { ty } => self.ty(ty)?,
                 PlaceElem::Index(value) => self.operand(value)?,
                 PlaceElem::Slice { start, end, step } => {
                     for value in [start, end, step].into_iter().flatten() {
@@ -279,6 +280,12 @@ impl<'a> PublicationAudit<'a> {
             Pattern::Tuple(items) | Pattern::Or(items) | Pattern::Result { fields: items, .. } => {
                 for item in items {
                     self.pattern(item)?;
+                }
+            }
+            Pattern::UnionMember { ty, fields } => {
+                self.ty(ty)?;
+                for field in fields {
+                    self.pattern(field)?;
                 }
             }
             Pattern::Nominal { target, fields } => {

@@ -4,6 +4,23 @@ use super::args::*;
 use super::primitives::*;
 use super::*;
 use incan_lang::lang::builtins::BuiltinFnId;
+use incan_lang::lang::surface::{dict_methods, list_methods, set_methods};
+
+/// Read receiver exclusivity from the canonical builtin collection registry, never from a source method's spelling.
+fn collection_method_changes_receiver(identity: &CanonicalSymbolId) -> bool {
+    if identity.origin != incan_semantics_core::SymbolOrigin::Builtin {
+        return false;
+    }
+    let Some((family, member)) = identity.declaration_name.split_once('.') else {
+        return false;
+    };
+    match family {
+        "List" => list_methods::from_str(member).is_some_and(list_methods::changes_receiver),
+        "Set" => set_methods::from_str(member).is_some_and(set_methods::changes_receiver),
+        "Dict" => dict_methods::from_str(member).is_some_and(dict_methods::changes_receiver),
+        _ => false,
+    }
+}
 
 /// The type a `Type.member(..)` call is made on, when its receiver names a type rather than a value.
 ///
@@ -153,7 +170,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         call_span: ast::Span,
     ) -> Result<DirectCallDeclaration, String> {
         let declarations = &self.type_info.declarations;
-        let local_declarations = self.local_function_declarations.get(name);
+        // A same-module alias keeps the selected function's identity; use that declaration's retained spans rather
+        // than treating the alias spelling as an imported function with no executable body.
+        let selected = self.type_info.resolved_identity(callee_span);
+        let declaration_name = selected
+            .filter(|identity| identity.kind == SemanticSourceTargetKind::Function)
+            .filter(|identity| {
+                incan_semantics_core::canonical_module_identity(identity).as_deref() == Some(self.module_identity)
+            })
+            .map_or(name, |identity| identity.declaration_name.as_str());
+        let local_declarations = self.local_function_declarations.get(declaration_name);
         let Some(local_declarations) = local_declarations else {
             let canonical = self.type_info.resolved_identity(callee_span).cloned();
             let builtin = self.type_info.resolved_builtin_call(call_span);
@@ -324,10 +350,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         Ok(resolved.iter().map(semantic_type_from_resolved).collect())
     }
 
-    /// Lower a `model`/`class` construction into a [`bir::AggregateKind::Constructor`] aggregate.
+    /// Lower a `model`/`class` or plain-newtype construction into a [`bir::AggregateKind::Constructor`] aggregate.
     ///
-    /// Source-level construction is named-only, so the argument-to-field binding is the whole representation
-    /// problem. Lowering consumes the typechecker's own recorded decision
+    /// Models/classes bind named fields; a newtype binds its single positional argument to tuple slot zero. Lowering
+    /// consumes the typechecker's own recorded decision
     /// ([`TypeCheckInfo::constructor_field_binding`](crate::typechecker::TypeCheckInfo::constructor_field_binding))
     /// rather than re-resolving field aliases or rediscovering declared field order, both of which live in the
     /// symbol table this stage deliberately cannot reach. Operands are emitted in declared field order while the
@@ -729,6 +755,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         };
         let name = name.clone();
 
+        // The checked constructor identity distinguishes this conversion from a same-spelled source callable.
+        if type_args.is_empty()
+            && self.type_info.resolved_collection_constructor(span) == Some(CollectionTypeId::Set)
+            && let [ast::CallArg::Positional(source)] = args
+        {
+            return self.lower_set_constructor_source(source, span, scope, out);
+        }
+
         // A retained zero-argument constructor fact distinguishes builtin construction from a same-spelled source
         // callable. Only empty List/Set/Dict construction is admitted here; iterable conversions stay on their
         // existing path.
@@ -1102,7 +1136,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     }
 
     /// Lower a method call `recv.name(args)` to a [`bir::Callee::Method`] call, with the receiver prepended to
-    /// `args[0]` as a [`bir::OwnershipFact::Borrow`] operand (see the inline comment on the receiver-borrow decision
+    /// `args[0]` as a shared or exclusive borrow operand (see the inline comment on the receiver-borrow decision
     /// below).
     ///
     /// Argument binding goes through the same [`plan_declared_args`] planner every other call shape uses, against
@@ -1173,13 +1207,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.lower_expr_to_operand(recv, scope, out)
         } else {
             let recv_place = self.lower_expr_to_place(recv, scope, out);
-            let builtin_list_receiver = self.type_info.resolved_identity(span).is_some_and(|identity| {
-                identity.origin == incan_semantics_core::SymbolOrigin::Builtin
-                    && identity.declaration_name.starts_with("List.")
-            });
-            let fact = if builtin_list_receiver
-                && incan_lang::lang::surface::list_methods::from_str(name)
-                    .is_some_and(incan_lang::lang::surface::list_methods::changes_receiver)
+            let fact = if self
+                .type_info
+                .resolved_identity(span)
+                .is_some_and(collection_method_changes_receiver)
             {
                 bir::OwnershipFact::MutBorrow
             } else {

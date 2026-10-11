@@ -243,10 +243,17 @@ fn is_body_ir_rust_path(ty: &ResolvedType) -> bool {
     )
 }
 
-/// Follow one public Rust-backed alias when deciding whether a shared reference belongs to the Body IR exception.
+/// Follow a public Rust-backed alias or a list of those aliases when deciding whether a shared reference belongs to
+/// the identity-witnessed Body IR exception. List admission retains the same canonical element restriction.
 fn is_body_ir_caller_type(ty: &ResolvedType, exports: &BTreeMap<&str, &CheckedNamedExport>) -> bool {
     if is_body_ir_rust_path(ty) {
         return true;
+    }
+    if let ResolvedType::Generic(name, arguments) = ty
+        && collections::from_str(name) == Some(CollectionTypeId::List)
+        && let [element] = arguments.as_slice()
+    {
+        return is_body_ir_caller_type(element, exports);
     }
     let ResolvedType::Named(name) = ty else {
         return false;
@@ -370,15 +377,20 @@ const RAW: &str = r##"a quote " hidden::caller::incan::ignored"##;
     #[test]
     fn body_ir_caller_requires_dependency_identity() -> Result<(), Box<dyn std::error::Error>> {
         let source = "from rust::incan_semantics_core::body_ir import BodyIrModule as RustModule\npub type Module = rusttype RustModule\npub def inspect(module: &Module) -> bool:\n    return True\n";
-        let exports = checked_exports(source)?;
         let requested = BTreeSet::from(["inspect".to_string()]);
-        assert!(select_checked_caller_exports("lowering", &requested, &exports).is_err());
-        select_checked_caller_exports_with_body_ir("lowering", &requested, &exports, true)?;
-        let other = source
-            .replace("incan_semantics_core::body_ir", "other")
-            .replace("BodyIrModule", "OtherType");
-        let exports = checked_exports(&other)?;
-        assert!(select_checked_caller_exports_with_body_ir("lowering", &requested, &exports, true).is_err());
+        for source in [
+            source.to_owned(),
+            source.replace("module: &Module", "module: &list[Module]"),
+        ] {
+            let exports = checked_exports(&source)?;
+            assert!(select_checked_caller_exports("lowering", &requested, &exports).is_err());
+            select_checked_caller_exports_with_body_ir("lowering", &requested, &exports, true)?;
+            let other = source
+                .replace("incan_semantics_core::body_ir", "other")
+                .replace("BodyIrModule", "OtherType");
+            let exports = checked_exports(&other)?;
+            assert!(select_checked_caller_exports_with_body_ir("lowering", &requested, &exports, true).is_err());
+        }
         Ok(())
     }
 

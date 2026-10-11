@@ -1,5 +1,6 @@
 """List layout and iteration admission from canonical checked Body IR."""
 
+from collections import collection_reference, leaf_type
 from pub::incan_mir_plan import ListLeaf, PlanType
 from rust::incan_semantics_core::body_ir import (
     Block as RustBlock,
@@ -29,11 +30,7 @@ pub def list_element(leaf: ListLeaf, depth: int) -> PlanType:
     """Recover the exact immediate element representation without flattening nested lists."""
     if depth > 1:
         return PlanType.List(leaf, depth - 1)
-    match leaf:
-        ListLeaf.Int => return PlanType.Int
-        ListLeaf.Float => return PlanType.Float
-        ListLeaf.Bool => return PlanType.Bool
-        ListLeaf.Str => return PlanType.String
+    return leaf_type(leaf)
 
 
 pub def list_iterator_locals(block: &RustBlock) -> list[int]:
@@ -88,17 +85,19 @@ pub def is_builtin_iteration(protocol: &IterProtocol) -> bool:
 
 
 pub def list_parameter_type(ty: PlanType, mutable: bool) -> PlanType:
-    """Map list parameters and iterable storage to their caller-owned reference representation."""
+    """Map supported collection parameters and iterable storage to caller-owned references."""
     match list_shape(ty):
         Some((leaf, depth)) =>
             if mutable:
                 return PlanType.ListMutRef(leaf, depth)
             return PlanType.ListRef(leaf, depth)
-        None => return ty
+        None => return collection_reference(ty, mutable)
 
 
 pub def is_mutable_list_reference(ty: PlanType) -> bool:
-    """Read the declared list parameter's exclusive-borrow contract."""
+    """Read a supported collection parameter's exclusive-borrow contract."""
     match ty:
+        PlanType.SetMutRef(_leaf) => return true
+        PlanType.DictMutRef(_key, _value) => return true
         PlanType.ListMutRef(_leaf, _depth) => return true
         _ => return false

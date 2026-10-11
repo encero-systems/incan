@@ -1,0 +1,62 @@
+"""Shared declaration context for a project whose individual owning modules have been validated."""
+
+from rust::incan_semantics_core::body_ir import BodyIrModule
+from traits import specialize_traits
+
+
+pub def project_context(
+    modules: &list[BodyIrModule],
+    entry: int,
+) -> Result[tuple[BodyIrModule, list[BodyIrModule]], str]:
+    """Retain original canonical identities while joining layouts and specialized bodies for native planning."""
+    mut context = modules[entry].clone()
+    context.bodies.clear()
+    context.nominal_declarations.clear()
+    context.enum_declarations.clear()
+    context.fieldless_enum_declarations.clear()
+    context.value_enum_declarations.clear()
+    context.trait_declarations.clear()
+    context.trait_implementations.clear()
+    context.static_declarations.clear()
+    context.stdlib_delegations.clear()
+    mut checked: list[BodyIrModule] = []
+    for module in modules:
+        if len(module.value_enum_declarations) != 0:
+            return Err("unsupported Body IR value enum declaration")
+        specialized = specialize_traits(module)?
+        # The imported Rust type has Clone, but List.append cannot prove that trait for a named opaque value.
+        # An explicit interop clone is an owned call result and retains the module for both planning views.
+        checked.append(specialized.clone())
+        for body in specialized.bodies:
+            context.bodies.push(body.clone())
+        # Indexed interop reads avoid legacy emission moving a vector field from a borrowed loop element.
+        for index in range(len(module.nominal_declarations)):
+            declaration = module.nominal_declarations[index].clone()
+            # Native carrier types still use checked names. Equal names from different owners must refuse rather
+            # than selecting the first layout until carrier admission accepts complete nominal identities.
+            for retained in range(len(context.nominal_declarations)):
+                if context.nominal_declarations[retained].name == declaration.name:
+                    return Err(f"unsupported Body IR ambiguous project nominal carrier {declaration.name}")
+            context.nominal_declarations.push(declaration.clone())
+        for index in range(len(module.enum_declarations)):
+            declaration = module.enum_declarations[index].clone()
+            for retained in range(len(context.enum_declarations)):
+                if context.enum_declarations[retained].name == declaration.name:
+                    return Err(f"unsupported Body IR ambiguous project enum carrier {declaration.name}")
+            context.enum_declarations.push(declaration.clone())
+        for index in range(len(module.fieldless_enum_declarations)):
+            declaration = module.fieldless_enum_declarations[index].clone()
+            context.fieldless_enum_declarations.push(declaration.clone())
+        for index in range(len(module.trait_declarations)):
+            declaration = module.trait_declarations[index].clone()
+            context.trait_declarations.push(declaration.clone())
+        for index in range(len(module.trait_implementations)):
+            declaration = module.trait_implementations[index].clone()
+            context.trait_implementations.push(declaration.clone())
+        for index in range(len(module.static_declarations)):
+            declaration = module.static_declarations[index].clone()
+            context.static_declarations.push(declaration.clone())
+        for index in range(len(module.stdlib_delegations)):
+            declaration = module.stdlib_delegations[index].clone()
+            context.stdlib_delegations.push(declaration.clone())
+    return Ok((context, checked))

@@ -1,9 +1,7 @@
 //! Scalar places, constants, and expressions in the pinned rustc MIR vocabulary.
 
 use crate::error::PlanError;
-use crate::plan::{
-    BinaryOp, Constant, Operand, OperandKind, Place, PlanType, Projection, RvalueKind, UnaryOp,
-};
+use crate::plan::{BinaryOp, Constant, Operand, OperandKind, Place, PlanType, Projection, RvalueKind, UnaryOp};
 use crate::spans::Sources;
 use crate::types::native_type;
 use rustc_abi::FieldIdx;
@@ -26,20 +24,26 @@ pub fn place<'tcx>(tcx: TyCtxt<'tcx>, value: &Place) -> Result<mir::Place<'tcx>,
     let place = mir::Place::from(local);
     Ok(match &value.projection {
         Projection::Whole => place,
-        Projection::Field(slot, ty) => tcx.mk_place_field(
-            place,
-            FieldIdx::from_usize(index(*slot)?),
-            native_type(tcx, ty)?,
-        ),
+        Projection::VariantField(variant, slot, ty) => {
+            let downcast = place.project_deeper(
+                &[mir::ProjectionElem::Downcast(
+                    None,
+                    rustc_abi::VariantIdx::from_usize(index(*variant)?),
+                )],
+                tcx,
+            );
+            tcx.mk_place_field(downcast, FieldIdx::from_usize(index(*slot)?), native_type(tcx, ty)?)
+        }
+        Projection::Field(slot, ty) => {
+            tcx.mk_place_field(place, FieldIdx::from_usize(index(*slot)?), native_type(tcx, ty)?)
+        }
         Projection::Deref(_) => tcx.mk_place_deref(place),
         Projection::DerefField(slot, ty) => tcx.mk_place_field(
             tcx.mk_place_deref(place),
             FieldIdx::from_usize(index(*slot)?),
             native_type(tcx, ty)?,
         ),
-        Projection::NumericValue(ty) => {
-            tcx.mk_place_field(place, FieldIdx::from_u32(0), native_type(tcx, ty)?)
-        }
+        Projection::NumericValue(ty) => tcx.mk_place_field(place, FieldIdx::from_u32(0), native_type(tcx, ty)?),
         Projection::Value => tcx.mk_place_field(place, FieldIdx::from_u32(0), tcx.types.i64),
         Projection::Overflow => tcx.mk_place_field(place, FieldIdx::from_u32(1), tcx.types.bool),
     })
@@ -60,33 +64,21 @@ pub fn operand<'tcx>(
 }
 
 /// Encode fixed-width scalar constants without changing their bit representation.
-fn constant<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    value: &Constant,
-    span: Span,
-) -> Result<mir::Operand<'tcx>, PlanError> {
+fn constant<'tcx>(tcx: TyCtxt<'tcx>, value: &Constant, span: Span) -> Result<mir::Operand<'tcx>, PlanError> {
     Ok(match value {
-        Constant::Int(value) => {
-            mir::Operand::const_from_scalar(tcx, tcx.types.i64, Scalar::from_i64(*value), span)
-        }
+        Constant::Int(value) => mir::Operand::const_from_scalar(tcx, tcx.types.i64, Scalar::from_i64(*value), span),
         Constant::Numeric(text, ty) => numeric_constant(tcx, text, ty, span)?,
-        Constant::Float(value) => mir::Operand::const_from_scalar(
-            tcx,
-            tcx.types.f64,
-            Scalar::from_u64(value.to_bits()),
-            span,
-        ),
-        Constant::Bool(value) => {
-            mir::Operand::const_from_scalar(tcx, tcx.types.bool, Scalar::from_bool(*value), span)
+        Constant::Float(value) => {
+            mir::Operand::const_from_scalar(tcx, tcx.types.f64, Scalar::from_u64(value.to_bits()), span)
         }
+        Constant::Bool(value) => mir::Operand::const_from_scalar(tcx, tcx.types.bool, Scalar::from_bool(*value), span),
         Constant::Unit => mir::Operand::Constant(Box::new(mir::ConstOperand {
             span,
             user_ty: None,
             const_: mir::Const::Val(mir::ConstValue::ZeroSized, tcx.types.unit),
         })),
         Constant::Text(text) => {
-            let alloc_id =
-                tcx.allocate_bytes_dedup(text.as_bytes(), mir::interpret::CTFE_ALLOC_SALT);
+            let alloc_id = tcx.allocate_bytes_dedup(text.as_bytes(), mir::interpret::CTFE_ALLOC_SALT);
             let meta = u64::try_from(text.len()).map_err(|_| PlanError::Invalid {
                 function: "text".into(),
                 reason: "string literal length exceeds the native representation".into(),
@@ -130,9 +122,11 @@ pub fn rvalue<'tcx>(
     destination_type: &PlanType,
 ) -> Result<mir::Rvalue<'tcx>, PlanError> {
     Ok(match value {
-        RvalueKind::Use(value) => {
-            mir::Rvalue::Use(operand(tcx, sources, value)?, mir::WithRetag::Yes)
+        RvalueKind::Discriminant(value) => mir::Rvalue::Discriminant(place(tcx, value)?),
+        RvalueKind::TagToInt(value) => {
+            mir::Rvalue::Cast(mir::CastKind::IntToInt, operand(tcx, sources, value)?, tcx.types.i64)
         }
+        RvalueKind::Use(value) => mir::Rvalue::Use(operand(tcx, sources, value)?, mir::WithRetag::Yes),
         RvalueKind::NumericCast(value, source, target) => {
             let source_float = matches!(source, PlanType::Float | PlanType::F32 | PlanType::F64);
             let target_float = matches!(target, PlanType::Float | PlanType::F32 | PlanType::F64);
@@ -142,27 +136,17 @@ pub fn rvalue<'tcx>(
                 (false, true) => mir::CastKind::IntToFloat,
                 (false, false) => mir::CastKind::IntToInt,
             };
-            mir::Rvalue::Cast(
-                kind,
-                operand(tcx, sources, value)?,
-                native_type(tcx, target)?,
-            )
+            mir::Rvalue::Cast(kind, operand(tcx, sources, value)?, native_type(tcx, target)?)
         }
-        RvalueKind::IntToFloat(value) => mir::Rvalue::Cast(
-            mir::CastKind::IntToFloat,
-            operand(tcx, sources, value)?,
-            tcx.types.f64,
-        ),
-        RvalueKind::FloatToInt(value) => mir::Rvalue::Cast(
-            mir::CastKind::FloatToInt,
-            operand(tcx, sources, value)?,
-            tcx.types.i64,
-        ),
-        RvalueKind::BoolToInt(value) => mir::Rvalue::Cast(
-            mir::CastKind::IntToInt,
-            operand(tcx, sources, value)?,
-            tcx.types.i64,
-        ),
+        RvalueKind::IntToFloat(value) => {
+            mir::Rvalue::Cast(mir::CastKind::IntToFloat, operand(tcx, sources, value)?, tcx.types.f64)
+        }
+        RvalueKind::FloatToInt(value) => {
+            mir::Rvalue::Cast(mir::CastKind::FloatToInt, operand(tcx, sources, value)?, tcx.types.i64)
+        }
+        RvalueKind::BoolToInt(value) => {
+            mir::Rvalue::Cast(mir::CastKind::IntToInt, operand(tcx, sources, value)?, tcx.types.i64)
+        }
         RvalueKind::Unary(op, value) => mir::Rvalue::UnaryOp(
             match op {
                 UnaryOp::Not => mir::UnOp::Not,
@@ -173,14 +157,11 @@ pub fn rvalue<'tcx>(
         RvalueKind::Binary(op, left, right) => mir::Rvalue::BinaryOp(
             binary(
                 op,
-                matches!(
-                    destination_type,
-                    PlanType::CheckedInt | PlanType::CheckedNumeric(_)
-                ),
+                matches!(destination_type, PlanType::CheckedInt | PlanType::CheckedNumeric(_)),
             ),
             Box::new((operand(tcx, sources, left)?, operand(tcx, sources, right)?)),
         ),
-        RvalueKind::Model(_, elements) => {
+        RvalueKind::Model(_, elements) | RvalueKind::Enum(_, _, elements) => {
             let ty = native_type(tcx, destination_type)?;
             let rustc_middle::ty::Adt(definition, args) = ty.kind() else {
                 return Err(PlanError::Invalid {
@@ -195,7 +176,10 @@ pub fn rvalue<'tcx>(
             mir::Rvalue::Aggregate(
                 Box::new(mir::AggregateKind::Adt(
                     definition.did(),
-                    rustc_abi::VariantIdx::from_u32(0),
+                    rustc_abi::VariantIdx::from_usize(match value {
+                        RvalueKind::Enum(_, variant, _) => index(*variant)?,
+                        _ => 0,
+                    }),
                     *args,
                     None,
                     None,
@@ -230,11 +214,9 @@ pub fn rvalue<'tcx>(
             },
             place(tcx, value)?,
         ),
-        RvalueKind::Borrow(value) => mir::Rvalue::Ref(
-            tcx.lifetimes.re_erased,
-            mir::BorrowKind::Shared,
-            place(tcx, value)?,
-        ),
+        RvalueKind::Borrow(value) => {
+            mir::Rvalue::Ref(tcx.lifetimes.re_erased, mir::BorrowKind::Shared, place(tcx, value)?)
+        }
         RvalueKind::UnsizeSlice(value) => mir::Rvalue::Cast(
             mir::CastKind::PointerCoercion(
                 rustc_middle::ty::adjustment::PointerCoercion::Unsize,

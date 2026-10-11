@@ -1,0 +1,35 @@
+"""Persistent scalar cells for canonical direct-route storage slots."""
+
+static INTEGER_CELLS: dict[int, int] = {}
+static FLOAT_CELLS: dict[int, float] = {}
+static BOOLEAN_CELLS: dict[int, bool] = {}
+
+
+pub def read_static_int(slot: int, initial: int) -> int:
+    """Read a literal-initialized cell without resetting a previously assigned value."""
+    return INTEGER_CELLS.get(slot, initial)
+
+
+pub def write_static_int(slot: int, value: int) -> None:
+    """Persist an integer assignment across native function frames."""
+    INTEGER_CELLS[slot] = value
+
+
+pub def read_static_float(slot: int, initial: float) -> float:
+    """Read a literal-initialized floating-point cell without resetting writes."""
+    return FLOAT_CELLS.get(slot, initial)
+
+
+pub def write_static_float(slot: int, value: float) -> None:
+    """Persist a floating-point assignment across native function frames."""
+    FLOAT_CELLS[slot] = value
+
+
+pub def read_static_bool(slot: int, initial: bool) -> bool:
+    """Read a literal-initialized boolean cell without resetting writes."""
+    return BOOLEAN_CELLS.get(slot, initial)
+
+
+pub def write_static_bool(slot: int, value: bool) -> None:
+    """Persist a boolean assignment across native function frames."""
+    BOOLEAN_CELLS[slot] = value

@@ -540,6 +540,14 @@ impl TypeChecker {
                         TypeArgumentOrigin::Inferred,
                         span,
                     );
+                    self.type_info.record_constructor_field_binding(
+                        span,
+                        ConstructorFieldBinding {
+                            argument_slots: vec![0],
+                            defaulted_slots: Vec::new(),
+                            field_count: 1,
+                        },
+                    );
                     return self.constructor_result_type(name);
                 }
                 let ctor_fields: Option<std::collections::HashMap<String, FieldInfo>> =

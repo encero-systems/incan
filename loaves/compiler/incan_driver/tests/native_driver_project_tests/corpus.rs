@@ -2,6 +2,65 @@
 
 use super::*;
 
+/// Exercise newtype construction and projection, aliases, scalar constants, and static mutation against legacy.
+pub(super) fn check_declarations(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    runtime: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let project = root.join("declarations");
+    fs::create_dir_all(&project)?;
+    let source = project.join("declarations.incn");
+    fs::write(
+        &source,
+        "type Count = int\ntype Ratio = float\nconst BASE: int = 42\nconst SCALE: float = 1.5\nconst WHOLE: float = 2\nconst ENABLED: bool = true\ntype Id = newtype int\ntype Label = newtype str\nstatic COUNT: int = 4\nstatic RATIO: float = 2.5\nstatic FLAG: bool = false\n\ndef doubled(mut value: Count) -> Count:\n    value += value\n    return value\n\nagain = alias doubled\n\ndef increment() -> None:\n    COUNT += 1\n\ndef main() -> None:\n    println(again(BASE))\n    ratio: Ratio = SCALE\n    println(ratio)\n    println(WHOLE)\n    println(ENABLED)\n    id = Id(9)\n    label = Label(\"wrapped\")\n    println(id.0)\n    println(label.0)\n    increment()\n    increment()\n    println(COUNT)\n    RATIO = RATIO + 1.0\n    println(RATIO)\n    FLAG = true\n    println(FLAG)\n",
+    )?;
+    let native = project.join("native");
+    success(
+        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime, "release")?)?,
+        "declarations native compilation",
+    );
+    let legacy = project.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&project)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy)
+            .output()?,
+        "declarations legacy compilation",
+    );
+    let expected = Command::new(legacy.join("oven/release/declarations")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "declarations legacy execution");
+    success(&actual, "declarations native execution");
+    assert_eq!(
+        actual.stdout, expected.stdout,
+        "declaration output must be byte-identical"
+    );
+    assert_eq!(actual.stdout, b"84\n1.5\n2.0\ntrue\n9\nwrapped\n6\n3.5\ntrue\n");
+    let unsupported = project.join("effectful_static.incn");
+    fs::write(
+        &unsupported,
+        "def initial() -> int:\n    println(99)\n    return 4\n\nstatic COUNT: int = initial()\n\ndef main() -> None:\n    println(COUNT)\n",
+    )?;
+    let refused = compile_source(
+        driver,
+        &unsupported,
+        &project.join("effectful"),
+        sysroot,
+        &runtime_closure(runtime, "release")?,
+    )?;
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("unsupported source Static initializer or carrier"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    Ok(())
+}
+
 /// Prove constants, shared parameters, owned returns, concatenation, comparison, and display against legacy.
 pub(super) fn check_strings(
     driver: &Path,
@@ -40,6 +99,70 @@ pub(super) fn check_strings(
         actual.stdout,
         b"true\ntrue\nhello world\nresult=hello world\nhello world!\n"
     );
+    Ok(())
+}
+
+/// Compare Unicode text helpers and global length byte for byte with legacy.
+pub(super) fn check_string_methods(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    runtime: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    check_builtin_source(
+        driver,
+        root,
+        sysroot,
+        runtime,
+        r#"def main() -> None:
+    text = "  café 世界  "
+    println(len(text))
+    println(text.len())
+    println(text.upper())
+    println(text.lower())
+    println(text.strip())
+    println(text.replace("café", "tea"))
+    println("世界" in text)
+    println(not ("absent" in text))
+    println("absent" not in text)
+    println("|".join("é,,猫".split(",")))
+    println("|".join(" a b ".split()))
+"#,
+    )
+}
+
+/// Compare a focused builtin program with legacy without normalizing its output.
+pub(super) fn check_builtin_source(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    runtime: &Path,
+    program: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let project = root.join("builtin-parity");
+    fs::create_dir_all(&project)?;
+    let source = project.join("probe.incn");
+    fs::write(&source, program)?;
+    let native = project.join("native");
+    success(
+        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime, "release")?)?,
+        "native builtin compilation",
+    );
+    let legacy_output = project.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&project)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_output)
+            .output()?,
+        "legacy builtin compilation",
+    );
+    let expected = Command::new(legacy_output.join("oven/release/probe")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy builtin execution");
+    success(&actual, "native builtin execution");
+    assert_eq!(actual.stdout, expected.stdout, "builtin output must be byte-identical");
     Ok(())
 }
 
@@ -597,5 +720,110 @@ def main() -> None:
     );
     assert_eq!(actual.stdout, b"7\n14\n9\n18\n3\n5\n6\n8\n");
 
+    Ok(())
+}
+
+/// Hash collections must keep legacy key membership, overwrites, and caller-owned mutation.
+///
+/// Dictionary traversal uses the admitted `keys()` method: legacy bare dictionary iteration emits entries despite
+/// the frontend's key item type, so indexing with that loop binding cannot compile on the comparison route.
+pub(super) fn check_collections(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    runtime: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let project = root.join("collections");
+    fs::create_dir_all(&project)?;
+    let source = project.join("collections.incn");
+    fs::write(
+        &source,
+        r#"
+def add(mut values: Set[int]) -> None:
+    values.add(7)
+
+def copied(values: Dict[str, int]) -> Dict[str, int]:
+    return values
+
+def main() -> None:
+    mut numbers = {1, 2, 2}
+    println(len(numbers))
+    println(2 in numbers)
+    println(9 not in numbers)
+    add(numbers)
+    println(numbers.contains(7))
+    mut mapping = {"one": 1, "two": 2, "one": 3}
+    mapping.insert("three", 4)
+    mapping["two"] = 8
+    println(mapping["two"])
+    println(mapping["one"])
+    println("three" in mapping)
+    println("absent" not in mapping)
+    println(len(mapping))
+    copy = copied(mapping)
+    println(copy["one"])
+    words = {"first", "second"}
+    println("first" in words)
+    flags = {true, false}
+    println(len(flags))
+    fractions = {1: 1.5, 2: 2.5}
+    println(fractions[2])
+    empty_numbers: Set[int] = Set()
+    empty_mapping: Dict[str, int] = Dict()
+    println(len(empty_numbers))
+    println(len(empty_mapping))
+    println(mapping.get("absent", 11))
+    println(mapping.get("one", 12))
+    println(len(mapping.keys()))
+    println(len(mapping.values()))
+    mut total = 0
+    for number in numbers:
+        total += number
+    println(total)
+    mut mapped_total = 0
+    for key in mapping.keys():
+        mapped_total += mapping[key]
+    println(mapped_total)
+    inputs = ["a", "b", "a"]
+    unique = Set(inputs)
+    println(len(inputs))
+    println(len(unique))
+    copied_set = set(unique)
+    println(len(copied_set))
+    spread = {**mapping, "two": 19}
+    println(spread["two"])
+    println(mapping["two"])
+    for word in {"single"}:
+        println(word)
+
+"#,
+    )?;
+    let native = project.join("native");
+    success(
+        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime, "release")?)?,
+        "native collections compilation",
+    );
+    let legacy_output = project.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&project)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_output)
+            .output()?,
+        "legacy collections compilation",
+    );
+    let expected = Command::new(legacy_output.join("oven/release/collections")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy collections execution");
+    success(&actual, "native collections execution");
+    assert_eq!(
+        actual.stdout, expected.stdout,
+        "collections output must be byte-identical"
+    );
+    assert_eq!(
+        actual.stdout,
+        b"2\ntrue\ntrue\ntrue\n8\n3\ntrue\ntrue\n3\n3\ntrue\n2\n2.5\n0\n0\n11\n3\n3\n3\n10\n15\n3\n2\n2\n19\n8\nsingle\n"
+    );
     Ok(())
 }
