@@ -2682,6 +2682,47 @@ def main() -> None:
     )
 }
 
+/// Prove chained assignments of literals over targets of different types byte-identical to legacy: each target gets
+/// its own evaluation of the value at its own type, whichever target comes last, under a negation, inside list and
+/// dict literals, and for a name the chain declares.
+#[test]
+fn chained_literal_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("chained-literal")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def main() -> None:
+    mut n: int = 0
+    mut f: float = 0.5
+    n = f = 1
+    println(n)
+    println(f)
+    f = n = -2
+    println(n)
+    println(f)
+    mut g: f32 = 0.5
+    g = n = 3
+    println(n)
+    println(g)
+    mut ints: list[int] = []
+    mut floats: list[float] = []
+    ints = floats = [4, -4]
+    println(ints)
+    println(floats)
+    mut counts: dict[str, int] = {}
+    mut weights: dict[str, float] = {}
+    counts = weights = {"a": 5}
+    println(counts["a"])
+    println(weights["a"])
+    x = n = f = 6
+    println(x + n)
+    println(f)
+"#,
+    )
+}
+
 /// Measure the actual unchanged graph with expensive fallback forbidden and retain numeric parity evidence.
 #[test]
 #[ignore = "machine-local diagnostic of the 50 ms completed fixture graph reuse budget"]

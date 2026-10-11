@@ -136,6 +136,51 @@ fn lowers_chained_assignment_right_to_left() -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
+/// A chained value the checker recorded as written per target is evaluated once per target, left to right, at that
+/// target's type, as legacy writes it: `n = f = 1` over an `int` and a `float` writes the integer `1` to `n` and the
+/// float `1.0` to `f`, and a name the chain declares takes the literal as an `int`.
+#[test]
+fn chained_literal_written_per_target_takes_each_target_type() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def chain() -> None:\n  mut n: int = 0\n  mut f: float = 0.5\n  n = f = 1\n  x = n = f = -2\n";
+    let module = build(source, &["m", "chained_per_target"])?;
+    let body = body_named(&module, "chain")?;
+    let local_named = |name: &str| {
+        body.locals
+            .iter()
+            .find(|local| local.name.as_deref() == Some(name))
+            .map(|local| local.id)
+            .ok_or(format!("missing local `{name}`"))
+    };
+    let (n, f, x) = (local_named("n")?, local_named("f")?, local_named("x")?);
+    let writes: Vec<(bir::LocalId, &bir::Constant)> = body
+        .block
+        .stmts
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                place,
+                rvalue: bir::Rvalue::Use(bir::Operand::Constant(constant)),
+            } => place.local_id().map(|local| (local, constant)),
+            _ => None,
+        })
+        .collect();
+    // An `int` target keeps `-2` as a negation of `2`; only the `float` target folds it into a constant.
+    let expected = [
+        (n, bir::Constant::Int(0)),
+        (f, bir::Constant::Float("0.5".into())),
+        (n, bir::Constant::Int(1)),
+        (f, bir::Constant::Float("1".into())),
+        (f, bir::Constant::Float("-2".into())),
+    ];
+    assert_eq!(body.locals[x.index()].ty, IncanType::Primitive(IncanPrimitiveType::Int));
+    let actual: Vec<(bir::LocalId, bir::Constant)> = writes
+        .into_iter()
+        .map(|(local, constant)| (local, constant.clone()))
+        .collect();
+    assert_eq!(actual, expected);
+    Ok(())
+}
+
 #[test]
 fn static_method_lowers_like_a_free_function_with_no_receiver_local() -> Result<(), Box<dyn std::error::Error>> {
     let source = "model Counter:\n  value: int\n\n  def zero() -> Counter:\n    return Counter(value=0)\n";
