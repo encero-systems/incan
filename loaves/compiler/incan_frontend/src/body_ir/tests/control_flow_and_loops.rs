@@ -368,10 +368,23 @@ fn a_bound_range_loop_drives_itself_from_the_range_value_fields() -> Result<(), 
     let module = build(source, &["m", "bound_range_fields"])?;
     let snapshot = module.render_snapshot();
     let range = last_local_for_binding(&snapshot, "r").ok_or("expected a local for `r`")?;
+    // The loop evaluates the range once, as legacy's native range does, so it iterates a snapshot taken before it.
+    let snapshotted = snapshot
+        .lines()
+        .find_map(|line| {
+            let (place, value) = line.trim().split_once(" = ")?;
+            ["copy", "move", "clone"]
+                .iter()
+                .any(|fact| {
+                    [format!("{fact}({range})"), format!("{fact}({range}, last_use)")].contains(&value.to_string())
+                })
+                .then(|| place.to_string())
+        })
+        .ok_or_else(|| format!("the loop must snapshot the range before iterating: {snapshot}"))?;
 
     for field in bir::AggregateKind::RANGE_FIELDS {
         assert!(
-            snapshot.contains(&format!("copy({range}.{field})")),
+            snapshot.contains(&format!("copy({snapshotted}.{field})")),
             "the loop must read the range's own `{field}` field rather than re-deriving it: {snapshot}"
         );
     }
@@ -920,5 +933,48 @@ fn same_spelled_range_function_keeps_its_checked_iteration_target() -> Result<()
     let snapshot = module.render_snapshot();
     assert!(!snapshot.contains("range_validate"), "{snapshot}");
     assert!(snapshot.contains("iter_next("), "{snapshot}");
+    Ok(())
+}
+
+/// An inclusive source range ends at the maximum integer on both advancement edges, as a header and as a bound value,
+/// while a builtin range keeps its own runtime advancement.
+#[test]
+fn source_ranges_stop_at_the_maximum_integer_before_advancing() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def run(start: int, end: int, skip: bool) -> None:\n    values = start..=end\n    for item in values:\n        if skip:\n            continue\n        println(item)\n    for other in start..=end:\n        if skip:\n            continue\n        println(other)\n    for counted in range(start, end):\n        if skip:\n            continue\n        println(counted)\n",
+        &["m", "range_maximum"],
+    )?;
+    let snapshot = body_named(&module, "run")?.render_snapshot();
+    assert_eq!(
+        snapshot.matches("9223372036854775807").count(),
+        4,
+        "each source range loop must stop at the maximum on its fallthrough and continue edges: {snapshot}"
+    );
+    assert_eq!(
+        snapshot.matches("continue").count(),
+        3,
+        "every loop must exercise a continue edge: {snapshot}"
+    );
+    Ok(())
+}
+
+/// A range header evaluates its end once, before the loop, as legacy's native range does.
+#[test]
+fn range_header_end_is_evaluated_once_before_the_loop() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def end() -> int:\n    return 3\n\ndef run() -> None:\n    for i in 0..end():\n        println(i)\n",
+        &["m", "range_header_end"],
+    )?;
+    let snapshot = body_named(&module, "run")?.render_snapshot();
+    let (before, inside) = snapshot.split_once("loop:").ok_or("missing counting loop")?;
+    let calls_end = |line: &str| line.contains("call ") && line.contains("end");
+    assert!(
+        before.lines().any(calls_end),
+        "the end bound must be evaluated before the loop: {snapshot}"
+    );
+    assert!(
+        !inside.lines().any(calls_end),
+        "the loop must not re-evaluate its end bound: {snapshot}"
+    );
     Ok(())
 }

@@ -3519,6 +3519,55 @@ def main() -> None:
     Ok(())
 }
 
+/// Prove range values byte-identical to legacy: a range evaluates its bounds once, in order, even when unused;
+/// exclusive, inclusive and empty ranges bound to a local and copied to another are iterated; an inclusive range ending
+/// at the maximum integer stops there as a value, as a loop header and on a `continue` edge; and a range reassigned on
+/// one branch is iterated as assigned.
+#[test]
+fn range_value_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("range-value")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def bound(value: int) -> int:
+    println(value)
+    return value
+
+def main() -> None:
+    unused = bound(1)..bound(4)
+    r = 0..10
+    alias = r
+    mut total = 0
+    for i in alias:
+        total += i
+    println(total)
+    inclusive = 2..=bound(4)
+    for j in inclusive:
+        println(j)
+    edge = (bound(9223372036854775806))..=bound(9223372036854775807)
+    for m in edge:
+        println(m)
+    for n in (bound(9223372036854775806))..=bound(9223372036854775807):
+        println(n)
+    continued = bound(9223372036854775807)..=bound(9223372036854775807)
+    for c in continued:
+        println(c)
+        continue
+    empty = 5..2
+    for e in empty:
+        println(e)
+    mut chosen = 0..2
+    if total > 3:
+        chosen = 5..7
+    for k in chosen:
+        println(k)
+    println("done")
+"#,
+    )
+}
+
 /// Prove unit and payload construction, enum passing/returning, and variant-bound match output against legacy.
 #[test]
 fn source_enum_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
