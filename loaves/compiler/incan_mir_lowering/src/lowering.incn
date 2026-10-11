@@ -61,7 +61,13 @@ from decimal_plan import decimal_literal, decimal_comparison, is_decimal_literal
 from frozen_plan import frozen_literal, literal_text
 from loop_exits import exits_to
 from trait_links import is_well_formed_project_implementation
-from derived_methods import comparison_dunder, is_derived_clone, lower_comparison_dunder, lower_derived_clone
+from derived_methods import (
+    comparison_dunder,
+    is_derived_clone,
+    is_std_callable_call,
+    lower_comparison_dunder,
+    lower_derived_clone,
+)
 # ---- The checked Body IR, read through Rust interop ----
 from rust::incan_semantics_core import IncanType as RustType, HirSourceSpan as RustSpan
 from rust::incan_semantics_core::body_ir import (
@@ -1882,6 +1888,8 @@ def lower_method_call(
     match comparison_dunder(target):
         Some(operator) => return lower_comparison_dunder(module, builder, operator, arguments, destination, span)
         None => pass
+    if lower_callable_bound_call(builder, target, arguments, destination, span)?:
+        return Ok(None)
     # A list or dictionary element receiver is reborrowed in its container; no native place names it.
     match element_method_owner(builder, arguments[0])?:
         Some(owner) =>
@@ -2042,6 +2050,36 @@ def library_receiver(
                         _ => return Err("unsupported Body IR stdlib method receiver outside a stdlib layout")
                 _ => return Err("unsupported Body IR stdlib method nonplace receiver")
         None => return Err("unsupported Body IR stdlib method spread receiver")
+
+
+def lower_callable_bound_call(
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """
+    Call a function or closure received through a standard callable bound, as legacy calls its `Fn` value.
+
+    The checker selects the callable trait's `__call__` for `func(value)` on a type parameter bounded by it; a closed
+    instance holding a function item, pointer or closure calls that value with the remaining arguments. Any other
+    receiver, a nominal callable object included, keeps its ordinary method dispatch.
+    """
+    if not is_std_callable_call(target) or len(arguments) == 0:
+        return Ok(false)
+    match arguments[0].as_one():
+        Some(value) =>
+            match value:
+                RustOperand.Place(read) =>
+                    held = scalar_place(builder, read.place, span)?
+                    match callable_signature(place_type(builder.locals, held)):
+                        Ok(_signature) => pass
+                        Err(_error) => return Ok(false)
+                    call_callable_place(builder, read, target.binding, arguments, 1, destination, span)?
+                    return Ok(true)
+                _ => return Ok(false)
+        None => return Ok(false)
 
 
 def lower_named_target(
@@ -2223,14 +2261,31 @@ def lower_callable_value(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Call an admitted function item or pointer; closure environments retain a distinct named refusal."""
-    callable = scalar_place(builder, target.operand.place, span)?
+    return call_callable_place(builder, target.operand, target.binding, arguments, 0, destination, span)
+
+
+pub def call_callable_place(
+    mut builder: Builder,
+    held: &RustPlaceOperand,
+    binding: &RustArgumentBinding,
+    arguments: &list[RustArgumentElement],
+    first: int,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Call the function item, pointer or closure a local holds, binding the arguments from position `first` on.
+
+    A direct call passes every argument; a call through a callable bound's method passes the receiver first.
+    """
+    callable = scalar_place(builder, held.place, span)?
     signature = callable_signature(place_type(builder.locals, callable))?
     if len(signature) == 0:
         return Err("invalid Body IR callable signature without return type")
     mut parameters: list[PlanType] = []
     for index in range(len(signature) - 1):
         parameters.append(signature[index])
-    operands = ordered_slot_operands(builder, target.binding, arguments, parameters, span, 0)?
+    operands = ordered_slot_operands(builder, binding, arguments, parameters, span, first)?
     result = signature[-1]
     mut output = plan_place(0, span)
     match destination:
@@ -2242,7 +2297,7 @@ def lower_callable_value(
         PlanType.Closure(_held) => return call_closure(builder, callable, signature, operands, output, span)
         PlanType.ClosureRef(_held) => return call_closure(builder, callable, signature, operands, output, span)
         _ => pass
-    value = place_read(builder, target.operand.place, target.operand.fact, span)?
+    value = place_read(builder, held.place, held.fact, span)?
     return lower_callable_result(builder, CalleeKind.Value(value), operands, output, result, span)
 
 

@@ -22,17 +22,27 @@ pub def is_derived_clone(target: &MethodTarget) -> bool:
     return is_std_derive_method(target, "copying", "clone")
 
 
+pub def is_std_callable_call(target: &MethodTarget) -> bool:
+    """Recognize `__call__` of the standard library's callable traits, through which a callable bound is called."""
+    return is_std_core_method(target, "traits", "callable", "__call__")
+
+
 def is_std_derive_method(target: &MethodTarget, module: str, name: str) -> bool:
     """Whether the checker selected `name` of a trait declared by the standard library's `std.derives.<module>`."""
+    return is_std_core_method(target, "derives", module, name)
+
+
+def is_std_core_method(target: &MethodTarget, section: str, module: str, name: str) -> bool:
+    """Whether the checker selected `name` of `std.<section>.<module>`, in source or compiled SDK identities."""
     match target.canonical:
         Some(identity) =>
             if identity.kind != SemanticSourceTargetKind.Method or identity.declaration_name != name:
                 return false
             match identity.origin:
                 SymbolOrigin.Module(path) =>
-                    return len(path) == 3 and path[0] == "std" and path[1] == "derives" and path[2] == module
+                    return len(path) == 3 and path[0] == "std" and path[1] == section and path[2] == module
                 SymbolOrigin.Package(library=library, module_path=path) =>
-                    return library == "incan_stdlib_core" and len(path) == 2 and path[0] == "derives" and path[1] == module
+                    return library == "incan_stdlib_core" and len(path) == 2 and path[0] == section and path[1] == module
                 _ => return false
         None => return false
 
