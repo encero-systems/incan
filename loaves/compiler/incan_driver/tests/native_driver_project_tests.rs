@@ -5850,6 +5850,36 @@ def main() -> None:
     )
 }
 
+/// A value received through a standard callable bound is called like the function or closure it holds: a function
+/// item, a closure, and a two-argument closure through `Callable2`.
+#[test]
+fn callable_bound_call_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "callable_bound_call",
+        r#"from std.traits.callable import Callable1, Callable2
+
+
+def add_seven(value: int) -> int:
+    return value + 7
+
+
+def run_std[F with Callable1[int, int]](func: F, value: int) -> int:
+    return func(value)
+
+
+def combine[F with Callable2[int, int, int]](func: F, left: int, right: int) -> int:
+    return func(left, right)
+
+
+def main() -> None:
+    println(run_std((value) => value * 3, 3))
+    println(run_std(add_seven, 3))
+    println(combine((left, right) => left * right, 6, 7))
+"#,
+        b"9\n10\n42\n",
+    )
+}
+
 /// Compile a single-module program in the minimal project layout and require the native route to refuse it by name.
 fn check_project_refusal(name: &str, text: &str, reason: &str) -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
