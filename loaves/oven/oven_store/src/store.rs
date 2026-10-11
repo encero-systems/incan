@@ -325,6 +325,29 @@ impl OvenStoreExecutionPayload {
     /// consumer that will not read those files itself. File digests may reuse this owner's previous observation,
     /// with fresh replacement-sensitive path metadata before and after reuse. Changed generations use held-file checks.
     pub fn verify_admitted_payload(&self) -> Result<(), OvenStoreError> {
+        self.verify_admitted_inventory(None)
+    }
+
+    /// Verify the complete consumed inventory while leaving one explicitly unconsumed top-level directory alone.
+    ///
+    /// Native consumers use this to exclude archived source snapshots. All original record, payload, receipt and
+    /// root checks remain mandatory, and every member outside the exclusion must match the exact manifest. The
+    /// exclusion must be a single normal path component. A later source consumer must use full verification.
+    pub fn verify_admitted_payload_except_directory(&self, directory: &str) -> Result<(), OvenStoreError> {
+        let mut components = Path::new(directory).components();
+        if !matches!(components.next(), Some(Component::Normal(name)) if name == directory)
+            || components.next().is_some()
+        {
+            return Err(OvenStoreError::InvalidInput {
+                field: "unconsumed artifact directory",
+                message: "requires one normal top-level directory name".into(),
+            });
+        }
+        self.verify_admitted_inventory(Some(directory))
+    }
+
+    /// Reconcile full or explicitly scoped inventories through the same owner observations and integrity checks.
+    fn verify_admitted_inventory(&self, excluded_directory: Option<&str>) -> Result<(), OvenStoreError> {
         self.verify_admitted_record()?;
         let mut observations = self
             .materialized_observations
@@ -333,8 +356,13 @@ impl OvenStoreExecutionPayload {
                 identity: self.admitted_identity.clone(),
                 message: "materialized file observation lock poisoned".to_string(),
             })?;
-        verify_materialized_files_with_observations(&self.admitted_entry_root, &self.manifest, Some(&mut observations))
-            .map(|_| ())
+        verify_materialized_files_with_observations(
+            &self.admitted_entry_root,
+            &self.manifest,
+            Some(&mut observations),
+            excluded_directory,
+        )
+        .map(|_| ())
     }
 
     /// Verify a sealed native unit once, then reuse its identity-bound closure proof under the retained lease.
@@ -3444,18 +3472,19 @@ fn verify_materialized_root(root: &Path, manifest: &OvenArtifactManifest) -> Res
 
 /// Verify the exact recursive file closure materialized beneath one immutable entry.
 fn verify_materialized_files(root: &Path, manifest: &OvenArtifactManifest) -> Result<u64, OvenStoreError> {
-    verify_materialized_files_with_observations(root, manifest, None)
+    verify_materialized_files_with_observations(root, manifest, None, None)
 }
 
-/// Walk the complete current inventory, optionally retaining only byte observations under its admitted owner.
-/// Every file rechecks replacement-sensitive metadata; no cached inventory skips missing members.
+/// Walk the current consumed inventory, optionally retaining byte observations under its admitted owner.
+/// Every consumed file rechecks replacement-sensitive metadata; an explicit exclusion prunes only one root child.
 fn verify_materialized_files_with_observations(
     root: &Path,
     manifest: &OvenArtifactManifest,
     mut observations: Option<&mut BTreeMap<PathBuf, MaterializedFileDigest>>,
+    excluded_directory: Option<&str>,
 ) -> Result<u64, OvenStoreError> {
-    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_store::verify_materialized_inventory", input = %manifest.identity).entered();
-    let expected = manifest
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_store::verify_materialized_inventory", input = %manifest.identity, excluded_directory = excluded_directory.unwrap_or("")).entered();
+    let mut expected = manifest
         .materialized_files
         .iter()
         .map(|file| (file.relative_path.clone(), file))
@@ -3466,6 +3495,12 @@ fn verify_materialized_files_with_observations(
             message: "materialized artifact manifest declares a path more than once".to_string(),
         });
     }
+    let consumed = |path: &str| {
+        !excluded_directory.is_some_and(|excluded| {
+            path == excluded || path.strip_prefix(excluded).is_some_and(|rest| rest.starts_with('/'))
+        })
+    };
+    expected.retain(|path, _| consumed(path));
     let materialized_root = root.join(MATERIALIZED_DIRECTORY);
     let mut actual = BTreeMap::new();
     let mut actual_directories = BTreeSet::new();
@@ -3474,6 +3509,7 @@ fn verify_materialized_files_with_observations(
         &materialized_root,
         &mut actual,
         &mut actual_directories,
+        excluded_directory,
     )?;
     if actual.len() != expected.len() || actual.keys().ne(expected.keys()) {
         return Err(OvenStoreError::Integrity {
@@ -3503,6 +3539,7 @@ fn verify_materialized_files_with_observations(
     let expected_directories = manifest
         .materialized_directories
         .iter()
+        .filter(|directory| consumed(&directory.relative_path))
         .map(|directory| directory.relative_path.clone())
         .collect::<BTreeSet<_>>();
     if actual_directories != expected_directories {
@@ -3514,6 +3551,7 @@ fn verify_materialized_files_with_observations(
     Ok(manifest
         .materialized_files
         .iter()
+        .filter(|file| consumed(&file.relative_path))
         .fold(0_u64, |total, file| total.saturating_add(file.logical_bytes)))
 }
 
@@ -3890,12 +3928,13 @@ fn report_observed_file_digest(
     observed
 }
 
-/// Collect regular files and their non-following metadata for reconciliation, rejecting links and non-file entries.
+/// Collect consumed regular files without following links; an exclusion skips only the matching root child.
 fn collect_materialized_files(
     root: &Path,
     directory: &Path,
     files: &mut BTreeMap<String, (PathBuf, fs::Metadata)>,
     empty_directories: &mut BTreeSet<String>,
+    excluded_directory: Option<&str>,
 ) -> Result<(), OvenStoreError> {
     let children = fs::read_dir(directory)
         .map_err(|source| OvenStoreError::Io {
@@ -3919,6 +3958,9 @@ fn collect_materialized_files(
         empty_directories.insert(relative);
     }
     for child in children {
+        if directory == root && excluded_directory.is_some_and(|excluded| child.file_name() == excluded) {
+            continue;
+        }
         let path = child.path();
         let metadata = fs::symlink_metadata(&path).map_err(|source| OvenStoreError::Io {
             path: path.clone(),
@@ -3931,7 +3973,7 @@ fn collect_materialized_files(
             });
         }
         if metadata.is_dir() {
-            collect_materialized_files(root, &path, files, empty_directories)?;
+            collect_materialized_files(root, &path, files, empty_directories, excluded_directory)?;
             continue;
         }
         if !metadata.is_file() {
@@ -5127,6 +5169,58 @@ pub(crate) mod tests {
                 .len(),
             0
         );
+        Ok(())
+    }
+
+    /// Exclude only the root subtree while retaining original authority and consumed inventory checks.
+    #[test]
+    fn scoped_inventory_excludes_only_unconsumed_root_directory() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let source = project.path().join("native");
+        fs::write(&source, b"native bytes")?;
+        let store = OvenStore::new(temp.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let mut publication = request(project.path(), "scoped-owner", b"payload")?;
+        publication.materialized_files = ["native", "nested/source/native", "source/lib.rs"]
+            .into_iter()
+            .map(|path| OvenArtifactMaterializedFile {
+                relative_path: path.into(),
+                source_path: source.clone(),
+            })
+            .collect();
+        let manifest = store.publish(&publication)?;
+        let mut selected = store.select_payloads_for_execution(std::slice::from_ref(&manifest.identity))?;
+        let owner = selected.get_mut(0).ok_or("selected fixture missing")?;
+        owner.verify_admitted_payload()?;
+        // Publication may share identical bytes through hard links. Replace only this fixture's selected path.
+        let replace = |path: &Path, bytes: &[u8]| -> std::io::Result<()> {
+            let replacement = project.path().join("replacement");
+            fs::write(&replacement, bytes)?;
+            fs::set_permissions(&replacement, fs::metadata(path)?.permissions())?;
+            fs::rename(replacement, path)
+        };
+        replace(&owner.artifact_root.join("source/lib.rs"), b"changed archived source")?;
+        owner.verify_admitted_payload_except_directory("source")?;
+        assert!(owner.verify_admitted_payload().is_err());
+        for unsafe_directory in ["", ".", "..", "source/", "source/.", "source/nested", "/source"] {
+            assert!(
+                owner
+                    .verify_admitted_payload_except_directory(unsafe_directory)
+                    .is_err()
+            );
+        }
+        let nested = owner.artifact_root.join("nested/source/native");
+        replace(&nested, b"changed native bytes")?;
+        assert!(owner.verify_admitted_payload_except_directory("source").is_err());
+        replace(&nested, b"native bytes")?;
+        let injected = owner.artifact_root.join("injected");
+        fs::write(&injected, b"unlisted native bytes")?;
+        assert!(owner.verify_admitted_payload_except_directory("source").is_err());
+        fs::remove_file(injected)?;
+        owner.verify_admitted_payload_except_directory("source")?;
+        owner.payload.push(0);
+        assert!(owner.verify_admitted_payload_except_directory("source").is_err());
         Ok(())
     }
 

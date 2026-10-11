@@ -41,6 +41,7 @@ pub use prepared::{
     NativeLoafConsumerPreparation, NativeLoafConsumerReport, NativeLoafConsumerRequest, prepare_declared_native_loafs,
     prepare_declared_native_loafs_in_store,
 };
+pub(crate) use selection::verify_native_source_declaration;
 
 pub use request_observation::NativeLoafRequestObservation;
 
@@ -243,7 +244,8 @@ impl SelectedNativeLoaf {
         &self.record_owner.manifest.identity
     }
 
-    /// Revalidate both original owners and the complete recipe/payload binding on each physical handoff.
+    /// Revalidate both original records, consumed native files and the complete recipe binding on each physical
+    /// handoff.
     pub fn verify(&self) -> Result<()> {
         verify_record(&self.record, &self.record_owner, &self.native_owner)
     }
@@ -769,10 +771,12 @@ fn verify_record(
 
 /// Revalidate the original native generation and prove the complete extern alias-to-bytes recipe.
 fn verify_native(record: &NativeLoafRecord, owner: &OvenStoreExecutionPayload) -> Result<()> {
-    // Ordinary handoffs promise current original bytes, even for native units with a legacy closure proof. The
-    // Store's file-stamp digest cache avoids hashing unchanged bytes while its walk still rejects missing members,
-    // replacement files and symlinks. A retained lease alone only prevents pruning.
-    owner.verify_admitted_payload().map_err(failed)?;
+    // Native execution consumes the complete non-source inventory. Source inspection separately verifies the
+    // archived source subtree before reading it; native reuse must not traverse those unconsumed files.
+    owner
+        .verify_admitted_payload_except_directory("source")
+        .map_err(failed)?;
+    selection::verify_native_source_declaration(owner)?;
     record.recipe.verify_identity().map_err(failed)?;
     source_origin(&record.recipe)?;
     let source = &record.source;
