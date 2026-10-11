@@ -1773,6 +1773,13 @@ def lower_method_call(
     )?:
         Some(owner) => return lower_value_enum_method(module, builder, owner, arguments, destination, span)
         None => pass
+    # A stdlib method runs in the SDK crate that compiled it, through the frontend's crate-call record.
+    for delegation in module.stdlib_delegations:
+        match target.canonical:
+            Some(identity) =>
+                if identity == delegation.canonical:
+                    return lower_library_method(module, builder, delegation, target, arguments, destination, span)
+            None => pass
     index = method_index(
         module, target, builder.locals[builder.local_offset:], arguments[0], span, builder.unions, builder.intrinsics,
     )?
@@ -1823,6 +1830,97 @@ def call_method_body(
     for operand in ordinary:
         operands.append(operand)
     return emit_local_call(module, builder, body, operands, destination, span)
+
+
+def lower_library_method(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    delegation: &RustStdlibDelegation,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Call a stdlib method in the SDK crate that compiled it.
+
+    The record's first parameter is the receiver as that crate declares it, a shared or exclusive borrow of the
+    retained stdlib layout. The receiver is borrowed in place and the other arguments bind as for a local method; the
+    driver checks the whole signature against the crate's metadata before building the call.
+    """
+    if len(target.type_args) != 0:
+        return Err("unsupported Body IR type arguments on a stdlib method")
+    if len(delegation.parameters) == 0 or len(arguments) == 0:
+        return Err("unsupported Body IR stdlib method without a receiver")
+    receiver_type = delegation.parameters[0]
+    reference = library_receiver(module, builder, receiver_type, arguments[0], span)?
+    mut parameters = [place_type(builder.locals, reference)]
+    mut ordinary_types: list[PlanType] = []
+    for index in range(1, len(delegation.parameters)):
+        parameter = delegation.parameters[index]
+        ordinary_types.append(
+            native_source_type(builder.nominals, builder.enums, builder.unions, parameter, builder.intrinsics)?,
+        )
+    parameters.extend(ordinary_types)
+    result = native_source_type(
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        delegation.return_type,
+        builder.intrinsics,
+    )?
+    ordinary = ordered_slot_operands(builder, target.binding, arguments, ordinary_types, span, 1, true)?
+    mut operands = [read_place(reference, true, span)]
+    operands.extend(ordinary)
+    mut output = temporary(builder, result, span)
+    match destination:
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+        None => pass
+    match delegation.rust_path():
+        None => return Err("unsupported Body IR stdlib method native identity")
+        Some(path) =>
+            external_call(builder, path, parameters, result, operands, output, span)
+            return Ok(None)
+
+
+def library_receiver(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    declared: &RustType,
+    argument: &RustArgumentElement,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Borrow the receiver place as the stdlib method declares it, shared or exclusive, never moving its owner."""
+    match argument.as_one():
+        Some(value) =>
+            match value:
+                RustOperand.Place(read) =>
+                    mut receiver = model_place(
+                        module.nominal_declarations,
+                        builder.locals[builder.local_offset:],
+                        read.place,
+                        span,
+                        module.enum_declarations,
+                        builder.unions,
+                        builder.intrinsics,
+                    )?
+                    receiver.local += builder.local_offset
+                    match place_type(builder.locals, receiver):
+                        PlanType.Model(owner, name) =>
+                            match declared:
+                                RustType.Ref(_inner) =>
+                                    reference = temporary(builder, PlanType.ModelRef(owner, name), span)
+                                    builder.emit(plan_assign(reference, RvalueKind.Borrow(receiver), span))
+                                    return Ok(reference)
+                                RustType.RefMut(_inner) =>
+                                    reference = temporary(builder, PlanType.ModelMutRef(owner, name), span)
+                                    builder.emit(plan_assign(reference, RvalueKind.MutBorrow(receiver), span))
+                                    return Ok(reference)
+                                _ => return Err("unsupported Body IR by-value stdlib method receiver")
+                        _ => return Err("unsupported Body IR stdlib method receiver outside a stdlib layout")
+                _ => return Err("unsupported Body IR stdlib method nonplace receiver")
+        None => return Err("unsupported Body IR stdlib method spread receiver")
 
 
 def lower_named_target(
@@ -2117,11 +2215,12 @@ def lower_stdlib_delegation(
     span: SourceSpan,
 ) -> Result[None, str]:
     """
-    Call the Rust function an imported stdlib function forwards to.
+    Call the native item an imported stdlib function runs as.
 
-    The frontend records a delegation only for a forwarder it proved transparent: its only statement returns one Rust
-    call with every parameter passed through in order. Calling that Rust function directly is therefore the call the
-    legacy route makes, selected by the checker's canonical identity and native path, never by a spelling.
+    A forwarder the frontend proved transparent, whose only statement returns one Rust call with every parameter passed
+    through in order, calls that Rust function directly. Any other stdlib function calls the item its SDK crate
+    compiled. Either is the call the legacy route makes, selected by the checker's canonical identity and native path,
+    never by a spelling, and the driver checks its signature against the crate's metadata.
     """
     match target.direct_call_id:
         Some(_identity) => return Err("Body IR imported delegation has a local call identity")
@@ -2144,7 +2243,7 @@ def lower_delegated_call(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Emit the external call for one matched delegation, with its checked scalar signature."""
+    """Emit the external call for one matched delegation: a proven forwarder's Rust callee or the SDK crate item itself."""
     mut parameters: list[PlanType] = []
     for parameter in delegation.parameters:
         parameters.append(
@@ -2157,7 +2256,7 @@ def lower_delegated_call(
         delegation.return_type,
         builder.intrinsics,
     )?
-    operands = ordered_slot_operands(builder, target.binding, arguments, parameters, span, 0)?
+    operands = ordered_slot_operands(builder, target.binding, arguments, parameters, span, 0, true)?
     mut output = temporary(builder, result, span)
     match destination:
         Some(place) =>
@@ -2225,13 +2324,15 @@ def ordered_slot_operands(
     types: list[PlanType],
     span: SourceSpan,
     offset: int = 0,
+    owned: bool = false,
 ) -> Result[list[Operand], str]:
     """
     Place the written arguments into the callee's declared parameter slots.
 
     Body IR has already evaluated the arguments in written order; the binding says which slot each one fills.
     Defaults, missing slots, named or spread elements are refused. An offset of one skips a method receiver,
-    whose borrow is lowered separately and whose slot is absent from the ordinary argument binding.
+    whose borrow is lowered separately and whose slot is absent from the ordinary argument binding. With `owned`,
+    a collection slot receives an owned value, as an SDK crate's compiled signature takes it.
     """
     if offset < 0 or offset > len(elements):
         return Err("invalid Body IR argument offset")
@@ -2251,7 +2352,7 @@ def ordered_slot_operands(
                 occupied.append(slot)
                 match elements[index + offset].as_one():
                     Some(value) =>
-                        operands[slot] = call_argument_operand(builder, value, types[slot], span)?
+                        operands[slot] = call_argument_operand(builder, value, types[slot], span, owned)?
                     None => return Err("unsupported Body IR named or spread ArgumentElement")
             return Ok(operands)
         _ => return Err("unsupported Body IR unresolved ArgumentBinding")
@@ -2262,11 +2363,15 @@ pub def call_argument_operand(
     value: &RustOperand,
     ty: PlanType,
     span: SourceSpan,
+    owned: bool = false,
 ) -> Result[Operand, str]:
     """Share checked collection borrows, owned strings, callable objects, union injection, and numeric coercion across call slots."""
     match ty:
         PlanType.ClosureRef(signature) => return callable_argument(builder, value, signature, span)
         _ => pass
+    if owned and owned_collection(ty):
+        # An SDK crate takes its collection parameters by value; a borrowed argument is cloned, as legacy passes it.
+        return value_operand(builder, value, span)
     if is_list(ty) or is_collection(ty):
         return checked_list_argument(builder, value, is_mutable_list_reference(ty), span)
     if is_generator_reference(ty):
@@ -2283,6 +2388,15 @@ pub def call_argument_operand(
     operand = boundary_operand(builder, value, ty, span)?
     coerced = coerce_numeric_operand(builder, operand, ty, span)?
     return function_argument(builder, ty, coerced, span)
+
+
+def owned_collection(ty: PlanType) -> bool:
+    """Whether a parameter takes a list, set or dictionary by value rather than through a borrow."""
+    match ty:
+        PlanType.List(_leaf, _depth) => return true
+        PlanType.Set(_leaf) => return true
+        PlanType.Dict(_key, _value) => return true
+        _ => return false
 
 
 def function_argument(mut builder: Builder, ty: PlanType, value: Operand, span: SourceSpan) -> Result[Operand, str]:

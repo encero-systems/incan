@@ -192,6 +192,13 @@ impl rustc_driver::Callbacks for Callbacks {
             .externals
             .iter()
             .filter_map(|external| external.path.split("::").next())
+            .chain(
+                self.plan
+                    .models
+                    .iter()
+                    .filter_map(|model| model.library_item.split("::").next())
+                    .filter(|root| !root.is_empty()),
+            )
             .collect();
         if self.plan.functions.iter().any(|function| {
             function.locals.iter().any(|local| {
@@ -226,6 +233,11 @@ impl rustc_driver::Callbacks for Callbacks {
             }
             Ok(None) => {}
             Err(error) => refuse(tcx, error),
+        }
+        for model in self.plan.models.iter().filter(|model| !model.library_item.is_empty()) {
+            if let Err(error) = verify_library_layout(tcx, model) {
+                refuse(tcx, error);
+            }
         }
         for external in &self.plan.externals {
             let def = match callees::external(tcx, &external.path) {
@@ -264,6 +276,36 @@ impl rustc_driver::Callbacks for Callbacks {
         }
         rustc_driver::Compilation::Continue
     }
+}
+
+/// Check a stdlib layout against its crate's metadata: a nongeneric struct whose fields have the plan's names and
+/// types in order. An opaque layout records no fields, so the plan never projects one.
+fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration) -> Result<(), PlanError> {
+    let invalid = |reason: &str| PlanError::Invalid {
+        function: model.library_item.clone(),
+        reason: reason.into(),
+    };
+    let def = callees::library_item(tcx, &model.library_item)?;
+    if tcx.generics_of(def).count() != 0 {
+        return Err(invalid("stdlib layout struct has generic parameters"));
+    }
+    if model.fields.is_empty() {
+        return Ok(());
+    }
+    let adt = tcx.adt_def(def);
+    let declared = &adt.non_enum_variant().fields;
+    if declared.len() != model.fields.len() {
+        return Err(invalid("stdlib layout field count differs from metadata"));
+    }
+    let identity = rustc_middle::ty::GenericArgs::identity_for_item(tcx, def);
+    for (field, planned) in declared.iter().zip(&model.fields) {
+        if field.name.as_str() != planned.name
+            || field.ty(tcx, identity).skip_normalization() != crate::types::native_type(tcx, &planned.ty)?
+        {
+            return Err(invalid("stdlib layout field differs from metadata"));
+        }
+    }
+    Ok(())
 }
 
 /// Give each generic external declared without type arguments its inferred ones, and its calls the matching

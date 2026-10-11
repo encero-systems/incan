@@ -388,6 +388,9 @@ pub(crate) fn model_items(
     generator: &ast::attr::AttrIdGenerator,
     span: Span,
 ) -> Vec<Box<ast::Item>> {
+    if !model.library_item.is_empty() {
+        return vec![library_alias(model, span)];
+    }
     let mut declaration = self::model(model, span);
     for derive in model.derives.iter().filter(|derive| derive.as_str() != "Display") {
         declaration.attrs.push(derive_attribute(generator, derive, span));
@@ -432,6 +435,34 @@ pub(crate) fn model_items(
     );
     alias.vis = visibility(model.public, span);
     vec![module, alias]
+}
+
+/// Name a stdlib layout's compiled crate item under the plan's model name, so MIR uses that crate's own ADT and
+/// nothing about its storage is declared here.
+fn library_alias(model: &crate::plan::ModelDeclaration, span: Span) -> Box<ast::Item> {
+    let mut segments = model.library_item.split("::");
+    let mut path = ast::Path::from_ident(ident(segments.next().unwrap_or_default(), span));
+    for segment in segments {
+        path.segments.push(ast::PathSegment::from_ident(ident(segment, span)));
+    }
+    let mut alias = item(
+        ast::ItemKind::TyAlias(Box::new(ast::TyAlias {
+            defaultness: ast::Defaultness::Implicit,
+            ident: ident(&model.name, span),
+            generics: ast::Generics::default(),
+            after_where_clause: ast::WhereClause::default(),
+            bounds: Vec::new(),
+            ty: Some(Box::new(ast::Ty {
+                id: ast::DUMMY_NODE_ID,
+                kind: ast::TyKind::Path(None, path),
+                span,
+                tokens: None,
+            })),
+        })),
+        span,
+    );
+    alias.vis = visibility(model.public, span);
+    alias
 }
 
 /// Distinguish specialized layouts from legacy plan records whose source name defaults to their physical name.

@@ -84,6 +84,37 @@ pub fn planned(tcx: TyCtxt<'_>, name: &str) -> Result<DefId, PlanError> {
         .ok_or_else(|| PlanError::UnknownCallee(name.into()))
 }
 
+/// Resolve a stdlib layout's crate item through public module children; only a struct names a model layout.
+pub fn library_item(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
+    let unknown = || PlanError::Invalid {
+        function: path.into(),
+        reason: "stdlib layout names no public struct".into(),
+    };
+    let mut segments = path.split("::");
+    let root = segments.next().ok_or_else(unknown)?;
+    let krate = tcx
+        .crates(())
+        .iter()
+        .find(|krate| tcx.crate_name(**krate).as_str() == root)
+        .ok_or_else(unknown)?;
+    let mut current = krate.as_def_id();
+    for segment in segments {
+        if tcx.def_kind(current) != DefKind::Mod {
+            return Err(unknown());
+        }
+        current = tcx
+            .module_children(current)
+            .iter()
+            .find(|child| child.ident.name.as_str() == segment && child.vis.is_public())
+            .and_then(|child| child.res.opt_def_id())
+            .ok_or_else(unknown)?;
+    }
+    if tcx.def_kind(current) != DefKind::Struct {
+        return Err(unknown());
+    }
+    Ok(current)
+}
+
 /// Walk only public module children, rejecting nonfunction callees before constructing MIR.
 pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
     let mut segments = path.split("::");
@@ -95,20 +126,39 @@ pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
         .ok_or_else(|| PlanError::UnknownCallee(path.into()))?;
     let mut current = krate.as_def_id();
     for segment in segments {
-        if tcx.def_kind(current) != DefKind::Mod {
-            return Err(PlanError::UnknownCallee(path.into()));
-        }
-        current = tcx
-            .module_children(current)
-            .iter()
-            .find(|child| child.ident.name.as_str() == segment && child.vis.is_public())
-            .and_then(|child| child.res.opt_def_id())
-            .ok_or_else(|| PlanError::UnknownCallee(path.into()))?;
+        current = match tcx.def_kind(current) {
+            DefKind::Mod => tcx
+                .module_children(current)
+                .iter()
+                .find(|child| child.ident.name.as_str() == segment && child.vis.is_public())
+                .and_then(|child| child.res.opt_def_id())
+                .ok_or_else(|| PlanError::UnknownCallee(path.into()))?,
+            DefKind::Struct | DefKind::Enum => {
+                inherent_function(tcx, current, segment).ok_or_else(|| PlanError::UnknownCallee(path.into()))?
+            }
+            _ => return Err(PlanError::UnknownCallee(path.into())),
+        };
     }
-    if tcx.def_kind(current) != DefKind::Fn {
+    if !matches!(tcx.def_kind(current), DefKind::Fn | DefKind::AssocFn) {
         return Err(PlanError::UnknownCallee(path.into()));
     }
     Ok(current)
+}
+
+/// Select one public inherent associated function of a nongeneric type by name, as a stdlib crate declares a method.
+fn inherent_function(tcx: TyCtxt<'_>, owner: DefId, name: &str) -> Option<DefId> {
+    let mut found = tcx.inherent_impls(owner).iter().flat_map(|implementation| {
+        tcx.associated_item_def_ids(*implementation)
+            .iter()
+            .copied()
+            .filter(|item| {
+                tcx.def_kind(*item) == DefKind::AssocFn
+                    && tcx.item_name(*item).as_str() == name
+                    && tcx.visibility(*item).is_public()
+            })
+    });
+    let selected = found.next()?;
+    found.next().is_none().then_some(selected)
 }
 
 /// Bind a generic external function's type parameters from the plan's declared signature, as rustc's inference does

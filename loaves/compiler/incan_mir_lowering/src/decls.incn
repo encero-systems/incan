@@ -1,6 +1,7 @@
 """Runtime layouts of checked source-local declarations; erased aliases have no storage."""
 
-from rust::incan_semantics_core::body_ir import BodyIrModule, StaticDeclaration, GlobalPlace
+from rust::incan_semantics_core import SymbolOrigin
+from rust::incan_semantics_core::body_ir import BodyIrModule, NominalDeclaration, StaticDeclaration, GlobalPlace
 from pub::incan_mir_plan import EnumDeclaration, ModelDeclaration, Parameter, SourceSpan, PlanType, ListLeaf
 from unions import native_source_type, collect_unions
 
@@ -69,15 +70,43 @@ pub def lower_model_declarations(module: &BodyIrModule, file: str, intrinsics: l
                     span=SourceSpan(file=file, line=1, column=1),
                 ),
             )
+        item = library_item(declaration)
+        mut derives = declaration.derives
+        if item != "":
+            # The SDK crate already derives and implements everything its layout carries.
+            derives = []
         models.append(
             ModelDeclaration(
                 name=str(declaration.name),
-                public=declaration.public,
+                public=declaration.public or item != "",
                 fields=fields,
                 field_public=declaration.field_public,
-                derives=declaration.derives,
+                derives=derives,
                 source_name=str(declaration.canonical.declaration_name),
                 span=SourceSpan(file=file, line=1, column=1),
+                library_item=item,
             ),
         )
     return Ok(models)
+
+
+def library_item(declaration: &NominalDeclaration) -> str:
+    """
+    Name the compiled item that owns a stdlib layout, `library::module::Name`, or nothing for any other layout.
+
+    SDK packages compile each stdlib module into the like-named module of their crate, and the native route links
+    those crates, so a stdlib layout is named rather than declared. A dependency package's layout is declared from
+    its published representation instead.
+    """
+    if declaration.canonical.origin == SymbolOrigin.Builtin:
+        return ""
+    match declaration.canonical.origin:
+        SymbolOrigin.Package(library=library, module_path=path) =>
+            if not str(library).startswith("incan_stdlib_"):
+                return ""
+            mut segments = [str(library)]
+            for segment in path:
+                segments.append(str(segment))
+            segments.append(str(declaration.canonical.declaration_name))
+            return "::".join(segments)
+        _ => return ""

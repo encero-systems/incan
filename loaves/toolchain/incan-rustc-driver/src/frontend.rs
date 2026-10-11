@@ -92,6 +92,8 @@ fn checked_modules(path: &Path) -> Result<CheckedProgram, String> {
         .collect::<Vec<_>>();
     let mut sources = vec![String::new(); bodies.len()];
     let entry = entry + bodies.len();
+    let mut library_layouts = Vec::new();
+    let mut library_calls = Vec::new();
     for module in modules {
         let type_info = analysis
             .type_info_for_path(&module.file_path)
@@ -104,16 +106,78 @@ fn checked_modules(path: &Path) -> Result<CheckedProgram, String> {
             &bodies,
         );
         validate_retained_storage(&module.ast, &body_ir)?;
+        library_layouts.extend(incan_frontend::body_ir::library_nominal_declarations(type_info));
+        library_calls.extend(incan_frontend::body_ir::library_call_delegations(type_info));
         bodies.push(body_ir);
         sources.push(module.source);
         files.push(module.file_path.to_string_lossy().into_owned());
     }
+    // A proven transparent forwarder keeps its direct Rust callee; the crate item serves every other stdlib call.
+    library_calls.retain(|call: &incan_semantics_core::body_ir::StdlibDelegation| {
+        !bodies
+            .iter()
+            .flat_map(|module| &module.stdlib_delegations)
+            .any(|forwarder| forwarder.canonical == call.canonical)
+    });
+    let libraries = library_modules(library_layouts, library_calls);
+    let entry = entry + libraries.len();
+    files.splice(0..0, libraries.iter().map(|module| module.module_id.path().to_owned()));
+    sources.splice(0..0, libraries.iter().map(|_| String::new()));
+    bodies.splice(0..0, libraries);
     Ok(CheckedProgram {
         modules: bodies,
         sources,
         files,
         entry,
     })
+}
+
+/// Carry the stdlib layouts and crate calls the checked modules use into lowering as declaration-only modules, one per
+/// declaring stdlib module, so each layout validates against its own module identity as a published package layout
+/// does. Each layout and call travels once; whether a layout is linked rather than declared is the lowering's decision.
+fn library_modules(
+    layouts: Vec<incan_semantics_core::body_ir::NominalDeclaration>,
+    calls: Vec<incan_semantics_core::body_ir::StdlibDelegation>,
+) -> Vec<BodyIrModule> {
+    let mut owners = std::collections::BTreeMap::<String, BodyIrModule>::new();
+    let mut carried = std::collections::BTreeSet::new();
+    for declaration in layouts {
+        if let Some(module) = library_module(&mut owners, &mut carried, &declaration.canonical) {
+            module.nominal_declarations.push(declaration);
+        }
+    }
+    for call in calls {
+        if let Some(module) = library_module(&mut owners, &mut carried, &call.canonical) {
+            module.stdlib_delegations.push(call);
+        }
+    }
+    owners.into_values().collect()
+}
+
+/// The declaration-only module owning one stdlib identity, or nothing when that identity already travels.
+fn library_module<'modules>(
+    owners: &'modules mut std::collections::BTreeMap<String, BodyIrModule>,
+    carried: &mut std::collections::BTreeSet<incan_semantics_core::CanonicalSymbolId>,
+    identity: &incan_semantics_core::CanonicalSymbolId,
+) -> Option<&'modules mut BodyIrModule> {
+    let owner = incan_semantics_core::canonical_module_identity(identity)?;
+    if !carried.insert(identity.clone()) {
+        return None;
+    }
+    Some(owners.entry(owner.clone()).or_insert_with(|| BodyIrModule {
+        constant_declarations: Vec::new(),
+        type_alias_declarations: Vec::new(),
+        enum_declarations: Vec::new(),
+        stdlib_delegations: Vec::new(),
+        static_declarations: Vec::new(),
+        module_id: incan_semantics_core::CompilerNodeId::module(owner),
+        nominal_declarations: Vec::new(),
+        fieldless_enum_declarations: Vec::new(),
+        value_enum_declarations: Vec::new(),
+        trait_declarations: Vec::new(),
+        trait_implementations: Vec::new(),
+        bodies: Vec::new(),
+    }))
 }
 
 /// Refuse source storage whose checked layout was deliberately omitted from Body IR.
@@ -496,6 +560,16 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // ---- Explicit native dependencies ----
+    for model in plan.models.iter().filter(|model| !model.library_item.is_empty()) {
+        let root = model.library_item.split("::").next().unwrap_or_default();
+        if !dependencies.externs.iter().any(|(name, _)| name == root) {
+            return Err(format!(
+                "unsupported Body IR native dependency `{root}` for stdlib layout `{}`",
+                model.library_item
+            )
+            .into());
+        }
+    }
     for external in &plan.externals {
         let root = external
             .path

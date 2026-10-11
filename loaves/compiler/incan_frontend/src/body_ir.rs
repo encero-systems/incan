@@ -153,6 +153,24 @@ pub fn build_body_ir_module_v0_with_executable_context(
     )
 }
 
+/// Checked layouts of the stdlib models and classes one module names, each owned by a compiled SDK package.
+///
+/// A consumer that links the SDK crates carries these as package layouts beside the module's own Body IR: every
+/// field keeps its declared identity on the owner's package origin, so the records validate like published package
+/// layouts, while the crate that compiled them keeps their storage, derives and methods.
+pub fn library_nominal_declarations(type_info: &TypeCheckInfo) -> Vec<bir::NominalDeclaration> {
+    library_nominals::collect(type_info)
+}
+
+/// Crate-call records for the stdlib functions and model or class methods one module calls.
+///
+/// Each record names the compiled SDK crate item and the signature that crate compiled, with owned parameters and a
+/// shared or exclusive receiver. A consumer linking the SDK crates calls the item only after checking that signature
+/// against native metadata.
+pub fn library_call_delegations(type_info: &TypeCheckInfo) -> Vec<bir::StdlibDelegation> {
+    library_calls::collect(type_info)
+}
+
 /// Prepare one manifest-free parsed module so it satisfies [`build_body_ir_module_v0`]'s input contract.
 ///
 /// This lives beside the boundary it governs rather than inside any one caller, because every manifest-free caller owes
@@ -249,6 +267,11 @@ fn build_body_ir_module_v0_with_provider_operations(
         .iter()
         .map(|declaration| (declaration.name.clone(), declaration.clone()))
         .collect::<LocalValueEnumDeclarations>();
+    // Stdlib layouts are selected like package layouts: by the checked canonical identity of a construction, pattern or
+    // field, never by name. They stay out of this module's own declarations; the SDK crate owns their storage.
+    for declaration in library_nominals::collect(type_info) {
+        local_nominal_declarations.insert(declaration.canonical.render_compact(), declaration);
+    }
     for module in context {
         for declaration in &module.nominal_declarations {
             local_nominal_declarations.insert(declaration.canonical.render_compact(), declaration.clone());
@@ -1282,6 +1305,8 @@ mod async_;
 mod literals;
 
 mod calls;
+mod library_calls;
+mod library_nominals;
 mod stdlib_delegations;
 
 mod operators;

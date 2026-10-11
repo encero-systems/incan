@@ -507,6 +507,9 @@ pub model ModelDeclaration:
     pub span: SourceSpan
     # A specialized carrier keeps its source name for derived Debug and declaration metadata.
     pub source_name: str = ""
+    # A stdlib layout names the compiled SDK crate item that owns its storage; the plan never declares it. With no
+    # fields the layout is opaque: its values move and drop, but no field is read or written.
+    pub library_item: str = ""
 
 
 @derive(Clone, PartialEq)

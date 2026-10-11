@@ -1620,13 +1620,28 @@ fn valid_nominal_derives(derives: &[String], tuple: bool) -> bool {
         && derives.iter().collect::<BTreeSet<_>>().len() == derives.len()
 }
 
+/// A stdlib layout names a crate item by an identifier path below a crate root; its derives and storage belong to the
+/// crate that compiled it.
+fn valid_library_item(declaration: &crate::plan::ModelDeclaration) -> bool {
+    if declaration.library_item.is_empty() {
+        return true;
+    }
+    let segments: Vec<_> = declaration.library_item.split("::").collect();
+    segments.len() >= 2 && segments.iter().all(|segment| identifier(segment))
+}
+
 /// Validate named model layouts and single-slot newtypes, rejecting cyclic layouts before invoking rustc.
 fn validate_models(plan: &Plan) -> Result<(), PlanError> {
     let mut names: BTreeSet<_> = plan.functions.iter().map(|function| function.name.clone()).collect();
     for declaration in &plan.models {
         span(&declaration.span)?;
         let tuple = declaration.fields.len() == 1 && declaration.fields[0].name == "0";
-        let derives_valid = valid_nominal_derives(&declaration.derives, tuple);
+        // A stdlib layout's derives belong to the crate that compiled it; the plan records none of its own.
+        let derives_valid = if declaration.library_item.is_empty() {
+            valid_nominal_derives(&declaration.derives, tuple)
+        } else {
+            declaration.derives.is_empty()
+        };
         if !identifier(&declaration.name)
             || !names.insert(declaration.name.clone())
             || (!declaration.source_name.is_empty() && !identifier(&declaration.source_name))
@@ -1635,6 +1650,7 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
                 && !names.insert(crate::declarations::model_module_name(declaration)))
             || declaration.fields.len() != declaration.field_public.len()
             || !derives_valid
+            || !valid_library_item(declaration)
         {
             return Err(PlanError::Invalid {
                 function: declaration.name.clone(),
