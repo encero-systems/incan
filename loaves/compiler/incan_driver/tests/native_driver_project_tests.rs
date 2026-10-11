@@ -6364,3 +6364,31 @@ def main() -> None:
         b"{\"value\":1}\n{\"label\":\"x\",\"count\":2}\n{\"value\":3}\n2\n",
     )
 }
+
+/// A union value, and a model holding one bare and inside an Option, Debug-format the held member as legacy's
+/// hand-written union `Debug` does, never a variant name.
+#[test]
+fn union_member_debug_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("union-member-debug")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"model Holder:
+    value: int | str
+    maybe: Option[int | str]
+
+def show(value: int | str) -> None:
+    println(f"{value:?}")
+    println(f"[{value:?}]")
+
+def main() -> None:
+    show(7)
+    show("text")
+    println(f"{Holder(value=7, maybe=Some("x")):?}")
+    println(f"{Holder(value="text", maybe=None):?}")
+    println(f"{Holder(value=-1, maybe=Some(2)):?}")
+"#,
+    )
+}
