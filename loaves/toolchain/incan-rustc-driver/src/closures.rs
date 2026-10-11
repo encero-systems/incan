@@ -148,8 +148,10 @@ pub fn declaration_body(function: &Function, span: Span) -> Option<Box<ast::Bloc
 
 /// Replace the inferred closure's placeholder blocks with a call to the lifted function.
 ///
-/// rustc retains the closure's `Fn` ABI and by-value capture layout. The call passes each capture, copied from the
-/// shared environment, then each input in order; the lifted function's result is the closure's result.
+/// rustc retains the closure's `Fn` ABI and by-value capture layout. The call passes each capture, then each input in
+/// order; the lifted function's result is the closure's result. A Copy capture is copied from the shared environment.
+/// Owned text is cloned out of it first, because an `Fn` closure can run again and the lifted function takes its
+/// captures by value.
 pub fn callback<'tcx>(
     tcx: TyCtxt<'tcx>,
     def: LocalDefId,
@@ -180,16 +182,25 @@ pub fn callback<'tcx>(
     }
     let environment_place =
         mir::Place::from(mir::Local::from_usize(1)).project_deeper(&[mir::ProjectionElem::Deref], tcx);
+    let mut blocks = Vec::new();
     let mut operands = Vec::new();
     for (index, ty) in captures.iter().enumerate() {
         let field = environment_place.project_deeper(
             &[mir::ProjectionElem::Field(rustc_abi::FieldIdx::from_usize(index), ty)],
             tcx,
         );
-        operands.push(Spanned {
-            node: mir::Operand::Copy(field),
-            span,
-        });
+        let owned = constructor_function
+            .parameters
+            .get(index)
+            .is_some_and(|parameter| parameter.ty == PlanType::String);
+        let node = if owned {
+            let (block, clone) = clone_capture(tcx, &mut body, field, ty, blocks.len() + 1, span)?;
+            blocks.push(block);
+            mir::Operand::Move(clone.into())
+        } else {
+            mir::Operand::Copy(field)
+        };
+        operands.push(Spanned { node, span });
     }
     for index in 2..=body.arg_count {
         operands.push(Spanned {
@@ -205,30 +216,71 @@ pub fn callback<'tcx>(
         func: mir::Operand::function_handle(tcx, callees::resolve(tcx, &callee)?, [], span),
         args: operands.into_iter().collect(),
         destination: mir::RETURN_PLACE.into(),
-        target: Some(mir::BasicBlock::from_usize(1)),
+        target: Some(mir::BasicBlock::from_usize(blocks.len() + 1)),
         unwind: mir::UnwindAction::Continue,
         call_source: mir::CallSource::Normal,
         fn_span: span,
     };
-    *body.basic_blocks_mut() = IndexVec::from_raw(vec![
-        mir::BasicBlockData::new_stmts(
-            vec![],
-            Some(mir::Terminator {
-                source_info: mir::SourceInfo::outermost(span),
-                kind: call,
-                attributes: ThinVec::new(),
-            }),
-            false,
-        ),
-        mir::BasicBlockData::new_stmts(
-            vec![],
-            Some(mir::Terminator {
-                source_info: mir::SourceInfo::outermost(span),
-                kind: mir::TerminatorKind::Return,
-                attributes: ThinVec::new(),
-            }),
-            false,
-        ),
-    ]);
+    blocks.push(terminated(vec![], call, span));
+    blocks.push(terminated(vec![], mir::TerminatorKind::Return, span));
+    *body.basic_blocks_mut() = IndexVec::from_raw(blocks);
     Ok(body)
+}
+
+/// Clone one owned capture out of the shared environment into a fresh local, continuing at block `next`.
+///
+/// The block borrows the environment field and calls `Clone::clone` on that borrow, so the environment keeps its own
+/// value for the closure's next call while the lifted function receives and drops the clone.
+fn clone_capture<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    body: &mut mir::Body<'tcx>,
+    field: mir::Place<'tcx>,
+    ty: ty::Ty<'tcx>,
+    next: usize,
+    span: Span,
+) -> Result<(mir::BasicBlockData<'tcx>, mir::Local), PlanError> {
+    let reference = body.local_decls.push(mir::LocalDecl::new(
+        ty::Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, ty),
+        span,
+    ));
+    let clone = body.local_decls.push(mir::LocalDecl::new(ty, span));
+    let borrow = mir::Statement::new(
+        mir::SourceInfo::outermost(span),
+        mir::StatementKind::Assign(Box::new((
+            reference.into(),
+            mir::Rvalue::Ref(tcx.lifetimes.re_erased, mir::BorrowKind::Shared, field),
+        ))),
+    );
+    let call = mir::TerminatorKind::Call {
+        func: mir::Operand::function_handle(tcx, callees::clone_method(tcx)?, [ty.into()], span),
+        args: [Spanned {
+            node: mir::Operand::Move(reference.into()),
+            span,
+        }]
+        .into_iter()
+        .collect(),
+        destination: clone.into(),
+        target: Some(mir::BasicBlock::from_usize(next)),
+        unwind: mir::UnwindAction::Continue,
+        call_source: mir::CallSource::Normal,
+        fn_span: span,
+    };
+    Ok((terminated(vec![borrow], call, span), clone))
+}
+
+/// Build one basic block from its statements and terminator.
+fn terminated<'tcx>(
+    statements: Vec<mir::Statement<'tcx>>,
+    kind: mir::TerminatorKind<'tcx>,
+    span: Span,
+) -> mir::BasicBlockData<'tcx> {
+    mir::BasicBlockData::new_stmts(
+        statements,
+        Some(mir::Terminator {
+            source_info: mir::SourceInfo::outermost(span),
+            kind,
+            attributes: ThinVec::new(),
+        }),
+        false,
+    )
 }

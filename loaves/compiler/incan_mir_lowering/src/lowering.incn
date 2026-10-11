@@ -1285,7 +1285,7 @@ def lower_closure(
         operand = scalar_operand(builder, capture, span)?
         ty = operand_type(builder, operand)?
         if not closure_capture_type(ty):
-            return Err("unsupported Body IR closure capture outside int, float, and bool")
+            return Err("unsupported Body IR closure capture outside scalars and owned text")
         operands.append(operand)
         capture_types.append(ty)
     name = f"__incan_closure_{builder.name}_{len(builder.synthesized)}"

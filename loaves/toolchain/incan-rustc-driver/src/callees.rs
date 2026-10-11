@@ -23,18 +23,21 @@ pub fn resolve(tcx: TyCtxt<'_>, callee: &Callee) -> Result<DefId, PlanError> {
         CalleeKind::YieldGenerator(leaf, depth) => generator_method(tcx, "GeneratorYield", "yield_value", leaf, *depth),
         CalleeKind::CollectGenerator(leaf, depth) => generator_method(tcx, "Generator", "collect", leaf, *depth),
         CalleeKind::External(path) => external(tcx, path),
-        CalleeKind::CloneModel(_, _) | CalleeKind::CloneEnum(_, _) => {
-            let trait_id = tcx
-                .lang_items()
-                .clone_trait()
-                .ok_or_else(|| PlanError::UnknownCallee("Clone".into()))?;
-            tcx.associated_item_def_ids(trait_id)
-                .iter()
-                .copied()
-                .find(|def| tcx.item_name(*def).as_str() == "clone")
-                .ok_or_else(|| PlanError::UnknownCallee("Clone::clone".into()))
-        }
+        CalleeKind::CloneModel(_, _) | CalleeKind::CloneEnum(_, _) => clone_method(tcx),
     }
+}
+
+/// Resolve the `Clone::clone` trait method through the language item, never through a source-spelled path.
+pub fn clone_method(tcx: TyCtxt<'_>) -> Result<DefId, PlanError> {
+    let trait_id = tcx
+        .lang_items()
+        .clone_trait()
+        .ok_or_else(|| PlanError::UnknownCallee("Clone".into()))?;
+    tcx.associated_item_def_ids(trait_id)
+        .iter()
+        .copied()
+        .find(|def| tcx.item_name(*def).as_str() == "clone")
+        .ok_or_else(|| PlanError::UnknownCallee("Clone::clone".into()))
 }
 
 /// Select an inherent runtime method from the exact ADT, rather than from a source-spelled method name.
