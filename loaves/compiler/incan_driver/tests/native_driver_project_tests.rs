@@ -2618,6 +2618,62 @@ fn lint_suppressions_output_matches_legacy() -> Result<(), Box<dyn std::error::E
     )
 }
 
+/// Model and class fields read by value, as arguments, receivers' arguments and returned values, clone from their
+/// owners and leave them intact, as legacy does (#241).
+#[test]
+fn nominal_field_reads_by_value_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("nominal-field-reads-by-value")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"@derive(Clone)
+class Cursor:
+    pub name: str
+
+    def join(self, other: Self) -> Self:
+        return Cursor(name=f"{self.name}+{other.name}")
+
+
+model Pair:
+    left: Cursor
+    right: Cursor
+
+    def first(self) -> Cursor:
+        return self.left
+
+
+@derive(Clone)
+class Wrapper:
+    _cursor: Cursor
+
+    def merge(self, other: Self) -> Self:
+        return Wrapper(_cursor=self._cursor.join(other._cursor))
+
+    def label(self) -> str:
+        return self._cursor.name
+
+
+def take(cursor: Cursor) -> str:
+    return cursor.name
+
+
+def main() -> None:
+    pair = Pair(left=Cursor(name="a"), right=Cursor(name="b"))
+    println(take(pair.left))
+    println(pair.left.join(pair.right).name)
+    println(pair.first().name)
+    println(pair.left.name)
+    left = Wrapper(_cursor=Cursor(name="left"))
+    right = Wrapper(_cursor=Cursor(name="right"))
+    println(left.merge(right).label())
+    println(left.label())
+    println(right.label())
+"#,
+    )
+}
+
 /// Prove canonical scalar casts and default values byte-identical to legacy.
 #[test]
 fn numeric_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

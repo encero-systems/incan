@@ -5,6 +5,23 @@
 
 use super::*;
 
+/// A model or class field read by value, as an argument or a returned value, clones from its owner, as legacy's
+/// ownership policy does (#241).
+#[test]
+fn a_nominal_field_read_by_value_clones_from_its_owner() -> Result<(), Box<dyn std::error::Error>> {
+    let rendered = rendered_f(
+        "model Cursor:\n  name: str\n\nmodel Pair:\n  left: Cursor\n\ndef take(cursor: Cursor) -> str:\n  return cursor.name\n\ndef f(pair: Pair) -> str:\n  return take(pair.left)\n",
+        "nominal_field_clone",
+    )?;
+    assert!(rendered.contains("call fn:take(clone(_0.left))"), "{rendered}");
+    let returned = rendered_f(
+        "model Cursor:\n  name: str\n\nmodel Pair:\n  left: Cursor\n\ndef f(pair: Pair) -> Cursor:\n  return pair.left\n",
+        "nominal_field_return",
+    )?;
+    assert!(returned.contains("return clone(_0.left)"), "{returned}");
+    Ok(())
+}
+
 /// `unwrap` on Option and Result is an intrinsic carrier method, like `unwrap_or`, so the backend reads its payload
 /// through the carrier layout instead of treating the call as a builtin collection member.
 #[test]
