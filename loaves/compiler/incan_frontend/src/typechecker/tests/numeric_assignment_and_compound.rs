@@ -43,6 +43,27 @@ def main() -> None:
     check_str(source).map_err(|errors| format!("{errors:?}"))
 }
 
+/// RFC 009: a float member other than a predicate returns its receiver's own float type, as the carrier's method does,
+/// so `f32` members are `f32` values an `f32` binding accepts, `float` members stay `float`, and the predicates stay
+/// `bool`.
+#[test]
+fn float_members_return_their_receiver_float_type_numeric_contract() -> Result<(), String> {
+    let source = r#"
+def main() -> None:
+    narrow: f32 = 2.5
+    kept: f32 = narrow.powf(2.0)
+    root: f32 = narrow.sqrt()
+    size: f32 = narrow.abs()
+    wide: float = 6.25
+    widened: float = wide.sqrt()
+    finite: bool = narrow.is_finite()
+    println(kept + root + size)
+    println(widened)
+    println(finite)
+"#;
+    check_str(source).map_err(|errors| format!("{errors:?}"))
+}
+
 /// RFC 009: a suffixed literal has the suffix's type in inferred, destination-typed and nested positions.
 #[test]
 fn suffixed_numeric_literals_keep_their_named_type_numeric_contract() -> Result<(), String> {

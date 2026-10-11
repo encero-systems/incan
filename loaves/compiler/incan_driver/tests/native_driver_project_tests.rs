@@ -2723,6 +2723,31 @@ fn chained_literal_output_matches_legacy() -> Result<(), Box<dyn std::error::Err
     )
 }
 
+/// Prove `f32` float members byte-identical to legacy now that the checker types them at their receiver's own float
+/// type: `powf` on an `f32` is an `f32`, displayed, kept in an `f32` binding and widened into a `float` one, beside the
+/// `float` member and an `f32` predicate.
+#[test]
+fn f32_float_member_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("f32-float-member")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def main() -> None:
+    narrow: f32 = 2.5
+    println(narrow.powf(2.0))
+    kept: f32 = narrow.powf(3.0)
+    println(kept)
+    wide: float = narrow.powf(2.0)
+    println(wide)
+    println(narrow.is_finite())
+    x: float = 1.5
+    println(x.powf(2.0))
+"#,
+    )
+}
+
 /// Prove tuples holding a list, an `Option` or another tuple byte-identical to legacy: a list element changes in place
 /// through a constant index, including inside a nested tuple, a class field and an indexed write, and is read,
 /// measured and passed with its tuple; an `Option` element is matched; a copied tuple stays independent; a returned
