@@ -165,15 +165,26 @@ pub def lower_union_declaration(
     file: str,
     intrinsics: list[EnumDeclaration],
 ) -> Result[EnumDeclaration, str]:
-    """Construct a normalized union only after its nested payload layouts have been retained."""
+    """
+    Construct a normalized union only after its nested payload layouts have been retained.
+
+    Like legacy, it derives only Clone, and its Debug prints the held member rather than a variant name.
+    """
     members = union_members(module.nominal_declarations, module.enum_declarations, ty, intrinsics)?
     mut variants: list[EnumVariant] = []
     for index in range(len(members)):
         variants.append(EnumVariant(name=f"V{index}", fields=[members[index]]))
-    return Ok(EnumDeclaration(
-        name=union_name(members)?, public=true, variants=variants, derives=["Clone"],
-        span=SourceSpan(file=file, line=1, column=1), source_type=str(ty),
-    ))
+    return Ok(
+        EnumDeclaration(
+            name=union_name(members)?,
+            public=true,
+            variants=variants,
+            derives=["Clone"],
+            span=SourceSpan(file=file, line=1, column=1),
+            source_type=str(ty),
+            member_debug=true,
+        ),
+    )
 
 
 def retained_union(

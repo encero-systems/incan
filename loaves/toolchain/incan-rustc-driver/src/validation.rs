@@ -1751,7 +1751,8 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
                 return Err(error());
             }
         }
-        if !identifier(&declaration.name)
+        if (declaration.member_debug && !member_debug_layout(declaration))
+            || !identifier(&declaration.name)
             || !names.insert(&declaration.name)
             || declaration.variants.is_empty()
             || declaration.derives.iter().any(|name| {
@@ -1777,6 +1778,15 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
         }
     }
     Ok(())
+}
+
+/// Admit a member-delegating `Debug` only on a union layout: an ordinary enum that derives no `Debug` of its own and
+/// whose every variant holds exactly the one member the generated impl formats.
+fn member_debug_layout(declaration: &crate::plan::EnumDeclaration) -> bool {
+    declaration.carrier.is_empty()
+        && declaration.name.starts_with("__IncanUnion")
+        && !declaration.derives.iter().any(|name| name == "Debug")
+        && declaration.variants.iter().all(|variant| variant.fields.len() == 1)
 }
 
 /// Reject infinitely sized by-value nominal/enum layouts while allowing cycles behind collections and references.

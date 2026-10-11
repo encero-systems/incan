@@ -4,7 +4,7 @@ use crate::error::PlanError;
 use crate::identity::{self, IdentityError};
 use crate::plan::{Plan, PlanType};
 use crate::spans::Sources;
-use crate::{bodies, callees, declarations, types, validation};
+use crate::{bodies, callees, declarations, types, union_debug, validation};
 use rustc_ast as ast;
 use rustc_data_structures::steal::Steal;
 use rustc_hir::def_id::LocalDefId;
@@ -162,6 +162,9 @@ impl rustc_driver::Callbacks for Callbacks {
                 ));
             }
             krate.items.push(item);
+            if value.member_debug {
+                krate.items.push(union_debug::member_debug_impl(value, span));
+            }
         }
         for model in &self.plan.models {
             let span = match sources.span(&model.span) {

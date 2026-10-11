@@ -148,7 +148,7 @@ from decls import lower_model_declarations, static_slot, static_accessors
 from model_lists import model_list_read, structural_prefix, prefix_place
 from element_places import is_element_place, element_place_type
 from element_borrows import element_method_owner, element_method_receiver, borrow_element_mut
-from option_tests import is_option_carrier, option_isinstance, option_union_payload, enum_tag
+from option_tests import is_option_carrier, is_union_carrier, option_isinstance, option_union_payload, enum_tag
 from models import field_projection
 from models import model_type, model_place, constructor_index, field_slot
 from model_values import (
@@ -3331,7 +3331,7 @@ def debug_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -
                         place = scalar_place(builder, read.place, span)?
                         match place_type(builder.locals, place):
                             PlanType.Model(_owner, _name) => return debug_model_operand(builder, value, span)
-                            PlanType.Enum(_owner, _name) => return Err("unsupported Body IR nonmodel FormatStyle.Debug")
+                            PlanType.Enum(owner, _name) => return debug_union_operand(builder, place, owner, span)
                             _ => pass
                     Some(_global) => pass
         _ => pass
@@ -3448,6 +3448,14 @@ def display_plan_operand(mut builder: Builder, operand: Operand, span: SourceSpa
     result = temporary(builder, PlanType.String, span)
     external_call(builder, f"incan_native_runtime::{name}", [ty], PlanType.String, [operand], result, span)
     return Ok(result)
+
+
+def debug_union_operand(mut builder: Builder, place: Place, owner: int, span: SourceSpan) -> Result[Place, str]:
+    """Render a union through its member-delegating Debug on a copy; other enums keep their named refusal."""
+    if not is_union_carrier(builder, owner):
+        return Err("unsupported Body IR nonmodel FormatStyle.Debug")
+    copied = clone_nominal_operand(builder, place, span)?
+    return debug_plan_operand(builder, copied, span)
 
 
 def debug_plan_operand(mut builder: Builder, operand: Operand, span: SourceSpan) -> Result[Place, str]:

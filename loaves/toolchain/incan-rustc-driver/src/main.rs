@@ -27,6 +27,7 @@ mod plan;
 mod spans;
 mod terminators;
 mod types;
+mod union_debug;
 mod unit;
 mod validation;
 mod values;

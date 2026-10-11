@@ -659,6 +659,8 @@ pub model EnumDeclaration:
     # Standard carriers use their concrete type arguments from the variant fields.
     pub carrier: str = ""
     pub source_type: str = ""
+    # A union's Debug prints the member it holds, as legacy's hand-written impl does; it is never derived.
+    pub member_debug: bool = false
 
 
 @derive(Clone, PartialEq)
