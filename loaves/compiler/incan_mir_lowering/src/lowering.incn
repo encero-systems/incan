@@ -4135,14 +4135,61 @@ def lower_builtin_method(
             match destination:
                 Some(place) =>
                     output = scalar_place(builder, place, span)?
-                    operand = resize_receiver(builder, arguments, span)?
+                    operand = numeric_receiver(builder, arguments, span)?
                     return emit_resize(builder, policy, receiver_type, operand, output, span)
                 None => return Err("unsupported Body IR resize without checked destination")
+        None => pass
+    # The checker types every non-predicate float member as `float`, but an `f32` receiver's own `powf` returns `f32`.
+    # Lowering either width would disagree with one of them, so the member stays refused until they agree.
+    if member == "f32.powf":
+        return Err("unsupported Body IR f32 powf: its checked float result differs from the carrier's f32 powf")
+    match float_method(member, receiver_type):
+        Some((name, parameters, result)) =>
+            return lower_float_method(builder, name, parameters, result, arguments, destination, span)
         None => pass
     return lower_list_method(builder, member, arguments, destination, span)
 
 
-def resize_receiver(
+def float_method(member: str, receiver: PlanType) -> Option[tuple[str, list[PlanType], PlanType]]:
+    """Select the runtime boundary for a builtin float member; `powf` is the same `powf` legacy emits for `**`."""
+    mut width = ""
+    if receiver == PlanType.F32:
+        width = "f32"
+    elif receiver == PlanType.Float or receiver == PlanType.F64:
+        width = "f64"
+    else:
+        return None
+    if member == "f64.powf":
+        return Some(("power_f64", [receiver, receiver], receiver))
+    if member == f"{width}.is_finite":
+        return Some((f"is_finite_{width}", [receiver], PlanType.Bool))
+    if member == f"{width}.is_nan":
+        return Some((f"is_nan_{width}", [receiver], PlanType.Bool))
+    return None
+
+
+def lower_float_method(
+    mut builder: Builder,
+    name: str,
+    parameters: list[PlanType],
+    result: PlanType,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Call a float member's runtime boundary with the copied receiver and each argument at its checked carrier."""
+    if len(arguments) != len(parameters):
+        return Err("unsupported Body IR float Method arity")
+    mut operands = [numeric_receiver(builder, arguments, span)?]
+    for index in range(1, len(parameters)):
+        argument = argument_value(builder, arguments, index, span)?
+        operands.append(coerce_numeric_operand(builder, argument, parameters[index], span)?)
+    output = call_destination(builder, destination, result, span)?
+    external_call(builder, f"incan_native_runtime::{name}", parameters, result, operands, output, span)
+    return Ok(None)
+
+
+def numeric_receiver(
     mut builder: Builder,
     arguments: &list[RustArgumentElement],
     span: SourceSpan,
@@ -4153,7 +4200,7 @@ def resize_receiver(
             if read.fact == OwnershipFact.Borrow:
                 place = scalar_place(builder, read.place, span)?
                 if not numeric_carrier(place_type(builder.locals, place)):
-                    return Err("invalid Body IR resize receiver outside numeric storage")
+                    return Err("invalid Body IR numeric receiver outside numeric storage")
                 return Ok(read_place(place, false, span))
         _ => pass
     return argument_value(builder, arguments, 0, span)
@@ -5834,8 +5881,10 @@ def lower_carrier_method(
     mut ty = PlanType.Bool
     mut fallback: Option[Operand] = None
     mut arity = 1
-    if name == "unwrap_or":
-        arity = 2
+    if name == "unwrap_or" or name == "unwrap":
+        if name == "unwrap_or":
+            arity = 2
+        # The present payload lives in Option's `Some` slot one and Result's `Ok` slot zero.
         mut slot = 0
         if declaration.carrier == "Option":
             slot = 1

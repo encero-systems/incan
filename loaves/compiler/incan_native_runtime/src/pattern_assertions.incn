@@ -1,5 +1,6 @@
-"""Fail carrier-pattern assertions through the std.testing helpers that legacy inlines for them."""
+"""Fail carrier-pattern assertions and `unwrap` calls exactly as legacy's inlined code fails them."""
 
+from std.derives.string import Debug
 from std.testing import assert_is_some, assert_is_none, assert_is_ok, assert_is_err
 
 
@@ -49,3 +50,15 @@ pub def missing_err_with(message: str) -> None:
     """Fail as `assert value is Err(...), message` does on Ok."""
     succeeded: Result[int, int] = Ok(0)
     _ = assert_is_err(succeeded, message)
+
+
+pub def unwrap_none() -> None:
+    """Fail as legacy's `Option.unwrap()` does on None, with the standard library's own message."""
+    nothing: Option[int] = None
+    _ = nothing.unwrap()
+
+
+pub def unwrap_err[E with Debug](error: E) -> None:
+    """Fail as legacy's `Result.unwrap()` does on Err, rendering the error through its Debug implementation."""
+    failed: Result[int, E] = Err(error)
+    _ = failed.unwrap()

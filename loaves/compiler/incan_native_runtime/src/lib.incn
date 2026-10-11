@@ -17,6 +17,8 @@ pub from pattern_assertions import (
     missing_ok_with,
     missing_err,
     missing_err_with,
+    unwrap_none,
+    unwrap_err,
 )
 pub from model_values import (
     debug_model,
@@ -185,6 +187,10 @@ pub from numerics import (
     power_u64,
     power_u128,
     power_usize,
+    is_finite_f64,
+    is_finite_f32,
+    is_nan_f64,
+    is_nan_f32,
     parse_int,
     parse_float,
 )

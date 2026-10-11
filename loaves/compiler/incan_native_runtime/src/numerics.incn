@@ -527,3 +527,24 @@ pub def power_usize(left: usize, right: int) -> usize:
         exponent = exponent // 2
         base = base * base
     return accumulator * base
+
+
+# Float classification members. Each is the standard library method legacy calls on the same carrier.
+pub def is_finite_f64(value: f64) -> bool:
+    """Report whether an f64 is neither infinite nor NaN."""
+    return value.is_finite()
+
+
+pub def is_finite_f32(value: f32) -> bool:
+    """Report whether an f32 is neither infinite nor NaN."""
+    return value.is_finite()
+
+
+pub def is_nan_f64(value: f64) -> bool:
+    """Report whether an f64 is NaN."""
+    return value.is_nan()
+
+
+pub def is_nan_f32(value: f32) -> bool:
+    """Report whether an f32 is NaN."""
+    return value.is_nan()
