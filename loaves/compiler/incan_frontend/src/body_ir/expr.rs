@@ -74,6 +74,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if self.type_info.validated_newtype_coercion(expr.span).is_some() {
             return self.unsupported_operand("validated-newtype coercion".to_string(), scope, span, out);
         }
+        if let Some(lowered) = self.lower_operator_hook_expr(expr, scope, out) {
+            return lowered;
+        }
         match &expr.node {
             ast::Expr::Ident(name) => {
                 let ty = self.resolve_ty(expr.span);
@@ -316,7 +319,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     .push(self.lower_checked_field_projection(base, name, expr.span));
                 place
             }
-            ast::Expr::Index(base, index) => {
+            // A `__getitem__` hook returns a value; it is not a projection of its receiver.
+            ast::Expr::Index(base, index) if self.type_info.resolved_operator_call(expr.span).is_none() => {
                 let index_operand = self.lower_checked_index_operand(base, index, scope, out);
                 let mut place = self.lower_expr_to_place(base, scope, out);
                 place.projection.push(bir::PlaceElem::Index(Box::new(index_operand)));

@@ -36,7 +36,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             && dispatch.kind == ResolvedOperatorKind::Binary
         {
             let method = dispatch.method.clone();
-            return self.lower_operator_dispatch(&method, lhs, rhs, result_ty, scope, hir_span_value, out);
+            return self.lower_operator_dispatch(&method, lhs, &[rhs], result_ty, span, scope, out);
         }
 
         if !Self::binary_op_is_supported(op, &lhs_ty, &rhs_ty) {
@@ -152,40 +152,94 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Lower a user-defined operator to the dunder method call the typechecker resolved for it.
     ///
-    /// RFC 028 lets a type define `__add__`, `__and__`, `__contains__` and friends, and the typechecker records
-    /// which method one operator spelling dispatches to. Body IR must follow that decision: representing `a + b` on
-    /// two `Vec2` values as [`bir::BinOp::Add`] would claim a primitive machine operation where the source calls a
-    /// method, which is a wrong representation rather than an honest refusal — no `Unsupported` marker, nothing for
-    /// a consumer to notice.
+    /// RFC 028 lets a type define `__add__`, `__getitem__`, `__invert__` and friends, and the typechecker records
+    /// which method one operator spelling dispatches to, with that method's identity at the operator's span. Body IR
+    /// must follow that decision: representing `a + b` on two `Vec2` values as [`bir::BinOp::Add`] would claim a
+    /// primitive machine operation where the source calls a method, which is a wrong representation rather than an
+    /// honest refusal — no `Unsupported` marker, nothing for a consumer to notice.
     ///
-    /// The left operand becomes the receiver and the right becomes the single argument, matching how
-    /// [`Self::lower_method_call`] arranges an ordinary method call: `args[0]` is the receiver, borrowed. The
-    /// binding is [`bir::ArgumentBinding::UnresolvedPositional`] because an operator spelling names no parameter
-    /// and this stage resolves no declared slot for it.
+    /// The operand the operator reads first becomes the receiver, borrowed and evaluated before the arguments,
+    /// matching how [`Self::lower_method_call`] arranges an ordinary method call: `args[0]` is the receiver.
+    /// Checking resolved the dunder against exactly these positional arguments, so they fill its declared slots in
+    /// order. An operator whose identity checking did not record keeps no canonical target and stays refused.
+    ///
+    /// A hook on an instance of a generic owner stays refused by name: its closed body can display a type-parameter
+    /// value, which generic code spells through the type argument's own display (an integral float without its
+    /// fractional part), and Body IR records no such display fact yet.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn lower_operator_dispatch(
         &mut self,
         method: &str,
-        lhs: &ast::Spanned<ast::Expr>,
-        rhs: &ast::Spanned<ast::Expr>,
+        receiver: &ast::Spanned<ast::Expr>,
+        arguments: &[&ast::Spanned<ast::Expr>],
         result_ty: IncanType,
+        operator_span: ast::Span,
         scope: bir::ScopeId,
-        span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
-        // Source evaluation observes the receiver before the argument, exactly as for a written method call.
-        let receiver_place = self.lower_expr_to_place(lhs, scope, out);
-        let receiver = bir::Operand::place(receiver_place, bir::OwnershipFact::Borrow, false);
-        let argument = self.lower_expr_to_operand(rhs, scope, out);
+        if matches!(self.resolve_ty(receiver.span), IncanType::Generic { .. }) {
+            return self.unsupported_operand(
+                format!("operator hook `{method}` on a generic owner"),
+                scope,
+                hir_span(operator_span),
+                out,
+            );
+        }
+        // Source evaluation observes the receiver before the arguments, exactly as for a written method call.
+        let receiver_place = self.lower_expr_to_place(receiver, scope, out);
+        let mut elements = vec![bir::ArgumentElement::One(bir::Operand::place(
+            receiver_place,
+            bir::OwnershipFact::Borrow,
+            false,
+        ))];
+        for argument in arguments {
+            let operand = self.lower_expr_to_operand(argument, scope, out);
+            elements.push(bir::ArgumentElement::One(operand));
+        }
+        let canonical = self
+            .type_info
+            .resolved_identity(operator_span)
+            .filter(|identity| identity.kind == SemanticSourceTargetKind::Method)
+            .cloned();
         self.push_call_temp(
-            bir::Callee::Method(bir::MethodTarget::synthesized(method)),
-            vec![bir::ArgumentElement::One(receiver), bir::ArgumentElement::One(argument)],
+            bir::Callee::Method(bir::MethodTarget {
+                name: method.to_string(),
+                intrinsic_carrier: None,
+                canonical,
+                type_args: Vec::new(),
+                binding: bir::ArgumentBinding::resolved_positional(arguments.len()),
+            }),
+            elements,
             result_ty,
             scope,
-            span,
+            hir_span(operator_span),
             false,
             out,
         )
+    }
+
+    /// Lower a unary or index expression checking resolved to a user-defined dunder method, if it is one.
+    ///
+    /// `~value` and `-value` call the operand's hook with no arguments; `base[index]` calls `__getitem__` on the base
+    /// with the index. Every other expression returns `None` and keeps its ordinary lowering.
+    pub(super) fn lower_operator_hook_expr(
+        &mut self,
+        expr: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<bir::Operand> {
+        let dispatch = self.type_info.resolved_operator_call(expr.span)?;
+        let (method, kind) = (dispatch.method.clone(), dispatch.kind);
+        let ty = self.resolve_ty(expr.span);
+        match (&expr.node, kind) {
+            (ast::Expr::Unary(_, operand), ResolvedOperatorKind::Unary) => {
+                Some(self.lower_operator_dispatch(&method, operand, &[], ty, expr.span, scope, out))
+            }
+            (ast::Expr::Index(base, index), ResolvedOperatorKind::Index) => {
+                Some(self.lower_operator_dispatch(&method, base, &[&**index], ty, expr.span, scope, out))
+            }
+            _ => None,
+        }
     }
 
     /// Whether `op` between operands of `lhs_ty`/`rhs_ty` has any Body IR v0 handling (either the string-helper

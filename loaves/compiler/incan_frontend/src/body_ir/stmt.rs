@@ -67,7 +67,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.lower_field_assignment(field_assignment, scope, span, out)
             }
             ast::Statement::IndexAssignment(index_assignment) => {
-                self.lower_index_assignment(index_assignment, scope, span, out)
+                // The raw AST span keys a resolved `__setitem__` hook, as for compound assignment below.
+                self.lower_index_assignment(index_assignment, scope, stmt.span, out)
             }
             ast::Statement::CompoundAssignment(compound_assignment) => {
                 // Passed the raw AST span, not `span`: the typechecker keys a resolved operator hook by source
@@ -324,13 +325,25 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// `value` by the parser -- see [`Self::lower_field_assignment`]'s docs for the same note on
     /// `IndexAssignmentStmt::compound_op`). The object place is lowered before the index operand, preserving the
     /// established assignment evaluation order in the Rust-emission backend: object, index, then assigned value.
+    /// A write checking resolved to a user-defined `__setitem__` is that method's call, in the same order.
     pub(super) fn lower_index_assignment(
         &mut self,
         index_assignment: &ast::IndexAssignmentStmt,
         scope: bir::ScopeId,
-        span: HirSourceSpan,
+        source_span: ast::Span,
         out: &mut Vec<bir::Statement>,
     ) {
+        let span = hir_span(source_span);
+        if let Some(dispatch) = self.type_info.resolved_operator_call(source_span)
+            && dispatch.kind == ResolvedOperatorKind::IndexAssign
+        {
+            let method = dispatch.method.clone();
+            let object = &index_assignment.object;
+            let arguments = [&index_assignment.index, &index_assignment.value];
+            let unit = IncanType::Primitive(IncanPrimitiveType::Unit);
+            self.lower_operator_dispatch(&method, object, &arguments, unit, source_span, scope, out);
+            return;
+        }
         let mut place = self.lower_expr_to_place(&index_assignment.object, scope, out);
         let index_operand = self.lower_expr_to_operand(&index_assignment.index, scope, out);
         place.projection.push(bir::PlaceElem::Index(Box::new(index_operand)));
