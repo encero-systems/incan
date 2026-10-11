@@ -346,6 +346,59 @@ fn mixed_float_arithmetic_retains_the_checked_operand_promotion() -> Result<(), 
     Ok(())
 }
 
+/// A mixed numeric comparison reads both operands at legacy's common carrier: two integer carriers at the narrowest
+/// integer type holding both, and any pair involving a float as `float`. Same-carrier comparisons keep their operands.
+#[test]
+fn mixed_numeric_comparison_reads_both_operands_at_the_common_carrier() -> Result<(), Box<dyn std::error::Error>> {
+    for (parameters, expression, carrier) in [
+        ("left: f32, right: f64", "left < right", "float"),
+        ("left: f32, right: int", "left == right", "float"),
+        ("left: int, right: float", "left >= right", "float"),
+        ("left: i8, right: i16", "left < right", "i16"),
+        ("left: i8, right: u8", "left != right", "i16"),
+        ("left: int, right: u64", "left > right", "i128"),
+        ("left: i32, right: int", "left <= right", "int"),
+        ("left: f32, right: f32", "left < right", "f32"),
+    ] {
+        let source = format!("def f({parameters}) -> bool:\n  return {expression}\n");
+        let module = build(&source, &["m", "mixed_compare"])?;
+        let body = body_named(&module, "f")?;
+        let operands = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Assign {
+                    rvalue: bir::Rvalue::BinaryOp(_, left, right),
+                    ..
+                } => Some([left, right]),
+                _ => None,
+            })
+            .ok_or_else(|| format!("`{expression}` must lower as a primitive comparison"))?;
+        for operand in operands {
+            let bir::Operand::Place(read) = operand else {
+                return Err(format!("`{expression}` must read its operands from locals").into());
+            };
+            let bir::PlaceRoot::Local(local) = &read.place.root else {
+                return Err(format!("`{expression}` must read function-frame locals").into());
+            };
+            let ty = body
+                .locals
+                .iter()
+                .find(|declaration| declaration.id == *local)
+                .map(|declaration| declaration.ty.to_string())
+                .unwrap_or_default();
+            assert_eq!(
+                ty,
+                carrier,
+                "`{expression}` over ({parameters}) must compare at {carrier}: {}",
+                body.render_snapshot()
+            );
+        }
+    }
+    Ok(())
+}
+
 /// RFC 009 suffixed literals lower as typed numeric constants without a destination annotation.
 #[test]
 fn suffixed_numeric_literals_keep_their_body_ir_types_numeric_contract() -> Result<(), Box<dyn std::error::Error>> {
