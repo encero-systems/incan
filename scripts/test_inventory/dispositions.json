@@ -8620,6 +8620,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/rust_inspect/src/extractor/trait_candidates_tests.rs": {
+      "disposition": "keep",
+      "notes": "Compatibility oracle for query-scoped trait candidate acquisition preserves aliases, generics, primitives, mutable receivers, built-in derives and unnamed-const implementations. Uses the existing analyzer index without a second candidate cache.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/rust_inspect/src/lib.rs": {
       "disposition": "unaffected",
       "notes": "Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level.",

@@ -1149,8 +1149,9 @@ fn disk_cache_invalidates_when_workspace_fingerprint_changes() -> Result<(), Box
     Ok(())
 }
 
-/// Ownership metadata added by the current cache format must never be read from an older record with serde defaults,
-/// because that would silently turn a supported composite borrowing contract into a cache-dependent failure.
+/// Reject metadata from before either mutable-reference composition or re-exported trait authority was recorded.
+///
+/// Serde defaults cannot repair missing semantic facts; both obsolete formats must be re-extracted.
 #[test]
 fn disk_cache_rejects_pre_mutable_reference_metadata_format() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
@@ -1158,26 +1159,28 @@ fn disk_cache_rejects_pre_mutable_reference_metadata_format() -> Result<(), Box<
         tmp.path().join("Cargo.toml"),
         "[package]\nname = \"probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
     )?;
-    write_disk_cache(
-        tmp.path(),
-        &DiskCacheEnvelope {
-            cache_format: 21,
-            inspector_version: "cache-format-21".to_string(),
-            workspace_fingerprint: workspace_fingerprint(tmp.path())?,
-            items: HashMap::from([("demo::Thing".to_string(), dummy_type_metadata("demo::Thing"))]),
-            complete_items: HashSet::from(["demo::Thing".to_string()]),
-            misses: HashMap::new(),
-        },
-    )?;
+    for obsolete_format in [21, 41] {
+        write_disk_cache(
+            tmp.path(),
+            &DiskCacheEnvelope {
+                cache_format: obsolete_format,
+                inspector_version: format!("cache-format-{obsolete_format}"),
+                workspace_fingerprint: workspace_fingerprint(tmp.path())?,
+                items: HashMap::from([("demo::Thing".to_string(), dummy_type_metadata("demo::Thing"))]),
+                complete_items: HashSet::from(["demo::Thing".to_string()]),
+                misses: HashMap::new(),
+            },
+        )?;
 
-    let root = tmp.path().canonicalize()?;
-    let mut inner = CacheInner::default();
-    let report = ensure_disk_cache_loaded(&mut inner, root.as_path())?;
-    assert_eq!(report.reason, "miss.cache_format_changed");
-    assert!(
-        !inner.items.contains_key(&(root, "demo::Thing".to_string())),
-        "a pre-v22 record must be re-extracted rather than supplying empty tuple-composition metadata"
-    );
+        let root = tmp.path().canonicalize()?;
+        let mut inner = CacheInner::default();
+        let report = ensure_disk_cache_loaded(&mut inner, root.as_path())?;
+        assert_eq!(report.reason, "miss.cache_format_changed", "format {obsolete_format}");
+        assert!(
+            !inner.items.contains_key(&(root, "demo::Thing".to_string())),
+            "format {obsolete_format} must be re-extracted rather than supplying incomplete trait metadata"
+        );
+    }
     Ok(())
 }
 

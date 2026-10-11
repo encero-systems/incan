@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3569 | 245 | 431 |
+| keep | 3570 | 246 | 431 |
 | re-point | 1487 | 91 | 1058 |
 | retire | 1507 | 153 | 0 |
 | unaffected | 1974 | 211 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8537** | **700** | **1494** |
+| **Total** | **8538** | **701** | **1494** |
 
 - Retire-class tests: 1507, of which twinned 1022, dies 295, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -2531,6 +2531,21 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 | `host_bridge_match_rejects_path_and_identifier_lookalikes` | retire | `dies` | test-only demangled-symbol matcher for generated host-bridge evidence: accepting or rejecting host path lookalikes is not observable from Incan source once physical symbol inspection retires with #654. | - | - |
 | `generic_match_requires_exact_item_path_and_u64_suffix` | retire | `dies` | test-only demangled-symbol matcher for proving a generated generic host specialization: the item-path and host type-suffix evidence is not an Incan language observable and retires with physical symbol inspection under #654. | - | - |
 
+### `loaves/compiler/rust_inspect` (109 tests in 10 files: keep 1, unaffected 108)
+
+| File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
+|---|---:|---:|---:|---|---:|---:|---|---|---|---|
+| `loaves/compiler/rust_inspect/src/cache_tests.rs` | 42 | 2930 | 2930 | unaffected | - | - | required | #1561 | replacement 1 | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
+| `loaves/compiler/rust_inspect/src/digest/tests.rs` | 17 | 634 | 634 | unaffected | - | - | - | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
+| `loaves/compiler/rust_inspect/src/extractor.rs` | 21 | 4115 | 1898 | unaffected | - | - | required | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
+| `loaves/compiler/rust_inspect/src/extractor/trait_candidates_tests.rs` | 1 | 151 | 151 | keep | - | - | - | #1337 | - | Compatibility oracle for query-scoped trait candidate acquisition preserves aliases, generics, primitives, mutable receivers, built-in derives and unnamed-const implementations. Uses the existing analyzer index without a second candidate cache. |
+| `loaves/compiler/rust_inspect/src/lib.rs` | 2 | 208 | 149 | unaffected | - | - | - | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
+| `loaves/compiler/rust_inspect/src/loader.rs` | 16 | 2347 | 658 | unaffected | - | - | - | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
+| `loaves/compiler/rust_inspect/src/loader/loaf_manifest.rs` | 1 | 243 | 65 | unaffected | - | - | - | #1698 | - | Loaf source and frozen graph inspection without Cargo metadata; validates source containment, alias edges and selected facts. |
+| `loaves/compiler/rust_inspect/src/loader/native_macros.rs` | 1 | 260 | 17 | unaffected | - | - | - | #1698 | - | Native macro ownership admission rejects executable macro paths without retained store authority, including nested graphs. |
+| `loaves/compiler/rust_inspect/src/mir_digest.rs` | 5 | 469 | 249 | unaffected | - | - | - | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
+| `loaves/compiler/rust_inspect/src/receiver_contract.rs` | 3 | 101 | 43 | unaffected | - | - | - | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
+
 ### `loaves/kernel/incan_lang` (127 tests in 25 files: keep 127)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
@@ -3134,7 +3149,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 | `loaves/toolchain/oven-cli/src/commands/tools.rs` | 8 | 1869 | 414 | unaffected | - | - | - | #1561 | run 1 | Oven tools command; the build_run hit is a Cargo config hint, not an Incan build. |
 | `loaves/toolchain/oven-cli/src/invocation_trace.rs` | 6 | 399 | 193 | keep | - | - | - | #1337 | - | Opt-in compiler invocation diagnostics: disabled field laziness, nested identities, decision records, parent linkage, retained sinks and concurrent record integrity. No compiler semantics or legacy emitter dependence. |
 
-??? note "Unaffected crates (978 tests in 85 files)"
+??? note "Unaffected crates (870 tests in 76 files)"
 
     Every test in these crates is `unaffected`: the cutover does not touch them. They are listed so the summary reconciles to the whole tree.
 
@@ -3159,20 +3174,6 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     | `loaves/compiler/incan_provider/src/sdk_store.rs` | 13 | 1391 | 599 | unaffected | - | - | - | #1561 | - | SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level. |
     | `loaves/compiler/incan_provider/src/vocab_extraction.rs` | 15 | 1979 | 353 | unaffected | - | - | - | #1561 | run 4 | SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level. |
     | `loaves/compiler/incan_provider/tests/stdlib_effect_digest.rs` | 10 | 313 | 313 | unaffected | - | - | - | #1561 | - | SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level. |
-
-    #### `loaves/compiler/rust_inspect` (108 tests in 9 files: unaffected 108)
-
-    | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
-    |---|---:|---:|---:|---|---:|---:|---|---|---|---|
-    | `loaves/compiler/rust_inspect/src/cache_tests.rs` | 42 | 2927 | 2927 | unaffected | - | - | required | #1561 | replacement 1 | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
-    | `loaves/compiler/rust_inspect/src/digest/tests.rs` | 17 | 634 | 634 | unaffected | - | - | - | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
-    | `loaves/compiler/rust_inspect/src/extractor.rs` | 21 | 4038 | 1877 | unaffected | - | - | required | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
-    | `loaves/compiler/rust_inspect/src/lib.rs` | 2 | 208 | 149 | unaffected | - | - | - | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
-    | `loaves/compiler/rust_inspect/src/loader.rs` | 16 | 2347 | 658 | unaffected | - | - | - | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
-    | `loaves/compiler/rust_inspect/src/loader/loaf_manifest.rs` | 1 | 243 | 65 | unaffected | - | - | - | #1698 | - | Loaf source and frozen graph inspection without Cargo metadata; validates source containment, alias edges and selected facts. |
-    | `loaves/compiler/rust_inspect/src/loader/native_macros.rs` | 1 | 260 | 17 | unaffected | - | - | - | #1698 | - | Native macro ownership admission rejects executable macro paths without retained store authority, including nested graphs. |
-    | `loaves/compiler/rust_inspect/src/mir_digest.rs` | 5 | 469 | 249 | unaffected | - | - | - | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
-    | `loaves/compiler/rust_inspect/src/receiver_contract.rs` | 3 | 101 | 43 | unaffected | - | - | - | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
 
     #### `loaves/kernel/incan_codegraph` (5 tests in 1 file: unaffected 5)
 
