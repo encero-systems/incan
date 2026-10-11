@@ -5339,6 +5339,73 @@ def main() -> None:
     )
 }
 
+/// A trait default with its own type parameters runs for an adopter at each call's checked arguments: one reads an
+/// element and a slice of a list of the parameter, another returns the argument it was given.
+#[test]
+fn trait_generic_method_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "trait_generic_method",
+        r#"trait Picker:
+    def pick[K](self, items: list[K]) -> K:
+        return items[0]
+
+    def tail[K](self, items: list[K]) -> list[K]:
+        return items[1:]
+
+
+trait Echo:
+    def echo[T with Clone](self, value: T) -> T:
+        return value
+
+
+model Chooser with Picker, Echo:
+    id: int
+
+
+def main() -> None:
+    chooser = Chooser(id=1)
+    println(chooser.pick([5, 6]))
+    println(chooser.pick(["z"]))
+    println(len(chooser.tail([7, 8, 9])))
+    println(chooser.echo(true))
+    println(chooser.echo("text"))
+"#,
+        b"5\nz\n2\ntrue\ntext\n",
+    )
+}
+
+/// A declared type's own method returning `Self` returns that type, whether a class rebuilds itself in a method named
+/// `clone` or a model returns a moved copy, and its callers read the returned value's fields.
+#[test]
+fn own_method_self_result_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "own_method_self_result",
+        r#"pub class ActiveRegistration:
+    pub logical_name: str
+    pub rank: int
+
+    def clone(self) -> Self:
+        return ActiveRegistration(logical_name=self.logical_name, rank=self.rank)
+
+
+model Point:
+    x: int
+
+    def moved(self, dx: int) -> Self:
+        return Point(x=self.x + dx)
+
+
+def main() -> None:
+    reg = ActiveRegistration(logical_name="orders", rank=1)
+    copied = reg.clone()
+    println(copied.logical_name)
+    println(f"{reg.logical_name} {copied.rank}")
+    println(Point(x=1).moved(2).moved(3).x)
+"#,
+        b"orders\norders 1\n6\n",
+    )
+}
+
 /// Compare a single-module program in the minimal project layout behavior fixtures run in, pinning its output.
 ///
 /// The fixture harness runs a single-file program as `src/main.incn` of a minimal project through `incan run`, and

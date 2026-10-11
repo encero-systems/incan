@@ -1182,6 +1182,37 @@ fn a_self_typed_parameter_in_a_types_own_method_reads_as_that_type() -> Result<(
     Ok(())
 }
 
+#[test]
+fn a_self_return_type_in_a_types_own_method_reads_as_that_type() -> Result<(), Box<dyn std::error::Error>> {
+    // A declared type's own method returning `Self` returns that type, nested in a collection too, as the checker reads
+    // it at every call site; only a trait default keeps `Self` open for specialization per adopter.
+    let source = concat!(
+        "model P:\n",
+        "  v: int\n\n",
+        "  def again(self) -> Self:\n",
+        "    return P(v=self.v)\n\n",
+        "  def both(self) -> list[Self]:\n",
+        "    return [P(v=self.v)]\n\n",
+        "trait T:\n",
+        "  def me(self) -> Self:\n",
+        "    return self\n",
+    );
+    let module = build(source, &["m", "self_return"])?;
+    let again = body_named(&module, "again")?;
+    assert_eq!(again.return_type, IncanType::Named("P".to_string()));
+    let both = body_named(&module, "both")?;
+    assert_eq!(
+        both.return_type,
+        IncanType::Generic {
+            base: "List".to_string(),
+            args: vec![IncanType::Named("P".to_string())],
+        }
+    );
+    let me = body_named(&module, "me")?;
+    assert_eq!(me.return_type, IncanType::SelfType, "a trait default keeps `Self` open");
+    Ok(())
+}
+
 /// Canonical collection mutation records exclusive receiver facts while read-only members remain shared.
 #[test]
 fn collection_mutating_methods_retain_mutable_receiver_facts() -> Result<(), Box<dyn std::error::Error>> {
