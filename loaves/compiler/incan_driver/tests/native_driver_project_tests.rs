@@ -5583,3 +5583,62 @@ def main() -> None:
         None,
     )
 }
+
+/// List element reads in values, tuples, text helpers, numeric members and `len` copy the element like legacy does.
+#[test]
+fn list_element_read_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("list-element-reads")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"model Label:
+    text: str
+
+def score(mut values: list[int]) -> int:
+    values[0] = 40
+    pair = (values[0], values[-1])
+    return pair.0 + pair.1
+
+def find(words: list[str], size: int) -> int:
+    mut index = 0
+    while index < len(words):
+        if len(words[index]) == size:
+            return index
+        index += 1
+    return -1
+
+def lookup(rows: list[list[str]], key: str) -> int:
+    for row in rows:
+        if row[0] == key:
+            return len(row)
+    return 0
+
+def finite(values: list[float]) -> bool:
+    return values[0].is_finite() and not values[-1].is_nan()
+
+def main() -> None:
+    mut values = [1, 2]
+    println(score(values))
+    println(values)
+    println(find(["a", "bb", "ccc"], 2))
+    rows = [[], ["x"]]
+    println(len(rows[0]))
+    println(len(rows[1]))
+    deep = [[[]], [["x"]]]
+    println(len(deep[1][0]))
+    println(lookup([["a", "1"], ["b", "2", "3"]], "b"))
+    println(finite([0.5, 1.5]))
+    label = Label(text="a")
+    names: list[str] = ["a", "b"]
+    println(names[0] == label.text)
+    println(names[1] != label.text)
+    mut cells = [10, 20, 30]
+    cells[0], fresh = (cells[2], cells[0])
+    println(f"{cells[0]} {fresh}")
+    cells[1], cells[2] = (cells[2], cells[1])
+    println(cells)
+"#,
+    )
+}
