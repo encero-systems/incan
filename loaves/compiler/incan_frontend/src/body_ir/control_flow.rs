@@ -272,12 +272,20 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return;
         }
         let scrutinee_ty = self.resolve_ty(value.span);
+        let in_place = self.matches_in_place(value.span, &scrutinee_ty);
         let scrutinee_place = self.lower_expr_to_place(value, scope, out);
         let scrutinee = bir::Operand::place(scrutinee_place.clone(), bir::OwnershipFact::Borrow, false);
 
         let layouts_before = self.materialized_range_locals.clone();
-        let matched_arm =
-            self.lower_statement_pattern_arm(pattern, &scrutinee_ty, &scrutinee_place, scope, then_body, span);
+        let matched_arm = self.lower_statement_pattern_arm(
+            pattern,
+            &scrutinee_ty,
+            &scrutinee_place,
+            in_place,
+            scope,
+            then_body,
+            span,
+        );
         let layouts_after_match = self.materialized_range_locals.clone();
 
         // The unmatched path runs none of the body, so it leaves the entry facts untouched.
@@ -326,6 +334,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let loop_scope = self.new_scope(Some(scope), span);
         self.push_loop(loop_scope, None, span, out, |builder, loop_scope, body_stmts| {
             let scrutinee_ty = builder.resolve_ty(value.span);
+            let in_place = builder.matches_in_place(value.span, &scrutinee_ty);
             let scrutinee_place = builder.lower_expr_to_place(value, loop_scope, body_stmts);
             let scrutinee = bir::Operand::place(scrutinee_place.clone(), bir::OwnershipFact::Borrow, false);
 
@@ -334,8 +343,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             // covers today's shape because the match is the body's only statement -- but relying on that would make
             // this correct by accident, and wrong the moment a statement is appended after it.
             let layouts_before_arms = builder.materialized_range_locals.clone();
-            let matched_arm =
-                builder.lower_statement_pattern_arm(pattern, &scrutinee_ty, &scrutinee_place, loop_scope, body, span);
+            let matched_arm = builder.lower_statement_pattern_arm(
+                pattern,
+                &scrutinee_ty,
+                &scrutinee_place,
+                in_place,
+                loop_scope,
+                body,
+                span,
+            );
             builder.materialized_range_locals =
                 intersect_range_layouts(vec![layouts_before_arms, builder.materialized_range_locals.clone()]);
             let exhausted_arm = bir::MatchArm {

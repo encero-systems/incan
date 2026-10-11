@@ -65,6 +65,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
 
         let scrutinee_ty = self.resolve_ty(subject.span);
+        let in_place = self.matches_in_place(subject.span, &scrutinee_ty);
         let scrutinee_place = self.lower_expr_to_place(subject, scope, out);
         // Always read as `Borrow` -- see `bir::Rvalue::Match::scrutinee`'s own docs for why the overall scrutinee
         // read must not risk an unconditional move while individual pattern bindings below compute their own,
@@ -84,6 +85,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             // ---- Lower the pattern, declaring one fresh arm-scoped local per distinct bound name ----
             let mut seen: HashMap<String, bir::LocalId> = HashMap::new();
             let mut saved_bindings: Vec<(String, Option<bir::LocalId>)> = Vec::new();
+            let enclosing_in_place = std::mem::replace(&mut self.in_place_pattern, in_place);
             let pattern = self.lower_match_pattern(
                 &arm.node.pattern,
                 &scrutinee_ty,
@@ -93,6 +95,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 &mut seen,
                 &mut saved_bindings,
             );
+            self.in_place_pattern = enclosing_in_place;
 
             // ---- Guard and body see this arm's own pattern bindings, shadowing any outer binding of the same name
             // ----
@@ -155,6 +158,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         )
     }
 
+    /// Return whether the `match`, `if let` or `while let` over the scrutinee at `span` matches it in place.
+    ///
+    /// The checker records a scrutinee when an arm changes a part of a writable place through a name the pattern
+    /// binds (#1561); legacy then matches through `&mut` so the change lands in the place. A union-typed scrutinee
+    /// keeps the ordinary match, because its arms bind narrowed members rather than parts of the place.
+    pub(super) fn matches_in_place(&self, span: ast::Span, scrutinee_ty: &IncanType) -> bool {
+        !matches!(scrutinee_ty, IncanType::Generic { base, .. } if base == "Union")
+            && self.type_info.match_scrutinee_is_changed_in_place(span)
+    }
+
     /// Lower one pattern arm whose body is a statement block, restoring the enclosing bindings afterwards.
     ///
     /// Shared by the `if let` and `while let` desugarings (#1161), which both need the same three steps: test a
@@ -163,12 +176,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// it may carry a guard, both of which change what the arm produces.
     ///
     /// Restoring is what makes `if let`'s scoping honest: the pattern's names belong to the `then` branch only, and
-    /// an `else` branch lowered afterwards must not see them.
+    /// an `else` branch lowered afterwards must not see them. `in_place` is [`Self::matches_in_place`] for the
+    /// construct's scrutinee; it applies to the pattern only, never to patterns nested in the body.
+    #[allow(clippy::too_many_arguments)] // The scrutinee's type, place and in-place fact travel together into one arm.
     pub(super) fn lower_statement_pattern_arm(
         &mut self,
         pattern: &ast::Spanned<ast::Pattern>,
         scrutinee_ty: &IncanType,
         scrutinee_place: &bir::Place,
+        in_place: bool,
         scope: bir::ScopeId,
         body: &[ast::Spanned<ast::Statement>],
         span: HirSourceSpan,
@@ -176,6 +192,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let arm_scope = self.new_scope(Some(scope), span);
         let mut seen: HashMap<String, bir::LocalId> = HashMap::new();
         let mut saved_bindings: Vec<(String, Option<bir::LocalId>)> = Vec::new();
+        let enclosing_in_place = std::mem::replace(&mut self.in_place_pattern, in_place);
         let lowered_pattern = self.lower_match_pattern(
             pattern,
             scrutinee_ty,
@@ -185,6 +202,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             &mut seen,
             &mut saved_bindings,
         );
+        self.in_place_pattern = enclosing_in_place;
 
         let mut body_stmts = Vec::new();
         self.lower_block_into(body, arm_scope, &mut body_stmts);
@@ -283,7 +301,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         local
                     }
                 };
-                let (fact, last_use) = self.ownership_fact_for_place(place, expected_ty);
+                let (mut fact, last_use) = self.ownership_fact_for_place(place, expected_ty);
+                // An arm changes this part of the scrutinee through the name, so the name borrows the part itself.
+                if self.in_place_pattern
+                    && !place.projection.is_empty()
+                    && !expected_ty.abi_v0_facts().ownership.is_trivially_copy()
+                {
+                    fact = bir::OwnershipFact::MutBorrow;
+                }
                 bir::Pattern::Var(bir::PatternBinding { local, fact, last_use })
             }
             // `match_pattern_is_supported` has already ruled out byte-string patterns before

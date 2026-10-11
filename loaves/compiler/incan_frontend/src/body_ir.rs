@@ -806,6 +806,10 @@ struct BodyBuilder<'type_info, 'source> {
     /// target is lowered. The checker checks such a value once per target but records one type per span, so each
     /// evaluation installs its own target's types here and clears them afterwards; it is empty everywhere else.
     type_overrides: HashMap<(usize, usize), IncanType>,
+    /// Whether the pattern being lowered matches its scrutinee in place: an arm changes a part of a writable place
+    /// through a name the pattern binds (#1561), so each such name borrows that part mutably instead of reading a
+    /// copy.
+    in_place_pattern: bool,
     next_local: u32,
     next_scope: u32,
 }
@@ -843,6 +847,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             runtime_requirements: Vec::new(),
             panic_facts: Vec::new(),
             type_overrides: HashMap::new(),
+            in_place_pattern: false,
             next_local: 0,
             next_scope: 0,
         }

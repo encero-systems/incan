@@ -1,6 +1,11 @@
 """Checked primitive, tuple and source-local model pattern tests for direct-route match dispatch."""
 
-from rust::incan_semantics_core::body_ir import Pattern as RustPattern, Constant as RustConstant, NominalPatternTarget
+from rust::incan_semantics_core::body_ir import (
+    Pattern as RustPattern,
+    Constant as RustConstant,
+    NominalPatternTarget,
+    OwnershipFact,
+)
 from pub::incan_mir_plan import (
     PlanType,
     Place,
@@ -68,32 +73,41 @@ pub def pattern_tests(
 
 pub def pattern_binds(pattern: &RustPattern) -> bool:
     """Report whether any position of a pattern binds a name."""
+    return len(bound_in_place(pattern)) != 0
+
+
+pub def binds_in_place(pattern: &RustPattern) -> bool:
+    """Report whether a pattern binds a name its arm changes in place, as an exclusive borrow of the scrutinee."""
+    return true in bound_in_place(pattern)
+
+
+def bound_in_place(pattern: &RustPattern) -> list[bool]:
+    """For every name a pattern binds, in source order, whether the name borrows its part of the scrutinee exclusively."""
+    mut bound: list[bool] = []
     match pattern:
-        RustPattern.Var(_binding) => return true
-        RustPattern.Tuple(items) => return any_pattern_binds(items)
-        RustPattern.Or(alternatives) => return any_pattern_binds(alternatives)
+        RustPattern.Var(binding) => bound.append(binding.fact == OwnershipFact.MutBorrow)
+        RustPattern.Tuple(items) => bound.extend(all_bound_in_place(items))
+        RustPattern.Or(alternatives) => bound.extend(all_bound_in_place(alternatives))
         RustPattern.Enum(canonical=_identity, name=_name, variant=_variant, fields=fields) =>
-            return any_pattern_binds(fields)
-        RustPattern.Result(variant=_variant, fields=fields) => return any_pattern_binds(fields)
-        RustPattern.UnionMember(ty=_ty, fields=fields) => return any_pattern_binds(fields)
+            bound.extend(all_bound_in_place(fields))
+        RustPattern.Result(variant=_variant, fields=fields) => bound.extend(all_bound_in_place(fields))
+        RustPattern.UnionMember(ty=_ty, fields=fields) => bound.extend(all_bound_in_place(fields))
         RustPattern.Nominal(target=_target, fields=fields) =>
             for _name, field_pattern in fields:
-                if pattern_binds(field_pattern):
-                    return true
+                bound.extend(bound_in_place(field_pattern))
         RustPattern.Struct(canonical=_identity, name=_name, fields=fields) =>
             for _name, field_pattern in fields:
-                if pattern_binds(field_pattern):
-                    return true
+                bound.extend(bound_in_place(field_pattern))
         _ => pass
-    return false
+    return bound
 
 
-def any_pattern_binds(patterns: &list[RustPattern]) -> bool:
-    """Report whether any of several patterns binds a name."""
+def all_bound_in_place(patterns: &list[RustPattern]) -> list[bool]:
+    """Collect `bound_in_place` across several patterns, in order."""
+    mut bound: list[bool] = []
     for pattern in patterns:
-        if pattern_binds(pattern):
-            return true
-    return false
+        bound.extend(bound_in_place(pattern))
+    return bound
 
 
 pub def nominal_field(

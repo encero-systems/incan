@@ -99,12 +99,14 @@ pub def validate_payload_patterns(patterns: &list[RustPattern]) -> Result[None, 
         match pattern:
             RustPattern.Wildcard => pass
             RustPattern.Var(binding) =>
-                # A moved payload binding reads like a cloned one: legacy matches a cloned enum by value.
+                # A moved payload binding reads like a cloned one: legacy matches a cloned enum by value. A payload
+                # its arm changes in place is borrowed exclusively from the scrutinee instead.
                 match binding.fact:
                     OwnershipFact.Copy => pass
                     OwnershipFact.Clone => pass
                     OwnershipFact.Borrow => pass
                     OwnershipFact.Move => pass
+                    OwnershipFact.MutBorrow => pass
                     _ => return Err("unsupported Body IR enum payload binding ownership")
             _ => return Err("unsupported Body IR nested enum payload pattern")
     return Ok(None)

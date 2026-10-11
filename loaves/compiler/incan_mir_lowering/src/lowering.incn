@@ -216,7 +216,7 @@ from numerics import (
 )
 from builtins import scalar_builtin, list_call, emit_boolean_operator, emit_power_operator
 from strings import text_helper, emit_text_helper, text_helper_arity, text_method
-from patterns import pattern_tests, pattern_binds, nominal_field
+from patterns import pattern_tests, pattern_binds, binds_in_place, nominal_field
 from resize import resize_policy, emit_resize
 from equality import emit_collection_equality, equality_shape
 from frame import (
@@ -5667,6 +5667,7 @@ def lower_enum_match(
     match place_type(builder.locals, source):
         PlanType.Enum(_owner, _name) => pass
         _ => return lower_structural_match(module, builder, target, source, arms, span)
+    validate_in_place_scrutinee(builder, scrutinee, source, arms)?
     owner = enum_owner(place_type(builder.locals, source))?
     raw_tag = temporary(builder, PlanType.EnumTag, span)
     tag = temporary(builder, PlanType.Int, span)
@@ -5729,6 +5730,37 @@ def lower_enum_match(
     ty = place_type(builder.locals, target)
     if reaches_join and (ty == PlanType.String or is_nominal_type(ty) or is_owned_collection(ty)):
         builder.owned.append(target.local)
+    return Ok(None)
+
+
+def validate_in_place_scrutinee(
+    builder: Builder,
+    scrutinee: &RustOperand,
+    source: Place,
+    arms: &list[RustMatchArm],
+) -> Result[None, str]:
+    """
+    Require a match whose arms change their payloads in place to name storage the change can reach.
+
+    A local, a field of one, or a field of a `mut self` receiver is borrowed exclusively where it lives. A list element
+    and a loop variable are read as copies here, so a change through them would be lost; legacy reborrows them in place,
+    which needs exclusive element and iteration references this route does not build yet.
+    """
+    mut in_place = false
+    for arm in arms:
+        if binds_in_place(arm.pattern):
+            in_place = true
+    if not in_place:
+        return Ok(None)
+    match scrutinee:
+        RustOperand.Place(read) =>
+            for projection in read.place.projection:
+                match projection:
+                    PlaceElem.Index(_index) => return Err("unsupported Body IR in-place match on a list element")
+                    _ => pass
+        _ => return Err("unsupported Body IR in-place match on a value")
+    if source.local in builder.borrowed_items:
+        return Err("unsupported Body IR in-place match on a loop variable")
     return Ok(None)
 
 
@@ -5970,29 +6002,6 @@ pub def bind_enum_payload(
         RustPattern.Result(variant=_kind, fields=fields) =>
             return bind_enum_fields(builder, source, variant, fields, span)
         _ => pass
-    return Ok(None)
-
-
-def bind_payload_fields(
-    mut builder: Builder,
-    source: Place,
-    variant: int,
-    fields: &list[RustPattern],
-    span: SourceSpan,
-) -> Result[None, str]:
-    """Bind checked payload locals through the shared downcast and ownership path."""
-    for slot in range(len(fields)):
-        match fields[slot]:
-            RustPattern.Var(binding) =>
-                local = int(binding.local.index()) + 1
-                ty = builder.locals[local].ty
-                projected = appended_field(source, FieldProjection(slot=slot, ty=ty, variant=variant), span)?
-                value = enum_payload_read(builder, projected, binding.fact, span)?
-                track_rvalue_moves(builder, RvalueKind.Use(value))
-                builder.emit(plan_assign(plan_place(local, span), RvalueKind.Use(value), span))
-                if ty == PlanType.String or is_nominal_type(ty) or is_list(ty):
-                    builder.owned.append(local)
-            _ => pass
     return Ok(None)
 
 
@@ -6342,12 +6351,38 @@ def bind_enum_fields(
                 local = int(binding.local.index()) + 1 + builder.local_offset
                 ty = builder.locals[local].ty
                 projected = appended_field(source, FieldProjection(slot=slot, ty=ty, variant=variant), span)?
-                value = enum_payload_read(builder, projected, binding.fact, span)?
-                track_rvalue_moves(builder, RvalueKind.Use(value))
-                builder.emit(plan_assign(plan_place(local, span), RvalueKind.Use(value), span))
-                if ty == PlanType.String or is_nominal_type(ty):
-                    builder.owned.append(local)
+                if binding.fact == OwnershipFact.MutBorrow:
+                    bind_payload_in_place(builder, local, projected, span)?
+                else:
+                    value = enum_payload_read(builder, projected, binding.fact, span)?
+                    track_rvalue_moves(builder, RvalueKind.Use(value))
+                    builder.emit(plan_assign(plan_place(local, span), RvalueKind.Use(value), span))
+                    if ty == PlanType.String or is_nominal_type(ty):
+                        builder.owned.append(local)
             _ => pass
+    return Ok(None)
+
+
+def bind_payload_in_place(mut builder: Builder, local: int, payload: Place, span: SourceSpan) -> Result[None, str]:
+    """
+    Bind a name its arm changes as an exclusive reference to the payload it names, as legacy matches `&mut`.
+
+    The change then lands in the scrutinee itself. The reference owns nothing, so the binding never enters the drop
+    ledger. Text, nested carriers and tuples have no exclusive reference representation yet and stay refused.
+    """
+    ty = place_type(builder.locals, payload)
+    mut reference = PlanType.Unit
+    match ty:
+        PlanType.List(leaf, depth) =>
+            reference = PlanType.ListMutRef(leaf, depth)
+        PlanType.Model(owner, name) =>
+            reference = PlanType.ModelMutRef(owner, name)
+        _ =>
+            if not is_owned_collection(ty):
+                return Err("unsupported Body IR in-place pattern binding of a text, carrier or tuple payload")
+            reference = collection_reference(ty, true)
+    builder.locals[local].ty = reference
+    builder.emit(plan_assign(plan_place(local, span), RvalueKind.MutBorrow(payload), span))
     return Ok(None)
 
 
