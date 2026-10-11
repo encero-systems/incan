@@ -2431,6 +2431,78 @@ def main() -> None:
     )
 }
 
+/// Binary, comparison, unary, index and index-assignment operators on models and classes call their dunder methods
+/// exactly as legacy does.
+#[test]
+fn user_defined_operators_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("user-defined-operators")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"model Money:
+    cents: int
+
+    def __add__(self, other: Money) -> Money:
+        return Money(cents=self.cents + other.cents)
+
+    def __lt__(self, other: Money) -> bool:
+        return self.cents < other.cents
+
+
+model Value:
+    value: int
+    label: str
+
+    def __eq__(self, other: Value) -> bool:
+        return self.value == other.value
+
+
+model Row:
+    value: int
+
+    def __getitem__(self, index: int) -> int:
+        return self.value + index
+
+    def __setitem__(self, index: int, value: int) -> None:
+        println(f"set {index} to {value}")
+
+
+class OpBox:
+    pub value: int
+
+    def __matmul__(self, other: OpBox) -> OpBox:
+        return OpBox(value=self.value + other.value)
+
+    def __and__(self, other: OpBox) -> OpBox:
+        return OpBox(value=self.value * other.value)
+
+    def __invert__(self) -> OpBox:
+        return OpBox(value=0 - self.value)
+
+
+def same(left: Value, right: Value) -> bool:
+    return left == right
+
+
+def main() -> None:
+    a = Money(cents=100)
+    b = Money(cents=25)
+    println((a + b).cents)
+    println(b < a)
+    println(same(Value(value=1, label="a"), Value(value=1, label="b")))
+    println(Value(value=3, label="x") == Value(value=4, label="x"))
+    row = Row(value=4)
+    println(row[3])
+    row[3] = 9
+    left = OpBox(value=2)
+    right = OpBox(value=3)
+    println(f"{(left @ right).value} {(left & right).value} {(~left).value}")
+"#,
+    )
+}
+
 /// Prove canonical scalar casts and default values byte-identical to legacy.
 #[test]
 fn numeric_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
