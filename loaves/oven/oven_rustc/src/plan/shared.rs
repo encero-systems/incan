@@ -82,7 +82,7 @@ impl OvenSharedNativeOwners {
         let mut indexed = BTreeMap::new();
         let mut domains = BTreeMap::new();
         for owner in owners {
-            verify_retained_owner(owner, read_only)?;
+            verify_retained_owner(owner, read_only, record_bound)?;
             let store = owner
                 .artifact_root
                 .parent()
@@ -141,7 +141,7 @@ impl OvenSharedNativeOwners {
                 .owners
                 .get(&key)
                 .ok_or_else(|| OvenPlanError::selection("shared native owner was not admitted by this command"))?;
-            verify_retained_owner(owner, self.read_only)?;
+            verify_retained_owner(owner, self.read_only, self.record_bound_domains.contains_key(&key))?;
             selected.insert(key, Arc::clone(owner));
         }
         Ok(selected)
@@ -155,8 +155,15 @@ impl OvenSharedNativeOwners {
     }
 }
 
-/// Revalidate original held owners with full read-only verification or the existing writable native proof path.
-fn verify_retained_owner(owner: &OvenStoreExecutionPayload, read_only: bool) -> OvenPlanResult<()> {
+/// Revalidate every consumed native member; only ordinary record-bound owners exclude archived inspection sources.
+fn verify_retained_owner(owner: &OvenStoreExecutionPayload, read_only: bool, record_bound: bool) -> OvenPlanResult<()> {
+    if record_bound {
+        owner
+            .verify_admitted_payload_except_directory("source")
+            .map_err(|error| OvenPlanError::selection(error.to_string()))?;
+        return crate::native_loaf::verify_native_source_declaration(owner)
+            .map_err(|error| OvenPlanError::selection(error.to_string()));
+    }
     let result = if read_only {
         owner.verify_admitted_payload()
     } else {

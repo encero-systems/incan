@@ -236,13 +236,40 @@ pub(super) fn source_manifest_with_reader(
     unit: &SelectedNativeLoaf,
     read: &mut dyn FnMut(&Path) -> Result<Vec<u8>>,
 ) -> Result<toml::Value> {
-    let member = unit
-        .native_owner
+    let bytes = source_declaration_bytes(&unit.native_owner, read)?;
+    toml::from_str(std::str::from_utf8(&bytes).map_err(failed)?).map_err(failed)
+}
+
+/// Retain declaration integrity on native handoffs without visiting archived source bodies.
+pub(crate) fn verify_native_source_declaration(owner: &oven_store::store::OvenStoreExecutionPayload) -> Result<()> {
+    if owner
+        .admitted_materialized_files()
+        .iter()
+        .any(|member| member.relative_path == "source/loaf.toml")
+    {
+        source_declaration_bytes(owner, &mut |path| std::fs::read(path).map_err(failed))?;
+    }
+    Ok(())
+}
+
+/// Read the exact declaration beneath its original plain source directory and match its admitted byte digest.
+fn source_declaration_bytes(
+    owner: &oven_store::store::OvenStoreExecutionPayload,
+    read: &mut dyn FnMut(&Path) -> Result<Vec<u8>>,
+) -> Result<Vec<u8>> {
+    let source_root = owner.artifact_root.join("source");
+    let source_metadata = std::fs::symlink_metadata(&source_root).map_err(failed)?;
+    if !source_metadata.is_dir() || source_metadata.file_type().is_symlink() {
+        return Err(refused(
+            "native source declaration requires its original plain source directory",
+        ));
+    }
+    let member = owner
         .admitted_materialized_files()
         .iter()
         .find(|member| member.relative_path == "source/loaf.toml")
         .ok_or_else(|| refused("native owner has no admitted source declaration"))?;
-    let path = unit.native_owner.artifact_root.join(&member.relative_path);
+    let path = owner.artifact_root.join(&member.relative_path);
     if !std::fs::symlink_metadata(&path).map_err(failed)?.is_file() {
         return Err(refused("native source declaration is not a plain file"));
     }
@@ -250,7 +277,7 @@ pub(super) fn source_manifest_with_reader(
     if bytes.len() as u64 != member.logical_bytes || oven_store::digest_bytes(&bytes) != member.digest {
         return Err(refused("native source declaration changed after admission"));
     }
-    toml::from_str(std::str::from_utf8(&bytes).map_err(failed)?).map_err(failed)
+    Ok(bytes)
 }
 
 /// Require exact authored project fields instead of inferring them from filenames or Rust crate aliases.

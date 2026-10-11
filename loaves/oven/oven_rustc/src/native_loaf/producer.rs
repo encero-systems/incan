@@ -67,6 +67,7 @@ impl NativeLoafInspectionUnit {
     /// Borrow the complete inventoried source directory after revalidating its original retained owner.
     pub fn source_root(&self) -> Result<std::path::PathBuf> {
         self.selected.verify()?;
+        self.selected.native_owner.verify_admitted_payload().map_err(failed)?;
         Ok(self.selected.native_owner.artifact_root.join("source"))
     }
 
@@ -203,6 +204,7 @@ struct SourceProjection {
 fn source_projection(unit: &SelectedNativeLoaf, work: &mut NativeLoafInspectionWork) -> Result<SourceProjection> {
     work.source_projection_attempts += 1;
     verify_record(&unit.record, &unit.record_owner, &unit.native_owner)?;
+    unit.native_owner.verify_admitted_payload().map_err(failed)?;
     let manifest = super::selection::source_manifest_with_reader(unit, &mut |path| {
         work.manifest_read_attempts += 1;
         std::fs::read(path).map_err(failed)

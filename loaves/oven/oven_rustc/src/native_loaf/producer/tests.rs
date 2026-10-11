@@ -258,6 +258,67 @@ fn publish(
     Ok(graph.publish(store, source, native, recipe, owner, edges)?)
 }
 
+/// Native execution consumes native members; source inspection independently verifies its archived source closure.
+#[test]
+fn dev7_native_execution_leaves_source_validation_to_inspection() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let store = store(&root.path().join("store"));
+    let mut graph = NativeLoafGraph::default();
+    let identity = publish(root.path(), &store, &mut graph, &Unit::library("bounded"), &[])?;
+    let selected = graph.units.get(&identity).ok_or("fixture unit missing")?;
+    let inputs = graph.inspection_inputs()?;
+    let archived = selected.native_owner.artifact_root.join("source/src/custom.rs");
+    replace_owned_fixture(&archived, b"changed archived source")?;
+
+    let output = selected.output()?;
+    assert!(
+        output.is_file(),
+        "unchanged native output must not read archived source"
+    );
+    let _ = selected.plan_members("native/bounded")?;
+    graph.select(&[selected.declared_root("bounded")?])?.shared_owners()?;
+    assert!(inputs.inspection_project().is_err());
+    assert!(
+        inputs
+            .units()
+            .values()
+            .next()
+            .ok_or("inspection unit missing")?
+            .source_root()
+            .is_err()
+    );
+    assert!(graph.inspection_inputs().is_err());
+
+    let injected = selected.native_owner.artifact_root.join("injected.rlib");
+    std::fs::write(&injected, b"unlisted native input")?;
+    assert!(
+        selected.output().is_err(),
+        "native inventory must still reject extra members"
+    );
+    std::fs::remove_file(injected)?;
+    let bytes = std::fs::read(&output)?;
+    replace_owned_fixture(&output, b"changed native output")?;
+    assert!(selected.output().is_err());
+    replace_owned_fixture(&output, &bytes)?;
+    assert!(selected.output()?.is_file());
+    #[cfg(unix)]
+    {
+        let source_root = selected.native_owner.artifact_root.join("source");
+        let held = root.path().join("held-source");
+        std::fs::rename(&source_root, &held)?;
+        std::os::unix::fs::symlink(&held, &source_root)?;
+        assert!(
+            selected.output().is_err(),
+            "the consumed declaration must not follow a source-root link"
+        );
+        assert!(super::super::selection::source_manifest(selected).is_err());
+        assert!(inputs.inspection_project().is_err());
+        std::fs::remove_file(&source_root)?;
+        std::fs::rename(held, source_root)?;
+    }
+    Ok(())
+}
+
 /// Compare complete JSON and retained ownership through live and source-free published admission.
 #[test]
 fn dev7_native_source_projection_live_and_installed_preserve_exact_facts_and_aliases() -> TestResult {
@@ -541,10 +602,9 @@ fn dev7_native_source_projection_is_read_only_even_for_transitional_native_domai
     publish(root.path(), &store, &mut graph, &parent, &[("child", &child_id)])?;
     let proofs = store.root().join("closure-proofs");
     assert!(
-        proofs.is_dir(),
-        "fixture must exercise the writable native proof policy before inspection"
+        !proofs.exists(),
+        "ordinary record-bound execution must not create a legacy SDK closure proof"
     );
-    std::fs::remove_dir_all(&proofs)?;
     let inputs = graph.inspection_inputs()?;
     assert!(!proofs.exists());
     inputs.inspection_project()?;
