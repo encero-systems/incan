@@ -5996,6 +5996,8 @@ def lower_builtin_method(
     if member == "Option.clone":
         return lower_derived_clone(builder, arguments, destination, span)
     receiver_type = argument_type(builder, arguments, 0, span)?
+    if receiver_type == PlanType.FrozenBytes and member == "FrozenBytes.len":
+        return lower_list_builtin(builder, arguments, destination, span)
     match text_method(member, receiver_type):
         Some((name, result)) => return lower_text_helper(builder, name, result, arguments, destination, span)
         None => pass
