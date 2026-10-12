@@ -107,6 +107,7 @@ pub(super) fn count_reads_in_condition(name: &str, cond: &ast::Condition) -> usi
 pub(super) fn count_reads_in_expr(name: &str, expr: &ast::Expr) -> usize {
     match expr {
         ast::Expr::Ident(id) => usize::from(id == name),
+        ast::Expr::SelfExpr => usize::from(name == "self"),
         ast::Expr::Binary(l, _, r) => count_reads_in_expr(name, &l.node) + count_reads_in_expr(name, &r.node),
         ast::Expr::Unary(_, e) => count_reads_in_expr(name, &e.node),
         ast::Expr::Call(callee, _, args) => {
