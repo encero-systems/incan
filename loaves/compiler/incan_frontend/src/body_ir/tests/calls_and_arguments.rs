@@ -28,7 +28,7 @@ def keyed[T](items: list[T]) -> int:
         let local = body
             .locals
             .iter()
-            .find(|local| local.name == name)
+            .find(|local| local.name.as_deref() == Some(name))
             .ok_or("missing collection binding")?;
         assert_eq!(local.ty.to_string(), expected, "{}", module.render_snapshot());
     }
