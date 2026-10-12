@@ -149,13 +149,13 @@ impl ProducerRequest {
             let path = std::path::absolute(request.blobs)
                 .map_err(failed)?
                 .join(format!("{hex}.tar"));
-            if !archives.contains_key(&path) {
-                let canonical = path.canonicalize().map_err(failed)?;
+            if let std::collections::btree_map::Entry::Vacant(vacant) = archives.entry(path) {
+                let canonical = vacant.key().canonicalize().map_err(failed)?;
                 let digest = oven_store::store::digest_regular_file(&canonical).map_err(failed)?.1;
                 if digest != binding.archive_digest {
                     return Err(refused("complete native request archive changed"));
                 }
-                archives.insert(path, (canonical, digest));
+                vacant.insert((canonical, digest));
             }
         }
         let rustc = std::path::absolute(request.rustc).map_err(failed)?;

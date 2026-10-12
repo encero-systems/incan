@@ -210,12 +210,10 @@ fn prepare_native_loafs_with_document(
     store: &OvenStore,
 ) -> Result<NativeLoafPreparation> {
     let started = Instant::now();
-    if !request.facets.is_empty() {
-        if crate::rustc::rustc_host_target(request.rustc).map_err(failed)? != request.target {
-            return Err(refused(
-                "local native preparation currently requires the explicit compiler host target",
-            ));
-        }
+    if !request.facets.is_empty() && crate::rustc::rustc_host_target(request.rustc).map_err(failed)? != request.target {
+        return Err(refused(
+            "local native preparation currently requires the explicit compiler host target",
+        ));
     }
     let actual_request = ProducerRequest::capture(request, document)?;
     let mut closure = prepare_closure_in_store(

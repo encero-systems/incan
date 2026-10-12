@@ -1014,7 +1014,10 @@ impl Place {
                 PlaceElem::UnionMember { ty } => {
                     let _ = write!(&mut out, ".union[{ty}]");
                 }
-                PlaceElem::OptionPayload { option_type, payload_type } => {
+                PlaceElem::OptionPayload {
+                    option_type,
+                    payload_type,
+                } => {
                     let _ = write!(&mut out, ".some[{option_type}->{payload_type}]");
                 }
                 PlaceElem::Index(operand) => {

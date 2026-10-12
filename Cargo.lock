@@ -1486,6 +1486,7 @@ dependencies = [
  "tempfile",
  "toml",
  "toml_edit",
+ "tracing",
  "tracing-subscriber",
  "uuid",
  "wat",
@@ -1698,6 +1699,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "toml",
+ "tracing",
  "wasmtime",
 ]
 
@@ -2341,6 +2343,7 @@ dependencies = [
  "tempfile",
  "toml",
  "toml_edit",
+ "tracing",
  "tracing-subscriber",
 ]
 
@@ -2430,6 +2433,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "toml",
+ "tracing",
 ]
 
 [[package]]
@@ -3480,6 +3484,8 @@ version = "0.6.0-dev.6"
 dependencies = [
  "hex",
  "incan_lang",
+ "oven_rustc",
+ "oven_store",
  "proc-macro2",
  "quote",
  "ra_ap_hir",

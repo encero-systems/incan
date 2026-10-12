@@ -201,10 +201,10 @@ impl DeclaredRootDemand<'_> {
                 "native source manifest contradicts its producer-bound selection",
             ));
         }
-        if let Some((current, digest)) = &self.authored {
-            if digest != &source.archive_digest || current != manifest {
-                return Ok(false);
-            }
+        if let Some((current, digest)) = &self.authored
+            && (digest != &source.archive_digest || current != manifest)
+        {
+            return Ok(false);
         }
         let selected_domain = if manifest
             .get("rust")
