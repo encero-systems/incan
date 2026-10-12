@@ -6,6 +6,19 @@ use super::*;
 use incan_semantics_core::SymbolNamespace;
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
+    /// Keep a source call's producer-owned closed return carrier at inferred bindings and projected reads.
+    /// A bare call's selected identity belongs to its callee span, while a module-qualified call records it on the
+    /// whole call. Function references do not enter this boundary and keep their callable types.
+    pub(super) fn published_expression_type(&self, expr: &ast::Spanned<ast::Expr>) -> Option<IncanType> {
+        let span = match &expr.node {
+            ast::Expr::Call(callee, _, _) => callee.span,
+            ast::Expr::MethodCall(_, _, _, _) => expr.span,
+            _ => return None,
+        };
+        let identity = self.type_info.resolved_identity(span)?;
+        self.published_callable_returns.get(identity).cloned()
+    }
+
     /// Retain the checker's constant tuple index, including negative literals, before flattening ordinary expressions.
     /// Non-tuple indexing keeps its existing evaluation and ownership behavior.
     fn lower_checked_index_operand(
@@ -27,7 +40,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ///
     /// Numeric spelling alone proves nothing: only an in-bounds element of the existing checked tuple shape is
     /// structural. Checked member fields use the canonical declaration's name and identity together, so an alias
-    /// cannot become a second storage slot. Unresolved fields preserve their source spelling and remain unproven.
+    /// cannot become a second storage slot. A field lacking an expression identity can use the exact stored-field
+    /// identity of its checker-proven owner layout; a source spelling alone cannot select an owner. Other unresolved
+    /// fields preserve their source spelling and remain unproven.
     /// A newtype's wrapped-value slot uses the method's retained concrete receiver when the expression fact keeps Self
     /// open; an open trait receiver cannot authorize that physical projection.
     pub(super) fn lower_checked_field_projection(
@@ -36,7 +51,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         name: &str,
         span: ast::Span,
     ) -> bir::PlaceElem {
-        let ty = self.resolve_ty(base.span);
+        let ty = self
+            .published_expression_type(base)
+            .unwrap_or_else(|| self.resolve_ty(base.span));
         // The checker keeps a Self-typed parameter open in expression facts even when this method's retained receiver
         // is concrete. Use that receiver fact for physical wrapped-value projection; trait defaults keep Self open.
         let ty = if ty == IncanType::SelfType {
@@ -67,8 +84,27 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             {
                 return bir::PlaceElem::field(identity.declaration_name.clone(), Some(identity.clone()));
             }
-            bir::PlaceElem::field(name, self.type_info.resolved_identity(span).cloned())
+            let identity = self
+                .type_info
+                .resolved_identity(span)
+                .cloned()
+                .or_else(|| self.retained_field_identity(&ty, name));
+            bir::PlaceElem::field(name, identity)
         }
+    }
+
+    /// Read a stored slot from a checker-proven owner and its published layout when checking supplied no field target.
+    /// This preserves user Json storage through the legacy wrapper shortcut without resolving aliases or properties
+    /// from syntax. Only an exact declared field spelling qualifies; unresolved owners keep refusing downstream.
+    fn retained_field_identity(&self, ty: &IncanType, name: &str) -> Option<CanonicalSymbolId> {
+        let owner_name = match ty {
+            IncanType::Named(owner) | IncanType::Generic { base: owner, .. } => owner,
+            _ => return None,
+        };
+        let owner = self.type_info.declarations.named_type_identities.get(owner_name)?;
+        let declaration = self.local_nominal_declarations.get(&owner.render_compact())?;
+        let slot = declaration.fields.iter().position(|field| field == name)?;
+        declaration.field_identities.get(slot).cloned()
     }
 
     /// Return the checked value a `const` read at `ty` stands for, so the read is that constant rather than a global.

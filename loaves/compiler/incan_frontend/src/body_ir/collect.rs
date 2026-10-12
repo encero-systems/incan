@@ -309,6 +309,29 @@ fn field_default_sources(fields: &[ast::Spanned<ast::FieldDecl>]) -> Vec<Functio
         })
         .collect()
 }
+/// Retain a nongeneric source callable's exact return carrier before its private aliases leave the providing module.
+/// Generic callable results keep the consumer's checked instantiation facts; unresolved producer results never
+/// replace a consumer's type. The canonical key identifies the selected declaration, not a written import spelling.
+pub(super) fn collect_published_callable_returns(
+    context: &[bir::BodyIrModule],
+) -> HashMap<CanonicalSymbolId, IncanType> {
+    context
+        .iter()
+        .flat_map(|module| &module.bodies)
+        .filter(|body| body.type_parameters.is_empty())
+        .filter(|body| {
+            !matches!(
+                body.return_type,
+                IncanType::Unknown | IncanType::Infer | IncanType::SelfType | IncanType::TypeVar(_)
+            )
+        })
+        .filter_map(|body| {
+            let identity = body.canonical.as_ref()?;
+            (identity.kind == SemanticSourceTargetKind::Function).then(|| (identity.clone(), body.return_type.clone()))
+        })
+        .collect()
+}
+
 /// Collect the exact source spans eligible for same-module direct named-call dispatch.
 pub(super) fn collect_local_function_declarations(program: &ast::Program) -> LocalFunctionDeclarations {
     let mut declarations = LocalFunctionDeclarations::new();

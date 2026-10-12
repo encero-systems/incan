@@ -1200,13 +1200,19 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
         // The checked expression type is the eventual output for immediately awaited source calls. Body IR
         // represents construction and awaiting separately, so their intervening local must own the future.
+        let returned = declaration
+            .canonical
+            .as_ref()
+            .and_then(|identity| self.published_callable_returns.get(identity))
+            .cloned()
+            .unwrap_or_else(|| self.resolve_ty(span));
         let ty = if is_async {
             IncanType::Generic {
                 base: "Awaitable".to_string(),
-                args: vec![self.resolve_ty(span)],
+                args: vec![returned],
             }
         } else {
-            self.resolve_ty(span)
+            returned
         };
         self.push_call_temp(
             bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {

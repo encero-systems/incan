@@ -309,7 +309,9 @@ fn build_body_ir_module_v0_with_provider_operations(
             local_value_enum_declarations.insert(declaration.canonical.render_compact(), declaration.clone());
         }
     }
+    let published_callable_returns = collect::collect_published_callable_returns(context);
     let lowering_facts = BodyIrLoweringFacts {
+        published_callable_returns: &published_callable_returns,
         published_constants: &published_constants,
         type_info,
         function_default_sources: &function_default_sources,
@@ -474,6 +476,8 @@ type LocalValueEnumDeclarations = HashMap<String, bir::ValueEnumDeclaration>;
 /// identities and representations a later direct executor needs. Keeping the bundle explicit avoids widening any
 /// individual lowering helper's parameter surface as profiles add one bounded source-local fact at a time.
 struct BodyIrLoweringFacts<'type_info, 'source> {
+    /// Closed return carriers retained by a callable's providing module, keyed by its proven identity.
+    published_callable_returns: &'source HashMap<CanonicalSymbolId, IncanType>,
     published_constants: &'source HashMap<CanonicalSymbolId, bir::Constant>,
     type_info: &'type_info TypeCheckInfo,
     function_default_sources: &'source FunctionDefaultSources,
@@ -887,6 +891,8 @@ const fn hir_span(span: ast::Span) -> HirSourceSpan {
 /// Per-function lowering state: fresh local/scope allocation, current name bindings, and accumulated body-level
 /// facts (runtime requirements, panic facts, which locals have been moved out of their declaring scope).
 struct BodyBuilder<'type_info, 'source> {
+    /// Provider-owned closed return carriers; a private import alias is never a consumer-side layout key.
+    published_callable_returns: &'source HashMap<CanonicalSymbolId, IncanType>,
     /// Immutable values decoded from the selected package representation, indexed by canonical declaration.
     published_constants: &'source HashMap<CanonicalSymbolId, bir::Constant>,
     type_info: &'type_info TypeCheckInfo,
@@ -982,6 +988,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Start a fresh builder for one function body, with no locals, scopes, or accumulated facts yet.
     fn new(lowering_facts: &BodyIrLoweringFacts<'type_info, 'source>, owner_return_type: IncanType) -> Self {
         Self {
+            published_callable_returns: lowering_facts.published_callable_returns,
             type_info: lowering_facts.type_info,
             function_default_sources: lowering_facts.function_default_sources,
             local_function_declarations: lowering_facts.local_function_declarations,

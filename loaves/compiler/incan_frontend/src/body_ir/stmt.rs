@@ -166,6 +166,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// A plain inferred assignment and the internal `Reassign` spelling reuse the nearest active local when one is
     /// bound, falling back to a declaration for an otherwise unbound name. `let` and `mut` always declare a fresh
     /// local: those are the two source declaration forms that deliberately shadow an enclosing binding.
+    /// An inferred binding of a nongeneric source call retains its providing module's closed return carrier, so a
+    /// private import alias in the producer cannot become a consumer-side storage type.
     pub(super) fn lower_assignment(
         &mut self,
         assignment: &ast::AssignmentStmt,
@@ -185,6 +187,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .map(|ty| self.checked_type(ty))
             .or_else(|| self.callable_value_ty(&assignment.value))
             .unwrap_or_else(|| self.resolve_ty(assignment.value.span));
+        if assignment.ty.is_none()
+            && let Some(returned) = self.published_expression_type(&assignment.value)
+        {
+            ty = returned;
+        }
         let materializes_range = self.expr_has_materialized_range_layout(&assignment.value);
         let value = self.lower_expr_to_operand(&assignment.value, scope, out);
         // Future construction is a distinct Body IR value even when the surface checker exposes its output type.
