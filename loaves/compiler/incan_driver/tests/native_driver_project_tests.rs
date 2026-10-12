@@ -9737,6 +9737,126 @@ pub def limit_twice() -> int:
     )
 }
 
+/// A computed dictionary's indexed list retains its collection carrier for method calls and length reads; the key
+/// is evaluated once, and later reads observe the dictionary's replacement value.
+#[test]
+fn computed_static_dictionary_values_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("computed-static-dictionary-values")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"static graph: dict[str, list[str]] = {}
+
+def key(node: str) -> str:
+    println(f"key {node}")
+    return node
+
+def linked(node: str) -> bool:
+    return graph[key(node)].contains(node)
+
+def main() -> None:
+    graph.insert("a", ["a", "b"])
+    println(linked("a"))
+    graph.insert("a", ["b"])
+    println(linked("a"))
+    println(len(graph["a"]))
+"#,
+    )
+}
+
+/// Reading an imported literal static initializes every computed static in its declaring module first. The
+/// initializer's observable output precedes that first read, just as it does in legacy.
+#[test]
+fn imported_literal_static_initializes_computed_peers_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>>
+{
+    check_project_modules_case(
+        "imported_literal_static_initializes_computed_peers",
+        r#"from settings import COUNTER
+
+def main() -> None:
+    println("main")
+    println(COUNTER)
+    println(COUNTER)
+"#,
+        &[(
+            "settings.incn",
+            r#"pub static COUNTER: int = 1
+
+def setup() -> int:
+    println("init settings")
+    return 2
+
+static STARTED: int = setup()
+"#,
+        )],
+        b"main\ninit settings\n1\n1\n",
+    )
+}
+
+/// Snapshot-based reads do not imply a write-back path through a dictionary element. An unproven mutation of that
+/// projected static stays a named refusal, rather than reaching the adapter with a mismatched replacement carrier.
+#[test]
+fn computed_static_projection_mutation_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("computed-static-projection-mutation")?;
+    let source = root.join("mutation.incn");
+    fs::write(
+        &source,
+        "static graph: dict[str, list[int]] = {}\n\ndef main() -> None:\n    graph[\"a\"] = [1]\n    graph[\"a\"].append(2)\n",
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let binary = root.join("native");
+    let output = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &source,
+        &binary,
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("unsupported Body IR computed static replacement carrier"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!binary.exists());
+    Ok(())
+}
+
+/// A static model's frozen-list field reaches the collection carrier boundary after computed-static admission, so
+/// the remaining refusal is pinned for the collection lane rather than being reported as an initializer refusal.
+#[test]
+fn computed_static_frozen_list_field_keeps_its_named_refusal() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("computed-static-frozen-list")?;
+    let source = root.join("frozen.incn");
+    fs::write(
+        &source,
+        "const TEXTS: FrozenList[str] = [\"alpha\", \"beta\"]\n\nmodel Metadata:\n    pub names: FrozenList[str]\n\nstatic METADATA: Metadata = Metadata(names=TEXTS)\n\ndef main() -> None:\n    println(METADATA.names.len())\n",
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let binary = root.join("native");
+    let output = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &source,
+        &binary,
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("unsupported Body IR type FrozenList[str]"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!binary.exists());
+    Ok(())
+}
+
 /// Prove hashed enum leaves byte-identical to legacy: a source enum deriving Eq and Hash is a set element and a
 /// dictionary key, and `Option` and `Result` carriers over hashable payloads are set elements, read by membership,
 /// length and a loop over a one-element set.
