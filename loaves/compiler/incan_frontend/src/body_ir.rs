@@ -478,14 +478,19 @@ pub fn is_direct_replacement_plain_model(model: &ast::ModelDecl) -> bool {
         && has_direct_replacement_model_shape(model)
 }
 
-/// Admit JSON derives only after checking resolves all selections to canonical supported serde paths.
-/// Serde field renames remain refused until their checked metadata crosses the Body IR and plan boundary.
+/// Admit JSON derives only after checking resolves all selections to canonical supported serde paths, and
+/// `@rust.derive(...)` only when checking classified every derive it names as a Rust builtin retained among the
+/// model's derives. Serde field renames remain refused until their checked metadata crosses the Body IR and plan
+/// boundary.
 pub fn is_direct_replacement_checked_model(model: &ast::ModelDecl, type_info: &TypeCheckInfo) -> bool {
     if is_direct_replacement_plain_model(model) {
         return true;
     }
-    has_checked_native_derives(&model.decorators, type_info.declarations.model_derives.get(&model.name))
-        && model.fields.iter().all(|field| field.node.metadata.alias.is_none())
+    has_checked_native_derives(
+        &model.decorators,
+        type_info.declarations.model_derives.get(&model.name),
+        type_info.declarations.rust_builtin_derive_models.contains(&model.name),
+    ) && model.fields.iter().all(|field| field.node.metadata.alias.is_none())
         && has_direct_replacement_model_shape(model)
 }
 
@@ -494,15 +499,23 @@ pub fn is_direct_replacement_checked_model(model: &ast::ModelDecl, type_info: &T
 ///
 /// Checking has already resolved module-qualified JSON protocol derives to their canonical serde paths, so the
 /// selection, not the decorator spelling, decides admission. A declaration without a checked selection stays refused.
-fn has_checked_native_derives(decorators: &[ast::Spanned<ast::Decorator>], selection: Option<&Vec<String>>) -> bool {
+/// `rust_builtins` also admits `@rust.derive(...)` when checking recorded that it names only Rust builtin derives,
+/// which the selection then already contains.
+fn has_checked_native_derives(
+    decorators: &[ast::Spanned<ast::Decorator>],
+    selection: Option<&Vec<String>>,
+    rust_builtins: bool,
+) -> bool {
     let Some(names) = selection else {
         return false;
     };
     decorators.iter().all(|decorator| {
-        is_lint_suppression_decorator(&decorator.node)
-            || (decorator.node.name == "derive"
-                && decorator.node.path.segments == ["derive"]
-                && decorator.node.type_args.is_empty())
+        let derive = &decorator.node;
+        is_lint_suppression_decorator(derive)
+            || (derive.name == "derive"
+                && derive.type_args.is_empty()
+                && (derive.path.segments == ["derive"]
+                    || (rust_builtins && derive.path.segments == ["rust", "derive"])))
     }) && names.iter().all(|name| {
         matches!(
             name.as_str(),
@@ -648,13 +661,15 @@ pub fn is_direct_replacement_plain_newtype(newtype: &ast::NewtypeDecl) -> bool {
 /// builtin `@staticmethod` and `@classmethod` markers the checker's method facts; lint suppressions change nothing at
 /// run time. Inheritance, properties, partials and user-defined decorators remain refused.
 pub fn is_direct_replacement_checked_class(class: &ast::ClassDecl, type_info: &TypeCheckInfo) -> bool {
-    has_checked_native_derives(&class.decorators, type_info.declarations.class_derives.get(&class.name))
-        && has_at_most_one_open_shape_feature(
-            !class.type_params.is_empty(),
-            class.traits.iter().any(|adoption| !adoption.node.type_args.is_empty()),
-            !class.method_aliases.is_empty(),
-        )
-        && class.extends.is_none()
+    has_checked_native_derives(
+        &class.decorators,
+        type_info.declarations.class_derives.get(&class.name),
+        false,
+    ) && has_at_most_one_open_shape_feature(
+        !class.type_params.is_empty(),
+        class.traits.iter().any(|adoption| !adoption.node.type_args.is_empty()),
+        !class.method_aliases.is_empty(),
+    ) && class.extends.is_none()
         && class.method_partials.is_empty()
         && class.properties.is_empty()
         && class.declarative_members.is_empty()

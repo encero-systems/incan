@@ -307,14 +307,7 @@ impl TypeChecker {
     /// as for one named in `@derive`. Recording it beside the other checked derives keeps that one fact where Body
     /// IR reads a model's derives.
     pub(in crate::typechecker) fn record_adopted_json_derives(&mut self, model: &str, adoptions: &[TypeBoundInfo]) {
-        let provided = [
-            (StdlibJsonTraitId::Serialize, "serde::Serialize"),
-            (StdlibJsonTraitId::Deserialize, "serde::Deserialize"),
-        ]
-        .into_iter()
-        .filter(|(protocol, _)| self.adoptions_provide_json_protocol(adoptions, *protocol))
-        .map(|(_, derive)| derive)
-        .collect::<Vec<_>>();
+        let provided = self.adopted_json_derives(adoptions);
         let Some(derives) = self.type_info.declarations.model_derives.get_mut(model) else {
             return;
         };
@@ -323,5 +316,18 @@ impl TypeChecker {
                 derives.push(derive.to_owned());
             }
         }
+    }
+
+    /// Return serde's derive for each `std.serde.json` protocol a type's trait adoptions provide, Serialize first, as
+    /// legacy lowering forwards them into the type's Rust derives.
+    pub(in crate::typechecker) fn adopted_json_derives(&self, adoptions: &[TypeBoundInfo]) -> Vec<&'static str> {
+        [
+            (StdlibJsonTraitId::Serialize, "serde::Serialize"),
+            (StdlibJsonTraitId::Deserialize, "serde::Deserialize"),
+        ]
+        .into_iter()
+        .filter(|(protocol, _)| self.adoptions_provide_json_protocol(adoptions, *protocol))
+        .map(|(_, derive)| derive)
+        .collect()
     }
 }

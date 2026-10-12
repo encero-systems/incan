@@ -3788,6 +3788,12 @@ impl TypeChecker {
             let automatic_derives = self.newtype_automatic_derive_names(&name, &info);
             let mut explicit_derives = info.derives.clone();
             Self::append_implied_derives(&mut explicit_derives);
+            // Legacy forwards a std.serde.json protocol the newtype adopts into its derives after the explicit ones.
+            for derive in self.adopted_json_derives(&info.trait_adoptions) {
+                if !explicit_derives.iter().any(|existing| existing == derive) {
+                    explicit_derives.push(derive.to_owned());
+                }
+            }
             self.type_info.declarations.newtype_construction.insert(
                 name.clone(),
                 crate::typechecker::type_info::NewtypeConstructionInfo {

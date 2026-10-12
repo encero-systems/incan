@@ -351,7 +351,7 @@ fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> 
     for local in &function.locals {
         span(&local.span)?;
         validate_model_type(plan, &local.ty)?;
-        validate_array_length(function, scalar(&local.ty))?;
+        validate_array_length(plan, function, scalar(&local.ty))?;
     }
     for block in &function.blocks {
         span(&block.span)?;
@@ -1075,7 +1075,10 @@ fn validate_closure_constructor(function: &Function) -> Result<(), PlanError> {
 }
 
 /// Reject unsupported hashed leaves and invalid dimensions before constructing native types, including unused locals.
-fn validate_array_length(function: &Function, ty: Scalar) -> Result<(), PlanError> {
+///
+/// A model is a set element only when its declaration derives Eq and Hash, which the runtime's set operations bound;
+/// the runtime's dictionary key operations also bound Display, so model dictionary keys stay refused.
+fn validate_array_length(plan: &Plan, function: &Function, ty: Scalar) -> Result<(), PlanError> {
     match ty {
         Scalar::Generator(_, depth)
         | Scalar::GeneratorMutRef(_, depth)
@@ -1107,6 +1110,13 @@ fn validate_array_length(function: &Function, ty: Scalar) -> Result<(), PlanErro
             function,
             "enum hashed keys require retained Eq and Hash authority",
         )),
+        Scalar::Set(Leaf::Model(index))
+        | Scalar::SetRef(Leaf::Model(index))
+        | Scalar::SetMutRef(Leaf::Model(index))
+            if hashable_model(plan, index) =>
+        {
+            Ok(())
+        }
         Scalar::Set(Leaf::Model(_))
         | Scalar::SetRef(Leaf::Model(_))
         | Scalar::SetMutRef(Leaf::Model(_))
@@ -1485,6 +1495,15 @@ fn model(plan: &Plan, index: i64) -> Option<&crate::plan::ModelDeclaration> {
     usize::try_from(index).ok().and_then(|index| plan.models.get(index))
 }
 
+/// Whether the planned model at `index` derives both Eq and Hash, the authority a hashed collection element needs.
+fn hashable_model(plan: &Plan, index: i64) -> bool {
+    model(plan, index).is_some_and(|declaration| {
+        ["Eq", "Hash"]
+            .iter()
+            .all(|required| declaration.derives.iter().any(|derive| derive == required))
+    })
+}
+
 /// Require flat scalar/text tuple layouts and consistent nominal declaration identities.
 fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
     match ty {
@@ -1601,7 +1620,8 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
     Ok(())
 }
 
-/// Validate the shape-specific derive vocabulary without accepting duplicate selections or reflection on tuples.
+/// Validate the shape-specific derive vocabulary without accepting duplicate selections or reflection on tuples. Serde
+/// derives fit either shape: a tuple wrapper serializes as its wrapped value.
 fn valid_nominal_derives(derives: &[String], tuple: bool) -> bool {
     let required: &[&str] = if tuple {
         &["Debug", "Clone"]
@@ -1613,8 +1633,9 @@ fn valid_nominal_derives(derives: &[String], tuple: bool) -> bool {
         .all(|required| derives.iter().any(|derive| derive == required))
         && derives.iter().all(|derive| match derive.as_str() {
             "Debug" | "Clone" | "Eq" | "PartialEq" | "Hash" | "Ord" | "PartialOrd" | "Default" | "Display" => true,
+            "serde::Serialize" | "serde::Deserialize" => true,
             "Copy" => tuple,
-            "FieldInfo" | "IncanClass" | "serde::Serialize" | "serde::Deserialize" => !tuple,
+            "FieldInfo" | "IncanClass" => !tuple,
             _ => false,
         })
         && derives.iter().collect::<BTreeSet<_>>().len() == derives.len()

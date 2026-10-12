@@ -11,7 +11,16 @@ from rust::incan_semantics_core::body_ir import (
     PlaceElem as RustPlaceElem,
     EnumDeclaration as RustEnumDeclaration,
 )
-from pub::incan_mir_plan import ListLeaf, PlanType, Local, Place, Projection, SourceSpan, FieldProjection, EnumDeclaration
+from pub::incan_mir_plan import (
+    ListLeaf,
+    PlanType,
+    Local,
+    Place,
+    Projection,
+    SourceSpan,
+    FieldProjection,
+    EnumDeclaration,
+)
 from tuples import tuple_type, generic_tuple_type, type_name, tuple_slot
 from pub::incan_mir_plan import tuple_element_type
 from generators import generator_type
@@ -47,7 +56,7 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                 ):
                     return Ok(PlanType.Model(index, str(declaration.name)))
             if base == "Set" and len(arguments) == 1:
-                return Ok(PlanType.Set(primitive_leaf(arguments[0], true)?))
+                return Ok(PlanType.Set(set_element(declarations, arguments[0])?))
             if base == "Dict" and len(arguments) == 2:
                 return Ok(PlanType.Dict(primitive_leaf(arguments[0], true)?, primitive_leaf(arguments[1], false)?))
             if base != "List" or len(arguments) != 1:
@@ -66,6 +75,23 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                 PlanType.List(leaf, depth) => return Ok(PlanType.List(leaf, depth + 1))
                 _ => return Err(f"unsupported Body IR list element {ty}")
         _ => return Err(f"unsupported Body IR type {type_name(ty)}")
+
+
+def set_element(declarations: list[NominalDeclaration], ty: &RustType) -> Result[ListLeaf, str]:
+    """
+    Admit a retained model as a set element only when it derives the Eq and Hash the runtime's set operations bound.
+
+    Other elements keep the primitive hashed leaves. Dictionary keys do not come here: the runtime's key operations
+    also bound Display, which a model does not implement.
+    """
+    match ty:
+        RustType.Named(name) =>
+            for index in range(len(declarations)):
+                declaration = declarations[index]
+                if declaration.name == str(name) and "Eq" in declaration.derives and "Hash" in declaration.derives:
+                    return Ok(ListLeaf.Model(index, str(name)))
+        _ => pass
+    return primitive_leaf(ty, true)
 
 
 pub def model_place(
@@ -111,7 +137,13 @@ pub def model_prefix(
             fields = field_path(declarations, locals[index].ty, value.projection, count, enums, unions, intrinsics)?
             if len(fields) == 1:
                 if fields[0].variant >= 0:
-                    return Ok(Place(local=index, projection=Projection.VariantField(fields[0].variant, fields[0].slot, fields[0].ty), span=span))
+                    return Ok(
+                        Place(
+                            local=index,
+                            projection=Projection.VariantField(fields[0].variant, fields[0].slot, fields[0].ty),
+                            span=span,
+                        ),
+                    )
                 slot = fields[0].slot
                 ty = fields[0].ty
                 return Ok(Place(local=index, projection=Projection.Field(slot, ty), span=span))
@@ -261,7 +293,15 @@ def receiver_field(
     intrinsics: list[EnumDeclaration],
 ) -> Result[Place, str]:
     """Project a checked field path through a shared or mutable nominal receiver."""
-    fields = field_path(declarations, PlanType.Model(owner, declarations[owner].name), value.projection, count, enums, unions, intrinsics)?
+    fields = field_path(
+        declarations,
+        PlanType.Model(owner, declarations[owner].name),
+        value.projection,
+        count,
+        enums,
+        unions,
+        intrinsics,
+    )?
     if len(fields) == 1:
         slot = fields[0].slot
         ty = fields[0].ty

@@ -648,6 +648,29 @@ impl TypeChecker {
         }
     }
 
+    /// Append the Rust builtin derives the local type `type_name`'s `@rust.derive(...)` names to a native derive
+    /// selection, by their builtin names, skipping ones already selected.
+    ///
+    /// Returns whether the selection now covers that decorator completely: `false` when it also names a derive macro
+    /// checking cannot classify, whose expansion no derive name describes, or when collection recorded no facts for
+    /// the type.
+    pub(in crate::typechecker) fn append_rust_builtin_derives(
+        &self,
+        type_name: &str,
+        selected: &mut Vec<String>,
+    ) -> bool {
+        let Some(facts) = self.local_derive_facts.get(type_name) else {
+            return false;
+        };
+        for derive in &facts.rust_builtin_derives {
+            let name = derives::as_str(*derive).to_owned();
+            if !selected.contains(&name) {
+                selected.push(name);
+            }
+        }
+        !facts.has_unclassified_rust_derive
+    }
+
     /// Return the derive names lowering adds to a newtype automatically, in emission order (`Debug`, then `Clone`).
     ///
     /// Recorded for lowering with the newtype's construction facts, so lowering and this relation agree on what a

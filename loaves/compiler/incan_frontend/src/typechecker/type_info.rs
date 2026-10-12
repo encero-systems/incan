@@ -951,7 +951,9 @@ pub struct DeclarationArtifacts {
     /// Explicit and automatic native derives selected by checking for each source enum.
     pub enum_derives: HashMap<String, Vec<String>>,
     /// Explicit builtin, canonical serde, and implicit native derives selected for source models, in legacy emission
-    /// order. Derived Display remains a semantic selection, not a Rust macro.
+    /// order, except that the builtins a `@rust.derive(...)` names follow the `@derive(...)` selections whichever
+    /// decorator comes first (the order of a Rust derive list has no observable effect). Derived Display remains a
+    /// semantic selection, not a Rust macro.
     pub model_derives: HashMap<String, Vec<String>>,
     /// The same native derive selection for source classes, whose automatic derives match a model's.
     pub class_derives: HashMap<String, Vec<String>>,
@@ -959,6 +961,10 @@ pub struct DeclarationArtifacts {
     ///
     /// A class retains the plain native derives besides these; legacy emission forwards the same selection.
     pub class_adoption_derives: HashMap<String, Vec<String>>,
+    /// Source models whose `@rust.derive(...)` decorators name only Rust builtin derives, all of which
+    /// [`model_derives`](Self::model_derives) includes. A model naming any other derive macro is absent: that macro's
+    /// expansion is not part of its retained derives.
+    pub rust_builtin_derive_models: HashSet<String>,
     /// Active module-scope nominal identities from source and package bindings, retained before lexical checker
     /// context is discarded.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
@@ -1383,7 +1389,8 @@ pub struct NewtypeConstructionInfo {
     ///
     /// The checker's derive relation decides both, so a newtype implements what the checker says it does.
     pub automatic_derives: Vec<String>,
-    /// Explicit derive selections checked on the source newtype, retained for direct nominal carriers.
+    /// Explicit derive selections checked on the source newtype, then serde's derive for each `std.serde.json`
+    /// protocol its trait adoptions provide, retained for direct nominal carriers.
     pub explicit_derives: Vec<String>,
     /// Declared type parameters in source order.
     pub type_params: Vec<String>,
