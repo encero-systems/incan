@@ -287,6 +287,12 @@ impl BodyIrModule {
 
     /// Whether a retained model, class, or newtype layout agrees with its checked canonical identities.
     pub fn is_well_formed_nominal_declaration(&self, declaration: &NominalDeclaration) -> bool {
+        if !declaration.native_item.is_empty()
+            && crate::body_ir::native_nominal_item(&declaration.canonical).as_deref()
+                != Some(declaration.native_item.as_str())
+        {
+            return false;
+        }
         if declaration.display_method.as_ref().is_some_and(|method| {
             method.kind != SemanticSourceTargetKind::Method || method.namespace != SymbolNamespace::Member
         }) {
