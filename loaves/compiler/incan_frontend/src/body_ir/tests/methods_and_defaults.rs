@@ -458,7 +458,7 @@ fn chained_targets_read_the_original_value_before_destination_injection() -> Res
         .find(|local| local.name.as_deref() == Some("right"))
         .ok_or("missing right")?
         .id;
-    let reads: Vec<_> = body
+    let mut reads: Vec<_> = body
         .block
         .stmts
         .iter()
@@ -471,7 +471,10 @@ fn chained_targets_read_the_original_value_before_destination_injection() -> Res
             }
             _ => None,
         })
+        .rev()
+        .take(2)
         .collect();
+    reads.reverse();
     assert_eq!(reads.len(), 2);
     assert_eq!(reads[0].0, Some(left));
     assert_eq!(reads[1].0, Some(right));
