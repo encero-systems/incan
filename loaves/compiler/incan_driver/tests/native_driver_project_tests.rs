@@ -62,7 +62,9 @@ def main() -> None:
             println(value)
     options = sorted([Some(2), None, Some(1)])
     for option in options:
-        println(option == None)
+        match option:
+            Some(value) => println(value)
+            None => println("none")
 "#,
     )?;
     census::require_named_refusal(
