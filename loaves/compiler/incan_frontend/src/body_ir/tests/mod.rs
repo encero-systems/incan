@@ -26,6 +26,7 @@ mod library_types;
 mod method_partials;
 mod methods_and_defaults;
 mod native_carriers;
+mod newtype_json;
 mod newtypes;
 mod nominal_parameters;
 mod opaque_returns;

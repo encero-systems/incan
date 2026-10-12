@@ -6088,6 +6088,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/newtype_json.rs": {
+      "disposition": "keep",
+      "notes": "Checked serde capabilities on raw newtype layouts retained solely for the direct Body IR boundary.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/newtypes.rs": {
       "disposition": "keep",
       "notes": "Canonical newtype layouts, owner parameters, trait targets and explicit raw-construction boundary; direct Body IR facts without legacy emission.",

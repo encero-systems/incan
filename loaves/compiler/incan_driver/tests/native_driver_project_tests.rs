@@ -13293,3 +13293,96 @@ fn check_inheritance_project_case(
     assert_eq!(actual.stdout, expected_stdout);
     Ok(())
 }
+
+
+/// Raw newtype JSON matches original recorded fixture outputs: bare_json_protocol_bounds and qualified_json_derives
+/// UserId calls, and newtype_with_serialize_trait Wrapped output. Frozen legacy serde cannot link in this SDK profile.
+#[test]
+fn raw_newtype_json_derives_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    // Expected bytes come from those original fixtures' expect-stdout metadata. These are recorded oracle checks.
+    check_native_case(
+        "raw-newtype-json-bare",
+        r#"from std.serde.json import Deserialize, Serialize
+
+@derive(Serialize, Deserialize)
+type UserId = newtype int
+
+def stringify[T with Serialize](value: T) -> str:
+    return json_stringify(value)
+
+def decode[T with Deserialize](text: str) -> Result[T, str]:
+    return T.from_json(text)
+
+def main() -> None:
+    println(UserId(7).to_json())
+    println(stringify(UserId(8)))
+    match decode[UserId]("9"):
+        Ok(user_id) => println(user_id.0)
+        Err(error) => println(error)
+"#,
+        b"7\n8\n9\n",
+    )?;
+    check_native_case(
+        "raw-newtype-json-qualified",
+        r#"from std.serde import json
+
+@derive(json.Serialize)
+type UserId = newtype int
+
+def main() -> None:
+    println(UserId(4).to_json())
+"#,
+        b"4\n",
+    )?;
+    check_native_case(
+        "raw-newtype-json-adopted",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/newtype_with_serialize_trait.incn"
+        ),
+        b"\"wrapped\"\n",
+    )
+}
+
+/// Raw serde selections no longer refuse; trait-object storage and enum reads remain independently unsupported.
+#[test]
+fn raw_newtype_json_derives_reach_protocol_and_enum_read_refusals() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    for (name, source, expected) in [
+        (
+            "json-protocol-storage",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/bare_json_protocol_bounds.incn"
+            ),
+            "unsupported Body IR nominal type Serialize",
+        ),
+        (
+            "json-enum-read",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/qualified_json_derives.incn"
+            ),
+            "unsupported Body IR ownership Borrow outside formatting",
+        ),
+    ] {
+        let root = fixture.scratch(name)?;
+        let input = root.join("main.incn");
+        fs::write(&input, source)?;
+        let binary = root.join("native");
+        let refused = corpus::source_command(
+            &fixture.driver_binary("debug"),
+            &input,
+            &binary,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?;
+        assert!(!refused.status.success());
+        assert!(
+            String::from_utf8_lossy(&refused.stderr).contains(expected),
+            "{}",
+            String::from_utf8_lossy(&refused.stderr)
+        );
+        assert!(!binary.exists());
+    }
+    Ok(())
+}
