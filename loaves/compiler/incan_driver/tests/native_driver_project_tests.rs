@@ -2746,8 +2746,8 @@ def main() -> None:
 }
 
 /// `Ok(...)` and `Err(...)` values passed to generic functions and methods, alone, by name or in a list literal,
-/// returned by closures and built by a list comprehension take the `Result` side the checker settles for them, as legacy
-/// builds them (#1561).
+/// returned by closures and built by a list comprehension take the `Result` side the checker settles for them, as
+/// legacy builds them (#1561).
 #[test]
 fn settled_result_constructor_sides_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
@@ -2798,6 +2798,52 @@ def main() -> None:
     for y in ys:
         println(y.unwrap_or(0))
     println(run().unwrap_or("none"))
+"#,
+    )
+}
+
+/// A `Result` or `Option` payload a generic function binds by matching its type-parameter argument is copied out when
+/// the instance makes it a scalar, and cloned when it makes it a string, as legacy's instances do.
+#[test]
+fn scalar_payload_bindings_in_type_parameter_instances_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>>
+{
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("scalar-payload-bindings")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def first[T](r: Result[T, int]) -> Option[T]:
+    match r:
+        Ok(v) => return Some(v)
+        Err(_) => return None
+
+
+def describe[T with Display](r: Result[T, int]) -> str:
+    match r:
+        Ok(v) => return f"{v}"
+        Err(e) => return f"err {e}"
+
+
+def flag[T](o: Option[T], fallback: T) -> T:
+    match o:
+        Some(v) => return v
+        None => return fallback
+
+
+def main() -> None:
+    match first(Ok(3)):
+        Some(v) => println(v)
+        None => println("none")
+    match first(Err(4)):
+        Some(_) => println("some")
+        None => println("none")
+    println(describe(Ok(7)))
+    println(describe(Ok(2.5)))
+    println(describe(Ok(true)))
+    println(describe(Ok("text")))
+    println(describe[str](Err(4)))
+    println(flag(Some(false), true))
 "#,
     )
 }
