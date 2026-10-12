@@ -1156,6 +1156,20 @@ fn printing_a_type_parameter_value_displays_it_generically() -> Result<(), Box<d
     Ok(())
 }
 
+/// A generic owner's hook retains its checked dispatch once its type-parameter formatting has a Body IR fact.
+#[test]
+fn an_operator_hook_on_a_generic_owner_retains_dispatch() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Column[T with Display]:\n  sql: str\n\n  def __mul__(self, other: T) -> Column[T]:\n    return Column[T](sql=f\"({self.sql} * {other})\")\n\ndef main() -> None:\n  amount = Column[float](sql=\"amount\")\n  println((amount * 2.0).sql)\n";
+    let module = build(source, &["m", "generic_operator_owner"])?;
+    let rendered = body_named(&module, "main")?.render_snapshot();
+    assert!(!rendered.contains("unsupported"), "{rendered}");
+    assert_eq!(
+        dunder_identity(body_named(&module, "main")?, "__mul__"),
+        Some("__mul__")
+    );
+    Ok(())
+}
+
 /// Return the checked identity name of the first call of `method` in `body`, when it carries one.
 fn dunder_identity<'body>(body: &'body bir::Body, method: &str) -> Option<&'body str> {
     body.block.stmts.iter().find_map(|statement| match &statement.kind {

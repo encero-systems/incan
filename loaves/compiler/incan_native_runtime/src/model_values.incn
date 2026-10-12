@@ -23,6 +23,11 @@ pub def display_value[T with Display](value: T) -> str:
     return f"{value}"
 
 
+pub def display_type_parameter[T with Display](value: T) -> str:
+    """Use the argument's Rust Display contract, retaining generic float spelling without the concrete float adapter."""
+    return f"{value}"
+
+
 pub def equal_model[T with PartialEq](left: &T, right: &T) -> bool:
     """Compare through the derived PartialEq implementation without consuming either model."""
     return PartialEq.eq(left, right)

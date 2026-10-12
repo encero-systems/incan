@@ -162,6 +162,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// matching how [`Self::lower_method_call`] arranges an ordinary method call: `args[0]` is the receiver.
     /// Checking resolved the dunder against exactly these positional arguments, so they fill its declared slots in
     /// order. An operator whose identity checking did not record keeps no canonical target and stays refused.
+    ///
+    /// Hooks on generic owners keep their checked identities; frame specialization closes their receivers, and
+    /// f-string lowering retains the original type-parameter display contract before that specialization.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn lower_operator_dispatch(
         &mut self,

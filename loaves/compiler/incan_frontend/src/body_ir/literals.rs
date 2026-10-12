@@ -299,7 +299,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// f-string interpolations exactly like any other expression use. Mirrors the existing Rust-emission backend's
     /// dedicated `Format` node (`loaves/compiler/incan_ir/src/lower/expr/mod.rs`) rather than desugaring into a helper
     /// call -- see [`bir::Rvalue::Format`]'s own docs for why this needed its own `Rvalue` shape. A displayed value
-    /// whose checked type is a type parameter keeps that fact as [`bir::FormatStyle::TypeParameterDisplay`].
+    /// whose checked type is a type parameter keeps that fact as [`bir::FormatStyle::TypeParameterDisplay`] before
+    /// specialization replaces its type with a concrete carrier, because the generic display contract can differ from
+    /// that carrier's direct adapter.
     ///
     /// Building the formatted string always allocates and always needs the `fstring` runtime helper
     /// (`incan_std_core::strings::fstring`, the function the existing Rust-emission backend's `Format` node itself

@@ -144,7 +144,7 @@ fn type_parameter_display_is_retained_before_specialization() -> Result<(), Box<
         &["m", "type_parameter_display"],
     )?;
     let snapshot = body_named(&module, "text")?.render_snapshot();
-    assert!(snapshot.contains(":type-parameter-display"), "{snapshot}");
+    assert!(snapshot.contains(":type_parameter_display"), "{snapshot}");
     Ok(())
 }
 

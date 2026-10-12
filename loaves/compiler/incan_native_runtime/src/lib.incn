@@ -67,6 +67,7 @@ pub from model_values import (
     debug_model,
     debug_value,
     display_value,
+    display_type_parameter,
     serialize_model,
     deserialize_model,
     serialize_int,

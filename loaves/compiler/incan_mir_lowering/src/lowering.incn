@@ -4423,10 +4423,38 @@ def append_format_part(
         RustFormatPart.Expr(operand=value, style=style) =>
             match style:
                 RustFormatStyle.Display => values.append(display_operand(builder, value, span)?)
-                RustFormatStyle.TypeParameterDisplay => values.append(display_value_operand(builder, value, span, true)?)
                 RustFormatStyle.Debug => values.append(debug_operand(builder, value, span)?)
+                RustFormatStyle.TypeParameterDisplay => values.append(
+                    type_parameter_display_operand(builder, value, span)?,
+                )
             parts.append("")
     return Ok(None)
+
+
+def type_parameter_display_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+    """Keep a closed floating type parameter's own Display spelling; other carriers retain their existing renderer."""
+    match value:
+        RustOperand.Place(read) =>
+            place = scalar_place(builder, read.place, span)?
+            ty = place_type(builder.locals, place)
+            if ty == PlanType.Float or ty == PlanType.F32 or ty == PlanType.F64:
+                operand = value_operand(builder, value, span)?
+                path = "incan_native_runtime::display_type_parameter"
+                result = temporary(builder, PlanType.String, span)
+                builder.externals.append(
+                    ExternalFunction(
+                        path=path,
+                        type_arguments=[ty],
+                        parameters=[ty],
+                        return_type=PlanType.String,
+                        span=span,
+                    ),
+                )
+                terminate_call(builder, CalleeKind.Instantiated(path, ty), [operand], result, span)
+                builder.owned.append(result.local)
+                return Ok(result)
+        _ => pass
+    return display_operand(builder, value, span)
 
 
 def debug_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
