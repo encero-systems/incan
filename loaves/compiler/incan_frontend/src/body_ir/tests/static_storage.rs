@@ -26,7 +26,7 @@ fn static_list_literals_retain_checked_elements() -> Result<(), Box<dyn std::err
         "def initial() -> int:\n    return 1\n\nstatic ITEMS: list[int] = [initial()]\n\ndef main() -> int:\n    return len(ITEMS)\n",
         &["m", "effectful_list"],
     )?;
-    assert!(effectful.static_declarations.is_empty());
+    assert_eq!(effectful.static_declarations.len(), 1);
     Ok(())
 }
 
@@ -78,7 +78,7 @@ fn static_alias_reads_retain_storage_until_whole_rebind() -> Result<(), Box<dyn 
 }
 
 /// Primitive dictionary and set literals and the empty `Set()` constructor retain their checked elements; forged
-/// mismatched payloads are malformed, and a dictionary of lists keeps no initializer.
+/// mismatched payloads are malformed, and a dictionary of lists keeps a computed initializer.
 #[test]
 fn static_hashed_literals_retain_checked_elements() -> Result<(), Box<dyn std::error::Error>> {
     let module = build(
@@ -107,7 +107,35 @@ fn static_hashed_literals_retain_checked_elements() -> Result<(), Box<dyn std::e
         "static GROUPS: dict[str, list[int]] = {}\n\ndef main() -> int:\n    return len(GROUPS)\n",
         &["m", "nested_hashed"],
     )?;
-    assert!(nested.static_declarations.is_empty());
+    assert_eq!(nested.static_declarations.len(), 1);
+    Ok(())
+}
+
+/// Computed initializers retain declaration order, canonical storage identity, and their closed checked carrier.
+#[test]
+fn computed_statics_retain_order_and_closed_initializer_bodies() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def initial(value: int) -> int:\n    return value\n\nstatic FIRST: int = initial(1)\nstatic SECOND: int = initial(FIRST + 1)\n",
+        &["m", "computed_statics"],
+    )?;
+    let [first, second] = module.static_declarations.as_slice() else {
+        return Err("expected both computed static declarations in source order".into());
+    };
+    for declaration in [first, second] {
+        assert!(module.is_well_formed_static_declaration(declaration));
+        let initializer = format!("{:?}", declaration.initial);
+        assert!(initializer.starts_with("Computed("), "{initializer}");
+        assert!(initializer.contains("params: []"), "{initializer}");
+        assert!(initializer.contains("return_type: Primitive(Int)"), "{initializer}");
+        assert!(initializer.contains(&format!("canonical: Some({:?})", declaration.canonical)));
+    }
+    assert!(format!("{:?}", first.canonical).contains("FIRST"));
+    assert!(format!("{:?}", second.canonical).contains("SECOND"));
+    assert_eq!(
+        module.bodies.len(),
+        1,
+        "initializers must not become callable source declarations"
+    );
     Ok(())
 }
 

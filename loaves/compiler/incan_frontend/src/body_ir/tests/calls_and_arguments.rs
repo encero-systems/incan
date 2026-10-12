@@ -420,7 +420,7 @@ fn newtype_methods_retain_layout_without_erasing_validation() -> Result<(), Box<
     Ok(())
 }
 
-/// Literal scalar and string initialization retain canonical storage without admitting effectful initializers.
+/// Scalar and string statics retain canonical storage, including an effectful initializer's computed body.
 #[test]
 fn scalar_static_retains_canonical_initializer() -> Result<(), Box<dyn std::error::Error>> {
     let module = build(
@@ -452,7 +452,7 @@ fn scalar_static_retains_canonical_initializer() -> Result<(), Box<dyn std::erro
         "def initial() -> int:\n    return 4\n\nstatic COUNT: int = initial()\n\ndef main() -> int:\n    return COUNT\n",
         &["m", "effectful_static"],
     )?;
-    assert!(effectful.static_declarations.is_empty());
+    assert_eq!(effectful.static_declarations.len(), 1);
     Ok(())
 }
 

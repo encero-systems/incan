@@ -9472,6 +9472,86 @@ def main() -> None:
     )
 }
 
+/// Computed statics initialize as legacy's do (RFC 052): once each, in declaration order, on entry to the first
+/// function of their module and so before `main`'s first statement, a later initializer reading an earlier static's
+/// value. Reads then see the current value, whole or through a field, and a write or a collection method replaces it.
+#[test]
+fn computed_statics_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "computed_statics",
+        r#"model Config:
+    name: str
+    sizes: list[int]
+
+
+def announce(label: str, value: int) -> int:
+    println(f"init {label}")
+    return value
+
+
+static FIRST: int = announce("first", 1)
+static CONFIG: Config = Config(name="base", sizes=[1, 2])
+static NAME: Option[str] = Some("n")
+static NAMES: list[str] = [str(FIRST)]
+static SECOND: int = announce("second", FIRST + 1)
+
+
+def describe() -> str:
+    return f"{CONFIG.name} {len(CONFIG.sizes)}"
+
+
+def remember(name: str) -> None:
+    NAMES.append(name)
+
+
+def main() -> None:
+    println("main")
+    println(FIRST + SECOND)
+    println(describe())
+    println(NAME.unwrap_or("x"))
+    CONFIG = Config(name="next", sizes=[])
+    println(describe())
+    remember("a")
+    remember("b")
+    println(len(NAMES))
+    println(NAMES[2])
+"#,
+        b"init first\ninit second\nmain\n3\nbase 2\nn\nnext 0\n3\nb\n",
+    )
+}
+
+/// An imported module's computed static initializes when the importer first reads it, after the importer's earlier
+/// statements, as legacy's read of an imported static first initializes its declaring module's statics.
+#[test]
+fn imported_computed_statics_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_case(
+        "imported_computed_statics",
+        r#"from settings import LIMIT, limit_twice
+
+
+def main() -> None:
+    println("main")
+    println(LIMIT)
+    println(limit_twice())
+"#,
+        &[(
+            "settings.incn",
+            r#"def announce(value: int) -> int:
+    println("init settings")
+    return value
+
+
+pub static LIMIT: int = announce(4)
+
+
+pub def limit_twice() -> int:
+    return LIMIT * 2
+"#,
+        )],
+        b"main\ninit settings\n4\n8\n",
+    )
+}
+
 /// Prove hashed enum leaves byte-identical to legacy: a source enum deriving Eq and Hash is a set element and a
 /// dictionary key, and `Option` and `Result` carriers over hashable payloads are set elements, read by membership,
 /// length and a loop over a one-element set.
