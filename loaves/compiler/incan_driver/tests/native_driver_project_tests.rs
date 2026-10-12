@@ -6915,6 +6915,73 @@ def main() -> None:
     )
 }
 
+/// Result's builtin combinators call their callback on one side and pass the other side through: a named function, a
+/// callable model, a capturing closure and a closure over a model payload all run, a receiver read again afterwards is
+/// unchanged, and a source model named `Box` does not shadow a boxed closure.
+#[test]
+fn result_combinator_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "result_combinator",
+        r#"from std.traits.callable import Callable1
+
+
+model Box:
+    tag: str
+
+
+model Observer with Callable1[int, None]:
+    def __call__(self, value: int) -> None:
+        println(f"observer {value}")
+
+
+def double(value: int) -> int:
+    return value * 2
+
+
+def shout(message: str) -> str:
+    return f"{message}!"
+
+
+def lower(value: int) -> Result[int, str]:
+    if value == 0:
+        return Err("zero")
+    return Ok(value - 1)
+
+
+def recover(message: str) -> Result[int, str]:
+    return Ok(len(message))
+
+
+def observe_box(item: Box) -> None:
+    println(f"box {item.tag}")
+
+
+def show(value: Result[int, str]) -> str:
+    match value:
+        Ok(number) => return f"Ok({number})"
+        Err(message) => return f"Err({message})"
+
+
+def main() -> None:
+    ok: Result[int, str] = Ok(4)
+    bad: Result[int, str] = Err("bad")
+    println(show(ok.map(double)))
+    println(show(bad.map_err(shout)))
+    println(show(ok.and_then(lower)))
+    println(show(bad.or_else(recover)))
+    println(show(ok))
+    observer = Observer()
+    ok.inspect(observer)
+    suffix = "?"
+    bad.inspect_err((message) => println(message + suffix))
+    boxed: Result[Box, str] = Ok(Box(tag="t"))
+    boxed.inspect(observe_box)
+    boxed.inspect((item) => println(item.tag + "!"))
+"#,
+        b"Ok(8)\nErr(bad!)\nOk(3)\nOk(3)\nOk(4)\nobserver 4\nbad?\nbox t\nt!\n",
+    )
+}
+
 /// Compile a single-module program in the minimal project layout and require the native route to refuse it by name.
 fn check_project_refusal(name: &str, text: &str, reason: &str) -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;

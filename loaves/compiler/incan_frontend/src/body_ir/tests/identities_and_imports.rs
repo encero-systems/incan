@@ -1168,3 +1168,36 @@ model Reversed with Ord:
     );
     Ok(())
 }
+
+/// An adopter of a standard-library protocol with type parameters retains the slot its own method fills, exactly as an
+/// adopter of a protocol without them does.
+#[test]
+fn generic_std_protocol_slots_retain_the_adopters_own_methods() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from std.traits.callable import Callable1
+
+
+model Observer with Callable1[int, None]:
+    def __call__(self, value: int) -> None:
+        println(value)
+"#;
+    let module = build(source, &["m", "generic_std_protocol_slots"])?;
+    let call = module
+        .trait_implementations
+        .iter()
+        .find(|implementation| implementation.method.declaration_name == "__call__")
+        .ok_or("the generic protocol slot the adopter fills must be retained")?;
+    assert_eq!(call.owner.declaration_name, "Observer");
+    assert_eq!(call.implementation.declaration_name, "__call__");
+    assert_eq!(call.implementation.origin, call.owner.origin);
+    assert_ne!(call.implementation, call.method);
+    assert!(
+        module
+            .trait_implementations
+            .iter()
+            .all(|implementation| implementation.implementation != implementation.method),
+        "a protocol default must not be retained: {:?}",
+        module.trait_implementations
+    );
+    Ok(())
+}
