@@ -553,7 +553,7 @@ def target_read(mut builder: Builder, target: Place, fact: &OwnershipFact, span:
                 return Err("unsupported Body IR move out of a borrowed value")
             return Ok(Operand(kind=OperandKind.Move(target), span=span))
         OwnershipFact.Clone =>
-            if place_type(builder.locals, target) == PlanType.FrozenStr:
+            if place_type(builder.locals, target) in [PlanType.FrozenStr, PlanType.FrozenBytes]:
                 return Ok(read_place(target, false, span))
             # A checked clone of an open parameter becomes Rust's copy-valued Clone on concrete scalar instances.
             ty = place_type(builder.locals, target)
@@ -569,7 +569,7 @@ def target_read(mut builder: Builder, target: Place, fact: &OwnershipFact, span:
                 return Ok(read_place(cloned, true, span))
             return clone_nominal_operand(builder, target, span)
         OwnershipFact.Borrow =>
-            if place_type(builder.locals, target) == PlanType.FrozenStr:
+            if place_type(builder.locals, target) in [PlanType.FrozenStr, PlanType.FrozenBytes]:
                 return Ok(read_place(target, false, span))
             if is_tuple_type(place_type(builder.locals, target)):
                 return clone_tuple_operand(builder, target, span)
