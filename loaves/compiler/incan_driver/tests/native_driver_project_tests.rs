@@ -4123,6 +4123,64 @@ def main() -> None:
     )
 }
 
+/// Prove the generator consumers byte-identical to legacy: `count`, `sum`, `fold`, `any`, `all`, `find` and `for_each`
+/// draining yield-based generators, generator expressions and generators chained through `map` and `filter`, including
+/// an empty generator and a `find` with no match; and `any` and `all` drawing only the items they need.
+#[test]
+fn generator_consumer_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("generator-consumer")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def numbers(limit: int) -> Generator[int]:
+    for value in range(limit):
+        yield value
+
+def is_even(n: int) -> bool:
+    return n % 2 == 0
+
+def is_odd(n: int) -> bool:
+    return n % 2 == 1
+
+def add(acc: int, n: int) -> int:
+    return acc + n
+
+def double(n: int) -> int:
+    return n * 2
+
+def show(n: int) -> None:
+    println(n)
+
+def note(value: int) -> int:
+    println(f"note {value}")
+    return value
+
+def main() -> None:
+    println(numbers(4).count())
+    println(numbers(4).sum())
+    println(numbers(4).fold(10, add))
+    println(numbers(4).any(is_even))
+    println(numbers(4).all(is_even))
+    match numbers(4).find(is_odd):
+        Some(value) => println(value)
+        None => println("none")
+    match numbers(1).find(is_odd):
+        Some(value) => println(value)
+        None => println("none")
+    numbers(2).for_each(show)
+    println((n * 2 for n in [1, 2, 3]).sum())
+    println((note(v) for v in [1, 2, 3, 4]).any(is_even))
+    println((note(v) for v in [1, 3, 4, 5]).all(is_odd))
+    println(numbers(3).map(double).count())
+    println(numbers(5).filter(is_even).sum())
+    println(numbers(0).count())
+    println((v for v in range(3)).fold(1, add))
+"#,
+    )
+}
+
 /// Prove unit and payload construction, enum passing/returning, and variant-bound match output against legacy.
 #[test]
 fn source_enum_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
