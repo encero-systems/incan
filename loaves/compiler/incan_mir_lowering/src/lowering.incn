@@ -6040,6 +6040,19 @@ def lower_list_method(
         None => pass
     if member == "List.iter":
         return lower_list_iter(builder, arguments, destination, span)
+    if member == "List.contains":
+        leaf, _depth = require_list_shape(receiver_ty, "unsupported Body IR List.contains receiver")?
+        # Primitive leaves use the runtime's builtin PartialEq. Nominal hooks and compound equality need their own
+        # parity before this method may select Rust equality in their place.
+        match leaf:
+            ListLeaf.Model(_owner, _name) => return Err("unsupported Body IR List.contains nominal equality")
+            ListLeaf.Enum(_owner, _name) => return Err("unsupported Body IR List.contains enum equality")
+            ListLeaf.FunctionPointer(_signature) => return Err("unsupported Body IR List.contains callable equality")
+            ListLeaf.Tuple(_fields) => return Err("unsupported Body IR List.contains tuple equality")
+            ListLeaf.List(_elements, _depth) => return Err("unsupported Body IR List.contains nested equality")
+            ListLeaf.Dict(_elements) => return Err("unsupported Body IR List.contains dictionary equality")
+            _ => pass
+        return lower_list_helper(builder, false, arguments, destination, span)
     if is_collection(receiver_ty):
         return collection_method(builder, member, arguments, destination, span)
     leaf, depth = require_list_shape(receiver_ty, "unsupported Body IR list Method on non-list")?
