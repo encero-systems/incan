@@ -14,12 +14,13 @@ from rust::incan_semantics_core::body_ir import (
     CallableParam as RustCallableParam,
     CallableParamDefault,
 )
-from pub::incan_mir_plan import Constant, Operand, PlanType, RvalueKind, SourceSpan, TerminatorKind
+from pub::incan_mir_plan import Constant, ListLeaf, Operand, Place, PlanType, RvalueKind, SourceSpan, TerminatorKind
 from pub::incan_mir_plan import assign as plan_assign, place as plan_place
-from frame import Builder, read_place, literal, drop_owned, track_rvalue_moves
+from frame import Builder, read_place, literal, drop_owned, forget_owned, temporary, track_rvalue_moves
 from text_plan import clone_text, owned_literal
-from lists import list_parameter_type
-from lowering import call_argument_operand, lower_statement
+from lists import list_parameter_type, list_element
+from builtins import list_call
+from lowering import call_argument_operand, lower_statement, list_borrow
 
 
 pub def default_flags(parameters: &list[RustCallableParam]) -> list[bool]:
@@ -143,7 +144,17 @@ def placeholder(mut builder: Builder, ty: PlanType, span: SourceSpan) -> Result[
         PlanType.String =>
             text = owned_literal(builder, "", span)
             return Ok(read_place(text, true, span))
+        PlanType.ListRef(leaf, depth) =>
+            # A list parameter is a view, so the placeholder views an empty list the caller owns until its scope ends.
+            empty = temporary(builder, PlanType.List(leaf, depth), span)
+            empty_list(builder, empty, leaf, depth, span)
+            return list_borrow(builder, empty, false, span)
         _ => return Err("unsupported Body IR omitted partial parameter of this type")
+
+
+def empty_list(mut builder: Builder, output: Place, leaf: ListLeaf, depth: int, span: SourceSpan) -> None:
+    """Store a new empty list in `output`, which owns it from then on; it allocates nothing until an item is added."""
+    list_call(builder, "empty_list", list_element(leaf, depth), [], PlanType.List(leaf, depth), [], output, span)
 
 
 pub def bind_defaulted_parameter(
@@ -158,12 +169,19 @@ pub def bind_defaulted_parameter(
     """
     Bind a parameter that carries a default from its supplied flag: the passed value, or else its preset or default.
 
-    The flag is the argument at `flag_slot` and the value the one after it. An omitted text value is dropped unread.
-    A default whose computation would leave other owned values behind stays refused.
+    The flag is the argument at `flag_slot` and the value the one after it. An omitted text value is dropped unread. A
+    list parameter is a view, so an omitted one views its computed default list, which a holder local keeps alive until
+    the closure returns; the supplied path gives that holder an empty list, so it is initialized on both paths. Any
+    other default whose computation would leave owned values behind stays refused.
     """
     if list_parameter_type(lifted.locals[destination].ty, false) != ty:
         return Err("invalid Body IR closure argument type")
     lifted.locals[destination].ty = ty
+    mut holder = -1
+    match ty:
+        PlanType.ListRef(leaf, depth) =>
+            holder = temporary(lifted, PlanType.List(leaf, depth), span).local
+        _ => pass
     supplied = lifted.new_block(span)
     omitted = lifted.new_block(span)
     joined = lifted.new_block(span)
@@ -174,6 +192,9 @@ pub def bind_defaulted_parameter(
     owned = ty == PlanType.String
     passed = read_place(plan_place(flag_slot + 1, span), owned, span)
     lifted.emit(plan_assign(plan_place(destination, span), RvalueKind.Use(passed), span))
+    match ty:
+        PlanType.ListRef(leaf, depth) => empty_list(lifted, plan_place(holder, span), leaf, depth, span)
+        _ => pass
     lifted.finish(TerminatorKind.Goto(joined), span)
     lifted.current = omitted
     lifted.owned = incoming
@@ -183,7 +204,10 @@ pub def bind_defaulted_parameter(
     value = default_value(module, lifted, parameter, ty, span)?
     # The preset's copy or the computed default moves into the parameter, so it needs no drop of its own.
     track_rvalue_moves(lifted, RvalueKind.Use(value))
-    lifted.emit(plan_assign(plan_place(destination, span), RvalueKind.Use(value), span))
+    if holder >= 0:
+        hold_default_list(lifted, incoming, holder, destination, span)?
+    else:
+        lifted.emit(plan_assign(plan_place(destination, span), RvalueKind.Use(value), span))
     if lifted.owned != incoming:
         return Err("unsupported Body IR partial default leaving owned values")
     lifted.finish(TerminatorKind.Goto(joined), span)
@@ -191,6 +215,33 @@ pub def bind_defaulted_parameter(
     lifted.owned = incoming
     if owned:
         lifted.owned.append(destination)
+    if holder >= 0:
+        lifted.owned.append(holder)
+    return Ok(None)
+
+
+def hold_default_list(
+    mut lifted: Builder,
+    incoming: list[int],
+    holder: int,
+    destination: int,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Move the one list a default computation created into the parameter's holder, and view the holder instead.
+
+    The view the computation returned is left unused; the holder outlives the parameter until the closure returns.
+    """
+    mut created: list[int] = []
+    for owner in lifted.owned:
+        if owner not in incoming:
+            created.append(owner)
+    if len(created) != 1:
+        return Err("unsupported Body IR partial default leaving owned values")
+    computed = plan_place(created[0], span)
+    lifted.emit(plan_assign(plan_place(holder, span), RvalueKind.Use(read_place(computed, true, span)), span))
+    forget_owned(lifted, created[0])
+    lifted.emit(plan_assign(plan_place(destination, span), RvalueKind.Borrow(plan_place(holder, span)), span))
     return Ok(None)
 
 
