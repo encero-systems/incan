@@ -1115,6 +1115,8 @@ fn external_signature_type(ty: &Scalar) -> bool {
             Scalar::ZipIteratorRef(_, _)
                 | Scalar::StringRef
                 | Scalar::StrRef
+                | Scalar::StaticText
+                | Scalar::StaticBytes
                 | Scalar::StringSlice
                 | Scalar::StrSlice
                 | Scalar::EnumRef(_)

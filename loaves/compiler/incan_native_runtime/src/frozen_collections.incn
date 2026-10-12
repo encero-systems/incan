@@ -8,7 +8,7 @@ from rust::incan_std_core::frozen import (
 from rust::std::clone import Clone as RuntimeClone
 from rust::std::fmt import Display
 from rust::std::cmp import PartialEq
-from rust::std::convert import Into
+from rust::std::convert import Into as RustInto
 from rust::incan_std_core::errors import raise_key_error
 from std.rust import Static
 
@@ -31,14 +31,19 @@ pub def frozen_list_text_items[T with (Display, Static)](value: RuntimeFrozenLis
     return result
 
 
-pub def frozen_list_byte_items[Source with (RuntimeClone, Into[bytes], Static)](
+pub def frozen_list_byte_items[Source with (RuntimeClone, RustInto[bytes], Static)](
     value: RuntimeFrozenList[Source],
 ) -> list[bytes]:
     """Copy static byte slices into owned byte buffers at the same read boundary as legacy iteration."""
     mut result: list[bytes] = []
     for item in value.iter():
-        result.append(Into.into(RuntimeClone.clone(item)))
+        result.append(RustInto.into(RuntimeClone.clone(item)))
     return result
+
+
+pub def own_static_bytes[Source with RustInto[bytes]](value: Source) -> bytes:
+    """Copy a static byte slice into the owned byte buffer a frozen element read returns."""
+    return RustInto.into(value)
 
 
 pub def frozen_set_length[T with Static](value: RuntimeFrozenSet[T]) -> int:
@@ -83,11 +88,6 @@ pub def frozen_dict_text_keys[K with (Display, Static), V with Static](value: Ru
     return result
 
 
-pub def own_static_bytes[Source with Into[bytes]](value: Source) -> bytes:
-    """Copy a static byte slice into the owned byte buffer a frozen element read returns."""
-    return Into.into(value)
-
-
 pub def frozen_dict_text_get[K with (Display, Static), V with (RuntimeClone, Static)](
     value: RuntimeFrozenDict[K, V],
     key: &str,
@@ -104,8 +104,9 @@ pub def frozen_dict_get[K with (PartialEq, Display, Static), V with (RuntimeClon
     key: K,
 ) -> V:
     """Use exact scalar key equality and return the first matching value, without cloning unrelated entries."""
+    reference: &K = key
     for stored, item in value.iter():
-        if PartialEq.eq(stored, key):
+        if PartialEq.eq(stored, reference):
             return RuntimeClone.clone(item)
     return raise_key_error(f"'{key}' not found in dict")
 
@@ -123,7 +124,8 @@ pub def frozen_dict_text_contains[K with (Display, Static), V with Static](
 
 pub def frozen_dict_contains[K with (PartialEq, Static), V with Static](value: RuntimeFrozenDict[K, V], key: K) -> bool:
     """Test scalar key equality in baked order without requiring a hash implementation."""
+    reference: &K = key
     for stored, _item in value.iter():
-        if PartialEq.eq(stored, key):
+        if PartialEq.eq(stored, reference):
             return true
     return false
