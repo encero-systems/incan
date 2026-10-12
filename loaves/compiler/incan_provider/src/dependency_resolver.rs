@@ -167,12 +167,20 @@ fn resolve_dependencies_with_scope(
 
     if errors.is_empty() {
         Ok(ResolvedDependencies {
-            dependencies: resolved_deps.into_values().collect(),
-            dev_dependencies: resolved_dev_deps.into_values().collect(),
+            dependencies: ordered_specs(resolved_deps),
+            dev_dependencies: ordered_specs(resolved_dev_deps),
         })
     } else {
         Err(errors)
     }
+}
+
+/// Preserve deterministic dependency request identity across independent parses of the same declarations.
+/// Sorting changes only order: versions, aliases, source paths and normalized feature requirements remain intact.
+fn ordered_specs(specs: HashMap<String, DependencySpec>) -> Vec<DependencySpec> {
+    let mut specs = specs.into_values().collect::<Vec<_>>();
+    specs.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
+    specs
 }
 
 // ============================================================================
@@ -744,6 +752,44 @@ mod tests {
         errors
             .first()
             .ok_or_else(|| std::io::Error::other("expected at least one dependency error").into())
+    }
+
+    /// Reopening identical authored dependencies must preserve ordered native preparation requests.
+    #[test]
+    fn reloaded_manifest_preserves_dependency_request_order() -> TestResult {
+        let source = r#"
+[project]
+name = "ordered_dependencies"
+version = "0.1.0"
+[dependencies]
+zeta = { loaf = "crates-io/zeta", version = "1" }
+alpha = { loaf = "crates-io/alpha", version = "2", features = ["second", "first"] }
+middle = { loaf = "crates-io/middle", version = "3", default-features = false }
+"#;
+        for _ in 0..16 {
+            let manifest = parse_manifest(source)?;
+            let resolved = resolve_ok(Some(&manifest), &[], true, &default_cargo_features())?;
+            let names = resolved
+                .dependencies
+                .iter()
+                .map(|dependency| dependency.crate_name.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(names, ["alpha", "middle", "zeta"]);
+            assert_eq!(resolved.dependencies[0].features, ["first", "second"]);
+            assert!(!resolved.dependencies[1].default_features);
+            let imports = [
+                inline("zeta_dev", Some("1"), &[], true),
+                inline("alpha_dev", Some("1"), &[], true),
+            ];
+            let resolved = resolve_ok(None, &imports, true, &default_cargo_features())?;
+            let names = resolved
+                .dev_dependencies
+                .iter()
+                .map(|dependency| dependency.crate_name.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(names, ["alpha_dev", "zeta_dev"]);
+        }
+        Ok(())
     }
 
     // ---- Phase 2: Feature union across multiple import sites ----
