@@ -18,6 +18,106 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// Canonical enumerate observes its sole spread operand as the outer collection, matching frozen legacy emission.
+#[test]
+fn enumerate_spread_operand_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("enumerate-spread-operand")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def main() -> None:
+    values = [[4, 5], [9]]
+    for pair in enumerate(*values):
+        println(f"{pair.0}:{pair.1}")
+"#,
+    )
+}
+
+/// Closed Eq/Ord instances compare text and Option presence using the same runtime helpers as concrete values.
+#[test]
+fn generic_text_comparison_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("generic-text-comparison")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"from std.derives.comparison import Eq, Ord
+
+def equal[T with Eq](left: T, right: T) -> bool:
+    return left == right
+
+def before[T with Ord](left: T, right: T) -> bool:
+    return left < right
+
+def at_most[T with Ord](left: T, right: T) -> bool:
+    return left <= right
+
+def after[T with Ord](left: T, right: T) -> bool:
+    return left > right
+
+def at_least[T with Ord](left: T, right: T) -> bool:
+    return left >= right
+
+def absent[T](value: Option[T]) -> bool:
+    return value is None
+
+def present[T](value: Option[T]) -> bool:
+    return value is not None
+
+def ordered[T with Ord](items: list[T]) -> list[T]:
+    return sorted(items)
+
+def main() -> None:
+    println(equal("a", "a"))
+    println(before(1, 2))
+    println(before("b", "a"))
+    println(at_most("a", "a"))
+    println(after("c", "b"))
+    println(at_least("a", "b"))
+    missing: Option[int] = None
+    println(absent(missing))
+    println(present(Some(1)))
+    println(ordered([3, 1, 2])[0])
+"#,
+    )
+}
+
+/// Numeric values widen to the checked union member at binding, argument, field and return boundaries.
+#[test]
+fn numeric_union_member_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("numeric-union-member")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"model Holder:
+    value: int | str
+
+def returned(value: u8) -> int | str:
+    return value
+
+def describe(value: int | str) -> str:
+    if isinstance(value, int):
+        return f"number:{value}"
+    return "text"
+
+def main() -> None:
+    byte: u8 = 250
+    signed: i8 = -5
+    held: int | str = byte
+    holder = Holder(value=signed)
+    println(describe(held))
+    println(describe(byte))
+    println(describe(holder.value))
+    println(describe(returned(byte)))
+"#,
+    )
+}
+
 /// Literal and checked tuple spreads bind fixed function, rest, keyword and method parameters with legacy output.
 #[test]
 fn fixed_call_spreads_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

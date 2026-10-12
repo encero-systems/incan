@@ -5,6 +5,56 @@
 
 use super::*;
 
+/// A canonical enumerate spread retains the outer collection operand that the frozen builtin actually observes.
+#[test]
+fn enumerate_spread_retains_legacy_operand() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n  values = [[4, 5], [9]]\n  for pair in enumerate(*values):\n    println(pair.0)\n",
+        &["m", "enumerate_spread_operand"],
+    )?;
+    let body = body_named(&module, "main")?;
+    let arguments = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+                args,
+                ..
+            } if target.builtin == Some(incan_lang::lang::builtins::BuiltinFnId::Enumerate) => Some(args),
+            _ => None,
+        })
+        .ok_or("missing canonical enumerate call")?;
+    assert!(
+        matches!(arguments.as_slice(), [bir::ArgumentElement::One(_)]),
+        "{}",
+        module.render_snapshot()
+    );
+    Ok(())
+}
+
+/// The checked union destination retains a numeric widening before its member is injected by the native plan.
+#[test]
+fn numeric_union_widening_retains_selected_member() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def returned(value: u8) -> int | str:\n  return value\n\ndef main() -> None:\n  byte: u8 = 250\n  held: int | str = byte\n  println(isinstance(held, int))\n",
+        &["m", "numeric_union_destination"],
+    )?;
+    for name in ["returned", "main"] {
+        let body = body_named(&module, name)?;
+        assert!(
+            body.locals
+                .iter()
+                .any(|local| local.origin == bir::LocalOrigin::Temporary
+                    && local.ty == IncanType::Primitive(IncanPrimitiveType::Int)),
+            "{}",
+            module.render_snapshot()
+        );
+    }
+    Ok(())
+}
+
 /// A checked tuple variable supplies fixed and rest slots without leaving an unresolved spread or unknown carrier.
 #[test]
 fn tuple_variable_spreads_retain_fixed_slots() -> Result<(), Box<dyn std::error::Error>> {
