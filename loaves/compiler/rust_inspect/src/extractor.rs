@@ -1543,7 +1543,7 @@ fn surface_trait_candidates(ty: &Type<'_>, authorized_trait_crates: &HashSet<Cra
     candidates
 }
 
-/// Collect non-blanket trait impls whose traits belong to the queried Rust surface dependency closure.
+/// Collect non-blanket impls of exported traits that belong to the queried Rust surface dependency closure.
 ///
 /// Candidate acquisition stays inside that closure rather than expanding every loaded analyzer crate. The trait's
 /// defining crate is checked separately, and each distinct trait is solved once for this receiver/environment;
@@ -1583,7 +1583,12 @@ fn collect_implemented_traits(
         if observe {
             work.trait_candidates += 1;
         }
-        if !authorized_trait_crates.contains(&trait_def.module(db).krate(db)) {
+        // A trait its crate does not export cannot be named from source. Recording it would also make a re-exported
+        // type's facts depend on the surface queried: std's private `SizeHint` reaches `std::time::Duration` but not
+        // `core::time::Duration`, one definition with two competing facts.
+        if !authorized_trait_crates.contains(&trait_def.module(db).krate(db))
+            || !is_exported_rust_api(trait_def.visibility(db))
+        {
             continue;
         }
         if observe {
