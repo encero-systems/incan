@@ -9103,7 +9103,8 @@ def main() -> Result[None, EnvironError]:
     )
 }
 
-/// The chunk stream a stdlib trait default returns keeps its SDK type without importing that type.
+/// A stdlib trait call returns its actual SDK layout without importing it. Iteration keeps its independent missing
+/// canonical-method refusal until the protocol boundary retains that identity.
 #[test]
 fn stdlib_reader_chunk_types_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
@@ -9112,6 +9113,15 @@ fn stdlib_reader_chunk_types_output_matches_legacy() -> Result<(), Box<dyn std::
         &fixture.scratch("stdlib-reader-chunk-types")?,
         &fixture.sysroot,
         &fixture.formatting,
+        r#"from std.io import BytesIO
+
+def main() -> None:
+    stream = BytesIO(b"abcde").chunks(2)
+    println(stream.chunk_size)
+"#,
+    )?;
+    check_project_refusal(
+        "stdlib_reader_chunk_iteration",
         r#"from std.io import BytesIO, IoError
 
 def chunks() -> Result[None, IoError]:
@@ -9123,6 +9133,31 @@ def main() -> None:
     match chunks():
         Ok(_) => pass
         Err(err) => println(err.message())
+"#,
+        "unsupported Body IR Method without canonical identity",
+    )
+}
+
+/// Frozen byte literals keep static storage, exact unsigned bytes, copyable parameters, and legacy length behavior.
+#[test]
+fn stdlib_frozen_bytes_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("stdlib-frozen-bytes")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"const EMPTY: FrozenBytes = b""
+const DATA: FrozenBytes = b"\x00\x7f\x80\xff"
+
+def size(value: FrozenBytes) -> int:
+    return value.len()
+
+def main() -> None:
+    println(EMPTY.len())
+    println(DATA.len())
+    println(size(DATA))
+    println(DATA.len())
 "#,
     )
 }
