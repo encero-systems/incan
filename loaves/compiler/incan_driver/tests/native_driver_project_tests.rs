@@ -1091,7 +1091,8 @@ fn bake_driver_fixture() -> Result<DriverFixture, Box<dyn std::error::Error>> {
 /// crate a bake of this library selects from the fixture Store, so a program reaches the same compiled stdlib items
 /// legacy calls.
 const SDK_CLOSURE_MANIFEST: &str = "[project]\nname = \"sdk_closure\"\nversion = \"0.1.0\"\n";
-const SDK_CLOSURE_SOURCE: &str = "\"\"\"Name one public item of each stdlib component, so its bake links them all.\"\"\"
+const SDK_CLOSURE_SOURCE: &str =
+    "\"\"\"Name one public item of each stdlib component, so its bake links them all.\"\"\"
 
 from std.uuid import UuidError
 from std.io import IoError
@@ -1125,8 +1126,20 @@ pub def observability_item(value: Logger) -> Logger:
     return value
 ";
 
-/// Bake the SDK closure library beside the runtime, reusing an unchanged earlier bake.
+/// The process-wide SDK closure library; tests running in parallel wait for its single bake instead of baking the
+/// same project at once.
+static SDK_CLOSURE: OnceLock<Result<PathBuf, String>> = OnceLock::new();
+
+/// Return the SDK closure library, baking it on first use.
 fn sdk_closure(fixture: &DriverFixture) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    SDK_CLOSURE
+        .get_or_init(|| bake_sdk_closure(fixture).map_err(|error| error.to_string()))
+        .clone()
+        .map_err(Into::into)
+}
+
+/// Bake the SDK closure library beside the runtime, reusing an unchanged earlier bake.
+fn bake_sdk_closure(fixture: &DriverFixture) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let project = fixture.root.join("sdk-closure");
     fs::create_dir_all(project.join("src"))?;
     fs::write(project.join("loaf.toml"), SDK_CLOSURE_MANIFEST)?;
@@ -6093,6 +6106,42 @@ def main() -> None:
     println(len(ordinal_key_byte(7)))
 "#,
         b"invalid_length: short\nok 3\nraw input\n1\n",
+    )
+}
+
+/// A stdlib model built with omitted fields takes its published defaults, and a stdlib error type that reaches the
+/// program only through a stdlib method's result keeps its own type; a local model's Option field default works too.
+#[test]
+fn stdlib_defaults_and_implied_types_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "stdlib_defaults_and_implied_types",
+        r#"from std.io import BytesIO, IoError
+
+
+model Entry:
+    pub name: str
+    pub note: Option[str] = None
+
+
+def describe(entry: Entry) -> str:
+    match entry.note:
+        Some(text) => return text
+        None => return "none"
+
+
+def main() -> None:
+    error = IoError(kind="bad", detail="detail")
+    println(f"{error.kind} {error.operation} {error.position}")
+    match BytesIO(b"AB").read_exact(4):
+        Ok(data) => println(len(data))
+        Err(err) => println(err.kind)
+    match BytesIO(b"AB").read_exact(2):
+        Ok(data) => println(len(data))
+        Err(err) => println(err.kind)
+    println(describe(Entry(name="a")))
+    println(describe(Entry(name="b", note=Some("given"))))
+"#,
+        b"bad io -1\nunexpected_eof\n2\nnone\ngiven\n",
     )
 }
 
