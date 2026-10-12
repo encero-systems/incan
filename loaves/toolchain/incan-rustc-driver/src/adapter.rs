@@ -285,17 +285,22 @@ impl rustc_driver::Callbacks for Callbacks {
     }
 }
 
-/// Check a stdlib layout against its crate's metadata: a nongeneric struct whose fields have the plan's names and
-/// types in order. An opaque layout records no fields, so the plan never projects one.
+/// Check a stdlib layout against its crate's metadata at the plan's explicit type arguments, including their bounds.
+/// Fields keep their names and instantiated types in order. An opaque layout records no fields, so the plan never
+/// projects one.
 fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration) -> Result<(), PlanError> {
     let invalid = |reason: &str| PlanError::Invalid {
         function: model.library_item.clone(),
         reason: reason.into(),
     };
     let def = callees::library_item(tcx, &model.library_item, rustc_hir::def::DefKind::Struct)?;
-    if tcx.generics_of(def).count() != 0 {
-        return Err(invalid("stdlib layout struct has generic parameters"));
+    if tcx.generics_of(def).count() != model.library_type_arguments.len() {
+        return Err(invalid(
+            "unsupported stdlib layout type argument count differs from metadata",
+        ));
     }
+    let arguments = callees::arguments(tcx, def, &model.library_type_arguments)?;
+    callees::verify_bounds(tcx, def, arguments)?;
     if model.fields.is_empty() {
         return Ok(());
     }
@@ -304,10 +309,9 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
     if declared.len() != model.fields.len() {
         return Err(invalid("stdlib layout field count differs from metadata"));
     }
-    let identity = rustc_middle::ty::GenericArgs::identity_for_item(tcx, def);
     for (field, planned) in declared.iter().zip(&model.fields) {
         if field.name.as_str() != planned.name
-            || field.ty(tcx, identity).skip_normalization() != crate::types::native_type(tcx, &planned.ty)?
+            || field.ty(tcx, arguments).skip_normalization() != crate::types::native_type(tcx, &planned.ty)?
         {
             return Err(invalid("stdlib layout field differs from metadata"));
         }
