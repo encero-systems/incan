@@ -284,6 +284,31 @@ fn adopted_json_protocols_retain_serde_derives() -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
+/// The builtin derives a model names through `@rust.derive(...)` are retained in legacy's order, ahead of the implicit
+/// ones, so the model is admitted with them; a plain newtype adopting the std.serde.json Serialize trait retains
+/// serde's derive after its automatic ones, as legacy emits it.
+#[test]
+fn rust_derived_builtins_and_newtype_serde_adoption_are_retained() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "from std.serde.json import Serialize\n\n@rust.derive(PartialEq, Eq, Hash)\nmodel Key:\n    id: int\n\ntype Wrapped = newtype str with Serialize\n",
+        &["m", "retained_derives"],
+    )?;
+    let derives = |name: &str| {
+        module
+            .nominal_declarations
+            .iter()
+            .find(|declaration| declaration.name == name)
+            .map(|declaration| declaration.derives.clone())
+            .ok_or(format!("missing retained nominal {name}"))
+    };
+    assert_eq!(
+        derives("Key")?,
+        ["PartialEq", "Eq", "Hash", "Debug", "Clone", "FieldInfo", "IncanClass"]
+    );
+    assert_eq!(derives("Wrapped")?, ["Debug", "Clone", "serde::Serialize"]);
+    Ok(())
+}
+
 /// A plain newtype's slot and construction share the retained owner identity; hooks stay outside this profile.
 #[test]
 fn plain_newtype_retains_checked_tuple_layout() -> Result<(), Box<dyn std::error::Error>> {

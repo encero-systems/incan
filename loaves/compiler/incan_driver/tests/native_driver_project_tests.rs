@@ -7112,3 +7112,53 @@ def main() -> None:
         b"7\napi\n{\"port\":7,\"name\":\"api\"}\n[1,2]\n[3,4,5]\n3\n",
     )
 }
+
+/// A plain newtype adopting the std.serde.json Serialize trait serializes as its wrapped value through serde's
+/// newtype-struct form, pinned to the output legacy records for it.
+#[test]
+fn adopted_serialize_newtype_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_native_case(
+        "adopted_serialize_newtype",
+        r#"from std.serde.json import Serialize
+
+
+type Wrapped = newtype str with Serialize
+type Count = newtype int with Serialize
+
+
+def main() -> None:
+    println(Wrapped("wrapped").to_json())
+    count = Count(3)
+    println(count.to_json())
+    println(count.0)
+"#,
+        b"\"wrapped\"\n3\n3\n",
+    )
+}
+
+/// A model whose Eq and Hash come from `@rust.derive(...)` is a set element as in legacy: equal values collapse, and
+/// membership and insertion hash the whole model.
+#[test]
+fn rust_derived_hashable_model_set_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("rust-derived-hashable-set")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"@rust.derive(PartialEq, Eq, Hash)
+model Key:
+    id: int
+    label: str
+
+def main() -> None:
+    mut seen: set[Key] = {Key(id=1, label="a"), Key(id=1, label="a"), Key(id=2, label="a")}
+    println(len(seen))
+    println(Key(id=2, label="a") in seen)
+    println(Key(id=2, label="b") in seen)
+    seen.add(Key(id=3, label="c"))
+    seen.add(Key(id=1, label="a"))
+    println(len(seen))
+"#,
+    )
+}
