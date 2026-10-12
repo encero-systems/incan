@@ -11621,13 +11621,13 @@ def main() -> None:
     )
 }
 
-/// A captured collection changed by its closure stays refused until its checked callable capability is retained.
+/// Checking rejects changes to captured collection snapshots before either backend can lower the closure.
 #[test]
 fn mutable_list_capture_refusal_is_retained() -> Result<(), Box<dyn std::error::Error>> {
     check_collection_family_refusal(
         "mutable-list-capture",
         "def main() -> None:\n    mut items = [1, 2]\n    mut pick = () => items.pop()\n    println(pick())\n    println(pick())\n",
-        "unsupported Body IR closure capture outside scalars, owned text and models",
+        "Cannot change 'items' inside a closure - the closure captures its own copy of it",
     )
 }
 
