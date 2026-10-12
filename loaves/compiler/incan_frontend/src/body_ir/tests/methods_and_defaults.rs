@@ -4,6 +4,28 @@
 
 use super::*;
 
+/// A model combining owner arguments, an instantiated trait and an alias retains its layout, method frame and trait
+/// implementation once, with canonical targets rather than an alias wrapper body.
+#[test]
+fn retains_model_with_type_parameters_trait_adoption_and_alias() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Read[T]:\n  def read(self) -> T: ...\n\nmodel Cell[T with Clone] with Read[T]:\n  value: T\n  get = read\n  def read(self) -> T:\n    return self.value\n\ndef main() -> None:\n  println(Cell(value=7).get())\n  println(Cell(value=\"text\").get())\n",
+        &["m", "combined_model_shape"],
+    )?;
+    let owner = module.nominal_declarations.first().ok_or("model layout missing")?;
+    assert_eq!(owner.name, "Cell");
+    assert_eq!(owner.type_parameter_count, 1);
+    let read = body_named(&module, "read")?;
+    assert_eq!(read.type_parameters, ["T"]);
+    let implementation = module
+        .trait_implementations
+        .first()
+        .ok_or("trait implementation missing")?;
+    assert_eq!(implementation.owner, owner.canonical);
+    assert!(module.is_well_formed_trait_implementation(implementation));
+    Ok(())
+}
+
 /// Class defaults retain declaration-owned computations with the same omission contract as model defaults.
 #[test]
 fn retains_class_field_default_computations() -> Result<(), Box<dyn std::error::Error>> {

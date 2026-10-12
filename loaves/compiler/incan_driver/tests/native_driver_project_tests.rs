@@ -9698,6 +9698,109 @@ fn enum_dictionary_key_lookup_is_refused() -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
+/// A model's owner arguments, adopted trait arguments and method alias keep the same checked target together as each
+/// does alone; two concrete instantiations must preserve their distinct field and result types.
+#[test]
+fn model_shape_combinations_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("model-shape-combinations")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"trait Read[T]:
+    def read(self) -> T: ...
+
+model Cell[T with Clone] with Read[T]:
+    value: T
+    get = read
+
+    def read(self) -> T:
+        return self.value
+
+def main() -> None:
+    println(Cell(value=7).get())
+    println(Cell(value="text").get())
+"#,
+    )
+}
+
+/// The TOML derive bundle selects serde for the model just as the JSON bundle does, while TOML's compiled library
+/// remains responsible for serialization.
+#[test]
+fn model_toml_derive_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_native_case(
+        "model-toml-derive",
+        r#"from std import toml
+
+@derive(toml)
+model Project:
+    name: str
+
+def main() -> None:
+    match toml.serialize(Project(name="demo")):
+        Ok(text) => println(text.strip())
+        Err(error) => println(error.message())
+"#,
+        b"name = \"demo\"\n",
+    )
+}
+
+/// A descriptor model's frozen fields and constant construction preserve its declared values and comparison.
+#[test]
+fn model_descriptor_derive_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("model-descriptor-derive")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"@derive(Clone, Eq, Descriptor)
+model Version:
+    major: int
+    minor: int
+
+const INITIAL: Version = Version(major=0, minor=1)
+
+def main() -> None:
+    println(f"{INITIAL.major}.{INITIAL.minor}")
+    println(INITIAL == Version(major=0, minor=1))
+"#,
+    )
+}
+
+/// A value enum reached only through another declaration's serde derives stays refused by name until that propagation
+/// has raw-value parity evidence; ordinary enum serde derives must never silently serialize its variant names.
+#[test]
+fn propagated_value_enum_serde_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("propagated-value-enum-serde")?;
+    let source = root.join("payload.incn");
+    fs::write(
+        &source,
+        "from std.serde import json\n\n@derive(json)\nmodel Payload:\n    tag: Tag\n\nenum Tag(str):\n    A = \"alpha\"\n    B = \"beta\"\n\ndef main() -> None:\n    println(Payload(tag=Tag.A).to_json())\n",
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let binary = root.join("native");
+    let refused = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &source,
+        &binary,
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr)
+            .contains("unsupported Body IR serde derive propagation to value enum Tag"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(!binary.exists());
+    Ok(())
+}
+
 /// A serde model's derives reach the enums and newtypes its fields name, directly and through a list, an `Option` and
 /// a dictionary, as legacy propagates them, so the whole payload writes and reads. Pinned to the output legacy records.
 #[test]
