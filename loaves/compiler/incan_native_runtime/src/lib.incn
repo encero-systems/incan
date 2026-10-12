@@ -102,6 +102,8 @@ pub from collections import (
 )
 pub from builtins import power_i64, power_f64, power_f32
 pub from builtins import sum_int, sum_bool, truth_text, truth_list
+pub from builtins import minimum_int, maximum_int, minimum_float, maximum_float
+pub from builtins import minimum_bool, maximum_bool, minimum_text, maximum_text, read_file_text, write_file_text
 pub from builtins import absolute_int, truth_int, truth_float, truth_bool, boolean_and, boolean_or
 from rust::incan_std_core::iter import range as runtime_range
 pub from statics import (

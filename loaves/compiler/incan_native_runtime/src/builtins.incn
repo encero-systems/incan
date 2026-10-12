@@ -43,6 +43,56 @@ pub def sum_bool(values: &list[bool]) -> int:
     return sum(values)
 
 
+pub def minimum_int(values: &list[int]) -> int:
+    """Borrow integer elements through legacy's minimum helper, including its empty-list error."""
+    return min(values)
+
+
+pub def maximum_int(values: &list[int]) -> int:
+    """Borrow integer elements through legacy's maximum helper, including its empty-list error."""
+    return max(values)
+
+
+pub def minimum_float(values: &list[float]) -> float:
+    """Use legacy floating minimum and its NaN and empty-list conventions."""
+    return min(values)
+
+
+pub def maximum_float(values: &list[float]) -> float:
+    """Use legacy floating maximum and its NaN and empty-list conventions."""
+    return max(values)
+
+
+pub def minimum_bool(values: &list[bool]) -> bool:
+    """Order borrowed booleans with false before true, preserving the empty-list error."""
+    return min(values)
+
+
+pub def maximum_bool(values: &list[bool]) -> bool:
+    """Order borrowed booleans with true after false, preserving the empty-list error."""
+    return max(values)
+
+
+pub def minimum_text(values: &list[str]) -> str:
+    """Clone the smallest borrowed string through the same helper as legacy."""
+    return min(values)
+
+
+pub def maximum_text(values: &list[str]) -> str:
+    """Clone the largest borrowed string through the same helper as legacy."""
+    return max(values)
+
+
+pub def read_file_text(path: &str) -> Result[str, str]:
+    """Read UTF-8 text or return the host IO error's Display text, as the legacy builtin does."""
+    return read_file(path)
+
+
+pub def write_file_text(path: &str, content: &str) -> Result[None, str]:
+    """Write text or return the host IO error's Display text, preserving the legacy unit success payload."""
+    return write_file(path, content)
+
+
 pub def truth_text(value: &str) -> bool:
     """Empty text is false; every nonempty string is true."""
     return str_len(value) != 0

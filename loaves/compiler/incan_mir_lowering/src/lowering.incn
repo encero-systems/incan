@@ -858,6 +858,13 @@ def scalar_rvalue(
                 return bit_operation(operator, left_operand, left_type, right_operand, right_type)
             if left_type != right_type:
                 return Err("unsupported Body IR mixed numeric arithmetic without retained coercion")
+            if operator == BinOp.Is or operator == BinOp.IsNot:
+                if left_type != PlanType.Bool:
+                    return Err("unsupported Body IR scalar identity outside booleans")
+                mut comparison = BinaryOp.Equal
+                if operator == BinOp.IsNot:
+                    comparison = BinaryOp.NotEqual
+                return Ok(RvalueKind.Binary(comparison, left_operand, right_operand))
             if left_type == PlanType.Decimal:
                 return Ok(RvalueKind.Use(decimal_comparison(builder, operator, left_operand, right_operand, span)?))
             # A closed type-parameter instance can reach here with text or a nominal where the checker chose a plain
@@ -3583,6 +3590,10 @@ def lower_builtin(
         RustBuiltin.Print => return lower_print(builder, arguments, destination, span)
         RustBuiltin.Sum => return lower_sequence_builtin(builder, builtin, arguments, destination, span)
         RustBuiltin.Sorted => return lower_sequence_builtin(builder, builtin, arguments, destination, span)
+        RustBuiltin.Min => return lower_extrema_builtin(builder, builtin, arguments, destination, span)
+        RustBuiltin.Max => return lower_extrema_builtin(builder, builtin, arguments, destination, span)
+        RustBuiltin.ReadFile => return lower_file_builtin(builder, builtin, arguments, destination, span)
+        RustBuiltin.WriteFile => return lower_file_builtin(builder, builtin, arguments, destination, span)
         RustBuiltin.Zip => return lower_zip_builtin(builder, arguments, destination, span)
         RustBuiltin.Enumerate => return lower_enumerate_builtin(builder, arguments, destination, span)
         RustBuiltin.Len => return lower_list_builtin(builder, arguments, destination, span)
@@ -3592,6 +3603,96 @@ def lower_builtin(
         RustBuiltin.JsonStringify => return lower_model_json_builtin(builder, arguments, destination, span)
         RustBuiltin.Range => return lower_range_builtin(builder, arguments, destination, span)
         _ => return Err(f"unsupported Body IR builtin {builtin:?}")
+
+
+def lower_file_builtin(
+    mut builder: Builder,
+    builtin: &RustBuiltin,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Use checked Result storage for file IO, borrowing text inputs and preserving the string error payload."""
+    mut count = 1
+    mut name = "read_file_text"
+    mut success_type = PlanType.String
+    if builtin == RustBuiltin.WriteFile:
+        count = 2
+        name = "write_file_text"
+        success_type = PlanType.Unit
+    if len(arguments) != count:
+        return Err("unsupported Body IR file builtin arity")
+    mut output = plan_place(0, span)
+    match destination:
+        None => return Err("unsupported Body IR file builtin without result storage")
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+    result = place_type(builder.locals, output)
+    _owner, declaration = carrier_layout(builder, result)?
+    if declaration.carrier != "Result" or len(declaration.variants) != 2:
+        return Err("unsupported Body IR file builtin result carrier")
+    if declaration.variants[0].fields != [success_type] or declaration.variants[1].fields != [PlanType.String]:
+        return Err("unsupported Body IR file builtin result payloads")
+    incoming = builder.owned
+    mut operands: list[Operand] = []
+    mut parameters: list[PlanType] = []
+    for argument in arguments:
+        match argument.as_one():
+            None => return Err("unsupported Body IR spread file builtin argument")
+            Some(value) =>
+                operands.append(borrow_text_operand(builder, value, span)?)
+                parameters.append(PlanType.StringRef)
+    external_call(builder, f"incan_native_runtime::{name}", parameters, result, operands, output, span)
+    drop_borrowed_text_temporaries(builder, incoming, output.local, span)
+    builder.owned.append(output.local)
+    return Ok(None)
+
+
+def lower_extrema_builtin(
+    mut builder: Builder,
+    builtin: &RustBuiltin,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Borrow one homogeneous scalar list and call legacy's copy or clone minimum/maximum implementation."""
+    if len(arguments) != 1:
+        return Err("unsupported Body IR extrema builtin arity")
+    receiver = argument_place(builder, arguments, 0, span)?
+    leaf, depth = require_list_shape(place_type(builder.locals, receiver), "unsupported Body IR extrema builtin type")?
+    if depth != 1:
+        return Err("unsupported Body IR nested extrema list")
+    mut suffix = "int"
+    mut result = PlanType.Int
+    match leaf:
+        ListLeaf.Int => pass
+        ListLeaf.Float =>
+            suffix = "float"
+            result = PlanType.Float
+        ListLeaf.Bool =>
+            suffix = "bool"
+            result = PlanType.Bool
+        ListLeaf.Str =>
+            suffix = "text"
+            result = PlanType.String
+        _ => return Err("unsupported Body IR extrema list element")
+    mut name = "minimum"
+    if builtin == RustBuiltin.Max:
+        name = "maximum"
+    output = call_destination(builder, destination, result, span)?
+    reference = borrowed_list_argument(builder, arguments, 0, false, span)?
+    external_call(
+        builder,
+        f"incan_native_runtime::{name}_{suffix}",
+        [PlanType.ListRef(leaf, depth)],
+        result,
+        [reference],
+        output,
+        span,
+    )
+    if result == PlanType.String:
+        builder.owned.append(output.local)
+    return Ok(None)
 
 
 def lower_range_builtin(
