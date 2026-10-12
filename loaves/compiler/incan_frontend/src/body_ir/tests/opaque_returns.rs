@@ -59,3 +59,32 @@ fn unknown_trait_parameter_remains_opaque() -> Result<(), Box<dyn std::error::Er
     assert!(matches!(&body.return_type, IncanType::Generic { base, .. } if base == "Read"));
     Ok(())
 }
+
+/// Observable producer side effects and discarded opaque results must keep the same concrete return ABI.
+#[test]
+fn discarded_local_trait_producer_retains_carrier() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Read[T]:\n    def value(self) -> T: ...\n\nmodel Reading with Read[int]:\n    number: int\n    def value(self) -> int:\n        return self.number\n\ndef reading(number: int) -> Read[int]:\n    println(number)\n    return Reading(number=number)\n\ndef main() -> None:\n    reading(7)\n    reading(9)\n",
+        &["m", "discarded_opaque"],
+    )?;
+    for name in ["reading", "main"] {
+        let body = body_named(&module, name)?;
+        assert!(
+            !body
+                .locals
+                .iter()
+                .any(|local| matches!(&local.ty, IncanType::Generic { base, .. } if base == "Read")),
+            "{}",
+            body.render_snapshot()
+        );
+        if name == "reading" {
+            assert_eq!(
+                body.return_type,
+                IncanType::Named("Reading".to_owned()),
+                "{}",
+                body.render_snapshot()
+            );
+        }
+    }
+    Ok(())
+}
