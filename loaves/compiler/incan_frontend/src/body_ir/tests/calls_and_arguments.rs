@@ -5,6 +5,25 @@
 
 use super::*;
 
+/// Imported metadata and source signatures give one structural union the same Body IR order, including nested uses.
+#[test]
+fn union_member_order_is_canonical_at_the_body_ir_boundary() {
+    let checker = TypeChecker::new();
+    let source = ResolvedType::Generic("Union".to_string(), vec![ResolvedType::Int, ResolvedType::Str]);
+    let imported = ResolvedType::Generic("Union".to_string(), vec![ResolvedType::Str, ResolvedType::Int]);
+    let retain = |ty: &ResolvedType| parameter_types::checked_semantic_type(ty, checker.type_info());
+    assert_eq!(retain(&source), retain(&imported));
+    let nested_source = ResolvedType::Generic(
+        "Option".to_string(),
+        vec![ResolvedType::Generic("List".to_string(), vec![source])],
+    );
+    let nested_imported = ResolvedType::Generic(
+        "Option".to_string(),
+        vec![ResolvedType::Generic("List".to_string(), vec![imported])],
+    );
+    assert_eq!(retain(&nested_source), retain(&nested_imported));
+}
+
 /// Legacy moves a rest spread of an owned local even when a later read remains; that unbuildable case stays refused.
 #[test]
 fn rest_spread_reused_local_retains_a_named_refusal() -> Result<(), Box<dyn std::error::Error>> {

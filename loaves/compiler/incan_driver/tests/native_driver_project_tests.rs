@@ -18,6 +18,62 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// Prove narrowed union tests and matches retain their physical tag layouts through chains and optional payloads.
+#[test]
+fn narrowed_union_layout_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("narrowed-union-layout")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def chain(value: bool | float | int | str) -> str:
+    if isinstance(value, bool):
+        return "bool"
+    elif isinstance(value, int):
+        return "int"
+    elif isinstance(value, float):
+        return "float"
+    elif isinstance(value, str):
+        return value.upper()
+    return "unknown"
+
+def subset(value: int | bool | str) -> str:
+    if isinstance(value, int):
+        return "int"
+    else:
+        match value:
+            bool(flag) => return f"bool:{flag}"
+            str(text) => return text.upper()
+
+def optional(value: Option[bool | float | int | str]) -> str:
+    if isinstance(value, bool):
+        return "bool"
+    elif isinstance(value, int):
+        return "int"
+    elif isinstance(value, float):
+        return "float"
+    elif isinstance(value, str):
+        return value.upper()
+    return "none"
+
+def main() -> None:
+    println(chain(true))
+    println(chain(4))
+    println(chain(2.5))
+    println(chain("text"))
+    println(subset(3))
+    println(subset(false))
+    println(subset("word"))
+    println(optional(Some(true)))
+    println(optional(Some(7)))
+    println(optional(Some(2.5)))
+    println(optional(Some("value")))
+    println(optional(None))
+"#,
+    )
+}
+
 /// Prove positional and keyword rest packing, bound function values, method calls and empty rest collections against
 /// legacy.
 #[test]
