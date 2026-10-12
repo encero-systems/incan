@@ -975,6 +975,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let hir_span_value = hir_span(span);
+        if let Some(value) = self.lower_checked_length_call(args, span, scope, out) {
+            return value;
+        }
         if self.type_info.resolved_builtin_call(span) == Some(BuiltinFnId::IsInstance) {
             return self.lower_checked_isinstance_call(type_args, args, span, scope, out);
         }
@@ -1322,6 +1325,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> Option<bir::Operand> {
+        if let Some(value) = self.lower_checked_length_call(args, span, scope, out) {
+            return Some(value);
+        }
         let builtin = self.type_info.resolved_builtin_call(span)?;
         if builtin == BuiltinFnId::IsInstance {
             return None;
@@ -1367,6 +1373,31 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             false,
             out,
         ))
+    }
+
+    /// Preserve the checker's selected length hook as an ordinary method call, evaluating its receiver once.
+    ///
+    /// Builtin lists and strings have no user operator selection and retain their builtin calls. An imported model's
+    /// hook keeps the checked canonical method identity so the SDK call collector can retain its signature.
+    fn lower_checked_length_call(
+        &mut self,
+        args: &[ast::CallArg],
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<bir::Operand> {
+        if self.type_info.resolved_builtin_call(span) != Some(BuiltinFnId::Len) {
+            return None;
+        }
+        let dispatch = self.type_info.resolved_operator_call(span)?;
+        if dispatch.kind != ResolvedOperatorKind::Len {
+            return None;
+        }
+        let method = dispatch.method.clone();
+        let [ast::CallArg::Positional(receiver) | ast::CallArg::Named(_, receiver)] = args else {
+            return None;
+        };
+        Some(self.lower_operator_dispatch(&method, receiver, &[], self.resolve_ty(span), span, scope, out))
     }
 
     /// Lower `list.repeat(value, count)` as the [`bir::HelperOp::ListRepeat`] call the typechecker resolved.
