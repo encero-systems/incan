@@ -4,6 +4,40 @@
 
 use super::*;
 
+/// A deferred read of `self` belongs to an explicit captured local, never the enclosing receiver frame.
+#[test]
+fn closure_captures_the_receiver_in_its_own_local() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "class Greeter:\n  pub name: str\n  def describe(self) -> str:\n    render: () -> str = () => self.name\n    return render() + render() + self.name\n";
+    let module = build(source, &["m", "closure_receiver"])?;
+    let body = body_named(&module, "describe")?;
+    let (captures, closure) = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue:
+                    bir::Rvalue::Closure {
+                        captured_operands,
+                        body,
+                        ..
+                    },
+                ..
+            } => Some((captured_operands, body)),
+            _ => None,
+        })
+        .ok_or("missing receiver closure")?;
+    assert_eq!(captures.len(), 1, "{}", module.render_snapshot());
+    assert_eq!(closure.capture_locals.len(), 1);
+    let captured = closure.capture_locals[0];
+    assert_eq!(body.locals[captured.index()].origin, bir::LocalOrigin::Captured);
+    let bir::Operand::Place(read) = &closure.result else {
+        return Err("receiver field result must read a place".into());
+    };
+    assert_eq!(read.place.local_id(), Some(captured));
+    Ok(())
+}
+
 /// Preserve the checker's `Fn` representation choices separately from the function-type call surface.
 #[test]
 fn callable_signatures_retain_closure_holding_parameters_and_returns() -> Result<(), Box<dyn std::error::Error>> {
