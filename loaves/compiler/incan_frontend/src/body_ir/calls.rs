@@ -990,6 +990,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let hir_span_value = hir_span(span);
+        if let Some(value) = self.lower_testing_raises_call(callee, type_args, args, span, scope, out) {
+            return value;
+        }
         if let Some(value) = self.lower_checked_length_call(args, span, scope, out) {
             return value;
         }

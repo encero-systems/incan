@@ -6,14 +6,18 @@ from rust::incan_semantics_core::body_ir import (
     Constant as RustConstant,
     Pattern as RustPattern,
 )
+from rust::incan_lang::lang::errors import as_str as runtime_error_name
+from rust::incan_lang::errors import ErrorKind
 from pub::incan_mir_plan import PlanType, SourceSpan, TerminatorKind, Constant, Operand
+from pub::incan_mir_plan import assign as plan_assign
 from pub::incan_mir_plan import place as plan_place
 from frame import external_call, literal, place_type
 from text_plan import owned_literal
 from lowering import scalar_operand, display_operand, scalar_place, bind_enum_payload
 from options import carrier_layout, intrinsic_pattern, variant_condition
 from patterns import has_refutable_payload
-from frame import Builder, read_place, temporary
+from frame import Builder, read_place, temporary, operand_type
+from closures import function_assignment
 
 
 pub def lower_assertion(
@@ -22,13 +26,15 @@ pub def lower_assertion(
     message: &Option[RustOperand],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Branch before materializing failure text; raises assertions remain refused."""
+    """Branch before materializing failure text, or invoke a retained unit callable inside the unwind boundary."""
     mut operand = literal(Constant.Bool(false), span)
     match kind:
         AssertionKind.Condition(cond=condition) =>
             operand = scalar_operand(builder, condition, span)?
         AssertionKind.Pattern(scrutinee=scrutinee, pattern=pattern) =>
             return lower_pattern_assertion(builder, scrutinee, pattern, message, span)
+        AssertionKind.Raises(call=call, expected_error=expected) =>
+            return lower_raises_assertion(builder, call, expected, message, span)
         _ => return Err("unsupported Body IR raises Assert")
     # Body IR's lazy-message failure block ends in `assert false`; it has no success edge or owner merge.
     match kind:
@@ -44,6 +50,49 @@ pub def lower_assertion(
     lower_failure(builder, message, span)?
     builder.current = passed
     builder.owned = incoming
+    return Ok(None)
+
+
+def lower_raises_assertion(
+    mut builder: Builder,
+    call: &RustOperand,
+    expected: ErrorKind,
+    message: &Option[RustOperand],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Reify a checked zero-argument unit function and retain only effect-free literal messages."""
+    mut text = ""
+    match message:
+        Some(RustOperand.Constant(RustConstant.Str(value))) =>
+            text = str(value)
+        Some(_) => return Err("unsupported Body IR computed raises Assert message")
+        None => pass
+    operand = scalar_operand(builder, call, span)?
+    pointer_type = PlanType.FunctionPointer([PlanType.Unit])
+    source_type = operand_type(builder, operand)?
+    match source_type:
+        PlanType.FunctionItem(_name, signature) =>
+            if signature != [PlanType.Unit]:
+                return Err("unsupported Body IR raises Assert callable outside zero-argument unit functions")
+        PlanType.FunctionPointer(signature) =>
+            if signature != [PlanType.Unit]:
+                return Err("unsupported Body IR raises Assert callable outside zero-argument unit functions")
+        _ => return Err("unsupported Body IR raises Assert without a deferred function")
+    ty, operation = function_assignment(pointer_type, source_type, operand, true)?
+    pointer = temporary(builder, ty, span)
+    builder.emit(plan_assign(pointer, operation, span))
+    error_name = owned_literal(builder, str(runtime_error_name(expected)), span)
+    failure_message = owned_literal(builder, text, span)
+    destination = temporary(builder, PlanType.Unit, span)
+    external_call(
+        builder,
+        "incan_native_runtime::assert_raises_deferred",
+        [pointer_type, PlanType.String, PlanType.String],
+        PlanType.Unit,
+        [read_place(pointer, false, span), read_place(error_name, true, span), read_place(failure_message, true, span)],
+        destination,
+        span,
+    )
     return Ok(None)
 
 

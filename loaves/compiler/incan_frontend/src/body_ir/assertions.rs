@@ -1,6 +1,9 @@
 //! Lowering for `assert` forms and their explicit panic facts.
 
+use crate::typechecker::stdlib_loader::StdlibAstCache;
 use incan_lang::lang::errors as runtime_errors;
+use incan_lang::lang::testing::{self, TestingAssertHelperId};
+use incan_semantics_core::SymbolOrigin;
 
 use super::match_::PatternReadScope;
 use super::refusals::*;
@@ -175,13 +178,99 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     );
                     return None;
                 };
-                let call = self.lower_expr_to_operand(call, scope, out);
+                let call = self.lower_deferred_raises_call(call, scope, out);
                 Some(bir::AssertionKind::Raises { call, expected_error })
             }
         }
     }
 
-    // ---- Callable defaults ----
+    /// Retain a checked zero-argument unit function as an item instead of executing it before its unwind boundary.
+    /// Other call shapes keep their existing representation and remain refused by the direct assertion consumer.
+    fn lower_deferred_raises_call(
+        &mut self,
+        call: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        if let ast::Expr::Call(callee, type_args, args) = &call.node
+            && type_args.is_empty()
+            && args.is_empty()
+            && matches!(self.resolve_ty(callee.span), IncanType::Function { params, return_type }
+                if params.is_empty() && *return_type == IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Unit))
+            && self
+                .type_info
+                .resolved_identity(callee.span)
+                .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Function)
+        {
+            return self.lower_expr_to_operand(callee, scope, out);
+        }
+        self.lower_expr_to_operand(call, scope, out)
+    }
+
+    /// Normalize only the canonical SDK testing helper into the same deferred assertion as the language form.
+    /// Explicit positional function and literal-message arguments need no SDK default binding or deferred effects.
+    pub(super) fn lower_testing_raises_call(
+        &mut self,
+        callee: &ast::Spanned<ast::Expr>,
+        type_args: &[ast::Spanned<ast::Type>],
+        args: &[ast::CallArg],
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<bir::Operand> {
+        let identity = self.type_info.resolved_identity(callee.span)?;
+        if !is_testing_raises_helper(identity) {
+            return None;
+        }
+        let [error_type] = type_args else {
+            return None;
+        };
+        let expected_error = expected_runtime_error(&error_type.node)?;
+        let [ast::CallArg::Positional(block), ast::CallArg::Positional(message)] = args else {
+            return None;
+        };
+        let ast::Expr::Literal(ast::Literal::String(text)) = &message.node else {
+            return Some(self.unsupported_operand(
+                "computed raises Assert message".to_owned(),
+                scope,
+                hir_span(span),
+                out,
+            ));
+        };
+        let call = self.lower_expr_to_operand(block, scope, out);
+        let span = hir_span(span);
+        self.panic_facts.push(bir::PanicFact {
+            span,
+            reason: bir::PanicReason::AssertFailure,
+        });
+        self.record_runtime_requirement(AbiV0RuntimeRequirement::PanicStrategy);
+        out.push(bir::Statement {
+            kind: bir::StatementKind::Assert {
+                kind: bir::AssertionKind::Raises { call, expected_error },
+                message: Some(bir::Operand::Constant(bir::Constant::Str(text.clone()))),
+                may_panic: true,
+            },
+            span,
+        });
+        Some(bir::Operand::Constant(bir::Constant::Unit))
+    }
+}
+
+/// Require the selected stdlib declaration's full source identity, so aliases work and same-spelled user calls do not.
+fn is_testing_raises_helper(identity: &CanonicalSymbolId) -> bool {
+    let Some(published) = super::library_nominals::sdk_identity(identity) else {
+        return false;
+    };
+    let SymbolOrigin::Package { module_path, .. } = &published.origin else {
+        return false;
+    };
+    let path = std::iter::once("std".to_owned())
+        .chain(module_path.iter().cloned())
+        .chain(std::iter::once(published.declaration_name.clone()))
+        .collect::<Vec<_>>();
+    published.kind == SemanticSourceTargetKind::Function
+        && testing::is_assert_helper_std_path(&path, TestingAssertHelperId::AssertRaises)
+        && StdlibAstCache::new().callable_source_identity(&published).is_some()
 }
 
 /// Resolve the type named after `raises` to its builtin-exception identity, or `None` when it is not one.
