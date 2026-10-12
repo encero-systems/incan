@@ -8286,3 +8286,50 @@ fn model_dictionary_key_lookup_is_refused() -> Result<(), Box<dyn std::error::Er
     assert!(!binary.exists());
     Ok(())
 }
+
+/// Static dictionaries and sets keep the entries an index write, `insert` and `add` commit across calls, and every
+/// later read sees them.
+#[test]
+fn static_hashed_collection_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("static-hashed-collections")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"static counts: dict[str, int] = {}
+static totals: dict[str, int] = {"start": 1}
+static seen: set[int] = Set()
+
+def record(name: str) -> None:
+    counts[name] = counts.get(name, 0) + 1
+
+def lookup(name: str) -> int:
+    match counts.get(name):
+        Some(value) => return value
+        None => return -1
+
+def mark(value: int) -> None:
+    seen.add(value)
+
+def main() -> None:
+    record("a")
+    record("a")
+    record("b")
+    println(counts["a"])
+    println(counts.get("b", 0))
+    println(counts.get("missing", 0))
+    println(lookup("a"))
+    println(lookup("z"))
+    println(len(counts))
+    totals.insert("next", 2)
+    println(totals["start"] + totals["next"])
+    mark(4)
+    mark(4)
+    mark(6)
+    println(len(seen))
+    println(seen.contains(4))
+    println(seen.contains(5))
+"#,
+    )
+}
