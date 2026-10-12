@@ -94,9 +94,9 @@ pub def lower_model_declarations(module: &BodyIrModule, file: str, intrinsics: l
             # The SDK crate already derives and implements everything its layout carries.
             derives = []
         else:
-            # Only a plain newtype would take a propagated serde derive; another reached nominal keeps its own derives.
+            # Only a plain newtype takes a propagated serde derive; another reached nominal keeps its own derives.
             if len(declaration.fields) == 1 and str(declaration.fields[0]) == "0":
-                require_serde_derives(derives, str(declaration.name), reached)?
+                derives = with_serde_derives(derives, str(declaration.name), reached)
             serde_names = serde_field_names(declaration)
             for slot in range(len(declaration.fields)):
                 fields.append(
@@ -134,11 +134,10 @@ pub def serde_propagation(module: &BodyIrModule) -> Result[tuple[list[str], list
     the names reached under Serialize, then those reached under Deserialize.
 
     Legacy adds a model's serde derives to each source enum and plain newtype its field types name, so the generated
-    derive compiles without annotating every nested type; the direct route refuses such a declaration that lacks the
-    derive until it propagates them too. Field types are walked through lists, sets, dictionaries, tuples, `Option` and
-    `Result` carriers and other type arguments, one level deep: a reached model's own fields propagate nothing. Legacy
-    propagates within one module's declarations, so a reached declaration of another module takes nothing. A stdlib
-    layout's derives belong to its crate, so it neither propagates nor receives a derive.
+    derive compiles without annotating every nested type. Field types are walked through lists, sets, dictionaries,
+    tuples, `Option` and `Result` carriers and other type arguments, one level deep: a reached model's own fields
+    propagate nothing. Legacy propagates within one module's declarations, so a reached declaration of another module
+    takes nothing. A stdlib layout's derives belong to its crate, so it neither propagates nor receives a derive.
     """
     mut serialize: list[str] = []
     mut deserialize: list[str] = []
@@ -198,17 +197,15 @@ def reached_names(ty: &RustType, names: list[str]) -> Result[list[str], str]:
     return Ok(result)
 
 
-pub def require_serde_derives(derives: list[str], name: str, reached: tuple[list[str], list[str]]) -> Result[None, str]:
-    """
-    Refuse a source enum or plain newtype that a serde-deriving declaration's fields hold without its own derive of
-    that serde trait: legacy adds the derive, which the direct route does not propagate yet.
-    """
+pub def with_serde_derives(derives: list[str], name: str, reached: tuple[list[str], list[str]]) -> list[str]:
+    """Append each serde derive a serde-deriving declaration's fields require of `name`, unless it is already derived."""
     serialize, deserialize = reached
-    if name in serialize and "serde::Serialize" not in derives:
-        return Err(f"unsupported Body IR serde derive propagation to {name}")
-    if name in deserialize and "serde::Deserialize" not in derives:
-        return Err(f"unsupported Body IR serde derive propagation to {name}")
-    return Ok(None)
+    mut result = derives
+    if name in serialize and "serde::Serialize" not in result:
+        result.append("serde::Serialize")
+    if name in deserialize and "serde::Deserialize" not in result:
+        result.append("serde::Deserialize")
+    return result
 
 
 def library_fields(

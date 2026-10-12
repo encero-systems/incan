@@ -4,7 +4,7 @@ use crate::error::PlanError;
 use crate::identity::{self, IdentityError};
 use crate::plan::{Plan, PlanType};
 use crate::spans::Sources;
-use crate::{bodies, callees, declarations, types, union_debug, validation};
+use crate::{bodies, callees, declarations, types, union_debug, validation, value_enum_serde};
 use rustc_ast as ast;
 use rustc_data_structures::steal::Steal;
 use rustc_hir::def_id::LocalDefId;
@@ -153,18 +153,9 @@ impl rustc_driver::Callbacks for Callbacks {
                 Ok(span) => span,
                 Err(error) => compiler.sess.dcx().fatal(error.to_string()),
             };
-            let mut item = declarations::enum_declaration(value, span);
-            for derive in value.derives.iter().filter(|_| value.carrier.is_empty()) {
-                item.attrs.push(declarations::derive_attribute(
-                    &compiler.sess.psess.attr_id_generator,
-                    derive,
-                    span,
-                ));
-            }
-            krate.items.push(item);
-            if value.member_debug {
-                krate.items.push(union_debug::member_debug_impl(value, span));
-            }
+            krate
+                .items
+                .extend(enum_items(value, &compiler.sess.psess.attr_id_generator, span));
         }
         for model in &self.plan.models {
             let span = match sources.span(&model.span) {
@@ -351,6 +342,39 @@ fn verify_library_enum(tcx: TyCtxt<'_>, value: &crate::plan::EnumDeclaration) ->
         }
     }
     Ok(())
+}
+
+/// One planned enum as it is injected: its declaration with derive attributes, then the impls legacy writes by hand.
+///
+/// A union prints the member it holds through its own `Debug`; a value enum's serde form is its raw values, so its
+/// serde derives become impls beside it instead of attributes, while any other enum derives serde as legacy does.
+fn enum_items(
+    value: &crate::plan::EnumDeclaration,
+    generator: &ast::attr::AttrIdGenerator,
+    span: rustc_span::Span,
+) -> Vec<Box<ast::Item>> {
+    let value_enum = !value.raw_kind.is_empty();
+    let mut item = declarations::enum_declaration(value, span);
+    if value.carrier.is_empty() {
+        for derive in value
+            .derives
+            .iter()
+            .filter(|derive| !(value_enum && derive.starts_with("serde::")))
+        {
+            item.attrs.push(declarations::derive_attribute(generator, derive, span));
+        }
+    }
+    let mut items = vec![item];
+    if value.member_debug {
+        items.push(union_debug::member_debug_impl(value, span));
+    }
+    if value_enum && value.derives.iter().any(|derive| derive == "serde::Serialize") {
+        items.push(value_enum_serde::serialize_impl(value, span));
+    }
+    if value_enum && value.derives.iter().any(|derive| derive == "serde::Deserialize") {
+        items.push(value_enum_serde::deserialize_impl(value, span));
+    }
+    items
 }
 
 /// Give each generic external declared without type arguments its inferred ones, and its calls the matching

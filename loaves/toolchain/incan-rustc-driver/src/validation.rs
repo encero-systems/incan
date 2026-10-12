@@ -1953,17 +1953,21 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
             }
         }
         if (declaration.member_debug && !member_debug_layout(declaration))
+            || (!declaration.raw_kind.is_empty() && !raw_value_layout(declaration))
             || !identifier(&declaration.name)
             || !names.insert(&declaration.name)
             || declaration.variants.is_empty()
             || !valid_library_item(&declaration.library_item)
             || (!declaration.library_item.is_empty()
-                && (!declaration.carrier.is_empty() || !declaration.derives.is_empty()))
-            || declaration.derives.iter().any(|name| {
-                !matches!(
-                    name.as_str(),
-                    "Debug" | "Clone" | "Copy" | "PartialEq" | "Eq" | "PartialOrd" | "Ord" | "Hash"
-                )
+                && (!declaration.carrier.is_empty()
+                    || !declaration.derives.is_empty()
+                    || !declaration.raw_kind.is_empty()))
+            || declaration.derives.iter().any(|name| match name.as_str() {
+                "Debug" | "Clone" | "Copy" | "PartialEq" | "Eq" | "PartialOrd" | "Ord" | "Hash" => false,
+                "serde::Serialize" | "serde::Deserialize" => {
+                    !declaration.carrier.is_empty() || declaration.member_debug
+                }
+                _ => true,
             })
         {
             return Err(error());
@@ -2012,6 +2016,22 @@ fn validate_statics(plan: &Plan) -> Result<(), PlanError> {
         }
     }
     Ok(())
+}
+
+/// Admit raw values only on a value enum layout: an ordinary unit-only enum with one distinct raw value per variant,
+/// each an `i64` for an integer backing, which its serde impls write and read.
+fn raw_value_layout(declaration: &crate::plan::EnumDeclaration) -> bool {
+    let kind_valid = match declaration.raw_kind.as_str() {
+        "str" => true,
+        "int" => declaration.raw_values.iter().all(|raw| raw.parse::<i64>().is_ok()),
+        _ => false,
+    };
+    kind_valid
+        && declaration.carrier.is_empty()
+        && !declaration.member_debug
+        && declaration.raw_values.len() == declaration.variants.len()
+        && declaration.variants.iter().all(|variant| variant.fields.is_empty())
+        && declaration.raw_values.iter().collect::<BTreeSet<_>>().len() == declaration.raw_values.len()
 }
 
 /// Reject infinitely sized by-value nominal/enum layouts while allowing cycles behind collections and references.

@@ -484,6 +484,12 @@ fn validate_declarations(
                 if !incan_frontend::body_ir::is_direct_native_enum(value) {
                     return Err(format!("unsupported source Enum {} on the native route", value.name));
                 }
+                if !incan_frontend::body_ir::has_direct_native_enum_derives(value, type_info) {
+                    return Err(format!(
+                        "unsupported source Enum derives on {} on the native route",
+                        value.name
+                    ));
+                }
                 validate_generic_adoptions(&value.traits, program, type_info)?;
                 continue;
             }

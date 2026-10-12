@@ -983,7 +983,8 @@ pub struct MutableRustTypeArgumentProjection {
 pub struct DeclarationArtifacts {
     /// Checked payload types keyed by their source annotation span; direct lowering never resolves raw annotations.
     pub enum_payload_types: HashMap<(usize, usize), ResolvedType>,
-    /// Explicit and automatic native derives selected by checking for each source enum.
+    /// Explicit and automatic native derives selected by checking for each source enum; a std.serde.json protocol
+    /// selects serde's derive path, as for models.
     pub enum_derives: HashMap<String, Vec<String>>,
     /// Explicit builtin, canonical serde, and implicit native derives selected for source models, in legacy emission
     /// order, except that the builtins a `@rust.derive(...)` names follow the `@derive(...)` selections whichever

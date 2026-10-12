@@ -3439,6 +3439,26 @@ impl TypeChecker {
     /// and the automatic Debug, Clone, FieldInfo and IncanClass derives every model and class receives come last.
     /// Derived Display stays a semantic selection that consumers must not emit as a Rust macro.
     fn native_derive_selection(&self, derives: &[String], declared: Vec<String>) -> Vec<String> {
+        let mut native_derives = self.json_derive_selections(derives);
+        for name in declared {
+            if !native_derives.contains(&name) {
+                native_derives.push(name);
+            }
+        }
+        Self::append_implied_derives(&mut native_derives);
+        for derive in derives::plain_model_derives() {
+            if !native_derives.iter().any(|name| name == derive) {
+                native_derives.push(derive.to_owned());
+            }
+        }
+        native_derives
+    }
+
+    /// Select the native derives a type's `@derive(...)` names stand for, in order and without repeats.
+    ///
+    /// A std.serde.json protocol, named by its trait or through the module, selects serde's own derive path, as legacy
+    /// derive emission does; every other selection keeps its name.
+    fn json_derive_selections(&self, derives: &[String]) -> Vec<String> {
         let mut native_derives = Vec::new();
         for derive in derives {
             let selected = if self
@@ -3463,17 +3483,6 @@ impl TypeChecker {
                 if !native_derives.contains(&name) {
                     native_derives.push(name);
                 }
-            }
-        }
-        for name in declared {
-            if !native_derives.contains(&name) {
-                native_derives.push(name);
-            }
-        }
-        Self::append_implied_derives(&mut native_derives);
-        for derive in derives::plain_model_derives() {
-            if !native_derives.iter().any(|name| name == derive) {
-                native_derives.push(derive.to_owned());
             }
         }
         native_derives
@@ -5027,7 +5036,7 @@ impl TypeChecker {
             self.check_method_with_owner_type_params(&method.node, method.span, &en.name, &en.type_params);
         }
         if let Some(TypeInfo::Enum(info)) = self.lookup_type_info(&en.name).cloned() {
-            let mut native_derives = derives.clone();
+            let mut native_derives = self.json_derive_selections(&derives);
             // A derive brings the derives it implies, as a model's does: a derived `Ord` needs `PartialOrd` natively.
             Self::append_implied_derives(&mut native_derives);
             for automatic in ["Debug", "Clone"] {

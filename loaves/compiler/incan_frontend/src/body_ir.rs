@@ -823,12 +823,45 @@ pub fn is_direct_native_enum(value: &ast::EnumDecl) -> bool {
             && value
                 .decorators
                 .iter()
-                .all(|decorator| decorator.node.name == "derive" || is_lint_suppression_decorator(&decorator.node)))
+                .all(|decorator| is_bare_derive(&decorator.node) || is_lint_suppression_decorator(&decorator.node)))
+}
+
+/// Whether checking selected only derives the native route realizes for a source enum: Rust's builtin derives and
+/// serde's, which a value enum writes through its raw values as legacy does and any other enum derives.
+///
+/// The enum predicates admit any bare `@derive(...)`; this checked selection decides which of those reach a plan.
+pub fn has_direct_native_enum_derives(value: &ast::EnumDecl, type_info: &TypeCheckInfo) -> bool {
+    type_info
+        .declarations
+        .enum_derives
+        .get(&value.name)
+        .is_some_and(|names| {
+            names.iter().all(|name| {
+                matches!(
+                    name.as_str(),
+                    "Debug"
+                        | "Clone"
+                        | "Copy"
+                        | "PartialEq"
+                        | "Eq"
+                        | "PartialOrd"
+                        | "Ord"
+                        | "Hash"
+                        | "serde::Serialize"
+                        | "serde::Deserialize"
+                )
+            })
+        })
+}
+
+/// The plain `@derive(...)` decorator, not a qualified or Rust derive spelled with the same final name.
+fn is_bare_derive(decorator: &ast::Decorator) -> bool {
+    decorator.name == "derive" && decorator.path.segments == ["derive"] && decorator.type_args.is_empty()
 }
 
 /// Determine whether an enum carries the narrow source-local RFC 032 scalar declaration fact.
 ///
-/// Builtin derives use the checked native enum layout alongside this scalar registry. This predicate excludes aliases
+/// The checked native enum layout and its derives accompany this scalar registry. This predicate excludes aliases
 /// and other behavior-bearing forms even when they are source-valid:
 /// the direct executor may validate only a canonical literal member and the compiler-provided `.value()` extraction,
 /// not trait dispatch, custom methods, alias canonicalization, generic substitution, or payload construction.
@@ -836,7 +869,7 @@ pub fn is_direct_replacement_value_enum(enum_decl: &ast::EnumDecl) -> bool {
     enum_decl
         .decorators
         .iter()
-        .all(|decorator| is_direct_replacement_model_derive(&decorator.node))
+        .all(|decorator| is_bare_derive(&decorator.node))
         && enum_decl.type_params.is_empty()
         && enum_decl.value_type.is_some()
         && enum_decl.traits.is_empty()

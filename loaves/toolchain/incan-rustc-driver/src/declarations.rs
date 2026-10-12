@@ -672,6 +672,9 @@ fn type_tokens(ty: &ast::Ty) -> Vec<ast::tokenstream::AttrTokenTree> {
                     ));
                 }
                 tokens.push(name_token(segment.ident.name.as_str(), ty.span));
+                if let Some(arguments) = &segment.args {
+                    tokens.extend(generic_argument_tokens(arguments, ty.span));
+                }
             }
             tokens
         }
@@ -693,6 +696,30 @@ fn type_tokens(ty: &ast::Ty) -> Vec<ast::tokenstream::AttrTokenTree> {
         }
         _ => unreachable!("the admitted AST type builder emits only paths and tuples"),
     }
+}
+
+/// Mirror a path segment's type arguments (`Vec<Tag>`, `HashMap<String, i64>`) into derive input tokens.
+///
+/// Without them a derive would name a generic struct bare and fail to compile; the admitted type builder spells only
+/// type arguments, never lifetimes or constants.
+fn generic_argument_tokens(arguments: &ast::GenericArgs, span: Span) -> Vec<ast::tokenstream::AttrTokenTree> {
+    use ast::token::{Token, TokenKind};
+    use ast::tokenstream::{AttrTokenTree, Spacing};
+    let ast::GenericArgs::AngleBracketed(angle) = arguments else {
+        unreachable!("the admitted AST type builder emits only angle-bracketed type arguments")
+    };
+    let mut tokens = vec![AttrTokenTree::Token(Token::new(TokenKind::Lt, span), Spacing::Alone)];
+    for (index, argument) in angle.args.iter().enumerate() {
+        if index != 0 {
+            tokens.push(AttrTokenTree::Token(Token::new(TokenKind::Comma, span), Spacing::Alone));
+        }
+        match argument {
+            ast::AngleBracketedArg::Arg(ast::GenericArg::Type(argument)) => tokens.extend(type_tokens(argument)),
+            _ => unreachable!("the admitted AST type builder emits only type arguments"),
+        }
+    }
+    tokens.push(AttrTokenTree::Token(Token::new(TokenKind::Gt, span), Spacing::Alone));
+    tokens
 }
 
 /// Convert checked visibility without widening private fields.

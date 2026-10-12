@@ -4,9 +4,10 @@
 //! arm therefore delegates to the held member's own `Debug`, exactly as legacy's generated impl does, where
 //! `#[derive(Debug)]` would print `V0(7)`.
 
+use crate::ast_build::{binding, expression, global_path, ident, inherited, local, path_ty, self_value};
 use crate::plan::EnumDeclaration;
 use rustc_ast as ast;
-use rustc_span::{Ident, Span, Symbol, kw, respan};
+use rustc_span::{Ident, Span, kw, respan};
 use thin_vec::{ThinVec, thin_vec};
 
 /// Build `impl ::core::fmt::Debug for Union { fn fmt(&self, formatter) { match self { Self::Vn(value) => ...  } } }`.
@@ -141,78 +142,4 @@ fn member_arm(variant: &str, span: Span) -> ast::Arm {
         id: ast::DUMMY_NODE_ID,
         is_placeholder: false,
     }
-}
-
-/// The receiver `self` as an expression.
-fn self_value(span: Span) -> Box<ast::Expr> {
-    expression(
-        ast::ExprKind::Path(None, ast::Path::from_ident(Ident::new(kw::SelfLower, span))),
-        span,
-    )
-}
-
-/// A read of one local binding.
-fn local(name: &str, span: Span) -> Box<ast::Expr> {
-    expression(
-        ast::ExprKind::Path(None, ast::Path::from_ident(ident(name, span))),
-        span,
-    )
-}
-
-/// A by-value binding pattern for one name.
-fn binding(name: &str, span: Span) -> Box<ast::Pat> {
-    Box::new(ast::Pat {
-        id: ast::DUMMY_NODE_ID,
-        kind: ast::PatKind::Ident(ast::BindingMode::NONE, ident(name, span), None),
-        span,
-        tokens: None,
-    })
-}
-
-/// A path rooted at the crate graph (`::core::...`), so no item of the generated crate can shadow it.
-fn global_path(segments: &[&str], span: Span) -> ast::Path {
-    let mut path = ast::Path {
-        span,
-        segments: thin_vec![ast::PathSegment::path_root(span)],
-        tokens: None,
-    };
-    for segment in segments {
-        path.segments.push(ast::PathSegment::from_ident(ident(segment, span)));
-    }
-    path
-}
-
-/// A type named by a path.
-fn path_ty(path: ast::Path, span: Span) -> Box<ast::Ty> {
-    Box::new(ast::Ty {
-        id: ast::DUMMY_NODE_ID,
-        kind: ast::TyKind::Path(None, path),
-        span,
-        tokens: None,
-    })
-}
-
-/// An expression node without attributes or source tokens.
-fn expression(kind: ast::ExprKind, span: Span) -> Box<ast::Expr> {
-    Box::new(ast::Expr {
-        id: ast::DUMMY_NODE_ID,
-        kind,
-        span,
-        attrs: ThinVec::new(),
-        tokens: None,
-    })
-}
-
-/// The inherited visibility a trait implementation and its items must carry.
-fn inherited(span: Span) -> ast::Visibility {
-    ast::Visibility {
-        kind: ast::VisibilityKind::Inherited,
-        span,
-        tokens: None,
-    }
-}
-
-/// An identifier for a name the plan admitted.
-fn ident(name: &str, span: Span) -> Ident {
-    Ident::new(Symbol::intern(name), span)
 }

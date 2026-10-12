@@ -10,11 +10,13 @@ from rust::incan_semantics_core::body_ir import (
     Pattern as RustPattern,
     ArgumentBinding,
     OwnershipFact,
+    Constant as RustConstant,
+    ValueEnumBacking,
 )
 from pub::incan_mir_plan import EnumDeclaration, EnumVariant, PlanType, SourceSpan
 from models import model_type as plain_model_type
 from layout_types import native_source_type as retained_source_type
-from decls import library_enum_item, serde_propagation, require_serde_derives
+from decls import library_enum_item, serde_propagation, with_serde_derives
 
 
 pub def enum_type(declarations: list[RustEnumDeclaration], ty: &RustType) -> Option[PlanType]:
@@ -164,8 +166,8 @@ pub def lower_enum_declarations(
     """
     Copy checked source-order variants and derives into the native declaration plan.
 
-    A source enum that a serde-deriving declaration's fields hold without its own serde derive stays refused: legacy
-    propagates the derive to it, which the direct route does not do yet.
+    A source enum also takes the serde derives a serde-deriving declaration's fields require of it, as legacy
+    propagates them; a value enum keeps its raw values, which its serde form writes and reads as legacy's does.
     """
     reached = serde_propagation(module)?
     mut declarations: list[EnumDeclaration] = []
@@ -178,11 +180,10 @@ pub def lower_enum_declarations(
             variants.append(EnumVariant(name=str(variant.name), fields=fields))
         # A stdlib enum is the SDK crate's own type; its derives and storage belong to that crate.
         item = library_enum_item(declaration)
-        mut derives = declaration.derives
+        mut derives = with_serde_derives(declaration.derives, str(declaration.name), reached)
         if item != "":
             derives = []
-        else:
-            require_serde_derives(declaration.derives, str(declaration.name), reached)?
+        raw_kind, raw_values = value_enum_raw_values(module, declaration)?
         declarations.append(
             EnumDeclaration(
                 name=str(declaration.name),
@@ -191,9 +192,31 @@ pub def lower_enum_declarations(
                 derives=derives,
                 span=SourceSpan(file=file, line=1, column=1),
                 library_item=item,
+                raw_kind=raw_kind,
+                raw_values=raw_values,
             ),
         )
     return Ok(declarations)
+
+
+def value_enum_raw_values(
+    module: &RustBodyIrModule,
+    declaration: &RustEnumDeclaration,
+) -> Result[tuple[str, list[str]], str]:
+    """A value enum's backing and its raw values in variant order, as its serde form spells them; none for another enum."""
+    for value_enum in module.value_enum_declarations:
+        if value_enum.canonical != declaration.canonical:
+            continue
+        mut raw_values: list[str] = []
+        for variant in value_enum.variants:
+            match variant.raw_value:
+                RustConstant.Str(text) => raw_values.append(str(text))
+                RustConstant.Int(number) => raw_values.append(str(number))
+                _ => return Err("invalid Body IR value enum raw value")
+        match value_enum.backing:
+            ValueEnumBacking.Str => return Ok(("str", raw_values))
+            ValueEnumBacking.Int => return Ok(("int", raw_values))
+    return Ok(("", []))
 
 
 pub def enum_owner(ty: PlanType) -> Result[int, str]:

@@ -702,6 +702,10 @@ pub model EnumDeclaration:
     pub member_debug: bool = false
     # A stdlib enum names the compiled SDK crate item that owns it; the plan never declares it.
     pub library_item: str = ""
+    # A value enum's backing ("str" or "int") and its raw values in variant order, which its serde form writes and
+    # reads as legacy's hand-written impls do; empty for any other enum.
+    pub raw_kind: str = ""
+    pub raw_values: list[str] = []
 
 
 @derive(Clone, PartialEq)

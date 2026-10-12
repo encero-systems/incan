@@ -17,6 +17,7 @@ extern crate rustc_trait_selection;
 extern crate thin_vec;
 
 mod adapter;
+mod ast_build;
 mod bodies;
 mod callees;
 mod captured_generators;
@@ -33,6 +34,7 @@ mod types;
 mod union_debug;
 mod unit;
 mod validation;
+mod value_enum_serde;
 mod values;
 
 use incan_mir_lowering::caller::incan::scalar_example;
