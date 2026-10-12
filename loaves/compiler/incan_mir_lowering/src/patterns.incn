@@ -24,6 +24,7 @@ from layout_types import native_source_type as retained_type
 from enums import pattern_variant
 from unions import union_pattern_slot
 from options import intrinsic_pattern, variant_condition
+from numerics import numeric_constant
 
 
 pub def pattern_tests(
@@ -269,6 +270,12 @@ def literal_test(mut builder: Builder, source: Place, value: &RustConstant, span
         RustConstant.Bool(flag) =>
             constant = Constant.Bool(flag)
             expected = PlanType.Bool
+        RustConstant.TypedNumeric(number) =>
+            constant = numeric_constant(number)?
+            match constant:
+                Constant.Numeric(_spelling, carrier) =>
+                    expected = carrier
+                _ => return Err("unsupported Body IR nonprimitive numeric literal pattern")
         RustConstant.Unit => pass
         _ => return Err("unsupported Body IR nonprimitive literal pattern")
     if ty != expected:

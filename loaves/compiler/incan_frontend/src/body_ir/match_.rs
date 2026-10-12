@@ -109,7 +109,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let (body_stmts, result) = match &arm.node.body {
                 ast::MatchBody::Expr(e) => {
                     let mut stmts = Vec::new();
-                    let result = self.lower_expr_to_operand(e, arm_scope, &mut stmts);
+                    let result = self.lower_boundary_value(e, None, arm_scope, &mut stmts);
                     (stmts, result)
                 }
                 ast::MatchBody::Block(block_stmts) => {
@@ -274,6 +274,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         saved_bindings: &mut Vec<(String, Option<bir::LocalId>)>,
     ) -> bir::Pattern {
         let span = hir_span(pattern.span);
+        let literal_storage_type = expected_ty;
 
         // ---- Retain the checked node type, closing only caller-open parts from the retained scrutinee ----
         let checked_ty = self.resolve_ty(pattern.span);
@@ -317,7 +318,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             // `match_pattern_is_supported` has already ruled out byte-string patterns before
             // `Self::lower_match` calls this method. Literal expression lowering is total; this is a separate
             // pattern-vocabulary boundary, retained until Body IR models byte-pattern matching semantics.
-            ast::Pattern::Literal(lit) => bir::Pattern::Literal(lower_literal(lit)),
+            ast::Pattern::Literal(lit) => bir::Pattern::Literal(lower_checked_literal(lit, literal_storage_type)),
             ast::Pattern::Tuple(items) => {
                 let element_types = tuple_element_types(expected_ty, items.len());
                 let fields = items

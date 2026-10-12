@@ -8134,9 +8134,9 @@ def lower_structural_match(
     arms: &list[RustMatchArm],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Dispatch primitive, tuple and source-local model patterns in source order with branch-local owned bindings."""
+    """Dispatch numeric, primitive, tuple and source-local model patterns with branch-local owned bindings."""
     source_type = place_type(builder.locals, source)
-    if source_type not in [PlanType.Int, PlanType.Float, PlanType.Bool, PlanType.Unit, PlanType.String] and not is_tuple_type(
+    if not numeric_carrier(source_type) and source_type not in [PlanType.Bool, PlanType.Unit, PlanType.String] and not is_tuple_type(
         source_type,
     ) and not is_model_type(source_type):
         return Err("unsupported Body IR nonprimitive structural match scrutinee")

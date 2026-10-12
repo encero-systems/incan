@@ -948,7 +948,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let target = self.loop_break_targets.last().copied().flatten();
         match (value, target) {
             (Some(expr), Some(result_local)) => {
-                let operand = self.lower_expr_to_operand(expr, scope, out);
+                let destination = self.locals[result_local.index()].ty.clone();
+                let operand = self.lower_boundary_value(expr, Some(&destination), scope, out);
                 out.push(bir::Statement {
                     kind: bir::StatementKind::Assign {
                         place: bir::Place::from_local(result_local),
@@ -962,7 +963,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 });
             }
             _ => {
-                let operand = value.map(|v| self.lower_expr_to_operand(v, scope, out));
+                let operand = value.map(|v| self.lower_boundary_value(v, None, scope, out));
                 out.push(bir::Statement {
                     kind: bir::StatementKind::Break { value: operand },
                     span,
@@ -974,8 +975,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Lower a statement-position `yield value` (`ast::Expr::Yield(Some(value))` reached through
     /// [`Self::lower_stmt_into`]'s `ast::Statement::Expr` arm) into a [`bir::StatementKind::Yield`].
     ///
-    /// `value` is lowered through the same [`Self::lower_expr_to_operand`] path every other statement's operand
-    /// goes through, so ownership facts/last-use tracking apply to a yielded value exactly like any other read.
+    /// The checked destination boundary retains numeric widening before the generator consumes the value; ownership
+    /// facts and last-use tracking still apply to its source operand exactly as for another value read.
+    ///
     /// Records the runtime dependencies the existing Rust-emission backend's own `yield` lowering actually needs
     /// (`__incan_yield.yield_value(..)` on a `GeneratorYield` handle backed by `std::thread::spawn` and
     /// `std::sync::mpsc::sync_channel` -- see `loaves/stdlib/core/rust/src/iter.rs`'s `Generator`/`SpawnedGenerator`):
@@ -990,7 +992,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) {
-        let operand = self.lower_expr_to_operand(value, scope, out);
+        let operand = self.lower_boundary_value(value, None, scope, out);
         out.push(bir::Statement {
             kind: bir::StatementKind::Yield { value: operand },
             span,

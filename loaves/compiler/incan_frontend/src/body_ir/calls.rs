@@ -1813,6 +1813,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     return self.unsupported_operand(description, scope, hir_span_value, out);
                 }
             };
+        arg_operands = self.retain_list_probe_carrier(recv, args, arg_operands, span, scope, out);
 
         // The receiver is `args[0]` and is never spliced, so it is always a single-value element.
         let mut call_args = Vec::with_capacity(arg_operands.len() + 1);
@@ -1881,6 +1882,60 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.type_info
             .resolved_identity(span)
             .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Property)
+    }
+
+    /// Retain a checked builtin list lookup's numeric element carrier even when its legacy signature table is absent.
+    ///
+    /// The canonical builtin member and list-method registry authorize the single probe slot. The receiver's checked
+    /// element type supplies its destination; a user method with the same spelling and unshaped spreads stay unchanged.
+    fn retain_list_probe_carrier(
+        &mut self,
+        receiver: &ast::Spanned<ast::Expr>,
+        args: &[ast::CallArg],
+        mut elements: Vec<bir::ArgumentElement>,
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Vec<bir::ArgumentElement> {
+        let Some(identity) = self.type_info.resolved_identity(span) else {
+            return elements;
+        };
+        if identity.origin != SymbolOrigin::Builtin {
+            return elements;
+        }
+        let Some(member) = identity.declaration_name.strip_prefix("List.") else {
+            return elements;
+        };
+        if !matches!(
+            list_methods::from_str(member),
+            Some(
+                list_methods::ListMethodId::Count
+                    | list_methods::ListMethodId::Contains
+                    | list_methods::ListMethodId::Index
+            )
+        ) {
+            return elements;
+        }
+        let [argument] = args else { return elements };
+        let expression = match argument {
+            ast::CallArg::Positional(expression) | ast::CallArg::Named(_, expression) => expression,
+            _ => return elements,
+        };
+        if elements.len() != 1 {
+            return elements;
+        }
+        let receiver_type = self.resolve_ty(receiver.span);
+        let Some([element_type]) = collection_member_types(&receiver_type, CollectionTypeId::List) else {
+            return elements;
+        };
+        match elements.pop() {
+            Some(bir::ArgumentElement::One(operand)) => elements.push(bir::ArgumentElement::One(
+                self.retain_numeric_destination(expression, operand, element_type, scope, out),
+            )),
+            Some(other) => elements.push(other),
+            None => {}
+        }
+        elements
     }
 
     /// Lower a computed property read `value.name` as a call of the property's getter body on the borrowed receiver.
