@@ -185,7 +185,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     }
 
     /// Retain a checked zero-argument unit function as an item instead of executing it before its unwind boundary.
-    /// Other call shapes keep their existing representation and remain refused by the direct assertion consumer.
+    /// The checker need not type a callee as a value; project the verified call signature only onto this synthetic
+    /// read. Other call shapes keep their existing representation and remain refused by the direct assertion
+    /// consumer.
     fn lower_deferred_raises_call(
         &mut self,
         call: &ast::Spanned<ast::Expr>,
@@ -207,7 +209,22 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 .resolved_identity(callee.span)
                 .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Function)
         {
-            return self.lower_expr_to_operand(callee, scope, out);
+            let key = (callee.span.start, callee.span.end);
+            let signature = IncanType::Function {
+                params: Vec::new(),
+                return_type: Box::new(self.resolve_ty(call.span)),
+            };
+            let previous = self.type_overrides.insert(key, signature);
+            let operand = self.lower_expr_to_operand(callee, scope, out);
+            match previous {
+                Some(previous) => {
+                    self.type_overrides.insert(key, previous);
+                }
+                None => {
+                    self.type_overrides.remove(&key);
+                }
+            }
+            return operand;
         }
         self.lower_expr_to_operand(call, scope, out)
     }
