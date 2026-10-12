@@ -49,3 +49,19 @@ fn stdlib_generic_model_retains_declared_type_parameters() -> Result<(), Box<dyn
     assert_eq!(deque.fields, vec!["items"]);
     Ok(())
 }
+
+/// A collection's length follows the selected method identity instead of the builtin vector operation.
+#[test]
+fn stdlib_collection_length_retains_selected_method() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "from std.collections import Deque\n\ndef main() -> int:\n    queue = Deque[int].from_iter([1])\n    return len(queue)\n",
+        &["m", "sdk_length"],
+    )?;
+    let main = body_named(&module, "main")?;
+    assert!(main.block.stmts.iter().any(|statement| matches!(
+        &statement.kind,
+        bir::StatementKind::Call { callee: bir::Callee::Method(target), .. }
+            if target.name == "__len__" && target.canonical.as_ref().is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Method)
+    )), "length must retain its checked method: {}", main.render_snapshot());
+    Ok(())
+}
