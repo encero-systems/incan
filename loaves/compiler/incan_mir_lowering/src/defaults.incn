@@ -163,6 +163,7 @@ pub def evaluate_default(
             for statement in computation.stmts:
                 lower_statement(module, builder, statement)?
             builder.anchor = anchor
+            before = builder.owned
             result = call_argument_operand(builder, computation.result, ty, span, false)?
             mut result_owner = -1
             match result.kind:
@@ -170,7 +171,7 @@ pub def evaluate_default(
                     result_owner = place.local
                 _ => pass
             if is_list(ty) or is_collection(ty):
-                result_owner = borrowed_default_owner(builder, computation.result, span)?
+                result_owner = borrowed_default_owner(builder, computation.result, before, span)?
             builder.local_offset = saved
             retained = builder.owned
             for owner in retained[::-1]:
@@ -183,15 +184,28 @@ pub def evaluate_default(
         _ => return Err("unsupported Body IR unavailable defaulted parameter")
 
 
-def borrowed_default_owner(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[int, str]:
+def borrowed_default_owner(
+    mut builder: Builder,
+    value: &RustOperand,
+    before: list[int],
+    span: SourceSpan,
+) -> Result[int, str]:
     """
     Find the collection a borrowed default argument refers to.
 
-    The call borrows it, so it stays owned by the caller frame and drops when that scope ends, after the call.
+    The call borrows it, so it stays owned by the caller frame and drops when that scope ends, after the call. A
+    literal default, such as a bytes literal, is the one owner its borrow created after the owners in `before`.
     """
     match value:
         RustOperand.Place(read) => return Ok(list_root_place(builder, read.place, span)?.local)
-        _ => return Err("unsupported Body IR constant collection default")
+        _ => pass
+    mut created: list[int] = []
+    for owner in builder.owned:
+        if owner not in before:
+            created.append(owner)
+    if len(created) != 1:
+        return Err("unsupported Body IR constant collection default")
+    return Ok(created[0])
 
 
 pub def default_type(ty: PlanType) -> Result[None, str]:

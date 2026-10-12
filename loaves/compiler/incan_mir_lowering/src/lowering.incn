@@ -534,8 +534,9 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
             # A list held by a tuple element is materialized by cloning it, leaving the owning tuple whole.
             if is_list(place_type(builder.locals, target)) and is_tuple_type(builder.locals[target.local].ty):
                 return carrier_payload_value(builder, target, span)
-            # A checked projected read borrows its parent. Materialize only the selected enum through its real
-            # Clone implementation; copying or moving that field would invalidate the still-owned parent.
+            # A checked projected read borrows its parent. Materialize only the selected enum or model through its real
+            # Clone implementation; copying or moving that field would invalidate the still-owned parent. A model
+            # read through a shared receiver is cloned the same way, as legacy clones `self` to return it.
             match place_type(builder.locals, target):
                 PlanType.Enum(_owner, _name) =>
                     match target.projection:
@@ -543,6 +544,12 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
                         Projection.VariantField(_variant, _slot, _ty) => return clone_nominal_operand(builder, target, span)
                         Projection.Fields(_fields) => return clone_nominal_operand(builder, target, span)
                         _ => pass
+                PlanType.Model(_owner, _name) =>
+                    match target.projection:
+                        Projection.Whole => pass
+                        Projection.VariantField(_variant, _slot, _ty) => pass
+                        _ => return clone_nominal_operand(builder, target, span)
+                PlanType.ModelRef(_owner, _name) => return clone_nominal_operand(builder, target, span)
                 _ => pass
             match target.projection:
                 Projection.VariantField(_variant, _slot, _ty) => return enum_payload_read(builder, target, fact, span)
@@ -3585,8 +3592,17 @@ def coerce_numeric_operand(
 
 
 pub def clone_nominal_operand(mut builder: Builder, value: Place, span: SourceSpan) -> Result[Operand, str]:
-    """Materialize the checker's clone fact through a source nominal's real derived Clone implementation."""
+    """
+    Materialize the checker's clone fact through a source nominal's real derived Clone implementation.
+
+    A shared model reference, such as a receiver, already is the borrow that Clone takes.
+    """
     match place_type(builder.locals, value):
+        PlanType.ModelRef(index, name) =>
+            result = temporary(builder, PlanType.Model(index, name), span)
+            terminate_call(builder, CalleeKind.CloneModel(index, name), [read_place(value, false, span)], result, span)
+            builder.owned.append(result.local)
+            return Ok(read_place(result, true, span))
         PlanType.Model(index, name) =>
             reference = temporary(builder, PlanType.ModelRef(index, name), span)
             builder.emit(plan_assign(reference, RvalueKind.Borrow(value), span))
@@ -4858,7 +4874,10 @@ pub def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpa
                 Some((leaf, depth)) =>
                     if read.fact == OwnershipFact.Move and ty == PlanType.List(leaf, depth):
                         return Ok(read_place(place, true, span))
-                    if read.fact != OwnershipFact.Clone and read.fact != OwnershipFact.Borrow:
+                    # A list parameter is a view of the caller's list, so moving it out hands over a copy, which is the
+                    # value legacy's by-value parameter would carry.
+                    shared = read.fact == OwnershipFact.Move and ty == PlanType.ListRef(leaf, depth)
+                    if read.fact != OwnershipFact.Clone and read.fact != OwnershipFact.Borrow and not shared:
                         return Err("unsupported Body IR list value ownership")
                     return Ok(read_place(cloned_list(builder, place, span)?, true, span))
                 None => pass
