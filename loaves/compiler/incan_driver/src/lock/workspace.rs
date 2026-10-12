@@ -438,7 +438,59 @@ pub fn collect_project_lock_context(
     )
 }
 
+/// The explicitly retained ordinary native authority a lock collector may carry.
+#[cfg(feature = "cli")]
+type OrdinaryNative = crate::build::ordinary_library_native::OrdinaryLibraryNativeProfiles;
+
+/// Without the build pipeline (the `cli` feature, #1479) no ordinary native authority exists: the uninhabited
+/// stand-in keeps one collector signature while proving its optional authority is always absent.
+#[cfg(not(feature = "cli"))]
+enum OrdinaryNative {}
+
+/// Bind the semantic SDK paths to the ordinary native authority's checked demands rather than to discovered support.
+#[cfg(feature = "cli")]
+fn ordinary_semantic_sdk_paths(
+    native: &OrdinaryNative,
+    session_manifest: &ProjectManifest,
+    project_requirement_modules: &[ParsedModule],
+    project_requirements: &incan_provider::requirements::ProjectRequirements,
+    provider_plan: &incan_provider::ProviderPlan,
+) -> CliResult<Vec<DependencySpec>> {
+    native.verify()?;
+    #[cfg(feature = "rust_inspect")]
+    let queries = crate::build::library_exports::collect_library_rust_abi_query_paths(
+        project_requirement_modules,
+        &crate::build::rust_extern::collect_rust_extern_contexts(project_requirement_modules),
+    )
+    .into_iter()
+    .collect();
+    #[cfg(not(feature = "rust_inspect"))]
+    let queries = BTreeSet::new();
+    crate::build::library_metadata::requirements::capture_checked_native_demands(
+        session_manifest,
+        project_requirement_modules,
+        project_requirements,
+        provider_plan,
+        &queries,
+    )?
+    .require_ordinary_source_inspection()?;
+    native.provider_semantic_dependencies(provider_plan, project_requirements)
+}
+
+/// No ordinary native authority can exist without the build pipeline, so this is never reached.
+#[cfg(not(feature = "cli"))]
+fn ordinary_semantic_sdk_paths(
+    native: &OrdinaryNative,
+    _session_manifest: &ProjectManifest,
+    _project_requirement_modules: &[ParsedModule],
+    _project_requirements: &incan_provider::requirements::ProjectRequirements,
+    _provider_plan: &incan_provider::ProviderPlan,
+) -> CliResult<Vec<DependencySpec>> {
+    match *native {}
+}
+
 /// Collect the same whole-project inputs under an explicitly retained ordinary native authority.
+#[cfg(feature = "cli")]
 pub(crate) fn collect_ordinary_project_lock_context(
     manifest: &ProjectManifest,
     entry: &Path,
@@ -471,7 +523,7 @@ fn collect_project_lock_context_impl(
     sdk_profile_override: Option<&str>,
     workspace: Option<&WorkspaceGraph>,
     command_session: Option<&CompilationSession>,
-    ordinary_native: Option<&crate::build::ordinary_library_native::OrdinaryLibraryNativeProfiles>,
+    ordinary_native: Option<&OrdinaryNative>,
 ) -> CliResult<Option<ProjectLockContext>> {
     #[cfg(any(test, feature = "test_support"))]
     record_project_lock_context_collection();
@@ -573,28 +625,15 @@ fn collect_project_lock_context_impl(
     let provider_plan = session
         .provider_plan_for_used_module_paths(lock_provider_used_module_paths(session, &project_requirement_modules))?;
     extend_requirements_with_provider_plan(&mut project_requirements, &provider_plan)?;
-    let semantic_sdk_paths = if let Some(native) = ordinary_native {
-        native.verify()?;
-        #[cfg(feature = "rust_inspect")]
-        let queries = crate::build::library_exports::collect_library_rust_abi_query_paths(
-            &project_requirement_modules,
-            &crate::build::rust_extern::collect_rust_extern_contexts(&project_requirement_modules),
-        )
-        .into_iter()
-        .collect();
-        #[cfg(not(feature = "rust_inspect"))]
-        let queries = BTreeSet::new();
-        crate::build::library_metadata::requirements::capture_checked_native_demands(
+    let semantic_sdk_paths = match ordinary_native {
+        Some(native) => ordinary_semantic_sdk_paths(
+            native,
             session_manifest,
             &project_requirement_modules,
             &project_requirements,
             &provider_plan,
-            &queries,
-        )?
-        .require_ordinary_source_inspection()?;
-        native.provider_semantic_dependencies(&provider_plan, &project_requirements)?
-    } else {
-        semantic_sdk_path_dependencies(&project_requirements)
+        )?,
+        None => semantic_sdk_path_dependencies(&project_requirements),
     };
     let semantic = semantic_lock_state(
         session_manifest.project_root(),

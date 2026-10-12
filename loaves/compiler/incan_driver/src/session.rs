@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 
 use incan_lang::lang::stdlib;
 
+#[cfg(feature = "cli")]
 use crate::build::library_dependencies::PreparedLibraryDependencies;
 use crate::diagnostics::CliDiagnosticFailure;
 use crate::error::{CliError, CliResult};
@@ -234,6 +235,7 @@ pub struct CompilationSession {
     /// every command rehash provider source roots and, worse, lets a mutable local cache dominate the warm path.
     provider_plans_by_modules: ProviderPlanCache,
     /// Original ordinary checked package capabilities retained throughout analysis and current plan preparation.
+    #[cfg(feature = "cli")]
     admitted_library_dependencies: Option<Arc<PreparedLibraryDependencies>>,
     /// Original provider plan issued with the private admitted dependencies, before public session fields can change.
     admitted_provider_plan: Option<Arc<ProviderPlan>>,
@@ -278,6 +280,53 @@ impl CompilationSession {
             &mut BTreeSet::new(),
         )?;
         Ok(session)
+    }
+
+    /// Check one unbaked path dependency through its public metadata, recursing into its own source dependencies.
+    #[cfg(feature = "cli")]
+    fn check_source_dependency(
+        root: &Path,
+        selected: BTreeSet<String>,
+        features: &PackageFeaturePlan,
+        sdk_profile_override: Option<&str>,
+        completed: &mut CheckedSourceDependencies,
+        visiting: &mut BTreeSet<PathBuf>,
+    ) -> CliResult<(incan_frontend::library_manifest::LibraryManifest, Arc<ProviderPlan>)> {
+        let child_manifest = discover_effective_project_manifest(root)?
+            .ok_or_else(|| CliError::failure("source dependency manifest disappeared during checking"))?;
+        let child_entry = crate::build::library_exports::validate_library_entrypoint(&child_manifest)?;
+        let selection = FeatureSelection {
+            requested: selected,
+            no_default_features: true,
+            all_features: false,
+        };
+        let mut child = Self::discover_with_dependency_mode_and_sdk_source(
+            &child_entry,
+            DependencyManifestMode::CheckMetadata,
+            SdkInventorySource::DiscoverOnly,
+            &selection,
+            sdk_profile_override,
+        )?;
+        child.check_source_dependencies(features, sdk_profile_override, completed, visiting)?;
+        let checked = crate::build::library_project::checked_source_library_manifest(&child, &child_entry)?;
+        Ok((checked, Arc::clone(&child.provider_plan)))
+    }
+
+    /// Without the build pipeline (the `cli` feature, #1479) an unbaked path dependency has no public-metadata
+    /// checker, so it is refused rather than read as source.
+    #[cfg(not(feature = "cli"))]
+    fn check_source_dependency(
+        root: &Path,
+        _selected: BTreeSet<String>,
+        _features: &PackageFeaturePlan,
+        _sdk_profile_override: Option<&str>,
+        _completed: &mut CheckedSourceDependencies,
+        _visiting: &mut BTreeSet<PathBuf>,
+    ) -> CliResult<(incan_frontend::library_manifest::LibraryManifest, Arc<ProviderPlan>)> {
+        Err(CliError::failure(format!(
+            "checking the unbaked source dependency at {} requires the build pipeline",
+            root.display()
+        )))
     }
 
     /// Materialize only command-local checked metadata, sharing exact feature instances across a dependency graph.
@@ -331,25 +380,15 @@ impl CompilationSession {
                         root.display()
                     )));
                 }
-                let child_manifest = discover_effective_project_manifest(&root)?
-                    .ok_or_else(|| CliError::failure("source dependency manifest disappeared during checking"))?;
-                let child_entry = crate::build::library_exports::validate_library_entrypoint(&child_manifest)?;
-                let selection = FeatureSelection {
-                    requested: selected,
-                    no_default_features: true,
-                    all_features: false,
-                };
-                let mut child = Self::discover_with_dependency_mode_and_sdk_source(
-                    &child_entry,
-                    DependencyManifestMode::CheckMetadata,
-                    SdkInventorySource::DiscoverOnly,
-                    &selection,
+                let checked = Self::check_source_dependency(
+                    &root,
+                    selected,
+                    features,
                     sdk_profile_override,
+                    completed,
+                    visiting,
                 )?;
-                child.check_source_dependencies(features, sdk_profile_override, completed, visiting)?;
-                let checked = crate::build::library_project::checked_source_library_manifest(&child, &child_entry)?;
                 visiting.remove(&root);
-                let checked = (checked, Arc::clone(&child.provider_plan));
                 completed.insert(identity, checked.clone());
                 checked
             };
@@ -508,6 +547,7 @@ impl CompilationSession {
     /// The caller must prepare every current root dependency and any reserved namespace grant before entering.
     /// Installed and source-backed packages use the same checked catalog. Missing component adapters refuse;
     /// native execution still requires separately selected current profiles and native plans.
+    #[cfg(feature = "cli")]
     pub fn discover_with_admitted_library_dependencies(
         entry_path: &Path,
         feature_selection: &FeatureSelection,
@@ -547,6 +587,7 @@ impl CompilationSession {
             )]))),
             admitted_provider_plan: Some(Arc::clone(&provider_plan)),
             provider_plan,
+            #[cfg(feature = "cli")]
             admitted_library_dependencies: Some(dependencies),
             provider_semantic_identities: Arc::new(
                 incan_provider::lock_semantics::ProviderSemanticIdentitySession::default(),
@@ -562,6 +603,7 @@ impl CompilationSession {
 
     /// Construct an ordinary standard-source publisher session with original dependency and own-source admissions.
     /// Own namespaces remain source authority only; dependency metadata/native routes are never fabricated.
+    #[cfg(feature = "cli")]
     pub(crate) fn discover_with_admitted_standard_source(
         entry_path: &Path,
         feature_selection: &FeatureSelection,
@@ -679,9 +721,14 @@ impl CompilationSession {
             Some(Arc::new(inventory.clone()))
         } else {
             match sdk_source {
+                #[cfg(feature = "cli")]
                 SdkInventorySource::PrepareNativeIfAbsent => {
                     crate::build::native_sdk::prepare_or_discover_sdk_inventory()?
                 }
+                // Without the build pipeline (the `cli` feature, #1479) nothing can prepare providers, so a session
+                // reuses the inventory a toolchain command published, as an Oven command does.
+                #[cfg(not(feature = "cli"))]
+                SdkInventorySource::PrepareNativeIfAbsent => discover_or_reuse_published_sdk_inventory()?,
                 // An Oven command never builds the providers, but it reuses the inventory `incan check` published for a
                 // source checkout, so both parse a file with the same standard-library vocabulary (#1774).
                 SdkInventorySource::DiscoverOnly => discover_or_reuse_published_sdk_inventory()?,
@@ -796,6 +843,7 @@ impl CompilationSession {
             library_manifest_index,
             provider_plan,
             provider_plans_by_modules,
+            #[cfg(feature = "cli")]
             admitted_library_dependencies: None,
             admitted_provider_plan: None,
             provider_semantic_identities: Arc::new(
@@ -816,11 +864,26 @@ impl CompilationSession {
     ///
     /// Compatibility discovery sessions return none. Publication and planning callers must not fabricate a checked
     /// owner for those sessions or infer that absent authority means an authenticated empty dependency closure.
+    #[cfg(feature = "cli")]
     pub fn admitted_library_dependencies(&self) -> Option<&Arc<PreparedLibraryDependencies>> {
         self.admitted_library_dependencies.as_ref()
     }
 
+    /// Whether explicitly admitted ordinary dependencies drive this session. Without the build pipeline (the `cli`
+    /// feature, #1479) no session can be admitted that way, so it is always a discovery session.
+    pub(crate) fn has_admitted_library_dependencies(&self) -> bool {
+        #[cfg(feature = "cli")]
+        {
+            self.admitted_library_dependencies.is_some()
+        }
+        #[cfg(not(feature = "cli"))]
+        {
+            false
+        }
+    }
+
     /// Borrow the original ordinary provider plan, refusing a public replacement or mixed SDK discovery state.
+    #[cfg(feature = "cli")]
     pub(crate) fn original_admitted_provider_plan(&self) -> CliResult<&Arc<ProviderPlan>> {
         let original = self
             .admitted_provider_plan
@@ -862,7 +925,7 @@ impl CompilationSession {
     /// Admitted ordinary dependencies require exact source use. Discovered legacy sessions retain their existing
     /// synthetic prelude link requirement. Explicit prelude imports are preserved by both routes.
     pub(crate) fn provider_module_paths(&self, modules: &[ParsedModule]) -> BTreeSet<Vec<String>> {
-        if self.admitted_library_dependencies.is_some() {
+        if self.has_admitted_library_dependencies() {
             provider_source_used_module_paths(modules)
         } else {
             provider_used_module_paths(modules)
@@ -880,6 +943,7 @@ impl CompilationSession {
         self.provider_plan
             .verify_standard_source_publication()
             .map_err(CliError::failure)?;
+        #[cfg(feature = "cli")]
         if let Some(dependencies) = &self.admitted_library_dependencies {
             self.original_admitted_provider_plan()?;
             dependencies.verify()?;
@@ -902,7 +966,7 @@ impl CompilationSession {
         {
             return Ok(plan);
         }
-        let plan = if self.admitted_library_dependencies.is_some() {
+        let plan = if self.has_admitted_library_dependencies() {
             Arc::new(self.provider_plan.project_module_usage(used_module_paths.clone()))
         } else {
             ProviderPlan::from_resolved_inputs(
@@ -1183,6 +1247,7 @@ mod tests {
                 BTreeSet::new(),
                 Arc::clone(&provider_plan),
             )]))),
+            #[cfg(feature = "cli")]
             admitted_library_dependencies: None,
             admitted_provider_plan: None,
             provider_semantic_identities: Arc::new(
@@ -1491,6 +1556,7 @@ mod tests {
                 BTreeSet::new(),
                 Arc::clone(&provider_plan),
             )]))),
+            #[cfg(feature = "cli")]
             admitted_library_dependencies: None,
             admitted_provider_plan: None,
             provider_semantic_identities: Arc::new(

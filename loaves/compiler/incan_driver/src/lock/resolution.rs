@@ -7,6 +7,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "cli")]
 use crate::build::native_sdk::prepare_or_discover_sdk_inventory;
 use crate::cargo_policy::{CargoPolicy, enforce_project_toolchain_constraint};
 use crate::error::{CliError, CliResult};
@@ -134,6 +135,7 @@ fn collect_and_publish_project_lock_with_session(
 ///
 /// `incan lock` owns this explicit preparation path. Oven publishers use [`collect_and_publish_project_lock`]
 /// directly so a bake can discover prepared state but can never launch the legacy SDK provider builder itself.
+#[cfg(feature = "cli")]
 pub fn prepare_sdk_and_publish_project_lock(
     manifest: &ProjectManifest,
     entry_file: Option<&Path>,
@@ -588,6 +590,7 @@ pub fn publish_oven_project_lock(
 
 /// Publish through the original canonical writer using a genuine current ordinary command session.
 /// Workspace siblings require separate admitted authority and are deliberately refused by this migration entry.
+#[cfg(feature = "cli")]
 pub(crate) fn publish_oven_project_lock_with_admitted_session(
     project_root: &Path,
     entrypoint: &Path,
@@ -598,6 +601,7 @@ pub(crate) fn publish_oven_project_lock_with_admitted_session(
 }
 
 /// Publish through the canonical collector and writer without rediscovering a legacy SDK support catalog.
+#[cfg(feature = "cli")]
 pub(crate) fn publish_oven_project_lock_with_ordinary_native(
     project_root: &Path,
     entrypoint: &Path,
@@ -609,6 +613,7 @@ pub(crate) fn publish_oven_project_lock_with_ordinary_native(
 }
 
 /// Reconstruct source-current admitted session facts and retain the explicit native authority through publication.
+#[cfg(feature = "cli")]
 fn publish_admitted_project_lock(
     project_root: &Path,
     entrypoint: &Path,

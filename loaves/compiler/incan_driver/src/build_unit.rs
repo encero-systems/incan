@@ -14,6 +14,7 @@ use incan_provider::requirements::{ProjectRequirements, semantic_sdk_path_depend
 use oven_model::manifest::DependencySpec;
 
 /// Checked logical inputs and original native producer requests retained until every profile is planned.
+#[cfg(feature = "cli")]
 pub(crate) struct OrdinaryLibraryRuntimeInputs {
     native: std::sync::Arc<crate::build::ordinary_library_native::OrdinaryLibraryNativeProfiles>,
     provider_records: Vec<String>,
@@ -22,6 +23,7 @@ pub(crate) struct OrdinaryLibraryRuntimeInputs {
     owner: std::path::PathBuf,
 }
 
+#[cfg(feature = "cli")]
 impl OrdinaryLibraryRuntimeInputs {
     /// Bind already checked provider semantics and resolved declarations without selecting or discovering an SDK.
     pub(crate) fn from_checked(
@@ -80,6 +82,7 @@ impl OrdinaryLibraryRuntimeInputs {
 /// are not derived from that directory: normal execution selects one matching direct-rustc provider/dependency plan
 /// from the bounded Oven store. Incan-generated programs always link the standard runtime, so an empty plan is not a
 /// meaningful normal-command fallback.
+#[cfg(feature = "cli")]
 pub fn oven_build_unit_inputs(
     provider_plan: &ProviderPlan,
     requirements: &ProjectRequirements,
@@ -90,6 +93,7 @@ pub fn oven_build_unit_inputs(
 }
 
 /// Build unit inputs using provider records already checked by the current compilation session.
+#[cfg(feature = "cli")]
 pub fn oven_build_unit_inputs_with_provider_identities(
     provider_plan: &ProviderPlan,
     requirements: &ProjectRequirements,
@@ -108,6 +112,7 @@ pub fn oven_build_unit_inputs_with_provider_identities(
 ///
 /// A published native SDK adds its canonical portable receipt catalog, so a plan cannot reuse different admitted
 /// native bytes merely because the generated root happens to request the same public provider surface.
+#[cfg(feature = "cli")]
 fn oven_build_unit_inputs_with_provider_records(
     requirements: &ProjectRequirements,
     resolved: &ResolvedDependencies,
@@ -123,6 +128,7 @@ fn oven_build_unit_inputs_with_provider_records(
 }
 
 /// Build unit identity with the canonical provider records and a native admission retained by the whole command.
+#[cfg(feature = "cli")]
 pub fn oven_build_unit_inputs_with_native_sdk(
     provider_plan: &ProviderPlan,
     requirements: &ProjectRequirements,
@@ -134,6 +140,7 @@ pub fn oven_build_unit_inputs_with_native_sdk(
 }
 
 /// Combine already checked provider identities with the same native admission used by plan selection.
+#[cfg(feature = "cli")]
 pub fn oven_build_unit_inputs_with_provider_identities_and_native_sdk(
     provider_plan: &ProviderPlan,
     requirements: &ProjectRequirements,
@@ -150,6 +157,7 @@ pub fn oven_build_unit_inputs_with_provider_identities_and_native_sdk(
 }
 
 /// Finish the canonical identity exchange without reacquiring command-admitted native owners.
+#[cfg(feature = "cli")]
 fn oven_build_unit_inputs_with_provider_records_and_native_sdk(
     requirements: &ProjectRequirements,
     resolved: &ResolvedDependencies,
