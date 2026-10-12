@@ -443,3 +443,41 @@ fn ordinary_metadata_refuses_competing_canonical_rust_facts_across_dependencies(
     assert!(super::validate_rust_fact_agreement([&first, &second]).is_err());
     Ok(())
 }
+
+/// Two re-exports of one type definition may list different implemented traits, because each is solved in the crate
+/// that re-exports it, as `std::time::Duration` and `core::time::Duration` are. Every other fact must still agree.
+#[test]
+fn ordinary_metadata_admits_surface_scoped_traits_on_one_definition() -> Result<(), Box<dyn std::error::Error>> {
+    use incan_lang::interop::metadata::RustImplementedTrait;
+    let definition = |canonical: &str, traits: &[&str]| RustItemMetadata {
+        canonical_path: canonical.into(),
+        definition_path: Some("core::time::Duration".into()),
+        visibility: RustVisibility::Public,
+        kind: RustItemKind::Type(RustTypeInfo {
+            implemented_traits: traits
+                .iter()
+                .map(|path| RustImplementedTrait {
+                    path: (*path).into(),
+                    mutable_reference: false,
+                })
+                .collect(),
+            ..RustTypeInfo::default()
+        }),
+    };
+    let mut manifest = LibraryManifest::new("system", "1.0.0");
+    manifest.rust_abi = LibraryRustAbi::from_items(vec![
+        definition("core::time::Duration", &["core::fmt::Debug"]),
+        definition("std::time::Duration", &["core::fmt::Debug", "std::panic::UnwindSafe"]),
+    ]);
+    super::validate_rust_fact_agreement([&manifest])?;
+
+    // A definition whose re-exports disagree on anything but their trait surface still refuses.
+    let mut generic = definition("std::time::Duration", &["core::fmt::Debug"]);
+    if let RustItemKind::Type(info) = &mut generic.kind {
+        info.type_params = vec!["T".into()];
+    }
+    manifest.rust_abi =
+        LibraryRustAbi::from_items(vec![definition("core::time::Duration", &["core::fmt::Debug"]), generic]);
+    assert!(super::validate_rust_fact_agreement([&manifest]).is_err());
+    Ok(())
+}

@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3660 | 246 | 431 |
+| keep | 3661 | 246 | 431 |
 | re-point | 1487 | 91 | 1058 |
 | retire | 1507 | 153 | 0 |
 | unaffected | 1977 | 212 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8631** | **702** | **1494** |
+| **Total** | **8632** | **702** | **1494** |
 
 - Retire-class tests: 1507, of which twinned 1022, dies 295, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -127,7 +127,7 @@ The collector counts these in the text of each test function and of the file-loc
 
 `Lines` is the file length; `Test lines` is the test region the split threshold applies to: the `#[cfg(test)]` modules when the file has any, otherwise the whole file. `Twins` is `twinned/retire-class` and `Dies` the number recorded `dies`, for files with retire-class tests. Per-test rows follow a file only when it carries per-test overrides.
 
-### `loaves/compiler/incan_driver` (745 tests in 96 files: keep 369, re-point 19, retire 104, unaffected 253)
+### `loaves/compiler/incan_driver` (746 tests in 96 files: keep 370, re-point 19, retire 104, unaffected 253)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -152,7 +152,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/build/library_exports.rs` | 19 | 1956 | 1473 | keep | - | - | - | #1561 | codegen 1, checker 13, parser 14 | library re-export resolution and Rust ABI query paths from checked declarations. |
 | `loaves/compiler/incan_driver/src/build/library_metadata/requirements/native_demands/tests.rs` | 16 | 628 | 628 | keep | - | - | - | #1337 | checker 16, parser 16 | Actual checked source native-demand coverage, explicit unknown old metadata and conservative parsed AST refusals; no generated Rust assertion. |
 | `loaves/compiler/incan_driver/src/build/library_metadata/requirements/tests.rs` | 2 | 95 | 95 | keep | - | - | - | #1698 | checker 2, parser 2 | Portable checked requirement replay preserves exports and current bindings and refuses incomplete planning authority. |
-| `loaves/compiler/incan_driver/src/build/library_metadata/tests.rs` | 12 | 446 | 446 | keep | - | - | - | #1698 | checker 12 | Ordinary checked-library metadata ownership: exact recipe and intent binding, sealed sidecars, promised ABI completeness, original owner retention and conflicting native output refusal. These controls remain required after SDK removal. |
+| `loaves/compiler/incan_driver/src/build/library_metadata/tests.rs` | 13 | 484 | 484 | keep | - | - | - | #1698 | checker 13 | Ordinary checked-library metadata ownership: exact recipe and intent binding, sealed sidecars, promised ABI completeness, original owner retention and conflicting native output refusal. These controls remain required after SDK removal. |
 | `loaves/compiler/incan_driver/src/build/library_metadata/tests/published.rs` | 8 | 682 | 682 | unaffected | - | - | - | #1337 | - | Read-only admission of original ordinary checked metadata/generation owners, transitive lease retention, relocation, payload corruption and shared-DAG verification; independent of generated Rust. |
 | `loaves/compiler/incan_driver/src/build/library_outputs.rs` | 3 | 273 | 59 | unaffected | - | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/library_project/admitted_preparation_tests.rs` | 6 | 276 | 276 | unaffected | - | - | - | #1337 | checker 6 | Original admitted ordinary dependency/session retention and refusal of project, feature and provider substitution; independent of generated Rust. |
@@ -2538,7 +2538,7 @@ Per-test overrides in `loaves/compiler/incan_test_support/src/emitted_symbol_art
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
 | `loaves/compiler/rust_inspect/src/cache_tests.rs` | 42 | 2930 | 2930 | unaffected | - | - | required | #1561 | replacement 1 | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/rust_inspect/src/digest/tests.rs` | 17 | 634 | 634 | unaffected | - | - | - | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
-| `loaves/compiler/rust_inspect/src/extractor.rs` | 21 | 4115 | 1898 | unaffected | - | - | required | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
+| `loaves/compiler/rust_inspect/src/extractor.rs` | 21 | 4120 | 1898 | unaffected | - | - | required | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/rust_inspect/src/extractor/trait_candidates_tests.rs` | 2 | 188 | 188 | keep | - | - | - | #1337 | - | Compatibility oracle for query-scoped trait candidate acquisition preserves aliases, generics, primitives, mutable receivers, built-in derives and unnamed-const implementations. Uses the existing analyzer index without a second candidate cache. |
 | `loaves/compiler/rust_inspect/src/lib.rs` | 2 | 208 | 149 | unaffected | - | - | - | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/rust_inspect/src/loader.rs` | 16 | 2347 | 658 | unaffected | - | - | - | #1561 | - | Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level. |
