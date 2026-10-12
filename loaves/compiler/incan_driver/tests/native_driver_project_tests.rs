@@ -6402,6 +6402,37 @@ def main() -> None:
     )
 }
 
+/// A local trait whose supertrait comes from the standard library serves that supertrait's slot from its default: a
+/// `Clone` supertrait's `clone()` copies through the adopter's derived Clone, on the default's `self` and through a
+/// bound on the subtrait.
+#[test]
+fn imported_supertrait_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "imported_supertrait",
+        r#"trait Copyable with Clone:
+    def dup(self) -> Self:
+        return self.clone()
+
+
+model Copied with Copyable:
+    value: int
+
+
+def twin[T with Copyable](value: T) -> T:
+    return value.dup()
+
+
+def main() -> None:
+    original = Copied(value=5)
+    mut copy = original.dup()
+    copy.value = 6
+    println(f"{original.value} {copy.value}")
+    println(twin(Copied(value=7)).value)
+"#,
+        b"5 6\n7\n",
+    )
+}
+
 /// Compile a single-module program in the minimal project layout and require the native route to refuse it by name.
 fn check_project_refusal(name: &str, text: &str, reason: &str) -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;

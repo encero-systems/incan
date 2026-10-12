@@ -146,6 +146,28 @@ fn model_derives_retain_checked_native_selection() -> Result<(), Box<dyn std::er
     Ok(())
 }
 
+/// Adopting a trait whose supertrait is the standard library's JSON `Serialize` gives a model and a class the serde
+/// derive, as legacy emission forwards it; a same-named local trait gives nothing.
+#[test]
+fn adopted_json_supertrait_retains_the_serde_derive() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "from std.serde.json import Serialize\n\ntrait Loggable with Serialize:\n    def log(self) -> str:\n        return self.to_json()\n\ntrait Plain:\n    def name(self) -> str:\n        return \"plain\"\n\nmodel Payload with Loggable:\n    value: int\n\nclass Record with Loggable:\n    value: int\n\nmodel Other with Plain:\n    value: int\n",
+        &["m", "adopted_serde"],
+    )?;
+    let derives = |name: &str| {
+        module
+            .nominal_declarations
+            .iter()
+            .find(|declaration| declaration.name == name)
+            .map(|declaration| declaration.derives.clone())
+            .ok_or_else(|| Box::<dyn std::error::Error>::from(format!("missing nominal `{name}`")))
+    };
+    assert!(derives("Payload")?.iter().any(|derive| derive == "serde::Serialize"));
+    assert!(derives("Record")?.iter().any(|derive| derive == "serde::Serialize"));
+    assert!(!derives("Other")?.iter().any(|derive| derive.starts_with("serde::")));
+    Ok(())
+}
+
 /// A fieldless enum's derived Ord retains the derives it implies, as a model's does, then the automatic ones.
 #[test]
 fn enum_derives_retain_implied_selections() -> Result<(), Box<dyn std::error::Error>> {
