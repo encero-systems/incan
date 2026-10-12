@@ -85,10 +85,11 @@ def specialize_body(body: &Body, owner: str, arguments: list[TraitTypeArgument])
     # this indirection).
     concrete: RustType = concrete_self_type(owner)
     mut result = body.clone()
-    result.type_parameters.clear()
+    mut parameters: list[str] = []
     for parameter in body.type_parameters:
         if not is_adoption_parameter(str(parameter), arguments):
-            result.type_parameters.push(parameter.clone())
+            parameters.append(str(parameter))
+    result.type_parameters = parameters
     for index in range(len(result.locals)):
         local_type: RustType = instantiate_type(result.locals[index].ty, concrete, arguments)
         result.locals[index].ty = local_type
