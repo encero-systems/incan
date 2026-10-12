@@ -24,6 +24,9 @@ pub fn resolve(tcx: TyCtxt<'_>, callee: &Callee) -> Result<DefId, PlanError> {
         CalleeKind::CollectGenerator(leaf, depth) => generator_method(tcx, "Generator", "collect", leaf, *depth),
         CalleeKind::External(path) => external(tcx, path),
         CalleeKind::CloneModel(_, _) | CalleeKind::CloneEnum(_, _) => clone_method(tcx),
+        CalleeKind::StaticLoad(slot) => planned(tcx, &crate::statics::load_name(*slot)),
+        CalleeKind::StaticStore(slot) => planned(tcx, &crate::statics::store_name(*slot)),
+        CalleeKind::StaticForce(slot) => planned(tcx, &crate::statics::force_name(*slot)),
     }
 }
 

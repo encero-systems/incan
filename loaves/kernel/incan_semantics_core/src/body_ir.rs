@@ -130,18 +130,22 @@ pub struct TypeAliasDeclaration {
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
 }
 
-/// Canonical persistent storage with a checker-typed, effect-free initializer.
+/// Canonical persistent storage with a checker-typed initializer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StaticDeclaration {
     /// Exact checker-selected storage identity, independent of aliases at its uses.
     pub canonical: CanonicalSymbolId,
     /// Checked carrier type; initializer validation must preserve its exact element types.
     pub ty: IncanType,
-    /// Effect-free initialization value; repeated reads must not reinitialize an assigned cell.
+    /// Initialization value; repeated reads must not reinitialize an assigned cell.
     pub initial: StaticInitializer,
 }
 
-/// Checked effect-free storage initialization, independent of its eventual native representation.
+/// Checked storage initialization, independent of its eventual native representation.
+///
+/// Literal initializers are effect-free, so when they are evaluated is not observable. A computed initializer is
+/// evaluated as legacy evaluates its static (RFC 052): once, when its module's statics are initialized in declaration
+/// order on entry to the first function of that module, or earlier when a read reaches it first.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum StaticInitializer {
     /// One primitive literal, interpreted in the storage declaration's checked carrier.
@@ -152,6 +156,9 @@ pub enum StaticInitializer {
     Dict(Vec<(Constant, Constant)>),
     /// Primitive member literals of a set, including the empty `Set()` constructor; duplicates collapse on insert.
     Set(Vec<Constant>),
+    /// Any other checked initializer, as a body with no parameters that returns the storage carrier. A consumer runs
+    /// it at most once per program, at the point legacy's static initialization would.
+    Computed(Box<Body>),
 }
 
 /// A source-owned stdlib callable's proven transparent native delegation and scalar signature.

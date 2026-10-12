@@ -190,6 +190,14 @@ impl rustc_driver::Callbacks for Callbacks {
             };
             krate.items.push(declarations::function(function, span));
         }
+        // Computed statics keep rustc's own MIR for their storage and accessors (see `statics`).
+        for cell in &self.plan.statics {
+            let span = match sources.span(&cell.span) {
+                Ok(span) => span,
+                Err(error) => compiler.sess.dcx().fatal(error.to_string()),
+            };
+            krate.items.extend(crate::statics::items(cell, span));
+        }
         let mut roots: BTreeSet<_> = self
             .plan
             .externals

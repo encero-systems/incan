@@ -108,6 +108,8 @@ pub from statics import (
     write_static_float,
     read_static_bool,
     write_static_bool,
+    begin_module_initialization,
+    end_module_initialization,
 )
 pub from static_lists import (
     read_static_int_list,

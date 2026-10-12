@@ -1,0 +1,155 @@
+"""
+Computed module statics (RFC 052): their initializer functions, native storage cells and module initialization.
+
+Legacy declares each computed static as lazily initialized storage and, on entry to every function of the module,
+forces the module's statics once in declaration order; a read forces its own static first. A plan keeps the same
+order: each computed static becomes a storage cell the adapter declares, initialized by a planned function with no
+parameters, and each module with computed statics gets one planned initializer, claimed through the runtime so it runs
+once, that forces its cells in declaration order. Every function of the module calls that initializer on entry, and a
+read calls it before loading, as legacy's reads do.
+"""
+
+from rust::incan_semantics_core import SemanticSourceTargetKind, canonical_module_identity
+from rust::incan_semantics_core::body_ir import Body, StaticDeclaration, StaticInitializer
+from pub::incan_mir_plan import (
+    Callee,
+    CalleeKind,
+    Constant,
+    ExternalFunction,
+    Function,
+    Local,
+    Operand,
+    OperandKind,
+    PlanType,
+    RvalueKind,
+    SourceSpan,
+    Statement,
+    TerminatorKind,
+    Unwind,
+)
+from pub::incan_mir_plan import assign as plan_assign, block as plan_block, place as plan_place
+from frame import Builder, temporary, terminate_call, literal
+
+
+pub def is_computed_static(declaration: &StaticDeclaration) -> bool:
+    """Report whether a static's initializer is a computed body rather than an effect-free literal."""
+    match declaration.initial:
+        StaticInitializer.Computed(_body) => return true
+        _ => return false
+
+
+pub def static_owner(declaration: &StaticDeclaration) -> str:
+    """The declaring module of a static, read from its canonical identity."""
+    match canonical_module_identity(declaration.canonical):
+        Some(owner) => return owner
+        None => return ""
+
+
+pub def module_static_key(statics: list[StaticDeclaration], owner: str) -> int:
+    """The first computed static slot module `owner` declares, which keys its initialization, or -1 for none."""
+    for slot in range(len(statics)):
+        if is_computed_static(statics[slot]) and static_owner(statics[slot]) == owner:
+            return slot
+    return -1
+
+
+pub def static_initializer_name(slot: int) -> str:
+    """Name the planned function computing computed static `slot`'s first value."""
+    return f"__incan_static_init_{slot}"
+
+
+pub def module_initializer_name(key: int) -> str:
+    """Name the planned function initializing the statics of the module keyed `key`."""
+    return f"__incan_init_module_statics_{key}"
+
+
+pub def initialize_module_statics(mut builder: Builder, owner: str, span: SourceSpan) -> None:
+    """Call module `owner`'s static initializer, as legacy calls `__incan_init_module_statics` at a function entry."""
+    key = module_static_key(builder.statics, owner)
+    if key < 0:
+        return
+    output = temporary(builder, PlanType.Unit, span)
+    terminate_call(builder, CalleeKind.Planned(module_initializer_name(key)), [], output, span)
+
+
+pub def module_initialization_externals(span: SourceSpan) -> list[ExternalFunction]:
+    """The runtime's module initialization claim and completion, which every module initializer calls."""
+    return [ExternalFunction(
+        path="incan_native_runtime::begin_module_initialization",
+        type_arguments=[],
+        parameters=[PlanType.Int],
+        return_type=PlanType.Bool,
+        span=span,
+    ), ExternalFunction(
+        path="incan_native_runtime::end_module_initialization",
+        type_arguments=[],
+        parameters=[PlanType.Int],
+        return_type=PlanType.Unit,
+        span=span,
+    )]
+
+
+pub def module_initializer(statics: list[StaticDeclaration], key: int, span: SourceSpan) -> Function:
+    """
+    Build the initializer of the module keyed `key`: claim the module's initialization, and when this is the first
+    claim, force its computed statics in declaration order before recording it complete.
+
+    A later call, and one made while the statics are still initializing, returns without forcing anything, as legacy's
+    once and running guards do.
+    """
+    owner = static_owner(statics[key])
+    mut forced: list[int] = []
+    for slot in range(len(statics)):
+        if is_computed_static(statics[slot]) and static_owner(statics[slot]) == owner:
+            forced.append(slot)
+    # Blocks: 0 claims, 1 branches, then one block per forced static, the completion record, and the return.
+    done = 2 + len(forced) + 1
+    claim = TerminatorKind.Call(
+        Callee(kind=CalleeKind.External("incan_native_runtime::begin_module_initialization"), span=span),
+        [literal(Constant.Int(key), span)],
+        plan_place(1, span),
+        1,
+        Unwind.Continue,
+    )
+    claimed = Operand(kind=OperandKind.Copy(plan_place(1, span)), span=span)
+    mut blocks = [plan_block([], claim, span), plan_block([], TerminatorKind.SwitchBool(claimed, done, 2), span)]
+    for index in range(len(forced)):
+        force = TerminatorKind.Call(
+            Callee(kind=CalleeKind.StaticForce(forced[index]), span=span),
+            [],
+            plan_place(2, span),
+            3 + index,
+            Unwind.Continue,
+        )
+        blocks.append(plan_block([], force, span))
+    complete = TerminatorKind.Call(
+        Callee(kind=CalleeKind.External("incan_native_runtime::end_module_initialization"), span=span),
+        [literal(Constant.Int(key), span)],
+        plan_place(2, span),
+        done,
+        Unwind.Continue,
+    )
+    blocks.append(plan_block([], complete, span))
+    unit = plan_assign(plan_place(0, span), RvalueKind.Use(literal(Constant.Unit, span)), span)
+    blocks.append(plan_block([unit], TerminatorKind.Return, span))
+    return Function(
+        name=module_initializer_name(key),
+        parameters=[],
+        return_type=PlanType.Unit,
+        locals=[Local(ty=PlanType.Unit, span=span), Local(ty=PlanType.Bool, span=span), Local(
+            ty=PlanType.Unit,
+            span=span,
+        )],
+        blocks=blocks,
+        span=span,
+    )
+
+
+pub def enters_module_initialization(body: &Body) -> bool:
+    """
+    Report whether a body initializes its module's statics on entry: every function and method does, as in legacy,
+    but a computed static's own initializer does not, because the module's initialization is what runs it.
+    """
+    match body.canonical:
+        Some(identity) => return identity.kind != SemanticSourceTargetKind.Static
+        None => return true

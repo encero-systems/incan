@@ -419,6 +419,12 @@ pub enum CalleeKind:
     ClosureBody(str, int)
     # Invoke a borrowed callable object of this signature with one packed argument tuple.
     CallClosure(list[PlanType])
+    # Read a clone of computed static storage slot `n`, running its initializer first if nothing has yet.
+    StaticLoad(int)
+    # Replace the value of computed static storage slot `n`.
+    StaticStore(int)
+    # Run computed static slot `n`'s initializer unless it has already run, keeping the value in its storage.
+    StaticForce(int)
 
 
 @derive(Clone, PartialEq)
@@ -501,6 +507,23 @@ pub model Plan:
     pub models: list[ModelDeclaration]
     pub functions: list[Function]
     pub externals: list[ExternalFunction]
+    pub span: SourceSpan
+    # Computed static storage the adapter declares, each initialized by its planned initializer function.
+    pub statics: list[StaticCell] = []
+
+
+@derive(Clone, PartialEq)
+pub model StaticCell:
+    """
+    One computed module static's native storage: a lazily initialized cell holding a value of `ty`.
+
+    The adapter declares the cell and its load, store and force accessors; `initializer` names the planned function
+    with no parameters that computes the first value, run at most once, when the cell is first forced or read.
+    """
+
+    pub slot: int
+    pub ty: PlanType
+    pub initializer: str
     pub span: SourceSpan
 
 

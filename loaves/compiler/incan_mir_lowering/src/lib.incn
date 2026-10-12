@@ -41,6 +41,7 @@ pub from pub::incan_mir_plan import (
     Rvalue,
     RvalueKind,
     SourceSpan,
+    StaticCell,
     Statement,
     StatementKind,
     Terminator,
@@ -81,11 +82,6 @@ pub def lower_program(
     return lower_checked_program(modules, sources, files, entry)
 
 
-pub def program_refusals(
-    modules: &list[BodyIrModule],
-    sources: list[str],
-    files: list[str],
-    entry: int,
-) -> list[str]:
+pub def program_refusals(modules: &list[BodyIrModule], sources: list[str], files: list[str], entry: int) -> list[str]:
     """Delegate the census's per-body refusal collection through the canonical caller boundary."""
     return checked_program_refusals(modules, sources, files, entry)

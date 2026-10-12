@@ -20,15 +20,23 @@ use crate::{
 };
 
 impl BodyIrModule {
-    /// Prove a literal static belongs to this module and its initializer matches its exact retained carrier.
+    /// Prove a static belongs to this module and its initializer matches its exact retained carrier. A computed
+    /// initializer's body must carry the static's own canonical identity and declaration id, so a module cannot attach
+    /// another declaration's body to it.
     pub fn is_well_formed_static_declaration(&self, declaration: &crate::body_ir::StaticDeclaration) -> bool {
-        self.declaration_id_for_canonical(
+        let Some(declaration_id) = self.declaration_id_for_canonical(
             &declaration.canonical,
             SymbolNamespace::OrdinaryLexical,
             SemanticSourceTargetKind::Static,
-        )
-        .is_some()
-            && static_initializer_matches(&declaration.ty, &declaration.initial)
+        ) else {
+            return false;
+        };
+        if let StaticInitializer::Computed(body) = &declaration.initial
+            && (body.canonical.as_ref() != Some(&declaration.canonical) || body.decl_id != declaration_id)
+        {
+            return false;
+        }
+        static_initializer_matches(&declaration.ty, &declaration.initial)
     }
 
     /// Whether a normal enum layout belongs to this module and every variant identity belongs to its declared owner.
@@ -395,9 +403,17 @@ fn nominal_receiver_type(owner: &NominalDeclaration) -> crate::IncanType {
 }
 
 /// Whether a static initializer's literals match its storage carrier: a primitive, or a list, dictionary or set of
-/// primitives whose hashed keys and members exclude floating point, as legacy hashed collections do.
+/// primitives whose hashed keys and members exclude floating point, as legacy hashed collections do. A computed
+/// initializer is a closed body with no parameters that returns exactly the storage carrier.
 fn static_initializer_matches(ty: &IncanType, initial: &StaticInitializer) -> bool {
     match initial {
+        StaticInitializer::Computed(body) => {
+            body.params.is_empty()
+                && body.param_locals.is_empty()
+                && body.type_parameters.is_empty()
+                && !body.is_async
+                && body.return_type == *ty
+        }
         StaticInitializer::Literal(value) => literal_static_carrier_matches(ty, value),
         StaticInitializer::List(values) => match collection_arguments(ty, CollectionTypeId::List) {
             Some([element]) => {

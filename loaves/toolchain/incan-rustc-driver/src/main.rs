@@ -27,6 +27,7 @@ mod frontend;
 mod identity;
 mod plan;
 mod spans;
+mod statics;
 mod terminators;
 mod types;
 mod union_debug;

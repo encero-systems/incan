@@ -388,7 +388,7 @@ pub fn function(function: &Function, span: Span) -> Box<ast::Item> {
 }
 
 /// Build an item without source tokens; rustc assigns node identities after injection.
-fn item(kind: ast::ItemKind, span: Span) -> Box<ast::Item> {
+pub(crate) fn item(kind: ast::ItemKind, span: Span) -> Box<ast::Item> {
     Box::new(ast::Item {
         attrs: ThinVec::new(),
         id: ast::DUMMY_NODE_ID,

@@ -121,6 +121,65 @@ fn lower_declaration_statements(
     (stmts, None)
 }
 
+/// Lower a computed static's initializer into a body with no parameters that returns the storage carrier
+/// ([`bir::StaticInitializer::Computed`]).
+///
+/// The body returns the initializer expression as a function body returns a value, checked against the static's
+/// carrier, under the static's own identity and declaration-span ids. It is not a callable source declaration, so it
+/// never joins the module's bodies; a consumer runs it at most once, where legacy initializes the static.
+pub(super) fn lower_static_initializer_body(
+    storage: &ast::StaticDecl,
+    decl_span: ast::Span,
+    canonical: &CanonicalSymbolId,
+    ty: &IncanType,
+    lowering_facts: &BodyIrLoweringFacts<'_, '_>,
+) -> bir::Body {
+    let direct_call_id =
+        CompilerNodeId::declaration_span(lowering_facts.module_identity, decl_span.start, decl_span.end);
+    let mut builder = BodyBuilder::new(lowering_facts, ty.clone());
+    let root_scope = builder.new_scope(None, hir_span(decl_span));
+    let source = [ast::Spanned::new(
+        ast::Statement::Return(Some(storage.value.clone())),
+        storage.value.span,
+    )];
+    let (stmts, _) = lower_declaration_statements(&mut builder, None, &source, root_scope, hir_span(decl_span));
+    if builder
+        .locals
+        .iter()
+        .any(|local| !local.ty.abi_v0_facts().ownership.is_trivially_copy())
+    {
+        builder.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
+    }
+    bir::Body {
+        type_parameters: Vec::new(),
+        decl_id: direct_call_id.clone(),
+        direct_call_id,
+        canonical: Some(canonical.clone()),
+        name: storage.name.clone(),
+        span: hir_span(decl_span),
+        return_type: ty.clone(),
+        callable_representation: Some(bir::CallableRepresentation {
+            function_pointer_locals: builder.function_pointer_locals,
+            closure_holding_locals: builder.closure_holding_locals,
+            closure_holding_parameters: Vec::new(),
+            closure_holding_return: false,
+        }),
+        named_type_identities: lowering_facts.type_info.declarations.named_type_identities.clone(),
+        locals: builder.locals,
+        params: Vec::new(),
+        param_locals: Vec::new(),
+        scopes: builder.scopes,
+        block: bir::Block {
+            scope: root_scope,
+            stmts,
+        },
+        runtime_requirements: builder.runtime_requirements,
+        panic_facts: builder.panic_facts,
+        is_async: false,
+        extern_delegation: None,
+    }
+}
+
 /// Lower one function declaration's body into Body IR v0.
 pub(super) fn lower_function_body(
     function: &ast::FunctionDecl,

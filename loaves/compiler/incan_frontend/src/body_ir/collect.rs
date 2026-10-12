@@ -58,8 +58,14 @@ pub(super) fn collect_type_aliases(
         .collect()
 }
 
-/// Retain primitive and primitive-collection literal statics, whose initialization has no user-visible effects.
-pub(super) fn collect_scalar_statics(program: &ast::Program, type_info: &TypeCheckInfo) -> Vec<bir::StaticDeclaration> {
+/// Retain every static of this module: a primitive or primitive-collection literal, whose initialization has no
+/// user-visible effects, keeps its literal initializer; any other checked initializer is lowered as a computed body
+/// evaluated where legacy initializes the static (see [`bir::StaticInitializer::Computed`]).
+pub(super) fn collect_statics(
+    program: &ast::Program,
+    lowering_facts: &BodyIrLoweringFacts<'_, '_>,
+) -> Vec<bir::StaticDeclaration> {
+    let type_info = lowering_facts.type_info;
     program
         .declarations
         .iter()
@@ -68,12 +74,20 @@ pub(super) fn collect_scalar_statics(program: &ast::Program, type_info: &TypeChe
                 return None;
             };
             let ty = semantic_type_from_resolved(type_info.expr_type(storage.value.span)?);
-            let initial = static_initializer(&storage.value, &ty, type_info)?;
             let canonical = type_info
                 .declarations
                 .declaration_identities
                 .get(&(declaration.span.start, declaration.span.end))?
                 .clone();
+            let initial = static_initializer(&storage.value, &ty, type_info).unwrap_or_else(|| {
+                bir::StaticInitializer::Computed(Box::new(lower_static_initializer_body(
+                    storage,
+                    declaration.span,
+                    &canonical,
+                    &ty,
+                    lowering_facts,
+                )))
+            });
             Some(bir::StaticDeclaration { canonical, ty, initial })
         })
         .collect()

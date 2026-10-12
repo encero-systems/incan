@@ -262,6 +262,7 @@ pub fn validate(plan: &Plan) -> Result<(), PlanError> {
     validate_models(plan)?;
     validate_enums(plan)?;
     validate_value_layouts(plan)?;
+    validate_statics(plan)?;
     let mut paths = BTreeSet::new();
     for external in &plan.externals {
         span(&external.span)?;
@@ -1441,6 +1442,12 @@ fn signature(plan: &Plan, function: &Function, callee: &Callee) -> Result<(Vec<S
                 .ok_or_else(|| invalid(function, "local callable has no result type"))?;
             Ok((signature, result))
         }
+        CalleeKind::StaticLoad(slot) => Ok((Vec::new(), scalar(&crate::statics::cell(plan, *slot)?.ty))),
+        CalleeKind::StaticStore(slot) => Ok((vec![scalar(&crate::statics::cell(plan, *slot)?.ty)], Scalar::Unit)),
+        CalleeKind::StaticForce(slot) => {
+            crate::statics::cell(plan, *slot)?;
+            Ok((Vec::new(), Scalar::Unit))
+        }
         CalleeKind::Planned(name) => {
             let function = plan
                 .functions
@@ -1984,6 +1991,27 @@ fn member_debug_layout(declaration: &crate::plan::EnumDeclaration) -> bool {
         && declaration.name.starts_with("__IncanUnion")
         && !declaration.derives.iter().any(|name| name == "Debug")
         && declaration.variants.iter().all(|variant| variant.fields.len() == 1)
+}
+
+/// Require each computed static cell to own a distinct slot and to name a planned initializer that takes no
+/// parameters and returns exactly the cell's value type.
+fn validate_statics(plan: &Plan) -> Result<(), PlanError> {
+    let mut slots = BTreeSet::new();
+    for cell in &plan.statics {
+        span(&cell.span)?;
+        let initializer = plan
+            .functions
+            .iter()
+            .find(|function| function.name == cell.initializer)
+            .ok_or_else(|| PlanError::UnknownCallee(cell.initializer.clone()))?;
+        if !slots.insert(cell.slot) || !initializer.parameters.is_empty() || initializer.return_type != cell.ty {
+            return Err(invalid(
+                initializer,
+                "static cell slot or initializer signature is invalid",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Reject infinitely sized by-value nominal/enum layouts while allowing cycles behind collections and references.

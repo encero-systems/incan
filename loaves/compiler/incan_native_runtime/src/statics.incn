@@ -44,3 +44,25 @@ pub def read_static_bool(slot: int, initial: bool) -> bool:
 pub def write_static_bool(slot: int, value: bool) -> None:
     """Persist a boolean assignment across native function frames."""
     BOOLEAN_CELLS[slot] = value
+
+
+# Module initialization state by module key: absent before, 1 while its statics initialize, 2 once they have.
+static MODULE_INITIALIZATION: dict[int, int] = {}
+
+
+pub def begin_module_initialization(module: int) -> bool:
+    """
+    Claim one module's static initialization, as legacy's `__incan_init_module_statics` does on entry.
+
+    Only the first call claims it. A call made while the module's statics are still initializing, from a function an
+    initializer reaches, returns without claiming, as legacy's running guard does, and so does every later call.
+    """
+    if MODULE_INITIALIZATION.get(module, 0) != 0:
+        return false
+    MODULE_INITIALIZATION[module] = 1
+    return true
+
+
+pub def end_module_initialization(module: int) -> None:
+    """Record that one module's statics have all been initialized."""
+    MODULE_INITIALIZATION[module] = 2

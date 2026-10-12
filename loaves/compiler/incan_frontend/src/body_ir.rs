@@ -399,7 +399,7 @@ fn build_body_ir_module_v0_with_provider_operations(
         ),
         enum_declarations,
         stdlib_delegations: stdlib_delegations::collect(type_info),
-        static_declarations: collect::collect_scalar_statics(program, type_info),
+        static_declarations: collect::collect_statics(program, &lowering_facts),
         module_id,
         nominal_declarations,
         fieldless_enum_declarations,

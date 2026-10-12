@@ -37,6 +37,7 @@ from pub::incan_mir_plan import (
     Parameter,
     Place,
     Plan,
+    StaticCell,
     PlanType,
     SizedNumeric,
     TupleElement,
@@ -167,7 +168,7 @@ from element_places import is_element_place, element_place_type
 from element_borrows import element_method_owner, element_method_receiver, borrow_element_mut, mutable_element_place
 from option_tests import is_option_carrier, is_union_carrier, option_isinstance, enum_tag
 from derived_defaults import is_derived_default, lower_derived_default
-from models import field_projection
+from models import field_path, field_projection
 from models import model_type, model_place, constructor_index, field_slot
 from model_values import (
     debug_model_operand,
@@ -305,6 +306,16 @@ from assertions import lower_assertion
 from async_ import future_type, future_declarations, construct_future, await_future, async_entry, evaluator_name
 from defaults import default_arguments, default_type, method_default_arguments, model_default_arguments
 from type_parameters import Instance, instantiate, substitute
+from computed_statics import (
+    enters_module_initialization,
+    initialize_module_statics,
+    is_computed_static,
+    module_initialization_externals,
+    module_initializer,
+    module_static_key,
+    static_initializer_name,
+    static_owner,
+)
 from closures import (
     validate_callable_representation,
     source_function_item,
@@ -483,7 +494,11 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
     match element_read(builder, value, span)?:
         Some(operand) => return Ok(operand)
         None => pass
-    target = scalar_place(builder, value, span)?
+    return target_read(builder, scalar_place(builder, value, span)?, fact, span)
+
+
+def target_read(mut builder: Builder, target: Place, fact: &OwnershipFact, span: SourceSpan) -> Result[Operand, str]:
+    """Read a resolved frame place as a copy, move or clone, exactly as Body IR's ownership fact says."""
     # Only the binding remembers a partial's supplied flags, so a partial is called or moved into a binding, never read.
     match partial_flags(builder, target.local):
         Some(_flags) => return Err("unsupported Body IR partial read outside a call or a binding")
@@ -4592,6 +4607,17 @@ pub def lower_program(
     mut owners: list[str] = []
     for module in checked:
         owners.append(str(module.module_id.path()))
+    statics = lower_computed_statics(
+        context,
+        unions,
+        sources,
+        files,
+        owners,
+        intrinsics,
+        functions,
+        externals,
+        instances,
+    )?
     _ = lower_instances(context, instances, unions, sources, files, owners, functions, externals, intrinsics)?
     # Instances may add intrinsic declarations, so the intrinsic and future declarations join the plan last.
     for declaration in intrinsics:
@@ -4605,8 +4631,72 @@ pub def lower_program(
             functions=functions,
             externals=externals,
             span=SourceSpan(file=files[entry], line=1, column=1),
+            statics=statics,
         ),
     )
+
+
+def lower_computed_statics(
+    module: &BodyIrModule,
+    unions: list[RustType],
+    sources: list[str],
+    files: list[str],
+    owners: list[str],
+    intrinsics: list[EnumDeclaration],
+    mut functions: list[Function],
+    mut externals: list[ExternalFunction],
+    mut instances: list[Instance],
+) -> Result[list[StaticCell], str]:
+    """
+    Plan each computed static (RFC 052): its initializer body becomes a planned function returning the first value,
+    the static a storage cell the adapter declares, and each module declaring computed statics one initializer that
+    forces them in declaration order (see `computed_statics`).
+    """
+    mut cells: list[StaticCell] = []
+    mut keys: list[int] = []
+    for slot in range(len(module.static_declarations)):
+        declaration = module.static_declarations[slot]
+        match declaration.initial:
+            RustStaticInitializer.Computed(body) =>
+                owner = static_owner(declaration)
+                mut source_index = -1
+                for index in range(len(owners)):
+                    if owners[index] == owner:
+                        source_index = index
+                if source_index < 0:
+                    return Err("unsupported Body IR computed static without source provenance")
+                function, runtime, pending, synthesized = lower_function(
+                    module,
+                    body,
+                    unions,
+                    sources[source_index],
+                    files[source_index],
+                    intrinsics,
+                    [],
+                )?
+                mut initializer = function
+                initializer.name = static_initializer_name(slot)
+                ty = native_source_type(
+                    module.nominal_declarations,
+                    module.enum_declarations,
+                    unions,
+                    declaration.ty,
+                    intrinsics,
+                )?
+                if initializer.return_type != ty:
+                    return Err("invalid Body IR computed static initializer carrier")
+                cells.append(StaticCell(slot=slot, ty=ty, initializer=initializer.name, span=initializer.span))
+                key = module_static_key(module.static_declarations, owner)
+                if key not in keys:
+                    keys.append(key)
+                    functions.append(module_initializer(module.static_declarations, key, initializer.span))
+                    merge_externals(externals, module_initialization_externals(initializer.span))
+                functions.append(initializer)
+                append_synthesized(functions, synthesized)?
+                merge_externals(externals, runtime)
+                instances.extend(pending)
+            _ => pass
+    return Ok(cells)
 
 
 pub def program_refusals(modules: &list[BodyIrModule], sources: list[str], files: list[str], entry: int) -> list[str]:
@@ -4670,6 +4760,9 @@ def body_refusals(
     mut owners: list[str] = []
     for module in checked:
         owners.append(str(module.module_id.path()))
+    match lower_computed_statics(context, unions, sources, files, owners, intrinsics, functions, externals, instances):
+        Ok(_cells) => pass
+        Err(error) => refusals.append(f"computed static: {error}")
     match lower_instances(context, instances, unions, sources, files, owners, functions, externals, intrinsics):
         Ok(_lowered) => pass
         Err(error) => refusals.append(f"type-parameter instance: {error}")
@@ -4709,17 +4802,19 @@ def lower_concrete_module(module: &BodyIrModule, source: str, file: str) -> Resu
         append_generator_constructor(functions, module, body, source, file, intrinsics)?
         merge_externals(externals, runtime)
         instances.extend(pending)
-    _ = lower_instances(
+    owners = [str(module.module_id.path())]
+    statics = lower_computed_statics(
         module,
-        instances,
         unions,
         [source],
         [file],
-        [str(module.module_id.path())],
+        owners,
+        intrinsics,
         functions,
         externals,
-        intrinsics,
+        instances,
     )?
+    _ = lower_instances(module, instances, unions, [source], [file], owners, functions, externals, intrinsics)?
     # Instances may add intrinsic declarations, so the intrinsic and future declarations join the plan last.
     for declaration in intrinsics:
         enums.append(declaration)
@@ -4732,6 +4827,7 @@ def lower_concrete_module(module: &BodyIrModule, source: str, file: str) -> Resu
             functions=functions,
             externals=externals,
             span=SourceSpan(file=file, line=1, column=1),
+            statics=statics,
         ),
     )
 
@@ -4989,6 +5085,10 @@ def lower_function(
                 builder.generator_handle = handle.local
                 builder.owned.append(handle.local)
             None => return Err("unsupported Body IR generator return type")
+    # Legacy initializes the module's computed statics on entry to each of its functions (RFC 052), in `main` before
+    # it installs the panic hook.
+    if enters_module_initialization(body):
+        initialize_module_statics(builder, body_module_identity(body)?, span)
     # Direct MIR bypasses legacy's generated entrypoint, so request its canonical panic initialization explicitly.
     if str(body.name) == "main":
         initialized = temporary(builder, PlanType.Unit, span)
@@ -6416,6 +6516,9 @@ pub def list_root_place(mut builder: Builder, value: &RustPlace, span: SourceSpa
     retains its separate element-materialization route.
     """
     if len(value.projection) != 0:
+        match computed_static_root(builder, value, span)?:
+            Some(place) => return Ok(place)
+            None => pass
         match value.local_id():
             None => return Err("unsupported Body IR global list root projection")
             Some(local) =>
@@ -7511,10 +7614,12 @@ def read_static(
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """Read persistent storage without consuming it, cloning owned string and collection values."""
+    slot = static_slot(builder.statics, global)?
+    if is_computed_static(builder.statics[slot]):
+        return read_computed_static(builder, value, global, slot, fact, span)
     ty = model_type(builder.nominals, global.ty)?
     if len(value.projection) != 0 and not is_owned_collection(ty):
         return Err("unsupported Body IR static projection")
-    slot = static_slot(builder.statics, global)?
     if is_owned_collection(ty):
         if fact != OwnershipFact.Clone and fact != OwnershipFact.Borrow and fact != OwnershipFact.MutBorrow:
             if len(value.projection) == 0 or fact != OwnershipFact.Copy:
@@ -7537,6 +7642,117 @@ def read_static(
     if is_collection(ty):
         return dictionary_value_read(builder, value, target, span)
     return projected_element_read(builder, value, target, 0, span)
+
+
+def read_computed_static(
+    mut builder: Builder,
+    value: &RustPlace,
+    global: &RustGlobalPlace,
+    slot: int,
+    fact: &OwnershipFact,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """
+    Read a computed static (RFC 052) as legacy reads it: initialize its module's statics, then copy its current value.
+
+    The copy is a fresh owner, so a whole read hands it on and a projected read selects from it as from any owned
+    snapshot. Only a collection is borrowed mutably, by a method that commits the changed copy back.
+    """
+    ty = native_source_type(builder.nominals, builder.enums, builder.unions, global.ty, builder.intrinsics)?
+    match fact:
+        OwnershipFact.Unknown => return Err("unsupported Body IR static ownership")
+        OwnershipFact.MutBorrow =>
+            if len(value.projection) != 0 or not is_owned_collection(ty):
+                return Err("unsupported Body IR mutable borrow of a computed static")
+        OwnershipFact.Move =>
+            if len(value.projection) != 0:
+                return Err("unsupported Body IR partial move out of a static")
+        _ => pass
+    snapshot = load_computed_static(builder, slot, ty, span)
+    if len(value.projection) == 0:
+        return Ok(read_place(snapshot, snapshot_owns(ty), span))
+    if is_collection(ty):
+        return dictionary_value_read(builder, value, snapshot, span)
+    if is_owned_collection(ty):
+        return projected_element_read(builder, value, snapshot, 0, span)
+    selected = snapshot_projection(builder, value, snapshot, span)?
+    # The copy stays whole until its scope ends, so a borrowed field is read as a clone rather than moved out of it.
+    if fact == OwnershipFact.Borrow:
+        return target_read(builder, selected, OwnershipFact.Clone, span)
+    return target_read(builder, selected, fact, span)
+
+
+def load_computed_static(mut builder: Builder, slot: int, ty: PlanType, span: SourceSpan) -> Place:
+    """Load a copy of computed static `slot` after its module's statics are initialized, as legacy reads do."""
+    initialize_module_statics(builder, static_owner(builder.statics[slot]), span)
+    snapshot = temporary(builder, ty, span)
+    terminate_call(builder, CalleeKind.StaticLoad(slot), [], snapshot, span)
+    if snapshot_owns(ty):
+        builder.owned.append(snapshot.local)
+    return snapshot
+
+
+def snapshot_owns(ty: PlanType) -> bool:
+    """Whether a loaded static value owns resources its frame must drop, rather than being a plain copy."""
+    if numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit or ty == PlanType.FrozenStr:
+        return false
+    return not callable_copy_type(ty)
+
+
+def computed_static_root(mut builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Option[Place], str]:
+    """The place a projected computed static selects inside a freshly loaded copy, or None for any other place."""
+    match value.global():
+        Some(global) =>
+            slot = static_slot(builder.statics, global)?
+            if not is_computed_static(builder.statics[slot]):
+                return Ok(None)
+            ty = native_source_type(builder.nominals, builder.enums, builder.unions, global.ty, builder.intrinsics)?
+            snapshot = load_computed_static(builder, slot, ty, span)
+            if len(value.projection) == 0:
+                return Ok(Some(snapshot))
+            return Ok(Some(snapshot_projection(builder, value, snapshot, span)?))
+        None => return Ok(None)
+
+
+def computed_static_type(builder: Builder, value: &RustPlace, global: &RustGlobalPlace) -> Result[PlanType, str]:
+    """The checked carrier a computed static place selects, without reading the static."""
+    ty = native_source_type(builder.nominals, builder.enums, builder.unions, global.ty, builder.intrinsics)?
+    if len(value.projection) == 0:
+        return Ok(ty)
+    fields = field_path(
+        builder.nominals,
+        ty,
+        value.projection,
+        len(value.projection),
+        builder.enums,
+        builder.unions,
+        builder.intrinsics,
+    )?
+    return Ok(fields[-1].ty)
+
+
+def snapshot_projection(builder: Builder, value: &RustPlace, snapshot: Place, span: SourceSpan) -> Result[Place, str]:
+    """Select a static place's checked field and payload path inside its loaded copy."""
+    fields = field_path(
+        builder.nominals,
+        place_type(builder.locals, snapshot),
+        value.projection,
+        len(value.projection),
+        builder.enums,
+        builder.unions,
+        builder.intrinsics,
+    )?
+    if len(fields) == 1 and fields[0].variant >= 0:
+        return Ok(
+            Place(
+                local=snapshot.local,
+                projection=Projection.VariantField(fields[0].variant, fields[0].slot, fields[0].ty),
+                span=span,
+            ),
+        )
+    if len(fields) == 1:
+        return Ok(Place(local=snapshot.local, projection=Projection.Field(fields[0].slot, fields[0].ty), span=span))
+    return Ok(Place(local=snapshot.local, projection=Projection.Fields(fields), span=span))
 
 
 def static_initial_operand(
@@ -7568,6 +7784,8 @@ def static_initial_operand(
             for member in members:
                 keys.append(member.clone())
             return static_hashed_initial(builder, ty, keys, [], span)
+        RustStaticInitializer.Computed(_body) =>
+            return Err("invalid Body IR computed static as a literal initial value")
 
 
 def static_hashed_initial(
@@ -7623,7 +7841,11 @@ def write_static(
     match global.write_policy:
         RustGlobalWritePolicy.Rebindable => pass
         _ => return Err("unsupported Body IR static write policy")
-    ty = model_type(builder.nominals, global.ty)?
+    mut ty = PlanType.Unit
+    if is_computed_static(builder.statics[static_slot(builder.statics, global)?]):
+        ty = native_source_type(builder.nominals, builder.enums, builder.unions, global.ty, builder.intrinsics)?
+    else:
+        ty = model_type(builder.nominals, global.ty)?
     if len(destination.projection) != 0:
         if not is_collection(ty):
             return Err("unsupported Body IR static projection")
@@ -7675,6 +7897,8 @@ def persist_static_value(
 ) -> Result[None, str]:
     """Commit an evaluated primitive or collection replacement to its exact canonical storage slot."""
     slot = static_slot(builder.statics, global)?
+    if is_computed_static(builder.statics[slot]):
+        return store_computed_static(builder, global, slot, target, span)
     ty = model_type(builder.nominals, global.ty)?
     if place_type(builder.locals, target) != ty:
         return Err("invalid Body IR static replacement carrier")
@@ -7689,6 +7913,26 @@ def persist_static_value(
         output,
         span,
     )
+    return Ok(None)
+
+
+def store_computed_static(
+    mut builder: Builder,
+    global: &RustGlobalPlace,
+    slot: int,
+    target: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Replace a computed static's value with an evaluated one, after its module's statics are initialized as legacy's
+    writes first initialize them (RFC 052).
+    """
+    ty = native_source_type(builder.nominals, builder.enums, builder.unions, global.ty, builder.intrinsics)?
+    if place_type(builder.locals, target) != ty:
+        return Err("invalid Body IR static replacement carrier")
+    initialize_module_statics(builder, static_owner(builder.statics[slot]), span)
+    output = temporary(builder, PlanType.Unit, span)
+    terminate_call(builder, CalleeKind.StaticStore(slot), [read_place(target, snapshot_owns(ty), span)], output, span)
     return Ok(None)
 
 
@@ -8311,7 +8555,10 @@ def argument_type(
     match arguments[index].as_one():
         Some(RustOperand.Place(read)) =>
             match read.place.global():
-                Some(global) => return model_type(builder.nominals, global.ty)
+                Some(global) =>
+                    if is_computed_static(builder.statics[static_slot(builder.statics, global)?]):
+                        return computed_static_type(builder, read.place, global)
+                    return model_type(builder.nominals, global.ty)
                 None => pass
             if is_element_place(builder, read.place)?:
                 return element_place_type(builder, read.place)
