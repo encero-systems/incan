@@ -11,7 +11,9 @@ pub(super) fn checked_semantic_type(ty: &crate::symbols::ResolvedType, facts: &T
     retain_checked_nominal_names(semantic_type_from_resolved(ty), facts)
 }
 
-/// Normalize nested checked nominal positions before they cross the Body IR boundary.
+/// Normalize nested nominal spellings and structural union order before they cross the Body IR boundary.
+/// Imported metadata may list an equivalent union in another order; retaining one order keeps nested return and
+/// parameter positions on the same layout without changing the legacy checker's representation.
 fn retain_checked_nominal_names(ty: IncanType, facts: &TypeCheckInfo) -> IncanType {
     match ty {
         IncanType::Named(name) => IncanType::Named(
@@ -21,13 +23,16 @@ fn retain_checked_nominal_names(ty: IncanType, facts: &TypeCheckInfo) -> IncanTy
                 .get(&name)
                 .map_or(name.clone(), |identity| identity.declaration_name.clone()),
         ),
-        IncanType::Generic { base, args } => IncanType::Generic {
-            base,
-            args: args
+        IncanType::Generic { base, args } => {
+            let mut args: Vec<_> = args
                 .into_iter()
                 .map(|ty| retain_checked_nominal_names(ty, facts))
-                .collect(),
-        },
+                .collect();
+            if base == "Union" {
+                args.sort_by_cached_key(ToString::to_string);
+            }
+            IncanType::Generic { base, args }
+        }
         IncanType::Tuple(elements) => IncanType::Tuple(
             elements
                 .into_iter()

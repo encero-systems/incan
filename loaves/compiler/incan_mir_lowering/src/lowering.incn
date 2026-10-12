@@ -8180,8 +8180,8 @@ def lower_union_isinstance(
     target: &RustType,
     span: SourceSpan,
 ) -> Result[RvalueKind, str]:
-    """Inspect an ordinary union's or an Option's tag without consuming the tested value."""
-    source_ty = native_source_type(builder.nominals, builder.enums, builder.unions, ty, builder.intrinsics)?
+    """Inspect the physical carrier's tag without consuming it; a narrowed view never changes stored variant indexes."""
+    source_ty = isinstance_source_type(builder, value, ty, span)?
     member = native_source_type(builder.nominals, builder.enums, builder.unions, target, builder.intrinsics)?
     match source_ty:
         PlanType.Int => return Ok(RvalueKind.Use(literal(Constant.Bool(source_ty == member), span)))
@@ -8202,6 +8202,22 @@ def lower_union_isinstance(
     source = isinstance_place(builder, value, span)?
     tag = enum_tag(builder, source, span)
     return Ok(test_union_tag(builder, tag, slots, span))
+
+
+def isinstance_source_type(
+    builder: Builder,
+    value: &RustOperand,
+    checked: &RustType,
+    span: SourceSpan,
+) -> Result[PlanType, str]:
+    """Use retained place storage for carrier views, preserving full union indexes after a checker-proven narrowing."""
+    match checked:
+        RustType.Generic(base=base, args=_arguments) =>
+            if base == "Union" or base == "Option":
+                source = isinstance_place(builder, value, span)?
+                return Ok(place_type(builder.locals, source))
+        _ => pass
+    return native_source_type(builder.nominals, builder.enums, builder.unions, checked, builder.intrinsics)
 
 
 def isinstance_place(builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
