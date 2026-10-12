@@ -48,12 +48,12 @@ fn newtype_trait_targets_retain_distinct_implementations() -> Result<(), Box<dyn
     Ok(())
 }
 
-/// A validation hook cannot be admitted as a raw tuple wrapper without its checks.
+/// A generic validation hook stays refused until its declaration-bound checked ingress can be specialized.
 #[test]
-fn checked_newtypes_remain_outside_raw_layout_admission() -> Result<(), Box<dyn std::error::Error>> {
+fn generic_checked_newtypes_remain_outside_raw_layout_admission() -> Result<(), Box<dyn std::error::Error>> {
     let module = build(
-        r#"type Checked = newtype int:
-    def from_underlying(value: int) -> Result[Self, ValidationError]:
+        r#"type Checked[T] = newtype T:
+    def from_underlying(value: T) -> Result[Self, ValidationError]:
         return Ok(Checked(value))
 
 def main() -> None:

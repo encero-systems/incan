@@ -272,3 +272,217 @@ pub(super) fn check() -> TestResult<()> {
     println!("instantiated result ownership: normal and unwind drops passed");
     Ok(())
 }
+
+/// Follow the straight-line checked source's normal control-flow path without mistaking cleanup blocks for execution.
+fn formatting_normal_blocks(function: &plan::Function) -> TestResult<Vec<usize>> {
+    let mut index = 0;
+    let mut visited = BTreeSet::new();
+    let mut blocks = Vec::new();
+    loop {
+        if !visited.insert(index) {
+            return Err("cycle in validation-format normal path".into());
+        }
+        let block = function
+            .blocks
+            .get(index)
+            .ok_or("missing validation-format normal block")?;
+        if block.cleanup {
+            return Err("validation-format normal path entered cleanup".into());
+        }
+        blocks.push(index);
+        let next = match &block.terminator.kind {
+            plan::TerminatorKind::Call(_, _, _, next, _)
+            | plan::TerminatorKind::Drop(_, next, _)
+            | plan::TerminatorKind::Goto(next) => *next,
+            plan::TerminatorKind::Return => return Ok(blocks),
+            _ => return Err("unexpected validation-format normal terminator".into()),
+        };
+        index = usize::try_from(next)?;
+    }
+}
+
+/// Read the actual runtime call's destination and unwind edge, rejecting a source path that lost its formatter.
+fn formatting_call<'a>(
+    function: &'a plan::Function,
+    index: usize,
+    path: &str,
+) -> TestResult<(&'a plan::Place, &'a plan::Unwind)> {
+    let block = function
+        .blocks
+        .get(index)
+        .ok_or("missing validation-format call block")?;
+    let plan::TerminatorKind::Call(callee, _, destination, _, unwind) = &block.terminator.kind else {
+        return Err("expected validation-format runtime call".into());
+    };
+    if !matches!(&callee.kind, plan::CalleeKind::External(selected) if selected == path)
+        || !matches!(destination.projection, plan::Projection::Whole)
+    {
+        return Err(format!("expected whole-result runtime call to {path}").into());
+    }
+    Ok((destination, unwind))
+}
+
+/// Require the two successful formatter outputs to move in order into the exact array the f-string runtime borrows.
+fn formatting_array_owner(
+    function: &plan::Function,
+    normal: &[usize],
+    second_position: usize,
+    outputs: &[i64; 2],
+) -> TestResult<(i64, usize)> {
+    let mut found = None;
+    for (position, index) in normal.iter().enumerate() {
+        let block = function
+            .blocks
+            .get(*index)
+            .ok_or("missing formatting-array normal block")?;
+        for statement in &block.statements {
+            let plan::StatementKind::Assign(destination, value) = &statement.kind else {
+                continue;
+            };
+            let plan::RvalueKind::Array(elements) = &value.kind else {
+                continue;
+            };
+            let local = function
+                .locals
+                .get(usize::try_from(destination.local)?)
+                .ok_or("missing array local")?;
+            if !matches!(local.ty, plan::PlanType::StringArray(2)) {
+                continue;
+            }
+            if found.is_some() || position <= second_position || elements.len() != 2 {
+                return Err("expected one two-string array after the second successful formatter call".into());
+            }
+            for (element, expected) in elements.iter().zip(outputs) {
+                if !matches!(&element.kind, plan::OperandKind::Move(source)
+                    if source.local == *expected && matches!(source.projection, plan::Projection::Whole))
+                {
+                    return Err("formatted strings must move into their array in source order".into());
+                }
+            }
+            if !matches!(destination.projection, plan::Projection::Whole) {
+                return Err("formatted string array must have a whole owner".into());
+            }
+            found = Some((destination.local, position));
+        }
+    }
+    found.ok_or_else(|| "missing ownership transfer into the formatted string array".into())
+}
+
+/// Check genuine source lowering: each formatter output owns once until it moves into the f-string value array.
+pub(super) fn check_validation_format() -> TestResult<()> {
+    const SOURCE: &str =
+        "def main() -> None:\n    error = ValidationError(\"owned\")\n    text = f\"{error} {error}\"\n";
+    const FORMATTER: &str = "incan_native_runtime::format_validation_error";
+    let module = super::checked_source(SOURCE, "dev7_validation_format_ownership")?;
+    let lowered = lower_module(
+        &module,
+        SOURCE.to_owned(),
+        "dev7_validation_format_ownership.incn".to_owned(),
+    )?;
+    let function = lowered
+        .functions
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("missing formatting main")?;
+    let normal = formatting_normal_blocks(function)?;
+    let calls = normal
+        .iter()
+        .enumerate()
+        .filter_map(|(position, index)| {
+            let block = function.blocks.get(*index)?;
+            match &block.terminator.kind {
+                plan::TerminatorKind::Call(callee, _, _, _, _)
+                    if matches!(&callee.kind, plan::CalleeKind::External(path) if path == FORMATTER) =>
+                {
+                    Some((position, *index))
+                }
+                _ => None,
+            }
+        })
+        .collect::<Vec<_>>();
+    if calls.len() != 2 {
+        return Err(format!(
+            "expected exactly two checked error formatter calls, got {}",
+            calls.len()
+        )
+        .into());
+    }
+    let (first, _) = formatting_call(function, calls[0].1, FORMATTER)?;
+    let (second, unwind) = formatting_call(function, calls[1].1, FORMATTER)?;
+    let outputs = [first.local, second.local];
+    if first.local == second.local {
+        return Err("two f-string fields must retain distinct formatter outputs".into());
+    }
+    for output in outputs {
+        let local = function
+            .locals
+            .get(usize::try_from(output)?)
+            .ok_or("missing formatter result local")?;
+        if !matches!(local.ty, plan::PlanType::String) {
+            return Err("formatter output must retain its owned String representation".into());
+        }
+    }
+    let plan::Unwind::Cleanup(start) = unwind else {
+        return Err("second formatter must clean up the first successful formatter's live output".into());
+    };
+    let drops = cleanup_drops(function, *start)?;
+    let first_drops = drops.iter().filter(|local| **local == first.local).count();
+    if first_drops != 1 {
+        return Err(format!(
+            "second formatter cleanup must drop first formatter output exactly once, got {first_drops}"
+        )
+        .into());
+    }
+    if drops.contains(&second.local) {
+        return Err("second formatter unwind cannot drop its uninitialized output".into());
+    }
+
+    let (array, array_position) = formatting_array_owner(function, &normal, calls[1].0, &outputs)?;
+    let fstrings = normal.iter().enumerate().filter_map(|(position, index)| {
+        let block = function.blocks.get(*index)?;
+        match &block.terminator.kind {
+            plan::TerminatorKind::Call(callee, _, _, _, _)
+                if matches!(&callee.kind, plan::CalleeKind::External(path) if path == "incan_std_core::strings::fstring") =>
+            {
+                Some((position, *index))
+            }
+            _ => None,
+        }
+    }).collect::<Vec<_>>();
+    let [(fstring_position, fstring_index)] = fstrings.as_slice() else {
+        return Err("expected exactly one f-string runtime call".into());
+    };
+    if *fstring_position < array_position {
+        return Err("f-string runtime call must follow formatted-value ownership transfer".into());
+    }
+    let (_, unwind) = formatting_call(function, *fstring_index, "incan_std_core::strings::fstring")?;
+    let plan::Unwind::Cleanup(start) = unwind else {
+        return Err("f-string runtime call must clean up its owned value array".into());
+    };
+    let drops = cleanup_drops(function, *start)?;
+    if drops.iter().filter(|local| **local == array).count() != 1 || outputs.iter().any(|output| drops.contains(output))
+    {
+        return Err("f-string cleanup must drop its array once and never its moved formatter outputs".into());
+    }
+    let mut array_drops = 0;
+    for index in normal {
+        let block = function
+            .blocks
+            .get(index)
+            .ok_or("missing formatting normal-drop block")?;
+        if let plan::TerminatorKind::Drop(place, _, _) = &block.terminator.kind {
+            if outputs.contains(&place.local) {
+                return Err("normal formatting path drops a formatter output transferred to its array".into());
+            }
+            if place.local == array {
+                array_drops += 1;
+            }
+        }
+    }
+    if array_drops != 1 {
+        return Err(format!("formatted value array must drop once normally, got {array_drops}").into());
+    }
+    validation::validate(&lowered)?;
+    println!("validation formatting ownership: second-call cleanup and array transfer passed");
+    Ok(())
+}

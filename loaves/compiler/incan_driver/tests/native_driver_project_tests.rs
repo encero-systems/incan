@@ -13416,6 +13416,69 @@ def main() -> None:
     )
 }
 
+/// Explicit checked construction and implicit argument conversion execute the canonical source hook.
+#[test]
+fn checked_newtype_hook_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("checked-newtype-hook")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_functions_and_projections/validated_newtype_hook_and_coercion.incn"
+        ),
+    )
+}
+
+/// Builtin validation errors preserve code/message rendering, borrowed reuse and legacy's constructor evaluation.
+#[test]
+fn validation_error_construction_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("validation-error-construction")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"static CALLS: int = 0
+
+def text(label: str) -> str:
+    CALLS += 1
+    println(label)
+    return label
+
+def main() -> None:
+    error = ValidationError(code=text("code"), message=text("message"))
+    println(error)
+    println(error)
+    println(ValidationError("plain"))
+    println(CALLS)
+"#,
+    )?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("validation-error-source-shadow")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "model ValidationError:\n    message: str\n\ndef main() -> None:\n    value = ValidationError(message=\"source\")\n    println(value.message)\n",
+    )
+}
+
+/// A checked newtype's explicit constructor preserves raw construction inside its owning validation implementation.
+#[test]
+fn checked_newtype_construction_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("checked-newtype-construction")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/newtype_checked_construction.incn"
+        ),
+    )
+}
+
 /// Explicit construction inside the owning constrained implementation keeps legacy's raw tuple bypass.
 #[test]
 fn constrained_newtype_own_implementation_bypass_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

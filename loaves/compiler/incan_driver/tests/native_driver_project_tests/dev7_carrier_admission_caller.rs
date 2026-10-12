@@ -786,10 +786,11 @@ fn nested_carrier_controls() -> TestResult<()> {
     Ok(())
 }
 
-/// Select owned-result controls independently so their regression fails only the new host test.
+/// Select independent ownership controls so each regression fails only its dedicated host test.
 fn main() -> TestResult<()> {
-    if std::env::args().nth(1).as_deref() == Some("owned-result") {
-        return instantiated_owned_results::check();
+    match std::env::args().nth(1).as_deref() {
+        Some("owned-result") => instantiated_owned_results::check(),
+        Some("validation-format") => instantiated_owned_results::check_validation_format(),
+        _ => nested_carrier_controls(),
     }
-    nested_carrier_controls()
 }

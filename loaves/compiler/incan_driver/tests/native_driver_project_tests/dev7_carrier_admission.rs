@@ -97,3 +97,17 @@ sysroot_dependencies = ["rustc_driver"]
     bake(&caller, &fixture.home)?;
     Ok(caller.join("target/rust/debug/dev7_carrier_admission"))
 }
+
+/// Repeated error formatting retains one live String owner before transferring both outputs to the f-string array.
+#[test]
+fn validation_error_formatting_retains_single_owned_cleanup() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let binary = baked_carrier_caller(fixture, "validation-error-format-owned-results")?;
+    let output = driver_command(&binary).arg("validation-format").output()?;
+    success(&output, "validation error formatting ownership");
+    assert_eq!(
+        output.stdout,
+        b"validation formatting ownership: second-call cleanup and array transfer passed\n"
+    );
+    Ok(())
+}

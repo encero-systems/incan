@@ -163,7 +163,7 @@ fn build_with_imports(
 
 /// Like [`build_with_imports`], with the already lowered `context` modules a project build publishes beside it, so
 /// their retained facts (published constants among them) reach the consumer as they do in a project compilation.
-fn build_with_published_imports(
+pub(super) fn build_with_published_imports(
     source: &str,
     module_path: &[&str],
     imports: &[(&str, &[&str], &str)],

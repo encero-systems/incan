@@ -925,8 +925,11 @@ fn newtype_methods_retain_layout_without_erasing_validation() -> Result<(), Box<
         "trait Read:\n    def read(self) -> int\n\ntype Positive = newtype int with Read:\n    def read(self) -> int:\n        return self.0\n\n    def from_underlying(value: int) -> Result[Self, ValidationError]:\n        if value <= 0:\n            return Err(ValidationError(\"must be positive\"))\n        return Ok(Positive(value))\n\ndef main() -> None:\n    value = Positive(1)\n",
         &["m", "checked_newtype"],
     )?;
-    assert!(checked.nominal_declarations.is_empty());
-    assert!(checked.trait_implementations.is_empty());
+    assert_eq!(checked.nominal_declarations.len(), 1);
+    assert_eq!(checked.trait_implementations.len(), 1);
+    let main = body_named(&checked, "main")?.render_snapshot();
+    assert!(main.contains("helper:newtype_hook_extract"), "{main}");
+    assert!(!main.contains("constructor(Positive)"), "{main}");
     Ok(())
 }
 

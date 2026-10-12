@@ -6096,6 +6096,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/newtype_hooks.rs": {
+      "disposition": "keep",
+      "notes": "Canonical source hook calls, own-owner raw construction, and ordered fail-fast coercion chains retained in Body IR.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/newtype_json.rs": {
       "disposition": "keep",
       "notes": "Checked serde capabilities on raw newtype layouts retained solely for the direct Body IR boundary.",
