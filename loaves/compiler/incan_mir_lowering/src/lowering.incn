@@ -191,6 +191,7 @@ from model_values import (
     lower_model_from_json,
     compare_models,
 )
+from enum_values import serialize_enum_operand
 from enums import lower_enum_declarations, enum_owner, variant_index, unit_variant
 from enums import validate_unit_comparison, validate_unit_ordering
 from value_enums import (
@@ -3935,6 +3936,8 @@ def lower_model_json_builtin(
         Some(value) =>
             result = call_destination(builder, destination, PlanType.String, span)?
             if serialize_model_operand(builder, value, result, span)?:
+                return Ok(None)
+            if serialize_enum_operand(builder, value, result, span)?:
                 return Ok(None)
             return serialize_scalar_json(builder, value, result, span)
         None => return Err("unsupported Body IR json_stringify spread argument")

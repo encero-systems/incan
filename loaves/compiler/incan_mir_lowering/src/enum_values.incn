@@ -1,0 +1,55 @@
+"""Shared JSON reads of retained source enum layouts with an exact checked serde capability."""
+
+from rust::incan_semantics_core::body_ir import Operand as RustOperand
+from pub::incan_mir_plan import PlanType, Place, SourceSpan, RvalueKind, ExternalFunction, CalleeKind
+from pub::incan_mir_plan import assign as plan_assign
+from frame import Builder, place_type, temporary, read_place, terminate_call
+from lowering import scalar_place
+
+
+pub def serialize_enum_operand(
+    mut builder: Builder,
+    value: &RustOperand,
+    destination: Place,
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Borrow a whole source enum through its retained Serialize derive; propagated raw-value refusals remain upstream."""
+    match value:
+        RustOperand.Place(read) =>
+            if len(read.place.projection) != 0:
+                return Ok(false)
+            match read.place.local_id():
+                None => return Ok(false)
+                Some(_local) => pass
+            source = scalar_place(builder, read.place, span)?
+            match place_type(builder.locals, source):
+                PlanType.Enum(owner, name) =>
+                    if owner < 0 or owner >= len(builder.enums):
+                        return Ok(false)
+                    if "serde::Serialize" not in builder.enums[owner].derives:
+                        return Err("unsupported Body IR enum JSON serialization without serde::Serialize")
+                    reference_type = PlanType.EnumRef(owner, name)
+                    reference = temporary(builder, reference_type, span)
+                    builder.emit(plan_assign(reference, RvalueKind.Borrow(source), span))
+                    path = "incan_native_runtime::serialize_model"
+                    ty = PlanType.Enum(owner, name)
+                    builder.externals.append(
+                        ExternalFunction(
+                            path=path,
+                            type_arguments=[ty],
+                            parameters=[reference_type],
+                            return_type=PlanType.String,
+                            span=span,
+                        ),
+                    )
+                    terminate_call(
+                        builder,
+                        CalleeKind.Instantiated(path, ty),
+                        [read_place(reference, false, span)],
+                        destination,
+                        span,
+                    )
+                    builder.owned.append(destination.local)
+                    return Ok(true)
+                _ => return Ok(false)
+        _ => return Ok(false)
