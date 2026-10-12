@@ -6721,23 +6721,24 @@ def lower_enum_match(
     builder.emit(plan_assign(raw_tag, RvalueKind.Discriminant(source), span))
     builder.emit(plan_assign(tag, RvalueKind.TagToInt(read_place(raw_tag, false, span)), span))
     join = builder.new_block(span)
-    owners = builder.owned
+    mut owners = builder.owned
     mut arm_ends: list[int] = []
     mut arm_owners: list[list[int]] = []
     for arm in arms:
         selected = builder.new_block(span)
+        missed = builder.new_block(span)
         next_arm = builder.new_block(span)
         mut slot = -2
-        if is_binding_alternation(arm.pattern):
-            bound = bind_alternatives(builder, source, arm.pattern, selected, next_arm, owners, span)?
+        if binds_through_alternation(arm.pattern):
+            bound = bind_alternatives(builder, source, arm.pattern, selected, missed, owners, span)?
             builder.current = selected
             builder.owned = bound
         else:
-            slot = dispatch_enum_arm(builder, source, owner, tag, arm.pattern, selected, next_arm, span)?
+            slot = dispatch_enum_arm(builder, source, owner, tag, arm.pattern, selected, missed, span)?
             builder.current = selected
             builder.owned = owners
             bind_enum_payload(builder, source, slot, arm.pattern, span)?
-        lower_arm_guard(module, builder, arm, owners, next_arm, span)?
+        consumed = lower_arm_guard(module, builder, arm, owners, source.local, next_arm, span)?
         lower_enum_arm_body(module, builder, arm)?
         if not builder.closed[builder.current]:
             value = boundary_operand(builder, arm.result, place_type(builder.locals, target), span)?
@@ -6750,8 +6751,7 @@ def lower_enum_match(
                     drop_owned(builder, local, span)
             arm_ends.append(builder.current)
             arm_owners.append(builder.owned)
-        builder.current = next_arm
-        builder.owned = owners
+        owners = skip_consumed_guard(builder, missed, next_arm, owners, consumed, span)
         # A catch-all arm ends the dispatch unless its guard can still reject.
         if slot == -1 and arm.guard.is_none():
             break
@@ -6806,10 +6806,23 @@ def dispatch_enum_arm(
 
 
 def is_binding_alternation(pattern: &RustPattern) -> bool:
-    """Report whether an arm's pattern is an alternation whose alternatives bind names."""
+    """Report whether a pattern is an alternation whose alternatives bind names."""
     match pattern:
         RustPattern.Or(_alternatives) => return pattern_binds(pattern)
         _ => return false
+
+
+def binds_through_alternation(pattern: &RustPattern) -> bool:
+    """Report whether an arm's pattern binds through an alternation: at its top, or as an item of a tuple there."""
+    if is_binding_alternation(pattern):
+        return true
+    match pattern:
+        RustPattern.Tuple(items) =>
+            for item in items:
+                if is_binding_alternation(item):
+                    return true
+        _ => pass
+    return false
 
 
 def bind_alternatives(
@@ -6825,28 +6838,121 @@ def bind_alternatives(
     Test each alternative of a binding alternation in source order; the first that matches binds and selects the arm.
 
     The checker requires every alternative to bind the same names, which share one local each, so every path reaches
-    `selected` owning the same bound locals. The owners at `selected` are returned.
+    `selected` owning the same bound locals. The owners at `selected` are returned. A pattern that is not itself an
+    alternation is its own single alternative.
     """
-    mut bound: list[int] = []
-    mut first = true
     match pattern:
         RustPattern.Or(alternatives) =>
+            mut bound: list[int] = []
+            mut first = true
             for alternative in alternatives:
-                matched = builder.new_block(span)
                 next_alternative = builder.new_block(span)
-                pattern_tests(builder, source, alternative, matched, next_alternative, span)?
-                builder.current = matched
-                builder.owned = incoming
-                bind_structural_pattern(builder, source, alternative, span)?
+                owners = bind_alternative(builder, source, alternative, selected, next_alternative, incoming, span)?
                 if first:
-                    bound = builder.owned
+                    bound = owners
                     first = false
-                elif not same_owners(builder.owned, bound):
+                elif not same_owners(owners, bound):
                     return Err("unsupported Body IR binding alternation ownership")
-                builder.finish(TerminatorKind.Goto(selected), span)
                 builder.current = next_alternative
             builder.finish(TerminatorKind.Goto(rejected), span)
             return Ok(bound)
+        _ => return bind_alternative(builder, source, pattern, selected, rejected, incoming, span)
+
+
+def bind_alternative(
+    mut builder: Builder,
+    source: Place,
+    alternative: &RustPattern,
+    selected: int,
+    rejected: int,
+    incoming: list[int],
+    span: SourceSpan,
+) -> Result[list[int], str]:
+    """Test one alternative and, when it matches, bind it and select the arm, returning the owners at `selected`."""
+    match alternative:
+        RustPattern.Tuple(items) =>
+            if binds_through_alternation(alternative):
+                fields = tuple_fields(source, place_type(builder.locals, source), span)?
+                if len(fields) != len(items):
+                    return Err("invalid Body IR tuple pattern layout")
+                mut choices: list[int] = []
+                for _item in items:
+                    choices.append(-1)
+                return tuple_paths(builder, fields, items, 0, choices, selected, rejected, incoming, span)
+        _ => pass
+    matched = builder.new_block(span)
+    pattern_tests(builder, source, alternative, matched, rejected, span)?
+    builder.current = matched
+    builder.owned = incoming
+    bind_structural_pattern(builder, source, alternative, span)?
+    owners = builder.owned
+    builder.finish(TerminatorKind.Goto(selected), span)
+    return Ok(owners)
+
+
+def tuple_paths(
+    mut builder: Builder,
+    fields: list[Place],
+    items: &list[RustPattern],
+    index: int,
+    choices: list[int],
+    selected: int,
+    rejected: int,
+    incoming: list[int],
+    span: SourceSpan,
+) -> Result[list[int], str]:
+    """
+    Test a tuple pattern's items from `index` on, trying each alternative of an item that binds through an alternation.
+
+    `(A | B, C)` matches as `(A, C) | (B, C)`: a later item's failure tries the item's next alternative, and its last
+    alternative's failure rejects. A path on which every item matched binds each item, an alternation item through the
+    alternative `choices` records for it, and selects the arm. The owners at `selected` are returned.
+    """
+    if index == len(items):
+        builder.owned = incoming
+        for position in range(len(items)):
+            bind_tuple_item(builder, fields[position], items[position], choices[position], span)?
+        owners = builder.owned
+        builder.finish(TerminatorKind.Goto(selected), span)
+        return Ok(owners)
+    if not is_binding_alternation(items[index]):
+        next_item = builder.new_block(span)
+        pattern_tests(builder, fields[index], items[index], next_item, rejected, span)?
+        builder.current = next_item
+        return tuple_paths(builder, fields, items, index + 1, choices, selected, rejected, incoming, span)
+    mut bound: list[int] = []
+    match items[index]:
+        RustPattern.Or(alternatives) =>
+            for choice in range(len(alternatives)):
+                matched = builder.new_block(span)
+                next_alternative = builder.new_block(span)
+                pattern_tests(builder, fields[index], alternatives[choice], matched, next_alternative, span)?
+                builder.current = matched
+                mut chosen = choices.clone()
+                chosen[index] = choice
+                owners = tuple_paths(builder, fields, items, index + 1, chosen, selected, next_alternative, incoming, span)?
+                if choice == 0:
+                    bound = owners
+                elif not same_owners(owners, bound):
+                    return Err("unsupported Body IR binding alternation ownership")
+                builder.current = next_alternative
+        _ => return Err("invalid Body IR binding alternation")
+    builder.finish(TerminatorKind.Goto(rejected), span)
+    return Ok(bound)
+
+
+def bind_tuple_item(
+    mut builder: Builder,
+    field: Place,
+    item: &RustPattern,
+    choice: int,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Bind one tuple item: the alternative `choice` selects of an item that binds through an alternation, or the item."""
+    if choice < 0:
+        return bind_structural_pattern(builder, field, item, span)
+    match item:
+        RustPattern.Or(alternatives) => return bind_structural_pattern(builder, field, alternatives[choice], span)
         _ => return Err("invalid Body IR binding alternation")
 
 
@@ -6965,36 +7071,38 @@ def lower_structural_match(
         return Err("unsupported Body IR nonprimitive structural match scrutinee")
     result_type = place_type(builder.locals, target)
     join = builder.new_block(span)
-    owners = builder.owned
-    mut reaches_join = false
+    mut owners = builder.owned
+    mut arm_ends: list[int] = []
+    mut arm_owners: list[list[int]] = []
     for arm in arms:
         selected = builder.new_block(span)
+        missed = builder.new_block(span)
         next_arm = builder.new_block(span)
-        if is_binding_alternation(arm.pattern):
-            bound = bind_alternatives(builder, source, arm.pattern, selected, next_arm, owners, span)?
+        if binds_through_alternation(arm.pattern):
+            bound = bind_alternatives(builder, source, arm.pattern, selected, missed, owners, span)?
             builder.current = selected
             builder.owned = bound
         else:
-            pattern_tests(builder, source, arm.pattern, selected, next_arm, span)?
+            pattern_tests(builder, source, arm.pattern, selected, missed, span)?
             builder.current = selected
             bind_structural_pattern(builder, source, arm.pattern, span)?
-        lower_arm_guard(module, builder, arm, owners, next_arm, span)?
+        consumed = lower_arm_guard(module, builder, arm, owners, source.local, next_arm, span)?
         lower_enum_arm_body(module, builder, arm)?
         if not builder.closed[builder.current]:
-            reaches_join = true
             value = boundary_operand(builder, arm.result, result_type, span)?
             track_rvalue_moves(builder, RvalueKind.Use(value))
             builder.emit(plan_assign(target, RvalueKind.Use(value), span))
             release_match_scratch(builder, owners, span)
-            if builder.owned != owners:
-                return Err("unsupported Body IR structural match branch ownership change")
-            finish_fallthrough(builder, join, span)
-        builder.current = next_arm
-        builder.owned = owners
+            arm_ends.append(builder.current)
+            arm_owners.append(builder.owned)
+        owners = skip_consumed_guard(builder, missed, next_arm, owners, consumed, span)
     builder.finish(TerminatorKind.Unreachable, span)
+    # An arm or its guard may move an incoming owner the other arms keep; the join keeps only what every arm kept.
+    join_owners = join_branch_owners(builder, join, arm_ends, arm_owners, span)?
+    reaches_join = len(arm_ends) != 0
     builder.current = join
     builder.closed[join] = not reaches_join
-    builder.owned = owners
+    builder.owned = join_owners
     if reaches_join and (result_type == PlanType.String or tuple_has_owners(result_type) or is_nominal_type(result_type) or is_owned_collection(
         result_type,
     )):
@@ -7014,26 +7122,32 @@ def lower_arm_guard(
     mut builder: Builder,
     arm: &RustMatchArm,
     incoming: list[int],
+    scrutinee: int,
     rejected: int,
     span: SourceSpan,
-) -> Result[None, str]:
+) -> Result[list[int], str]:
     """
     Run a matched arm's guard after its pattern bound, falling through to `rejected` when the guard is false.
 
-    The guard reads the arm's bindings and the incoming owners. It must leave every incoming owner live, because the
-    next arm tests the same scrutinee. A rejecting guard releases the bindings and guard temporaries it owns before
-    falling through; an admitting guard keeps them for the arm's body.
+    The guard reads the arm's bindings and the incoming owners. A rejecting guard releases the bindings and guard
+    temporaries it owns before falling through; an admitting guard keeps them for the arm's body. The guard may make
+    the last use of an incoming owner, moving it on every path through the guard (Body IR counts last uses in source
+    order, so no later arm reads it); those owners are returned for the caller to release on the paths that skip the
+    guard. The scrutinee, which later arms test, and an owner whose release does more than free memory stay refused.
     """
+    mut consumed: list[int] = []
     match arm.guard:
         Some(guard) =>
             for statement in arm.guard_stmts:
                 lower_statement(module, builder, statement)?
                 if builder.closed[builder.current]:
                     return Err("unsupported Body IR diverging match guard")
+            condition = scalar_operand(builder, guard, span)?
             for local in incoming:
                 if local not in builder.owned:
-                    return Err("unsupported Body IR match guard consuming an owner")
-            condition = scalar_operand(builder, guard, span)?
+                    if local == scrutinee or not releases_only_memory(builder.locals[local].ty):
+                        return Err("unsupported Body IR match guard consuming an owner")
+                    consumed.append(local)
             admitted = builder.new_block(span)
             refused = builder.new_block(span)
             builder.finish(TerminatorKind.SwitchBool(condition, refused, admitted), span)
@@ -7044,7 +7158,35 @@ def lower_arm_guard(
             builder.current = admitted
             builder.owned = kept
         None => pass
-    return Ok(None)
+    return Ok(consumed)
+
+
+def skip_consumed_guard(
+    mut builder: Builder,
+    missed: int,
+    next_arm: int,
+    owners: list[int],
+    consumed: list[int],
+    span: SourceSpan,
+) -> list[int]:
+    """
+    Close an arm's pattern-miss path into the next arm and return the owners the next arm starts with.
+
+    The arm's guard moved `consumed` on every path through it, so the miss path, which skips the guard, releases them
+    too; both ways into the next arm then hold the same owners.
+    """
+    builder.current = missed
+    builder.owned = owners
+    for local in consumed:
+        drop_owned(builder, local, span)
+    builder.finish(TerminatorKind.Goto(next_arm), span)
+    mut remaining: list[int] = []
+    for local in owners:
+        if local not in consumed:
+            remaining.append(local)
+    builder.current = next_arm
+    builder.owned = remaining
+    return remaining
 
 
 def release_match_scratch(mut builder: Builder, incoming: list[int], span: SourceSpan) -> None:
