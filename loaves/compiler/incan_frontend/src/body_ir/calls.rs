@@ -177,12 +177,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ///
     /// `mut_slots` marks, by declaration slot, which parameters are declared `mut`; an operand for such a slot goes
     /// through [`Self::borrow_for_mut_parameter`]. A slot past its end, or an empty slice for a surface with no
-    /// declared parameters, is treated as not `mut`.
+    /// declared parameters, is treated as not `mut`. `slot_types` retains numeric union member conversions at checked
+    /// by-value parameter boundaries; absent slot types use the recorded value destination, as constructor fields do.
     pub(super) fn lower_planned_args(
         &mut self,
         planned: &[(usize, &ast::Spanned<ast::Expr>)],
         slot_count: usize,
         mut_slots: &[bool],
+        slot_types: &[IncanType],
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> Result<(Vec<bir::Operand>, bir::ArgumentBinding), String> {
@@ -197,7 +199,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         let mut lowered: Vec<Option<(bir::Operand, usize)>> = (0..slot_count).map(|_| None).collect();
         for (written_position, (slot, expr)) in planned.iter().enumerate() {
-            let mut operand = self.lower_expr_to_operand(expr, scope, out);
+            let mut operand = if mut_slots.get(*slot).copied().unwrap_or(false) {
+                self.lower_expr_to_operand(expr, scope, out)
+            } else {
+                self.lower_boundary_value(expr, slot_types.get(*slot), scope, out)
+            };
             if mut_slots.get(*slot).copied().unwrap_or(false) {
                 operand = self.borrow_for_mut_parameter(operand);
             } else {
@@ -386,6 +392,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 &planned,
                 slots.len(),
                 &slots.iter().map(|slot| slot.is_mut).collect::<Vec<bool>>(),
+                &slots.iter().map(|slot| slot.ty.clone()).collect::<Vec<IncanType>>(),
                 scope,
                 out,
             )
@@ -393,9 +400,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         Ok((fixed_elements(operands), binding))
     }
 
-    /// Retain the checker's ordered explicit or inferred call-site type arguments, refusing unresolved explicit
-    /// arguments.
-    ///
     /// Retain a nonlocal callable's checked signature by the exact selected identity, including imported overloads.
     ///
     /// An overload-set spelling cannot select a signature. Its canonical call-site identity must match a retained
@@ -437,6 +441,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         })
     }
 
+    /// Retain checked explicit or inferred call-site type arguments, refusing unresolved explicit arguments.
+    ///
     /// Type arguments are part of a call's resolved identity, so Body IR takes the typechecker's
     /// monomorphized selection rather than re-lowering the written AST type nodes -- which is also the only way a
     /// `_` placeholder resolves to a real type instead of an unknown. A call that wrote type arguments the
@@ -640,17 +646,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 out,
             );
         }
-        let (operands, binding) = match self.lower_planned_args(&planned, field_binding.field_count, &[], scope, out) {
-            Ok(bound) => bound,
-            Err(description) => {
-                return self.unsupported_operand(
-                    format!("construction of `{name}`: {description}"),
-                    scope,
-                    hir_span_value,
-                    out,
-                );
-            }
-        };
+        let (operands, binding) =
+            match self.lower_planned_args(&planned, field_binding.field_count, &[], &[], scope, out) {
+                Ok(bound) => bound,
+                Err(description) => {
+                    return self.unsupported_operand(
+                        format!("construction of `{name}`: {description}"),
+                        scope,
+                        hir_span_value,
+                        out,
+                    );
+                }
+            };
         let ty = self.resolve_ty(span);
         // A constructor field binding proves argument slots, but not that this constructor names one of the plain
         // models admitted to this lowering context. Preserve the selected declaration's identity and layout together;
@@ -1291,6 +1298,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         !slot.mutable && slot.role == crate::typechecker::MethodDecoratorReceiverRole::Replacement
                     })
         });
+        let legacy_enumerate_argument = legacy_enumerate_argument(declaration.builtin, args);
+        let args = legacy_enumerate_argument.as_deref().unwrap_or(args);
         let (mut operands, binding) =
             match self.bind_declared_args(&format!("function `{name}`"), declaration.slots, args, scope, out) {
                 Ok(bound) => bound,
@@ -1434,6 +1443,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .call_site_callable_params(span)
             .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect());
         let display_name = canonical.declaration_name.clone();
+        let legacy_enumerate_argument = legacy_enumerate_argument(Some(builtin), args);
+        let args = legacy_enumerate_argument.as_deref().unwrap_or(args);
         let (operands, binding) =
             match self.bind_declared_args(&format!("builtin `{display_name}`"), declared, args, scope, out) {
                 Ok(bound) => bound,
@@ -2045,4 +2056,18 @@ fn canonical_builtin(identity: &CanonicalSymbolId) -> Option<incan_lang::lang::b
         && identity.declaration_span == HirSourceSpan::new(0, 0))
     .then(|| incan_lang::lang::builtins::from_str(&identity.declaration_name))
     .flatten()
+}
+
+/// Retain the sole operand frozen legacy passes to canonical `enumerate`, including a written positional spread.
+///
+/// Legacy's builtin emission directly enumerates the outer operand instead of unpacking its elements into arguments.
+/// Only the checker's canonical builtin identity authorizes this profile; user callables keep ordinary spread binding.
+fn legacy_enumerate_argument(builtin: Option<BuiltinFnId>, args: &[ast::CallArg]) -> Option<Vec<ast::CallArg>> {
+    if builtin != Some(BuiltinFnId::Enumerate) {
+        return None;
+    }
+    match args {
+        [ast::CallArg::PositionalUnpack(source)] => Some(vec![ast::CallArg::Positional(source.clone())]),
+        _ => None,
+    }
 }

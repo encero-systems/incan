@@ -86,13 +86,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
             ast::Statement::Return(value) => {
                 // A returned `Ok(...)` or `Err(...)` builds the sides the declared return type settles for it.
-                if let Some(returned) = value.as_ref() {
+                let value = value.as_ref().map(|returned| {
                     let destination = self.owner_return_type.clone();
                     self.settle_open_result_value(returned, &destination);
-                }
-                let value = value.as_ref().map(|v| {
-                    let operand = self.lower_expr_to_operand(v, scope, out);
-                    self.owned_parameter_operand(v, operand)
+                    let operand = self.lower_boundary_value(returned, Some(&destination), scope, out);
+                    self.owned_parameter_operand(returned, operand)
                 });
                 out.push(bir::Statement {
                     kind: bir::StatementKind::Return { value },
@@ -194,7 +192,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         let materializes_range = self.expr_has_materialized_range_layout(&assignment.value);
         self.settle_open_result_value(&assignment.value, &ty);
-        let value = self.lower_expr_to_operand(&assignment.value, scope, out);
+        let value = self.lower_boundary_value(&assignment.value, Some(&ty), scope, out);
         // Future construction is a distinct Body IR value even when the surface checker exposes its output type.
         // Preserve that carrier through a binding or alias instead of silently turning it into a scalar copy.
         if let bir::Operand::Place(read) = &value
@@ -324,7 +322,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.push_unsupported_stmt(format!("assignment target `{target}` is not writable"), span, out);
             return;
         }
-        let value = self.lower_expr_to_operand(&field_assignment.value, scope, out);
+        let value = self.lower_boundary_value(&field_assignment.value, None, scope, out);
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {
                 place,
@@ -363,7 +361,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let early_value = place
             .global()
             .is_some()
-            .then(|| self.lower_expr_to_operand(&index_assignment.value, scope, out));
+            .then(|| self.lower_boundary_value(&index_assignment.value, None, scope, out));
         let index_operand = self.lower_expr_to_operand(&index_assignment.index, scope, out);
         place.projection.push(bir::PlaceElem::Index(Box::new(index_operand)));
         if !place.permits_write() {
@@ -376,7 +374,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         let value = match early_value {
             Some(value) => value,
-            None => self.lower_expr_to_operand(&index_assignment.value, scope, out),
+            None => self.lower_boundary_value(&index_assignment.value, None, scope, out),
         };
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {

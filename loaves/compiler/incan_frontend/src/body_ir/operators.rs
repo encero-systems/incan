@@ -427,7 +427,7 @@ fn comparison_carrier(op: bir::BinOp, lhs_ty: &IncanType, rhs_ty: &IncanType) ->
 }
 
 /// The numeric identity of a checked carrier: `int` is `i64` and `float` is `f64`; `bool` and non-numerics have none.
-fn numeric_carrier_id(ty: &IncanType) -> Option<NumericTypeId> {
+pub(super) fn numeric_carrier_id(ty: &IncanType) -> Option<NumericTypeId> {
     match ty {
         IncanType::Primitive(IncanPrimitiveType::Int) => Some(NumericTypeId::I64),
         IncanType::Primitive(IncanPrimitiveType::Float) => Some(NumericTypeId::F64),

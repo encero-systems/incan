@@ -1,8 +1,9 @@
 //! Checked tuple spread components and their single source evaluation at the call binding boundary.
 
 use super::args::{DeclaredSlot, expand_shaped_spread, fixed_elements, plan_declared_args};
-use super::*;
+use super::{BodyBuilder, IncanType, TypeCheckInfo, ast, bir, hir_span};
 use crate::typechecker::FixedUnpackPlan;
+use std::collections::HashMap;
 
 /// Whether a checked nonliteral tuple spread needs component projection rather than literal expansion.
 pub(super) fn has_checked_tuple_spread(info: &TypeCheckInfo, args: &[ast::CallArg]) -> bool {

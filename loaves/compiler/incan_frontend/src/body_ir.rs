@@ -1821,6 +1821,7 @@ mod primitives;
 
 mod args;
 mod fixed_spreads;
+mod numeric_destinations;
 mod variadics;
 
 use bodies::*;
