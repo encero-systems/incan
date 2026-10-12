@@ -12072,7 +12072,8 @@ fn zip_source_exhaustion_output_matches_legacy() -> Result<(), Box<dyn std::erro
     for name, row in zip(names, empty):
         row.append(len(name))
     println(empty)
-    println([i + n for i, n in zip(range(3), range(7, 0, -3))])
+    for i, n in zip(range(3), range(7, 0, -3)):
+        println(i + n)
 "#,
     )
 }
@@ -12104,6 +12105,12 @@ def main() -> None:
         copied.bump()
         cell.bump()
     println(cells["x"].value)
+    mut untouched: dict[str, list[int]] = {"x": [8]}
+    for value in untouched.values():
+        mut copied = value
+        copied.append(9)
+        println(copied)
+    println(untouched["x"])
 "#,
     )
 }
