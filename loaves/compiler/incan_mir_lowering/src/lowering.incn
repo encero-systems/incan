@@ -4432,34 +4432,8 @@ def append_format_part(
 
 
 def type_parameter_display_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
-    """
-    Keep a closed floating type parameter's own Display spelling; other carriers retain their existing renderer.
-
-    A floating place is observed by Copy inside formatting even when its source field is borrowed; this never moves
-    the owner or reroutes the shared read through ordinary value ownership validation.
-    """
-    match value:
-        RustOperand.Place(read) =>
-            place = scalar_place(builder, read.place, span)?
-            ty = place_type(builder.locals, place)
-            if ty == PlanType.Float or ty == PlanType.F32 or ty == PlanType.F64:
-                operand = read_place(place, false, span)
-                path = "incan_native_runtime::display_type_parameter"
-                result = temporary(builder, PlanType.String, span)
-                builder.externals.append(
-                    ExternalFunction(
-                        path=path,
-                        type_arguments=[ty],
-                        parameters=[ty],
-                        return_type=PlanType.String,
-                        span=span,
-                    ),
-                )
-                terminate_call(builder, CalleeKind.Instantiated(path, ty), [operand], result, span)
-                builder.owned.append(result.local)
-                return Ok(result)
-        _ => pass
-    return display_operand(builder, value, span)
+    """Use the shared formatter's generic Display contract, including its copied borrowed-field observations."""
+    return display_value_operand(builder, value, span, true)
 
 
 def debug_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
