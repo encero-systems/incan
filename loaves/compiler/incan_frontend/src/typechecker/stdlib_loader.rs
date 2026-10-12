@@ -367,6 +367,41 @@ impl StdlibAstCache {
             .map(|(_, info)| info.clone())
     }
 
+    /// Read the source layout of a compiler-provided foreign nominal for Body IR only. The ordinary cache exports
+    /// public source types, while FieldInfo's private source declaration describes public runtime metadata. This
+    /// query validates its exact native owner and declaration span, then extracts an independent public layout;
+    /// it never changes the shared cache, source visibility, import resolution or legacy signatures.
+    pub(crate) fn native_nominal_type(&mut self, identity: &CanonicalSymbolId) -> Option<TypeInfo> {
+        incan_semantics_core::body_ir::native_nominal_item(identity)?;
+        let source_identity = self.callable_source_identity(identity)?;
+        let incan_semantics_core::SymbolOrigin::Module(path) = &source_identity.origin else {
+            return None;
+        };
+        let source = self.source_inputs.read_module(path)?;
+        let tokens = crate::lexer::lex(&source).ok()?;
+        self.source_inputs.record_parse();
+        let mut program = crate::parser::parse(&tokens).ok()?;
+        program.declarations.retain(|declaration| {
+            matches!(declaration.node, ast::Declaration::Import(_))
+                || (declaration.span.start == identity.declaration_span.start
+                    && declaration.span.end == identity.declaration_span.end
+                    && matches!(&declaration.node, ast::Declaration::Class(class)
+                        if class.name == identity.declaration_name))
+        });
+        for declaration in &mut program.declarations {
+            if let ast::Declaration::Class(class) = &mut declaration.node {
+                class.visibility = ast::Visibility::Public;
+                for field in &mut class.fields {
+                    field.node.visibility = ast::Visibility::Public;
+                }
+            }
+        }
+        extract_type_signatures(&program, path)
+            .into_iter()
+            .find(|(name, _)| name == &identity.declaration_name)
+            .map(|(_, info)| info)
+    }
+
     /// Look up a method declaration on a stdlib type, following prelude re-exports.
     ///
     /// This is intentionally AST-shaped rather than `MethodInfo`-shaped so lowering can preserve default parameter

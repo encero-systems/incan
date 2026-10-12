@@ -263,7 +263,10 @@ fn library_nominal(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> 
     let SymbolOrigin::Module(path) = &source.origin else {
         return None;
     };
-    let (order, fields, derives, type_parameters) = match cache.lookup_type(path, &identity.declaration_name)? {
+    let info = cache
+        .lookup_type(path, &identity.declaration_name)
+        .or_else(|| cache.native_nominal_type(identity))?;
+    let (order, fields, derives, type_parameters) = match info {
         TypeInfo::Model(model) => (model.field_order, model.fields, model.derives, model.type_params),
         TypeInfo::Class(class) if class.extends.is_none() => {
             (class.field_order, class.fields, class.derives, class.type_params)
