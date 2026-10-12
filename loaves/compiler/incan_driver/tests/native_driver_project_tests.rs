@@ -4994,6 +4994,92 @@ def main() -> None:
     )
 }
 
+/// Generator expressions over pair items: the first source is builtin `enumerate` over a list of numbers or text, or
+/// builtin `zip` over two lists, read through tuple fields or destructured, filtered on either half and drawn lazily by
+/// a prefix. Legacy's emitted Rust does not build for these (its iterator borrows a temporary list for `'static`), as
+/// the pending `refuses_corrupted_enumerate_*` fixtures record, so the output is pinned to the values they record.
+#[test]
+fn pair_item_generator_expression_output() -> Result<(), Box<dyn std::error::Error>> {
+    check_native_case(
+        "pair_item_generator_expression",
+        r#"def main() -> None:
+    sums: list[int] = (pair.0 + pair.1 for pair in enumerate([5, 6, 7])).collect()
+    println(sums)
+    labels: list[str] = (f"{i}:{s}" for i, s in enumerate(["a", "b", "c"])).collect()
+    println(labels)
+    later: list[str] = (s.upper() for i, s in enumerate(["a", "b", "c"]) if i > 0).collect()
+    println(later)
+    products: list[int] = (l * r for l, r in zip([1, 2, 3], [4, 5])).collect()
+    println(products)
+    named: list[str] = (f"{n}={v}" for n, v in zip(["x", "y"], [1, 2]) if v > 1).collect()
+    println(named)
+    first: list[int] = (i * 10 for i, _ in enumerate([9, 9, 9])).take(2).collect()
+    println(first)
+"#,
+        b"[5, 7, 9]\n[\"0:a\", \"1:b\", \"2:c\"]\n[\"B\", \"C\"]\n[4, 10]\n[\"y=2\"]\n[0, 10]\n",
+    )
+}
+
+/// A generator expression over pair items also runs inside a closure and inside a parameter's deferred default, as the
+/// pending `refuses_corrupted_enumerate_*` and `executes_deferred_enumerate_and_zip_frames_with_distinct_bindings`
+/// fixtures record; legacy's emitted Rust does not build for them either.
+#[test]
+fn generator_expressions_in_closures_and_defaults_output() -> Result<(), Box<dyn std::error::Error>> {
+    check_native_case(
+        "generator_expressions_in_closures_and_defaults",
+        r#"def defaulted(values: list[int] = (pair.1 for pair in enumerate([7, 8])).collect()) -> int:
+    return values[0] + values[1]
+
+
+def zipped(values: list[int] = (l + r for l, r in zip([1], [2])).collect()) -> int:
+    return values[0]
+
+
+def main() -> None:
+    firsts: () -> list[int] = () => (pair.0 for pair in enumerate([8, 9])).collect()
+    println(firsts())
+    sums: () -> list[int] = () => (l + r for l, r in zip([2, 4], [3, 5])).collect()
+    println(sums())
+    println(defaulted())
+    println(defaulted([1, 2]))
+    println(zipped())
+"#,
+        b"[0, 1]\n[5, 9]\n15\n3\n3\n",
+    )
+}
+
+/// A generator expression step over pair items that captures a value would cross a boxed environment's call boundary
+/// with a tuple input, which that boundary does not carry, so the direct route refuses it by name.
+#[test]
+fn capturing_pair_item_generator_step_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("capturing-pair-item-generator-step")?;
+    let source = root.join("pairs.incn");
+    fs::write(
+        &source,
+        "def main() -> None:\n    n = 5\n    picked = (i for i, v in enumerate([5, 6, 7]) if v > n).collect()\n    println(len(picked))\n",
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let binary = root.join("native");
+    let refused = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &source,
+        &binary,
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr)
+            .contains("unsupported Body IR capturing generator expression step over tuple items"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(!binary.exists());
+    Ok(())
+}
+
 /// Prove collections held by other collections byte-identical to legacy: dictionaries whose values are lists or
 /// dictionaries, a list of dictionaries and a model field holding a dictionary of lists are built, passed and read by
 /// key and index, through nested lookups, without consuming their sources.
