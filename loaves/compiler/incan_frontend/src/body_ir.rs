@@ -285,6 +285,7 @@ fn build_body_ir_module_v0_with_provider_operations(
         .chain(context.iter().flat_map(|module| module.enum_declarations.iter()))
         .map(|declaration| (declaration.canonical.clone(), declaration.clone()))
         .collect::<HashMap<_, _>>();
+    let local_receiver_methods = collect_local_receiver_methods(program, type_info);
     let mut nominal_declarations = collect_local_nominal_declarations(program, &module_identity, type_info);
     let mut local_nominal_declarations = nominal_declarations
         .iter()
@@ -324,6 +325,7 @@ fn build_body_ir_module_v0_with_provider_operations(
         type_info,
         function_default_sources: &function_default_sources,
         local_function_declarations: &local_function_declarations,
+        local_receiver_methods: &local_receiver_methods,
         local_nominal_declarations: &local_nominal_declarations,
         local_fieldless_enum_declarations: &local_fieldless_enum_declarations,
         local_value_enum_declarations: &local_value_enum_declarations,
@@ -496,6 +498,7 @@ struct BodyIrLoweringFacts<'type_info, 'source> {
     type_info: &'type_info TypeCheckInfo,
     function_default_sources: &'source FunctionDefaultSources,
     local_function_declarations: &'source LocalFunctionDeclarations,
+    local_receiver_methods: &'source [LocalReceiverMethod],
     local_nominal_declarations: &'source LocalNominalDeclarations,
     local_fieldless_enum_declarations: &'source LocalFieldlessEnumDeclarations,
     local_value_enum_declarations: &'source LocalValueEnumDeclarations,
@@ -513,6 +516,16 @@ struct FunctionDefaultSource {
     param_span: ast::Span,
     /// The target's ordinary source default, if it declared one.
     default: Option<ast::Spanned<ast::Expr>>,
+}
+
+/// One physical immutable instance method whose checked signature can close a caller-open receiver.
+struct LocalReceiverMethod {
+    /// Checked nominal declaration containing this method.
+    owner: CanonicalSymbolId,
+    /// Source slot spelling; alias projection uses the checker's existing table.
+    name: String,
+    /// Physical method span selecting its checked signature and canonical target.
+    span: ast::Span,
 }
 
 /// Determine whether a model can carry the small direct-replacement declaration fact.
@@ -918,6 +931,8 @@ struct BodyBuilder<'type_info, 'source> {
     function_default_sources: &'source FunctionDefaultSources,
     /// Exact declarations physically present in this module, used only to retain same-module call identities.
     local_function_declarations: &'source LocalFunctionDeclarations,
+    /// Physical source methods available when a retained payload closes a legacy caller-open receiver.
+    local_receiver_methods: &'source [LocalReceiverMethod],
     /// Checked local and selected package models, used to retain exact constructor identity and layout.
     local_nominal_declarations: &'source LocalNominalDeclarations,
     /// Checked local and selected package fieldless enums, used to retain exact unit-member target identities.
@@ -1013,6 +1028,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             type_info: lowering_facts.type_info,
             function_default_sources: lowering_facts.function_default_sources,
             local_function_declarations: lowering_facts.local_function_declarations,
+            local_receiver_methods: lowering_facts.local_receiver_methods,
             local_nominal_declarations: lowering_facts.local_nominal_declarations,
             local_fieldless_enum_declarations: lowering_facts.local_fieldless_enum_declarations,
             local_value_enum_declarations: lowering_facts.local_value_enum_declarations,
@@ -1075,6 +1091,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// While one evaluation of a chained value written per target is lowered, that target's types for the value's
     /// nodes come first (see [`Self::type_overrides`]), then the settled type of a `Result` constructor whose open
     /// side its destination fixes (see [`Self::settled_types`]).
+    /// A checked lexical read whose contextual type remains caller-open takes its active local's retained type by
+    /// full canonical binding identity. This carries a concrete matched payload through the arm without changing
+    /// legacy expression facts or resolving a variable by spelling.
     fn resolve_ty(&self, span: ast::Span) -> IncanType {
         if let Some(ty) = self.type_overrides.get(&(span.start, span.end)) {
             return ty.clone();
@@ -1082,7 +1101,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if let Some(ty) = self.settled_types.get(&(span.start, span.end)) {
             return ty.clone();
         }
-        self.type_info
+        let checked = self
+            .type_info
             .calls
             .body_ir_constructor_types
             .get(&(span.start, span.end))
@@ -1112,7 +1132,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             })
             .or_else(|| self.type_info.expr_type(span))
             .map(|ty| self.checked_type(ty))
-            .unwrap_or(IncanType::Unknown)
+            .unwrap_or(IncanType::Unknown);
+        if self.leaves_type_open(&checked)
+            && let Some(identity) = self.type_info.resolved_identity(span)
+            && let Some(local) = self
+                .bindings
+                .values()
+                .filter_map(|id| self.locals.get(id.index()))
+                .find(|local| local.identity.as_ref() == Some(identity) && !self.leaves_type_open(&local.ty))
+        {
+            return local.ty.clone();
+        }
+        checked
     }
 
     /// Whether `ty` leaves a part unresolved in this body: an unknown or still-inferred type, or a type parameter the

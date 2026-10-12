@@ -109,6 +109,7 @@ from rust::incan_semantics_core::body_ir import (
     LocalCallableTarget as RustLocalCallableTarget,
     CallableParam as RustCallableParam,
     LocalId as RustLocalId,
+    LocalDecl as RustLocalDecl,
     Operand as RustOperand,
     OwnershipFact,
     Place as RustPlace,
@@ -5623,10 +5624,7 @@ def frame_locals(
             Some(carrier) =>
                 ty = carrier
             None =>
-                match frame_type(module, local, intrinsics):
-                    Ok(resolved) =>
-                        ty = resolved
-                    Err(reason) => return Err(f"{reason} in {body.name} local {local.id.index()}")
+                ty = body_frame_type(module, body, local, intrinsics)?
         index = int(local.id.index()) + 1
         if index in pairs:
             ty = pair_generator_type(ty)
@@ -5647,6 +5645,18 @@ def frame_locals(
     return Ok(locals)
 
 
+def body_frame_type(
+    module: &BodyIrModule,
+    body: &RustBody,
+    local: &RustLocalDecl,
+    intrinsics: list[EnumDeclaration],
+) -> Result[PlanType, str]:
+    """Admit a checked frame local with its declaration and slot retained in every refusal."""
+    match frame_type(module, local, intrinsics):
+        Ok(ty) => return Ok(ty)
+        Err(reason) => return Err(f"{reason} in {body.name} frame local {int(local.id.index())}")
+
+
 def frame_parameters(
     module: &BodyIrModule,
     body: &RustBody,
@@ -5660,7 +5670,7 @@ def frame_parameters(
         ty = parameter_representation(
             body,
             int(parameter.local.index()),
-            frame_type(module, body.locals[int(parameter.local.index())], intrinsics)?,
+            body_frame_type(module, body, body.locals[int(parameter.local.index())], intrinsics)?,
         )?
         if parameter.mutable and lacks_exclusive_parameter(ty):
             return Err("unsupported Body IR mutable tuple or iterator parameter")

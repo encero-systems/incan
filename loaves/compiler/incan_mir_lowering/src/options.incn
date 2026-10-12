@@ -172,10 +172,14 @@ pub def retain_body_carriers(
     body: &Body,
     file: str,
 ) -> Result[None, str]:
-    """Append closed frame carriers without renumbering earlier layouts; open instance payloads still refuse."""
-    retain_carrier(module, declarations, body.return_type, file)?
-    for local in body.locals:
-        retain_carrier(module, declarations, local.ty, file)?
+    """Append closed frame carriers without renumbering layouts; refusal names its declaring frame position."""
+    match retain_carrier(module, declarations, body.return_type, file):
+        Ok(_value) => pass
+        Err(reason) => return Err(f"{reason} in {body.name} return carrier")
+    for index in range(len(body.locals)):
+        match retain_carrier(module, declarations, body.locals[index].ty, file):
+            Ok(_value) => pass
+            Err(reason) => return Err(f"{reason} in {body.name} local {index} carrier")
     return Ok(None)
 
 

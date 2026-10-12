@@ -380,6 +380,7 @@ fn a_prefix_surface_keyword_that_is_not_await_is_refused_rather_than_treated_as_
         type_info: &type_info,
         function_default_sources: &function_default_sources,
         local_function_declarations: &local_function_declarations,
+        local_receiver_methods: &[],
         local_nominal_declarations: &local_nominal_declarations,
         local_fieldless_enum_declarations: &local_fieldless_enum_declarations,
         local_value_enum_declarations: &local_value_enum_declarations,

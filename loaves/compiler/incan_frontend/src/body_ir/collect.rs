@@ -3,6 +3,47 @@
 
 use super::*;
 
+/// Retain physical immutable instance methods with their checked owning declaration, once per source module.
+///
+/// An unresolved caller-open method has no mutability, decorator, or generic-header contract. Those shapes stay
+/// refused; only the ordinary checked source body and signature may complete a newly concrete receiver.
+pub(super) fn collect_local_receiver_methods(
+    program: &ast::Program,
+    facts: &TypeCheckInfo,
+) -> Vec<LocalReceiverMethod> {
+    let mut methods = Vec::new();
+    for declaration in &program.declarations {
+        let source = match &declaration.node {
+            ast::Declaration::Model(model) => &model.methods,
+            ast::Declaration::Class(class) => &class.methods,
+            _ => continue,
+        };
+        let Some(owner) = facts
+            .declarations
+            .declaration_identities
+            .get(&(declaration.span.start, declaration.span.end))
+        else {
+            continue;
+        };
+        for method in source {
+            if method.node.receiver != Some(ast::Receiver::Immutable)
+                || method.node.body.is_none()
+                || !method.node.type_params.is_empty()
+                || !method.node.decorators.is_empty()
+                || method.node.is_async()
+            {
+                continue;
+            }
+            methods.push(LocalReceiverMethod {
+                owner: owner.clone(),
+                name: method.node.name.clone(),
+                span: method.span,
+            });
+        }
+    }
+    methods
+}
+
 /// Retain checker-evaluated constants once; unsupported aggregate and symbolic constants remain absent.
 pub(super) fn collect_constants(program: &ast::Program, type_info: &TypeCheckInfo) -> Vec<bir::ConstantDeclaration> {
     program
@@ -1186,7 +1227,7 @@ fn imported_slot_implementation(
 ///
 /// Only the recorded alias map participates; source spellings do not introduce a new relationship. The finite walk
 /// also keeps a corrupted cyclic map from hanging the bridge, although ordinary checked input excludes cycles.
-fn checked_slot_method_name<'facts>(
+pub(super) fn checked_slot_method_name<'facts>(
     type_info: &'facts TypeCheckInfo,
     owner: &CanonicalSymbolId,
     slot_name: &'facts str,

@@ -1651,6 +1651,52 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .map_or(checked, |declared| self.checked_type(declared))
     }
 
+    /// Complete a caller-open receiver from one retained source nominal and its physical checked method signature.
+    ///
+    /// Existing call identities remain authoritative. A generic owner, overloaded member, or method without an
+    /// ordinary immutable instance contract stays refused; selecting a concrete source method here does not infer
+    /// runtime dispatch or reconstruct a canonical identity from its spelling.
+    fn retained_receiver_method_binding(
+        &self,
+        receiver: &ast::Spanned<ast::Expr>,
+        name: &str,
+        span: ast::Span,
+    ) -> Option<&'type_info crate::typechecker::FunctionBindingInfo> {
+        if self.type_info.resolved_identity(span).is_some() {
+            return None;
+        }
+        let recorded = self
+            .type_info
+            .expr_type(receiver.span)
+            .map(|ty| self.checked_type(ty))?;
+        if !self.leaves_type_open(&recorded) {
+            return None;
+        }
+        let IncanType::Named(owner_name) = self.resolve_ty(receiver.span) else {
+            return None;
+        };
+        let owner = self.type_info.declarations.named_type_identities.get(&owner_name)?;
+        self.local_nominal_declarations
+            .values()
+            .find(|declaration| &declaration.canonical == owner && declaration.type_parameters.is_empty())?;
+        let selected = collect::checked_slot_method_name(self.type_info, owner, name);
+        let mut candidates = self
+            .local_receiver_methods
+            .iter()
+            .filter(|method| &method.owner == owner && method.name == selected);
+        let method = candidates.next()?;
+        if candidates.next().is_some() {
+            return None;
+        }
+        let facts: &'type_info TypeCheckInfo = self.type_info;
+        let binding = facts
+            .declarations
+            .method_bindings_by_span
+            .get(&(method.span.start, method.span.end))?;
+        let identity = binding.identity.as_ref()?;
+        (identity.kind == SemanticSourceTargetKind::Method).then_some(binding)
+    }
+
     /// Lower a method call `recv.name(args)` to a [`bir::Callee::Method`] call, with the receiver prepended to
     /// `args[0]` as a shared or exclusive borrow operand (see the inline comment on the receiver-borrow decision
     /// below).
@@ -1691,6 +1737,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if self.static_receiver_type(recv).is_some() {
             return self.lower_static_method_call(recv, name, type_args, args, span, scope, out);
         }
+        let retained_binding = self.retained_receiver_method_binding(recv, name, span);
         let helper = match self.checked_string_helper_for_method_call(recv, name, span) {
             Ok(helper) => helper,
             Err(description) => return self.unsupported_operand(description, scope, hir_span_value, out),
@@ -1719,6 +1766,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     .get(&(span.start, span.end))
                     .map(Vec::as_slice)
             })
+            .or_else(|| retained_binding.map(|binding| binding.params.as_slice()))
             .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect());
 
         // The receiver is read before the arguments, matching source evaluation order: `recv.m(f())` observes the
@@ -1756,7 +1804,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let mut call_args = Vec::with_capacity(arg_operands.len() + 1);
         call_args.push(bir::ArgumentElement::One(receiver_operand));
         call_args.append(&mut arg_operands);
-        let ty = self.method_call_result_type(span);
+        let checked = self.method_call_result_type(span);
+        let ty = match retained_binding {
+            Some(binding) if self.leaves_type_open(&checked) => self.checked_type(&binding.return_type),
+            _ => checked,
+        };
         if let Some(helper) = helper {
             self.record_runtime_requirement(AbiV0RuntimeRequirement::RuntimeHelper(helper.as_str().to_string()));
             self.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
@@ -1796,6 +1848,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                             .self_method_identities
                             .get(&(span.start, span.end))
                     })
+                    .or_else(|| retained_binding.and_then(|binding| binding.identity.as_ref()))
                     .cloned(),
                 type_args: resolved_type_args,
                 binding,
