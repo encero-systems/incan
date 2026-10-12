@@ -2492,6 +2492,57 @@ def main() -> None:
     )
 }
 
+/// Trait-required computed getters evaluate their bodies at every source property access.
+#[test]
+fn computed_properties_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("computed-properties")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_models_and_classes/computed_properties.incn"
+        ),
+    )
+}
+
+/// Model, class and generic getters read current owner storage, including through a temporary receiver.
+#[test]
+fn property_owner_frames_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("property-owner-frames")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"model Counter:
+    pub base: int
+    pub property doubled -> int:
+        println("read")
+        return self.base * 2
+
+class Label:
+    pub value: int
+    pub property text -> str:
+        return f"n={self.value}"
+
+model Box[T with Clone]:
+    pub content: T
+    pub property selected -> T:
+        return self.content
+
+def main() -> None:
+    mut counter = Counter(base=7)
+    println(counter.doubled)
+    counter.base = 21
+    println(counter.doubled)
+    println(Label(value=3).text)
+    println(Box(content="x").selected)
+"#,
+    )
+}
+
 /// Generic callers retain the payloads inferred for nested model constructors and their receiver methods.
 #[test]
 fn generic_model_caller_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
