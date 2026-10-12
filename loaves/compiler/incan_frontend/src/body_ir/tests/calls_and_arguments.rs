@@ -5,6 +5,40 @@
 
 use super::*;
 
+/// An accepted exact-width literal pattern retains the scrutinee's numeric carrier rather than a default int.
+#[test]
+fn numeric_literal_pattern_retains_checked_carrier() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def pick(value: u8) -> int:\n  return match value:\n    250 => 7\n    _ => 0\n",
+        &["m", "numeric_literal_pattern"],
+    )?;
+    let body = body_named(&module, "pick")?;
+    let pattern = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Match { arms, .. },
+                ..
+            } => arms.first().map(|arm| &arm.pattern),
+            _ => None,
+        })
+        .ok_or("missing numeric match pattern")?;
+    assert!(
+        matches!(
+            pattern,
+            bir::Pattern::Literal(bir::Constant::TypedNumeric(bir::TypedNumericConstant::Unsigned {
+                kind: incan_lang::lang::types::numerics::NumericTypeId::U8,
+                value: 250
+            }))
+        ),
+        "{}",
+        module.render_snapshot()
+    );
+    Ok(())
+}
+
 /// Canonical list count retains its checked element carrier independently of positional signature availability.
 #[test]
 fn numeric_count_probe_retains_checked_element() -> Result<(), Box<dyn std::error::Error>> {

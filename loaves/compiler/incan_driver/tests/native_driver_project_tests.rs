@@ -18,6 +18,37 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// Exact-width numeric patterns and arm values retain their checked match carriers and legacy result.
+#[test]
+fn sized_numeric_match_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("sized-numeric-match")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def pick(value: u8) -> Option[int]:
+    return match value:
+        250 => 7
+        _ => None
+
+def widened_arm(value: int, small: i8, wide: int) -> int:
+    return match value:
+        0 => small
+        _ => wide
+
+def main() -> None:
+    byte: u8 = 250
+    other: u8 = 251
+    small: i8 = -5
+    println(pick(byte).unwrap_or(0))
+    println(pick(other).unwrap_or(0))
+    println(widened_arm(0, small, 1000))
+    println(widened_arm(1, small, 1000))
+"#,
+    )
+}
+
 /// Membership and count probes widen to their checked collection element or key carrier, matching legacy lookups.
 #[test]
 fn numeric_collection_probes_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
