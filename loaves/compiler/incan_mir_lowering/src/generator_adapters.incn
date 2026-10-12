@@ -288,7 +288,7 @@ def text_callable_adapter(
             span=span,
         ),
     )
-    terminate_call(builder, CalleeKind.InstantiatedPair(path, element, pointer), [source, callable], output, span)
+    terminate_call(builder, CalleeKind.Instantiated(path, [element, pointer]), [source, callable], output, span)
     return Ok(None)
 
 
