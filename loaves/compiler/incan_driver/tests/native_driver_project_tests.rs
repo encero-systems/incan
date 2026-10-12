@@ -18,6 +18,26 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// Membership and count probes widen to their checked collection element or key carrier, matching legacy lookups.
+#[test]
+fn numeric_collection_probes_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("numeric-collection-probes")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def main() -> None:
+    small: i8 = -5
+    byte: u8 = 250
+    values: list[int] = [-5, 250]
+    table: dict[int, str] = {250: "b"}
+    println(f"{small in values} {byte in table} {values.count(small)}")
+    println(f"{byte not in values} {small not in table}")
+"#,
+    )
+}
+
 /// Canonical enumerate observes its sole spread operand as the outer collection, matching frozen legacy emission.
 #[test]
 fn enumerate_spread_operand_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

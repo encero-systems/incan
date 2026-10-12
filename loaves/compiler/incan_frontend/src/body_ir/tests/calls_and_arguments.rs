@@ -5,6 +5,40 @@
 
 use super::*;
 
+/// A numeric dictionary membership probe retains its checked key carrier before the runtime lookup.
+#[test]
+fn numeric_membership_probe_retains_checked_key() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n  byte: u8 = 250\n  table: dict[int, str] = {250: \"b\"}\n  println(byte in table)\n",
+        &["m", "numeric_membership_probe"],
+    )?;
+    let body = body_named(&module, "main")?;
+    let probe = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Helper(bir::HelperOp::DictContainsKey),
+                args,
+                ..
+            } => args.get(1),
+            _ => None,
+        })
+        .ok_or("missing dictionary membership helper")?;
+    let bir::ArgumentElement::One(bir::Operand::Place(read)) = probe else {
+        return Err("numeric membership probe has no retained storage".into());
+    };
+    let local = read.place.local_id().ok_or("numeric membership probe has no local")?;
+    assert_eq!(
+        body.locals[local.index()].ty,
+        IncanType::Primitive(IncanPrimitiveType::Int),
+        "{}",
+        module.render_snapshot()
+    );
+    Ok(())
+}
+
 /// A canonical enumerate spread retains the outer collection operand that the frozen builtin actually observes.
 #[test]
 fn enumerate_spread_retains_legacy_operand() -> Result<(), Box<dyn std::error::Error>> {
