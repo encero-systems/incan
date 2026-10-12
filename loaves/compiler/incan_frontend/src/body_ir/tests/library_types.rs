@@ -151,3 +151,31 @@ fn frozen_byte_length_retains_its_builtin_identity() -> Result<(), Box<dyn std::
     assert_eq!(method.declaration_name, "frozenbytes.len", "{}", body.render_snapshot());
     Ok(())
 }
+
+/// Reading a frozen byte const retains its checked storage carrier instead of erasing it to mutable bytes.
+#[test]
+fn frozen_byte_const_reads_keep_their_checked_carrier() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "const DATA: FrozenBytes = b\"ab\"\n\ndef consume(value: FrozenBytes) -> None:\n    pass\n\ndef main() -> None:\n    consume(DATA)\n",
+        &["m", "frozen_read"],
+    )?;
+    let body = body_named(&module, "main")?;
+    let receiver = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call { args, .. } => args.first().and_then(|argument| argument.as_one()),
+            _ => None,
+        })
+        .ok_or("missing frozen byte argument")?;
+    let bir::Operand::Place(read) = receiver else {
+        return Err(format!("frozen storage was erased: {}", body.render_snapshot()).into());
+    };
+    let local = read.place.local_id().ok_or("frozen read has no local")?;
+    assert_eq!(
+        body.locals[local.index()].ty,
+        IncanType::Primitive(IncanPrimitiveType::FrozenBytes)
+    );
+    Ok(())
+}
