@@ -1773,7 +1773,7 @@ def lower_closure(
     mut operands: list[Operand] = []
     mut capture_types: list[PlanType] = []
     for capture in captures:
-        operand = scalar_operand(builder, capture, span)?
+        operand = value_operand(builder, capture, span)?
         ty = operand_type(builder, operand)?
         match ty:
             PlanType.ZipIterator(_left, _right) =>
@@ -2247,9 +2247,9 @@ def bind_closure_input(
     if storage != ty:
         return Err("invalid Body IR closure argument type")
     lifted.locals[destination].ty = storage
-    # Text and an owned model, enum or carrier input move into the local the body reads, which then owns them; an
+    # Text and an owned collection, model, enum or carrier input move into the local the body reads, which then owns them; an
     # exclusive borrow moves in too, and every other input is a copy or a shared view.
-    owned = ty == PlanType.String or is_nominal_type(ty)
+    owned = ty == PlanType.String or is_nominal_type(ty) or is_owned_collection(ty)
     value = read_place(plan_place(argument, span), owned or is_exclusive_borrow(ty), span)
     lifted.emit(plan_assign(plan_place(destination, span), RvalueKind.Use(value), span))
     if owned:
