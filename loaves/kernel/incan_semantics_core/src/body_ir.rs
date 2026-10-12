@@ -396,10 +396,19 @@ pub struct NominalDeclaration {
     pub type_parameter_count: usize,
 }
 
-/// Foreign runtime ownership for a compiler-known nominal whose stdlib declaration describes its public surface.
+/// Foreign runtime ownership for a compiler-known nominal with a checked builtin or stdlib source identity.
 /// This direct-route bridge does not alter source resolution or legacy emission. A user declaration, including one
 /// with the same name, never selects a foreign item; ordinary SDK layouts keep their compiled source item.
 pub fn native_nominal_item(identity: &CanonicalSymbolId) -> Option<String> {
+    if identity.origin == crate::SymbolOrigin::Builtin
+        && identity.namespace == crate::SymbolNamespace::OrdinaryLexical
+        && identity.kind == crate::SemanticSourceTargetKind::Builtin
+        && identity.declaration_name == "ValidationError"
+        && identity.scope_discriminant.is_none()
+        && identity.declaration_span == crate::HirSourceSpan::new(0, 0)
+    {
+        return Some("incan_std_core::validation::ValidationError".to_owned());
+    }
     let crate::SymbolOrigin::Package { library, module_path } = &identity.origin else {
         return None;
     };
@@ -408,6 +417,48 @@ pub fn native_nominal_item(identity: &CanonicalSymbolId) -> Option<String> {
         && identity.declaration_name == "FieldInfo"
         && identity.kind == crate::SemanticSourceTargetKind::Class)
         .then(|| "incan_std_core::reflection::FieldInfo".to_owned())
+}
+
+/// Physical direct-route declaration scope of a retained native builtin, or the existing source/package scope.
+/// This is a layout transport coordinate, not a replacement semantic identity or a change to legacy resolution.
+pub fn native_nominal_module(identity: &CanonicalSymbolId) -> Option<String> {
+    if identity.origin == crate::SymbolOrigin::Builtin && native_nominal_item(identity).is_some() {
+        return Some("builtin::native::ValidationError".to_owned());
+    }
+    crate::canonical_module_identity(identity)
+}
+
+/// Exact opaque ABI declaration of the checked ValidationError builtin, retaining its runtime's four derived traits.
+/// Operations on its fields, constructors or display remain unadmitted; storage stays opaque through native frames.
+pub fn native_builtin_nominal(identity: &CanonicalSymbolId) -> Option<NominalDeclaration> {
+    if identity.origin != crate::SymbolOrigin::Builtin {
+        return None;
+    }
+    let native_item = native_nominal_item(identity)?;
+    let module = native_nominal_module(identity)?;
+    Some(NominalDeclaration {
+        native_item,
+        direct_declaration_id: CompilerNodeId::declaration_span(&module, 0, 0),
+        canonical: identity.clone(),
+        name: identity.declaration_name.clone(),
+        fields: Vec::new(),
+        field_identities: Vec::new(),
+        field_types: Vec::new(),
+        field_public: Vec::new(),
+        field_aliases: Vec::new(),
+        public: true,
+        has_field_defaults: false,
+        field_default_body: None,
+        method_partial_defaults: Vec::new(),
+        display_method: None,
+        derives: ["Debug", "Clone", "PartialEq", "Eq"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+        named_type_identities: Default::default(),
+        type_parameters: Vec::new(),
+        type_parameter_count: 0,
+    })
 }
 
 /// The deferred defaults of one same-owner method partial (`short = partial label(prefix="x")`), without a second
