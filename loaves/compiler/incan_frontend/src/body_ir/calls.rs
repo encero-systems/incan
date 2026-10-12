@@ -1110,7 +1110,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     out,
                 );
             };
-            let payload = self.lower_expr_to_operand(payload, scope, out);
+            let operand = self.lower_expr_to_operand(payload, scope, out);
+            // A Result owns its payload, so a generic or nominal field follows the same clone boundary as a value
+            // argument.
+            let payload = self.owned_parameter_operand(payload, operand);
             let recorded = self
                 .type_info
                 .expressions
