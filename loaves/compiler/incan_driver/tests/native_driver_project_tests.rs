@@ -72,10 +72,32 @@ def main() -> None:
     println(optional(None))
 "#,
     )?;
-    census::require_named_refusal(
+    Ok(())
+}
+
+/// Checked overload identities keep named argument order and their imported package targets.
+#[test]
+fn imported_overload_binding_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("overload-binding")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def pick(value: int) -> int:
+    return value + 1
+
+def pick(left: str, right: int) -> str:
+    return f"{left}:{right}"
+
+def main() -> None:
+    println(pick(4))
+    println(pick(right=7, left="named"))
+"#,
+    )?;
+    census::require_named_pass(
         "emit_dependency_unions_and_surfaces",
         "dependency_unions_across_the_package_boundary",
-        "unsupported Body IR unresolved ArgumentBinding",
     )
 }
 

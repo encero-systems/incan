@@ -5,6 +5,40 @@
 
 use super::*;
 
+/// A selected overload keeps its checked slots when this module does not physically own its executable body.
+#[test]
+fn a_selected_external_overload_retains_its_parameter_binding() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def pick(value: int) -> int:\n  return value\n\ndef pick(left: str, right: int) -> str:\n  return left\n\ndef main() -> None:\n  println(pick(right=2, left=\"x\"))\n";
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let path = vec!["m".to_string(), "external_overload".to_string()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(path.clone()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    // Keep checked candidate identities while retaining only the consumer's executable body.
+    program.declarations.retain(
+        |declaration| !matches!(&declaration.node, ast::Declaration::Function(function) if function.name == "pick"),
+    );
+    let module = build_body_ir_module_v0(&program, &path, checker.type_info());
+    let targets = named_targets(&module, "main");
+    let target = targets
+        .iter()
+        .find(|target| target.name == "pick")
+        .ok_or("missing selected overload call")?;
+    assert!(target.direct_call_id.is_none());
+    assert!(
+        matches!(&target.binding, bir::ArgumentBinding::Resolved { arguments, defaulted_slots } if arguments.len() == 2 && defaulted_slots.is_empty())
+    );
+    assert!(
+        !module.render_snapshot().contains("unsupported("),
+        "{}",
+        module.render_snapshot()
+    );
+    Ok(())
+}
+
 /// Imported metadata and source signatures give one structural union the same Body IR order, including nested uses.
 #[test]
 fn union_member_order_is_canonical_at_the_body_ir_boundary() {

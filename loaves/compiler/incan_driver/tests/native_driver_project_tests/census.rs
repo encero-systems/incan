@@ -538,6 +538,28 @@ pub(super) fn require_named_refusal(area: &str, name: &str, expected: &str) -> R
     Ok(())
 }
 
+/// Require one original fixture to execute with all its declared output observables intact.
+pub(super) fn require_named_pass(area: &str, name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = all_fixtures()?
+        .into_iter()
+        .find_map(|(found_area, fixture)| (found_area == area && fixture.name == name).then_some(fixture))
+        .ok_or("missing original fixture")?;
+    let graph = driver_fixture()?;
+    let root = graph.scratch(&format!("completed-{name}"))?;
+    let mut closure = corpus::runtime_closure(&graph.formatting)?;
+    closure.extend_with(&sdk_closure(graph)?)?;
+    let (observed, detail) = measure(
+        &fixture,
+        &root,
+        &graph.driver_binary("debug"),
+        &graph.sysroot,
+        &closure,
+        Duration::from_secs(180),
+    )?;
+    assert_eq!(observed, "pass", "{area}/{name}: {detail}");
+    Ok(())
+}
+
 /// Different source payloads for one refused type belong to the same ranked construct.
 #[cfg(unix)]
 #[test]
