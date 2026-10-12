@@ -6024,6 +6024,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/frozen_collections.rs": {
+      "disposition": "keep",
+      "notes": "Body IR-only static frozen data retention and canonical constant versus local shadowing coverage.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "tests": {}
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/identities_and_imports.rs": {
       "disposition": "keep",
       "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
