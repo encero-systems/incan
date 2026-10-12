@@ -4939,6 +4939,9 @@ def lower_computed_statics(
                 )?
                 mut original_function = original
                 original_function.name = f"{function_name(module, binding.original_body)}__incan_original"
+                for retained in functions:
+                    if retained.name == original_function.name:
+                        return Err("unsupported Body IR original callable name collision")
                 functions.append(original_function)
                 append_synthesized(functions, original_synthesized)?
                 merge_externals(externals, original_runtime)
