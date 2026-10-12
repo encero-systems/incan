@@ -5461,7 +5461,7 @@ def lower_list_iter(
         return Err("invalid Body IR list iter arguments")
     leaf, depth = require_list_shape(argument_type(builder, arguments, 0, span)?, "unsupported Body IR iter on non-list")?
     element = list_element(leaf, depth)
-    cell = static_list_receiver(builder, arguments, false, span)?
+    cell = static_collection_receiver(builder, arguments, false, span)?
     mut reference = read_place(plan_place(0, span), false, span)
     match cell:
         Some((_global, receiver)) =>
