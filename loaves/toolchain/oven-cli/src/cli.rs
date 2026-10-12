@@ -170,6 +170,17 @@ pub enum ToolsMetadataCommand {
 /// Explicit Oven Alpha lifecycle commands.
 #[derive(Subcommand, Debug)]
 pub enum OvenCommand {
+    /// Run project tests through the shared owner
+    Tests {
+        /// Collect only Incan source tests
+        #[arg(long, conflicts_with = "rust_only")]
+        incan_only: bool,
+        /// Collect only Rust source tests
+        #[arg(long, conflicts_with = "incan_only")]
+        rust_only: bool,
+        #[command(flatten)]
+        arguments: TestArgs,
+    },
     /// Convert selected Cargo workspace library closures into authored Loaf declarations once
     ConvertCargo {
         /// Workspace owning Cargo.toml and Cargo.lock; read only during this explicit adoption
@@ -885,4 +896,111 @@ pub struct LockArgs {
     /// Enable all Cargo features
     #[arg(long = "cargo-all-features")]
     pub cargo_all_features: bool,
+}
+
+/// Shared project test options used by both entry points.
+#[derive(clap::Args, Debug)]
+pub struct TestArgs {
+    /// Path to test file or directory
+    #[arg(value_name = "PATH", default_value = ".")]
+    pub path: PathBuf,
+    /// Select Incan package features for collection and generated test batches
+    #[command(flatten)]
+    pub package_features: PackageFeatureCliFlags,
+    /// Select a non-persistent SDK profile for collection and generated test batches
+    #[command(flatten)]
+    pub sdk_profile: SdkProfileCliFlags,
+    /// Verbose output
+    #[arg(short, long)]
+    pub verbose: bool,
+    /// Stop on first failure
+    #[arg(short = 'x', long = "exitfirst")]
+    pub stop_on_fail: bool,
+    /// Include slow tests
+    #[arg(long)]
+    pub slow: bool,
+    /// Filter tests by keyword expression
+    #[arg(short = 'k', value_name = "EXPR")]
+    pub filter: Option<String>,
+    /// Filter tests by marker expression
+    #[arg(short = 'm', long = "markers", value_name = "EXPR")]
+    pub marker_expr: Option<String>,
+    /// Treat unknown marker names as collection errors
+    #[arg(long = "strict-markers")]
+    pub strict_markers: bool,
+    /// Maximum number of runner execution units to run concurrently
+    #[arg(short = 'j', long = "jobs", value_name = "N", default_value_t = 1)]
+    pub jobs: usize,
+    /// Enable a collection-time testing feature for std.testing.feature("name")
+    #[arg(long = "feature", value_name = "NAME")]
+    pub test_features: Vec<String>,
+    /// Default generated test-batch timeout, such as 250ms, 5s, or 2m
+    #[arg(long = "timeout", value_name = "DURATION")]
+    pub timeout: Option<String>,
+    /// Show test stdout/stderr even when tests pass
+    #[arg(long = "nocapture")]
+    pub no_capture: bool,
+    /// Fail if no tests are collected
+    #[arg(long = "fail-on-empty")]
+    pub fail_on_empty: bool,
+    /// List collected tests after filtering and do not execute them
+    #[arg(long = "list")]
+    pub list_only: bool,
+    /// Output format
+    #[arg(long = "format", value_enum, default_value = "console")]
+    pub report_format: crate::test_runner::TestOutputFormat,
+    /// Write a JUnit XML report to this path
+    #[arg(long = "junit", value_name = "PATH")]
+    pub junit_path: Option<PathBuf>,
+    /// Show the slowest N test durations after the run
+    #[arg(long = "durations", value_name = "N")]
+    pub durations: Option<usize>,
+    /// Shuffle test execution order
+    #[arg(long)]
+    pub shuffle: bool,
+    /// Seed used with --shuffle
+    #[arg(long, value_name = "N")]
+    pub seed: Option<u64>,
+    /// Run xfail tests as ordinary tests
+    #[arg(long = "run-xfail")]
+    pub run_xfail: bool,
+    /// Require up-to-date oven.lock; does not authorize a Cargo command
+    #[arg(long, hide = true)]
+    pub locked: bool,
+    /// Disable INCAN_LOCKED for this invocation
+    #[arg(long = "no-locked", conflicts_with_all = ["locked", "frozen"], hide = true)]
+    pub no_locked: bool,
+    /// Require offline-compatible locked inputs; does not authorize a Cargo command
+    #[arg(long, hide = true)]
+    pub offline: bool,
+    /// Disable INCAN_OFFLINE for this invocation
+    #[arg(long = "no-offline", conflicts_with_all = ["offline", "frozen"], hide = true)]
+    pub no_offline: bool,
+    /// Require an up-to-date frozen oven.lock; does not authorize a Cargo command
+    #[arg(long, hide = true)]
+    pub frozen: bool,
+    /// Disable INCAN_FROZEN for this invocation
+    #[arg(long = "no-frozen", conflicts_with = "frozen", hide = true)]
+    pub no_frozen: bool,
+    /// Retired Cargo argument surface; normal Oven commands reject it
+    #[arg(long = "cargo-args", value_name = "ARG", num_args = 1.., allow_hyphen_values = true, hide = true)]
+    pub cargo_args: Vec<String>,
+    /// Retired Cargo feature surface; normal Oven commands reject it
+    #[arg(long = "cargo-features", value_delimiter = ',', hide = true)]
+    pub cargo_features: Vec<String>,
+    /// Retired Cargo feature surface; normal Oven commands reject it
+    #[arg(long = "cargo-no-default-features", hide = true)]
+    pub cargo_no_default_features: bool,
+    /// Retired Cargo feature surface; normal Oven commands reject it
+    #[arg(long = "cargo-all-features", hide = true)]
+    pub cargo_all_features: bool,
+    /// Select every member in the active workspace
+    #[arg(long, conflicts_with = "members")]
+    pub workspace: bool,
+    /// Select one workspace member by name or root-relative path; may be repeated
+    #[arg(long = "member", value_name = "NAME_OR_PATH", conflicts_with = "workspace")]
+    pub members: Vec<String>,
+    /// Retired Cargo passthrough surface; normal Oven commands reject it
+    #[arg(last = true, hide = true)]
+    pub cargo_passthrough: Vec<String>,
 }

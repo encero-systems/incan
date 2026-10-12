@@ -4030,14 +4030,10 @@ fn materialized_metadata_stamp(metadata: &fs::Metadata) -> io::Result<Materializ
 /// Keep acceleration outside the published store inventory; staging and caller paths remain uncached.
 fn materialized_digest_cache_path(path: &Path) -> Option<PathBuf> {
     let canonical = fs::canonicalize(path).ok()?;
-    let entries = canonical
+    canonical
         .ancestors()
         .find(|ancestor| ancestor.file_name().is_some_and(|name| name == ENTRIES_DIRECTORY))?;
-    let store = entries.parent()?;
-    Some(store.parent()?.join("oven-file-digests-v1").join(format!(
-        "{:x}.json",
-        Sha256::digest(canonical.as_os_str().as_encoded_bytes())
-    )))
+    observed_digest_cache_path(&canonical)
 }
 
 /// Publish a complete optional hash record atomically without receipt-level durability.
@@ -4070,6 +4066,18 @@ fn publish_materialized_file_digest(path: &Path, record: &MaterializedFileDigest
 /// without those observations always hash bytes. Missing, malformed or unwritable cache records only forfeit
 /// acceleration. Callers must still enforce their own receipt, path and owner admission rules.
 pub fn digest_regular_file(path: &Path) -> Result<(u64, String), OvenStoreError> {
+    let canonical = fs::canonicalize(path).map_err(|source| OvenStoreError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let record = observed_digest_cache_path(&canonical);
+    let observed = digest_observed_file(path, record.as_deref())?;
+    Ok((observed.length, observed.digest))
+}
+
+/// Use the existing user cache for all file observations, including nested published package Stores.
+/// Placing records beside a Store can mutate its enclosing immutable provider and change that provider's identity.
+fn observed_digest_cache_path(canonical: &Path) -> Option<PathBuf> {
     let cache = std::env::var_os("INCAN_HOME")
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
@@ -4080,18 +4088,12 @@ pub fn digest_regular_file(path: &Path) -> Result<(u64, String), OvenStoreError>
                 .map(|path| PathBuf::from(path).join(".incan"))
         })
         .map(|root| root.join("cache/observed-file-digests-v1"));
-    let canonical = fs::canonicalize(path).map_err(|source| OvenStoreError::Io {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    let record = cache.map(|root| {
+    cache.map(|root| {
         root.join(format!(
             "{:x}.json",
             Sha256::digest(canonical.as_os_str().as_encoded_bytes())
         ))
-    });
-    let observed = digest_observed_file(path, record.as_deref())?;
-    Ok((observed.length, observed.digest))
+    })
 }
 
 /// Content identity and physical work from one file observation; retained warm lookups need no file opens.
@@ -6284,6 +6286,22 @@ pub(crate) mod tests {
             String::from_utf8_lossy(&child.stderr)
         );
         assert!(String::from_utf8_lossy(&child.stdout).contains("1 passed"));
+        Ok(())
+    }
+
+    /// Published package reads must not place digest acceleration inside the enclosing provider artifact.
+    #[test]
+    fn materialized_digest_records_use_shared_user_cache() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("oven/loafs/entries/fixture.loaf/artifacts/native");
+        fs::create_dir_all(source.parent().ok_or("artifact has no parent")?)?;
+        fs::write(&source, b"immutable native")?;
+        let cache = super::materialized_digest_cache_path(&source).ok_or("observation cache unavailable")?;
+        assert!(!cache.starts_with(root.path()));
+        let first = super::digest_materialized_file(&source)?;
+        assert_eq!(first, super::digest_regular_file(&source)?);
+        assert_eq!(first, super::digest_materialized_file(&source)?);
+        assert!(!root.path().join("oven/oven-file-digests-v1").exists());
         Ok(())
     }
 

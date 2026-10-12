@@ -12,6 +12,9 @@ std_async = []
 std_decorators = []
 
 [dependencies]
+incan_semantics_core = { loaf = "incan_semantics_core", path = "../../../loaves/kernel/incan_semantics_core" }
+incan_vocab = { loaf = "incan_vocab", path = "../../../loaves/kernel/incan_vocab" }
+hex = { loaf = "crates-io/hex", version = "0.4.3" }
 tracing = { loaf = "crates-io/tracing", version = "0.1" }
 clap = { features = ["derive"], loaf = "crates-io/clap", version = "4.4" }
 incan_driver = { default-features = false, features = ["cli", "test_support", "rust_inspect", "std_testing", "std_async", "std_decorators"], loaf = "incan_driver", path = "../../../loaves/compiler/incan_driver" }

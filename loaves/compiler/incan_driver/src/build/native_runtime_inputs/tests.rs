@@ -119,7 +119,7 @@ fn ordinary_engine_original_closure_first_repeat_and_refusals() -> Result<(), Bo
         return Err("exact original record fixture owner is missing or ambiguous".into());
     };
     let payload = record_owner
-        .artifact_root
+        .artifact_root()
         .parent()
         .ok_or("record artifact root has no entry")?
         .join("payload");
@@ -161,5 +161,34 @@ fn ordinary_engine_original_closure_first_repeat_and_refusals() -> Result<(), Bo
         initial,
         ordinary_runtime_inputs(&closure, &intent, &rustc, &[], &[], &[])?
     );
+    Ok(())
+}
+
+/// Standalone Oven selects its own toolchain compiler even when a stale test-runner override is present.
+#[test]
+fn oven_native_runtime_uses_adjacent_compiler() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let compiler = directory.path().join(format!("incan{}", std::env::consts::EXE_SUFFIX));
+    let oven = directory.path().join(format!("oven{}", std::env::consts::EXE_SUFFIX));
+    std::fs::write(&compiler, "compiler")?;
+    assert_eq!(
+        super::compiler_for_native_runtime(&oven, Some(directory.path().join("stale")))?,
+        compiler
+    );
+    Ok(())
+}
+
+/// A missing standalone compiler refuses; explicit native test hosts keep their existing selected-compiler boundary.
+#[test]
+fn native_runtime_compiler_selection_refuses_missing_toolchain() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let compiler = directory.path().join("selected");
+    let oven = directory.path().join(format!("oven{}", std::env::consts::EXE_SUFFIX));
+    assert!(super::compiler_for_native_runtime(&oven, Some(compiler.clone())).is_err());
+    assert_eq!(
+        super::compiler_for_native_runtime(&directory.path().join("native-libtest"), Some(compiler.clone()))?,
+        compiler
+    );
+    assert!(super::compiler_for_native_runtime(&directory.path().join("native-libtest"), None).is_err());
     Ok(())
 }

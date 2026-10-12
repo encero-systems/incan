@@ -186,7 +186,7 @@ fn ordinary_metadata_refuses_changed_owner_and_extra_replay_files() -> Result<()
     selected.replay(destination.path())?;
     fs::write(destination.path().join("src/injected.rs"), "pub fn injected() {}\n")?;
     assert!(selected.replay(destination.path()).is_err());
-    let materialized = selected.owner.artifact_root.join("src/lib.rs");
+    let materialized = selected.owner.artifact_root().join("src/lib.rs");
     let original_metadata = fs::metadata(&materialized)?;
     let original_permissions = original_metadata.permissions();
     let original_modified = original_metadata.modified()?;
@@ -250,11 +250,11 @@ fn ordinary_metadata_refuses_forged_payload_and_receipt() -> Result<(), Box<dyn 
             payload: serde_json::to_vec(&payload)?,
             materialized_files: selected
                 .owner
-                .manifest
+                .manifest()
                 .materialized_files
                 .iter()
                 .map(|file| OvenArtifactMaterializedFile {
-                    source_path: selected.owner.artifact_root.join(&file.relative_path),
+                    source_path: selected.owner.artifact_root().join(&file.relative_path),
                     relative_path: file.relative_path.clone(),
                 })
                 .collect(),

@@ -64,12 +64,14 @@ pub(super) struct TestExecutionOptions {
 
 /// Store and immutable source authority opened once for one `incan test` command.
 pub(super) struct OvenTestCommandContext {
+    /// Prepared Rust roots retain their original dependency plan leases through execution.
+    pub(super) rust_roots: BTreeMap<PathBuf, super::rust::PreparedRustRoot>,
     /// Native admission and original owner leases shared by every parallel harness in this command.
-    native_sdk_context: Option<Arc<incan_driver::build::NativeSdkCommandContext>>,
-    project_root: PathBuf,
+    pub(super) native_sdk_context: Option<Arc<incan_driver::build::NativeSdkCommandContext>>,
+    pub(super) project_root: PathBuf,
     planned_test_files: BTreeSet<PathBuf>,
-    session: Arc<incan_driver::session::CompilationSession>,
-    store: oven_store::store::OvenStore,
+    pub(super) session: Arc<incan_driver::session::CompilationSession>,
+    pub(super) store: oven_store::store::OvenStore,
     project_source_authorities: Option<Arc<PreparedOvenProjectRegistrySourceAuthorities>>,
 }
 
@@ -123,6 +125,7 @@ pub(super) fn prepare_oven_test_command_context(
         None
     };
     Ok(Arc::new(OvenTestCommandContext {
+        rust_roots: BTreeMap::new(),
         native_sdk_context,
         project_root,
         planned_test_files: planned_test_files
@@ -3230,6 +3233,7 @@ def captured_resource() -> int:
         )?);
         let store_root = tempfile::tempdir()?;
         let context = OvenTestCommandContext {
+            rust_roots: BTreeMap::new(),
             native_sdk_context: None,
             project_root: absolute_project_root(project.path()),
             planned_test_files: BTreeSet::from([

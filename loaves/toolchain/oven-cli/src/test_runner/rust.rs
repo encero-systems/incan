@@ -1,0 +1,356 @@
+//! Rust crate roots enter the existing test inventory, scheduler and reports through native libtest metadata.
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use incan_provider::FeatureSelection;
+use oven_model::manifest::ProjectManifest;
+use oven_rustc::native_test::{
+    OvenNativeTestRequest, inventory_native_tests_for_collection, run_native_tests_exact_for_request,
+};
+use oven_rustc::plan::OvenDirectRustcPlanSelection;
+use oven_rustc::rustc::{
+    OvenTrustedDirectRustcTargetRequest, bake_trusted_direct_rustc_test_in_store, resolve_active_rustc,
+    rustc_host_target, rustc_identity,
+};
+use oven_store::{OvenGeneratedProjectRequest, receipt_generated_project};
+use sha2::{Digest, Sha256};
+
+use super::execution::OvenTestCommandContext;
+use super::output::TestOutputSink;
+use super::{TestInfo, TestMarker, TestResult, trace_test_stage};
+use crate::{CliError, CliResult};
+
+/// The root's compiled harness and original dependency leases remain alive until all scheduled cases finish.
+pub(super) struct PreparedRustRoot {
+    /// Actual libtest inventory mapped to the common selection model.
+    pub(super) tests: Vec<TestInfo>,
+    executable: PathBuf,
+    environment: BTreeMap<String, String>,
+    working_directory: PathBuf,
+    _selection: OvenDirectRustcPlanSelection,
+}
+
+/// Locate the nearest authored project for either a directory or source-file selection.
+/// Use the manifest's existing discovery rules rather than a source-file-only parent heuristic.
+pub(super) fn project_root(path: &Path) -> CliResult<Option<PathBuf>> {
+    let path = path
+        .canonicalize()
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let start = if path.is_dir() {
+        path.as_path()
+    } else {
+        path.parent()
+            .ok_or_else(|| CliError::failure("test path has no parent"))?
+    };
+    oven_model::manifest::find_manifest(start)
+        .map_err(|error| CliError::failure(error.to_string()))?
+        .map(|manifest| {
+            manifest
+                .parent()
+                .map(Path::to_path_buf)
+                .ok_or_else(|| CliError::failure("test manifest has no parent"))
+        })
+        .transpose()
+}
+
+/// Discover authored crate roots, never treating nested Rust modules as independent crates.
+/// The selected path narrows the package's conventional roots and declared binary roles.
+pub(super) fn discover_roots(path: &Path) -> CliResult<Vec<PathBuf>> {
+    let Some(root) = project_root(path)? else {
+        return Ok(Vec::new());
+    };
+    let manifest_path = root.join("loaf.toml");
+    let manifest = ProjectManifest::load(&manifest_path).map_err(|e| CliError::failure(e.to_string()))?;
+    let source = manifest
+        .rust_source
+        .as_ref()
+        .map_or_else(|| root.join("src"), |source| root.join(&source.root).join("src"));
+    let mut candidates = vec![source.join("lib.rs"), source.join("main.rs")];
+    candidates.extend(manifest.rust_bins.iter().map(|role| root.join(&role.path)));
+    let tests = root.join("tests");
+    if tests.is_dir() {
+        for entry in std::fs::read_dir(&tests).map_err(|e| CliError::failure(e.to_string()))? {
+            let entry = entry.map_err(|e| CliError::failure(e.to_string()))?;
+            let candidate = entry.path();
+            if candidate.extension().is_some_and(|extension| extension == "rs") {
+                candidates.push(candidate);
+            }
+        }
+    }
+    let selected = path.canonicalize().map_err(|e| CliError::failure(e.to_string()))?;
+    let root = root.canonicalize().map_err(|e| CliError::failure(e.to_string()))?;
+    let mut roots = BTreeSet::new();
+    for candidate in candidates.into_iter().filter(|candidate| candidate.is_file()) {
+        let candidate = candidate.canonicalize().map_err(|e| CliError::failure(e.to_string()))?;
+        if !candidate.starts_with(&root) {
+            return Err(CliError::failure("Rust test root escapes its project"));
+        }
+        if candidate == selected || (selected.is_dir() && candidate.starts_with(&selected)) {
+            roots.insert(candidate);
+        }
+    }
+    Ok(roots.into_iter().collect())
+}
+
+/// Compile one authored Rust root through the existing receipt, native admission and direct-rustc plan selection.
+/// A sibling declaration may narrow integration-test dependencies; it never supplies ambient Cargo authority.
+pub(super) fn prepare(
+    source: &Path,
+    context: &OvenTestCommandContext,
+    features: &FeatureSelection,
+) -> CliResult<PreparedRustRoot> {
+    prepare_inner(source, context, features)
+        .map_err(|e| CliError::failure(format!("Rust test {}: {e}", source.display())))
+}
+
+/// Preserve exact compilation inputs and leases while mapping real libtest metadata into common test records.
+fn prepare_inner(
+    source: &Path,
+    context: &OvenTestCommandContext,
+    features: &FeatureSelection,
+) -> Result<PreparedRustRoot, Box<dyn std::error::Error>> {
+    let _stage = trace_test_stage("rust_test_preparation");
+    let declaration = source.with_extension("loaf.toml");
+    let owned_manifest = if declaration.is_file() {
+        Some(ProjectManifest::load(&declaration)?)
+    } else {
+        None
+    };
+    let manifest = owned_manifest
+        .as_ref()
+        .or(context.session.manifest.as_ref())
+        .ok_or("Rust tests require loaf.toml")?;
+    if manifest
+        .rust_facet
+        .as_ref()
+        .is_some_and(|facet| facet.build_script == Some(true))
+    {
+        return Err("Rust test roots with build scripts require declared build facts in their native plan".into());
+    }
+    let selected_features = incan_provider::PackageFeatureGraph::from_manifest(manifest)?.resolve(features)?;
+    if !selected_features.dependency_features.is_empty() || !selected_features.active_optional_dependencies.is_empty() {
+        return Err(
+            "Rust test feature forwarding must be represented by the selected native dependency declaration".into(),
+        );
+    }
+    let features = selected_features.active_features.into_iter().collect::<Vec<_>>();
+    let resolved = incan_provider::dependency_resolver::resolve_dependencies(
+        Some(manifest),
+        &[],
+        true,
+        &oven_model::lock::CargoFeatureSelection::default().normalized(),
+    )
+    .map_err(|errors| format!("invalid Rust test dependencies: {errors:?}"))?;
+    let dependencies = resolved
+        .dependencies
+        .iter()
+        .chain(&resolved.dev_dependencies)
+        .cloned()
+        .collect::<Vec<_>>();
+    let requirements = incan_provider::requirements::ProjectRequirements::default();
+    let inputs = incan_driver::build_unit::oven_build_unit_inputs_with_native_sdk(
+        &context.session.provider_plan,
+        &requirements,
+        &resolved,
+        context.native_sdk_context.as_deref(),
+    )?;
+    let rustc = resolve_active_rustc()?;
+    let project = manifest
+        .project
+        .as_ref()
+        .ok_or("Rust test declaration has no project identity")?;
+    let name = project
+        .name
+        .as_deref()
+        .ok_or("Rust test declaration has no project name")?
+        .replace('-', "_");
+    let environment = BTreeMap::from([(
+        "CARGO_MANIFEST_DIR".into(),
+        context.project_root.to_string_lossy().into_owned(),
+    )]);
+    let mut request = OvenGeneratedProjectRequest::new(
+        &context.project_root,
+        &name,
+        project.version.as_deref().unwrap_or("0.1.0"),
+        rustc_host_target(&rustc)?,
+        rustc_identity(&rustc)?,
+        "debug",
+        features.clone(),
+    )
+    .with_generated_source("test-root", source)
+    .with_generated_source_tree("test-modules", source.parent().ok_or("Rust root has no parent")?)
+    .with_generated_source(
+        "test-declaration",
+        if declaration.is_file() {
+            declaration
+        } else {
+            context.project_root.join("loaf.toml")
+        },
+    )
+    .with_build_unit_input("test-environment", serde_json::to_string(&environment)?);
+    for (key, value) in inputs {
+        request = request.with_build_unit_input(key, value);
+    }
+    let receipt = receipt_generated_project(&request)?;
+    let selection = incan_driver::build::oven_project::select_oven_direct_rustc_plan_with_native_sdk(
+        &context.store,
+        &receipt,
+        &dependencies,
+        context.native_sdk_context.as_deref(),
+    )?
+    .ok_or("Rust test dependencies have no matching prepared Loaves")?;
+    let mut plan = selection.source_artifact_plan("test-root")?;
+    plan.compile_environment.extend(environment.clone());
+    let mut artifacts = selection.artifacts().clone();
+    artifacts.compile_environment.extend(environment.clone());
+    let root_key = hex::encode(Sha256::digest(source.to_string_lossy().as_bytes()));
+    let directory = context.project_root.join("target/oven-tests").join(root_key);
+    std::fs::create_dir_all(&directory)?;
+    let executable = directory.join("native-libtest");
+    let edition = manifest
+        .rust_facet
+        .as_ref()
+        .and_then(|facet| facet.edition.as_deref())
+        .unwrap_or("2024");
+    bake_trusted_direct_rustc_test_in_store(
+        &OvenTrustedDirectRustcTargetRequest {
+            receipt: &receipt,
+            artifacts: &artifacts,
+            artifact_root: selection.output_guard_root(),
+            artifact_plan: Some(&plan),
+            rustc: &rustc,
+            source,
+            output: &executable,
+            crate_name: &name,
+            edition,
+            source_evidence_key: "test-root",
+            features: &features,
+            prefer_dynamic: false,
+        },
+        &context.store,
+    )?;
+    let (inventory, ignored) = inventory_native_tests_for_collection(
+        &executable,
+        &environment,
+        &context.project_root,
+        Some(Duration::from_secs(30)),
+    )?;
+    let ignored = ignored.names.into_iter().collect::<BTreeSet<_>>();
+    let tests = inventory
+        .names
+        .into_iter()
+        .map(|name| {
+            let markers = if ignored.contains(&name) {
+                vec![TestMarker::Skip("Rust #[ignore]".into())]
+            } else {
+                Vec::new()
+            };
+            TestInfo {
+                file_path: source.to_path_buf(),
+                function_name: name,
+                is_async: false,
+                markers,
+                required_fixtures: Vec::new(),
+                parameter_names: Vec::new(),
+                timeout: None,
+                parametrize_call: None,
+            }
+        })
+        .collect();
+    Ok(PreparedRustRoot {
+        tests,
+        executable,
+        environment,
+        working_directory: context.project_root.clone(),
+        _selection: selection,
+    })
+}
+
+/// Execute only selected Rust cases, freshly, under the common scheduler's timeout and output policy.
+pub(super) fn execute(
+    tests: &[TestInfo],
+    context: &OvenTestCommandContext,
+    timeout: Option<Duration>,
+    no_capture: bool,
+    output: &TestOutputSink,
+) -> Vec<(TestInfo, TestResult)> {
+    tests
+        .iter()
+        .map(|test| {
+            let started = Instant::now();
+            let result = match context.rust_roots.get(&test.file_path) {
+                None => TestResult::Failed(started.elapsed(), "Rust root was not in the prepared inventory".into()),
+                Some(root) => match run_native_tests_exact_for_request(
+                    &OvenNativeTestRequest {
+                        executable: root.executable.clone(),
+                        exact_names: vec![test.function_name.clone()],
+                        environment: root.environment.clone(),
+                        timeout,
+                    },
+                    &root.working_directory,
+                    no_capture,
+                ) {
+                    Ok(report) if report.success => {
+                        if no_capture {
+                            output.stdout(report.output);
+                        }
+                        TestResult::Passed(started.elapsed())
+                    }
+                    Ok(report) => TestResult::Failed(started.elapsed(), report.output),
+                    Err(error) => TestResult::Failed(started.elapsed(), error.to_string()),
+                },
+            };
+            (test.clone(), result)
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::discover_roots;
+
+    /// Nested Rust modules are compiled by their authored crate root, never collected as sibling crates.
+    #[test]
+    fn discovery_honors_mixed_source_roots_and_path_selection() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let root = project.path();
+        std::fs::create_dir_all(root.join("rust/src"))?;
+        std::fs::create_dir_all(root.join("tests"))?;
+        std::fs::write(
+            root.join("loaf.toml"),
+            "[project]\nname = \"mixed\"\n[rust.source]\nroot = \"rust\"\n",
+        )?;
+        for source in ["rust/src/lib.rs", "rust/src/helper.rs", "tests/check.rs"] {
+            std::fs::write(root.join(source), "")?;
+        }
+        let roots = discover_roots(root)?;
+        assert_eq!(
+            roots,
+            vec![
+                root.join("rust/src/lib.rs").canonicalize()?,
+                root.join("tests/check.rs").canonicalize()?
+            ]
+        );
+        assert_eq!(
+            discover_roots(&root.join("tests"))?,
+            vec![root.join("tests/check.rs").canonicalize()?]
+        );
+        assert!(discover_roots(&root.join("rust/src/helper.rs"))?.is_empty());
+        Ok(())
+    }
+
+    /// A source symlink cannot turn another package into the selected package's test authority.
+    #[cfg(unix)]
+    #[test]
+    fn discovery_rejects_roots_outside_the_project() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let foreign = tempfile::tempdir()?;
+        std::fs::create_dir_all(project.path().join("src"))?;
+        std::fs::write(project.path().join("loaf.toml"), "[project]\nname = \"local\"\n")?;
+        std::fs::write(foreign.path().join("lib.rs"), "")?;
+        std::os::unix::fs::symlink(foreign.path().join("lib.rs"), project.path().join("src/lib.rs"))?;
+        assert!(discover_roots(project.path()).is_err());
+        Ok(())
+    }
+}

@@ -474,17 +474,35 @@ fn compiler_engine_binding() -> CliResult<BoundCompilerEngine> {
         .map_err(CliError::failure)
 }
 
+/// Select the compiler belonging to the command's toolchain before validating its receipt and output bytes.
+/// Oven uses its adjacent compiler, never an ambient test override. Native libtest hosts keep the runner's explicit
+/// compiler.
+fn compiler_for_native_runtime(executable: &Path, test_compiler: Option<PathBuf>) -> CliResult<PathBuf> {
+    let name = executable.file_stem().and_then(|name| name.to_str());
+    match name {
+        Some("incan") => Ok(executable.to_path_buf()),
+        Some("oven") => {
+            let directory = executable
+                .parent()
+                .ok_or_else(|| CliError::failure("Oven executable has no parent"))?;
+            let compiler = directory.join(format!("incan{}", std::env::consts::EXE_SUFFIX));
+            if !compiler.is_file() {
+                return Err(CliError::failure(
+                    "Oven requires the receipt-bound incan compiler beside its executable",
+                ));
+            }
+            Ok(compiler)
+        }
+        _ => test_compiler
+            .ok_or_else(|| CliError::failure("native-runtime identity requires its receipt-bound compiler")),
+    }
+}
+
 /// Verify the selected compiler's retained output and source receipt before accepting its adjacent engine.
 fn resolve_compiler_engine() -> CliResult<BoundCompilerEngine> {
     let executable = std::env::current_exe().map_err(|error| CliError::failure(error.to_string()))?;
-    // Native libtest hosts carry the exact compiler selected by the existing runner.
-    let compiler = if executable.file_name().is_some_and(|name| name == "incan") {
-        executable
-    } else {
-        std::env::var_os("CARGO_BIN_EXE_incan")
-            .map(PathBuf::from)
-            .ok_or_else(|| CliError::failure("native-runtime identity requires its receipt-bound compiler"))?
-    };
+    let compiler =
+        compiler_for_native_runtime(&executable, std::env::var_os("CARGO_BIN_EXE_incan").map(PathBuf::from))?;
     let receipt: oven_store::OvenReceipt = read_json(&PathBuf::from(format!("{}.receipt.json", compiler.display())))?;
     let identity = oven_store::receipt_identity(
         &receipt.project,

@@ -551,7 +551,7 @@ mod tests {
         let relative_collection = Request {
             generation: "current".to_string(),
             intent: serde_json::json!({"test_list": {
-                "path": "tests", "verbose": false, "include_slow": false,
+                "languages": "Incan", "path": "tests", "verbose": false, "include_slow": false,
                 "filter": null, "marker_expr": null, "strict_markers": false,
                 "test_features": [], "package_features": incan_provider::FeatureSelection::default(),
                 "sdk_profile": null, "timeout": null,

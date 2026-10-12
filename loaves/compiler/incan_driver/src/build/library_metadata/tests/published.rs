@@ -143,7 +143,7 @@ fn owner_entry(store: &PublishedOvenStore, identity: &str) -> Result<PathBuf, Bo
     let owners = store.select_payloads_matching_for_execution(|manifest| manifest.identity == identity, |_, _| true)?;
     assert_eq!(owners.len(), 1);
     Ok(owners[0]
-        .artifact_root
+        .artifact_root()
         .parent()
         .ok_or("owner has no entry root")?
         .to_path_buf())
@@ -207,7 +207,7 @@ fn published_ordinary_metadata_generation_source_free_readonly_relocated_repeat(
         for _ in 0..2 {
             let metadata = select_published_library_metadata_reference(&published, &metadata_reference, &[])?;
             assert_eq!(metadata.manifest().name, name);
-            let entry = metadata.owner.artifact_root.parent().ok_or("metadata root missing")?;
+            let entry = metadata.owner.artifact_root().parent().ok_or("metadata root missing")?;
             let contender = fs::File::open(entry.join(".active.lock"))?;
             let generation = select_published_library_generation_reference(
                 &published,
@@ -363,15 +363,15 @@ fn published_ordinary_admission_refuses_preserved_mtime_corruption() -> Result<(
         let generation = fixture.generation.reference();
         if owner_kind == "extra" {
             fs::write(
-                fixture.metadata.owner.artifact_root.join("injected.txt"),
+                fixture.metadata.owner.artifact_root().join("injected.txt"),
                 b"not in checked closure",
             )?;
         } else {
             let path = match owner_kind {
                 "metadata" => owner_entry(&published, &metadata.owner_identity)?.join("payload"),
                 "generation" => owner_entry(&published, &generation.owner_identity)?.join("payload"),
-                "generated" => fixture.metadata.owner.artifact_root.join("src/lib.rs"),
-                _ => fixture.metadata.owner.artifact_root.join("ordinary.incnlib"),
+                "generated" => fixture.metadata.owner.artifact_root().join("src/lib.rs"),
+                _ => fixture.metadata.owner.artifact_root().join("ordinary.incnlib"),
             };
             let mut bytes = fs::read(&path)?;
             let first = bytes.first_mut().ok_or("empty corruption fixture")?;
@@ -584,7 +584,7 @@ fn published_ordinary_diamond_verification_observes_each_owner_once() -> Result<
     assert_eq!(contracts.capabilities.len(), 10);
     root.verify()?;
     root.verify_dependency_closure()?;
-    let path = leaf.owner.artifact_root.join("src/lib.rs");
+    let path = leaf.owner.artifact_root().join("src/lib.rs");
     let mut corrupt = fs::read(&path)?;
     *corrupt.first_mut().ok_or("missing diamond leaf bytes")? ^= 1;
     replace_preserving_metadata(&path, &corrupt)?;
@@ -608,9 +608,9 @@ fn published_ordinary_equal_owner_ids_at_distinct_roots_are_both_verified() -> R
     let published = PublishedOvenStore::new(destination.path());
     let copied = select_published_library_metadata_reference(&published, &reference, &[])?;
     assert_eq!(copied.reference().owner_identity, leaf.reference().owner_identity);
-    assert_ne!(copied.owner.artifact_root, leaf.owner.artifact_root);
+    assert_ne!(copied.owner.artifact_root(), leaf.owner.artifact_root());
     // Store import may hard-link immutable bytes; this control needs independent physical corruption.
-    let copied_file = copied.owner.artifact_root.join("src/lib.rs");
+    let copied_file = copied.owner.artifact_root().join("src/lib.rs");
     let independent_file = copied_file.with_file_name("lib.rs.independent");
     let copied_metadata = fs::metadata(&copied_file)?;
     fs::copy(&copied_file, &independent_file)?;
@@ -621,7 +621,7 @@ fn published_ordinary_equal_owner_ids_at_distinct_roots_are_both_verified() -> R
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        let original = fs::metadata(leaf.owner.artifact_root.join("src/lib.rs"))?;
+        let original = fs::metadata(leaf.owner.artifact_root().join("src/lib.rs"))?;
         let independent = fs::metadata(&copied_file)?;
         assert_ne!((original.dev(), original.ino()), (independent.dev(), independent.ino()));
     }
@@ -631,7 +631,7 @@ fn published_ordinary_equal_owner_ids_at_distinct_roots_are_both_verified() -> R
     assert_eq!(work.owner_checks, 3);
     assert_eq!(work.physical_owners.len(), 3);
     root.verify_dependency_closure()?;
-    let path = copied.owner.artifact_root.join("src/lib.rs");
+    let path = copied.owner.artifact_root().join("src/lib.rs");
     let mut corrupt = fs::read(&path)?;
     *corrupt.first_mut().ok_or("missing copied leaf bytes")? ^= 1;
     replace_preserving_metadata(&path, &corrupt)?;
@@ -653,7 +653,7 @@ fn published_ordinary_shared_owner_does_not_hide_incomplete_capability() -> Resu
         complete.reference().owner_identity,
         incomplete.reference().owner_identity
     );
-    assert_eq!(complete.owner.artifact_root, incomplete.owner.artifact_root);
+    assert_eq!(complete.owner.artifact_root(), incomplete.owner.artifact_root());
     assert!(!Arc::ptr_eq(&complete, &incomplete));
     // Writable preparation may hold an intermediate original selection before attaching its children.
     incomplete.verify()?;
