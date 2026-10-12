@@ -6534,6 +6534,58 @@ fn direct_route_packages_match_legacy() -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
+/// Public Partials forward package-qualified function and constructor targets, including unpreset defaults.
+#[test]
+fn published_partial_targets_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("published-partial-targets")?;
+    let project = root.join("builtin-parity");
+    let provider = project.join("deps/partial_items");
+    fs::create_dir_all(provider.join("src"))?;
+    fs::write(
+        project.join("loaf.toml"),
+        "[project]\nname = \"probe\"\nversion = \"0.1.0\"\n[dependencies]\npartial_items = { path = \"deps/partial_items\" }\n",
+    )?;
+    fs::write(
+        provider.join("loaf.toml"),
+        "[project]\nname = \"partial_items\"\nversion = \"0.1.0\"\n",
+    )?;
+    fs::write(
+        provider.join("src/lib.incn"),
+        r#"pub def build(size: int, label: str = "flat") -> str:
+    return f"{label}:{size}"
+
+pub default_build = partial build(size=3)
+
+pub model Spec:
+    pub name: str
+    pub label: str = "unset"
+
+pub default_spec = partial Spec(label="preset")
+"#,
+    )?;
+    let mut publish = support::cli_project::configured_incan_command(&provider, &["oven", "bake", "--project", "."]);
+    support::configure_explicit_oven_bake_command(&mut publish)?;
+    publish.env("INCAN_OVEN_BAKE_PROFILES", "debug,release");
+    success(&publish.output()?, "partial package publication");
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &root,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"from pub::partial_items import default_build, default_spec
+
+def main() -> None:
+    println(default_build())
+    println(default_build(label="named"))
+    println(default_build(size=5))
+    spec = default_spec(name="item")
+    println(spec.name)
+    println(spec.label)
+"#,
+    )
+}
+
 /// Published generic functions and receiver methods execute with the consumer's checked concrete arguments.
 #[test]
 fn published_generic_declarations_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

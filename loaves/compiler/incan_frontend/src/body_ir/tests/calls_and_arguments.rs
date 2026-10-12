@@ -40,6 +40,50 @@ fn a_selected_external_overload_retains_its_parameter_binding() -> Result<(), Bo
     Ok(())
 }
 
+/// A source-local Partial retains its physical target even when the checker uses package-qualified identities.
+#[test]
+fn package_partials_retain_physical_targets_and_defaults() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"pub def build(size: int, label: str = "flat") -> str:
+    return f"{label}:{size}"
+
+pub default_build = partial build(size=3)
+
+pub model Spec:
+    pub name: str
+    pub label: str = "unset"
+
+pub default_spec = partial Spec(label="preset")
+"#;
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let module_path = vec!["main".to_string()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(module_path.clone()));
+    checker.set_current_package_identity(Some("partial_provider".to_string()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let module = build_body_ir_module_v0(&program, &module_path, checker.type_info());
+    for name in ["default_build", "default_spec"] {
+        let body = body_named(&module, name)?;
+        assert!(body.first_representation_gap().is_none(), "{}", body.render_snapshot());
+        assert!(
+            body.params
+                .iter()
+                .any(|parameter| matches!(parameter.default, bir::CallableParamDefault::Source(_)))
+        );
+    }
+    let targets = named_targets(&module, "default_build");
+    let [target] = targets.as_slice() else {
+        return Err("the function Partial must forward to one retained target".into());
+    };
+    assert_eq!(
+        target.canonical.as_ref(),
+        body_named(&module, "build")?.canonical.as_ref()
+    );
+    Ok(())
+}
+
 /// Imported metadata and source signatures give one structural union the same Body IR order, including nested uses.
 #[test]
 fn union_member_order_is_canonical_at_the_body_ir_boundary() {
