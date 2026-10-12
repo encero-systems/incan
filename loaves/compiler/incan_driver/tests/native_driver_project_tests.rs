@@ -9698,36 +9698,93 @@ fn enum_dictionary_key_lookup_is_refused() -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
-/// Legacy adds a serde-deriving model's serde derives to the enums and newtypes its fields hold; until the direct
-/// route propagates them too, it refuses such a declaration by name rather than handing rustc an unsatisfied
-/// `Serialize` bound.
+/// A serde model's derives reach the enums and newtypes its fields name, directly and through a list, an `Option` and
+/// a dictionary, as legacy propagates them, so the whole payload writes and reads. Pinned to the output legacy records.
 #[test]
-fn serde_derive_propagation_is_refused() -> Result<(), Box<dyn std::error::Error>> {
-    let fixture = driver_fixture()?;
-    let root = fixture.scratch("serde-derive-propagation")?;
-    let source = root.join("payload.incn");
-    fs::write(
-        &source,
-        "from std.serde.json import Serialize\n\n@derive(Serialize)\nmodel Payload:\n    tags: list[Tag]\n\nenum Tag:\n    A\n    B\n\ndef main() -> None:\n    println(Payload(tags=[Tag.A]).to_json())\n",
-    )?;
-    let closure = corpus::runtime_closure(&fixture.formatting)?;
-    let binary = root.join("native");
-    let refused = corpus::source_command(
-        &fixture.driver_binary("debug"),
-        &source,
-        &binary,
-        &fixture.sysroot,
-        &closure,
+fn serde_derive_propagation_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_native_case(
+        "serde_derive_propagation",
+        r#"from std.serde import json
+
+
+@derive(json)
+model Payload:
+    tag: Tag
+    tags: list[Tag]
+    shape: Option[Shape]
+    kinds: dict[str, Shape]
+    id: UserId
+
+
+enum Tag:
+    A
+    B
+
+
+enum Shape:
+    Circle(int)
+    Square(int, int)
+
+
+type UserId = newtype int
+
+
+def main() -> None:
+    payload = Payload(tag=Tag.B, tags=[Tag.A, Tag.B], shape=Some(Shape.Square(2, 3)), kinds={"k": Shape.Circle(1)}, id=UserId(7))
+    encoded = payload.to_json()
+    println(encoded)
+    match Payload.from_json(encoded):
+        Ok(decoded) => println(decoded.to_json())
+        Err(error) => println(error)
+    match Payload.from_json("{\"tag\":\"C\",\"tags\":[],\"shape\":null,\"kinds\":{},\"id\":1}"):
+        Ok(_) => println("decoded")
+        Err(error) => println(error)
+"#,
+        b"{\"tag\":\"B\",\"tags\":[\"A\",\"B\"],\"shape\":{\"Square\":[2,3]},\"kinds\":{\"k\":{\"Circle\":1}},\"id\":7}\n{\"tag\":\"B\",\"tags\":[\"A\",\"B\"],\"shape\":{\"Square\":[2,3]},\"kinds\":{\"k\":{\"Circle\":1}},\"id\":7}\nJSONDecodeError: unknown variant `C`, expected `A` or `B` at line 1 column 10\n",
     )
-    .output()?;
-    assert!(!refused.status.success());
-    assert!(
-        String::from_utf8_lossy(&refused.stderr).contains("unsupported Body IR serde derive propagation to Tag"),
-        "{}",
-        String::from_utf8_lossy(&refused.stderr)
-    );
-    assert!(!binary.exists());
-    Ok(())
+}
+
+/// A JSON value enum writes and reads its raw value, never its variant name, as legacy's hand-written serde impls do:
+/// a text and an integer backing inside a JSON model, accepted and refused. Pinned to the output legacy records.
+#[test]
+fn value_enum_serde_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_native_case(
+        "value_enum_serde",
+        r#"from std.serde import json
+
+
+@derive(json)
+enum Env(str):
+    Dev = "development"
+    Prod = "production"
+
+
+@derive(json)
+enum Status(int):
+    Ok = 200
+    NotFound = 404
+
+
+@derive(json)
+model Deployment:
+    env: Env
+    status: Status
+
+
+def main() -> None:
+    println(Deployment(env=Env.Prod, status=Status.NotFound).to_json())
+    match Deployment.from_json("{\"env\":\"development\",\"status\":200}"):
+        Ok(parsed) => println(f"{parsed.env.value()} {parsed.status.value()} {parsed.env.message()}")
+        Err(error) => println(error)
+    match Deployment.from_json("{\"env\":\"Dev\",\"status\":200}"):
+        Ok(_) => println("accepted")
+        Err(error) => println(error)
+    match Deployment.from_json("{\"env\":\"production\",\"status\":7}"):
+        Ok(_) => println("accepted")
+        Err(error) => println(error)
+"#,
+        b"{\"env\":\"production\",\"status\":404}\ndevelopment 200 Dev\nJSONDecodeError: invalid value for Env: Dev at line 1 column 12\nJSONDecodeError: invalid value for Status: 7 at line 1 column 31\n",
+    )
 }
 
 /// Mutable list arguments and loops through container elements change the retained storage, with output identical

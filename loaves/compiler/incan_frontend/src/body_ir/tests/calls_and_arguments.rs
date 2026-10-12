@@ -284,6 +284,37 @@ fn adopted_json_protocols_retain_serde_derives() -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
+/// An enum deriving the std.serde.json protocols, through the module or by trait, retains serde's derive paths as a
+/// model does, and a JSON value enum keeps its raw-value registry beside them.
+#[test]
+fn json_enums_retain_serde_derives() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "from std.serde import json\nfrom std.serde.json import Serialize\n\n@derive(json)\nenum Env(str):\n    Dev = \"development\"\n    Prod = \"production\"\n\n@derive(Serialize)\nenum Tag:\n    A\n    B\n",
+        &["m", "json_enums"],
+    )?;
+    let derives = |name: &str| {
+        module
+            .enum_declarations
+            .iter()
+            .find(|declaration| declaration.name == name)
+            .map(|declaration| declaration.derives.clone())
+            .ok_or(format!("missing retained enum {name}"))
+    };
+    let env = derives("Env")?;
+    assert!(env.iter().any(|name| name == "serde::Serialize"), "{env:?}");
+    assert!(env.iter().any(|name| name == "serde::Deserialize"), "{env:?}");
+    let tag = derives("Tag")?;
+    assert!(tag.iter().any(|name| name == "serde::Serialize"), "{tag:?}");
+    assert!(!tag.iter().any(|name| name == "serde::Deserialize"), "{tag:?}");
+    assert!(
+        module
+            .value_enum_declarations
+            .iter()
+            .any(|declaration| declaration.name == "Env")
+    );
+    Ok(())
+}
+
 /// The builtin derives a model names through `@rust.derive(...)` are retained in legacy's order, ahead of the implicit
 /// ones, so the model is admitted with them; a plain newtype adopting the std.serde.json Serialize trait retains
 /// serde's derive after its automatic ones, as legacy emits it.
