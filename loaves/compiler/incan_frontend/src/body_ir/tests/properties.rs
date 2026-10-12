@@ -24,6 +24,45 @@ fn computed_properties_lower_to_getter_bodies_their_reads_call() -> Result<(), B
     Ok(())
 }
 
+/// Getter identities admit only immutable zero-argument receiver frames and matching property implementation kinds.
+#[test]
+fn getter_identity_requires_immutable_zero_argument_frame() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        include_str!(
+            "../../../../incan_test_support/fixtures/behavior/snapshots_models_and_classes/computed_properties.incn"
+        ),
+        &["m", "getter_identity"],
+    )?;
+    let index = module
+        .bodies
+        .iter()
+        .position(|body| body.name == "dollars")
+        .ok_or("missing getter")?;
+    assert!(module.body_has_canonical_direct_call_id(&module.bodies[index]));
+    let mut extra_parameter = module.clone();
+    let parameter = extra_parameter.bodies[index]
+        .params
+        .first()
+        .ok_or("missing receiver parameter")?
+        .clone();
+    extra_parameter.bodies[index].params.push(parameter);
+    assert!(!extra_parameter.body_has_canonical_direct_call_id(&extra_parameter.bodies[index]));
+    let mut mutable = module.clone();
+    mutable.bodies[index].locals[0].origin = bir::LocalOrigin::Receiver { mutable: true };
+    mutable.bodies[index].params[0].mutable = true;
+    assert!(!mutable.body_has_canonical_direct_call_id(&mutable.bodies[index]));
+    let implementation = module
+        .trait_implementations
+        .iter()
+        .find(|implementation| implementation.method.kind == SemanticSourceTargetKind::Property)
+        .ok_or("missing property implementation")?;
+    assert!(module.is_well_formed_trait_implementation(implementation));
+    let mut mismatch = implementation.clone();
+    mismatch.implementation.kind = SemanticSourceTargetKind::Method;
+    assert!(!module.is_well_formed_trait_implementation(&mismatch));
+    Ok(())
+}
+
 /// A trait-required nominal property retains its checked getter, receiver and canonical access target.
 #[test]
 fn nominal_property_reads_call_checked_getters() -> Result<(), Box<dyn std::error::Error>> {

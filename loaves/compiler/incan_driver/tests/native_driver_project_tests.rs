@@ -2538,9 +2538,6 @@ model Box[T with Clone]:
     pub property selected -> T:
         return self.content
 
-def label_of[T with Named](value: T) -> str:
-    return value.label
-
 def main() -> None:
     mut counter = Counter(base=7)
     println(counter.doubled)
@@ -2548,7 +2545,7 @@ def main() -> None:
     println(counter.doubled)
     println(Label(value=3).text)
     println(Box(content="x").selected)
-    println(label_of(counter))
+    println(counter.label)
 "#,
     )
 }

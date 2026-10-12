@@ -6122,7 +6122,7 @@
     },
     "loaves/compiler/incan_frontend/src/body_ir/tests/properties.rs": {
       "disposition": "keep",
-      "notes": "Checked property getter bodies and reads retained for direct execution; relocated from methods_and_defaults.rs.",
+      "notes": "Checked computed getter bodies, canonical calls and immutable receiver frames retained for direct-route execution; original control relocated from methods_and_defaults.rs and frontend identity contracts preserved.",
       "owner": 1337,
       "split_required": false,
       "split_target": "",
