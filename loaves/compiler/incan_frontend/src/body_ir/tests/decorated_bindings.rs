@@ -33,3 +33,18 @@ fn decorated_function_retains_original_body_and_replacement() -> Result<(), Box<
     assert!(!malformed.is_well_formed_static_declaration(&malformed.static_declarations[0]));
     Ok(())
 }
+
+/// An extern's delegation must not bypass an unproven user-defined replacement binding.
+#[test]
+fn decorated_extern_keeps_a_named_refusal() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "rust.module(\"incan_std_testing\")\n\ndef keep(func: (str) -> None) -> (str) -> None:\n    return func\n\n@keep\n@rust.extern\ndef fail_t(msg: str) -> None:\n    ...\n";
+    let module = build(source, &["m", "decorated_extern"])?;
+    let body = body_named(&module, "fail_t")?;
+    assert_eq!(
+        body.first_representation_gap(),
+        Some("declaration `fail_t` rebound by a user-defined decorator")
+    );
+    assert!(body.extern_delegation.is_none());
+    assert!(module.static_declarations.is_empty());
+    Ok(())
+}
