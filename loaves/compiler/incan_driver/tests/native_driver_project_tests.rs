@@ -2920,6 +2920,56 @@ def main() -> None:
     )
 }
 
+/// Computed properties on a model and a class run their bodies on each read, in expressions, f-strings, as a method
+/// receiver and from another member, as legacy does.
+#[test]
+fn computed_properties_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("computed-properties")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"model Account:
+    cents: int
+
+    property dollars -> int:
+        return self.cents // 100
+
+    property label -> str:
+        return f"{self.dollars} dollars"
+
+    def doubled(self) -> int:
+        return self.dollars * 2
+
+
+class Wallet:
+    pub owner: str
+    pub coins: list[int]
+
+    pub property total -> int:
+        mut sum = 0
+        for coin in self.coins:
+            sum += coin
+        return sum
+
+    pub property name -> str:
+        return self.owner.upper()
+
+
+def main() -> None:
+    account = Account(cents=1250)
+    println(account.dollars)
+    println(account.label)
+    println(account.doubled())
+    println(account.label.upper())
+    wallet = Wallet(owner="ada", coins=[1, 2, 3])
+    println(wallet.total + 1)
+    println(f"{wallet.name}: {wallet.total}")
+"#,
+    )
+}
+
 /// Prove canonical scalar casts and default values byte-identical to legacy.
 #[test]
 fn numeric_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
