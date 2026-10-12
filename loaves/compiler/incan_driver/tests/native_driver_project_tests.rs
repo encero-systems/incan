@@ -8488,6 +8488,26 @@ def main() -> None:
     )
 }
 
+/// Published Ord defaults compare imported adopters under aliased and qualified trait spellings, including a
+/// user override; stdout must be byte-identical to the frozen legacy route.
+#[test]
+fn imported_comparison_defaults_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("imported_comparison_defaults")?;
+    let corpus_root = support::fixtures_dir()
+        .join("behavior/lowering_declarations/comparison_dunders_of_an_adopter_from_another_module");
+    let project = root.join("builtin-parity");
+    fs::create_dir_all(&project)?;
+    fs::copy(corpus_root.join("scores.incn"), project.join("scores.incn"))?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &root,
+        &fixture.sysroot,
+        &fixture.formatting,
+        &fs::read_to_string(corpus_root.join("main.incn"))?,
+    )
+}
+
 /// Compile a single-module program in the minimal project layout and require the native route to refuse it by name.
 fn check_project_refusal(name: &str, text: &str, reason: &str) -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;

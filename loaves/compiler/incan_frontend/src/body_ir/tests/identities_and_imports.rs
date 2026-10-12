@@ -1256,6 +1256,38 @@ pub trait Source[T]:
     Ok(())
 }
 
+/// Standard-library defaults compose checked Self calls with conditional boolean evaluation without consulting
+/// legacy's intentionally open expression types.
+#[test]
+fn std_trait_boolean_defaults_retain_conditional_calls() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+pub trait Compare:
+    def less(self, other: Self) -> bool: ...
+    def equal(self, other: Self) -> bool: ...
+
+    def inclusive(self, other: Self) -> bool:
+        return self.less(other) or self.equal(other)
+
+    def both(self, other: Self) -> bool:
+        return self.less(other) and self.equal(other)
+"#;
+    let module = build(source, &["std", "derives", "boolean_defaults"])?;
+    for name in ["inclusive", "both"] {
+        let body = body_named(&module, name)?;
+        let snapshot = body.render_snapshot();
+        assert!(!snapshot.contains("unsupported"), "{snapshot}");
+        assert!(body.locals.iter().all(|local| local.ty != IncanType::Unknown));
+        assert!(
+            body.block
+                .stmts
+                .iter()
+                .any(|statement| matches!(statement.kind, bir::StatementKind::If { .. })),
+            "the second call must remain conditional: {snapshot}"
+        );
+    }
+    Ok(())
+}
+
 /// An adopter of a standard-library protocol without type parameters retains the protocol's own default for a slot it
 /// does not fill itself, beside the slots its own methods fill.
 #[test]
