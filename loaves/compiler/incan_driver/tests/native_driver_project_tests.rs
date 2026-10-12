@@ -6978,6 +6978,76 @@ def main() -> None:
     )
 }
 
+/// Prove source enum variants spelled like the builtin carriers' variants, and set, dictionary and list payloads,
+/// byte-identical to legacy: `Maybe.None` and `Outcome.Ok` patterns select the source enum's own variants beside a
+/// builtin `Option` match, and payload bindings copy their collections out of the matched value, which stays usable.
+#[test]
+fn source_enum_variant_patterns_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("source-enum-variant-patterns")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"enum Maybe:
+    Some(int)
+    None
+
+enum Outcome:
+    Ok(int)
+    Err(str)
+
+enum Container:
+    Empty
+    Items(list[int])
+    Tags(set[str])
+    Counts(dict[str, int])
+
+def unwrap_or(value: Maybe, fallback: int) -> int:
+    match value:
+        Maybe.Some(x) => return x
+        Maybe.None => return fallback
+
+def is_none(value: Maybe) -> bool:
+    match value:
+        case Maybe.None:
+            return true
+        case _:
+            return false
+
+def describe(outcome: Outcome) -> str:
+    match outcome:
+        Outcome.Ok(n) => return f"ok {n}"
+        Outcome.Err(reason) => return f"err {reason}"
+
+def size(container: Container) -> int:
+    match container:
+        Container.Empty => return 0
+        Container.Items(items) => return len(items)
+        Container.Tags(tags) => return len(tags)
+        Container.Counts(counts) => return len(counts)
+
+def main() -> None:
+    println(unwrap_or(Maybe.Some(4), 0))
+    println(unwrap_or(Maybe.None, 9))
+    println(is_none(Maybe.None))
+    println(is_none(Maybe.Some(1)))
+    maybe: Option[int] = None
+    match maybe:
+        Some(v) => println(v)
+        None => println("builtin none")
+    println(describe(Outcome.Ok(1)))
+    println(describe(Outcome.Err("bad")))
+    println(size(Container.Empty))
+    println(size(Container.Items([1, 2, 3])))
+    println(size(Container.Tags({"a", "b"})))
+    counts = Container.Counts({"x": 1})
+    println(size(counts))
+    println(size(counts))
+"#,
+    )
+}
+
 /// Prove member patterns over an optional union byte-identical to legacy: each member and `None` selected in a
 /// `match` over a parameter, a member pattern with a nested branch, and a member pattern beside a wildcard over a loop
 /// variable.

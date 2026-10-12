@@ -951,6 +951,34 @@ def capture(value: int | str) -> int:
     Ok(())
 }
 
+/// A qualified `Maybe.None` pattern names the source enum's own `None` variant, while a bare `None` over an `Option`
+/// keeps the builtin constructor's identity.
+#[test]
+fn source_enum_none_variant_pattern_keeps_its_own_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+enum Maybe:
+    Some(int)
+    None
+
+def unwrap_or(value: Maybe, fallback: int) -> int:
+    match value:
+        Maybe.Some(x) => return x
+        Maybe.None => return fallback
+
+def present(value: Option[int]) -> bool:
+    match value:
+        Some(_) => return true
+        None => return false
+"#;
+    let module = build(source, &["source_enum_none"])?;
+    let snapshot = module.render_snapshot();
+    assert!(snapshot.contains("Maybe::None canonical=member/variant:"), "{snapshot}");
+    assert!(!snapshot.contains("Maybe::None canonical=builtin"), "{snapshot}");
+    assert!(snapshot.contains("canonical=builtin:builtin::Some"), "{snapshot}");
+    assert!(!snapshot.contains("unsupported("), "{snapshot}");
+    Ok(())
+}
+
 /// A member pattern over an optional union selects the builtin `Some` constructor first, then the checker-selected
 /// member of its union payload, binding the name from inside both.
 #[test]
