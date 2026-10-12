@@ -19,7 +19,14 @@ from pub::incan_mir_plan import assign as plan_assign, place as plan_place
 from frame import Builder, place_type, temporary, appended_field
 from models import field_projection
 from lists import require_list_shape, list_element, is_list
-from collections import is_collection, collection_arguments, collection_reference, collection_call, borrow_collection
+from collections import (
+    is_collection,
+    collection_arguments,
+    collection_reference,
+    collection_call,
+    borrow_collection,
+    collection_owned,
+)
 from builtins import list_call
 from model_lists import structural_prefix, prefix_place
 from element_places import is_element_place, element_place_type
@@ -82,6 +89,17 @@ def shared_element_receiver(
 
 pub def mutable_element_reference(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Place, str]:
     """Reborrow the nominal element, or a nominal field inside it, that a list or dictionary place selects."""
+    place = mutable_element_place(builder, source, span)?
+    return model_reference(builder, place, span)
+
+
+pub def mutable_element_place(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+    """
+    Reach the storage a list or dictionary place selects, so a change through it lands in the container.
+
+    Each index reborrows its element or value through the runtime's checked accessor, and each field after it projects
+    through the resulting reference. The result is that reference, or a field place behind it.
+    """
     start = element_start(builder, source)?
     mut place = local_root(builder, source, span)?
     if start > 0:
@@ -103,7 +121,7 @@ pub def mutable_element_reference(mut builder: Builder, source: &RustPlace, span
                     builder.intrinsics,
                 )?
                 place = appended_field(owner, field, span)?
-    return model_reference(builder, place, span)
+    return Ok(place)
 
 
 pub def borrow_element_mut(
@@ -168,10 +186,15 @@ def borrow_dictionary_value(
     index: &RustOperand,
     span: SourceSpan,
 ) -> Result[Place, str]:
-    """Reborrow a stored dictionary value through legacy's missing-key diagnostic."""
-    if container.projection != Projection.Whole:
-        return Err("unsupported Body IR mutable borrow of a projected dictionary value")
+    """
+    Reborrow a stored dictionary value through legacy's missing-key diagnostic.
+
+    The dictionary is a whole local or reference, or an owned dictionary field such as a model's; a reference reached
+    through a projection keeps its refusal, because the reborrow dereferences only a whole reference.
+    """
     ty = place_type(builder.locals, container)
+    if container.projection != Projection.Whole and collection_owned(ty) != ty:
+        return Err("unsupported Body IR mutable borrow of a projected dictionary value")
     types = collection_arguments(ty)
     if len(types) != 2:
         return Err("unsupported Body IR set indexing")
@@ -202,6 +225,8 @@ def mutable_reference_type(element: PlanType) -> Result[PlanType, str]:
     match element:
         PlanType.List(leaf, depth) => return Ok(PlanType.ListMutRef(leaf, depth))
         PlanType.Model(owner, name) => return Ok(PlanType.ModelMutRef(owner, name))
+        PlanType.Dict(key, value) => return Ok(PlanType.DictMutRef(key, value))
+        PlanType.Set(leaf) => return Ok(PlanType.SetMutRef(leaf))
         _ => return Err("unsupported Body IR mutable borrow of a scalar collection element")
 
 
