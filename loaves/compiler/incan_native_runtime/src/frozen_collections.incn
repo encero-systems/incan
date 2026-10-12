@@ -35,7 +35,7 @@ pub def frozen_list_byte_items[T with (RuntimeClone, Into[bytes], Static)](value
     """Copy static byte slices into owned byte buffers at the same read boundary as legacy iteration."""
     mut result: list[bytes] = []
     for item in value.iter():
-        result.append(Into.into(RuntimeClone.clone(item)))
+        result.append(Into[bytes].into(RuntimeClone.clone(item)))
     return result
 
 
@@ -83,7 +83,7 @@ pub def frozen_dict_text_keys[K with (Display, Static), V with Static](value: Ru
 
 pub def own_static_bytes[T with Into[bytes]](value: T) -> bytes:
     """Copy a static byte slice into the owned byte buffer a frozen element read returns."""
-    return Into.into(value)
+    return Into[bytes].into(value)
 
 
 pub def frozen_dict_text_get[K with (Display, Static), V with (RuntimeClone, Static)](
@@ -92,7 +92,7 @@ pub def frozen_dict_text_get[K with (Display, Static), V with (RuntimeClone, Sta
 ) -> V:
     """Read the first matching static text key, cloning only its value and preserving legacy's missing-key error."""
     for stored, item in value.iter():
-        if str(stored) == key:
+        if str(stored) == str(key):
             return RuntimeClone.clone(item)
     return raise_key_error(f"'{key}' not found in dict")
 
@@ -114,7 +114,7 @@ pub def frozen_dict_text_contains[K with (Display, Static), V with Static](
 ) -> bool:
     """Check static text keys without reading or cloning values."""
     for stored, _item in value.iter():
-        if str(stored) == key:
+        if str(stored) == str(key):
             return true
     return false
 
