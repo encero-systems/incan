@@ -1201,3 +1201,56 @@ model Observer with Callable1[int, None]:
     );
     Ok(())
 }
+
+/// In the standard library's own trait defaults, a call on an open `Self` receiver keeps its checker type open for
+/// legacy, but Body IR still retains the slot it selects and the slot's declared result.
+#[test]
+fn std_trait_default_self_calls_retain_their_slot_and_result() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+pub trait Eq:
+    def __eq__(self, other: Self) -> bool: ...
+
+    def __ne__(self, other: Self) -> bool:
+        return not self.__eq__(other)
+
+
+pub trait Source[T]:
+    def __next__(mut self) -> Option[T]: ...
+
+    def count(mut self) -> int:
+        mut total = 0
+        while true:
+            match self.__next__():
+                Some(_) =>
+                    total += 1
+                None => return total
+"#;
+    let module = build(source, &["std", "derives", "self_calls"])?;
+    for name in ["__ne__", "count"] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("the trait default must be lowered")?;
+        assert!(
+            body.locals.iter().all(|local| local.ty != IncanType::Unknown),
+            "{name}: {:?}",
+            body.locals
+        );
+    }
+    let ne = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "__ne__")
+        .ok_or("the Eq default must be lowered")?;
+    let Some(bir::StatementKind::Call {
+        callee: bir::Callee::Method(target),
+        ..
+    }) = ne.block.stmts.first().map(|statement| &statement.kind)
+    else {
+        return Err(format!("first statement: {:?}", ne.block.stmts.first()).into());
+    };
+    let slot = target.canonical.as_ref().ok_or("the Self call must retain its slot")?;
+    assert_eq!(slot.declaration_name, "__eq__");
+    Ok(())
+}
