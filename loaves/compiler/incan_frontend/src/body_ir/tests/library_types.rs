@@ -126,3 +126,28 @@ fn stdlib_trait_method_retains_its_sdk_call_signature() -> Result<(), Box<dyn st
     );
     Ok(())
 }
+
+/// Frozen byte length keeps its canonical builtin receiver owner, independent of mutable byte-list methods.
+#[test]
+fn frozen_byte_length_retains_its_builtin_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def size(value: FrozenBytes) -> int:\n    return value.len()\n",
+        &["m", "frozen_length"],
+    )?;
+    let body = body_named(&module, "size")?;
+    let method = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                ..
+            } => target.canonical.as_ref(),
+            _ => None,
+        })
+        .ok_or("missing frozen byte method identity")?;
+    assert_eq!(method.origin, SymbolOrigin::Builtin);
+    assert_eq!(method.declaration_name, "frozenbytes.len", "{}", body.render_snapshot());
+    Ok(())
+}
