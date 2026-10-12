@@ -7034,17 +7034,7 @@ def tuple_paths(
                 builder.current = matched
                 mut chosen = choices.clone()
                 chosen[index] = choice
-                owners = tuple_paths(
-                    builder,
-                    fields,
-                    items,
-                    index + 1,
-                    chosen,
-                    selected,
-                    retry,
-                    incoming,
-                    span,
-                )?
+                owners = tuple_paths(builder, fields, items, index + 1, chosen, selected, retry, incoming, span)?
                 if choice == 0:
                     bound = owners
                 elif not same_owners(owners, bound):
