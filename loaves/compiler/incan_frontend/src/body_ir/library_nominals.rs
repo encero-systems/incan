@@ -180,39 +180,14 @@ pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::NominalDeclaration>
             identities.insert(identity);
         }
     }
-    let mut declarations = identities
+    identities
         .iter()
         .filter_map(|identity| match identity.kind {
             SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class => library_nominal(identity, &mut cache),
             SemanticSourceTargetKind::Newtype => library_newtype(identity, &mut cache),
             _ => None,
         })
-        .collect::<Vec<_>>();
-    for (name, identity) in &type_info.declarations.body_ir_native_type_identities {
-        if uses_native_carrier(type_info, name)
-            && let Some(declaration) = bir::native_builtin_nominal(identity)
-        {
-            declarations.push(declaration);
-        }
-    }
-    declarations
-}
-
-/// A native ABI is needed by a checked expression or declaration signature, including unused function parameters.
-/// Checking supplies the active owner separately; this leaf walk never selects a carrier from a spelling alone.
-fn uses_native_carrier(type_info: &TypeCheckInfo, name: &str) -> bool {
-    let signatures = type_info.declarations.function_bindings.values().flat_map(|binding| {
-        binding
-            .params
-            .iter()
-            .map(|parameter| &parameter.ty)
-            .chain(std::iter::once(&binding.return_type))
-    });
-    type_info.expressions.expr_types.values().chain(signatures).any(|ty| {
-        let mut names = BTreeSet::new();
-        super::library_calls::named_leaves(&semantic_type_from_resolved(ty), &mut names);
-        names.contains(name)
-    })
+        .collect()
 }
 
 /// Compiler-provided reflection results name FieldInfo without a lexical import. A checked project owner always

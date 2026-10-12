@@ -285,19 +285,13 @@ impl BodyIrModule {
             })
     }
 
-    /// Whether a retained source/SDK layout agrees with its canonical identities, or an opaque builtin exactly
-    /// matches the native ABI whitelist and its dedicated physical declaration scope.
+    /// Whether a retained model, class, or newtype layout agrees with its checked canonical identities.
     pub fn is_well_formed_nominal_declaration(&self, declaration: &NominalDeclaration) -> bool {
         if !declaration.native_item.is_empty()
             && crate::body_ir::native_nominal_item(&declaration.canonical).as_deref()
                 != Some(declaration.native_item.as_str())
         {
             return false;
-        }
-        if declaration.canonical.origin == crate::SymbolOrigin::Builtin {
-            return crate::body_ir::native_builtin_nominal(&declaration.canonical).as_ref() == Some(declaration)
-                && crate::body_ir::native_nominal_module(&declaration.canonical).as_deref()
-                    == Some(self.module_id.path());
         }
         if declaration.display_method.as_ref().is_some_and(|method| {
             method.kind != SemanticSourceTargetKind::Method || method.namespace != SymbolNamespace::Member
