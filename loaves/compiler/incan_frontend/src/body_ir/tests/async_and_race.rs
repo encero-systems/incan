@@ -7,6 +7,24 @@ use super::*;
 const ASYNC_PRELUDE: &str =
     "import std.async\n\nasync def fast() -> int:\n  return 1\n\nasync def slow() -> int:\n  return 2\n\n";
 
+/// A join result retains the SDK-owned error even when no error import appears in the source.
+#[test]
+fn retains_sdk_join_error_from_await() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "import std.async\nfrom std.async.task import JoinHandle\nasync def join(handle: JoinHandle[int]) -> None:\n  match await handle:\n    Ok(value) => println(value)\n    Err(error) => println(error.message())\n",
+        &["m", "join_error"],
+    )?;
+    assert!(
+        module
+            .nominal_declarations
+            .iter()
+            .any(|declaration| declaration.name == "TaskJoinError"),
+        "join error must have its SDK nominal record: {}",
+        module.render_snapshot()
+    );
+    Ok(())
+}
+
 /// Await consumes the owned future and records a separately typed resumed destination.
 #[test]
 fn lowers_await_as_an_explicit_suspension_point_with_a_destination() -> Result<(), Box<dyn std::error::Error>> {

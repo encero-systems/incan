@@ -6431,6 +6431,90 @@ fn declaration_case_outputs(
 }
 
 /// Source async calls defer discarded body effects and evaluate arguments before their immediately ready awaits.
+/// SDK prelude tasks preserve the original fixture's executor, task handles and output.
+#[test]
+fn async_prelude_tasks_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_async_family_source(
+        "async-prelude-tasks",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/codegen_models_and_collections/std_async_prelude_surface.incn"
+        ),
+    )
+}
+
+/// Awaitable-bounded source functions accept SDK task handles with their join result.
+#[test]
+fn async_awaitable_handle_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_async_family_source(
+        "async-awaitable-handle",
+        include_str!("../../incan_test_support/fixtures/behavior/snapshots_stdlib/awaitable_bound_join_handle.incn"),
+    )
+}
+
+/// Task handles in list parameters retain the original fixture's ownership and joins.
+#[test]
+fn async_task_list_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_async_family_source(
+        "async-task-list",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/cli_values_and_calls/passing_each_task_handle_of_a_list_on.incn"
+        ),
+    )
+}
+
+/// Immediate call-result and literal task lists preserve their awaited results.
+#[test]
+fn async_task_call_results_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_async_family_source(
+        "async-task-call-results",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/cli_values_and_calls/awaiting_task_handles_of_a_call_result_and_a_literal.incn"
+        ),
+    )
+}
+
+/// SDK task and deadline operations preserve expiry and durable task completion.
+#[test]
+fn async_tasks_and_time_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_async_family_source(
+        "async-tasks-and-time",
+        include_str!("../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_async_tasks_and_time.incn"),
+    )
+}
+
+/// SDK races and source race blocks select the first completion and cancel losing futures.
+#[test]
+fn async_race_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_async_family_source(
+        "async-race",
+        include_str!("../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_async_race.incn"),
+    )
+}
+
+/// Testing wrappers keep collection and asynchronous checks in one program.
+#[test]
+fn async_testing_collections_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_async_family_source(
+        "async-testing-collections",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_testing_collections_and_async_in_one_program.incn"
+        ),
+    )
+}
+
+/// Compare native execution byte for byte against the frozen SDK-backed legacy route.
+fn check_async_family_source(name: &str, source: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch(name)?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        source,
+    )
+}
+
+/// Source async calls defer discarded body effects and evaluate arguments before their immediately ready awaits.
 #[test]
 fn direct_route_async_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     check_declaration_case(
