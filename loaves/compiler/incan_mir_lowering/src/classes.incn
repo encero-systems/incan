@@ -1,6 +1,11 @@
 """Class receiver frames and canonical source method admission."""
 
-from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind, canonical_module_identity
+from rust::incan_semantics_core import (
+    IncanType as RustType,
+    CanonicalSymbolId,
+    SemanticSourceTargetKind,
+    canonical_module_identity,
+)
 from rust::incan_semantics_core::body_ir import (
     Body,
     LocalOrigin,
@@ -65,6 +70,9 @@ pub def function_name(module: &BodyIrModule, body: &Body) -> str:
                         return module_function_symbol(owner, body)
                 None => pass
             if identity.kind == SemanticSourceTargetKind.Function:
+                # Overloads share their source name, so each takes its own declaration span as well.
+                if has_overloaded_name(module, body, identity):
+                    return f"__incan_overload_{body.span.start}{symbol_component(str(body.name))}"
                 return str(body.name)
         None => pass
     if len(body.locals) != 0:
@@ -79,6 +87,21 @@ pub def function_name(module: &BodyIrModule, body: &Body) -> str:
     if len(body.type_parameters) != 0:
         return f"__incan_body_{body.span.start}{symbol_component(str(body.name))}"
     return f"__incan_body_{body.span.start}"
+
+
+def has_overloaded_name(module: &BodyIrModule, body: &Body, identity: &CanonicalSymbolId) -> bool:
+    """Report whether another function of the same module declares this body's source name, as overloads do."""
+    owner = canonical_module_identity(identity)
+    for other in module.bodies:
+        if other.name != body.name or other.span.start == body.span.start:
+            continue
+        match other.canonical:
+            Some(other_identity) =>
+                same_module = canonical_module_identity(other_identity) == owner
+                if other_identity.kind == SemanticSourceTargetKind.Function and same_module:
+                    return true
+            None => pass
+    return false
 
 
 pub def static_type_arguments(module: &BodyIrModule, target: &NamedCallableTarget) -> Result[list[RustType], str]:
