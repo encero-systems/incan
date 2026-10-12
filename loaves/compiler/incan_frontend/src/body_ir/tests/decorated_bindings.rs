@@ -2,6 +2,50 @@
 
 use super::*;
 
+/// Imported builtin Clone retains the model's required native marker even when the checked trait has no macro paths.
+#[test]
+fn imported_builtin_clone_retains_the_native_marker() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "from std.derives.copying import Clone\n\n@derive(Clone)\nmodel Counter:\n    value: int\n",
+        &["m", "imported_builtin_clone"],
+    )?;
+    let model = module
+        .nominal_declarations
+        .iter()
+        .find(|model| model.canonical.declaration_name == "Counter")
+        .ok_or("missing checked Counter declaration")?;
+    assert!(model.derives.iter().any(|derive| derive == "Clone"), "{model:?}");
+    Ok(())
+}
+
+/// A facade-adopted JSON protocol's late native selection reaches the same derive record consumed by Body IR.
+#[test]
+fn facade_json_adoption_reaches_the_native_derive_record() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "from facade import Serialize\n\nmodel Payload with Serialize:\n    value: int\n\ndef main() -> None:\n    println(Payload(value=1).to_json())\n";
+    let facade = "pub from std.serde.json import Serialize\n";
+    let program = parser::parse(&lexer::lex(source).map_err(|errors| format!("{errors:?}"))?)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let facade = parser::parse(&lexer::lex(facade).map_err(|errors| format!("{errors:?}"))?)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let mut checker = TypeChecker::new();
+    let path = vec!["m".to_string(), "facade_json_adoption".to_string()];
+    checker.set_current_module_path(Some(path.clone()));
+    checker
+        .check_with_imports(&program, &[("facade", &facade)])
+        .map_err(|errors| format!("{errors:?}"))?;
+    let module = build_body_ir_module_v0(&program, &path, checker.type_info());
+    let model = module
+        .nominal_declarations
+        .iter()
+        .find(|model| model.canonical.declaration_name == "Payload")
+        .ok_or("missing checked Payload declaration")?;
+    assert!(
+        model.derives.iter().any(|derive| derive == "serde::Serialize"),
+        "{model:?}"
+    );
+    Ok(())
+}
+
 /// A checked derive adoption retains the source trait slot and its default implementation for the concrete model.
 #[test]
 fn derived_trait_default_retains_its_implementation() -> Result<(), Box<dyn std::error::Error>> {
