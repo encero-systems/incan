@@ -221,12 +221,14 @@ impl ProjectSourceAuthorityDigester {
     ///
     /// Compiler/configuration, feature/profile selection, manifest and child changes invalidate this generation.
     /// Consumer source collection remains fresh and chooses through the retained session's existing module-use map.
+    /// Parser-only collection and artifact preparation have distinct identities and cannot reuse each other's session.
     pub(super) fn compilation_session(
         &mut self,
         root: &Path,
         entry: &Path,
         features: &incan_provider::FeatureSelection,
         sdk_profile: Option<&str>,
+        purpose: super::retained_inputs::SessionPurpose,
     ) -> CliResult<std::sync::Arc<crate::session::CompilationSession>> {
         let _trace =
             tracing::trace_span!(target: "incan::invocation", "incan_driver::retain_dependency_session").entered();
@@ -237,10 +239,11 @@ impl ProjectSourceAuthorityDigester {
             ordinary_preparation_identity_digest()?,
             features,
             sdk_profile,
+            purpose,
         ))
         .map_err(|error| CliError::failure(error.to_string()))?;
         self.retained_inputs
-            .compilation_session(&root, entry, digest_bytes(&identity), features, sdk_profile)
+            .compilation_session(&root, entry, digest_bytes(&identity), features, sdk_profile, purpose)
     }
 
     /// Borrow the original native plan only from a dependency session reconciled by this request.

@@ -12,7 +12,7 @@ use super::bake::{bake_oven_project, publish_ordinary_project_output, select_def
 use super::output_materialization::{completed_executable_output_report, materialize_completed_executable_output};
 use super::output_paths::{normalized_project_entrypoint, project_root_for_completed_output};
 use super::oven_project::prepare_oven_project_with_session;
-use super::retained_inputs::{ModelInputs, RetainedExecutableDependencies};
+use super::retained_inputs::{ModelInputs, RetainedExecutableDependencies, SessionPurpose};
 use super::source_authority::{digest_baked_project_source_authority, ordinary_preparation_identity_digest};
 use super::{BuildCommandOptions, OvenProjectPlanMode, ProjectSourceAuthorityDigester, elapsed_ms};
 use crate::build_report::artifact_report;
@@ -150,6 +150,31 @@ pub fn build_executable(
 }
 
 impl ExecutableBuildOwner {
+    /// Borrow the canonical parser-only session for a fresh test collection request.
+    ///
+    /// The same owner, typed lock and input reconciler used by builds guard retention. Collection mode is part of
+    /// the retained identity and never admits execution artifacts. Standalone files keep canonical discovery.
+    pub fn test_collection_session(
+        &mut self,
+        root: &Path,
+        entry: &Path,
+        features: &FeatureSelection,
+        sdk_profile: Option<&str>,
+    ) -> CliResult<std::sync::Arc<crate::session::CompilationSession>> {
+        self.authority.begin_request();
+        if !root.join(oven_model::manifest::LOAF_MANIFEST_FILENAME).is_file() {
+            return Ok(std::sync::Arc::new(
+                crate::session::CompilationSession::discover_for_collection_with_selections(
+                    entry,
+                    features,
+                    sdk_profile,
+                )?,
+            ));
+        }
+        self.authority
+            .compilation_session(root, entry, features, sdk_profile, SessionPurpose::Collection)
+    }
+
     /// Select and execute a receipt-bound native executable through existing Oven operations, retaining the same
     /// declared preparation across requests. A Store/configuration change drops that retained selection. Every
     /// execution still verifies source, selected plan, compiler and output; this is not a second native executor.
@@ -286,6 +311,7 @@ impl ExecutableBuildOwner {
                     &entry,
                     &options.package_features,
                     options.sdk_profile.as_deref(),
+                    SessionPurpose::Artifacts,
                 )
             })
             .transpose()?;

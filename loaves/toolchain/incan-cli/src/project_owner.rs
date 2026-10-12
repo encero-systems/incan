@@ -87,6 +87,48 @@ pub fn build_native_executable(
     serde_json::to_string(&result).map_err(|error| CliError::failure(error.to_string()))
 }
 
+/// One parser-only collection request, using the same bounded protocol and serial project owner as builds.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TestListIntent {
+    test_list: crate::test_runner::TestCollectionOptions,
+}
+
+/// Submit list-only collection and render this request's notices and identities in the CLI.
+///
+/// Execution remains in the existing runner. Non-Unix clients invoke the same collection operation in process;
+/// transport errors never select a second implementation.
+pub(crate) fn list_tests(config: &crate::test_runner::TestRunConfig<'_>) -> CliResult<crate::ExitCode> {
+    let mut options = crate::test_runner::TestCollectionOptions::from_config(config);
+    options.path = absolute_path(&options.path)?;
+    #[cfg(unix)]
+    let report: crate::test_runner::TestListReport = serde_json::from_value(unix::submit(
+        &std::env::current_exe().map_err(|error| CliError::failure(error.to_string()))?,
+        serde_json::to_value(TestListIntent { test_list: options })
+            .map_err(|error| CliError::failure(error.to_string()))?,
+        |message| print!("{message}"),
+    )?)
+    .map_err(|error| CliError::failure(error.to_string()))?;
+    #[cfg(not(unix))]
+    let report = crate::test_runner::list_tests_with_owner(
+        &options,
+        &mut incan_driver::build::executable::ExecutableBuildOwner::default(),
+        |message| print!("{message}"),
+    )?;
+    if report.ids.is_empty() {
+        eprintln!("No tests collected");
+        return if config.fail_on_empty {
+            Err(CliError::new("", crate::ExitCode::FAILURE))
+        } else {
+            Ok(crate::ExitCode::SUCCESS)
+        };
+    }
+    for id in report.ids {
+        println!("{id}");
+    }
+    Ok(crate::ExitCode::SUCCESS)
+}
+
 /// Resolve paths once at the client boundary without changing the owner's working directory.
 fn absolute_path(path: &str) -> CliResult<String> {
     let path = PathBuf::from(path);

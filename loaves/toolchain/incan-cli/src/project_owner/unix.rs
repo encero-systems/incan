@@ -11,7 +11,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use super::protocol::{self, Reply, Request};
-use super::{BuildIntent, NativeBuildIntent};
+use super::{BuildIntent, NativeBuildIntent, TestListIntent};
 use incan_driver::error::{CliError, CliResult};
 use sha2::{Digest, Sha256};
 
@@ -234,6 +234,37 @@ fn dispatch(
         )?;
         return Ok(stop);
     }
+    if request.intent.get("test_list").is_some() {
+        let mut disconnected = false;
+        let result = serde_json::from_value::<TestListIntent>(request.intent)
+            .map_err(transport_error)
+            .and_then(|intent| {
+                if !Path::new(&intent.test_list.path).is_absolute() {
+                    return Err(CliError::failure("owner requires an absolute test collection path"));
+                }
+                crate::test_runner::list_tests_with_owner(&intent.test_list, owner, |message| {
+                    if !disconnected && protocol::write(stream, &Reply::Progress { message }).is_err() {
+                        disconnected = true;
+                    }
+                })
+            })
+            .and_then(|report| serde_json::to_value(report).map_err(transport_error));
+        if disconnected {
+            return Ok(false);
+        }
+        let reply = match result {
+            Ok(result) => Reply::Complete {
+                pid: std::process::id(),
+                result,
+            },
+            Err(error) => Reply::Failure {
+                message: error.message,
+                exit_code: error.exit_code.0,
+            },
+        };
+        protocol::write(stream, &reply)?;
+        return Ok(false);
+    }
     if request.intent.get("native_build").is_some() {
         let result = serde_json::from_value::<NativeBuildIntent>(request.intent)
             .map_err(transport_error)
@@ -448,6 +479,27 @@ mod tests {
         };
         assert!(!dispatch(&mut server, "current", invalid_native, &mut owner)?);
         assert!(matches!(protocol::read::<Reply>(&mut client)?, Reply::Failure { .. }));
+        let invalid_collection = Request {
+            generation: "current".to_string(),
+            intent: serde_json::json!({"test_list": {"unrecognized": true}}),
+        };
+        assert!(!dispatch(&mut server, "current", invalid_collection, &mut owner)?);
+        assert!(matches!(protocol::read::<Reply>(&mut client)?, Reply::Failure { .. }));
+        let relative_collection = Request {
+            generation: "current".to_string(),
+            intent: serde_json::json!({"test_list": {
+                "path": "tests", "verbose": false, "include_slow": false,
+                "filter": null, "marker_expr": null, "strict_markers": false,
+                "test_features": [], "package_features": incan_provider::FeatureSelection::default(),
+                "sdk_profile": null, "timeout": null,
+                "cargo_policy": incan_driver::cargo_policy::CargoPolicy::default(),
+            }}),
+        };
+        assert!(!dispatch(&mut server, "current", relative_collection, &mut owner)?);
+        assert!(
+            matches!(protocol::read::<Reply>(&mut client)?, Reply::Failure { message, .. }
+            if message.contains("absolute test collection path"))
+        );
         let ping = Request {
             generation: "current".to_string(),
             intent: serde_json::json!({"operation":"ping"}),

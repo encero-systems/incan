@@ -356,13 +356,15 @@ impl WorkspaceGraph {
     ///
     /// Reports ancestor candidates, parsed manifests, literal topology paths and enumerated directories. The model
     /// remains the sole RFC 077 resolver; the observer may retain this result only while those observations remain
-    /// current, including paths that were absent and ancestors without workspace authority.
+    /// current, including paths that were absent and ancestors without workspace authority. Ordinary project roots
+    /// are structural ancestors of observed manifests; their unrelated output children do not affect discovery.
+    /// Directories whose children are enumerated remain full observations.
     pub fn discover_observed(start_dir: &Path, observe: &mut dyn FnMut(&Path)) -> Result<Option<Self>, WorkspaceError> {
-        observe(start_dir);
+        observe(&start_dir.join(LOAF_MANIFEST_FILENAME));
         let Some(project) = ProjectManifest::discover_observed(start_dir, observe)? else {
             return Ok(None);
         };
-        observe(project.project_root());
+        observe(&project.project_root().join(LOAF_MANIFEST_FILENAME));
         let project_root = canonical_directory(project.project_root())?;
         let starts_at_virtual_workspace_root = project.project.is_none()
             && project.workspace().is_some()
@@ -1526,6 +1528,48 @@ mod tests {
     use crate::manifest::LOAF_MANIFEST_FILENAME;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    /// Output siblings do not change discovery, while manifest edits and root replacement still invalidate it.
+    #[cfg(unix)]
+    #[test]
+    fn discovery_observations_ignore_project_output_siblings() -> TestResult {
+        let directory = tempfile::tempdir()?;
+        let root = fs::canonicalize(directory.path())?.join("project");
+        write_project(&root, "member")?;
+        let mut inputs = crate::observed_inputs::InputObservations::default();
+        assert!(WorkspaceGraph::discover_observed(&root, &mut |path| inputs.observe(path))?.is_none());
+        assert!(inputs.supports_retention() && inputs.current());
+        fs::create_dir(root.join("target"))?;
+        fs::write(root.join("target/output"), "generated")?;
+        assert!(inputs.current());
+        write_project(&root, "changed")?;
+        assert!(!inputs.current());
+        let mut inputs = crate::observed_inputs::InputObservations::default();
+        WorkspaceGraph::discover_observed(&root, &mut |path| inputs.observe(path))?;
+        fs::rename(&root, root.with_file_name("preserved-project"))?;
+        write_project(&root, "changed")?;
+        assert!(!inputs.current());
+        Ok(())
+    }
+
+    /// Enumerated workspace children remain full inputs even though ordinary project ancestry is structural.
+    #[cfg(unix)]
+    #[test]
+    fn discovery_observations_refuse_changed_enumerated_members() -> TestResult {
+        let directory = tempfile::tempdir()?;
+        let root = fs::canonicalize(directory.path())?;
+        write_manifest(
+            &root,
+            "[project]\nname=\"root\"\n[workspace]\nmembers=[\"packages/*\"]\n",
+        )?;
+        write_project(root.join("packages/one"), "one")?;
+        let mut inputs = crate::observed_inputs::InputObservations::default();
+        assert!(WorkspaceGraph::discover_observed(&root, &mut |path| inputs.observe(path))?.is_some());
+        assert!(inputs.current());
+        write_project(root.join("packages/two"), "two")?;
+        assert!(!inputs.current());
+        Ok(())
+    }
 
     #[test]
     fn rooted_workspace_orders_root_then_canonical_members() -> TestResult {
