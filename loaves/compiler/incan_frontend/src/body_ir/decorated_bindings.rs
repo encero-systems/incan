@@ -5,7 +5,7 @@ use super::*;
 use incan_lang::lang::decorators;
 
 /// Admit only nongeneric function decorators whose checked path can be read as a source callable.
-/// Factories, generic originals, extern delegations and method receivers retain their existing named refusal until
+/// Generic originals, extern delegations and method receivers retain their existing named refusal until
 /// independently proven; an extern's delegation must not bypass the visible replacement wrapper.
 pub(super) fn supports_function(
     function: &ast::FunctionDecl,
@@ -36,7 +36,7 @@ pub(super) fn supports_function(
             |decorator| match decorators::from_segments(&decorator.node.path.segments) {
                 Some(decorators::DecoratorId::RustExtern) => false,
                 Some(_) => true,
-                None => !decorator.node.is_call && decorator.node.path.segments.len() == 1,
+                None => decorator.node.path.segments.len() == 1,
             },
         )
 }
@@ -125,10 +125,14 @@ fn initializer(
         if decorators::from_segments(&decorator.node.path.segments).is_some() {
             continue;
         }
-        let path = ast::Spanned::new(
-            ast::Expr::Ident(decorator.node.path.segments[0].clone()),
-            decorator.span,
-        );
+        let Some(path) = decorator_expression(decorator) else {
+            builder.push_unsupported_stmt(
+                "decorator factory arguments".to_string(),
+                hir_span(decorator.span),
+                &mut statements,
+            );
+            break;
+        };
         let callable = builder.lower_expr_to_operand(&path, scope, &mut statements);
         let IncanType::Function { return_type, .. } = builder.resolve_ty(decorator.span) else {
             builder.push_unsupported_stmt(
@@ -181,6 +185,33 @@ fn initializer(
         closure_holding_return: false,
     });
     body
+}
+
+/// Recreate only the expression the checker already evaluated at this decorator's own span. Its recorded identities,
+/// argument bindings and result type remain authoritative; this helper does not resolve or recheck a factory.
+fn decorator_expression(decorator: &ast::Spanned<ast::Decorator>) -> Option<ast::Spanned<ast::Expr>> {
+    let path = ast::Spanned::new(
+        ast::Expr::Ident(decorator.node.path.segments.first()?.clone()),
+        decorator.span,
+    );
+    if !decorator.node.is_call {
+        return Some(path);
+    }
+    let mut arguments = Vec::with_capacity(decorator.node.args.len());
+    for argument in &decorator.node.args {
+        match argument {
+            ast::DecoratorArg::Positional(value) => arguments.push(ast::CallArg::Positional(value.clone())),
+            ast::DecoratorArg::Named(name, ast::DecoratorArgValue::Expr(value)) => arguments.push(ast::CallArg::Named(
+                ast::Spanned::new(name.clone(), ast::Span::default()),
+                value.clone(),
+            )),
+            ast::DecoratorArg::Named(_, ast::DecoratorArgValue::Type(_)) => return None,
+        }
+    }
+    Some(ast::Spanned::new(
+        ast::Expr::Call(Box::new(path), decorator.node.type_args.clone(), arguments),
+        decorator.span,
+    ))
 }
 
 /// Build the visible callable with the final checked signature; every invocation reads the initialized replacement.
