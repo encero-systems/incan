@@ -12060,7 +12060,9 @@ def main() -> None:
     mut pairs: dict[str, tuple[list[int], int]] = {"x": ([3], 4)}
     for items, n in pairs.values():
         items.append(n)
-        n += 10
+        mut copied_n = n
+        copied_n += 10
+        println(copied_n)
     println(pairs["x"][0])
     println(pairs["x"][1])
     mut cells: dict[str, Cell] = {"x": Cell(value=5)}
