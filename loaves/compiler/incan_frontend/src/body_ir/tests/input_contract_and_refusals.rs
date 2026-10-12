@@ -332,19 +332,12 @@ fn a_rust_extern_body_records_its_delegation_and_no_placeholder_statements_issue
 // ---- User-defined decorator rebinding (RFC 036) ----
 
 #[test]
-fn a_declaration_rebound_by_a_user_defined_decorator_is_a_representation_gap() -> Result<(), Box<dyn std::error::Error>>
-{
-    // `run` calls the binding `as_int` returns, but its call target still names `label`'s own body, so a lowered
-    // `label` would run undecorated. The decorator and its replacement stay ordinary bodies.
+fn a_declaration_rebound_by_a_user_defined_decorator_retains_the_binding() -> Result<(), Box<dyn std::error::Error>> {
+    // The canonical name selects the replacement wrapper; the original body remains a distinct callable item.
     let source = "def parse(value: int) -> int:\n    return value\n\ndef as_int(func: (int) -> str) -> (int) -> int:\n    println(\"decorating label\")\n    return parse\n\n@as_int\ndef label(value: int) -> str:\n    return \"value\"\n\ndef run(value: int) -> int:\n    return label(value)\n";
     let module = build(source, &["m", "decorator_rebinding"])?;
     let label = body_named(&module, "label")?;
-    assert_eq!(
-        label.first_representation_gap(),
-        Some("declaration `label` rebound by a user-defined decorator"),
-        "{}",
-        label.render_snapshot()
-    );
+    assert_eq!(label.first_representation_gap(), None, "{}", label.render_snapshot());
     for name in ["parse", "as_int", "run"] {
         let body = body_named(&module, name)?;
         assert_eq!(body.first_representation_gap(), None, "{}", body.render_snapshot());
