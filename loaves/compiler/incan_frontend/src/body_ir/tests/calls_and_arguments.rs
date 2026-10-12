@@ -25,6 +25,33 @@ def keyed[T](items: list[T]) -> int:
     )?;
     for (function, name, expected) in [("distinct", "seen", "Set[T]"), ("keyed", "table", "Dict[T, int]")] {
         let body = body_named(&module, function)?;
+        let target = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Loop { body } => body.stmts.iter().find_map(|statement| match &statement.kind {
+                    bir::StatementKind::Call {
+                        callee: bir::Callee::Method(target),
+                        ..
+                    } => Some(target),
+                    _ => None,
+                }),
+                _ => None,
+            })
+            .ok_or("missing checked collection write")?;
+        let canonical_name = if function == "distinct" {
+            "Set.add"
+        } else {
+            "Dict.insert"
+        };
+        assert!(
+            target.canonical.as_ref().is_some_and(|identity| {
+                identity.origin == incan_semantics_core::SymbolOrigin::Builtin
+                    && identity.declaration_name == canonical_name
+            }),
+            "unproven write identity: {target:?}"
+        );
         let local = body
             .locals
             .iter()
