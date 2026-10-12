@@ -151,6 +151,7 @@ from model_lists import model_list_read, structural_prefix, prefix_place
 from element_places import is_element_place, element_place_type
 from element_borrows import element_method_owner, element_method_receiver, borrow_element_mut
 from option_tests import is_option_carrier, is_union_carrier, option_isinstance, option_union_payload, enum_tag
+from derived_defaults import is_derived_default, lower_derived_default
 from models import field_projection
 from models import model_type, model_place, constructor_index, field_slot
 from model_values import (
@@ -2128,6 +2129,8 @@ def lower_named_target(
                 return Err("unsupported Body IR builtin type arguments")
             return lower_builtin(builder, builtin, arguments, destination, span)
         None => pass
+    if is_derived_default(target):
+        return lower_derived_default(module, builder, target, destination, span)
     match target.canonical:
         None => return Err("unsupported Body IR builtin or unproven NamedCallableTarget")
         Some(_identity) =>

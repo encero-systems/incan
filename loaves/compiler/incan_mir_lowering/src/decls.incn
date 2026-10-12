@@ -49,17 +49,22 @@ def static_list_accessors(leaf: ListLeaf) -> Result[tuple[str, str], str]:
 
 
 pub def lower_model_declarations(module: &BodyIrModule, file: str, intrinsics: list[EnumDeclaration] = []) -> Result[list[ModelDeclaration], str]:
-    """Retain checked field layout and derives for admitted plain model, class, and newtype declarations."""
+    """
+    Retain checked field layout and derives for admitted plain model, class, and newtype declarations.
+
+    A derived Default is built at each `default()` call from the declared field defaults, so the native struct never
+    derives Default: a Rust derive would give every field its zero value instead.
+    """
     unions = collect_unions(module)
     mut models: list[ModelDeclaration] = []
     for declaration in module.nominal_declarations:
         item = library_item(declaration)
-        # A stdlib layout's derives are its crate's; only a declared layout must not derive Default over defaults.
-        if item == "" and declaration.has_field_defaults and "Default" in declaration.derives:
-            return Err(f"unsupported Body IR derived Default over field defaults on {declaration.name}")
+        mut derives: list[str] = []
+        for derive in declaration.derives:
+            if derive != "Default":
+                derives.append(derive)
         mut fields: list[Parameter] = []
         mut field_public = declaration.field_public
-        mut derives = declaration.derives
         if item != "":
             fields = library_fields(module, declaration, file, intrinsics)
             if len(fields) != len(declaration.fields):

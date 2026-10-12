@@ -282,18 +282,6 @@ fn validate_declarations(
                         model.name
                     ));
                 }
-                if model.fields.iter().any(|field| field.node.default.is_some())
-                    && type_info
-                        .declarations
-                        .model_derives
-                        .get(&model.name)
-                        .is_some_and(|derives| derives.iter().any(|derive| derive == "Default"))
-                {
-                    return Err(format!(
-                        "unsupported source Model derived Default over field defaults on {} on the native route",
-                        model.name
-                    ));
-                }
                 validate_generic_adoptions(&model.traits, program)?;
                 continue;
             }

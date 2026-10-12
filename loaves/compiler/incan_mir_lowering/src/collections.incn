@@ -15,7 +15,7 @@ from pub::incan_mir_plan import (
     SourceSpan,
 )
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, temporary, terminate_call, read_place, drop_owned, forget_owned, value_type
+from frame import Builder, temporary, terminate_call, read_place, drop_owned, forget_owned, value_type, place_type
 from rust::incan_semantics_core::body_ir import (
     ArgumentElement as RustArgumentElement,
     Operand as RustOperand,
@@ -153,8 +153,8 @@ pub def collection_call(
 
 
 pub def borrow_collection(mut builder: Builder, place: Place, mutable: bool, span: SourceSpan) -> Result[Operand, str]:
-    """Borrow owners and reborrow parameters, never copying an exclusive reference."""
-    ty = builder.locals[place.local].ty
+    """Borrow owners, a model's collection field among them, and reborrow parameters, never copying an exclusive reference."""
+    ty = place_type(builder.locals, place)
     mut source = place
     if collection_owned(ty) != ty:
         if mutable and ty != collection_reference(ty, true):
