@@ -596,6 +596,44 @@ impl TypeChecker {
         }
     }
 
+    /// Select the serde derives a nominal's trait adoptions imply, walking each adopted trait's supertraits.
+    ///
+    /// Adopting the standard library's JSON `Serialize` or `Deserialize`, directly or through a supertrait, gives the
+    /// adopter the matching serde derive, as legacy emission forwards it. The walk keys on each trait's canonical
+    /// identity through the current import bindings, never on its basename, and visits each trait name once.
+    pub(in crate::typechecker) fn adopted_serde_derives(
+        &self,
+        adoptions: &[Spanned<crate::ast::TraitBound>],
+    ) -> Vec<String> {
+        let mut pending = adoptions
+            .iter()
+            .map(|adoption| adoption.node.name.clone())
+            .collect::<std::collections::VecDeque<_>>();
+        let mut visited = std::collections::HashSet::new();
+        let mut selected = Vec::new();
+        while let Some(name) = pending.pop_front() {
+            if !visited.insert(name.clone()) {
+                continue;
+            }
+            if let Some(info) = self.lookup_trait_info(&name) {
+                pending.extend(info.supertraits.iter().map(|(supertrait, _)| supertrait.clone()));
+            }
+            let path = self.derive_trait_path(&name);
+            let protocol = path.split_last().and_then(|(trait_name, module)| {
+                incan_lang::lang::stdlib::stdlib_json_trait_id_for_identity(module, trait_name)
+            });
+            let derive = match protocol {
+                Some(incan_lang::lang::stdlib::StdlibJsonTraitId::Serialize) => "serde::Serialize",
+                Some(incan_lang::lang::stdlib::StdlibJsonTraitId::Deserialize) => "serde::Deserialize",
+                None => continue,
+            };
+            if !selected.iter().any(|existing| existing == derive) {
+                selected.push(derive.to_owned());
+            }
+        }
+        selected
+    }
+
     /// Append builtin derive implications in legacy normalization order without duplicating checked selections.
     pub(in crate::typechecker) fn append_implied_derives(selected: &mut Vec<String>) {
         for (derive, implied) in derives::DERIVE_IMPLICATIONS {

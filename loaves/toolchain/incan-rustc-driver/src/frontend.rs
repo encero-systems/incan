@@ -359,7 +359,7 @@ fn validate_declarations(
                 continue;
             }
             Declaration::Trait(item) => {
-                if let Some(feature) = trait_refusal_feature(item, program) {
+                if let Some(feature) = trait_refusal_feature(item) {
                     return Err(format!("unsupported source Trait {feature} on the native route"));
                 }
                 continue;
@@ -486,12 +486,10 @@ fn refused_decorator_feature(
 ///
 /// Type parameters and supertraits declared in this module are retained: Body IR records each adopter's checked
 /// instantiation and the supertrait slots it fills. A method's own type parameters are retained like any method's:
-/// each checked call schedules the adopter's default at its call-site arguments. A supertrait from elsewhere is an
-/// obligation whose implementation facts Body IR does not carry, so it stays refused.
-fn trait_refusal_feature(
-    item: &incan_frontend::ast::TraitDecl,
-    program: &incan_frontend::ast::Program,
-) -> Option<&'static str> {
+/// each checked call schedules the adopter's default at its call-site arguments. A supertrait from elsewhere adds no
+/// declaration behavior of its own: the checker records the serde derives a standard JSON supertrait implies, and a
+/// call of one of its slots that has no retained body refuses by name where it is lowered.
+fn trait_refusal_feature(item: &incan_frontend::ast::TraitDecl) -> Option<&'static str> {
     if !item.decorators.is_empty() {
         return Some("decorators");
     }
@@ -506,13 +504,6 @@ fn trait_refusal_feature(
     }
     if item.methods.iter().any(|method| !method.node.decorators.is_empty()) {
         return Some("decorated methods");
-    }
-    if item
-        .traits
-        .iter()
-        .any(|supertrait| !declares_trait(program, &supertrait.node.name))
-    {
-        return Some("imported supertraits");
     }
     None
 }

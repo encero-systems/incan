@@ -339,7 +339,20 @@ pub(super) fn collect_local_nominal_declarations(
                 has_field_defaults: fields.iter().any(|field| field.node.default.is_some()),
                 field_default_body: None,
                 derives: if class_layout.is_some() {
-                    type_info.declarations.class_derives.get(name)?.clone()
+                    // The class's own derive selection, plus the serde derives its trait adoptions imply.
+                    let mut derives = type_info.declarations.class_derives.get(name)?.clone();
+                    for implied in type_info
+                        .declarations
+                        .class_adoption_derives
+                        .get(name)
+                        .into_iter()
+                        .flatten()
+                    {
+                        if !derives.contains(implied) {
+                            derives.push(implied.clone());
+                        }
+                    }
+                    derives
                 } else {
                     type_info.declarations.model_derives.get(name)?.clone()
                 },

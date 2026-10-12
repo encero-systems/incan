@@ -955,6 +955,10 @@ pub struct DeclarationArtifacts {
     pub model_derives: HashMap<String, Vec<String>>,
     /// The same native derive selection for source classes, whose automatic derives match a model's.
     pub class_derives: HashMap<String, Vec<String>>,
+    /// Serde derives a source class's trait adoptions imply, directly or through a supertrait, keyed by class name.
+    ///
+    /// A class retains the plain native derives besides these; legacy emission forwards the same selection.
+    pub class_adoption_derives: HashMap<String, Vec<String>>,
     /// Active module-scope nominal identities from source and package bindings, retained before lexical checker
     /// context is discarded.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,

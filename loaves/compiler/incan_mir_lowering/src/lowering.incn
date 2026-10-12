@@ -68,6 +68,8 @@ from derived_methods import (
     is_std_callable_call,
     lower_comparison_dunder,
     lower_derived_clone,
+    receiver_declares_method,
+    slot_name,
 )
 # ---- The checked Body IR, read through Rust interop ----
 from rust::incan_semantics_core import IncanType as RustType, HirSourceSpan as RustSpan
@@ -160,7 +162,6 @@ from model_values import (
     display_model_operand,
     serialize_model_operand,
     is_json_serialize_method,
-    refuse_overridden_json_default,
     is_json_deserialize_method,
     lower_model_from_json,
     compare_models,
@@ -1894,10 +1895,6 @@ def lower_method_call(
         None => return Err("unsupported Body IR Method without canonical identity")
     if len(arguments) == 0:
         return Err("invalid Body IR Method missing receiver")
-    if is_json_serialize_method(target):
-        receiver = argument_type(builder, arguments, 0, span)?
-        refuse_overridden_json_default(module, builder, receiver, "to_json")?
-        return lower_model_json_builtin(builder, arguments, destination, span)
     if lower_standard_slot(module, builder, target, arguments, destination, span)?:
         return Ok(None)
     # A list or dictionary element receiver is reborrowed in its container; no native place names it.
@@ -2073,11 +2070,19 @@ def lower_standard_slot(
     """
     Lower a standard-library slot through the behavior a derive or a held callable gives the receiver.
 
-    A slot the receiver's own method fills is left to ordinary dispatch, because that method is what legacy calls.
+    A slot the receiver's own method fills is left to ordinary dispatch, because that method is what legacy calls. A
+    receiver type that declares a method of the slot's name without such a record refuses, rather than taking the derived
+    behavior in its place.
     """
     locals = builder.locals[builder.local_offset:]
     if receiver_fills_slot(module, target, locals, arguments[0], span, builder.unions, builder.intrinsics):
         return Ok(false)
+    if is_json_serialize_method(target) or is_derived_clone(target) or is_derived_display(target):
+        if receiver_declares_method(module, builder, arguments[0], slot_name(target), span)?:
+            return Err("unsupported Body IR standard slot on a type with its own method of that name")
+    if is_json_serialize_method(target):
+        lower_model_json_builtin(builder, arguments, destination, span)?
+        return Ok(true)
     if is_derived_clone(target):
         lower_derived_clone(builder, arguments, destination, span)?
         return Ok(true)

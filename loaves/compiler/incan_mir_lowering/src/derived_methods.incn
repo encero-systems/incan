@@ -214,34 +214,65 @@ def declares_own_comparison(
     span: SourceSpan,
 ) -> Result[bool, str]:
     """Whether the receiver's source nominal or enum declares a comparison dunder or fills one from a source trait."""
+    dunders = ["__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__"]
+    return declares_own_method(module, builder, receiver, dunders, span)
+
+
+pub def slot_name(target: &MethodTarget) -> str:
+    """The checker-selected slot's declared name, empty for an unproven target."""
+    match target.canonical:
+        Some(identity) => return str(identity.declaration_name)
+        None => return ""
+
+
+pub def receiver_declares_method(
+    module: &BodyIrModule,
+    builder: Builder,
+    receiver: &RustArgumentElement,
+    name: str,
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """
+    Whether a method call's receiver type declares a method of `name` itself or fills that slot from a source trait.
+
+    A standard derive's behavior stands in for a slot only where the type supplies no method of its own for it.
+    """
+    match receiver.as_one():
+        Some(value) => return declares_own_method(module, builder, value, [name], span)
+        None => return Ok(false)
+
+
+def declares_own_method(
+    module: &BodyIrModule,
+    builder: Builder,
+    receiver: &RustOperand,
+    names: list[str],
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Whether the receiver's source nominal or enum declares a method of one of `names` or fills one from a trait."""
     match receiver:
         RustOperand.Place(read) =>
             source = scalar_place(builder, read.place, span)?
             match place_type(builder.locals, source):
-                PlanType.Model(index, _name) => return Ok(owns_comparison(module, builder.nominals[index].canonical))
+                PlanType.Model(index, _name) => return Ok(owns_method(module, builder.nominals[index].canonical, names))
                 PlanType.Enum(index, _name) =>
                     if index >= 0 and index < len(builder.enums):
-                        return Ok(owns_comparison(module, builder.enums[index].canonical))
+                        return Ok(owns_method(module, builder.enums[index].canonical, names))
                     return Ok(false)
                 _ => return Ok(false)
         _ => return Ok(false)
 
 
-def owns_comparison(module: &BodyIrModule, owner: &CanonicalSymbolId) -> bool:
-    """Whether a body inside the owner's declaration, or a source trait slot it adopts, is a comparison dunder."""
+def owns_method(module: &BodyIrModule, owner: &CanonicalSymbolId, names: list[str]) -> bool:
+    """Whether a body inside the owner's declaration, or a trait slot recorded for it, has one of `names`."""
     for body in module.bodies:
         match body.canonical:
             Some(identity) =>
                 name = str(identity.declaration_name)
-                if identity.origin == owner.origin and contains(owner, identity) and is_comparison_name(name):
+                if identity.origin == owner.origin and contains(owner, identity) and name in names:
                     return true
             None => pass
     for implementation in module.trait_implementations:
-        if implementation.owner == owner.clone() and is_comparison_name(str(implementation.method.declaration_name)):
+        if implementation.owner == owner.clone() and str(implementation.method.declaration_name) in names:
             return true
     return false
-
-
-def is_comparison_name(name: str) -> bool:
-    """The six comparison dunders of the standard library's Eq and Ord."""
-    return name in ["__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__"]

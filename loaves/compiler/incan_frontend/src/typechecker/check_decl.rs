@@ -3434,10 +3434,11 @@ impl TypeChecker {
 
     /// Select the native derives of a model or class from its explicit derive names, in legacy emission order.
     ///
-    /// Stdlib JSON protocol selections map to their canonical serde paths, the derives an explicit selection implies
-    /// follow, and the automatic Debug, Clone, FieldInfo and IncanClass derives every model and class receives come
-    /// last. Derived Display stays a semantic selection that consumers must not emit as a Rust macro.
-    fn native_derive_selection(&self, derives: &[String]) -> Vec<String> {
+    /// Stdlib JSON protocol selections map to their canonical serde paths, then `declared` adds the derives the
+    /// declaration itself implies, such as a model's adopted serde derives. The derives those selections imply follow,
+    /// and the automatic Debug, Clone, FieldInfo and IncanClass derives every model and class receives come last.
+    /// Derived Display stays a semantic selection that consumers must not emit as a Rust macro.
+    fn native_derive_selection(&self, derives: &[String], declared: Vec<String>) -> Vec<String> {
         let mut native_derives = Vec::new();
         for derive in derives {
             let selected = if self
@@ -3464,6 +3465,11 @@ impl TypeChecker {
                 }
             }
         }
+        for name in declared {
+            if !native_derives.contains(&name) {
+                native_derives.push(name);
+            }
+        }
         Self::append_implied_derives(&mut native_derives);
         for derive in derives::plain_model_derives() {
             if !native_derives.iter().any(|name| name == derive) {
@@ -3484,7 +3490,7 @@ impl TypeChecker {
         self.validate_derives(&model.decorators);
         self.validate_rust_derives(&model.decorators, "model", false, &model.traits);
         let derives = self.extract_derive_names(&model.decorators);
-        let native_derives = self.native_derive_selection(&derives);
+        let native_derives = self.native_derive_selection(&derives, self.adopted_serde_derives(&model.traits));
         self.type_info
             .declarations
             .model_derives
@@ -3966,7 +3972,8 @@ impl TypeChecker {
         self.validate_descriptor_derive_attachment(&class.decorators, "class");
         self.validate_rust_derives(&class.decorators, "class", false, &class.traits);
         let derives = self.extract_derive_names(&class.decorators);
-        let native_derives = self.native_derive_selection(&derives);
+        // A class's adoption-implied serde derives are recorded separately, in `class_adoption_derives`.
+        let native_derives = self.native_derive_selection(&derives, Vec::new());
         self.type_info
             .declarations
             .class_derives
@@ -4016,6 +4023,13 @@ impl TypeChecker {
                 continue;
             };
             resolved_trait_adoptions.push(resolved);
+        }
+        let adoption_derives = self.adopted_serde_derives(&class.traits);
+        if !adoption_derives.is_empty() {
+            self.type_info
+                .declarations
+                .class_adoption_derives
+                .insert(class.name.clone(), adoption_derives);
         }
         let active_class_fields = class
             .fields
