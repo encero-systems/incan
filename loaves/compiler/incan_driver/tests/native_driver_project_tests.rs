@@ -9103,6 +9103,30 @@ def main() -> Result[None, EnvironError]:
     )
 }
 
+/// A closed SDK collection keeps its type arguments through construction, mutation, length, and returned values.
+#[test]
+fn stdlib_generic_collection_methods_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("stdlib-generic-collection-methods")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"from std.collections import Deque
+
+def probe(requested: list[str]) -> Deque[str]:
+    mut pending = Deque[str].from_iter(requested)
+    pending.append("default")
+    return pending
+
+def main() -> None:
+    pending = probe(["a", "b"])
+    println(len(pending))
+    println(pending.to_list()[2])
+"#,
+    )
+}
+
 /// A compression error carries the SDK's Codec enum even when the consumer imports only the decompressor.
 #[test]
 fn stdlib_nested_signature_types_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
