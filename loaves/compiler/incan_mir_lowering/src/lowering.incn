@@ -6894,7 +6894,8 @@ def lower_carrier_method(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Materialize intrinsic call arguments, then delegate the carrier's branch and ownership operations."""
-    source = argument_place(builder, arguments, 0, span)?
+    receiver = argument_place(builder, arguments, 0, span)?
+    source = whole_carrier(builder, receiver, span)?
     _owner, declaration = carrier_layout(builder, place_type(builder.locals, source))?
     if method.intrinsic_carrier != Some(declaration.carrier):
         return Err("invalid Body IR intrinsic carrier method identity")
@@ -6919,6 +6920,28 @@ def lower_carrier_method(
             None => return Err("unsupported Body IR carrier fallback spread")
     target = call_destination(builder, destination, ty, span)?
     return lower_carrier_method_plan(builder, name, source, target, fallback, span)
+
+
+def whole_carrier(mut builder: Builder, source: Place, span: SourceSpan) -> Result[Place, str]:
+    """
+    Clone a carrier reached through a field into a temporary, leaving its owner whole.
+
+    The carrier's tag and payload are projected from one whole local, so a field's carrier is read out first; the
+    clone keeps an owned payload in the field for later reads.
+    """
+    if source.projection == Projection.Whole:
+        return Ok(source)
+    ty = place_type(builder.locals, source)
+    match ty:
+        PlanType.Enum(index, name) =>
+            reference = temporary(builder, PlanType.EnumRef(index, name), span)
+            builder.emit(plan_assign(reference, RvalueKind.Borrow(source), span))
+            held = temporary(builder, ty, span)
+            lower_callable_result(
+                builder, CalleeKind.CloneEnum(index, name), [read_place(reference, false, span)], held, ty, span,
+            )?
+            return Ok(held)
+        _ => return Err("unsupported Body IR projected carrier receiver")
 
 
 def typed_carrier_operand(
