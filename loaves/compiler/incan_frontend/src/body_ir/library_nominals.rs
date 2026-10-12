@@ -11,6 +11,7 @@ use super::{IncanType, TypeCheckInfo, bir, semantic_type_from_resolved};
 use crate::ast;
 use crate::symbols::{FieldInfo, TypeInfo};
 use crate::typechecker::stdlib_loader::StdlibAstCache;
+use incan_lang::lang::stdlib;
 
 /// Every package-origin model, class, enum or newtype one module uses: named by its bindings, carried by its checked
 /// expressions, or named in a called stdlib function's or method's own module.
@@ -41,7 +42,7 @@ pub(super) fn type_identities(type_info: &TypeCheckInfo, cache: &mut StdlibAstCa
         .iter()
         .flat_map(|callee| super::library_calls::signature_type_identities(callee, cache))
         .collect::<Vec<_>>();
-    type_info
+    let roots = type_info
         .declarations
         .named_type_identities
         .values()
@@ -57,6 +58,88 @@ pub(super) fn type_identities(type_info: &TypeCheckInfo, cache: &mut StdlibAstCa
                         | SemanticSourceTargetKind::Enum
                         | SemanticSourceTargetKind::Newtype
                 )
+        })
+        .filter_map(|identity| declaring_identity(&identity, cache))
+        .collect::<BTreeSet<_>>();
+    let mut retained = roots;
+    let mut pending = retained.iter().cloned().collect::<Vec<_>>();
+    while let Some(identity) = pending.pop() {
+        for dependency in layout_dependencies(&identity, cache) {
+            if retained.insert(dependency.clone()) {
+                pending.push(dependency);
+            }
+        }
+    }
+    retained
+}
+
+/// Follow a checked facade binding to the declaring module only when its complete declaration identity agrees.
+fn declaring_identity(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Option<CanonicalSymbolId> {
+    let SymbolOrigin::Package { library, module_path } = &identity.origin else {
+        return None;
+    };
+    let path = std::iter::once(stdlib::STDLIB_ROOT.to_owned())
+        .chain(module_path.iter().cloned())
+        .collect::<Vec<_>>();
+    let mut declared = cache.lookup_identity(&path, &identity.declaration_name)?;
+    let SymbolOrigin::Module(declaring_path) = &declared.origin else {
+        return None;
+    };
+    let declaring_path = declaring_path.strip_prefix(&[stdlib::STDLIB_ROOT.to_owned()])?.to_vec();
+    let mut comparable = declared.clone();
+    comparable.origin = identity.origin.clone();
+    if comparable != *identity {
+        return None;
+    }
+    declared.origin = SymbolOrigin::Package {
+        library: library.clone(),
+        module_path: declaring_path,
+    };
+    cache.callable_source_identity(&declared)?;
+    Some(declared)
+}
+
+/// Collect each type a retained SDK declaration holds, resolving field names in that declaration's module.
+fn layout_dependencies(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Vec<CanonicalSymbolId> {
+    let Some(source) = cache.callable_source_identity(identity) else {
+        return Vec::new();
+    };
+    let SymbolOrigin::Module(path) = source.origin else {
+        return Vec::new();
+    };
+    let Some(info) = cache.lookup_type(&path, &identity.declaration_name) else {
+        return Vec::new();
+    };
+    let types = match info {
+        TypeInfo::Model(model) => model.fields.into_values().map(|field| field.ty).collect::<Vec<_>>(),
+        TypeInfo::Class(class) => class.fields.into_values().map(|field| field.ty).collect(),
+        TypeInfo::Enum(declaration) => declaration.variant_fields.into_values().flatten().collect(),
+        TypeInfo::Newtype(newtype) => vec![newtype.underlying],
+        _ => Vec::new(),
+    };
+    let mut names = BTreeSet::new();
+    for ty in types {
+        super::library_calls::named_leaves(&semantic_type_from_resolved(&ty), &mut names);
+    }
+    let SymbolOrigin::Package { library, .. } = &identity.origin else {
+        return Vec::new();
+    };
+    names
+        .into_iter()
+        .filter_map(|name| {
+            let mut dependency = cache
+                .lookup_identity(&path, &name)
+                .or_else(|| cache.imported_type_identity(&path, &name))?;
+            let SymbolOrigin::Module(owner) = &dependency.origin else {
+                return None;
+            };
+            let owner = owner.strip_prefix(&[stdlib::STDLIB_ROOT.to_owned()])?.to_vec();
+            dependency.origin = SymbolOrigin::Package {
+                library: library.clone(),
+                module_path: owner,
+            };
+            cache.callable_source_identity(&dependency)?;
+            Some(dependency)
         })
         .collect()
 }

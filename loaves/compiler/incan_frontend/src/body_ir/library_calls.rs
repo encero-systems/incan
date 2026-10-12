@@ -174,7 +174,7 @@ pub(super) fn signature_type_identities(
 }
 
 /// Collect the nominal names a type mentions, through generic arguments, tuples and references.
-fn named_leaves(ty: &IncanType, names: &mut BTreeSet<String>) {
+pub(super) fn named_leaves(ty: &IncanType, names: &mut BTreeSet<String>) {
     match ty {
         IncanType::Named(name) => {
             names.insert(name.clone());
