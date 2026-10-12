@@ -10277,6 +10277,21 @@ def main() -> None:
     )
 }
 
+/// A factory's result decorates the original in source order and preserves the declared union callable surface.
+#[test]
+fn decorator_factory_binding_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("decorator-factory-binding")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/lowering_expressions/decorator_declared_surface_issue1453.incn"
+        ),
+    )
+}
+
 /// An imported module's computed static initializes when the importer first reads it, after the importer's earlier
 /// statements, as legacy's read of an imported static first initializes its declaring module's statics.
 #[test]

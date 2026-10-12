@@ -48,3 +48,19 @@ fn decorated_extern_keeps_a_named_refusal() -> Result<(), Box<dyn std::error::Er
     assert!(module.static_declarations.is_empty());
     Ok(())
 }
+
+/// A factory expression retains its checked call before the returned decorator is applied to the original.
+#[test]
+fn decorator_factory_retains_the_initialized_replacement() -> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/lowering_expressions/decorator_declared_surface_issue1453.incn"
+    );
+    let module = build(source, &["m", "decorator_factory"])?;
+    let body = body_named(&module, "twice")?;
+    assert_eq!(body.first_representation_gap(), None, "{}", body.render_snapshot());
+    assert_eq!(module.static_declarations.len(), 2);
+    for storage in &module.static_declarations {
+        assert!(module.is_well_formed_static_declaration(storage));
+    }
+    Ok(())
+}
