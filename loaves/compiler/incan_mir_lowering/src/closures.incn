@@ -394,6 +394,7 @@ def item_component(builder: Builder, ty: &RustType) -> Result[PlanType, str]:
             match native_source_type(builder.nominals, builder.enums, builder.unions, ty, builder.intrinsics):
                 Ok(PlanType.Model(index, name)) => return Ok(PlanType.Model(index, name))
                 Ok(PlanType.Enum(index, name)) => return Ok(PlanType.Enum(index, name))
+                Ok(PlanType.FunctionPointer(signature)) => return Ok(PlanType.FunctionPointer(signature))
                 _ => return Err(reason)
 
 
