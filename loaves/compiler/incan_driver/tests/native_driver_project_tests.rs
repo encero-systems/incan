@@ -18,6 +18,77 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// Minimum and maximum preserve integer, float, boolean and text list results without consuming their sources.
+#[test]
+fn extrema_builtins_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("extrema-builtins")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def main() -> None:
+    integers = [3, -2, 8, -2]
+    reals = [2.5, -1.0, 0.5]
+    flags = [true, false, true]
+    words = ["z", "a", "m"]
+    println(f"{min(integers)} {max(integers)} {len(integers)}")
+    println(f"{min(reals)} {max(reals)} {len(reals)}")
+    println(f"{min(flags)} {max(flags)} {len(flags)}")
+    println(f"{min(words)} {max(words)} {len(words)}")
+"#,
+    )
+}
+
+/// File builtins keep successful payloads and the host's error text on the string Err side.
+#[test]
+fn file_builtins_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("file-builtins")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def main() -> None:
+    match write_file("calls_file_probe.txt", "hello file"):
+        Ok(_) => println("written")
+        Err(error) => println(f"write failed: {error}")
+    match read_file("calls_file_probe.txt"):
+        Ok(data) => println(data)
+        Err(error) => println(f"read failed: {error}")
+    match read_file("calls_missing_directory/missing.txt"):
+        Ok(data) => println(f"unexpected: {data}")
+        Err(error) => println(error)
+"#,
+    )
+}
+
+/// Boolean identity uses the same equality convention as legacy, through literals, parameters and call results.
+#[test]
+fn boolean_identity_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("boolean-identity")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def same(left: bool, right: bool) -> bool:
+    return left is right
+
+def different(left: bool, right: bool) -> bool:
+    return left is not right
+
+def flag() -> bool:
+    return false
+
+def main() -> None:
+    println(f"{same(true, true)} {same(true, false)} {same(false, true)} {same(false, false)}")
+    println(f"{different(true, true)} {different(true, false)} {different(false, true)} {different(false, false)}")
+    println(f"{True is false} {flag() is False} {flag() is not true}")
+"#,
+    )
+}
+
 /// Prove narrowed union tests and matches retain their physical tag layouts through chains and optional payloads.
 #[test]
 fn narrowed_union_layout_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

@@ -259,8 +259,10 @@ pub(super) fn check_builtin_source(
             .output()?,
         "legacy builtin compilation",
     );
-    let expected = Command::new(legacy_output.join("oven/release/main")).output()?;
-    let actual = Command::new(native).output()?;
+    let expected = Command::new(legacy_output.join("oven/release/main"))
+        .current_dir(&project)
+        .output()?;
+    let actual = Command::new(native).current_dir(&project).output()?;
     success(&expected, "legacy builtin execution");
     success(&actual, "native builtin execution");
     assert_eq!(actual.stdout, expected.stdout, "builtin output must be byte-identical");
