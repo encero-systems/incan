@@ -514,8 +514,10 @@ pub fn is_direct_replacement_plain_model(model: &ast::ModelDecl) -> bool {
         && has_direct_replacement_model_shape(model)
 }
 
-/// Admit serde derives only after checked derive metadata resolves all selections to canonical supported paths, Copy only after checking accepted it for every field, and `@rust.derive(...)` only when checking classified every derive it names as a Rust builtin retained among the model's derives.
-/// A field alias crosses the boundary in the retained declaration, so a serde form can rename the field as legacy does.
+/// Admit serde derives only after checked derive metadata resolves all selections to canonical supported paths, Copy
+/// only after checking accepted it for every field, and `@rust.derive(...)` only when checking classified every derive
+/// it names as a Rust builtin retained among the model's derives. A field alias crosses the boundary in the retained
+/// declaration, so a serde form can rename the field as legacy does.
 pub fn is_direct_replacement_checked_model(model: &ast::ModelDecl, type_info: &TypeCheckInfo) -> bool {
     if is_direct_replacement_plain_model(model) {
         return true;
