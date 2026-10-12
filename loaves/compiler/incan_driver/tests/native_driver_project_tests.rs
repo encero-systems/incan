@@ -13386,3 +13386,98 @@ fn raw_newtype_json_derives_reach_protocol_and_enum_read_refusals() -> Result<()
     }
     Ok(())
 }
+
+/// A checked primitive constraint accepts both conversion surfaces, evaluating their supplied values once.
+#[test]
+fn constrained_newtype_construction_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("constrained-newtype-construction")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"type Positive = newtype int[gt=0]
+
+static CALLS: int = 0
+
+def next_value() -> int:
+    CALLS += 1
+    return CALLS
+
+def take(value: Positive) -> None:
+    println(value.0)
+
+def main() -> None:
+    take(next_value())
+    explicit = Positive(next_value())
+    println(explicit.0)
+    println(CALLS)
+"#,
+    )
+}
+
+/// Explicit construction inside the owning constrained implementation keeps legacy's raw tuple bypass.
+#[test]
+fn constrained_newtype_own_implementation_bypass_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("constrained-newtype-owner-bypass")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "type Positive = newtype int[gt=0]:\n    @staticmethod\n    def raw(value: int) -> Self:\n        return Positive(value)\n\ndef main() -> None:\n    println(Positive.raw(0).0)\n",
+    )
+}
+
+/// Aggregate validation and constrained serde reconstruction refuse before any native binary is published.
+#[test]
+fn constrained_newtype_validation_boundaries_produce_no_binary() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    for (name, source, expected) in [
+        (
+            "aggregate-field",
+            "type Positive = newtype int[gt=0]\n\nmodel Holder:\n    value: Positive\n\ndef main() -> None:\n    holder = Holder(value=0)\n    println(holder.value.0)\n",
+            "constrained-newtype aggregate-field validation",
+        ),
+        (
+            "bare-deserialize",
+            "from std.serde.json import Deserialize\n\n@derive(Deserialize)\ntype Positive = newtype int[gt=0]\n\ndef main() -> None:\n    println(Positive(1).0)\n",
+            "unsupported source nonplain Newtype on the native route",
+        ),
+        (
+            "qualified-deserialize",
+            "from std.serde import json\n\n@derive(json.Deserialize)\ntype Positive = newtype int[gt=0]\n\ndef main() -> None:\n    println(Positive(1).0)\n",
+            "unsupported source nonplain Newtype on the native route",
+        ),
+        (
+            "bundled-deserialize",
+            "from std.serde import json\n\n@derive(json)\ntype Positive = newtype int[gt=0]\n\ndef main() -> None:\n    println(Positive(1).0)\n",
+            "unsupported source nonplain Newtype on the native route",
+        ),
+        (
+            "adopted-deserialize",
+            "from std.serde.json import Deserialize\n\ntype Positive = newtype int[gt=0] with Deserialize:\n    @staticmethod\n    def from_json(text: str) -> Result[Self, str]:\n        return Ok(Positive(1))\n\ndef main() -> None:\n    println(Positive(1).0)\n",
+            "unsupported source nonplain Newtype on the native route",
+        ),
+    ] {
+        let root = fixture.scratch(name)?;
+        let input = root.join("main.incn");
+        fs::write(&input, source)?;
+        let binary = root.join("native");
+        let refused = corpus::source_command(
+            &fixture.driver_binary("debug"),
+            &input,
+            &binary,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?;
+        assert!(!refused.status.success(), "{name}");
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        assert!(stderr.contains("unsupported"), "{name}: {stderr}");
+        assert!(stderr.contains(expected), "{name}: {stderr}");
+        assert!(!binary.exists(), "{name}");
+    }
+    Ok(())
+}

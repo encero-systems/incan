@@ -48,13 +48,11 @@ fn newtype_trait_targets_retain_distinct_implementations() -> Result<(), Box<dyn
     Ok(())
 }
 
-/// A validation hook or primitive constraint cannot be admitted as a raw tuple wrapper without its checks.
+/// A validation hook cannot be admitted as a raw tuple wrapper without its checks.
 #[test]
 fn checked_newtypes_remain_outside_raw_layout_admission() -> Result<(), Box<dyn std::error::Error>> {
     let module = build(
-        r#"type Positive = newtype int[gt=0]
-
-type Checked = newtype int:
+        r#"type Checked = newtype int:
     def from_underlying(value: int) -> Result[Self, ValidationError]:
         return Ok(Checked(value))
 
