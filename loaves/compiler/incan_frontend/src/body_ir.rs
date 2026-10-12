@@ -1770,8 +1770,8 @@ mod partials;
 mod primitives;
 
 mod args;
-mod variadics;
 mod fixed_spreads;
+mod variadics;
 
 use bodies::*;
 use collect::*;
