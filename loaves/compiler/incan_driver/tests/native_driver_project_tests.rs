@@ -4861,6 +4861,51 @@ def main() -> None:
     )
 }
 
+/// Prove set, dictionary and value enum display byte-identical to legacy: `print`, `str` and an f-string spell a set,
+/// a dictionary, a dictionary of lists and a list of dictionaries through their structure, and a text or integer value
+/// enum as its raw value.
+#[test]
+fn collection_and_value_enum_display_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("collection-and-value-enum-display")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"pub enum Env(str):
+    Dev = "development"
+    Prod = "production"
+
+
+pub enum Code(int):
+    Ok = 200
+    Missing = 404
+
+
+def main() -> None:
+    counts: dict[str, int] = {"a": 1}
+    println(counts)
+    println(str(counts))
+    println(f"{counts}")
+    tags: set[int] = {3}
+    println(tags)
+    println({1: 2})
+    println({1})
+    groups: dict[str, list[int]] = {"k": [1, 2]}
+    println(groups)
+    rows: list[dict[str, int]] = [{"a": 1}]
+    println(rows)
+    println(str(Env.Dev))
+    println(f"{Env.Prod}")
+    println(str(Code.Missing))
+    println(f"{Code.Ok}!")
+    env = Env.Prod
+    println(env)
+    println(f"x {env}")
+"#,
+    )
+}
+
 /// Prove unit and payload construction, enum passing/returning, and variant-bound match output against legacy.
 #[test]
 fn source_enum_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
