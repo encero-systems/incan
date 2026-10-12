@@ -37,8 +37,8 @@ pub def specialize_enums(module: &BodyIrModule) -> Result[BodyIrModule, str]:
         instance = instances[cursor]
         cursor += 1
         declaration = close_layout(instance)?
-        for retained in result.enum_declarations:
-            if retained.name == declaration.name:
+        for retained in range(len(result.enum_declarations)):
+            if result.enum_declarations[retained].name == declaration.name:
                 return Err(f"unsupported Body IR enum instance symbol collision {declaration.name}")
         lineage = instance.ancestors + [instance.declaration.canonical.render_compact()]
         for variant in declaration.variants:
@@ -92,7 +92,7 @@ def retain_instance(
     return Ok(None)
 
 
-def closed_arguments(arguments: &list[RustType]) -> bool:
+def closed_arguments(arguments: list[RustType]) -> bool:
     """Keep unresolved placeholders out of executable enum layouts, including nested aggregate arguments."""
     for argument in arguments:
         match argument:
@@ -106,8 +106,8 @@ def closed_arguments(arguments: &list[RustType]) -> bool:
             RustType.Tuple(elements) =>
                 if not closed_arguments(elements):
                     return false
-            RustType.Ref(inner) => return false
-            RustType.RefMut(inner) => return false
+            RustType.Ref(_inner) => return false
+            RustType.RefMut(_inner) => return false
             _ => pass
     return true
 
@@ -115,7 +115,8 @@ def closed_arguments(arguments: &list[RustType]) -> bool:
 def close_layout(instance: EnumInstance) -> Result[EnumDeclaration, str]:
     """Substitute payload fields while keeping each source variant's declaration and canonical identities."""
     mut result = instance.declaration.clone()
-    result.name = nominal_symbol(str(instance.declaration.name), instance.arguments)
+    symbol: str = nominal_symbol(str(instance.declaration.name), instance.arguments)
+    result.name = symbol
     result.variants.clear()
     for variant in instance.declaration.variants:
         mut closed = variant.clone()

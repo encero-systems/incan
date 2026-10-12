@@ -179,12 +179,13 @@ pub def display_model_operand(
 
 def display_checked_model(mut builder: Builder, owner: int, place: Place, span: SourceSpan) -> Result[Place, str]:
     """Call the exact source body whose retained display target and shared receiver were validated for this layout."""
-    for function in builder.display_functions:
-        if function.owner != owner:
+    for index in range(len(builder.display_functions)):
+        if builder.display_functions[index].owner != owner:
             continue
+        symbol: str = builder.display_functions[index].symbol
         argument = borrow_model(builder, place, place_type(builder.locals, place), span)?
         result = temporary(builder, PlanType.String, span)
-        terminate_call(builder, CalleeKind.Planned(function.symbol), [argument], result, span)
+        terminate_call(builder, CalleeKind.Planned(symbol), [argument], result, span)
         builder.owned.append(result.local)
         return Ok(result)
     return Err(f"unsupported Body IR unavailable checked display body on {builder.nominals[owner].name}")

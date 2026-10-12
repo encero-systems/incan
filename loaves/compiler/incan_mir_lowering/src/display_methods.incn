@@ -16,16 +16,15 @@ pub def display_functions(
     for owner in range(len(module.nominal_declarations)):
         declaration = module.nominal_declarations[owner]
         match declaration.display_method:
-            None => continue
+            None => pass
             Some(selected) =>
                 for body in module.bodies:
                     if body.canonical != Some(selected.clone()) or len(body.type_parameters) != 0:
                         continue
                     if len(body.params) != 1 or len(body.locals) == 0:
                         continue
-                    match body.return_type:
-                        RustType.Primitive(IncanPrimitiveType.Str) => pass
-                        _ => continue
+                    if not string_result(body.return_type):
+                        continue
                     if frame_type(module, body.locals[0], intrinsics)? != PlanType.ModelRef(owner, str(declaration.name)):
                         continue
                     for retained in functions:
@@ -33,3 +32,10 @@ pub def display_functions(
                             return Err(f"unsupported Body IR ambiguous checked display body on {declaration.name}")
                     functions.append(DisplayFunction(owner=owner, symbol=function_name(module, body)))
     return Ok(functions)
+
+
+def string_result(ty: &RustType) -> bool:
+    """Require the exact checked string result without permitting an implicit formatting conversion."""
+    match ty:
+        RustType.Primitive(IncanPrimitiveType.Str) => return true
+        _ => return false
