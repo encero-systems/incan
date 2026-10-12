@@ -7837,7 +7837,9 @@ fn builtin_and_carrier_clone_output_matches_legacy() -> Result<(), Box<dyn std::
         &fixture.scratch("builtin-carrier-clone")?,
         &fixture.sysroot,
         &fixture.formatting,
-        r#"@derive(Clone)
+        r#"from std.derives.copying import Clone
+
+@derive(Clone)
 model Left:
     value: int
 
@@ -7861,8 +7863,8 @@ def main() -> None:
     println(number.clone())
     println(maybe.unwrap().value)
     match choice:
-        Left(value=n) => println(n)
-        Right(value=text) => println(text)
+        Left(left) => println(left.value)
+        Right(right) => println(right.value)
 "#,
     )
 }
