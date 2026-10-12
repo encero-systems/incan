@@ -304,10 +304,17 @@ impl TypeChecker {
     /// Add serde's derive to a model's checked derives for each `std.serde.json` protocol its trait adoptions provide.
     ///
     /// Legacy lowering derives serde for a protocol trait adopted with `with`, directly or through a supertrait, just
-    /// as for one named in `@derive`. Recording it beside the other checked derives keeps that one fact where Body
-    /// IR reads a model's derives.
+    /// as for one named in `@derive`. The canonical selections also enter the Body IR-only native derive record, while
+    /// the legacy selection table retains its existing update.
     pub(in crate::typechecker) fn record_adopted_json_derives(&mut self, model: &str, adoptions: &[TypeBoundInfo]) {
         let provided = self.adopted_json_derives(adoptions);
+        if let Some(derives) = self.type_info.declarations.body_ir_model_derives.get_mut(model) {
+            for derive in &provided {
+                if !derives.iter().any(|existing| existing.as_str() == *derive) {
+                    derives.push((*derive).to_owned());
+                }
+            }
+        }
         let Some(derives) = self.type_info.declarations.model_derives.get_mut(model) else {
             return;
         };

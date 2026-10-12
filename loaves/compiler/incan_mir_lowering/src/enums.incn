@@ -213,7 +213,9 @@ def value_enum_raw_values(
     module: &RustBodyIrModule,
     declaration: &RustEnumDeclaration,
 ) -> Result[tuple[str, list[str]], str]:
-    """A value enum's backing and its raw values in variant order, as its serde form spells them; none for another enum."""
+    """A source value enum's backing and raw values in variant order; an SDK enum keeps its serialization in its crate."""
+    if library_enum_item(declaration) != "":
+        return Ok(("", []))
     for value_enum in module.value_enum_declarations:
         if value_enum.canonical != declaration.canonical:
             continue
