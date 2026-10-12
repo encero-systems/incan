@@ -1,4 +1,4 @@
-"""Generator consumers: `count`, `sum`, `fold`, `any`, `all`, `find` and `for_each` drain an owned generator."""
+"""Generator consumers: `count`, `sum`, `fold`, `reduce`, `any`, `all`, `find` and `for_each` drain an owned generator."""
 
 from pub::incan_mir_plan import ListLeaf, Operand, Place, PlanType, SourceSpan
 from frame import Builder, value_type, external_call
@@ -7,27 +7,23 @@ from generator_adapters import adapter_callable
 from options import carrier_layout
 
 
-pub def is_generator_consumer(member: str) -> bool:
-    """Name the generator members that drain their receiver into one value."""
-    consumers = ["count", "sum", "fold", "any", "all", "find", "for_each"]
-    for name in consumers:
-        if member == f"Generator.{name}":
-            return true
-    return false
+pub def is_generator_consumer(method: str) -> bool:
+    """Name the iterator methods that drain their receiver into one value."""
+    return method in ["count", "sum", "fold", "reduce", "any", "all", "find", "for_each"]
 
 
-pub def consumer_result(member: str) -> PlanType:
+pub def consumer_result(method: str) -> PlanType:
     """Return the result a discarded consumer call still produces; `find`'s carrier comes from its destination."""
-    if member == "Generator.any" or member == "Generator.all":
+    if method == "any" or method == "all":
         return PlanType.Bool
-    if member == "Generator.for_each":
+    if method == "for_each":
         return PlanType.Unit
     return PlanType.Int
 
 
 pub def generator_consumer(
     mut builder: Builder,
-    member: str,
+    method: str,
     source: Operand,
     arguments: list[Operand],
     output: Place,
@@ -39,7 +35,7 @@ pub def generator_consumer(
         Some((leaf, depth)) =>
             if source_type != PlanType.Generator(leaf, depth):
                 return Err("unsupported Body IR borrowed generator consumer receiver")
-            if member == "Generator.count":
+            if method == "count":
                 if len(arguments) != 0:
                     return Err("invalid Body IR generator count arguments")
                 element = generator_element(leaf, depth)
@@ -57,13 +53,13 @@ pub def generator_consumer(
                 return Ok(None)
             if source_type != PlanType.Generator(ListLeaf.Int, 0):
                 return Err("unsupported Body IR generator consumer element outside int")
-            return int_consumer(builder, member, source, arguments, output, span)
+            return int_consumer(builder, method, source, arguments, output, span)
         None => return Err("unsupported Body IR generator consumer receiver")
 
 
 def int_consumer(
     mut builder: Builder,
-    member: str,
+    method: str,
     source: Operand,
     arguments: list[Operand],
     output: Place,
@@ -71,41 +67,52 @@ def int_consumer(
 ) -> Result[None, str]:
     """Drain an integer generator; each function value takes its items by value, as legacy's callable ABI does."""
     generator = PlanType.Generator(ListLeaf.Int, 0)
-    if member == "Generator.sum":
+    if method == "sum":
         if len(arguments) != 0:
             return Err("invalid Body IR generator sum arguments")
         return consume(builder, "sum_int_generator", [generator], PlanType.Int, [source], output, span)
-    if member == "Generator.fold":
-        if len(arguments) != 2 or value_type(builder, arguments[0])? != PlanType.Int:
-            return Err("unsupported Body IR generator fold arguments")
-        signature = [PlanType.Int, PlanType.Int, PlanType.Int]
-        combine = adapter_callable(builder, arguments[1], signature, span)?
-        parameters = [generator, PlanType.Int, PlanType.FunctionPointer(signature)]
-        return consume(
-            builder,
-            "fold_int_generator",
-            parameters,
-            PlanType.Int,
-            [source, arguments[0], combine],
-            output,
-            span,
-        )
+    if method == "fold" or method == "reduce":
+        return accumulate(builder, method, source, arguments, output, span)
     if len(arguments) != 1:
-        return Err(f"invalid Body IR generator {member} arguments")
+        return Err(f"invalid Body IR generator {method} arguments")
     mut returns = PlanType.Bool
-    if member == "Generator.for_each":
+    if method == "for_each":
         returns = PlanType.Unit
     signature = [PlanType.Int, returns]
     callable = adapter_callable(builder, arguments[0], signature, span)?
     parameters = [generator, PlanType.FunctionPointer(signature)]
-    if member == "Generator.find":
+    if method == "find":
         result = builder.locals[output.local].ty
         _owner, declaration = carrier_layout(builder, result)?
         if declaration.carrier != "Option" or declaration.variants[1].fields != [PlanType.Int]:
             return Err("unsupported Body IR generator find carrier")
         return consume(builder, "find_int_generator", parameters, result, [source, callable], output, span)
-    name = member.replace("Generator.", "")
-    return consume(builder, f"{name}_int_generator", parameters, returns, [source, callable], output, span)
+    return consume(builder, f"{method}_int_generator", parameters, returns, [source, callable], output, span)
+
+
+def accumulate(
+    mut builder: Builder,
+    method: str,
+    source: Operand,
+    arguments: list[Operand],
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Combine the integer items from an initial value, as `fold` and `reduce` both do."""
+    if len(arguments) != 2 or value_type(builder, arguments[0])? != PlanType.Int:
+        return Err(f"unsupported Body IR generator {method} arguments")
+    signature = [PlanType.Int, PlanType.Int, PlanType.Int]
+    combine = adapter_callable(builder, arguments[1], signature, span)?
+    parameters = [PlanType.Generator(ListLeaf.Int, 0), PlanType.Int, PlanType.FunctionPointer(signature)]
+    return consume(
+        builder,
+        f"{method}_int_generator",
+        parameters,
+        PlanType.Int,
+        [source, arguments[0], combine],
+        output,
+        span,
+    )
 
 
 def consume(

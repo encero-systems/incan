@@ -2058,10 +2058,18 @@ impl TypeChecker {
                 incan_lang::lang::types::collections::as_str(CollectionTypeId::FrozenDict),
                 frozen_dict_methods::from_str(method).map(frozen_dict_methods::as_str)?,
             ),
+            // An `Iterator[T]` value, such as an adapter's result or a list's `iter()`, has the RFC 088 surface as its
+            // own members, as a `Generator[T]` does.
+            ResolvedType::Generic(name, _) if Self::is_iterator_protocol_name(name) => (
+                Self::iterator_protocol_name(),
+                iterator_methods::from_str(method).map(iterator_methods::as_str)?,
+            ),
             ResolvedType::Generic(name, _) => match collection_type_id(name) {
                 Some(CollectionTypeId::List) => (
                     incan_lang::lang::types::collections::as_str(CollectionTypeId::List),
-                    list_methods::from_str(method).map(list_methods::as_str)?,
+                    list_methods::from_str(method)
+                        .map(list_methods::as_str)
+                        .or_else(|| Self::iterable_iter_member(method))?,
                 ),
                 Some(CollectionTypeId::Dict) => (
                     incan_lang::lang::types::collections::as_str(CollectionTypeId::Dict),
@@ -2090,6 +2098,13 @@ impl TypeChecker {
             _ => return None,
         };
         Some(Self::compiler_builtin_member_identity(owner, member))
+    }
+
+    /// Name the RFC 088 `iter()` member that starts an iterator over a list; the list method registry does not list it,
+    /// because the iterator surface owns it.
+    fn iterable_iter_member(method: &str) -> Option<&'static str> {
+        let iter = iterator_methods::IteratorMethodId::Iter;
+        (iterator_methods::from_str(method) == Some(iter)).then(|| iterator_methods::as_str(iter))
     }
 
     /// Typecheck built-in numeric resize helpers and retain their concrete target for downstream call lowering.

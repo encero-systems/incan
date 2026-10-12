@@ -44,10 +44,21 @@ pub def generator_type(ty: &RustType) -> Option[Result[PlanType, str]]:
                         if len(elements) == 2:
                             return Some(Ok(PlanType.ZipIterator(elements[0], elements[1])))
                     _ => pass
-            match primitive_leaf(arguments[0], false):
-                Ok(leaf) => return Some(Ok(PlanType.Generator(leaf, 0)))
+            match generator_item(arguments[0]):
+                Ok((leaf, depth)) => return Some(Ok(PlanType.Generator(leaf, depth)))
                 Err(_error) => return Some(Err(f"unsupported Body IR type {type_name(ty)}"))
         _ => return None
+
+
+def generator_item(ty: &RustType) -> Result[tuple[ListLeaf, int], str]:
+    """Lay out a primitive item, or a list nesting one, such as the lists `batch` yields."""
+    match ty:
+        RustType.Generic(base=base, args=arguments) =>
+            if base == "List" and len(arguments) == 1:
+                leaf, depth = generator_item(arguments[0])?
+                return Ok((leaf, depth + 1))
+        _ => pass
+    return Ok((primitive_leaf(ty, false)?, 0))
 
 
 def iterator_pair_type(ty: &RustType) -> Result[PlanType, str]:

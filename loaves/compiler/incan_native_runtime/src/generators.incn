@@ -61,6 +61,52 @@ pub def take_generator[T with (Clone, Static)](values: Generator[T], count: int)
     return values.take(count)
 
 
+pub def skip_generator[T with (Clone, Static)](values: Generator[T], count: int) -> Generator[T]:
+    """Drop the first `count` items when the first item is polled, then yield the rest."""
+    return (value for value in values.skip(count))
+
+
+pub def batch_generator[T with (Clone, Static)](values: Generator[T], size: int) -> Generator[list[T]]:
+    """Group the items in lists of `size`, the last one possibly shorter, drawing each group when it is polled."""
+    return (batch for batch in values.batch(size))
+
+
+pub def chain_generators[T with (Clone, Static)](first: Generator[T], second: Generator[T]) -> Generator[T]:
+    """Yield the first generator's items, then the second's once the first is exhausted."""
+    return (value for value in first.chain(second))
+
+
+pub def take_while_int_generator(values: Generator[int], predicate: (int) -> bool) -> Generator[int]:
+    """Yield the integer items until the predicate first rejects one."""
+    return (value for value in values.take_while(predicate))
+
+
+pub def skip_while_int_generator(values: Generator[int], predicate: (int) -> bool) -> Generator[int]:
+    """Drop the integer items the predicate accepts until it first rejects one, then yield the rest."""
+    return (value for value in values.skip_while(predicate))
+
+
+pub def flat_map_int_generator[U with (Clone, Static)](
+    values: Generator[int],
+    expand: (int) -> list[U],
+) -> Generator[U]:
+    """Expand each integer item into a list when it is polled and yield that list's items."""
+    return (item for value in values for item in expand(value))
+
+
+pub def enumerate_generator[T with (Clone, Static)](values: Generator[T]) -> Generator[tuple[int, T]]:
+    """Pair each item with its zero-based position when it is polled."""
+    return (pair for pair in values.enumerate())
+
+
+pub def zip_generators[T with (Clone, Static), U with (Clone, Static)](
+    left: Generator[T],
+    right: Generator[U],
+) -> Generator[tuple[T, U]]:
+    """Pair the items of two generators until either is exhausted."""
+    return (pair for pair in left.zip(right))
+
+
 pub def map_int_generator[U with (Clone, Static)](values: Generator[int], transform: (int) -> U) -> Generator[U]:
     """Transform each integer item when it is polled."""
     return (transform(value) for value in values)
@@ -104,6 +150,11 @@ pub def sum_int_generator(values: Generator[int]) -> int:
 pub def fold_int_generator(values: Generator[int], initial: int, combine: (int, int) -> int) -> int:
     """Combine the remaining integer items from `initial`, in order."""
     return values.fold(initial, combine)
+
+
+pub def reduce_int_generator(values: Generator[int], initial: int, combine: (int, int) -> int) -> int:
+    """Combine the remaining integer items from `initial`, in order, through the iterator's `reduce`."""
+    return values.reduce(initial, combine)
 
 
 pub def any_int_generator(values: Generator[int], predicate: (int) -> bool) -> bool:

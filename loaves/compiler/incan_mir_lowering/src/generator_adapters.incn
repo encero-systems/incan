@@ -1,24 +1,44 @@
-"""Lazy generator adapters: `take`, `map` and `filter` chained onto an owned generator through the runtime."""
+"""Lazy iterator adapters chained onto an owned generator through the runtime's own Incan iterator surface."""
 
-from pub::incan_mir_plan import Operand, Place, PlanType, RvalueKind, SourceSpan
+from pub::incan_mir_plan import (
+    CalleeKind,
+    ExternalFunction,
+    ListLeaf,
+    Operand,
+    OperandKind,
+    Place,
+    PlanType,
+    RvalueKind,
+    SourceSpan,
+    TupleElement,
+)
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, temporary, read_place, value_type, external_call
+from frame import Builder, temporary, read_place, value_type, external_call, terminate_call
 from generators import generator_shape, generator_element, generator_runtime_call
 
 
-pub def is_generator_adapter(member: str) -> bool:
+pub def iterator_method(member: str) -> str:
     """
-    Name the lazy generator members this module chains; consumers and `collect` drain instead.
+    Read the method a generator's or an iterator's member identity names; any other owner names no method.
 
-    The checker types the iterator protocol's other adapters as `Iterator` values, whose own members keep their
-    refusal, so only the generator's own `take`, `map` and `filter` chain here.
+    A generator's own members and the iterator surface it shares with an `Iterator[T]` value draw items through the
+    same runtime adapters, so both owners select them by method name.
     """
-    return member == "Generator.take" or member == "Generator.map" or member == "Generator.filter"
+    for owner in ["Generator.", "Iterator."]:
+        if member.startswith(owner):
+            return member.replace(owner, "")
+    return ""
+
+
+pub def is_generator_adapter(method: str) -> bool:
+    """Name the lazy adapters this module chains; consumers and `collect` drain instead."""
+    adapters = ["take", "skip", "batch", "map", "filter", "take_while", "skip_while", "flat_map", "chain", "enumerate", "zip"]
+    return method in adapters
 
 
 pub def generator_adapter(
     mut builder: Builder,
-    member: str,
+    method: str,
     source: Operand,
     arguments: list[Operand],
     output: Place,
@@ -27,59 +47,96 @@ pub def generator_adapter(
     """Chain one lazy adapter onto the owned source; nothing is drawn until a consumer polls the result."""
     source_type = value_type(builder, source)?
     _ = source_element(source_type)?
+    if method == "enumerate":
+        if len(arguments) != 0:
+            return Err("invalid Body IR generator enumerate arguments")
+        return enumerate_adapter(builder, source, source_type, output, span)
     if len(arguments) != 1:
-        return Err(f"invalid Body IR generator {member} arguments")
+        return Err(f"invalid Body IR generator {method} arguments")
     argument = arguments[0]
-    if member == "Generator.take":
-        return take_adapter(builder, source, source_type, argument, output, span)
-    if member == "Generator.map":
+    if method == "take" or method == "skip" or method == "batch":
+        return count_adapter(builder, method, source, source_type, argument, output, span)
+    if method == "chain":
+        return chain_adapter(builder, source, source_type, argument, output, span)
+    if method == "zip":
+        return zip_generators(builder, source, argument, output, span)
+    if method == "map":
         return map_adapter(builder, source, source_type, argument, output, span)
-    return filter_adapter(builder, source, source_type, argument, output, span)
+    if method == "flat_map":
+        return flat_map_adapter(builder, source, source_type, argument, output, span)
+    return predicate_adapter(builder, method, source, source_type, argument, output, span)
 
 
-def take_adapter(
+def count_adapter(
     mut builder: Builder,
+    method: str,
     source: Operand,
     source_type: PlanType,
     count: Operand,
     output: Place,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Stop after at most `count` items, as legacy's runtime `take` does."""
-    if builder.locals[output.local].ty != source_type or value_type(builder, count)? != PlanType.Int:
-        return Err("unsupported Body IR generator take types")
+    """Keep a prefix, drop a prefix, or group items in lists of `count`, as legacy's runtime adapters do."""
+    if value_type(builder, count)? != PlanType.Int:
+        return Err(f"unsupported Body IR generator {method} count type")
+    element = source_element(source_type)?
+    mut result = source_type
+    if method == "batch":
+        leaf, depth = require_generator(source_type)?
+        result = PlanType.Generator(leaf, depth + 1)
+    if builder.locals[output.local].ty != result:
+        return Err(f"unsupported Body IR generator {method} types")
+    name = f"{method}_generator"
+    generator_runtime_call(builder, name, element, [source_type, PlanType.Int], result, [source, count], output, span)
+    return Ok(None)
+
+
+def chain_adapter(
+    mut builder: Builder,
+    source: Operand,
+    source_type: PlanType,
+    second: Operand,
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Draw the second owned generator's items after the first is exhausted."""
+    if owned_generator(builder, second)? != source_type or builder.locals[output.local].ty != source_type:
+        return Err("unsupported Body IR generator chain types")
     element = source_element(source_type)?
     generator_runtime_call(
         builder,
-        "take_generator",
+        "chain_generators",
         element,
-        [source_type, PlanType.Int],
+        [source_type, source_type],
         source_type,
-        [source, count],
+        [source, second],
         output,
         span,
     )
     return Ok(None)
 
 
-def filter_adapter(
+def predicate_adapter(
     mut builder: Builder,
+    method: str,
     source: Operand,
     source_type: PlanType,
     predicate: Operand,
     output: Place,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Keep the items a function value accepts, testing each when it is polled."""
+    """Keep the items a function value accepts, or the prefix it accepts, or what follows that prefix."""
     if builder.locals[output.local].ty != source_type:
-        return Err("unsupported Body IR generator filter types")
+        return Err(f"unsupported Body IR generator {method} types")
     element = source_element(source_type)?
+    family = element_family(element)?
+    if method != "filter" and family != "int":
+        return Err(f"unsupported Body IR generator {method} element outside int")
     signature = [element, PlanType.Bool]
     pointer = adapter_callable(builder, predicate, signature, span)?
-    path = f"incan_native_runtime::filter_{element_family(element)?}_generator"
     external_call(
         builder,
-        path,
+        f"incan_native_runtime::{method}_{family}_generator",
         [source_type, PlanType.FunctionPointer(signature)],
         source_type,
         [source, pointer],
@@ -117,14 +174,118 @@ def map_adapter(
     return Ok(None)
 
 
-def source_element(ty: PlanType) -> Result[PlanType, str]:
-    """Read the element an owned generator yields."""
+def flat_map_adapter(
+    mut builder: Builder,
+    source: Operand,
+    source_type: PlanType,
+    expand: Operand,
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Expand each integer item into a list with a function value and draw that list's items lazily."""
+    if source_type != PlanType.Generator(ListLeaf.Int, 0):
+        return Err("unsupported Body IR generator flat_map element outside int")
+    result = builder.locals[output.local].ty
+    leaf, depth = require_generator(result)?
+    mapped = generator_element(leaf, depth)
+    signature = [PlanType.Int, PlanType.List(leaf, depth + 1)]
+    pointer = adapter_callable(builder, expand, signature, span)?
+    generator_runtime_call(
+        builder,
+        "flat_map_int_generator",
+        mapped,
+        [source_type, PlanType.FunctionPointer(signature)],
+        result,
+        [source, pointer],
+        output,
+        span,
+    )
+    return Ok(None)
+
+
+def enumerate_adapter(
+    mut builder: Builder,
+    source: Operand,
+    source_type: PlanType,
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Pair each item with its zero-based position, drawing it only when polled."""
+    element = source_element(source_type)?
+    result = pair_output(builder, output, TupleElement.Int, pair_component(element)?)?
+    generator_runtime_call(builder, "enumerate_generator", element, [source_type], result, [source], output, span)
+    return Ok(None)
+
+
+pub def zip_generators(
+    mut builder: Builder,
+    first: Operand,
+    second: Operand,
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Pair the items of two owned generators until either is exhausted, as `zip` over iterators does."""
+    first_type = owned_generator(builder, first)?
+    second_type = owned_generator(builder, second)?
+    left = source_element(first_type)?
+    right = source_element(second_type)?
+    result = pair_output(builder, output, pair_component(left)?, pair_component(right)?)?
+    path = "incan_native_runtime::zip_generators"
+    builder.externals.append(
+        ExternalFunction(
+            path=path,
+            type_arguments=[left, right],
+            parameters=[first_type, second_type],
+            return_type=result,
+            span=span,
+        ),
+    )
+    terminate_call(builder, CalleeKind.InstantiatedPair(path, left, right), [first, second], output, span)
+    return Ok(None)
+
+
+def pair_output(builder: Builder, output: Place, left: TupleElement, right: TupleElement) -> Result[PlanType, str]:
+    """Require the generator of pairs the frame laid out for a pair adapter's checked destination."""
+    result = PlanType.Generator(ListLeaf.Tuple([left, right]), 0)
+    if builder.locals[output.local].ty != result:
+        return Err("unsupported Body IR generator pair destination")
+    return Ok(result)
+
+
+def pair_component(element: PlanType) -> Result[TupleElement, str]:
+    """Lay out one scalar or text pair component."""
+    match element:
+        PlanType.Int => return Ok(TupleElement.Int)
+        PlanType.Float => return Ok(TupleElement.Float)
+        PlanType.Bool => return Ok(TupleElement.Bool)
+        PlanType.String => return Ok(TupleElement.String)
+        _ => return Err("unsupported Body IR generator pair component outside scalars and text")
+
+
+def owned_generator(builder: Builder, value: Operand) -> Result[PlanType, str]:
+    """Require a moved, owned generator argument; a borrowed one would be read twice."""
+    ty = value_type(builder, value)?
+    match value.kind:
+        OperandKind.Move(_place) =>
+            _ = source_element(ty)?
+            return Ok(ty)
+        _ => return Err("unsupported Body IR generator argument without a move")
+
+
+def require_generator(ty: PlanType) -> Result[tuple[ListLeaf, int], str]:
+    """Read an owned generator's item layout."""
     match generator_shape(ty):
         Some((leaf, depth)) =>
             if ty != PlanType.Generator(leaf, depth):
                 return Err("unsupported Body IR borrowed generator adapter value")
-            return Ok(generator_element(leaf, depth))
+            return Ok((leaf, depth))
         None => return Err("unsupported Body IR generator adapter result outside generators")
+
+
+def source_element(ty: PlanType) -> Result[PlanType, str]:
+    """Read the element an owned generator yields."""
+    leaf, depth = require_generator(ty)?
+    return Ok(generator_element(leaf, depth))
 
 
 def element_family(element: PlanType) -> Result[str, str]:

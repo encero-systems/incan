@@ -1,0 +1,146 @@
+"""The frame slots that hold a lazy generator of pairs rather than builtin `zip`'s list snapshot."""
+
+from rust::incan_semantics_core import IncanType as RustType, SymbolOrigin
+from rust::incan_semantics_core::body_ir import (
+    ArgumentElement as RustArgumentElement,
+    Block as RustBlock,
+    Body as RustBody,
+    BuiltinFnId as RustBuiltin,
+    CallableTarget,
+    Callee as RustCallee,
+    MethodTarget,
+    Operand as RustOperand,
+    Place as RustPlace,
+    Rvalue as RustRvalue,
+    StatementKind as RustStatementKind,
+)
+from pub::incan_mir_plan import ListLeaf, PlanType
+
+
+pub def pair_generator_locals(body: &RustBody) -> list[int]:
+    """
+    Name the frame slots, one past each Body IR local, that hold a lazy generator of pairs.
+
+    The checker types builtin `zip` over lists and a pair adapter alike as `Iterator[tuple[A, B]]`. Builtin `zip` over
+    lists keeps its list-snapshot layout. A pair adapter (`enumerate` or `zip` called on an iterator), builtin `zip`
+    over two iterators, and a loop iterator reading either of them draw lazily from their sources instead.
+    """
+    mut pairs: list[int] = []
+    collect_pairs(body, body.block, pairs)
+    return pairs
+
+
+pub def pair_generator_type(ty: PlanType) -> PlanType:
+    """Lay out a pair iterator slot as the generator of those pairs; any other layout keeps its own refusal."""
+    match ty:
+        PlanType.ZipIterator(left, right) => return PlanType.Generator(ListLeaf.Tuple([left, right]), 0)
+        _ => return ty
+
+
+def collect_pairs(body: &RustBody, block: &RustBlock, mut pairs: list[int]) -> None:
+    """Visit the statements in order, so a loop iterator follows the pair slot its source call filled before it."""
+    for statement in block.stmts:
+        visit_statement(body, statement.kind, pairs)
+
+
+def visit_statement(body: &RustBody, kind: &RustStatementKind, mut pairs: list[int]) -> None:
+    """Record a pair-producing call's destination or a loop iterator reading a pair slot, and visit nested blocks."""
+    match kind:
+        RustStatementKind.Call(destination=destination, callee=callee, args=arguments, may_panic=_may_panic) =>
+            if produces_pairs(body, callee, arguments):
+                match destination:
+                    Some(place) => add_slot(place, pairs)
+                    None => pass
+        RustStatementKind.Assign(place=place, rvalue=value) =>
+            if reads_pair_slot(value, pairs):
+                add_slot(place, pairs)
+        RustStatementKind.Loop(body=nested) => collect_pairs(body, nested, pairs)
+        RustStatementKind.If(cond=_condition, then_block=then_body, else_block=else_body) =>
+            collect_pairs(body, then_body, pairs)
+            match else_body:
+                Some(nested) => collect_pairs(body, nested, pairs)
+                None => pass
+        _ => pass
+
+
+def produces_pairs(body: &RustBody, callee: &RustCallee, arguments: &list[RustArgumentElement]) -> bool:
+    """Recognize a pair adapter by its builtin identity, or builtin `zip` by its two iterator operands."""
+    match callee:
+        RustCallee.Method(target) => return is_pair_adapter(target)
+        RustCallee.Function(callable) =>
+            match callable:
+                CallableTarget.Named(target) =>
+                    match target.builtin:
+                        Some(builtin) =>
+                            if builtin == RustBuiltin.Zip:
+                                return zips_iterators(body, arguments)
+                        None => pass
+                _ => pass
+        _ => pass
+    return false
+
+
+def is_pair_adapter(target: &MethodTarget) -> bool:
+    """Match the generator's and the iterator surface's `enumerate` and `zip` builtin member identities."""
+    match target.canonical:
+        Some(identity) =>
+            if identity.origin != SymbolOrigin.Builtin:
+                return false
+            name = str(identity.declaration_name)
+            return name in ["Generator.enumerate", "Iterator.enumerate", "Generator.zip", "Iterator.zip"]
+        None => return false
+
+
+def zips_iterators(body: &RustBody, arguments: &list[RustArgumentElement]) -> bool:
+    """Require exactly two whole-local operands whose checked types are iterators or generators."""
+    if len(arguments) != 2:
+        return false
+    for argument in arguments:
+        match argument.as_one():
+            Some(RustOperand.Place(read)) =>
+                if not iterator_local(body, read.place):
+                    return false
+            _ => return false
+    return true
+
+
+def iterator_local(body: &RustBody, place: &RustPlace) -> bool:
+    """Read a whole local's checked type; a projection or a global is not an iterator slot."""
+    if len(place.projection) != 0:
+        return false
+    match place.local_id():
+        Some(local) => return is_iterator_type(body.locals[int(local.index())].ty)
+        None => return false
+
+
+def is_iterator_type(ty: &RustType) -> bool:
+    """Recognize a checked `Iterator[T]` or `Generator[T]` type."""
+    match ty:
+        RustType.Generic(base=base, args=_arguments) => return base == "Iterator" or base == "Generator"
+        _ => return false
+
+
+def reads_pair_slot(value: &RustRvalue, pairs: list[int]) -> bool:
+    """Recognize a loop iterator initialized from a whole pair slot."""
+    match value:
+        RustRvalue.Use(RustOperand.Place(read)) =>
+            if len(read.place.projection) != 0:
+                return false
+            match read.place.local_id():
+                Some(local) =>
+                    slot = int(local.index()) + 1
+                    return slot in pairs
+                None => return false
+        _ => return false
+
+
+def add_slot(place: &RustPlace, mut pairs: list[int]) -> None:
+    """Record a whole local's frame slot once."""
+    if len(place.projection) != 0:
+        return
+    match place.local_id():
+        Some(local) =>
+            slot = int(local.index()) + 1
+            if slot not in pairs:
+                pairs.append(slot)
+        None => pass

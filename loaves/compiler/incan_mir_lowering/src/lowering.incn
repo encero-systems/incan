@@ -142,9 +142,11 @@ from generators import (
     generator_next,
     is_generator_type,
     is_generator_reference,
+    generator_runtime_call,
 )
 from generator_expressions import first_clause_item, source_generator, source_item, construct_chain, step_result
-from generator_adapters import is_generator_adapter, generator_adapter
+from generator_adapters import is_generator_adapter, generator_adapter, iterator_method, zip_generators
+from pair_generators import pair_generator_locals, pair_generator_type
 from generator_consumers import is_generator_consumer, consumer_result, generator_consumer
 from project import project_context
 from nominal_instances import specialize_nominals
@@ -2876,6 +2878,16 @@ def lower_zip_builtin(
     if len(arguments) != 2:
         return Err("unsupported Body IR zip arity")
     output = call_destination(builder, destination, PlanType.Unit, span)?
+    # The frame lays out zip over two iterators as a generator of pairs, which draws from both lazily.
+    match generator_shape(builder.locals[output.local].ty):
+        Some(_shape) =>
+            first = argument_value(builder, arguments, 0, span)?
+            second = argument_value(builder, arguments, 1, span)?
+            drop_owned(builder, output.local, span)
+            zip_generators(builder, first, second, output, span)?
+            builder.owned.append(output.local)
+            return Ok(None)
+        None => pass
     match zip_shape(builder.locals[output.local].ty):
         None => return Err("unsupported Body IR zip checked destination")
         Some((left, right)) =>
@@ -4314,6 +4326,7 @@ def frame_locals(
 ) -> Result[list[Local], str]:
     """The frame's locals: the return slot first, then Body IR's locals in `LocalId` order."""
     iterators = list_iterator_locals(body.block)
+    pairs = pair_generator_locals(body)
     mut locals = [Local(ty=return_type, span=span)]
     for local in body.locals:
         if int(local.id.index()) + 1 != len(locals):
@@ -4325,6 +4338,8 @@ def frame_locals(
             None =>
                 ty = frame_type(module, local, intrinsics)?
         index = int(local.id.index()) + 1
+        if index in pairs:
+            ty = pair_generator_type(ty)
         if index in iterators:
             match zip_shape(ty):
                 Some((left, right)) =>
@@ -5029,7 +5044,7 @@ def numeric_receiver(
 
 def lower_generator_member(
     mut builder: Builder,
-    member: str,
+    method: str,
     arguments: &list[RustArgumentElement],
     destination: &Option[RustPlace],
     receiver_ty: PlanType,
@@ -5047,13 +5062,62 @@ def lower_generator_member(
     for index in range(1, len(arguments)):
         operands.append(argument_value(builder, arguments, index, span)?)
     source = read_place(receiver, true, span)
-    if is_generator_consumer(member):
-        output = call_destination(builder, destination, consumer_result(member), span)?
+    if is_generator_consumer(method):
+        output = call_destination(builder, destination, consumer_result(method), span)?
         drop_owned(builder, output.local, span)
-        return generator_consumer(builder, member, source, operands, output, span)
+        return generator_consumer(builder, method, source, operands, output, span)
     output = call_destination(builder, destination, receiver_ty, span)?
     drop_owned(builder, output.local, span)
-    generator_adapter(builder, member, source, operands, output, span)?
+    generator_adapter(builder, method, source, operands, output, span)?
+    builder.owned.append(output.local)
+    return Ok(None)
+
+
+def lower_list_iter(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Start a lazy iterator over a snapshot of the list, so the list stays readable, as legacy's `iter()` leaves it."""
+    if len(arguments) != 1:
+        return Err("invalid Body IR list iter arguments")
+    leaf, depth = require_list_shape(argument_type(builder, arguments, 0, span)?, "unsupported Body IR iter on non-list")?
+    element = list_element(leaf, depth)
+    cell = static_list_receiver(builder, arguments, false, span)?
+    mut reference = read_place(plan_place(0, span), false, span)
+    match cell:
+        Some((_global, receiver)) =>
+            reference = list_borrow(builder, receiver, false, span)?
+        None =>
+            reference = borrowed_list_argument(builder, arguments, 0, false, span)?
+    snapshot = temporary(builder, PlanType.List(leaf, depth), span)
+    list_call(
+        builder,
+        "clone_list",
+        element,
+        [PlanType.ListRef(leaf, depth)],
+        PlanType.List(leaf, depth),
+        [reference],
+        snapshot,
+        span,
+    )
+    builder.owned.append(snapshot.local)
+    result = PlanType.Generator(leaf, depth - 1)
+    output = call_destination(builder, destination, result, span)?
+    if builder.locals[output.local].ty != result:
+        return Err("unsupported Body IR list iter destination")
+    drop_owned(builder, output.local, span)
+    generator_runtime_call(
+        builder,
+        "list_generator",
+        element,
+        [PlanType.List(leaf, depth)],
+        result,
+        [read_place(snapshot, true, span)],
+        output,
+        span,
+    )
     builder.owned.append(output.local)
     return Ok(None)
 
@@ -5069,9 +5133,10 @@ def lower_list_method(
     receiver_ty = argument_type(builder, arguments, 0, span)?
     match generator_shape(receiver_ty):
         Some((leaf, depth)) =>
-            if is_generator_adapter(member) or is_generator_consumer(member):
-                return lower_generator_member(builder, member, arguments, destination, receiver_ty, span)
-            if member != "Generator.collect" and member != "Iterator.collect":
+            method = iterator_method(member)
+            if is_generator_adapter(method) or is_generator_consumer(method):
+                return lower_generator_member(builder, method, arguments, destination, receiver_ty, span)
+            if method != "collect":
                 return Err(f"unsupported Body IR generator Method {member}")
             if len(arguments) != 1:
                 return Err("invalid Body IR generator collect arguments")
@@ -5082,6 +5147,8 @@ def lower_list_method(
             builder.owned.append(output.local)
             return Ok(None)
         None => pass
+    if member == "List.iter":
+        return lower_list_iter(builder, arguments, destination, span)
     if is_collection(receiver_ty):
         return collection_method(builder, member, arguments, destination, span)
     leaf, depth = require_list_shape(receiver_ty, "unsupported Body IR list Method on non-list")?
@@ -5202,14 +5269,48 @@ def lower_list_builtin(
     """Read string, list, and hashed-collection lengths through the legacy runtime contracts."""
     if len(arguments) != 1:
         return Err("unsupported Body IR len arity")
+    # An indexed nested list, such as `len(rows[1])`, is measured through the copy a shared list argument reads.
+    if indexes_a_list(builder, arguments):
+        element = borrowed_list_argument(builder, arguments, 0, false, span)?
+        return list_length(builder, element, destination, span)
     ty = argument_type(builder, arguments, 0, span)?
     if ty in [PlanType.String, PlanType.StringRef, PlanType.FrozenStr]:
         return lower_text_helper(builder, "length_text", PlanType.Int, arguments, destination, span)
     receiver = shared_receiver_place(builder, arguments, 0, span)?
     if is_collection(place_type(builder.locals, receiver)):
         return collection_length(builder, receiver, destination, span)
-    leaf, depth = require_list_shape(place_type(builder.locals, receiver), "unsupported Body IR len on non-list")?
+    _ = require_list_shape(place_type(builder.locals, receiver), "unsupported Body IR len on non-list")?
     reference = list_borrow(builder, receiver, false, span)?
+    return list_length(builder, reference, destination, span)
+
+
+def indexes_a_list(builder: Builder, arguments: &list[RustArgumentElement]) -> bool:
+    """Recognize one index into a local list of lists, such as `rows[1]`."""
+    match arguments[0].as_one():
+        Some(RustOperand.Place(read)) =>
+            if len(read.place.projection) != 1:
+                return false
+            match read.place.projection[0]:
+                PlaceElem.Index(_index) => pass
+                _ => return false
+            match read.place.local_id():
+                Some(local) =>
+                    slot = int(local.index()) + 1 + builder.local_offset
+                    match list_shape(builder.locals[slot].ty):
+                        Some((_leaf, depth)) => return depth > 1
+                        None => return false
+                None => return false
+        _ => return false
+
+
+def list_length(
+    mut builder: Builder,
+    reference: Operand,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Read a borrowed list's length through the runtime."""
+    leaf, depth = require_list_shape(operand_type(builder, reference)?, "unsupported Body IR len on non-list")?
     output = call_destination(builder, destination, PlanType.Int, span)?
     list_call(
         builder,
