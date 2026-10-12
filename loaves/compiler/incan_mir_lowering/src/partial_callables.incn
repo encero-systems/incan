@@ -1,0 +1,216 @@
+"""
+Closures whose parameters carry defaults: local partials with presets and the declaration defaults they keep.
+
+Legacy gives a partial's preset parameter an `Option` input that the closure resolves against its captured preset.
+Here each parameter that carries a default instead takes a supplied flag before its value: a call that names the
+parameter passes `true` and the value, and a call that omits it passes `false` and a placeholder, so the closure
+evaluates the preset or the declaration default itself, exactly once per call and after the written arguments.
+"""
+
+from rust::incan_semantics_core::body_ir import (
+    ArgumentBinding as RustArgumentBinding,
+    ArgumentElement as RustArgumentElement,
+    BodyIrModule,
+    CallableParam as RustCallableParam,
+    CallableParamDefault,
+)
+from pub::incan_mir_plan import Constant, Operand, PlanType, RvalueKind, SourceSpan, TerminatorKind
+from pub::incan_mir_plan import assign as plan_assign, place as plan_place
+from frame import Builder, read_place, literal, drop_owned, track_rvalue_moves
+from text_plan import clone_text, owned_literal
+from lists import list_parameter_type
+from lowering import call_argument_operand, lower_statement
+
+
+pub def default_flags(parameters: &list[RustCallableParam]) -> list[bool]:
+    """One flag per declared parameter, set when the parameter carries a preset or a declaration default."""
+    mut flags: list[bool] = []
+    for parameter in parameters:
+        match parameter.default:
+            CallableParamDefault.Required => flags.append(false)
+            _ => flags.append(true)
+    return flags
+
+
+pub def with_supplied_flags(signature: list[PlanType], flags: list[bool]) -> Result[list[PlanType], str]:
+    """Insert a `bool` supplied flag before each input whose parameter carries a default."""
+    if len(signature) != len(flags) + 1:
+        return Err("invalid Body IR partial callable signature")
+    mut expanded: list[PlanType] = []
+    for index in range(len(flags)):
+        if flags[index]:
+            expanded.append(PlanType.Bool)
+        expanded.append(signature[index])
+    expanded.append(signature[-1])
+    return Ok(expanded)
+
+
+pub def partial_flags(builder: Builder, local: int) -> Option[list[bool]]:
+    """The default flags recorded for a local that holds a closure whose parameters carry defaults."""
+    for entry in builder.partial_callables:
+        if entry[0] == local:
+            return Some(entry[1])
+    return None
+
+
+pub def record_partial(mut builder: Builder, local: int, flags: list[bool]) -> None:
+    """Remember the default flags of the callable a local now holds, forgetting those of any partial it held before."""
+    mut kept: list[tuple[int, list[bool]]] = []
+    for entry in builder.partial_callables:
+        if entry[0] != local:
+            kept.append(entry)
+    if true in flags:
+        kept.append((local, flags))
+    builder.partial_callables = kept
+
+
+pub def partial_call_operands(
+    mut builder: Builder,
+    binding: &RustArgumentBinding,
+    elements: &list[RustArgumentElement],
+    signature: list[PlanType],
+    flags: list[bool],
+    span: SourceSpan,
+) -> Result[list[Operand], str]:
+    """
+    Pass a call's written arguments, in written order, and then fill the closure's supplied flags.
+
+    A parameter that carries a default receives `true` and its argument when the call names it, and `false` and a
+    placeholder when the call leaves it to the closure. Every other parameter must be named.
+    """
+    match binding:
+        RustArgumentBinding.Resolved(arguments=bindings, defaulted_slots=_defaults) =>
+            positions = input_positions(flags.clone())
+            mut values: list[Option[Operand]] = []
+            for _index in range(len(flags)):
+                values.append(None)
+            mut named: list[int] = []
+            for index in range(len(bindings)):
+                slot = int(bindings[index].slot)
+                if slot < 0 or slot >= len(flags) or slot in named:
+                    return Err("invalid Body IR argument slot map")
+                named.append(slot)
+                match elements[index].as_one():
+                    Some(value) =>
+                        values[slot] = Some(call_argument_operand(builder, value, signature[positions[slot]], span)?)
+                    None => return Err("unsupported Body IR named or spread ArgumentElement")
+            return assemble_inputs(builder, values, signature, flags, positions, span)
+        _ => return Err("unsupported Body IR unresolved ArgumentBinding")
+
+
+def input_positions(flags: list[bool]) -> list[int]:
+    """Each declared parameter's value input position in the expanded signature."""
+    mut positions: list[int] = []
+    mut position = 0
+    for flag in flags:
+        if flag:
+            position += 1
+        positions.append(position)
+        position += 1
+    return positions
+
+
+def assemble_inputs(
+    mut builder: Builder,
+    values: list[Option[Operand]],
+    signature: list[PlanType],
+    flags: list[bool],
+    positions: list[int],
+    span: SourceSpan,
+) -> Result[list[Operand], str]:
+    """Order the evaluated values and supplied flags as the expanded signature lists them."""
+    mut operands: list[Operand] = []
+    for slot in range(len(flags)):
+        match values[slot]:
+            Some(value) =>
+                if flags[slot]:
+                    operands.append(literal(Constant.Bool(true), span))
+                operands.append(value)
+            None =>
+                if not flags[slot]:
+                    return Err("unsupported Body IR omitted argument without a default")
+                operands.append(literal(Constant.Bool(false), span))
+                operands.append(placeholder(builder, signature[positions[slot]], span)?)
+    return Ok(operands)
+
+
+def placeholder(mut builder: Builder, ty: PlanType, span: SourceSpan) -> Result[Operand, str]:
+    """A value the closure never reads, passed for an omitted parameter whose flag says it was not supplied."""
+    match ty:
+        PlanType.Int => return Ok(literal(Constant.Int(0), span))
+        PlanType.Float => return Ok(literal(Constant.Float(0.0), span))
+        PlanType.Bool => return Ok(literal(Constant.Bool(false), span))
+        PlanType.String =>
+            text = owned_literal(builder, "", span)
+            return Ok(read_place(text, true, span))
+        _ => return Err("unsupported Body IR omitted partial parameter of this type")
+
+
+pub def bind_defaulted_parameter(
+    module: &BodyIrModule,
+    mut lifted: Builder,
+    parameter: &RustCallableParam,
+    destination: int,
+    flag_slot: int,
+    ty: PlanType,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Bind a parameter that carries a default from its supplied flag: the passed value, or else its preset or default.
+
+    The flag is the argument at `flag_slot` and the value the one after it. An omitted text value is dropped unread.
+    A default whose computation would leave other owned values behind stays refused.
+    """
+    if list_parameter_type(lifted.locals[destination].ty, false) != ty:
+        return Err("invalid Body IR closure argument type")
+    lifted.locals[destination].ty = ty
+    supplied = lifted.new_block(span)
+    omitted = lifted.new_block(span)
+    joined = lifted.new_block(span)
+    flag = read_place(plan_place(flag_slot, span), false, span)
+    lifted.finish(TerminatorKind.SwitchBool(flag, omitted, supplied), span)
+    incoming = lifted.owned
+    lifted.current = supplied
+    owned = ty == PlanType.String
+    passed = read_place(plan_place(flag_slot + 1, span), owned, span)
+    lifted.emit(plan_assign(plan_place(destination, span), RvalueKind.Use(passed), span))
+    lifted.finish(TerminatorKind.Goto(joined), span)
+    lifted.current = omitted
+    lifted.owned = incoming
+    if owned:
+        lifted.owned.append(flag_slot + 1)
+        drop_owned(lifted, flag_slot + 1, span)
+    value = default_value(module, lifted, parameter, ty, span)?
+    # The preset's copy or the computed default moves into the parameter, so it needs no drop of its own.
+    track_rvalue_moves(lifted, RvalueKind.Use(value))
+    lifted.emit(plan_assign(plan_place(destination, span), RvalueKind.Use(value), span))
+    if lifted.owned != incoming:
+        return Err("unsupported Body IR partial default leaving owned values")
+    lifted.finish(TerminatorKind.Goto(joined), span)
+    lifted.current = joined
+    lifted.owned = incoming
+    if owned:
+        lifted.owned.append(destination)
+    return Ok(None)
+
+
+def default_value(
+    module: &BodyIrModule,
+    mut lifted: Builder,
+    parameter: &RustCallableParam,
+    ty: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Evaluate an omitted parameter's preset, copied from the closure's capture, or its declaration default."""
+    match parameter.default:
+        CallableParamDefault.PartialPreset(capture=capture) =>
+            source = plan_place(int(capture.index()) + 1 + lifted.local_offset, span)
+            if ty == PlanType.String:
+                copy = clone_text(lifted, source, span)?
+                return Ok(read_place(copy, true, span))
+            return Ok(read_place(source, false, span))
+        CallableParamDefault.Source(computation) =>
+            for statement in computation.stmts:
+                lower_statement(module, lifted, statement)?
+            return call_argument_operand(lifted, computation.result, ty, span)
+        _ => return Err("unsupported Body IR partial parameter default")

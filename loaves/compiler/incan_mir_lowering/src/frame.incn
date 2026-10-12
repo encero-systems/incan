@@ -50,6 +50,7 @@ pub model Builder:
     `step_element` is the element type of the generator expression whose lifted step this frame builds, or None in every other frame; a step's yield returns its one accepted element instead of suspending.
     `iteration_locals` lists the frame slots Body IR polls with a builtin `IterNext`, so an iterator's materialization is recognized by its slot rather than by its read.
     `step_bindings` lists the Body IR locals a generator-expression step binds from its arguments, and `step_clauses` each later `for` clause of that step: its iterator local, its source local, and the locals bound before it.
+    `partial_callables` pairs each local holding a closure whose parameters carry defaults with one flag per declared parameter, marking those whose input is preceded by a supplied flag.
     """
 
     pub locals: list[Local]
@@ -67,6 +68,7 @@ pub model Builder:
     pub iterators: list[tuple[int, int]]
     pub borrowed_items: list[int]
     pub in_place_items: list[int]
+    pub partial_callables: list[tuple[int, list[bool]]]
     pub nominals: list[RustNominalDeclaration]
     pub enums: list[RustEnumDeclaration]
     pub unions: list[RustType]
