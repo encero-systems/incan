@@ -159,8 +159,16 @@ pub fn build_body_ir_module_v0_with_executable_context(
 /// A consumer that links the SDK crates carries these as package layouts beside the module's own Body IR: every
 /// field keeps its declared identity on the owner's package origin, so the records validate like published package
 /// layouts, while the crate that compiled them keeps their storage, derives and methods.
+/// Concrete SDK constructors returned by selected trait defaults count even when legacy exposes only their trait
+/// interface; their source-verified layouts grant no permission to execute a missing default body.
 pub fn library_nominal_declarations(type_info: &TypeCheckInfo) -> Vec<bir::NominalDeclaration> {
-    library_nominals::collect(type_info)
+    let mut layouts = library_nominals::collect(type_info);
+    for layout in library_opaque_returns::layouts(type_info) {
+        if !layouts.iter().any(|existing| existing.canonical == layout.canonical) {
+            layouts.push(layout);
+        }
+    }
+    layouts
 }
 
 /// Crate-call records for the stdlib functions and model or class methods one module calls, retaining their type
@@ -174,12 +182,13 @@ pub fn library_call_delegations(type_info: &TypeCheckInfo) -> Vec<bir::StdlibDel
 }
 
 /// The package-origin models, classes, enums and newtypes one module uses, including those it reaches only through a
-/// stdlib signature or a checked expression type. A consumer resolves the ones its linked SDK packages publish.
+/// stdlib signature, a checked expression type, or a selected trait default's concrete constructor. A consumer
+/// resolves the ones its linked SDK packages publish.
 pub fn library_type_identities(type_info: &TypeCheckInfo) -> Vec<CanonicalSymbolId> {
     let mut cache = crate::typechecker::stdlib_loader::StdlibAstCache::new();
-    library_nominals::type_identities(type_info, &mut cache)
-        .into_iter()
-        .collect()
+    let mut identities = library_nominals::type_identities(type_info, &mut cache);
+    identities.extend(library_opaque_returns::identities(type_info));
+    identities.into_iter().collect()
 }
 
 /// Collect the named leaves of `ty` with their structural paths below `path`, through generic arguments and tuple
@@ -428,6 +437,7 @@ fn build_body_ir_module_v0_with_provider_operations(
         bodies,
     };
     opaque_returns::retain(&mut module);
+    library_opaque_returns::retain(&mut module, type_info);
     module
 }
 
@@ -1787,6 +1797,7 @@ mod calls;
 mod library_calls;
 mod library_defaults;
 mod library_nominals;
+mod library_opaque_returns;
 mod stdlib_delegations;
 
 mod operators;
