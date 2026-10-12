@@ -10775,6 +10775,28 @@ def main() -> None:
     )
 }
 
+/// Preserve the original value and evaluate user constructors once across chained collection/carrier targets.
+#[test]
+fn chained_collection_targets_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_collection_family_source(
+        "chained-collection-targets",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/cli_values_and_calls/chained_assignment_reassigns_names_inside_a_loop.incn"
+        ),
+    )
+}
+
+/// Keep nested carrier owners intact through indexed collection reads and replacement.
+#[test]
+fn nested_collection_carriers_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_collection_family_source(
+        "nested-collection-carriers",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/cli_dependencies/dev7_nested_carrier_ownership/src/main.incn"
+        ),
+    )
+}
+
 /// A keyed lookup in a dictionary with enum keys renders a missing key through Display, which an enum lacks, so the
 /// direct route refuses it by name, as it does for model keys.
 #[test]

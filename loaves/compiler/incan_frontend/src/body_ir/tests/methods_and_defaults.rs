@@ -439,6 +439,48 @@ fn lowers_chained_assignment_right_to_left() -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
+/// A shared chained value retains its original type rather than reading an already wrapped target back into
+/// another destination. Each target reads the same once-evaluated value in written order.
+#[test]
+fn chained_targets_read_the_original_value_before_destination_injection() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def value() -> list[int]:\n  return [1]\ndef chain() -> None:\n  mut left: list[int] = []\n  mut right: Option[list[int]] = None\n  left = right = value()\n";
+    let module = build(source, &["m", "chained_original"])?;
+    let body = body_named(&module, "chain")?;
+    let left = body
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("left"))
+        .ok_or("missing left")?
+        .id;
+    let right = body
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("right"))
+        .ok_or("missing right")?
+        .id;
+    let reads: Vec<_> = body
+        .block
+        .stmts
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                place,
+                rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
+            } if place.local_id() == Some(left) || place.local_id() == Some(right) => {
+                Some((place.local_id(), read.place.local_id()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(reads.len(), 2);
+    assert_eq!(reads[0].0, Some(left));
+    assert_eq!(reads[1].0, Some(right));
+    assert_eq!(reads[0].1, reads[1].1);
+    assert_ne!(reads[0].1, Some(left));
+    assert_ne!(reads[0].1, Some(right));
+    Ok(())
+}
+
 /// A chained value the checker recorded as written per target is evaluated once per target, left to right, at that
 /// target's type, as legacy writes it: `n = f = 1` over an `int` and a `float` writes the integer `1` to `n` and the
 /// float `1.0` to `f`, and a name the chain declares takes the literal as an `int`.
