@@ -1,6 +1,6 @@
 //! Checked property getter bodies and reads for direct execution.
 
-use super::*;
+use super::{IncanPrimitiveType, IncanType, SemanticSourceTargetKind, body_named, build};
 
 /// A computed property of a model lowers to a receiver-only getter body carrying the property's own identity, and a
 /// property read is a call of that getter on the borrowed receiver.
