@@ -5654,6 +5654,50 @@ def main() -> None:
     )
 }
 
+/// Prove loops over text and bytes byte-identical to legacy: a literal, a local and a parameter iterated as
+/// one-character strings, including a multi-byte character and empty text, and bytes literals and locals iterated as
+/// their unsigned values widened to `int`.
+#[test]
+fn text_and_bytes_iteration_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("text-bytes-iteration")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def letters(text: str) -> int:
+    mut count = 0
+    for letter in text:
+        if letter != "a":
+            count += 1
+    return count
+
+def main() -> None:
+    mut marked: list[str] = []
+    for ch in "hey":
+        marked.append(ch + ".")
+    println(len(marked))
+    println(marked[2])
+    word = "añb"
+    for letter in word:
+        println(letter)
+    println(word)
+    println(letters("banana"))
+    mut sum = 0
+    for b in b"AB":
+        sum += b
+    println(sum)
+    data = b"\x01\xff"
+    for value in data:
+        println(value)
+    println(len(data))
+    for skipped in "":
+        println(skipped)
+    println("done")
+"#,
+    )
+}
+
 /// Prove stored and immediate builtin enumeration, deferred yields, and tuple-string ownership against legacy.
 #[test]
 fn direct_route_enumerate_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
