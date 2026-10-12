@@ -142,6 +142,13 @@ pub def model_prefix(
                     fields = field_path(declarations, referent, value.projection, count, enums, unions, intrinsics)?
                     return Ok(Place(local=index, projection=Projection.DerefFields(fields), span=span))
                 None => pass
+            # An enum method's shared receiver reads the whole enum through its reference.
+            match locals[index].ty:
+                PlanType.EnumRef(owner, name) =>
+                    if count == 0:
+                        return Ok(Place(local=index, projection=Projection.Deref(PlanType.Enum(owner, name)), span=span))
+                    return Err("unsupported Body IR projection through an enum receiver")
+                _ => pass
             if count == 0:
                 return Ok(Place(local=index, projection=Projection.Whole, span=span))
             fields = field_path(declarations, locals[index].ty, value.projection, count, enums, unions, intrinsics)?

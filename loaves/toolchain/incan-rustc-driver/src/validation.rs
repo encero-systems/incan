@@ -346,7 +346,7 @@ fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> 
             return Err(invalid(function, "parameter name is invalid or duplicated"));
         }
         if !(source_signature_type(&scalar(&parameter.ty))
-            || matches!(scalar(&parameter.ty), Scalar::ModelRef(_) | Scalar::ModelMutRef(_)))
+            || matches!(scalar(&parameter.ty), Scalar::ModelRef(_) | Scalar::ModelMutRef(_) | Scalar::EnumRef(_)))
             || scalar(&parameter.ty) != scalar(&function.locals[index + 1].ty)
         {
             return Err(invalid(function, "parameter local differs from its declaration"));
@@ -500,6 +500,7 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
         Projection::Deref(field_type) => {
             let pointee = match ty {
                 Scalar::ModelRef(owner) | Scalar::ModelMutRef(owner) => Scalar::Model(owner),
+                Scalar::EnumRef(owner) => Scalar::Enum(owner),
                 Scalar::ZipIteratorRef(left, right) | Scalar::ZipIteratorMutRef(left, right) => {
                     Scalar::ZipIterator(left, right)
                 }

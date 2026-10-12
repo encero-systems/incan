@@ -23,7 +23,12 @@ pub def frame_type(
     local: &RustLocal,
     intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
-    """Turn only checker-retained receiver origins into borrowed native frame slots."""
+    """
+    Turn only checker-retained receiver origins into borrowed native frame slots.
+
+    A source enum's receiver is a shared reference; a `mut self` enum method would replace the value its caller holds,
+    which no enum receiver frame retains, so it refuses.
+    """
     if range_value_local(local.ty, local.origin):
         return Ok(PlanType.RangeValue)
     ty = native_source_type(
@@ -40,7 +45,13 @@ pub def frame_type(
                     if mutable:
                         return Ok(PlanType.ModelMutRef(index, name))
                     return Ok(PlanType.ModelRef(index, name))
-                _ => return Err("unsupported Body IR nonnominal receiver")
+                PlanType.Enum(index, name) =>
+                    if mutable:
+                        return Err("unsupported Body IR mutable enum receiver")
+                    if index < len(module.enum_declarations):
+                        return Ok(PlanType.EnumRef(index, name))
+                _ => pass
+            return Err("unsupported Body IR nonnominal receiver")
         None => return Ok(ty)
 
 
@@ -206,6 +217,7 @@ def receiver_borrow(
             match receiver_type:
                 PlanType.ModelRef(_owner, _name) => return Ok((receiver_type, RvalueKind.Borrow(receiver)))
                 PlanType.ModelMutRef(_owner, _name) => return Ok((receiver_type, RvalueKind.MutBorrow(receiver)))
+                PlanType.EnumRef(_owner, _name) => return Ok((receiver_type, RvalueKind.Borrow(receiver)))
                 _ => return Err("invalid Body IR Method receiver type")
         _ => return Err("unsupported Body IR Method nonplace receiver")
 

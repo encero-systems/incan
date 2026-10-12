@@ -154,11 +154,15 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
                 mutbl: ast::Mutability::Mut,
             },
         ),
-        PlanType::EnumMutRef(index, name) => ast::TyKind::Ref(
+        PlanType::EnumRef(index, name) | PlanType::EnumMutRef(index, name) => ast::TyKind::Ref(
             None,
             ast::MutTy {
                 ty: ty(&PlanType::Enum(*index, name.clone()), span),
-                mutbl: ast::Mutability::Mut,
+                mutbl: if matches!(kind, PlanType::EnumMutRef(..)) {
+                    ast::Mutability::Mut
+                } else {
+                    ast::Mutability::Not
+                },
             },
         ),
         PlanType::CheckedNumeric(kind) => {

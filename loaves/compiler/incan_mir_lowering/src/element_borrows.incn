@@ -27,15 +27,19 @@ from classes import frame_type
 from lowering import list_borrow, scalar_operand, value_operand, materialized_receiver
 
 
-pub def element_method_owner(builder: Builder, argument: &RustArgumentElement) -> Result[Option[int], str]:
-    """The nominal owner of a list or dictionary element receiver; `None` for a receiver a native place names."""
+pub def element_method_owner(builder: Builder, argument: &RustArgumentElement) -> Result[Option[PlanType], str]:
+    """The model or source enum owner of a list or dictionary element receiver; `None` when a native place names it."""
     match argument.as_one():
         Some(RustOperand.Place(read)) =>
             if not is_element_place(builder, read.place)?:
                 return Ok(None)
             match element_place_type(builder, read.place)?:
-                PlanType.Model(owner, _name) => return Ok(Some(owner))
-                _ => return Err("unsupported Body IR Method on a non-nominal collection element")
+                PlanType.Model(owner, name) => return Ok(Some(PlanType.Model(owner, name)))
+                PlanType.Enum(owner, name) =>
+                    if owner < len(builder.enums):
+                        return Ok(Some(PlanType.Enum(owner, name)))
+                _ => pass
+            return Err("unsupported Body IR Method on a non-nominal collection element")
         _ => return Ok(None)
 
 
@@ -56,13 +60,24 @@ pub def element_method_receiver(
             match receiver_type:
                 PlanType.ModelMutRef(_owner, _name) => return mutable_element_reference(builder, read.place, span)
                 PlanType.ModelRef(_owner, _name) =>
-                    # A shared receiver reads a copy of the element, as any other element read does.
-                    copied = materialized_receiver(builder, read.place, span)?
-                    reference = temporary(builder, receiver_type, span)
-                    builder.emit(plan_assign(reference, RvalueKind.Borrow(copied), span))
-                    return Ok(reference)
+                    return shared_element_receiver(builder, read.place, receiver_type, span)
+                PlanType.EnumRef(_owner, _name) =>
+                    return shared_element_receiver(builder, read.place, receiver_type, span)
                 _ => return Err("invalid Body IR Method receiver type")
         _ => return Err("unsupported Body IR Method nonplace or spread receiver")
+
+
+def shared_element_receiver(
+    mut builder: Builder,
+    source: &RustPlace,
+    receiver_type: PlanType,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Borrow a copy of the element as a shared receiver, as any other element read copies it."""
+    copied = materialized_receiver(builder, source, span)?
+    reference = temporary(builder, receiver_type, span)
+    builder.emit(plan_assign(reference, RvalueKind.Borrow(copied), span))
+    return Ok(reference)
 
 
 pub def mutable_element_reference(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Place, str]:

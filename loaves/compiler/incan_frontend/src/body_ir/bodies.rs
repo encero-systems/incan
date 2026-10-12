@@ -266,7 +266,7 @@ pub(super) fn lower_method_body(
     let owner_return_type = binding
         .map(|binding| parameter_types::checked_semantic_type(&binding.return_type, lowering_facts.type_info))
         .map(|ty| parameter_types::retain_parameter_type(ty, &type_parameters))
-        .map(|ty| close_own_self(ty, receiver_ty))
+        .map(|ty| close_self_type(ty, receiver_ty))
         .unwrap_or(IncanType::Unknown);
 
     // Resolve a nominal Self return exactly as a Self parameter; trait defaults keep their open Self receiver.
@@ -306,13 +306,7 @@ pub(super) fn lower_method_body(
             .and_then(|b| b.params.get(index))
             .map(|p| builder.checked_type(&p.ty))
             .unwrap_or(IncanType::Unknown);
-        // In a declared type's own method, a parameter typed `Self` (`other: Self`) is that type, as the checker reads
-        // it; only a trait default keeps `Self` open, and its `receiver_ty` is `Self` already.
-        let ty = if ty == IncanType::SelfType {
-            receiver_ty.clone()
-        } else {
-            ty
-        };
+        let ty = close_self_type(ty, receiver_ty);
         let local = builder.declare_new_local(
             param.node.name.clone(),
             ty,
@@ -432,26 +426,26 @@ pub(super) fn owner_self_type(owner_name: &str, owner_type_params: &[ast::TypePa
     }
 }
 
-/// Close `Self` in a declared type's own method signature to that type, as the checker reads it at every call site.
+/// Read `Self` in a declared type's own method signature (`other: Self`, `-> Self`, `-> Option[Self]`) as that type,
+/// as the checker reads it at every call site, at any depth.
 ///
-/// Only a trait default keeps `Self` open: its receiver type is `Self` itself, and trait specialization closes it for
-/// each adopter.
-fn close_own_self(ty: IncanType, receiver_ty: &IncanType) -> IncanType {
-    if *receiver_ty == IncanType::SelfType {
-        return ty;
-    }
+/// Only a trait default keeps `Self` open: its receiver type is `Self` itself, so closing changes nothing there, and
+/// trait specialization closes it for each adopter.
+fn close_self_type(ty: IncanType, receiver_ty: &IncanType) -> IncanType {
     match ty {
         IncanType::SelfType => receiver_ty.clone(),
         IncanType::Generic { base, args } => IncanType::Generic {
             base,
-            args: args.into_iter().map(|arg| close_own_self(arg, receiver_ty)).collect(),
+            args: args.into_iter().map(|arg| close_self_type(arg, receiver_ty)).collect(),
         },
-        IncanType::Tuple(items) => IncanType::Tuple(
-            items
+        IncanType::Tuple(elements) => IncanType::Tuple(
+            elements
                 .into_iter()
-                .map(|item| close_own_self(item, receiver_ty))
+                .map(|element| close_self_type(element, receiver_ty))
                 .collect(),
         ),
+        IncanType::Ref(inner) => IncanType::Ref(Box::new(close_self_type(*inner, receiver_ty))),
+        IncanType::RefMut(inner) => IncanType::RefMut(Box::new(close_self_type(*inner, receiver_ty))),
         other => other,
     }
 }

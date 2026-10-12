@@ -1,6 +1,6 @@
 """Concrete source-trait specialization and checker-selected static dispatch."""
 
-from rust::incan_semantics_core import IncanType as RustType, generic
+from rust::incan_semantics_core import IncanType as RustType, CanonicalSymbolId, generic
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
     Body,
@@ -14,6 +14,7 @@ from rust::incan_semantics_core::body_ir import (
 from pub::incan_mir_plan import Local, SourceSpan, PlanType, EnumDeclaration
 from classes import receiver_mode, frame_type
 from models import model_type, model_place, place_type
+from enums import enum_type
 
 
 pub def specialize_traits(module: &BodyIrModule) -> Result[BodyIrModule, str]:
@@ -187,16 +188,17 @@ pub def method_index(
 pub def owner_method_index(
     module: &BodyIrModule,
     target: &MethodTarget,
-    owner: int,
+    owner: PlanType,
     intrinsics: list[EnumDeclaration],
 ) -> Result[int, str]:
-    """Select the checked implementation for a receiver whose retained nominal owner is already known."""
+    """Select the checked implementation for a receiver whose retained model or source enum owner is already known."""
     match target.canonical:
         None => return Err("unsupported Body IR unproven Method")
         Some(_identity) => pass
+    identity = owner_identity(module, owner)?
     mut canonical = target.canonical.clone()
     for implementation in module.trait_implementations:
-        if implementation.owner == module.nominal_declarations[owner].canonical and Some(implementation.method) == canonical:
+        if implementation.owner == identity and Some(implementation.method) == canonical:
             canonical = Some(implementation.implementation)
             break
     for index in range(len(module.bodies)):
@@ -212,12 +214,31 @@ pub def owner_method_index(
     return Err("unsupported Body IR nonlocal or trait-object Method")
 
 
-def receiver_matches(receiver: PlanType, owner: int) -> bool:
-    """Match the declared receiver frame against the caller's checked concrete nominal carrier."""
-    match receiver:
-        PlanType.ModelRef(index, _name) => return index == owner
-        PlanType.ModelMutRef(index, _name) => return index == owner
-        _ => return false
+def owner_identity(module: &BodyIrModule, owner: PlanType) -> Result[CanonicalSymbolId, str]:
+    """The retained declaration identity a model or source enum receiver owner fills its trait slots under."""
+    match owner:
+        PlanType.Model(index, _name) => return Ok(module.nominal_declarations[index].canonical.clone())
+        PlanType.Enum(index, _name) =>
+            if index < len(module.enum_declarations):
+                return Ok(module.enum_declarations[index].canonical.clone())
+        _ => pass
+    return Err("unsupported Body IR trait-object receiver")
+
+
+def receiver_matches(receiver: PlanType, owner: PlanType) -> bool:
+    """Match the declared receiver frame against the caller's checked concrete model or enum carrier."""
+    match owner:
+        PlanType.Model(owner_index, _owner_name) =>
+            match receiver:
+                PlanType.ModelRef(index, _name) => return index == owner_index
+                PlanType.ModelMutRef(index, _name) => return index == owner_index
+                _ => pass
+        PlanType.Enum(owner_index, _owner_name) =>
+            match receiver:
+                PlanType.EnumRef(index, _name) => return index == owner_index
+                _ => pass
+        _ => pass
+    return false
 
 
 def receiver_owner(
@@ -227,8 +248,8 @@ def receiver_owner(
     span: SourceSpan,
     unions: list[RustType],
     intrinsics: list[EnumDeclaration],
-) -> Result[int, str]:
-    """Read the concrete receiver from its native place, never from a method spelling."""
+) -> Result[PlanType, str]:
+    """Read the concrete model or source enum receiver from its native place, never from a method spelling."""
     match argument.as_one():
         Some(value) =>
             match value:
@@ -243,16 +264,23 @@ def receiver_owner(
                         intrinsics,
                     )?
                     match place_type(locals, place):
-                        PlanType.Model(owner, _name) => return Ok(owner)
-                        _ => return Err("unsupported Body IR trait-object receiver")
+                        PlanType.Model(owner, name) => return Ok(PlanType.Model(owner, name))
+                        PlanType.Enum(owner, name) =>
+                            if owner < len(module.enum_declarations):
+                                return Ok(PlanType.Enum(owner, name))
+                        _ => pass
+                    return Err("unsupported Body IR trait-object receiver")
                 _ => return Err("unsupported Body IR Method nonplace receiver")
         None => return Err("unsupported Body IR Method spread receiver")
 
 
 pub def validate_static_receiver(module: &BodyIrModule, target: &NamedCallableTarget) -> Result[None, str]:
-    """Require a concrete retained nominal for associated calls, never execute a bare trait's default."""
+    """Require a concrete retained model or source enum for associated calls, never execute a bare trait's default."""
     match target.receiver_type:
         Some(ty) =>
+            match enum_type(module.enum_declarations, ty):
+                Some(_owner) => return Ok(None)
+                None => pass
             match model_type(module.nominal_declarations, ty)?:
                 PlanType.Model(_owner, _name) => return Ok(None)
                 _ => return Err("unsupported Body IR nonnominal static receiver")

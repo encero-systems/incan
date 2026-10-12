@@ -133,8 +133,8 @@ impl BodyIrModule {
     }
 
     /// Whether a function, source Partial forwarding body, or retained nominal method has its own canonical declaration
-    /// identity and span-derived direct-call id. Methods must belong to a retained nominal or trait owner whose
-    /// span contains them; an instance receiver must match that owner.
+    /// identity and span-derived direct-call id. Methods must belong to a retained nominal, normal enum or trait owner
+    /// whose span contains them; an instance receiver must match that owner.
     pub fn body_has_canonical_direct_call_id(&self, body: &Body) -> bool {
         body.direct_call_id == CompilerNodeId::declaration_span(self.module_id.path(), body.span.start, body.span.end)
             && body.canonical.as_ref().is_some_and(|canonical| {
@@ -159,6 +159,14 @@ impl BodyIrModule {
                                 !matches!(receiver.origin, LocalOrigin::Receiver { .. })
                                     || receiver.ty == nominal_receiver_type(owner)
                             })
+                    }) || self.enum_declarations.iter().any(|owner| {
+                        self.is_well_formed_native_enum_declaration(owner)
+                            && canonical.origin == owner.canonical.origin
+                            && declares_member(&owner.canonical, canonical)
+                            && body.locals.first().is_none_or(|receiver| {
+                                !matches!(receiver.origin, LocalOrigin::Receiver { .. })
+                                    || receiver.ty == crate::IncanType::Named(owner.name.clone())
+                            })
                     }) || self.trait_declarations.iter().any(|owner| {
                         self.declaration_id_for_canonical(
                             owner,
@@ -176,7 +184,8 @@ impl BodyIrModule {
             })
     }
 
-    /// Validate a concrete trait slot against retained physical owners and implementation bodies.
+    /// Validate a concrete trait slot against retained physical owners (a nominal or a normal enum) and implementation
+    /// bodies.
     ///
     /// A default belongs to a retained trait: the slot's own or a subtrait's. An explicit implementation must belong
     /// to the concrete owner and takes no trait type arguments; a default's type arguments must be closed types.
@@ -198,10 +207,14 @@ impl BodyIrModule {
         value.method.namespace == SymbolNamespace::Member
             && value.method.declaration_name == value.implementation.declaration_name
             && value.implementation.kind == SemanticSourceTargetKind::Method
-            && self
+            && (self
                 .nominal_declarations
                 .iter()
                 .any(|owner| owner.canonical == value.owner && self.is_well_formed_nominal_declaration(owner))
+                || self
+                    .enum_declarations
+                    .iter()
+                    .any(|owner| owner.canonical == value.owner && self.is_well_formed_native_enum_declaration(owner)))
             && self.trait_declarations.iter().any(|owner| {
                 self.declaration_id_for_canonical(
                     owner,

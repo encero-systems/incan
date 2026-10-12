@@ -785,13 +785,14 @@ fn slot_implementation(
 /// Successful typechecking already proves adoption and method compatibility. This registry covers the adopter's local
 /// traits at their checked instantiations and every local supertrait those reach; each slot keeps the body that fills
 /// it and the type arguments that body's trait was adopted at. Imported traits without type parameters keep their own
-/// slots under the checked provider identities (see [`imported_trait_implementations`]). Unrecorded
-/// instantiations and overloaded implementations never gain a guessed target. A refused checked newtype constructor
-/// cannot contribute an implementation without its owner layout.
+/// slots under the checked provider identities (see [`imported_trait_implementations`]). Unrecorded instantiations and
+/// overloaded implementations never gain a guessed target. A refused checked newtype constructor cannot contribute an
+/// implementation without its owner layout, nor can an enum whose layout was not retained.
 pub(super) fn collect_local_trait_implementations(
     program: &ast::Program,
     type_info: &TypeCheckInfo,
     nominal_declarations: &[bir::NominalDeclaration],
+    enum_declarations: &[bir::EnumDeclaration],
 ) -> Vec<bir::TraitImplementation> {
     let mut implementations = Vec::new();
     for declaration in &program.declarations {
@@ -805,6 +806,7 @@ pub(super) fn collect_local_trait_implementations(
             ast::Declaration::Newtype(newtype) if is_direct_replacement_plain_newtype(newtype) => {
                 (&newtype.traits, &newtype.methods)
             }
+            ast::Declaration::Enum(value) if is_direct_native_enum(value) => (&value.traits, &value.methods),
             _ => continue,
         };
         let Some(owner) = type_info
@@ -814,10 +816,13 @@ pub(super) fn collect_local_trait_implementations(
         else {
             continue;
         };
-        if !nominal_declarations
+        let retained = nominal_declarations
             .iter()
             .any(|declaration| &declaration.canonical == owner)
-        {
+            || enum_declarations
+                .iter()
+                .any(|declaration| &declaration.canonical == owner);
+        if !retained {
             continue;
         }
         implementations.extend(imported_trait_implementations(
