@@ -77,6 +77,16 @@ pub(super) fn retain_parameter_type(ty: IncanType, parameters: &[String]) -> Inc
         IncanType::Ref(inner) => IncanType::Ref(Box::new(retain_parameter_type(*inner, parameters))),
         IncanType::RefMut(inner) => IncanType::RefMut(Box::new(retain_parameter_type(*inner, parameters))),
         IncanType::TypeToken(inner) => IncanType::TypeToken(Box::new(retain_parameter_type(*inner, parameters))),
+        IncanType::Function { params, return_type } => IncanType::Function {
+            params: params
+                .into_iter()
+                .map(|mut parameter| {
+                    parameter.ty = retain_parameter_type(parameter.ty, parameters);
+                    parameter
+                })
+                .collect(),
+            return_type: Box::new(retain_parameter_type(*return_type, parameters)),
+        },
         ty => ty,
     }
 }

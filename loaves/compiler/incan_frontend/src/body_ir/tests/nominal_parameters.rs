@@ -2,6 +2,19 @@
 
 use super::{IncanPrimitiveType, IncanType, bir, body_named, build, named_targets};
 
+/// Associated methods retain owner parameters even without a receiver local, and resolve Self to the owner.
+#[test]
+fn retains_classmethod_owner_parameters_and_return_type() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "class Box[T]:\n  pub value: T\n  @classmethod\n  def make(cls, value: T) -> Self:\n    return cls(value=value)\n",
+        &["classmethods"],
+    )?;
+    let body = body_named(&module, "make")?;
+    assert_eq!(body.type_parameters, ["T"]);
+    assert!(matches!(&body.return_type, IncanType::Generic { base, .. } if base == "Box"));
+    Ok(())
+}
+
 /// A trait default declares the owner and method binders its portable body needs, including nested callable types.
 #[test]
 fn trait_default_declared_parameters_cover_callable_types() -> Result<(), Box<dyn std::error::Error>> {

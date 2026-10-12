@@ -85,6 +85,10 @@ def specialize_body(body: &Body, owner: str, arguments: list[TraitTypeArgument])
     # this indirection).
     concrete: RustType = concrete_self_type(owner)
     mut result = body.clone()
+    result.type_parameters.clear()
+    for parameter in body.type_parameters:
+        if not is_adoption_parameter(str(parameter), arguments):
+            result.type_parameters.push(parameter.clone())
     for index in range(len(result.locals)):
         local_type: RustType = instantiate_type(result.locals[index].ty, concrete, arguments)
         result.locals[index].ty = local_type
@@ -94,6 +98,14 @@ def specialize_body(body: &Body, owner: str, arguments: list[TraitTypeArgument])
     return_type: RustType = instantiate_type(result.return_type, concrete, arguments)
     result.return_type = return_type
     return result
+
+
+def is_adoption_parameter(name: str, arguments: list[TraitTypeArgument]) -> bool:
+    """Whether the checked adoption binds one declared trait parameter, leaving method parameters open."""
+    for argument in arguments:
+        if str(argument.parameter) == name:
+            return true
+    return false
 
 
 def instantiate_type(ty: &RustType, concrete: &RustType, arguments: list[TraitTypeArgument]) -> RustType:

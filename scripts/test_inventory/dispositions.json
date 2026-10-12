@@ -6031,6 +6031,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/method_partials.rs": {
+      "disposition": "keep",
+      "notes": "Checked method-partial frames and presets retained for direct-route execution; relocated from methods_and_defaults.rs.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/methods_and_defaults.rs": {
       "disposition": "keep",
       "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
@@ -6059,6 +6067,14 @@
       "disposition": "keep",
       "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
       "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/properties.rs": {
+      "disposition": "keep",
+      "notes": "Checked property getter bodies and reads retained for direct execution; relocated from methods_and_defaults.rs.",
+      "owner": 1337,
       "split_required": false,
       "split_target": "",
       "twin": ""

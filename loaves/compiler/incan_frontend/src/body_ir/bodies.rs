@@ -456,9 +456,9 @@ pub(super) fn lower_method_body(
     }
 
     Some(bir::Body {
-        // Receiver frames close their owner through layout specialization. Associated methods have no receiver,
-        // so callable scheduling retains the ordered owner parameters alongside method parameters.
-        type_parameters: if method.receiver.is_none() {
+        // Nominal receiver frames close their owner through layout specialization. Trait defaults instead retain
+        // their owner binders until the checked adoption specializes them; publication must know the exact scope.
+        type_parameters: if method.receiver.is_none() || *receiver_ty == IncanType::SelfType {
             builder.type_parameters.clone()
         } else {
             method

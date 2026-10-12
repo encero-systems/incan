@@ -47,6 +47,14 @@ pub(super) fn project_body(
     audit.trait_self = source.locals.first().is_some_and(|local| {
         local.ty == IncanType::SelfType && matches!(local.origin, crate::body_ir::LocalOrigin::Receiver { .. })
     });
+    audit.type_parameters.extend(source.type_parameters.iter().cloned());
+    if let Some(member) = &source.canonical {
+        for owner in &module.nominal_declarations {
+            if encloses(&owner.canonical, member) {
+                audit.type_parameters.extend(owner.type_parameters.iter().cloned());
+            }
+        }
+    }
     let canonical = body.canonical.as_mut().ok_or(CoverageReason::UnresolvedReference)?;
     audit.identity(canonical, false)?;
     body.decl_id = declaration_id(canonical)?;
@@ -82,6 +90,7 @@ pub(super) fn project_nominal(
     }
     let mut nominal = source.clone();
     let mut audit = PublicationAudit::new(module, library, public, &source.named_type_identities);
+    audit.type_parameters.extend(source.type_parameters.iter().cloned());
     audit.identity(&mut nominal.canonical, false)?;
     nominal.direct_declaration_id = declaration_id(&nominal.canonical)?;
     for ty in &nominal.field_types {
@@ -139,10 +148,20 @@ pub(super) fn project_type_alias(
     Ok((value, audit.requirements))
 }
 
+/// Require the same canonical origin and enclosing declaration span before borrowing an owner's binders.
+fn encloses(owner: &CanonicalSymbolId, member: &CanonicalSymbolId) -> bool {
+    owner != member
+        && owner.origin == member.origin
+        && owner.declaration_span.start <= member.declaration_span.start
+        && member.declaration_span.end <= owner.declaration_span.end
+}
+
 /// One exhaustive pass owns publication's type/reference checks and artifact-local address projection.
 struct PublicationAudit<'a> {
     /// Trait-default receiver placeholders remain abstract until concrete checked dispatch specialization.
     trait_self: bool,
+    /// Only binders retained by the declaration or its canonical nominal owner may remain open in publication.
+    type_parameters: BTreeSet<String>,
     library: &'a str,
     public: &'a BTreeSet<CanonicalSymbolId>,
     nominal_types: BTreeMap<String, CanonicalSymbolId>,
@@ -172,8 +191,12 @@ impl<'a> PublicationAudit<'a> {
         for declaration in &module.enum_declarations {
             nominal_types.insert(declaration.name.clone(), declaration.canonical.clone());
         }
+        for declaration in &module.trait_declarations {
+            nominal_types.insert(declaration.declaration_name.clone(), declaration.clone());
+        }
         Self {
             trait_self: false,
+            type_parameters: BTreeSet::new(),
             library,
             public,
             nominal_types,
@@ -209,29 +232,19 @@ impl<'a> PublicationAudit<'a> {
         }
     }
 
-    /// Admit concrete semantic types and retain the canonical declaration behind a local nominal type.
+    /// Admit concrete types and declared binders, retaining the canonical declaration behind each named type.
     fn ty(&mut self, ty: &IncanType) -> Result<(), CoverageReason> {
         match ty {
             IncanType::SelfType if self.trait_self => Ok(()),
+            IncanType::TypeVar(name) if self.type_parameters.contains(name) => Ok(()),
             IncanType::Primitive(_) | IncanType::Never | IncanType::Decimal { .. } => Ok(()),
-            IncanType::Named(name) => {
-                let local = self.nominal_types.get(name);
-                let checked = self.checked_nominal_types.get(name);
-                if matches!((local, checked), (Some(local), Some(checked)) if local != checked) {
-                    return Err(CoverageReason::UnresolvedReference);
-                }
-                let mut identity = checked.or(local).cloned().ok_or(CoverageReason::UnresolvedReference)?;
-                self.identity(&mut identity, true)?;
-                self.used_nominal_types.insert(name.clone(), identity);
-                Ok(())
-            }
+            IncanType::Named(name) => self.named_type(name),
             IncanType::Generic { base, args } => {
-                // These are the semantic model's compiler-owned generic constructors. User generic declarations
-                // lack canonical type arguments in this version and stay explicitly uncovered.
+                // Compiler collections have no declaration requirement; a generic nominal retains its checked base.
                 if incan_lang::lang::types::collections::from_str(base).is_none()
                     && base != incan_lang::lang::types::UNION_TYPE_NAME
                 {
-                    return Err(CoverageReason::UnresolvedReference);
+                    self.named_type(base)?;
                 }
                 for arg in args {
                     self.ty(arg)?;
@@ -257,6 +270,19 @@ impl<'a> PublicationAudit<'a> {
             | IncanType::Infer
             | IncanType::Unknown => Err(CoverageReason::UnresolvedReference),
         }
+    }
+
+    /// Retain a named model or trait only when local declarations and checker bindings agree on its identity.
+    fn named_type(&mut self, name: &str) -> Result<(), CoverageReason> {
+        let local = self.nominal_types.get(name);
+        let checked = self.checked_nominal_types.get(name);
+        if matches!((local, checked), (Some(local), Some(checked)) if local != checked) {
+            return Err(CoverageReason::UnresolvedReference);
+        }
+        let mut identity = checked.or(local).cloned().ok_or(CoverageReason::UnresolvedReference)?;
+        self.identity(&mut identity, true)?;
+        self.used_nominal_types.insert(name.to_owned(), identity);
+        Ok(())
     }
 
     /// Defaults are declaration-owned computations, including defaults nested in closure parameters.

@@ -65,19 +65,6 @@ fn retains_class_field_default_computations() -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-/// Associated methods retain owner parameters even without a receiver local, and resolve Self to the owner.
-#[test]
-fn retains_classmethod_owner_parameters_and_return_type() -> Result<(), Box<dyn std::error::Error>> {
-    let module = build(
-        "class Box[T]:\n  pub value: T\n  @classmethod\n  def make(cls, value: T) -> Self:\n    return cls(value=value)\n",
-        &["classmethods"],
-    )?;
-    let body = body_named(&module, "make")?;
-    assert_eq!(body.type_parameters, ["T"]);
-    assert!(matches!(&body.return_type, IncanType::Generic { base, .. } if base == "Box"));
-    Ok(())
-}
-
 /// Class derives use the checked selection models use: explicit names, the derives they imply, then the automatic set.
 #[test]
 fn retains_checked_class_derive_selection() -> Result<(), Box<dyn std::error::Error>> {
@@ -1547,85 +1534,5 @@ def main() -> None:
         return Err("the required generic trait slot must be retained".into());
     };
     assert!(get.type_arguments.is_empty());
-    Ok(())
-}
-
-/// A method partial on a model or class retains its target method's frame, through a method alias too, with the presets
-/// as defaults beside the target's own, and a call of the partial omits the preset as a defaulted slot of its target.
-#[test]
-fn method_partials_retain_target_frames_with_presets_as_defaults() -> Result<(), Box<dyn std::error::Error>> {
-    let source = concat!(
-        "model User:\n  name: str\n\n",
-        "  def label(self, prefix: str, suffix: str = \"!\") -> str:\n    return prefix + suffix\n\n",
-        "  display = label\n  short = partial display(prefix=\"name\")\n\n",
-        "class Counter:\n  pub count: int\n\n",
-        "  def bump(mut self, by: int) -> None:\n    self.count += by\n\n  bump_one = partial bump(by=1)\n\n",
-        "def main() -> None:\n  println(User(name=\"Ada\").short())\n",
-    );
-    let module = build(source, &["m", "method_partial_frames"])?;
-    let user = module
-        .nominal_declarations
-        .iter()
-        .find(|declaration| declaration.name == "User")
-        .ok_or("model declaration missing")?;
-    let [short] = user.method_partial_defaults.as_slice() else {
-        return Err(format!("one partial frame expected: {:?}", user.method_partial_defaults).into());
-    };
-    assert_eq!(short.name, "short");
-    assert_eq!(short.target.declaration_name, "label");
-    assert_eq!(short.frame.canonical.as_ref(), Some(&short.target));
-    assert!(matches!(
-        short.frame.params.as_slice(),
-        [
-            _,
-            bir::CallableParam {
-                default: bir::CallableParamDefault::Source(_),
-                ..
-            },
-            bir::CallableParam {
-                default: bir::CallableParamDefault::Source(_),
-                ..
-            },
-        ]
-    ));
-    assert!(module.is_well_formed_nominal_declaration(user));
-    let counter = module
-        .nominal_declarations
-        .iter()
-        .find(|declaration| declaration.name == "Counter")
-        .ok_or("class declaration missing")?;
-    let [bump_one] = counter.method_partial_defaults.as_slice() else {
-        return Err(format!(
-            "one class partial frame expected: {:?}",
-            counter.method_partial_defaults
-        )
-        .into());
-    };
-    assert_eq!(bump_one.target.declaration_name, "bump");
-    assert!(module.is_well_formed_nominal_declaration(counter));
-    let rendered = body_named(&module, "main")?.render_snapshot();
-    assert!(rendered.contains("call method:short defaults=[0, 1]"), "{rendered}");
-    Ok(())
-}
-
-/// A computed property of a model lowers to a receiver-only getter body carrying the property's own identity, and a
-/// property read is a call of that getter on the borrowed receiver.
-#[test]
-fn computed_properties_lower_to_getter_bodies_their_reads_call() -> Result<(), Box<dyn std::error::Error>> {
-    let source = concat!(
-        "model Account:\n  cents: int\n\n  property dollars -> int:\n    return self.cents // 100\n\n",
-        "def main() -> None:\n  account = Account(cents=1250)\n  println(account.dollars)\n",
-    );
-    let module = build(source, &["m", "computed_property"])?;
-    let getter = body_named(&module, "dollars")?;
-    let canonical = getter.canonical.as_ref().ok_or("getter identity missing")?;
-    assert_eq!(canonical.kind, SemanticSourceTargetKind::Property);
-    assert!(module.body_has_canonical_direct_call_id(getter));
-    let getter_rendered = getter.render_snapshot();
-    assert!(!getter_rendered.contains("unsupported("), "{getter_rendered}");
-    assert_eq!(getter.params.len(), 1);
-    assert_eq!(getter.return_type, IncanType::Primitive(IncanPrimitiveType::Int));
-    let rendered = body_named(&module, "main")?.render_snapshot();
-    assert!(rendered.contains("call method:dollars(borrow("), "{rendered}");
     Ok(())
 }
