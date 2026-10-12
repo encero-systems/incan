@@ -8140,6 +8140,30 @@ def main() -> None:
     )
 }
 
+/// A stdlib method's `Result` error that its module imports from another stdlib module is that crate's own type: a
+/// failed construction's error is read by field beside a successful construction's fields.
+#[test]
+fn stdlib_imported_signature_types_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "stdlib_imported_signature_types",
+        r#"from std.datetime.civil.naive import Date
+
+
+def show(year: int, month: int, day: int) -> None:
+    match Date.from_fields(year, month, day):
+        Ok(date) => println(f"{date.year}-{date.month}-{date.day}")
+        Err(error) => println(error.detail)
+
+
+def main() -> None:
+    show(2024, 2, 29)
+    show(2024, 13, 1)
+    show(2023, 2, 29)
+"#,
+        b"2024-2-29\nmonth must be in 1..12\nday is out of range for month\n",
+    )
+}
+
 /// `list.repeat` builds a list of clones of its value through legacy's runtime helper: scalars, text read from a
 /// binding that stays usable, nested lists, models, a zero count and arguments written by name.
 #[test]
