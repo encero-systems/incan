@@ -369,7 +369,7 @@ impl StdlibAstCache {
 
     /// Read the source layout of a compiler-provided foreign nominal for Body IR only. The ordinary cache exports
     /// public source types, while FieldInfo's private source declaration describes public runtime metadata. This
-    /// query validates its exact native owner and declaration span, then extracts an independent public layout;
+    /// query validates its exact native owner and declaration span, then checks an independent public layout;
     /// it never changes the shared cache, source visibility, import resolution or legacy signatures.
     pub(crate) fn native_nominal_type(&mut self, identity: &CanonicalSymbolId) -> Option<TypeInfo> {
         incan_semantics_core::body_ir::native_nominal_item(identity)?;
@@ -396,10 +396,14 @@ impl StdlibAstCache {
                 }
             }
         }
-        extract_type_signatures(&program, path)
-            .into_iter()
-            .find(|(name, _)| name == &identity.declaration_name)
-            .map(|(_, info)| info)
+        let mut checker = super::TypeChecker::new();
+        checker.set_current_module_path(Some(path.clone()));
+        checker.check_program(&program).ok()?;
+        let symbol = checker.symbols.lookup(&identity.declaration_name)?;
+        match &checker.symbols.get(symbol)?.kind {
+            SymbolKind::Type(info) => Some(info.clone()),
+            _ => None,
+        }
     }
 
     /// Look up a method declaration on a stdlib type, following prelude re-exports.
