@@ -145,6 +145,7 @@ pub fn oven_build_unit_inputs_with_native_sdk(
     resolved: &ResolvedDependencies,
     context: Option<&crate::build::NativeSdkCommandContext>,
 ) -> CliResult<BTreeMap<String, String>> {
+    let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::test_build_unit_inputs").entered();
     let provider_records = oven_native_provider_records(provider_plan, &semantic_sdk_path_dependencies(requirements))?;
     oven_build_unit_inputs_with_provider_records_and_native_sdk(requirements, resolved, provider_records, context)
 }
@@ -191,6 +192,7 @@ pub fn oven_native_provider_records(
     provider_plan: &ProviderPlan,
     sdk_path_dependencies: &[DependencySpec],
 ) -> CliResult<Vec<String>> {
+    let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::native_provider_records").entered();
     let semantic_identities =
         provider_semantic_identities(provider_plan, sdk_path_dependencies).map_err(CliError::failure)?;
     oven_native_provider_records_from_map(provider_plan, &semantic_identities)
@@ -202,6 +204,7 @@ pub fn oven_native_provider_records_with_checked_identities(
     sdk_path_dependencies: &[DependencySpec],
     semantic_identities: &CheckedProviderSemanticIdentities,
 ) -> CliResult<Vec<String>> {
+    let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::checked_provider_records").entered();
     let semantic_identities = semantic_identities
         .for_context(provider_plan, sdk_path_dependencies)
         .map_err(CliError::failure)?;
