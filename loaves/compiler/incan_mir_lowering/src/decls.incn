@@ -259,6 +259,8 @@ def library_fields(
 
 pub def library_item(declaration: &NominalDeclaration) -> str:
     """Name the compiled item that owns a stdlib layout, or nothing for any other layout."""
+    if declaration.native_item != "":
+        return str(declaration.native_item)
     return library_path(declaration.canonical.origin, str(declaration.canonical.declaration_name))
 
 
