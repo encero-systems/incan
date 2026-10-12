@@ -231,7 +231,8 @@ pub(super) fn check_string_methods(
 ///
 /// The reference compiler uses the explicit fixture home so a published dependency baked there is available under
 /// the same receipt-selected package identity. An ambient home can lack that Loaf even after native compilation
-/// succeeds.
+/// succeeds. A manifest-backed fixture must declare `probe.incn` as a script; its explicit consumer bake imports
+/// the provider's portable debug and release closures before either route runs.
 pub(super) fn check_builtin_source(
     driver: &Path,
     root: &Path,
@@ -243,6 +244,13 @@ pub(super) fn check_builtin_source(
     fs::create_dir_all(&project)?;
     let source = project.join("main.incn");
     fs::write(&source, program)?;
+    if project.join("loaf.toml").is_file() {
+        // Provider publication exports a portable Loaf; the consumer's explicit bake imports its sealed closure.
+        let mut prepare = support::cli_project::configured_incan_command(&project, &["oven", "bake", "--project", "."]);
+        support::configure_explicit_oven_bake_command(&mut prepare)?;
+        prepare.env("INCAN_OVEN_BAKE_PROFILES", "debug,release");
+        success(&prepare.output()?, "builtin package consumer preparation");
+    }
     let native = project.join("native");
     success(
         &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime)?)?,

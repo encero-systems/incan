@@ -83,6 +83,30 @@ fn published_generic_declarations_reach_owned_next_stages() -> Result<(), Box<dy
     Ok(())
 }
 
+/// Published Partials remain executable when the fixture reaches its separate imported function-value boundary.
+#[test]
+fn published_partial_reaches_function_value_next_stage() -> Result<(), Box<dyn std::error::Error>> {
+    let graph = driver_fixture()?;
+    let root = graph.scratch("published-partial-next-stage")?;
+    let closure = corpus::runtime_closure(&graph.formatting)?;
+    let name = "dependency_partial_and_function_value";
+    let fixture = fixtures::discover(&support::fixtures_dir().join("behavior/lowering_dependencies"))?
+        .into_iter()
+        .find(|fixture| fixture.name == name)
+        .ok_or("missing published Partial fixture")?;
+    let (class, detail) = measure(
+        &fixture,
+        &root,
+        &graph.driver_binary("debug"),
+        &graph.sysroot,
+        &closure,
+        Duration::from_secs(180),
+    )?;
+    assert_eq!(class, "refused", "{detail}");
+    assert_eq!(detail, "unsupported Body IR type Unknown");
+    Ok(())
+}
+
 /// Run a child with file-backed streams so pipe capacity cannot defeat the deadline.
 fn bounded(
     command: &mut Command,
