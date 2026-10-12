@@ -1576,7 +1576,7 @@ def lower_closure(
         operand = scalar_operand(builder, capture, span)?
         ty = operand_type(builder, operand)?
         if not closure_capture_type(ty):
-            return Err("unsupported Body IR closure capture outside scalars and owned text")
+            return Err("unsupported Body IR closure capture outside scalars, owned text and models")
         operands.append(operand)
         capture_types.append(ty)
     name = f"__incan_closure_{builder.name}_{len(builder.synthesized)}"
@@ -5179,7 +5179,10 @@ def frame_locals(
             Some(carrier) =>
                 ty = carrier
             None =>
-                ty = frame_type(module, local, intrinsics)?
+                match frame_type(module, local, intrinsics):
+                    Ok(resolved) =>
+                        ty = resolved
+                    Err(reason) => return Err(f"{reason} in {body.name} local {local.id.index()}")
         index = int(local.id.index()) + 1
         if index in pairs:
             ty = pair_generator_type(ty)
@@ -6058,6 +6061,10 @@ def lower_list_method(
         "List.clone" =>
             name = "clone_list"
             result = PlanType.List(leaf, depth)
+        "List.contains" =>
+            name = "contains_list"
+            result = PlanType.Bool
+            parameters = [element]
         "List.count" =>
             result = PlanType.Int
             if len(arguments) == 1:

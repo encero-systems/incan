@@ -270,18 +270,20 @@ def borrowed_default_owner(
     Find the collection a borrowed default argument refers to.
 
     The call borrows it, so it stays owned by the caller frame and drops when that scope ends, after the call. A
-    literal default, such as a bytes literal, is the one owner its borrow created after the owners in `before`.
+    literal default, such as a bytes literal, or a global read is the owner its borrow created after the owners in
+    `before`. Prefer that owner so a global is read exactly once and its borrowed snapshot is retained.
     """
-    match value:
-        RustOperand.Place(read) => return Ok(list_root_place(builder, read.place, span)?.local)
-        _ => pass
     mut created: list[int] = []
     for owner in builder.owned:
         if owner not in before:
             created.append(owner)
-    if len(created) != 1:
-        return Err("unsupported Body IR constant collection default")
-    return Ok(created[0])
+    if len(created) == 1:
+        return Ok(created[0])
+    if len(created) == 0:
+        match value:
+            RustOperand.Place(read) => return Ok(list_root_place(builder, read.place, span)?.local)
+            _ => pass
+    return Err("unsupported Body IR constant collection default")
 
 
 pub def default_type(ty: PlanType) -> Result[None, str]:

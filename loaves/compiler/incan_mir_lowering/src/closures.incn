@@ -151,7 +151,7 @@ pub def return_representation(body: &RustBody, ty: PlanType) -> Result[PlanType,
 pub def closure_arguments(signature: list[PlanType]) -> Result[list[PlanType], str]:
     """
     Pack scalar/text inputs, owned models and enums, shared collection views and the exclusive borrows `mut`
-    parameters take with their exact checked call representations.
+    parameters take with their exact checked call representations. Results may also own a list, transferred from the lifted function to its caller.
     """
     if len(signature) == 0:
         return Err("invalid Body IR callable signature without return type")
@@ -171,8 +171,8 @@ pub def closure_arguments(signature: list[PlanType]) -> Result[list[PlanType], s
                 PlanType.EnumMutRef(_index, _name) => pass
                 _ => return Err("unsupported Body IR closure input outside scalars, text, collection views and borrows")
         elements.append(input)
-    if not closure_value_type(signature[-1]):
-        return Err("unsupported Body IR closure result outside scalars and owned text")
+    if not closure_value_type(signature[-1]) and not is_owned_list(signature[-1]):
+        return Err("unsupported Body IR closure result outside scalars, owned text and lists")
     return Ok(elements)
 
 
@@ -193,10 +193,19 @@ pub def closure_capture_type(ty: PlanType) -> bool:
     """
     Admit the captures a by-value environment can hand to its lifted function on every call.
 
-    Copy scalars, including every sized numeric carrier, are copied out of the environment. Owned text moves into the
-    environment once, and each call forwards a clone of it, because a callable can run more than once.
+    Copy scalars, including every sized numeric carrier, are copied out of the environment. Owned text and model
+    snapshots move into the environment once, and each call forwards a clone, because a callable can run more than once.
     """
-    return closure_value_type(ty) and ty != PlanType.Unit
+    match ty:
+        PlanType.Model(_owner, _name) => return true
+        _ => return closure_value_type(ty) and ty != PlanType.Unit
+
+
+pub def owned_capture(ty: PlanType) -> bool:
+    """Move text, lists and model snapshots into an environment that clones them for each call."""
+    match ty:
+        PlanType.Model(_owner, _name) => return true
+        _ => return ty == PlanType.String or is_owned_list(ty)
 
 
 pub def closure_constructor(
@@ -218,9 +227,9 @@ pub def closure_constructor(
     for index in range(len(captures)):
         locals.append(Local(ty=captures[index], span=span))
         parameters.append(Parameter(name=f"__incan_capture_{index}", ty=captures[index], span=span))
-        # Owned text and lists move into the environment; Copy scalars are copied.
+        # Owned captures move into the environment; Copy scalars are copied.
         mut capture = OperandKind.Copy(plan_place(index + 1, span))
-        if captures[index] == PlanType.String or is_owned_list(captures[index]):
+        if owned_capture(captures[index]):
             capture = OperandKind.Move(plan_place(index + 1, span))
         operands.append(Operand(kind=capture, span=span))
     call = TerminatorKind.Call(

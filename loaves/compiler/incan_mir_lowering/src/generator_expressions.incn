@@ -160,7 +160,9 @@ pub def step_capture_type(ty: PlanType) -> bool:
 
     Text and lists are cloned out of the environment for each call, because the step runs once per item.
     """
-    return closure_capture_type(ty) or is_owned_list(ty)
+    match ty:
+        PlanType.Model(_owner, _name) => return false
+        _ => return closure_capture_type(ty) or is_owned_list(ty)
 
 
 pub def step_pointer(mut builder: Builder, step: str, signature: list[PlanType], span: SourceSpan) -> Operand:

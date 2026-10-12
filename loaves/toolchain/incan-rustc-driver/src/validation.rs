@@ -1078,13 +1078,12 @@ fn external_signature_type(ty: &Scalar) -> bool {
 }
 
 /// Callable objects accept scalars of any numeric carrier, text, owned models and enums, shared collection views and
-/// the exclusive borrows a `mut` parameter receives as inputs; their result remains a scalar or owned text, or an owned
-/// generator, which a generator expression's capturing step returns.
+/// the exclusive borrows a `mut` parameter receives as inputs; their result is a scalar, owned text, an owned list, or an owned generator, which a generator expression's capturing step returns.
 fn callable_object_signature(signature: &[Scalar]) -> bool {
     let Some((result, inputs)) = signature.split_last() else {
         return false;
     };
-    (callable_object_value(result) || matches!(result, Scalar::Generator(_, _)))
+    (callable_object_value(result) || matches!(result, Scalar::List(_, _) | Scalar::Generator(_, _)))
         && inputs.iter().all(|ty| {
             callable_object_value(ty)
                 || matches!(
@@ -1157,7 +1156,7 @@ fn validate_closure_constructor(function: &Function) -> Result<(), PlanError> {
     let TerminatorKind::Call(_, arguments, destination, 1, Unwind::Continue) = &first.terminator.kind else {
         return Err(refused());
     };
-    // Each capture is forwarded from its own parameter: owned text and lists move into the environment, Copy scalars
+    // Each capture is forwarded from its own parameter: owned captures move into the environment, Copy scalars
     // are copied.
     let forwarded = arguments.iter().enumerate().all(|(index, argument)| {
         let (moved, place) = match &argument.kind {
