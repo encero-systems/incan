@@ -204,9 +204,14 @@ fn frozen_byte_const_reads_keep_their_checked_carrier() -> Result<(), Box<dyn st
 #[test]
 fn reflection_metadata_retains_native_layout() -> Result<(), Box<dyn std::error::Error>> {
     let source = "model Record:\n    value: int\n\ndef main() -> None:\n    for info in Record(value=1).__fields__():\n        println(info.name)\n";
-    let module = build(source, &["m", "native_reflection"])?;
-    let declaration = module
-        .nominal_declarations
+    let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let declarations = library_nominal_declarations(checker.type_info());
+    let declaration = declarations
         .iter()
         .find(|value| value.name == "FieldInfo")
         .ok_or("missing native reflection layout")?;
