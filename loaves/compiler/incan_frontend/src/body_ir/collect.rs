@@ -499,7 +499,6 @@ pub(super) fn collect_local_nominal_declarations(
                 })
                 .collect::<Option<Vec<_>>>()?;
             Some(bir::NominalDeclaration {
-                native_item: String::new(),
                 direct_declaration_id: CompilerNodeId::declaration_span(
                     module_identity,
                     declaration.span.start,
@@ -621,7 +620,6 @@ fn collect_plain_newtype(
         }
     }
     Some(bir::NominalDeclaration {
-        native_item: String::new(),
         direct_declaration_id: CompilerNodeId::declaration_span(module_identity, span.start, span.end),
         field_identities: vec![canonical.clone()],
         canonical,
