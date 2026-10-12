@@ -12044,6 +12044,39 @@ fn zip_operand_mutation_output_matches_legacy() -> Result<(), Box<dyn std::error
     )
 }
 
+/// Zip keeps independent source lengths, signed range state and continue edges, with snapshots on read-only operands.
+#[test]
+fn zip_source_exhaustion_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_collection_family_source(
+        "zip-source-exhaustion",
+        r#"def main() -> None:
+    mut rows: list[list[int]] = [[1], [2], [3]]
+    for row, n in zip(rows, range(5, -1, -2)):
+        if n == 3:
+            continue
+        row.append(n)
+    println(rows)
+    for n, row in zip(range(2), rows):
+        row.append(n)
+    println(rows)
+    names: list[str] = ["a", "b"]
+    mut short: list[list[int]] = [[7]]
+    for name, row in zip(names, short):
+        row.append(len(name))
+    println(short)
+    mut longer: list[list[int]] = [[4], [5]]
+    for row, n in zip(longer, [9]):
+        row.append(n)
+    println(longer)
+    mut empty: list[list[int]] = []
+    for name, row in zip(names, empty):
+        row.append(len(name))
+    println(empty)
+    println([i + n for i, n in zip(range(3), range(7, 0, -3))])
+"#,
+    )
+}
+
 /// A direct value view keeps its dictionary storage, while ordinary aliases made from an item keep owned copies.
 #[test]
 fn dictionary_value_iteration_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
