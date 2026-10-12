@@ -356,7 +356,7 @@ fn validate_declarations(
                 if !incan_frontend::body_ir::is_direct_native_enum(value) {
                     return Err(format!("unsupported source Enum {} on the native route", value.name));
                 }
-                validate_generic_adoptions(&value.traits, program)?;
+                validate_generic_adoptions(&value.traits, program, type_info)?;
                 continue;
             }
             Declaration::Trait(item) => {
