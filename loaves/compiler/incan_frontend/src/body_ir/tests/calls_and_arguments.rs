@@ -12,6 +12,7 @@ fn capability_bound_calls_retain_checked_arguments() -> Result<(), Box<dyn std::
         "from std.rust import Send, Sync\n\ndef run[T with Send, Sync](_value: T) -> None:\n  pass\n\ndef main() -> None:\n  run(1)\n",
         &["m", "capability_bound_arguments"],
     )?;
+    assert_eq!(body_named(&module, "run")?.type_parameters, ["T"]);
     let targets = named_targets(&module, "main");
     let target = targets
         .iter()
