@@ -114,7 +114,7 @@ def retain_nominal_instance(
     return Ok(None)
 
 
-def closed_arguments(arguments: list[RustType]) -> bool:
+pub def closed_arguments(arguments: list[RustType]) -> bool:
     """Reject unresolved type variables recursively before retaining an executable layout instance."""
     for argument in arguments:
         match argument:

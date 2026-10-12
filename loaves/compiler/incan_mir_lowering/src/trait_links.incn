@@ -2,6 +2,12 @@
 
 from rust::incan_semantics_core import CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin
 from rust::incan_semantics_core::body_ir import BodyIrModule, TraitImplementation
+from nominal_instances import closed_arguments
+
+
+pub def has_open_trait_arguments(implementation: &TraitImplementation) -> bool:
+    """Identify a generic owner's still-open inherited default arguments before validating concrete slot records."""
+    return not closed_arguments([binding.argument.clone() for binding in implementation.type_arguments])
 
 
 pub def is_well_formed_project_implementation(

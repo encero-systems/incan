@@ -61,7 +61,11 @@ from text_ownership import drop_borrowed_text_temporaries
 from decimal_plan import decimal_literal, decimal_comparison, is_decimal_literal
 from frozen_plan import frozen_literal, literal_text
 from loop_exits import exits_to
-from trait_links import is_well_formed_module_implementation, is_well_formed_project_implementation
+from trait_links import (
+    is_well_formed_module_implementation,
+    is_well_formed_project_implementation,
+    has_open_trait_arguments,
+)
 from derived_methods import (
     comparison_dunder,
     is_derived_clone,
@@ -336,6 +340,9 @@ from closures import (
     closure_constructor,
     pointer_forwarder,
 )
+# =====================================================================================================================
+# Boundary types and validation
+# =====================================================================================================================
 from externs import delegated_function
 from mutable_parameters import mutable_argument
 from partial_callables import (
@@ -346,9 +353,6 @@ from partial_callables import (
     partial_call_operands,
     bind_defaulted_parameter,
 )
-# =====================================================================================================================
-# Boundary types and validation
-# =====================================================================================================================
 
 
 pub type BodyIrModule = rusttype RustBodyIrModule:
@@ -364,6 +368,8 @@ pub def validate_module(module: &BodyIrModule) -> Result[int, str]:
     count = validate_declarations_and_bodies(module)?
     for implementation in module.trait_implementations:
         if not is_well_formed_module_implementation(module, implementation):
+            if has_open_trait_arguments(implementation):
+                return Err("unsupported Body IR open trait default type arguments")
             return Err("invalid Body IR trait implementation identity")
     return Ok(count)
 
@@ -373,6 +379,8 @@ def validate_project_module(module: &BodyIrModule, modules: &list[BodyIrModule])
     count = validate_declarations_and_bodies(module)?
     for implementation in module.trait_implementations:
         if not is_well_formed_project_implementation(module, implementation, modules):
+            if has_open_trait_arguments(implementation):
+                return Err("unsupported Body IR open trait default type arguments")
             return Err("invalid Body IR trait implementation identity")
     return Ok(count)
 
@@ -5839,6 +5847,9 @@ def lower_builtin_method(
                 return Err("unsupported Body IR non-builtin list Method")
             member = str(identity.declaration_name)
         None => return Err("unsupported Body IR Method without canonical identity")
+    # Option's checked builtin Clone selects its native carrier, not a list member with a same-named method.
+    if member == "Option.clone":
+        return lower_derived_clone(builder, arguments, destination, span)
     receiver_type = argument_type(builder, arguments, 0, span)?
     match text_method(member, receiver_type):
         Some((name, result)) => return lower_text_helper(builder, name, result, arguments, destination, span)
