@@ -1,6 +1,7 @@
 """Concrete source-trait specialization and checker-selected static dispatch."""
 
 from rust::incan_semantics_core import IncanType as RustType, CanonicalSymbolId, SemanticSourceTargetKind, generic
+from rust::std::cmp import PartialEq
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
     Body,
@@ -167,7 +168,7 @@ def concrete_self_type(owner: &CanonicalSymbolId, owners: list[NominalDeclaratio
     arguments. Enums use their already-retained non-generic owner name. No missing class or model layout is guessed.
     """
     for declaration in owners:
-        if declaration.canonical != owner:
+        if not PartialEq.eq(declaration.canonical, owner):
             continue
         if len(declaration.type_parameters) == 0:
             return Ok(RustType.Named(str(declaration.name)))
