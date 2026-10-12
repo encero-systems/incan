@@ -9878,7 +9878,47 @@ def main() -> None:
     for chunk in CHUNKS:
         println(len(chunk))
 "#,
-    )
+    )?;
+    for (name, source, reason) in [
+        (
+            "frozen_list_constructor_follow_on",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/comprehensions_and_list_constructor_sources.incn"
+            ),
+            "unsupported Body IR builtin or unproven NamedCallableTarget",
+        ),
+        (
+            "frozen_membership_call_fact_follow_on",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/snapshots_collections_and_strings/const_frozen_collection_membership_and_iteration.incn"
+            ),
+            "unsupported Body IR collection leaf ?",
+        ),
+        (
+            "frozen_set_call_fact_follow_on",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/snapshots_collections_and_strings/set_constructor.incn"
+            ),
+            "unsupported Body IR collection leaf ?",
+        ),
+        (
+            "frozen_static_initializer_follow_on",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/snapshots_values_and_control_flow/consts_and_statics.incn"
+            ),
+            "unsupported source Static initializer or carrier on the native route",
+        ),
+        (
+            "frozen_descriptor_follow_on",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/snapshots_values_and_control_flow/descriptor_const_with_empty_frozen_list.incn"
+            ),
+            "unsupported source Model decorator @derive",
+        ),
+    ] {
+        check_project_refusal(name, source, reason)?;
+    }
+    Ok(())
 }
 
 /// Ordinary frozen byte elements read as owned buffers; explicit FrozenBytes elements retain their static wrapper.
