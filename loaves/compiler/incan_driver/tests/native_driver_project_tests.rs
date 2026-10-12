@@ -7064,6 +7064,69 @@ def main() -> None:
     )
 }
 
+/// Prove collection constructors over a source, and owned models passed into callable objects, byte-identical to
+/// legacy: `list()` of a list parameter, a `mut` list parameter, text, a dictionary's keys and a generator, `dict()` of
+/// a dictionary, each leaving its source intact; a capturing `map_err` closure and a capturing closure argument that
+/// each take a model by value.
+#[test]
+fn collection_constructor_sources_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("collection-constructor-sources")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"model Failure:
+    detail: str
+
+    def message(self) -> str:
+        return self.detail
+
+def numbers(limit: int) -> Generator[int]:
+    for value in range(limit):
+        yield value
+
+def copied(items: list[str]) -> list[str]:
+    return list(items)
+
+def from_mut(mut items: list[str]) -> list[str]:
+    items.append("z")
+    return list(items)
+
+def lookup(key: str) -> Result[str, Failure]:
+    return Err(Failure(detail=key))
+
+def describe(key: str, code: int) -> str:
+    return f"{key}:{code}"
+
+def fetch(key: str) -> Result[str, str]:
+    return lookup(key).map_err((failure) => describe(key, len(failure.message())))
+
+def apply(f: (Failure) -> int, value: Failure) -> int:
+    return f(value)
+
+def main() -> None:
+    words = ["ab", "c"]
+    println(f"{copied(words):?} {len(words)}")
+    mut more = ["x"]
+    println(f"{from_mut(more):?} {more:?}")
+    println(f"{list("hey"):?}")
+    keyed: dict[str, int] = {"k": 1, "j": 2}
+    keys = list(keyed)
+    println(len(keys))
+    println(f"{list(numbers(3)):?}")
+    table: dict[str, int] = {"a": 1, "b": 2}
+    copy = dict(table)
+    println(f"{len(copy)} {copy["b"]} {len(table)}")
+    match fetch("key"):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+    width = 3
+    println(apply((failure) => len(failure.detail) + width, Failure(detail="four")))
+"#,
+    )
+}
+
 /// Prove source enum variants spelled like the builtin carriers' variants, and set, dictionary and list payloads,
 /// byte-identical to legacy: `Maybe.None` and `Outcome.Ok` patterns select the source enum's own variants beside a
 /// builtin `Option` match, and payload bindings copy their collections out of the matched value, which stays usable.

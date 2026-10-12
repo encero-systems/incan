@@ -1058,3 +1058,29 @@ fn result_constructors_take_their_closure_or_comprehension_settled_type() -> Res
     );
     Ok(())
 }
+
+/// A checked `list(source)` conversion collects each item a `for` loop over the source yields, and `dict(source)` of
+/// a dictionary is a dictionary literal holding one spread; neither stays a call to a function named `list` or `dict`.
+#[test]
+fn collection_constructors_from_a_source_lower_to_their_loop_and_spread() -> Result<(), Box<dyn std::error::Error>> {
+    let source = concat!(
+        "def copy_list(items: list[str]) -> list[str]:\n  return list(items)\n\n",
+        "def letters() -> list[str]:\n  return list(\"hey\")\n\n",
+        "def copy_dict(table: dict[str, int]) -> dict[str, int]:\n  return dict(table)\n",
+    );
+    let module = build(source, &["m", "collection_constructors"])?;
+    for name in ["copy_list", "letters", "copy_dict"] {
+        let rendered = body_named(&module, name)?.render_snapshot();
+        assert!(!rendered.contains("unsupported("), "{rendered}");
+        assert!(
+            !rendered.contains("fn:list") && !rendered.contains("fn:dict"),
+            "{rendered}"
+        );
+    }
+    let copy_list = body_named(&module, "copy_list")?.render_snapshot();
+    assert!(copy_list.contains("loop"), "{copy_list}");
+    assert!(copy_list.contains("push"), "{copy_list}");
+    let copy_dict = body_named(&module, "copy_dict")?.render_snapshot();
+    assert!(copy_dict.contains("**"), "{copy_dict}");
+    Ok(())
+}
