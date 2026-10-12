@@ -6338,6 +6338,29 @@ def main() -> None:
     )
 }
 
+/// An Option method called on a model field reads that field's carrier and leaves the model whole, for a copied
+/// payload and for an owned text payload alike.
+#[test]
+fn carrier_methods_on_model_fields_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "carrier_methods_on_model_fields",
+        r#"model Counter:
+    count: Option[int] = None
+    name: Option[str] = None
+
+
+def main() -> None:
+    mut counter = Counter(count=1)
+    println(counter.count.unwrap_or(0))
+    println(counter.name.unwrap_or("none"))
+    counter.name = "b"
+    println(counter.name.unwrap_or("none"))
+    println(counter.count.unwrap_or(0))
+"#,
+        b"1\nnone\nb\n1\n",
+    )
+}
+
 /// A stdlib model built with omitted fields takes its published defaults, and a stdlib error type that reaches the
 /// program only through a stdlib method's result keeps its own type; a local model's Option field default works too.
 #[test]
