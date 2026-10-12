@@ -156,7 +156,7 @@ fn frozen_byte_length_retains_its_builtin_identity() -> Result<(), Box<dyn std::
 #[test]
 fn frozen_byte_const_reads_keep_their_checked_carrier() -> Result<(), Box<dyn std::error::Error>> {
     let module = build(
-        "const DATA: FrozenBytes = b\"ab\"\n\ndef consume(value: FrozenBytes) -> None:\n    pass\n\ndef main() -> None:\n    consume(DATA)\n",
+        "const DATA: FrozenBytes = b\"ab\"\n\ndef consume(value: FrozenBytes) -> None:\n    pass\n\ndef main() -> None:\n    consume(DATA)\n    DATA.len()\n",
         &["m", "frozen_read"],
     )?;
     let body = body_named(&module, "main")?;
@@ -176,6 +176,26 @@ fn frozen_byte_const_reads_keep_their_checked_carrier() -> Result<(), Box<dyn st
     assert_eq!(
         body.locals[local.index()].ty,
         IncanType::Primitive(IncanPrimitiveType::FrozenBytes)
+    );
+    let method_receiver = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(_),
+                args,
+                ..
+            } => args.first().and_then(|argument| argument.as_one()),
+            _ => None,
+        })
+        .ok_or("missing const method receiver")?;
+    let bir::Operand::Place(read) = method_receiver else {
+        return Err("const method receiver has no checked place".into());
+    };
+    assert!(
+        read.place.local_id().is_some(),
+        "const method receiver must materialize its value"
     );
     Ok(())
 }
