@@ -3007,7 +3007,7 @@ def lower_delegated_call(
         type_arguments.append(
             native_source_type(builder.nominals, builder.enums, builder.unions, argument, builder.intrinsics)?,
         )
-    operands = ordered_slot_operands(builder, target.binding, arguments, parameters, span, 0, true)?
+    operands = ordered_slot_operands(builder, target.binding, arguments, parameters, span, 0, true, true)?
     mut output = temporary(builder, result, span)
     match destination:
         Some(place) =>
@@ -3114,6 +3114,7 @@ def ordered_slot_operands(
     span: SourceSpan,
     offset: int = 0,
     owned: bool = false,
+    positional: bool = false,
 ) -> Result[list[Operand], str]:
     """
     Place the written arguments into the callee's declared parameter slots.
@@ -3122,6 +3123,10 @@ def ordered_slot_operands(
     Defaults, missing slots, named or spread elements are refused. An offset of one skips a method receiver,
     whose borrow is lowered separately and whose slot is absent from the ordinary argument binding. With `owned`,
     a collection slot receives an owned value, as an SDK crate's compiled signature takes it.
+
+    With `positional`, an unresolved binding whose elements are exactly one plain value per declared slot fills the
+    slots in written order: without a name, a spread or an omitted slot, position is the only binding. An SDK crate
+    call to an overloaded function arrives this way, since the checker records no slots for an overload set.
     """
     if offset < 0 or offset > len(elements):
         return Err("invalid Body IR argument offset")
@@ -3144,7 +3149,16 @@ def ordered_slot_operands(
                         operands[slot] = call_argument_operand(builder, value, types[slot], span, owned)?
                     None => return Err("unsupported Body IR named or spread ArgumentElement")
             return Ok(operands)
-        _ => return Err("unsupported Body IR unresolved ArgumentBinding")
+        RustArgumentBinding.UnresolvedPositional =>
+            if not positional or len(elements) - offset != count:
+                return Err("unsupported Body IR unresolved ArgumentBinding")
+            mut operands: list[Operand] = []
+            for index in range(count):
+                match elements[index + offset]:
+                    RustArgumentElement.One(value) =>
+                        operands.append(call_argument_operand(builder, value, types[index], span, owned)?)
+                    _ => return Err("unsupported Body IR named or spread ArgumentElement")
+            return Ok(operands)
 
 
 pub def call_argument_operand(
