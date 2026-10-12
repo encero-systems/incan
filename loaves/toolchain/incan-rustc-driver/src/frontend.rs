@@ -408,6 +408,8 @@ fn library_module<'modules>(
 ///
 /// In particular, a checked newtype constructor must not reach body validation as if it were an ordinary raw wrapper.
 /// The frontend declaration collector owns that decision; this boundary only checks whether its layout was retained.
+/// Decorated callable replacements share the storage table but are validated under their original function identity,
+/// so they do not count as source `static` declarations.
 fn validate_retained_storage(program: &incan_frontend::ast::Program, module: &BodyIrModule) -> Result<(), String> {
     use incan_frontend::ast::Declaration;
     use incan_semantics_core::SemanticSourceTargetKind;
@@ -417,7 +419,12 @@ fn validate_retained_storage(program: &incan_frontend::ast::Program, module: &Bo
         .iter()
         .filter(|declaration| matches!(declaration.node, Declaration::Static(_)))
         .count();
-    if static_count != module.static_declarations.len() {
+    let retained_statics = module
+        .static_declarations
+        .iter()
+        .filter(|declaration| declaration.canonical.kind == SemanticSourceTargetKind::Static)
+        .count();
+    if static_count != retained_statics {
         return Err("unsupported source Static initializer or carrier on the native route".to_owned());
     }
     let newtype_count = program
