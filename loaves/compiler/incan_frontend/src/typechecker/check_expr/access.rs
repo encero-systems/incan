@@ -6557,6 +6557,10 @@ impl TypeChecker {
                         .traits
                         .self_method_result_types
                         .insert((span.start, span.end), method_info.return_type.clone());
+                    self.type_info
+                        .traits
+                        .self_method_params
+                        .insert((span.start, span.end), method_info.params.clone());
                     return ResolvedType::Unknown;
                 }
                 return self.check_generic_method_call(

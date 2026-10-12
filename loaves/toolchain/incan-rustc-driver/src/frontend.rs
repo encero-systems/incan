@@ -103,7 +103,7 @@ fn checked_modules(path: &Path) -> Result<CheckedProgram, String> {
         .map(|module| module.module_id.path().to_owned())
         .collect::<Vec<_>>();
     let mut sources = vec![String::new(); bodies.len()];
-    let entry = entry + bodies.len();
+    let mut entry = entry + bodies.len();
     let mut library_layouts = Vec::new();
     let mut library_calls = Vec::new();
     for module in modules {
@@ -123,6 +123,10 @@ fn checked_modules(path: &Path) -> Result<CheckedProgram, String> {
         bodies.push(body_ir);
         sources.push(module.source);
         files.push(module.file_path.to_string_lossy().into_owned());
+    }
+    // ---- Stdlib trait defaults the program's adopters take, from the SDK's published representation ----
+    for module in published_standard_defaults(&session.provider_plan, &bodies) {
+        carry_published_module(module, &mut bodies, &mut files, &mut sources, &mut entry);
     }
     // A proven transparent forwarder keeps its direct Rust callee; the crate item serves every other stdlib call.
     library_calls.retain(|call: &incan_semantics_core::body_ir::StdlibDelegation| {
@@ -230,6 +234,142 @@ fn published_library_modules(
         }
     }
     owners.into_values().collect()
+}
+
+/// Resolve the bodies the linked SDK packages publish for the standard-library trait defaults the program's
+/// implementation records name, one module per declaring stdlib module.
+///
+/// A record whose implementation is the slot itself takes the protocol's default. Only the defaults the program calls
+/// are taken, so a default nothing calls is never lowered. Each resolves on its own, with its published closure (the
+/// trait around a slot it calls, for one), so a default the SDK does not publish is simply absent: its record stays,
+/// and a call to it refuses where it is lowered.
+fn published_standard_defaults(
+    plan: &incan_frontend::provider::ProviderPlan,
+    modules: &[BodyIrModule],
+) -> Vec<BodyIrModule> {
+    let mut called = std::collections::BTreeSet::new();
+    for body in modules.iter().flat_map(|module| &module.bodies) {
+        collect_called_methods(&body.block.stmts, &mut called);
+    }
+    let defaults = modules
+        .iter()
+        .flat_map(|module| &module.trait_implementations)
+        .filter(|record| record.method == record.implementation && called.contains(&record.method))
+        .filter(|record| {
+            matches!(&record.implementation.origin, incan_semantics_core::SymbolOrigin::Package { library, .. }
+                if plan.active_sdk_records().any(|provider| &provider.identity.name == library))
+        })
+        .map(|record| record.implementation.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut owners = std::collections::BTreeMap::<String, BodyIrModule>::new();
+    for identity in defaults {
+        let required = std::iter::once(identity).collect();
+        let Ok(resolved) = incan_frontend::executable_resolution::resolve_sdk_requirements(plan, &required) else {
+            continue;
+        };
+        for module in resolved.modules {
+            let path = module.module_id.path().to_owned();
+            let owner = owners.entry(path.clone()).or_insert_with(|| declaration_module(path));
+            join_published_module(owner, module);
+        }
+    }
+    owners.into_values().collect()
+}
+
+/// Collect the checked slots and methods that statements call, through nested blocks, match arms and closures.
+///
+/// A call this walk does not reach only leaves a default unresolved, and a call to that default then refuses where it
+/// is lowered.
+fn collect_called_methods(
+    statements: &[incan_semantics_core::body_ir::Statement],
+    called: &mut std::collections::BTreeSet<incan_semantics_core::CanonicalSymbolId>,
+) {
+    use incan_semantics_core::body_ir::{Callee, Rvalue, StatementKind};
+    for statement in statements {
+        match &statement.kind {
+            StatementKind::Call {
+                callee: Callee::Method(target),
+                ..
+            } => called.extend(target.canonical.iter().cloned()),
+            StatementKind::If {
+                then_block, else_block, ..
+            } => {
+                collect_called_methods(&then_block.stmts, called);
+                if let Some(block) = else_block {
+                    collect_called_methods(&block.stmts, called);
+                }
+            }
+            StatementKind::Loop { body } => collect_called_methods(&body.stmts, called),
+            StatementKind::Assign { rvalue, .. } => match rvalue {
+                Rvalue::Match { arms, .. } => {
+                    for arm in arms {
+                        collect_called_methods(&arm.guard_stmts, called);
+                        collect_called_methods(&arm.body_stmts, called);
+                    }
+                }
+                Rvalue::Closure { body, .. } => collect_called_methods(&body.stmts, called),
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+}
+
+/// Carry one published stdlib module into the program: it joins the module already carried for the same owner, or
+/// travels as a module of its own ahead of the program's modules, as a published package's declarations do.
+fn carry_published_module(
+    module: BodyIrModule,
+    bodies: &mut Vec<BodyIrModule>,
+    files: &mut Vec<String>,
+    sources: &mut Vec<String>,
+    entry: &mut usize,
+) {
+    if let Some(carried) = bodies.iter_mut().find(|carried| carried.module_id == module.module_id) {
+        join_published_module(carried, module);
+        return;
+    }
+    files.insert(0, module.module_id.path().to_owned());
+    sources.insert(0, String::new());
+    bodies.insert(0, module);
+    *entry += 1;
+}
+
+/// Join one resolved published module into the module carried for the same stdlib owner, each declaration and body
+/// once by its canonical identity.
+fn join_published_module(owner: &mut BodyIrModule, module: BodyIrModule) {
+    for body in module.bodies {
+        if !owner.bodies.iter().any(|carried| carried.canonical == body.canonical) {
+            owner.bodies.push(body);
+        }
+    }
+    for declaration in module.trait_declarations {
+        if !owner.trait_declarations.contains(&declaration) {
+            owner.trait_declarations.push(declaration);
+        }
+    }
+    for declaration in module.nominal_declarations {
+        if !owner
+            .nominal_declarations
+            .iter()
+            .any(|carried| carried.canonical == declaration.canonical)
+        {
+            owner.nominal_declarations.push(declaration);
+        }
+    }
+    for declaration in module.enum_declarations {
+        if !owner
+            .enum_declarations
+            .iter()
+            .any(|carried| carried.canonical == declaration.canonical)
+        {
+            owner.enum_declarations.push(declaration);
+        }
+    }
+    for implementation in module.trait_implementations {
+        if !owner.trait_implementations.contains(&implementation) {
+            owner.trait_implementations.push(implementation);
+        }
+    }
 }
 
 /// An empty module for one stdlib module identity, holding only the declarations the program needs from it.

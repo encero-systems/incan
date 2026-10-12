@@ -3759,6 +3759,7 @@ impl TypeChecker {
             }
         }
         self.record_sdk_trait_methods();
+        self.record_provider_slot_identities();
         for (type_name, aliases) in method_rebindings {
             if !aliases.is_empty() {
                 self.type_info
@@ -3809,6 +3810,36 @@ impl TypeChecker {
                 },
             );
         }
+    }
+
+    /// Record, for Body IR only, the provider identity of each standard-library trait slot a call reached through the
+    /// stdlib source cache, after the provider slots are recorded.
+    ///
+    /// The provider slot is the one the active SDK declares in the same module, under the same name, member namespace
+    /// and declaration span as the source slot: both come from one stdlib source declaration. A call whose slot no
+    /// active provider declares gets no record. The call's resolved identity is left as it is.
+    fn record_provider_slot_identities(&mut self) {
+        let traits = &self.type_info.traits;
+        let mut provider_slots = HashMap::new();
+        for (span, identity) in &self.type_info.references.resolved_identities {
+            let SymbolOrigin::Module(path) = &identity.origin else {
+                continue;
+            };
+            if identity.kind != SemanticSourceTargetKind::Method || path.first().map(String::as_str) != Some("std") {
+                continue;
+            }
+            let provider = traits.sdk_method_identities.iter().find(|candidate| {
+                matches!(&candidate.origin, SymbolOrigin::Package { module_path, .. } if module_path[..] == path[1..])
+                    && candidate.declaration_name == identity.declaration_name
+                    && candidate.namespace == identity.namespace
+                    && candidate.kind == identity.kind
+                    && candidate.declaration_span == identity.declaration_span
+            });
+            if let Some(provider) = provider {
+                provider_slots.insert(*span, provider.clone());
+            }
+        }
+        self.type_info.traits.provider_slot_identities = provider_slots;
     }
 
     /// Record which visible trait slots the active compiled SDK providers declare, after every slot is recorded.

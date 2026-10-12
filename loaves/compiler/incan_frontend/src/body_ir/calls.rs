@@ -1579,9 +1579,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
         };
 
+        // A call on an open `Self` receiver in a standard-library trait default binds against its slot's declared
+        // parameters, which the checker retains for Body IR only.
         let declared: Option<Vec<DeclaredSlot>> = self
             .type_info
             .call_site_callable_params(span)
+            .or_else(|| {
+                self.type_info
+                    .traits
+                    .self_method_params
+                    .get(&(span.start, span.end))
+                    .map(Vec::as_slice)
+            })
             .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect());
 
         // The receiver is read before the arguments, matching source evaluation order: `recv.m(f())` observes the
@@ -1645,9 +1654,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     }
                     _ => None,
                 },
+                // A standard slot reached through the stdlib source cache is named by its provider identity, the one
+                // the program's implementation records and the SDK's published bodies carry.
                 canonical: self
                     .type_info
-                    .resolved_identity(span)
+                    .traits
+                    .provider_slot_identities
+                    .get(&(span.start, span.end))
+                    .or_else(|| self.type_info.resolved_identity(span))
                     .or_else(|| {
                         self.type_info
                             .traits

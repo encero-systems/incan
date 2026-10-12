@@ -925,12 +925,14 @@ pub(super) fn collect_local_trait_implementations(
 
 /// Retain the slots of one adopter's imported traits, under checked provider identities.
 ///
-/// Each slot keeps the body that fills it: the adopter's own method, or the imported trait's default, whose body lives
-/// in the module that declares the trait. A slot of a standard-library or compiled SDK protocol, with or without type
-/// parameters, is recorded only when the adopter's own method fills it, because the protocol's default bodies are not
-/// among the project's modules. Imported supertraits and other modules' traits with type parameters get no record, so
-/// a call that needs one of those keeps refusing. The records are sorted by slot identity, so the module's Body IR
-/// does not depend on hash order.
+/// Each slot keeps the body that fills it: the adopter's own method, or the imported trait's default. A project or
+/// package trait's default lives in the module that declares the trait. A standard-library or compiled SDK protocol
+/// brings its own slots and those of its standard supertraits ([`adopted_slots`]): the adopter's own method fills one
+/// with or without type parameters, and the protocol's default fills one only when the protocol has none. That
+/// default's body comes from the SDK's published representation, or a call to it refuses where it is lowered. Imported
+/// supertraits of other traits and other modules' traits with type parameters get no record, so a call that needs one
+/// of those keeps refusing. The records are sorted by slot identity, so the module's Body IR does not depend on hash
+/// order.
 fn imported_trait_implementations(
     program: &ast::Program,
     type_info: &TypeCheckInfo,
@@ -944,19 +946,21 @@ fn imported_trait_implementations(
         if local_trait(program, name).is_some() {
             continue;
         }
-        // A protocol slot records only the adopter's own method, which needs no trait type arguments; another
-        // module's trait with type parameters would need its defaults instantiated, which Body IR does not do.
+        // Another module's trait with type parameters would need its defaults instantiated, which Body IR does not do
+        // here; a protocol's own methods need no trait type arguments, and its defaults are taken only without them.
         let generic =
             !adoption.node.type_args.is_empty() || !type_info.traits.type_params.get(name).is_some_and(Vec::is_empty);
-        for ((trait_name, slot_name), method) in &type_info.traits.method_identities {
-            if trait_name != name || implementations.iter().any(|existing| &existing.method == method) {
+        for (trait_key, slot_name, method) in adopted_slots(type_info, name) {
+            if implementations.iter().any(|existing| &existing.method == method) {
                 continue;
             }
             let protocol = type_info.traits.is_standard_slot(method);
             if (generic && !protocol) || (!protocol && !is_executable_source_trait_slot(method)) {
                 continue;
             }
-            if let Some(implementation) = imported_slot_implementation(type_info, method, slot_name, methods, !protocol)
+            // A protocol whose behavior a Rust derive provides keeps the slots it leaves on that derive.
+            let defaults = !generic && !(protocol && derive_backed_protocol(type_info, trait_key, method));
+            if let Some(implementation) = imported_slot_implementation(type_info, method, slot_name, methods, defaults)
             {
                 implementations.push(bir::TraitImplementation {
                     owner: owner.clone(),
@@ -969,6 +973,84 @@ fn imported_trait_implementations(
     }
     implementations.sort_by(|left, right| left.method.cmp(&right.method));
     implementations
+}
+
+/// Whether the standard protocol a slot belongs to declares its behavior through a Rust derive (`@rust.derive`), as
+/// `std.serde.json.Serialize` does.
+///
+/// Such a protocol's defaults are what the derive provides, not bodies an adopter takes, exactly as legacy derives
+/// them. The trait is named by the module its slot's identity names and the last segment of its key, the
+/// module-qualified key its derive paths are recorded under.
+fn derive_backed_protocol(type_info: &TypeCheckInfo, name: &str, slot: &CanonicalSymbolId) -> bool {
+    let module_path = match &slot.origin {
+        incan_semantics_core::SymbolOrigin::Package { module_path, .. } => module_path.as_slice(),
+        incan_semantics_core::SymbolOrigin::Module(path) if path.first().map(String::as_str) == Some("std") => {
+            &path[1..]
+        }
+        _ => return false,
+    };
+    let trait_name = name.rsplit('.').next().unwrap_or(name);
+    let key = std::iter::once("std")
+        .chain(module_path.iter().map(String::as_str))
+        .chain(std::iter::once(trait_name))
+        .collect::<Vec<_>>()
+        .join(".");
+    type_info
+        .derivations
+        .trait_rust_derive_paths
+        .get(&key)
+        .is_some_and(|paths| !paths.is_empty())
+}
+
+/// The slots one adopted trait brings, each with the trait key it is recorded under, its spelling and its identity.
+///
+/// A trait brings its own slots. A standard-library protocol also brings the slots of its standard supertraits without
+/// type arguments, which the program need not import: those are recorded under the provider's module-qualified trait
+/// key ([`standard_supertrait_keys`]), with the provider identities the SDK publishes their bodies under.
+fn adopted_slots<'facts>(
+    type_info: &'facts TypeCheckInfo,
+    name: &str,
+) -> Vec<(&'facts str, &'facts str, &'facts CanonicalSymbolId)> {
+    let mut keys = vec![name.to_owned()];
+    if type_info.traits.is_standard_trait(name) {
+        keys.extend(standard_supertrait_keys(type_info, name));
+    }
+    let mut slots = type_info
+        .traits
+        .method_identities
+        .iter()
+        .filter(|((trait_key, _), _)| keys.contains(trait_key))
+        .map(|((trait_key, slot_name), method)| (trait_key.as_str(), slot_name.as_str(), method))
+        .collect::<Vec<_>>();
+    slots.sort_by(|left, right| left.2.cmp(right.2));
+    slots
+}
+
+/// The provider keys of a standard trait's standard supertraits without type arguments, transitively.
+///
+/// Each key is the supertrait's stdlib module path followed by its name, as `std.derives.comparison.Eq`: the key the
+/// checker records a provider-declared trait's slots under. A supertrait the stdlib registry does not place in a
+/// module has no such key and contributes no slots.
+fn standard_supertrait_keys(type_info: &TypeCheckInfo, name: &str) -> Vec<String> {
+    let mut keys = Vec::new();
+    let mut pending = vec![name.to_owned()];
+    let mut seen = std::collections::HashSet::new();
+    while let Some(current) = pending.pop() {
+        if !seen.insert(current.clone()) {
+            continue;
+        }
+        for (supertrait, arguments) in type_info.traits.direct_supertraits.get(&current).into_iter().flatten() {
+            if !arguments.is_empty() {
+                continue;
+            }
+            let Some(segments) = incan_lang::lang::stdlib::trait_method_module_segments(supertrait) else {
+                continue;
+            };
+            keys.push(format!("{}.{supertrait}", segments.join(".")));
+            pending.push(supertrait.clone());
+        }
+    }
+    keys
 }
 
 /// Select the body that fills one imported slot: the adopter's only method of that name, else the slot's default when

@@ -16,14 +16,19 @@ pub def is_well_formed_project_implementation(
     imported trait without type parameters names a slot another module declares: it holds only when this module retains
     the adopter's layout, the declaring module retains the trait around the slot, the adopter's own method or the slot's
     own default fills it, and some module retains that body under its direct-call identity. A slot of a standard-library
-    or SDK protocol has no declaring project module; only the adopter's own method may fill it. Matching spellings never
-    establish any of these.
+    or SDK protocol has no declaring project module and holds by its identity ([`is_protocol_slot`]).
+    Matching spellings never establish any of these.
     """
     if module.is_well_formed_trait_implementation(implementation):
         return true
     if not is_imported_slot_record(module, implementation):
         return false
-    if not declares_slot(modules, implementation.method) and not protocol_slot_filled_by_owner(implementation):
+    if is_protocol_slot(implementation.method):
+        return implementation.implementation == implementation.method or retains_body(
+            modules,
+            implementation.implementation,
+        )
+    if not declares_slot(modules, implementation.method):
         return false
     return retains_body(modules, implementation.implementation)
 
@@ -32,14 +37,18 @@ pub def is_well_formed_module_implementation(module: &BodyIrModule, implementati
     """
     Validate one trait implementation record of a single-module program.
 
-    Besides the module's own traits, only a standard-library or SDK protocol slot can be imported here, and the
-    adopter's own method, retained by this module, must fill it, exactly as a project module's record must.
+    Besides the module's own traits, only a standard-library or SDK protocol slot can be imported here. The adopter's
+    own method, retained by this module, or the protocol's own default may fill it, exactly as a project module's
+    record may.
     """
     if module.is_well_formed_trait_implementation(implementation):
         return true
-    if not is_imported_slot_record(module, implementation) or not protocol_slot_filled_by_owner(implementation):
+    if not is_imported_slot_record(module, implementation) or not is_protocol_slot(implementation.method):
         return false
-    return module_retains_body(module, implementation.implementation)
+    return implementation.implementation == implementation.method or module_retains_body(
+        module,
+        implementation.implementation,
+    )
 
 
 def is_imported_slot_record(module: &BodyIrModule, implementation: &TraitImplementation) -> bool:
@@ -49,11 +58,15 @@ def is_imported_slot_record(module: &BodyIrModule, implementation: &TraitImpleme
     return retains_owner(module, implementation.owner)
 
 
-def protocol_slot_filled_by_owner(implementation: &TraitImplementation) -> bool:
-    """Whether a standard-library or SDK protocol slot is filled by the adopter's own method rather than a default."""
-    if implementation.implementation == implementation.method:
-        return false
-    match implementation.method.origin:
+def is_protocol_slot(slot: &CanonicalSymbolId) -> bool:
+    """
+    Whether a slot belongs to a standard-library or SDK protocol, by its checked source or provider identity.
+
+    Such a slot is filled by the adopter's own method, which a module must retain, or by the protocol's own default. The
+    default's body is the one the SDK publishes, when it publishes one; a call to a default no module retains refuses
+    where it is lowered, so the record itself holds by the slot's identity.
+    """
+    match slot.origin:
         SymbolOrigin.Module(path) => return len(path) > 0 and path[0] == "std"
         SymbolOrigin.Package(library=library, module_path=_path) => return str(library).startswith("incan_stdlib_")
         _ => return false

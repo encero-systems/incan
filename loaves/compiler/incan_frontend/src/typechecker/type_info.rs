@@ -686,6 +686,17 @@ pub struct TraitArtifacts {
     /// its own rules. Body IR, which publishes the defaults' executable representation, takes the slot's declared
     /// result from here instead; no legacy route reads it.
     pub self_method_result_types: HashMap<(usize, usize), ResolvedType>,
+    /// Declared parameters of the same slots, keyed by the whole call span, so Body IR binds the call's arguments to
+    /// the slot's declaration as it binds any checked call; no legacy route reads it.
+    pub self_method_params: HashMap<(usize, usize), Vec<CallableParam>>,
+    /// The active SDK provider's identity of a standard-library trait slot whose call resolved through the stdlib
+    /// source cache, keyed by the whole call span.
+    ///
+    /// A supertrait the program does not import resolves its slots from the stdlib source, so the call's resolved
+    /// identity names the source module (`std.derives.comparison`) while the program's other slots, and the bodies the
+    /// SDK publishes, carry the provider's package identity. Body IR names the call by the provider identity recorded
+    /// here; the resolved identity, which legacy reads, is unchanged.
+    pub provider_slot_identities: HashMap<(usize, usize), CanonicalSymbolId>,
     /// Checked type arguments of each source `with Trait[...]` adoption clause, keyed by the clause's span.
     ///
     /// Body IR instantiates an adopted trait's default methods for a concrete adopter from these arguments, so no
