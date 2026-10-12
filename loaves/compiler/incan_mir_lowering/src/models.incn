@@ -132,6 +132,14 @@ pub def model_prefix(
                         )
                     return receiver_field(declarations, index, owner, value, count, span, enums, unions, intrinsics)
                 None => pass
+            # A `mut str` or enum parameter, an in-place binding or an in-place loop item reads through its reference.
+            match exclusive_referent(locals[index].ty):
+                Some(referent) =>
+                    if count == 0:
+                        return Ok(Place(local=index, projection=Projection.Deref(referent), span=span))
+                    fields = field_path(declarations, referent, value.projection, count, enums, unions, intrinsics)?
+                    return Ok(Place(local=index, projection=Projection.DerefFields(fields), span=span))
+                None => pass
             if count == 0:
                 return Ok(Place(local=index, projection=Projection.Whole, span=span))
             fields = field_path(declarations, locals[index].ty, value.projection, count, enums, unions, intrinsics)?
@@ -307,6 +315,14 @@ def receiver_field(
         ty = fields[0].ty
         return Ok(Place(local=index, projection=Projection.DerefField(slot, ty), span=span))
     return Ok(Place(local=index, projection=Projection.DerefFields(fields), span=span))
+
+
+def exclusive_referent(ty: PlanType) -> Option[PlanType]:
+    """The text or enum value an exclusive reference names; model references keep their receiver projection."""
+    match ty:
+        PlanType.StringMutRef => return Some(PlanType.String)
+        PlanType.EnumMutRef(owner, name) => return Some(PlanType.Enum(owner, name))
+        _ => return None
 
 
 def receiver_owner(ty: PlanType) -> Option[tuple[int, str]]:

@@ -272,6 +272,8 @@ from lists import (
     is_owned_list,
     is_builtin_iteration,
     list_parameter_type,
+    parameter_storage_type,
+    exclusive_reference,
     is_mutable_list_reference,
 )
 from assertions import lower_assertion
@@ -293,6 +295,7 @@ from closures import (
     pointer_forwarder,
 )
 from externs import delegated_function
+from mutable_parameters import mutable_argument
 # =====================================================================================================================
 # Boundary types and validation
 # =====================================================================================================================
@@ -473,6 +476,9 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
                 place_type(builder.locals, target),
             ):
                 return Err("unsupported Body IR partial tuple move")
+            # A value reached through a reference stays its owner's; moving it out would leave that owner empty.
+            if is_nominal_type(place_type(builder.locals, target)) and reads_through_reference(target):
+                return Err("unsupported Body IR move out of a borrowed value")
             return Ok(Operand(kind=OperandKind.Move(target), span=span))
         OwnershipFact.Clone =>
             if place_type(builder.locals, target) == PlanType.FrozenStr:
@@ -517,6 +523,15 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
                     return Err(f"unsupported Body IR ownership Borrow outside formatting at {site}; {detail}")
         OwnershipFact.MutBorrow => return Err("unsupported Body IR ownership MutBorrow")
         OwnershipFact.Unknown => return Err("unsupported Body IR ownership Unknown")
+
+
+def reads_through_reference(place: Place) -> bool:
+    """Report whether a place reaches its value through a reference: a receiver, a `mut` parameter or an in-place view."""
+    match place.projection:
+        Projection.Deref(_ty) => return true
+        Projection.DerefField(_slot, _ty) => return true
+        Projection.DerefFields(_fields) => return true
+        _ => return false
 
 
 def scalar_constant(constant: &RustConstant, span: SourceSpan) -> Result[Operand, str]:
@@ -1193,6 +1208,9 @@ def lower_local_assignment(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Assign a resolved local slot while preserving checked values and ownership replacement."""
+    # Replacing the caller's text through a `mut str` parameter would need its old value dropped in place.
+    if builder.locals[target.local].ty == PlanType.StringMutRef:
+        return Err("unsupported Body IR assignment through a mutable text parameter")
     if target.local in builder.borrowed_items:
         return Err("unsupported Body IR mutation of borrowed list iteration item")
     match source_function_item(module, value)?:
@@ -2524,15 +2542,23 @@ def call_parameter_type(builder: Builder, body: &RustBody, parameter: &RustCalla
     The representation a call passes for one declared parameter, shared by functions and methods.
 
     A list, set or dictionary parameter takes a shared or, when `mut`, an exclusive reference to the caller's storage;
-    a `mut` scalar is the callee's own copy. Mutable text and nominal parameters stay refused by name.
+    `mut` text, models and enums take an exclusive reference to the caller's value; a `mut` scalar is the callee's own
+    copy. A `mut` tuple or iterator parameter stays refused by name.
     """
     declared = native_source_type(builder.nominals, builder.enums, builder.unions, parameter.ty, builder.intrinsics)?
     ty = parameter_representation(body, int(parameter.local.index()), declared)?
-    if is_nominal_type(ty) and parameter.mutable and not is_generator_type(ty):
-        return Err("unsupported Body IR mutable model parameter")
-    if ty == PlanType.String and parameter.mutable:
-        return Err("unsupported Body IR mutable String argument")
-    return Ok(list_parameter_type(ty, parameter.mutable))
+    if parameter.mutable and lacks_exclusive_parameter(ty):
+        return Err("unsupported Body IR mutable tuple or iterator parameter")
+    return Ok(parameter_storage_type(ty, parameter.mutable))
+
+
+def lacks_exclusive_parameter(ty: PlanType) -> bool:
+    """Report whether a value that owns storage has no exclusive reference a `mut` parameter could receive."""
+    if not is_nominal_type(ty) or is_generator_type(ty):
+        return false
+    match exclusive_reference(ty):
+        Some(_reference) => return false
+        None => return true
 
 
 def has_defaulted_slots(binding: &RustArgumentBinding) -> bool:
@@ -2614,6 +2640,11 @@ pub def call_argument_operand(
     if ty == PlanType.String:
         text = display_operand(builder, value, span)?
         return Ok(read_place(text, true, span))
+    match ty:
+        PlanType.StringMutRef => return mutable_argument(builder, value, ty, span)
+        PlanType.ModelMutRef(_owner, _name) => return mutable_argument(builder, value, ty, span)
+        PlanType.EnumMutRef(_owner, _name) => return mutable_argument(builder, value, ty, span)
+        _ => pass
     operand = boundary_operand(builder, value, ty, span)?
     coerced = coerce_numeric_operand(builder, operand, ty, span)?
     return function_argument(builder, ty, coerced, span)
@@ -3198,7 +3229,7 @@ def coerce_numeric_operand(
     return Ok(read_place(converted, false, span))
 
 
-def clone_nominal_operand(mut builder: Builder, value: Place, span: SourceSpan) -> Result[Operand, str]:
+pub def clone_nominal_operand(mut builder: Builder, value: Place, span: SourceSpan) -> Result[Operand, str]:
     """Materialize the checker's clone fact through a source nominal's real derived Clone implementation."""
     match place_type(builder.locals, value):
         PlanType.Model(index, name) =>
@@ -4183,7 +4214,7 @@ def lower_function(
     if body.is_generator():
         for parameter in body.params:
             capture = frame_type(module, body.locals[int(parameter.local.index())], intrinsics)?
-            if list_parameter_type(capture, parameter.mutable) != capture:
+            if parameter_storage_type(capture, parameter.mutable) != capture:
                 return Err("unsupported Body IR borrowed generator parameter")
             match capture:
                 PlanType.ModelRef(_owner, _name) => return Err("unsupported Body IR borrowed generator receiver")
@@ -4306,7 +4337,7 @@ def frame_locals(
                     ty = list_parameter_type(ty, false)
         for parameter in body.params:
             if parameter.local == local.id:
-                ty = list_parameter_type(parameter_representation(body, index - 1, ty)?, parameter.mutable)
+                ty = parameter_storage_type(parameter_representation(body, index - 1, ty)?, parameter.mutable)
         locals.append(Local(ty=ty, span=location(local.span, source, file)))
     return Ok(locals)
 
@@ -4318,7 +4349,7 @@ def frame_parameters(
     file: str,
     intrinsics: list[EnumDeclaration],
 ) -> Result[list[Parameter], str]:
-    """The frame's parameters, in declaration order; mutable string, mutable model, and defaulted parameters are refused."""
+    """The frame's parameters, in declaration order; mutable model and frozen text parameters are refused."""
     mut parameters: list[Parameter] = []
     for parameter in body.params:
         ty = parameter_representation(
@@ -4326,10 +4357,8 @@ def frame_parameters(
             int(parameter.local.index()),
             frame_type(module, body.locals[int(parameter.local.index())], intrinsics)?,
         )?
-        if is_nominal_type(ty) and parameter.mutable and not is_generator_type(ty):
-            return Err("unsupported Body IR mutable model parameter")
-        if ty == PlanType.String and parameter.mutable:
-            return Err("unsupported Body IR mutable String parameter")
+        if parameter.mutable and lacks_exclusive_parameter(ty):
+            return Err("unsupported Body IR mutable tuple or iterator parameter")
         if ty == PlanType.FrozenStr and parameter.mutable:
             return Err("unsupported Body IR mutable FrozenStr parameter: mutable scalar parameter representation")
         if int(parameter.local.index()) != len(parameters):
@@ -4344,7 +4373,7 @@ def frame_parameters(
         parameters.append(
             Parameter(
                 name=name,
-                ty=list_parameter_type(ty, parameter.mutable),
+                ty=parameter_storage_type(ty, parameter.mutable),
                 span=location(parameter.span, source, file),
             ),
         )
@@ -5463,17 +5492,15 @@ def in_place_item(
     Bind a loop item that the body changes in place as an exclusive reference to its element, as legacy's `iter_mut`.
 
     The element is reborrowed through the runtime's checked `borrow_list_mut` at the cursor position, so each change
-    lands in the list. A list or model element has an exclusive reference representation; any other element stays
-    refused by name.
+    lands in the list. An element without an exclusive reference representation (a tuple or a scalar) stays refused by
+    name.
     """
     leaf, depth = require_list_shape(place_type(builder.locals, iterator), "unsupported Body IR nonlist cursor")?
     mut reference_type = PlanType.Unit
-    match element:
-        PlanType.List(element_leaf, element_depth) =>
-            reference_type = PlanType.ListMutRef(element_leaf, element_depth)
-        PlanType.Model(owner, name) =>
-            reference_type = PlanType.ModelMutRef(owner, name)
-        _ => return Err("unsupported Body IR in-place iteration over text, carrier or tuple elements")
+    match exclusive_reference(element):
+        Some(reference) =>
+            reference_type = reference
+        None => return Err("unsupported Body IR in-place iteration over tuple or scalar elements")
     builder.locals[item.local].ty = reference_type
     if item.local not in builder.in_place_items:
         builder.in_place_items.append(item.local)
@@ -5542,6 +5569,7 @@ pub def list_root_place(mut builder: Builder, value: &RustPlace, span: SourceSpa
                 match ty:
                     PlanType.ModelRef(owner, name) => ty = PlanType.Model(owner, name)
                     PlanType.ModelMutRef(owner, name) => ty = PlanType.Model(owner, name)
+                    PlanType.EnumMutRef(owner, name) => ty = PlanType.Enum(owner, name)
                     _ => pass
                 for projection in value.projection:
                     match projection:
@@ -5860,29 +5888,10 @@ def lower_enum_match(
     """Dispatch checked variants in source arm order, with independent owner snapshots on each branch."""
     if target.local in builder.owned:
         return Err("unsupported Body IR initialized owned match destination")
-    mut source = plan_place(0, span)
-    match scrutinee:
-        RustOperand.Place(read) =>
-            mut indexed = false
-            for projection in read.place.projection:
-                match projection:
-                    PlaceElem.Index(_index) => indexed = true
-                    _ => pass
-            if indexed:
-                # Collection reads clone one element before inspecting its tag. Evaluate the checked index once
-                # and keep the parent alive; an index cannot be interpreted as a model field projection.
-                operand = value_operand(builder, scrutinee, span)?
-                match operand.kind:
-                    OperandKind.Move(place) => source = place
-                    OperandKind.Copy(place) => source = place
-                    _ => return Err("unsupported Body IR nonplace enum match scrutinee")
-            else:
-                source = scalar_place(builder, read.place, span)?
-        _ => return Err("unsupported Body IR nonplace enum match scrutinee")
+    source = match_scrutinee_place(builder, scrutinee, arms, span)?
     match place_type(builder.locals, source):
         PlanType.Enum(_owner, _name) => pass
         _ => return lower_structural_match(module, builder, target, source, arms, span)
-    validate_in_place_scrutinee(builder, scrutinee, source, arms)?
     owner = enum_owner(place_type(builder.locals, source))?
     raw_tag = temporary(builder, PlanType.EnumTag, span)
     tag = temporary(builder, PlanType.Int, span)
@@ -5948,35 +5957,93 @@ def lower_enum_match(
     return Ok(None)
 
 
-def validate_in_place_scrutinee(
-    builder: Builder,
+def match_scrutinee_place(
+    mut builder: Builder,
     scrutinee: &RustOperand,
-    source: Place,
     arms: &list[RustMatchArm],
-) -> Result[None, str]:
+    span: SourceSpan,
+) -> Result[Place, str]:
     """
-    Require a match whose arms change their payloads in place to name storage the change can reach.
+    Select the place a match inspects, borrowing the matched storage itself when an arm changes it in place.
 
-    A local, a field of one, or a field of a `mut self` receiver is borrowed exclusively where it lives. A list element
-    and a loop variable are read as copies here, so a change through them would be lost; legacy reborrows them in place,
-    which needs exclusive element and iteration references this route does not build yet.
+    A list element is read as a copy unless an arm changes its payload in place; then it is reborrowed in its list, as
+    legacy's checked `list_get_mut` does. A local, a field of one, a `mut` parameter and an exclusive loop item are
+    already places the change reaches. A copied loop variable is not, so an in-place match over one stays refused.
     """
     mut in_place = false
     for arm in arms:
         if binds_in_place(arm.pattern):
             in_place = true
-    if not in_place:
-        return Ok(None)
     match scrutinee:
         RustOperand.Place(read) =>
+            mut indexed = false
             for projection in read.place.projection:
                 match projection:
-                    PlaceElem.Index(_index) => return Err("unsupported Body IR in-place match on a list element")
+                    PlaceElem.Index(_index) =>
+                        indexed = true
                     _ => pass
-        _ => return Err("unsupported Body IR in-place match on a value")
-    if source.local in builder.borrowed_items:
-        return Err("unsupported Body IR in-place match on a loop variable")
-    return Ok(None)
+            if indexed and in_place:
+                return exclusive_element(builder, read.place, span)
+            if indexed:
+                # Collection reads clone one element before inspecting its tag. Evaluate the checked index once
+                # and keep the parent alive; an index cannot be interpreted as a model field projection.
+                operand = value_operand(builder, scrutinee, span)?
+                match operand.kind:
+                    OperandKind.Move(place) => return Ok(place)
+                    OperandKind.Copy(place) => return Ok(place)
+                    _ => return Err("unsupported Body IR nonplace enum match scrutinee")
+            source = scalar_place(builder, read.place, span)?
+            if in_place and source.local in builder.borrowed_items:
+                return Err("unsupported Body IR in-place match on a copied loop variable")
+            return Ok(source)
+        _ => return Err("unsupported Body IR nonplace enum match scrutinee")
+
+
+def exclusive_element(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+    """
+    Reborrow the list element an in-place match names through the runtime's checked `borrow_list_mut`.
+
+    The list is the scrutinee's local or a structural field path of it; the index is evaluated before the list is
+    borrowed. Only an enum carrier element is matched this way, and a nested or sliced element stays refused.
+    """
+    last = len(source.projection) - 1
+    match source.projection[last]:
+        PlaceElem.Index(_index) => pass
+        _ => return Err("unsupported Body IR in-place match on a list slice")
+    mut container = plan_place(0, span)
+    if last == 0:
+        container = list_base_place(builder, source, span)?
+    else:
+        match structural_prefix(builder, source)?:
+            Some((count, _through_tuple)) =>
+                if count != last:
+                    return Err("unsupported Body IR in-place match on a nested list element")
+            None => return Err("unsupported Body IR in-place match on a nested list element")
+        container = prefix_place(builder, source, last, span)?
+    leaf, depth = require_list_shape(
+        place_type(builder.locals, container),
+        "unsupported Body IR in-place match off a list",
+    )?
+    element = list_element(leaf, depth)
+    mut reference_type = PlanType.Unit
+    match element:
+        PlanType.Enum(owner, name) =>
+            reference_type = PlanType.EnumMutRef(owner, name)
+        _ => return Err("unsupported Body IR in-place match on a non-carrier element")
+    index = list_index_operand(builder, source, last, span)?
+    exclusive_list = list_borrow(builder, container, true, span)?
+    reference = temporary(builder, reference_type, span)
+    list_call(
+        builder,
+        "borrow_list_mut",
+        element,
+        [PlanType.ListMutRef(leaf, depth), PlanType.Int],
+        reference_type,
+        [exclusive_list, index],
+        reference,
+        span,
+    )
+    return Ok(Place(local=reference.local, projection=Projection.Deref(element), span=span))
 
 
 def lower_structural_match(
@@ -6583,19 +6650,13 @@ def bind_payload_in_place(mut builder: Builder, local: int, payload: Place, span
     Bind a name its arm changes as an exclusive reference to the payload it names, as legacy matches `&mut`.
 
     The change then lands in the scrutinee itself. The reference owns nothing, so the binding never enters the drop
-    ledger. Text, nested carriers and tuples have no exclusive reference representation yet and stay refused.
+    ledger. A tuple payload has no exclusive reference representation yet and stays refused.
     """
-    ty = place_type(builder.locals, payload)
     mut reference = PlanType.Unit
-    match ty:
-        PlanType.List(leaf, depth) =>
-            reference = PlanType.ListMutRef(leaf, depth)
-        PlanType.Model(owner, name) =>
-            reference = PlanType.ModelMutRef(owner, name)
-        _ =>
-            if not is_owned_collection(ty):
-                return Err("unsupported Body IR in-place pattern binding of a text, carrier or tuple payload")
-            reference = collection_reference(ty, true)
+    match exclusive_reference(place_type(builder.locals, payload)):
+        Some(exclusive) =>
+            reference = exclusive
+        None => return Err("unsupported Body IR in-place pattern binding of a tuple or scalar payload")
     builder.locals[local].ty = reference
     builder.emit(plan_assign(plan_place(local, span), RvalueKind.MutBorrow(payload), span))
     return Ok(None)

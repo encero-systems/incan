@@ -100,6 +100,34 @@ pub def list_parameter_type(ty: PlanType, mutable: bool) -> PlanType:
         None => return collection_reference(ty, mutable)
 
 
+pub def parameter_storage_type(ty: PlanType, mutable: bool) -> PlanType:
+    """
+    A source parameter's frame storage: the collection and iterable references above, and for a `mut` text, model or
+    enum parameter the exclusive borrow of the caller's value, which is how legacy passes it.
+    """
+    if mutable:
+        match ty:
+            PlanType.String => return PlanType.StringMutRef
+            PlanType.Model(owner, name) => return PlanType.ModelMutRef(owner, name)
+            PlanType.Enum(owner, name) => return PlanType.EnumMutRef(owner, name)
+            _ => pass
+    return list_parameter_type(ty, mutable)
+
+
+pub def exclusive_reference(ty: PlanType) -> Option[PlanType]:
+    """
+    The exclusive reference that changes a value of this type where it lives: a list, set or dictionary, text, a
+    model or an enum. A tuple, a generator and a scalar have none.
+    """
+    match ty:
+        PlanType.Generator(_leaf, _depth) => return None
+        _ => pass
+    exclusive = parameter_storage_type(ty, true)
+    if exclusive == ty or exclusive == list_parameter_type(ty, false):
+        return None
+    return Some(exclusive)
+
+
 pub def is_mutable_list_reference(ty: PlanType) -> bool:
     """Read a supported collection parameter's exclusive-borrow contract."""
     match ty:

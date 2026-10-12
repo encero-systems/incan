@@ -71,10 +71,12 @@ enum Scalar {
     EnumTag,
     Enum(i64),
     EnumRef(i64),
+    EnumMutRef(i64),
     CheckedInt,
     Tuple(Vec<Scalar>),
     String,
     StringRef,
+    StringMutRef,
     Decimal,
     FrozenStr,
     StrRef,
@@ -171,6 +173,7 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::GeneratorYieldRef(leaf, depth) => Scalar::GeneratorYieldRef(Leaf::of(leaf), *depth),
         PlanType::Enum(index, _) => Scalar::Enum(*index),
         PlanType::EnumRef(index, _) => Scalar::EnumRef(*index),
+        PlanType::EnumMutRef(index, _) => Scalar::EnumMutRef(*index),
         PlanType::Model(index, _) => Scalar::Model(*index),
         PlanType::ModelMutRef(index, _) => Scalar::ModelMutRef(*index),
         PlanType::ModelRef(index, _) => Scalar::ModelRef(*index),
@@ -214,6 +217,7 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::Decimal => Scalar::Decimal,
         PlanType::FrozenStr => Scalar::FrozenStr,
         PlanType::StringRef => Scalar::StringRef,
+        PlanType::StringMutRef => Scalar::StringMutRef,
         PlanType::StrRef => Scalar::StrRef,
         PlanType::StringArray(count) => Scalar::StringArray(*count),
         PlanType::StrArray(count) => Scalar::StrArray(*count),
@@ -396,13 +400,14 @@ fn local(function: &Function, index: i64) -> Result<Scalar, PlanError> {
         })
 }
 
-/// Require a field path's root to have its explicit owned or receiver-reference shape.
+/// Require a field path's root to have its explicit owned shape, or a receiver or exclusive enum reference to one.
 fn field_owner(function: &Function, ty: Scalar, dereference: bool) -> Result<Scalar, PlanError> {
     if !dereference {
         return Ok(ty);
     }
     match ty {
         Scalar::ModelRef(owner) | Scalar::ModelMutRef(owner) => Ok(Scalar::Model(owner)),
+        Scalar::EnumMutRef(owner) => Ok(Scalar::Enum(owner)),
         _ => Err(invalid(
             function,
             "field dereference requires a nominal receiver reference",
@@ -499,6 +504,8 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
                     Scalar::ZipIterator(left, right)
                 }
                 Scalar::GeneratorMutRef(leaf, depth) => Scalar::Generator(leaf, depth),
+                Scalar::StringMutRef => Scalar::String,
+                Scalar::EnumMutRef(owner) => Scalar::Enum(owner),
                 Scalar::ListRef(leaf, depth) | Scalar::ListMutRef(leaf, depth) => Scalar::List(leaf, depth),
                 Scalar::SetRef(leaf) | Scalar::SetMutRef(leaf) => Scalar::Set(leaf),
                 Scalar::DictRef(key, value) | Scalar::DictMutRef(key, value) => Scalar::Dict(key, value),
@@ -590,6 +597,8 @@ fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, 
                         | Scalar::GeneratorYield(_, _)
                         | Scalar::StringArray(_)
                         | Scalar::Model(_)
+                        | Scalar::StringMutRef
+                        | Scalar::EnumMutRef(_)
                         | Scalar::List(_, _)
                         | Scalar::ListMutRef(_, _)
                         | Scalar::Set(_)
@@ -892,6 +901,24 @@ fn borrow_result(plan: &Plan, function: &Function, value: &Place, mutable: bool)
                 }
                 Ok(Scalar::DictMutRef(key, item))
             }
+            Scalar::String => {
+                if shared_reference(&local(function, value.local)?) {
+                    return Err(invalid(
+                        function,
+                        "cannot mutably borrow text through a shared reference",
+                    ));
+                }
+                Ok(Scalar::StringMutRef)
+            }
+            Scalar::Enum(index) => {
+                if shared_reference(&local(function, value.local)?) {
+                    return Err(invalid(
+                        function,
+                        "cannot mutably borrow an enum through a shared reference",
+                    ));
+                }
+                Ok(Scalar::EnumMutRef(index))
+            }
             _ => Err(invalid(
                 function,
                 "mutable borrow requires a collection or nominal value",
@@ -913,8 +940,25 @@ fn borrow_result(plan: &Plan, function: &Function, value: &Place, mutable: bool)
     }
 }
 
-/// Source signatures expose scalars, owned text, models, callables, and tuples of admitted types; formatting views
-/// stay internal.
+/// Report whether a local only lends its referent for reading, so nothing reached through it may be borrowed mutably.
+fn shared_reference(ty: &Scalar) -> bool {
+    matches!(
+        ty,
+        Scalar::StringRef
+            | Scalar::StrRef
+            | Scalar::EnumRef(_)
+            | Scalar::ModelRef(_)
+            | Scalar::ListRef(_, _)
+            | Scalar::SetRef(_)
+            | Scalar::DictRef(_, _)
+            | Scalar::ZipIteratorRef(_, _)
+            | Scalar::GeneratorYieldRef(_, _)
+            | Scalar::ClosureRef(_)
+    )
+}
+
+/// Source signatures expose scalars, owned text and the exclusive text reference a `mut str` parameter receives,
+/// models, callables, and tuples of admitted types; formatting views stay internal.
 fn source_signature_type(ty: &Scalar) -> bool {
     if let Scalar::FunctionPointer(signature) = ty {
         return !signature.is_empty() && signature.iter().all(source_signature_type);
@@ -950,6 +994,8 @@ fn source_signature_type(ty: &Scalar) -> bool {
                 | Scalar::Bool
                 | Scalar::Unit
                 | Scalar::String
+                | Scalar::StringMutRef
+                | Scalar::EnumMutRef(_)
                 | Scalar::Decimal
                 | Scalar::FrozenStr
                 | Scalar::Model(_)
@@ -967,7 +1013,7 @@ fn source_signature_type(ty: &Scalar) -> bool {
 }
 
 /// Runtime signatures additionally admit shared text and slice views, whose regions metadata checking erases, and
-/// the exclusive nominal reference a checked element reborrow returns.
+/// the exclusive model and enum references a checked element reborrow returns.
 fn external_signature_type(ty: &Scalar) -> bool {
     source_signature_type(ty)
         || matches!(
@@ -980,6 +1026,7 @@ fn external_signature_type(ty: &Scalar) -> bool {
                 | Scalar::EnumRef(_)
                 | Scalar::ModelRef(_)
                 | Scalar::ModelMutRef(_)
+                | Scalar::EnumMutRef(_)
                 | Scalar::GeneratorYieldRef(_, _)
         )
 }

@@ -134,6 +134,20 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
                 },
             },
         ),
+        PlanType::StringMutRef => ast::TyKind::Ref(
+            None,
+            ast::MutTy {
+                ty: ty(&PlanType::String, span),
+                mutbl: ast::Mutability::Mut,
+            },
+        ),
+        PlanType::EnumMutRef(index, name) => ast::TyKind::Ref(
+            None,
+            ast::MutTy {
+                ty: ty(&PlanType::Enum(*index, name.clone()), span),
+                mutbl: ast::Mutability::Mut,
+            },
+        ),
         PlanType::CheckedNumeric(kind) => {
             ast::TyKind::Tup(thin_vec![numeric_ty(kind, span), ty(&PlanType::Bool, span)])
         }

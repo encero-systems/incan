@@ -31,6 +31,7 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         ),
         PlanType::Enum(_, name) => enum_type(tcx, name)?,
         PlanType::EnumRef(_, name) => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, enum_type(tcx, name)?),
+        PlanType::EnumMutRef(_, name) => Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, enum_type(tcx, name)?),
         PlanType::Model(_, name) => model_type(tcx, name)?,
         PlanType::CallableArguments(inputs) => Ty::new_tup(
             tcx,
@@ -115,6 +116,7 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::Decimal => decimal_type(tcx)?,
         PlanType::FrozenStr => frozen_type(tcx)?,
         PlanType::StringRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, string_type(tcx)?),
+        PlanType::StringMutRef => Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, string_type(tcx)?),
         PlanType::StrRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, tcx.types.str_),
         PlanType::StringArray(count) => array_type(tcx, string_type(tcx)?, *count)?,
         PlanType::StrArray(count) => array_type(tcx, native_type(tcx, &PlanType::StrRef)?, *count)?,
