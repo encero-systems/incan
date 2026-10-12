@@ -2,7 +2,8 @@
 
 from rust::std::fmt import Debug
 from rust::serde import Serialize
-from rust::incan_std_data::json::__private import stringify_or_raise
+from rust::serde::de import DeserializeOwned
+from rust::incan_std_data::json::__private import stringify_or_raise, parse_or_error
 from rust::std::any import type_name_of_val
 from rust::std::cmp import PartialEq, PartialOrd
 
@@ -50,6 +51,11 @@ pub def greater_equal_model[T with PartialOrd](left: &T, right: &T) -> bool:
 pub def serialize_model[T with Serialize](value: &T) -> str:
     """Use the same serde stringify and structured error boundary as the legacy JSON protocol default."""
     return stringify_or_raise(value, type_name_of_val(value))
+
+
+pub def deserialize_model[T with DeserializeOwned](text: &str) -> Result[T, str]:
+    """Parse through the same serde decoding and error text as legacy's derived `from_json`."""
+    return parse_or_error(text)
 
 
 pub def serialize_int(value: int) -> str:

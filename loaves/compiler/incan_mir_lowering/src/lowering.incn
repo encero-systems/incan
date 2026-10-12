@@ -160,6 +160,8 @@ from model_values import (
     serialize_model_operand,
     is_json_serialize_method,
     refuse_overridden_json_default,
+    is_json_deserialize_method,
+    lower_model_from_json,
     compare_models,
 )
 from enums import lower_enum_declarations, enum_owner, variant_index, unit_variant, pattern_variant
@@ -1892,7 +1894,7 @@ def lower_method_call(
         return Err("invalid Body IR Method missing receiver")
     if is_json_serialize_method(target):
         receiver = argument_type(builder, arguments, 0, span)?
-        refuse_overridden_json_default(module, builder, receiver)?
+        refuse_overridden_json_default(module, builder, receiver, "to_json")?
         return lower_model_json_builtin(builder, arguments, destination, span)
     if lower_standard_slot(module, builder, target, arguments, destination, span)?:
         return Ok(None)
@@ -2135,6 +2137,8 @@ def lower_named_target(
         None => pass
     if is_derived_default(target):
         return lower_derived_default(module, builder, target, destination, span)
+    if is_json_deserialize_method(target):
+        return lower_model_from_json(module, builder, target, arguments, destination, span)
     match target.canonical:
         None => return Err("unsupported Body IR builtin or unproven NamedCallableTarget")
         Some(_identity) =>
@@ -2929,9 +2933,13 @@ def serialize_scalar_json(
                     return Ok(None)
                 _ => pass
         RustOperand.Place(read) =>
-            place = scalar_place(builder, read.place, span)?
-            if place_type(builder.locals, place) == PlanType.String:
-                return serialize_json_text(builder, value, result, span)
+            if not is_element_place(builder, read.place)?:
+                place = scalar_place(builder, read.place, span)?
+                ty = place_type(builder.locals, place)
+                if ty == PlanType.String:
+                    return serialize_json_text(builder, value, result, span)
+                if is_list(ty):
+                    return serialize_json_list(builder, value, ty, result, span)
     operand = value_operand(builder, value, span)?
     ty = operand_type(builder, operand)?
     mut name = ""
@@ -2944,6 +2952,32 @@ def serialize_scalar_json(
             name = "serialize_bool"
         _ => return Err(f"unsupported Body IR JSON serialization type {ty:?}")
     external_call(builder, f"incan_native_runtime::{name}", [ty], PlanType.String, [operand], result, span)
+    return Ok(None)
+
+
+def serialize_json_list(
+    mut builder: Builder,
+    value: &RustOperand,
+    ty: PlanType,
+    result: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Serialize a borrowed list through the same serde stringify boundary legacy's `json_stringify` uses."""
+    leaf, depth = require_list_shape(ty, "unsupported Body IR JSON serialization of a non-list")?
+    reference = checked_list_argument(builder, value, false, span)?
+    owned = PlanType.List(leaf, depth)
+    path = "incan_native_runtime::serialize_model"
+    builder.externals.append(
+        ExternalFunction(
+            path=path,
+            type_arguments=[owned],
+            parameters=[PlanType.ListRef(leaf, depth)],
+            return_type=PlanType.String,
+            span=span,
+        ),
+    )
+    terminate_call(builder, CalleeKind.Instantiated(path, owned), [reference], result, span)
+    builder.owned.append(result.local)
     return Ok(None)
 
 
@@ -6710,7 +6744,7 @@ def lower_exact_integer_power(
     return Ok(None)
 
 
-def text_argument(
+pub def text_argument(
     mut builder: Builder,
     arguments: &list[RustArgumentElement],
     index: int,

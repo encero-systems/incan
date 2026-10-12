@@ -40,6 +40,7 @@ pub from model_values import (
     debug_model,
     debug_value,
     serialize_model,
+    deserialize_model,
     serialize_int,
     serialize_float,
     serialize_bool,

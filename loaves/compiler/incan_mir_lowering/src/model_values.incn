@@ -1,12 +1,26 @@
 """Derived nominal formatting and comparisons over the retained source field layout."""
 
-from rust::incan_semantics_core::body_ir import Operand as RustOperand, BinOp, MethodTarget, BodyIrModule, Body
-from rust::incan_semantics_core import SymbolOrigin, SemanticSourceTargetKind
+from rust::incan_semantics_core::body_ir import (
+    Operand as RustOperand,
+    BinOp,
+    MethodTarget,
+    BodyIrModule,
+    Body,
+    NominalDeclaration,
+    NamedCallableTarget,
+    ArgumentElement,
+    Place as RustPlace,
+)
+from rust::incan_semantics_core import IncanType as RustType, SymbolOrigin, SemanticSourceTargetKind
 from pub::incan_mir_plan import PlanType, Place, Operand, RvalueKind, ExternalFunction, CalleeKind, SourceSpan
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, temporary, read_place, terminate_call, place_type
 from models import model_place
-from classes import frame_type
+from type_parameters import substitute
+from unions import native_source_type
+from options import carrier_layout
+from text_ownership import drop_borrowed_text_temporaries
+from lowering import scalar_place, text_argument, lower_callable_result
 
 
 def nominal_place(builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Option[Place], str]:
@@ -195,35 +209,107 @@ pub def refuse_overridden_json_default(
     module: &BodyIrModule,
     builder: Builder,
     receiver: PlanType,
+    method: str,
 ) -> Result[None, str]:
     """
-    Refuse the serde protocol default for a model receiver that has its own `to_json` method body.
+    Refuse the serde protocol default named `method` for a model receiver that declares its own `method` body.
 
-    A call that reaches the protocol default through a type parameter must run the adopter's own `to_json` instead,
-    and Body IR records no implementation slot for an imported protocol trait, so that dispatch stays refused.
+    A call that reaches the protocol default through a type parameter must run the adopter's own method instead, and
+    Body IR records no implementation slot for an imported protocol trait, so that dispatch stays refused.
     """
     match receiver:
         PlanType.Model(owner, _name) =>
             for body in module.bodies:
-                if is_own_json_method(module, builder, body, owner):
-                    return Err("unsupported Body IR JSON protocol default over an adopter's own to_json")
+                if declares_own_method(builder.nominals[owner], body, method):
+                    return Err(f"unsupported Body IR JSON protocol default over an adopter's own {method}")
         _ => pass
     return Ok(None)
 
 
-def is_own_json_method(module: &BodyIrModule, builder: Builder, body: &Body, owner: int) -> bool:
-    """Whether a body is a method spelled `to_json` whose receiver is the model `owner`, as an adopter's override is."""
-    if len(body.locals) == 0:
-        return false
+def declares_own_method(owner: &NominalDeclaration, body: &Body, method: str) -> bool:
+    """Whether a body is a method spelled `method` declared inside the model `owner`, as an adopter's override is."""
     match body.canonical:
         Some(identity) =>
-            if identity.kind != SemanticSourceTargetKind.Method or identity.declaration_name != "to_json":
+            if identity.kind != SemanticSourceTargetKind.Method or identity.declaration_name != method:
                 return false
+            if identity.origin != owner.canonical.origin:
+                return false
+            member = identity.declaration_span
+            declaration = owner.canonical.declaration_span
+            return declaration.start <= member.start and member.end <= declaration.end
         None => return false
-    match frame_type(module, body.locals[0], builder.intrinsics):
-        Ok(receiver) =>
-            match receiver:
-                PlanType.ModelRef(index, _name) => return index == owner
-                PlanType.ModelMutRef(index, _name) => return index == owner
+
+
+pub def is_json_deserialize_method(target: &NamedCallableTarget) -> bool:
+    """Recognize the JSON protocol's `from_json` default in source and compiled SDK identities, never an override."""
+    match target.canonical:
+        Some(identity) =>
+            if identity.kind != SemanticSourceTargetKind.Method or identity.declaration_name != "from_json":
+                return false
+            match identity.origin:
+                SymbolOrigin.Module(path) =>
+                    return len(path) == 3 and path[0] == "std" and path[1] == "serde" and path[2] == "json"
+                SymbolOrigin.Package(library=library, module_path=path) =>
+                    return library == "incan_stdlib_data" and len(path) == 2 and path[0] == "serde" and path[1] == "json"
                 _ => return false
-        Err(_reason) => return false
+        None => return false
+
+
+pub def lower_model_from_json(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &NamedCallableTarget,
+    arguments: &list[ArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Parse a model that derives serde's Deserialize through legacy's serde decoding and its error text."""
+    ty = static_receiver_type(builder, target)?
+    match ty:
+        PlanType.Model(owner, _name) =>
+            if "serde::Deserialize" not in builder.nominals[owner].derives:
+                return Err("unsupported Body IR model JSON deserialization without serde::Deserialize")
+        _ => return Err("unsupported Body IR JSON deserialization receiver")
+    refuse_overridden_json_default(module, builder, ty, "from_json")?
+    if len(arguments) != 1 or len(target.type_args) != 0:
+        return Err("invalid Body IR from_json arguments")
+    match destination:
+        Some(place) =>
+            output = scalar_place(builder, place, span)?
+            result = place_type(builder.locals, output)
+            require_parsed_result(builder, result, ty)?
+            incoming = builder.owned
+            text = text_argument(builder, arguments, 0, span)?
+            path = "incan_native_runtime::deserialize_model"
+            builder.externals.append(
+                ExternalFunction(
+                    path=path,
+                    type_arguments=[ty],
+                    parameters=[PlanType.StringRef],
+                    return_type=result,
+                    span=span,
+                ),
+            )
+            lower_callable_result(builder, CalleeKind.Instantiated(path, ty), [text], output, result, span)?
+            drop_borrowed_text_temporaries(builder, incoming, output.local, span)
+            return Ok(None)
+        None => return Err("unsupported Body IR discarded from_json")
+
+
+def static_receiver_type(builder: Builder, target: &NamedCallableTarget) -> Result[PlanType, str]:
+    """The checked static owner, closed in the active instance when it names a type parameter."""
+    match target.receiver_type:
+        Some(ty) =>
+            closed: RustType = substitute(ty, builder.type_parameters, builder.type_arguments)?
+            return native_source_type(builder.nominals, builder.enums, builder.unions, closed, builder.intrinsics)
+        None => return Err("unsupported Body IR from_json without a receiver type")
+
+
+def require_parsed_result(builder: Builder, result: PlanType, payload: PlanType) -> Result[None, str]:
+    """Require the destination to be the `Result[Model, str]` carrier legacy's `from_json` returns."""
+    _owner, declaration = carrier_layout(builder, result)?
+    if declaration.carrier != "Result":
+        return Err("unsupported Body IR from_json destination carrier")
+    if declaration.variants[0].fields != [payload] or declaration.variants[1].fields != [PlanType.String]:
+        return Err("unsupported Body IR from_json destination carrier")
+    return Ok(None)
