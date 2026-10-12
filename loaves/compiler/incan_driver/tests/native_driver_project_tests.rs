@@ -6964,6 +6964,35 @@ def main() -> None:
     )
 }
 
+/// A union side that names a newtype takes that newtype's checked identity when an `Ok(...)` member widens into it.
+#[test]
+fn result_constructors_into_nominal_union_sides_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "result_constructors_into_nominal_union_sides",
+        r#"@derive(Clone)
+type Kind = newtype str
+
+
+def kind(value: Result[Kind | str, str]) -> str:
+    match value:
+        Ok(member) =>
+            if isinstance(member, Kind):
+                return f"kind {member.0}"
+            if isinstance(member, str):
+                return f"text {member}"
+            return "other"
+        Err(message) => return f"error {message}"
+
+
+def main() -> None:
+    println(kind(Ok("fine")))
+    println(kind(Ok(Kind("k"))))
+    println(kind(Err("bad")))
+"#,
+        b"text fine\nkind k\nerror bad\n",
+    )
+}
+
 /// An Option method called on a model field reads that field's carrier and leaves the model whole, for a copied
 /// payload and for an owned text payload alike.
 #[test]
