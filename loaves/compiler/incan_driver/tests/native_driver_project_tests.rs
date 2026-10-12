@@ -10722,6 +10722,51 @@ fn decorator_factory_binding_output_matches_legacy() -> Result<(), Box<dyn std::
     )
 }
 
+/// Method replacements initialize once and preserve shared receiver calls and changed return types.
+#[test]
+fn decorated_method_binding_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("decorated-method-binding")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_functions_and_projections/user_defined_method_decorators.incn"
+        ),
+    )
+}
+
+/// A retained original mutable method writes through its receiver after initialization.
+#[test]
+fn decorated_mutable_method_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("decorated-mutable-method")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_functions_and_projections/user_defined_mutable_method_decorators.incn"
+        ),
+    )
+}
+
+/// A returned mutable replacement writes through the original caller's receiver on each invocation.
+#[test]
+fn decorated_mutable_replacement_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("decorated-mutable-replacement")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_functions_and_projections/user_defined_mutable_method_decorator_replacement.incn"
+        ),
+    )
+}
+
 /// An imported module's computed static initializes when the importer first reads it, after the importer's earlier
 /// statements, as legacy's read of an imported static first initializes its declaring module's statics.
 #[test]

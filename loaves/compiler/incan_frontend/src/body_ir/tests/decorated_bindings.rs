@@ -2,6 +2,48 @@
 
 use super::*;
 
+/// A decorated method retains its receiver on the original and on the initialized replacement signature.
+#[test]
+fn decorated_method_retains_original_receiver_and_replacement() -> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/snapshots_functions_and_projections/user_defined_method_decorators.incn"
+    );
+    let module = build(source, &["m", "decorated_method"])?;
+    let [binding] = module.decorated_bindings.as_slice() else {
+        return Err("expected the decorated method original".into());
+    };
+    assert_eq!(binding.original_body.first_representation_gap(), None);
+    assert_eq!(
+        binding.original_body.return_type,
+        IncanType::Primitive(IncanPrimitiveType::Str)
+    );
+    assert!(module.is_well_formed_decorated_binding(binding));
+    assert_eq!(binding.original_body.params[0].name, "self");
+    let [storage] = module.static_declarations.as_slice() else {
+        return Err("expected the initialized method replacement".into());
+    };
+    assert!(module.is_well_formed_static_declaration(storage));
+    Ok(())
+}
+
+/// A mutable method original and replacement retain the exclusive receiver passing contract.
+#[test]
+fn decorated_mutable_method_retains_receiver_passing() -> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/snapshots_functions_and_projections/user_defined_mutable_method_decorators.incn"
+    );
+    let module = build(source, &["m", "decorated_mutable_method"])?;
+    let [binding] = module.decorated_bindings.as_slice() else {
+        return Err("expected the mutable decorated method original".into());
+    };
+    assert!(binding.original_body.params[0].mutable);
+    assert!(module.is_well_formed_decorated_binding(binding));
+    let wrapper = body_named(&module, "bump")?;
+    assert!(wrapper.params[0].mutable);
+    assert_eq!(wrapper.first_representation_gap(), None);
+    Ok(())
+}
+
 /// A decorated function retains an executable original body and a separately typed replacement initializer.
 #[test]
 fn decorated_function_retains_original_body_and_replacement() -> Result<(), Box<dyn std::error::Error>> {
