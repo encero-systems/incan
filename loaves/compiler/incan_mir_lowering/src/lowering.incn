@@ -6698,7 +6698,7 @@ def lower_list_builtin(
     if len(arguments) != 1:
         return Err("unsupported Body IR len arity")
     # An indexed nested list, such as `len(rows[1])`, is measured through the copy a shared list argument reads.
-    if indexes_a_list(builder, arguments):
+    if indexes_nested_list(builder, arguments):
         element = borrowed_list_argument(builder, arguments, 0, false, span)?
         return list_length(builder, element, destination, span)
     ty = argument_type(builder, arguments, 0, span)?
@@ -6743,7 +6743,7 @@ def lower_list_builtin(
     return list_length(builder, reference, destination, span)
 
 
-def indexes_a_list(builder: Builder, arguments: &list[RustArgumentElement]) -> bool:
+def indexes_nested_list(builder: Builder, arguments: &list[RustArgumentElement]) -> bool:
     """Recognize one index into a local list of lists, such as `rows[1]`."""
     match arguments[0].as_one():
         Some(RustOperand.Place(read)) =>

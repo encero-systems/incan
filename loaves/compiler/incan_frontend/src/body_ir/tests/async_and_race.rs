@@ -10,17 +10,19 @@ const ASYNC_PRELUDE: &str =
 /// A join result retains the SDK-owned error even when no error import appears in the source.
 #[test]
 fn retains_sdk_join_error_from_await() -> Result<(), Box<dyn std::error::Error>> {
-    let module = build(
-        "import std.async\nfrom std.async.task import JoinHandle\nasync def join(handle: JoinHandle[int]) -> None:\n  match await handle:\n    Ok(value) => println(value)\n    Err(error) => println(error.message())\n",
-        &["m", "join_error"],
-    )?;
+    let source = "import std.async\nfrom std.async.task import JoinHandle\nasync def join(handle: JoinHandle[int]) -> None:\n  match await handle:\n    Ok(value) => println(value)\n    Err(error) => println(error.message())\n";
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let declarations = library_nominal_declarations(checker.type_info());
     assert!(
-        module
-            .nominal_declarations
+        declarations
             .iter()
             .any(|declaration| declaration.name == "TaskJoinError"),
-        "join error must have its SDK nominal record: {}",
-        module.render_snapshot()
+        "join error must have its SDK nominal record: {declarations:?}"
     );
     Ok(())
 }
