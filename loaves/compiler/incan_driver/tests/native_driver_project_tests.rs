@@ -11046,6 +11046,84 @@ fn bytes_io_trait_method_refusal_is_retained() -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
+/// Tuple element writes retain the original container through fields, nested tuples and list elements.
+#[test]
+fn tuple_element_mutation_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_collection_family_source(
+        "tuple-element-mutation",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/ownership_values_and_fields/tuple_elements_changed_in_place.incn"
+        ),
+    )
+}
+
+/// An exclusive tuple parameter changes its caller's tuple fields, including through a model field.
+#[test]
+fn mutable_tuple_parameter_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_collection_family_source(
+        "mutable-tuple-parameter",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/mut_tuple_parameter_elements_changed_in_place.incn"
+        ),
+    )
+}
+
+/// Dictionary value writes and reborrows change retained lists, tuples, nested dictionaries and models.
+#[test]
+fn dictionary_value_mutation_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_collection_family_source(
+        "dictionary-value-mutation",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/ownership_values_and_fields/dict_values_changed_in_place.incn"
+        ),
+    )
+}
+
+/// Mutating model loop-item calls embedded in expressions preserve the retained element.
+#[test]
+fn model_loop_item_expression_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_collection_family_source(
+        "model-loop-item-expression",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/mut_self_call_on_a_loop_item_inside_an_expression.incn"
+        ),
+    )
+}
+
+/// A comprehension's changed list, dictionary and model items retain legacy storage behavior.
+#[test]
+fn comprehension_element_mutation_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_collection_family_source(
+        "comprehension-element-mutation",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/ownership_values_and_fields/comprehensions_changing_their_items.incn"
+        ),
+    )
+}
+
+/// Callable tuple/list elements and generic value aliases preserve both source and alias bindings.
+#[test]
+fn generic_callable_alias_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_collection_family_source(
+        "generic-callable-alias",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/codegen_models_and_collections/generic_value_aliases_keep_both_bindings.incn"
+        ),
+    )
+}
+
+/// Compare an original collection-family source with legacy in its own case directory.
+fn check_collection_family_source(case: &str, source: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch(case)?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        source,
+    )
+}
+
 /// A consuming iterator capture needs the FnOnce contract that a reusable snapshot environment cannot provide.
 #[test]
 fn consuming_zip_capture_refusal_is_retained() -> Result<(), Box<dyn std::error::Error>> {
