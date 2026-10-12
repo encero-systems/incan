@@ -18,6 +18,14 @@ pub(super) fn result_type_parts(ty: &IncanType) -> Option<(&IncanType, &IncanTyp
         _ => None,
     }
 }
+/// Return the member types of `ty` when it is the builtin collection `kind` (a list's or set's element type, a dict's
+/// key and value types).
+pub(super) fn collection_member_types(ty: &IncanType, kind: CollectionTypeId) -> Option<&[IncanType]> {
+    let IncanType::Generic { base, args } = ty else {
+        return None;
+    };
+    (collections::from_str(base) == Some(kind)).then_some(args.as_slice())
+}
 /// Return just the checked error channel for an intrinsic `Result` carrier.
 pub(super) fn result_error_type(ty: &IncanType) -> Option<&IncanType> {
     result_type_parts(ty).map(|(_, error_type)| error_type)

@@ -786,6 +786,48 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         )
     }
 
+    /// The intrinsic `Result` variant a call of `callee` at `span` constructs: `Ok` or `Err` spelled as a bare name
+    /// that no local, same-module function or source target binds. A same-spelled source binding stays an ordinary
+    /// call that refuses unless its own direct callable facts are available; the direct runtime never resolves a
+    /// constructor name dynamically.
+    pub(super) fn intrinsic_result_constructor(
+        &self,
+        callee: &ast::Spanned<ast::Expr>,
+        span: ast::Span,
+    ) -> Option<bir::ResultVariantKind> {
+        let ast::Expr::Ident(name) = &callee.node else {
+            return None;
+        };
+        if self.bindings.contains_key(name)
+            || self.local_function_declarations.contains_key(name)
+            || self.type_info.source_target(span).is_some()
+        {
+            return None;
+        }
+        result_variant_kind(name)
+    }
+
+    /// Settle each `Ok(...)` or `Err(...)` argument of the call at `span` to the parameter type the checker resolved
+    /// for it, which carries the side the constructor leaves open as the call settled it (see
+    /// [`Self::settle_open_result_value`]). A call with no resolved parameters, a rest parameter, or arguments that do
+    /// not bind settles nothing; binding the arguments for the call itself still reports those.
+    pub(super) fn settle_open_call_arguments(&mut self, span: ast::Span, args: &[ast::CallArg]) {
+        let type_info = self.type_info;
+        let Some(params) = type_info.call_site_callable_params(span) else {
+            return;
+        };
+        let slots: Vec<DeclaredSlot> = params.iter().map(DeclaredSlot::from_checked_param).collect();
+        let Ok(planned) = plan_declared_args("call", &slots, args) else {
+            return;
+        };
+        for (slot, argument) in planned {
+            if let Some(param) = params.get(slot) {
+                let destination = self.checked_type(&param.ty);
+                self.settle_open_result_value(argument, &destination);
+            }
+        }
+    }
+
     /// Lower a call to a locally held callable value, a nominal construction, or a direct named function.
     ///
     /// A bare identifier that resolves to one of this body's locals is deliberately a
@@ -818,6 +860,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if self.type_info.resolved_builtin_call(span) == Some(BuiltinFnId::IsInstance) {
             return self.lower_checked_isinstance_call(type_args, args, span, scope, out);
         }
+        self.settle_open_call_arguments(span, args);
         let ast::Expr::Ident(name) = &callee.node else {
             return self.unsupported_operand("indirect call target".to_string(), scope, hir_span_value, out);
         };
@@ -864,11 +907,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // distinction explicitly: a same-spelled source binding (a local callable, local function, or imported
         // target) must remain on the normal call path and refuse unless its own direct callable facts are available.
         // The direct runtime never resolves a constructor name dynamically.
-        if !self.bindings.contains_key(&name)
-            && !self.local_function_declarations.contains_key(&name)
-            && self.type_info.source_target(span).is_none()
-            && type_args.is_empty()
-            && let Some(kind) = result_variant_kind(&name)
+        if type_args.is_empty()
+            && let Some(kind) = self.intrinsic_result_constructor(callee, span)
         {
             let result_ty = self.resolve_ty(span);
             let Some((ok_type, error_type)) = result_type_parts(&result_ty) else {
@@ -1262,6 +1302,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if self.type_info.resolved_builtin_call(span) == Some(BuiltinFnId::IsInstance) {
             return self.lower_checked_isinstance_call(type_args, args, span, scope, out);
         }
+        self.settle_open_call_arguments(span, args);
         if let Some(lowered) = self.lower_checked_builtin_method_call(type_args, args, span, scope, out) {
             return lowered;
         }

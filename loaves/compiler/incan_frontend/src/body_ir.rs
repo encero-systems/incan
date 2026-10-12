@@ -834,6 +834,10 @@ struct BodyBuilder<'type_info, 'source> {
     /// through a name the pattern binds (#1561), so each such name borrows that part mutably instead of reading a
     /// copy.
     in_place_pattern: bool,
+    /// Source-span types of `Ok(...)` and `Err(...)` values whose open `Result` side the checker settled where the
+    /// value flows, on the call parameter, closure or comprehension it flows into rather than on the value's own span
+    /// (see [`Self::settle_open_result_value`]).
+    settled_types: HashMap<(usize, usize), IncanType>,
     next_local: u32,
     next_scope: u32,
 }
@@ -872,6 +876,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             panic_facts: Vec::new(),
             type_overrides: HashMap::new(),
             in_place_pattern: false,
+            settled_types: HashMap::new(),
             next_local: 0,
             next_scope: 0,
         }
@@ -900,9 +905,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Retain the checker's concrete executable constructor/call type when an open caller context masks it; otherwise
     /// use the contextual expression type. Missing facts remain [`IncanType::Unknown`], never inferred from operands.
     /// While one evaluation of a chained value written per target is lowered, that target's types for the value's
-    /// nodes come first (see [`Self::type_overrides`]).
+    /// nodes come first (see [`Self::type_overrides`]), then the settled type of a `Result` constructor whose open
+    /// side its destination fixes (see [`Self::settled_types`]).
     fn resolve_ty(&self, span: ast::Span) -> IncanType {
         if let Some(ty) = self.type_overrides.get(&(span.start, span.end)) {
+            return ty.clone();
+        }
+        if let Some(ty) = self.settled_types.get(&(span.start, span.end)) {
             return ty.clone();
         }
         self.type_info
@@ -918,6 +927,142 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .or_else(|| self.type_info.expr_type(span))
             .map(|ty| self.checked_type(ty))
             .unwrap_or(IncanType::Unknown)
+    }
+
+    /// Whether `ty` leaves a part unresolved in this body: an unknown or still-inferred type, or a type parameter the
+    /// body does not declare, which checking left uninstantiated where a call's result was used.
+    fn leaves_type_open(&self, ty: &IncanType) -> bool {
+        match ty {
+            IncanType::Unknown | IncanType::Infer => true,
+            IncanType::TypeVar(name) => !self.type_parameters.contains(name),
+            IncanType::Generic { args, .. } | IncanType::Tuple(args) => {
+                args.iter().any(|arg| self.leaves_type_open(arg))
+            }
+            IncanType::Ref(inner) | IncanType::RefMut(inner) => self.leaves_type_open(inner),
+            IncanType::Function { params, return_type } => {
+                params.iter().any(|param| self.leaves_type_open(&param.ty)) || self.leaves_type_open(return_type)
+            }
+            _ => false,
+        }
+    }
+
+    /// Retain, for an `Ok(...)` or `Err(...)` value and each list, set, dict or tuple literal holding one, the type
+    /// its destination settled for the side the constructor leaves open (#1561).
+    ///
+    /// The checker settles such a side where the value flows: a generic call's argument takes the parameter type the
+    /// call's other arguments or the enclosing function's `Result` side fix, a closure's result takes the closure's
+    /// settled return type, and a list comprehension's element the comprehension's element type. It records the
+    /// settled type on the destination but keeps the open side on the constructor's own span, which the legacy
+    /// backend pins from the destination (`pin_settled_closure_result_constructor` and its siblings in
+    /// `loaves/compiler/incan_ir/src/lower/expr/helpers.rs`). Body IR builds the constructor with the settled type
+    /// instead, through [`Self::settled_types`]. An open destination, a value of another shape, and a part whose
+    /// shape differs from the destination's settle nothing.
+    fn settle_open_result_value(&mut self, value: &ast::Spanned<ast::Expr>, destination: &IncanType) {
+        if self.leaves_type_open(destination) {
+            return;
+        }
+        match &value.node {
+            ast::Expr::Paren(inner) => self.settle_open_result_value(inner, destination),
+            ast::Expr::Call(callee, type_args, args)
+                if type_args.is_empty()
+                    && args.len() == 1
+                    && self.intrinsic_result_constructor(callee, value.span).is_some() =>
+            {
+                self.settle_open_value_type(value.span, destination);
+            }
+            ast::Expr::List(entries) => {
+                let Some([member]) = primitives::collection_member_types(destination, CollectionTypeId::List) else {
+                    return;
+                };
+                for entry in entries {
+                    if let ast::ListEntry::Element(element) = entry {
+                        self.settle_open_result_value(element, member);
+                    }
+                }
+                self.settle_open_value_type(value.span, destination);
+            }
+            ast::Expr::Set(elements) => {
+                let Some([member]) = primitives::collection_member_types(destination, CollectionTypeId::Set) else {
+                    return;
+                };
+                for element in elements {
+                    self.settle_open_result_value(element, member);
+                }
+                self.settle_open_value_type(value.span, destination);
+            }
+            ast::Expr::Dict(entries) => {
+                let Some([key_ty, value_ty]) = primitives::collection_member_types(destination, CollectionTypeId::Dict)
+                else {
+                    return;
+                };
+                for entry in entries {
+                    if let ast::DictEntry::Pair(key, member) = entry {
+                        self.settle_open_result_value(key, key_ty);
+                        self.settle_open_result_value(member, value_ty);
+                    }
+                }
+                self.settle_open_value_type(value.span, destination);
+            }
+            ast::Expr::Tuple(items) => {
+                let IncanType::Tuple(item_types) = destination else {
+                    return;
+                };
+                if items.len() != item_types.len() {
+                    return;
+                }
+                for (item, item_ty) in items.iter().zip(item_types) {
+                    self.settle_open_result_value(item, item_ty);
+                }
+                self.settle_open_value_type(value.span, destination);
+            }
+            _ => {}
+        }
+    }
+
+    /// Retain `destination`'s parts for the parts the type recorded at `span` leaves open, when that closes it (see
+    /// [`Self::settle_open_result_value`]). A span with no recorded type, or one already closed, keeps what it has.
+    fn settle_open_value_type(&mut self, span: ast::Span, destination: &IncanType) {
+        let recorded = self.resolve_ty(span);
+        if matches!(recorded, IncanType::Unknown) || !self.leaves_type_open(&recorded) {
+            return;
+        }
+        let settled = self.fill_open_type_parts(&recorded, destination);
+        if !self.leaves_type_open(&settled) {
+            self.settled_types.insert((span.start, span.end), settled);
+        }
+    }
+
+    /// Fill each part of `recorded` this body leaves open with the matching part of `settled`, keeping every part
+    /// `recorded` fixes and every part whose shape differs from `settled`'s.
+    fn fill_open_type_parts(&self, recorded: &IncanType, settled: &IncanType) -> IncanType {
+        match (recorded, settled) {
+            (IncanType::Unknown | IncanType::Infer, _) => settled.clone(),
+            (IncanType::TypeVar(name), _) if !self.type_parameters.contains(name) => settled.clone(),
+            (
+                IncanType::Generic { base, args },
+                IncanType::Generic {
+                    base: settled_base,
+                    args: settled_args,
+                },
+            ) if base == settled_base && args.len() == settled_args.len() => IncanType::Generic {
+                base: base.clone(),
+                args: args
+                    .iter()
+                    .zip(settled_args)
+                    .map(|(arg, settled_arg)| self.fill_open_type_parts(arg, settled_arg))
+                    .collect(),
+            },
+            (IncanType::Tuple(items), IncanType::Tuple(settled_items)) if items.len() == settled_items.len() => {
+                IncanType::Tuple(
+                    items
+                        .iter()
+                        .zip(settled_items)
+                        .map(|(item, settled_item)| self.fill_open_type_parts(item, settled_item))
+                        .collect(),
+                )
+            }
+            _ => recorded.clone(),
+        }
     }
 
     /// Declare a new user-facing local (parameter or source binding), seeding its last-use countdown from the

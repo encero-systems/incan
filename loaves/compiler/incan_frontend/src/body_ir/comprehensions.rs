@@ -3,6 +3,7 @@
 use super::args::*;
 use super::control_flow::intersect_range_layouts;
 use super::free_vars::*;
+use super::primitives::collection_member_types;
 use super::reads::*;
 use super::*;
 
@@ -25,6 +26,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ) -> bir::Operand {
         let hir_span_value = hir_span(span);
         let ty = self.resolve_ty(span);
+        // An `Ok(...)` or `Err(...)` element is built with the element type the checker settled for the
+        // comprehension, which fixes the side the constructor leaves open.
+        if let Some([element_ty]) = collection_member_types(&ty, CollectionTypeId::List) {
+            self.settle_open_result_value(&comp.expr, element_ty);
+        }
         let list_local = self.new_temp(ty.clone(), scope, hir_span_value);
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {

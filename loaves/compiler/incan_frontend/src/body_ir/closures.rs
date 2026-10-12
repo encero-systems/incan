@@ -128,6 +128,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // currently has the source-local range aggregate layout; its captured/writeable locals are a distinct
         // invocation frame.
         let saved_materialized_range_locals = self.materialized_range_locals.clone();
+        // An `Ok(...)` or `Err(...)` the body returns is built with the result type the checker settled for the
+        // closure, which fixes the side the constructor leaves open.
+        if let IncanType::Function { return_type, .. } = self.resolve_ty(expr_span) {
+            self.settle_open_result_value(body_expr, &return_type);
+        }
         let mut body_stmts = Vec::new();
         let result = self.lower_expr_to_operand(body_expr, closure_scope, &mut body_stmts);
         for (name, previous) in saved_bindings {

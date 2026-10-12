@@ -696,8 +696,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
     }
 
-    /// Lower `x = y = z = value` into `z = value; y = <read z>; x = <read y>` (rightmost target first) when the value is
-    /// shared by every target. A value the checker recorded as written per target is instead evaluated once per
+    /// Lower `x = y = z = value` into `z = value; y = <read z>; x = <read y>` (rightmost target first) when the value
+    /// is shared by every target. A value the checker recorded as written per target is instead evaluated once per
     /// target, at that target's type (see [`Self::lower_chained_per_target`]).
     pub(super) fn lower_chained_assignment(
         &mut self,
