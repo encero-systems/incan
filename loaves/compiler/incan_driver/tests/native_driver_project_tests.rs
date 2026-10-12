@@ -43,18 +43,31 @@ type Rank = newtype int
 def main() -> None:
     source = [Task(priority=2, name="b"), Task(priority=1, name="a")]
     tasks = sorted(source)
-    println(f"{tasks[0].name} {source[0].name}")
+    for task in tasks:
+        println(task.name)
+    for task in source:
+        println(task.name)
     levels = sorted([Level.High, Level.Low])
     println(levels[0] == Level.Low)
     ranks = sorted([Rank(3), Rank(1)])
-    println(ranks[0].0)
+    for rank in ranks:
+        println(rank.0)
     pairs = sorted([(2, "b"), (1, "a")])
-    println(pairs[0][1])
+    for pair in pairs:
+        println(pair[1])
     nested = sorted([[3, 1], [2]])
-    println(nested[0][0])
+    for items in nested:
+        for value in items:
+            println(value)
     options = sorted([Some(2), None, Some(1)])
-    println(options[0] == None)
+    for option in options:
+        println(option == None)
 "#,
+    )?;
+    census::require_named_refusal(
+        "snapshots_traits_and_generics",
+        "sorted_list_of_ordered_types",
+        "unsupported Body IR model index or slice projection",
     )
 }
 
