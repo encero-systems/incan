@@ -5,7 +5,8 @@ use super::*;
 use incan_lang::lang::decorators;
 
 /// Admit only nongeneric function decorators whose checked path can be read as a source callable.
-/// Factories, generic originals and method receivers retain their existing named refusal until independently proven.
+/// Factories, generic originals, extern delegations and method receivers retain their existing named refusal until
+/// independently proven; an extern's delegation must not bypass the visible replacement wrapper.
 pub(super) fn supports_function(
     function: &ast::FunctionDecl,
     span: ast::Span,
@@ -31,10 +32,13 @@ pub(super) fn supports_function(
             .all(|(left, right)| left.ty == right.ty && left.is_mut == right.is_mut)
         && function.type_params.is_empty()
         && !function.is_async()
-        && function.decorators.iter().all(|decorator| {
-            decorators::from_segments(&decorator.node.path.segments).is_some()
-                || (!decorator.node.is_call && decorator.node.path.segments.len() == 1)
-        })
+        && function.decorators.iter().all(
+            |decorator| match decorators::from_segments(&decorator.node.path.segments) {
+                Some(decorators::DecoratorId::RustExtern) => false,
+                Some(_) => true,
+                None => !decorator.node.is_call && decorator.node.path.segments.len() == 1,
+            },
+        )
 }
 
 /// Retain originals and replacement initializers in source order, replacing their visible bodies with wrappers.
