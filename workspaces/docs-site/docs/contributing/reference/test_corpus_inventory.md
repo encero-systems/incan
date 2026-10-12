@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3943 | 257 | 431 |
+| keep | 3944 | 257 | 431 |
 | re-point | 1487 | 91 | 1058 |
 | retire | 1507 | 153 | 0 |
 | unaffected | 1977 | 212 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8914** | **713** | **1494** |
+| **Total** | **8915** | **713** | **1494** |
 
 - Retire-class tests: 1507, of which twinned 1022, dies 295, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -1833,7 +1833,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
 
-### `loaves/compiler/incan_frontend` (2338 tests in 132 files: keep 2325, unaffected 13)
+### `loaves/compiler/incan_frontend` (2339 tests in 132 files: keep 2326, unaffected 13)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -1843,7 +1843,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_frontend/src/body_ir/stdlib_delegations.rs` | 1 | 142 | 28 | keep | - | - | - | #1337 | checker 1 | Canonical SDK Package forwarding proof rejects wrong owners and stale declaration spans without emitted spelling dispatch. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/async_and_race.rs` | 17 | 464 | 464 | keep | - | - | - | #1561 | replacement 1, checker 2, parser 2 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/calls_and_arguments.rs` | 94 | 2657 | 2657 | keep | - | - | required | #1561 | replacement 3, checker 4, parser 4 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
-| `loaves/compiler/incan_frontend/src/body_ir/tests/class_inheritance.rs` | 3 | 125 | 125 | keep | - | - | - | #1337 | - | Checked parent-first layout, canonical override selection and malformed inheritance admission; frontend-only Body IR contracts. |
+| `loaves/compiler/incan_frontend/src/body_ir/tests/class_inheritance.rs` | 4 | 163 | 163 | keep | - | - | - | #1337 | - | Checked parent-first layout, canonical override selection and malformed inheritance admission; frontend-only Body IR contracts. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/closures_comprehensions_and_generators.rs` | 36 | 1121 | 1121 | keep | - | - | - | #1561 | parser 1 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/control_flow_and_loops.rs` | 36 | 1227 | 1227 | keep | - | - | - | #1561 | replacement 4 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/decorated_bindings.rs` | 9 | 257 | 257 | keep | - | - | - | #1337 | replacement 2, checker 2, parser 2 | Original callable identity and initialized decorator replacement contracts; frontend-only Body IR coverage. |

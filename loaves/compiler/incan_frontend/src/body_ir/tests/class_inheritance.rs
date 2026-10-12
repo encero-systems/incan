@@ -122,3 +122,41 @@ fn malformed_class_inheritance_is_rejected() -> Result<(), Box<dyn std::error::E
     assert!(!tokens.is_well_formed_nominal_declaration(&forged));
     Ok(())
 }
+
+/// Source-local inheritance remains explicitly uncovered by package publication until its complete closure is proven.
+#[test]
+fn inherited_class_package_publication_is_uncovered() -> Result<(), Box<dyn std::error::Error>> {
+    use incan_semantics_core::SymbolOrigin;
+    use incan_semantics_core::executable_representation::{
+        CoverageReason, DeclarationCoverage, SurfaceReader, build_surface,
+    };
+    use std::collections::BTreeSet;
+
+    let mut module = build(SOURCE, &["inheritance_publication"])?;
+    let mut child = module
+        .nominal_declarations
+        .iter()
+        .find(|item| item.name == "Child")
+        .ok_or("child missing")?
+        .clone();
+    child.canonical.origin = SymbolOrigin::Package {
+        library: "inheritance_probe".to_owned(),
+        module_path: vec!["inheritance_publication".to_owned()],
+    };
+    let identity = child.canonical.clone();
+    module.nominal_declarations = vec![child];
+    module.bodies.clear();
+    let bytes = build_surface(
+        &[module],
+        "inheritance_probe",
+        "0.1.0",
+        &BTreeSet::from([identity.clone()]),
+        &BTreeSet::new(),
+    )?;
+    let reader = SurfaceReader::open(&bytes)?;
+    assert!(matches!(
+        reader.index().coverage(&identity)?,
+        DeclarationCoverage::Uncovered(CoverageReason::UnsupportedConstruct)
+    ));
+    Ok(())
+}
