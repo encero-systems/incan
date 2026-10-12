@@ -12674,36 +12674,19 @@ def main() -> None:
     )
 }
 
-/// Keep the calls-owned contextual constructor refusal explicit after generic dictionary fields become writable.
+/// Checked empty collection context completes the original generic dictionary/set fixture with frozen legacy output.
 #[test]
-fn contextual_generic_collection_refusal_is_retained() -> Result<(), Box<dyn std::error::Error>> {
+fn contextual_generic_collections_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
-    let root = fixture.scratch("contextual-generic-collection-refusal")?;
-    let source = root.join("generic.incn");
-    fs::write(
-        &source,
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("contextual-generic-collections")?,
+        &fixture.sysroot,
+        &fixture.formatting,
         include_str!(
             "../../incan_test_support/fixtures/behavior/ownership_numerics_and_bounds/generic_functions_hash_through_dict_and_set_types.incn"
         ),
-    )?;
-    let closure = corpus::runtime_closure(&fixture.formatting)?;
-    let binary = root.join("native");
-    let refused = corpus::source_command(
-        &fixture.driver_binary("debug"),
-        &source,
-        &binary,
-        &fixture.sysroot,
-        &closure,
     )
-    .output()?;
-    assert!(!refused.status.success());
-    assert!(
-        String::from_utf8_lossy(&refused.stderr).contains("unsupported Body IR collection leaf ? in distinct"),
-        "{}",
-        String::from_utf8_lossy(&refused.stderr)
-    );
-    assert!(!binary.exists());
-    Ok(())
 }
 
 /// An environment argument list can be sliced for iteration while its original storage remains readable.

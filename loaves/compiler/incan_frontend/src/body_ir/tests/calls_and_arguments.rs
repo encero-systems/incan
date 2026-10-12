@@ -5,6 +5,30 @@
 
 use super::*;
 
+/// A checked write to a shadowed collection cannot settle a different outer binding's open constructor.
+#[test]
+fn collection_write_context_preserves_binding_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        r#"def f[T](items: list[T]) -> int:
+    mut seen = set()
+    for item in items:
+        mut seen: set[int] = set()
+        seen.add(1)
+    return len(seen)
+"#,
+        &["m", "shadowed_collection_context"],
+    )?;
+    let body = body_named(&module, "f")?;
+    let types: Vec<_> = body
+        .locals
+        .iter()
+        .filter(|local| local.name.as_deref() == Some("seen"))
+        .map(|local| local.ty.to_string())
+        .collect();
+    assert_eq!(types, ["Set[?]", "Set[int]"], "{}", module.render_snapshot());
+    Ok(())
+}
+
 /// Checked writes settle empty collection bindings through a declared type parameter without legacy inference changes.
 #[test]
 fn empty_collection_writes_retain_parameter_context() -> Result<(), Box<dyn std::error::Error>> {
