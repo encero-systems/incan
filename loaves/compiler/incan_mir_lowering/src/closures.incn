@@ -35,6 +35,7 @@ from layout_types import native_source_type
 from lists import is_list, is_owned_list, list_parameter_type
 from numerics import numeric_carrier
 from generators import generator_type, is_generator_type
+from frame import Builder
 
 
 pub def function_pointer_type(parameters: &list[IncanCallableParam], result: &RustType) -> Result[PlanType, str]:
@@ -297,7 +298,11 @@ pub def function_assignment(
         _ => return Err("unsupported Body IR noncallable assignment to function value")
 
 
-pub def source_function_item(module: &RustModule, value: &RustRvalue) -> Result[Option[tuple[str, PlanType]], str]:
+pub def source_function_item(
+    module: &RustModule,
+    builder: Builder,
+    value: &RustRvalue,
+) -> Result[Option[tuple[str, PlanType]], str]:
     """Select a function item only from the frontend's explicit named-read fact and canonical forwarding identity."""
     match value:
         RustRvalue.Closure(params=parameters, captured_operands=captures, body=closure) =>
@@ -305,12 +310,13 @@ pub def source_function_item(module: &RustModule, value: &RustRvalue) -> Result[
                 return Ok(None)
             if len(captures) != 0 or len(closure.capture_locals) != 0 or len(closure.stmts) != 1:
                 return Err("invalid Body IR function-item forwarding computation")
-            return Ok(Some(checked_function_item(module, parameters, closure.stmts[0].kind)?))
+            return Ok(Some(checked_function_item(module, builder, parameters, closure.stmts[0].kind)?))
         _ => return Ok(None)
 
 
 def checked_function_item(
     module: &RustModule,
+    builder: Builder,
     parameters: &list[RustParameter],
     statement: &RustStatementKind,
 ) -> Result[tuple[str, PlanType], str]:
@@ -320,14 +326,42 @@ def checked_function_item(
             match callee:
                 RustCallee.Function(target) =>
                     match target:
-                        RustCallableTarget.Named(named) => return function_item_identity(module, parameters, named)
+                        RustCallableTarget.Named(named) =>
+                            return function_item_identity(module, builder, parameters, named)
                         _ => return Err("invalid Body IR indirect function-item forwarding target")
                 _ => return Err("invalid Body IR nonfunction item forwarding target")
         _ => return Err("invalid Body IR function-item body")
 
 
+def item_component(builder: Builder, ty: &RustType) -> Result[PlanType, str]:
+    """
+    Admit a function item's signature component: a callable component, a source model or enum, or a standard carrier.
+
+    The item's own frame takes and returns models, enums and carriers by value under the frame's own layout, which is
+    the representation a closure expression's item already carries.
+    """
+    match callable_component(ty):
+        Ok(component) => return Ok(component)
+        Err(reason) =>
+            match native_source_type(builder.nominals, builder.enums, builder.unions, ty, builder.intrinsics):
+                Ok(PlanType.Model(index, name)) => return Ok(PlanType.Model(index, name))
+                Ok(PlanType.Enum(index, name)) => return Ok(PlanType.Enum(index, name))
+                _ => return Err(reason)
+
+
+def item_result(builder: Builder, ty: &RustType) -> Result[PlanType, str]:
+    """A function item's result: a lazy generator, as `callable_result` admits one, or any item component."""
+    match generator_type(ty):
+        Some(Ok(result)) =>
+            if is_generator_type(result):
+                return Ok(result)
+        _ => pass
+    return item_component(builder, ty)
+
+
 def function_item_identity(
     module: &RustModule,
+    builder: Builder,
     parameters: &list[RustParameter],
     target: &RustNamedTarget,
 ) -> Result[tuple[str, PlanType], str]:
@@ -351,8 +385,8 @@ def function_item_identity(
                     for index in range(len(parameters)):
                         if parameters[index].ty != body.params[index].ty or body.params[index].mutable:
                             return Err("unsupported Body IR function-item parameter contract")
-                        signature.append(signature_input(callable_component(body.params[index].ty)?))
-                    signature.append(callable_result(body.return_type)?)
+                        signature.append(signature_input(item_component(builder, body.params[index].ty)?))
+                    signature.append(item_result(builder, body.return_type)?)
                     # The item names the same plan symbol a direct call to this declaration uses.
                     name = function_name(module, body)
                     return Ok((name, PlanType.FunctionItem(name, signature)))

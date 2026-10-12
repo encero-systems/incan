@@ -854,13 +854,14 @@ pub(super) fn collect_local_trait_implementations(
     implementations
 }
 
-/// Retain the slots of one adopter's imported traits that have no type parameters, under checked provider identities.
+/// Retain the slots of one adopter's imported traits, under checked provider identities.
 ///
 /// Each slot keeps the body that fills it: the adopter's own method, or the imported trait's default, whose body lives
-/// in the module that declares the trait. A slot of a standard-library or compiled SDK protocol is recorded only when
-/// the adopter's own method fills it, because the protocol's default bodies are not among the project's modules.
-/// Imported supertraits and imported traits with type parameters get no record, so a call that needs one of those
-/// keeps refusing. The records are sorted by slot identity, so the module's Body IR does not depend on hash order.
+/// in the module that declares the trait. A slot of a standard-library or compiled SDK protocol, with or without type
+/// parameters, is recorded only when the adopter's own method fills it, because the protocol's default bodies are not
+/// among the project's modules. Imported supertraits and other modules' traits with type parameters get no record, so
+/// a call that needs one of those keeps refusing. The records are sorted by slot identity, so the module's Body IR
+/// does not depend on hash order.
 fn imported_trait_implementations(
     program: &ast::Program,
     type_info: &TypeCheckInfo,
@@ -871,18 +872,19 @@ fn imported_trait_implementations(
     let mut implementations: Vec<bir::TraitImplementation> = Vec::new();
     for adoption in adoptions {
         let name = &adoption.node.name;
-        if local_trait(program, name).is_some()
-            || !adoption.node.type_args.is_empty()
-            || !type_info.traits.type_params.get(name).is_some_and(Vec::is_empty)
-        {
+        if local_trait(program, name).is_some() {
             continue;
         }
+        // A protocol slot records only the adopter's own method, which needs no trait type arguments; another
+        // module's trait with type parameters would need its defaults instantiated, which Body IR does not do.
+        let generic =
+            !adoption.node.type_args.is_empty() || !type_info.traits.type_params.get(name).is_some_and(Vec::is_empty);
         for ((trait_name, slot_name), method) in &type_info.traits.method_identities {
             if trait_name != name || implementations.iter().any(|existing| &existing.method == method) {
                 continue;
             }
-            let protocol = type_info.traits.sdk_method_identities.contains(method) || is_stdlib_trait_slot(method);
-            if !protocol && !is_executable_source_trait_slot(method) {
+            let protocol = type_info.traits.is_standard_slot(method);
+            if (generic && !protocol) || (!protocol && !is_executable_source_trait_slot(method)) {
                 continue;
             }
             if let Some(implementation) = imported_slot_implementation(type_info, method, slot_name, methods, !protocol)
@@ -922,11 +924,6 @@ fn imported_slot_implementation(
         [] if defaults && type_info.traits.default_method_identities.contains(method) => Some(method.clone()),
         _ => None,
     }
-}
-
-/// Whether a trait slot belongs to a protocol the standard library's source declares.
-fn is_stdlib_trait_slot(identity: &CanonicalSymbolId) -> bool {
-    matches!(&identity.origin, incan_semantics_core::SymbolOrigin::Module(path) if incan_lang::lang::stdlib::is_any_stdlib_path(path))
 }
 
 /// Whether a trait slot can be filled by a body of the project or of a package dependency.

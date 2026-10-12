@@ -10,6 +10,19 @@ fn ident(name: &str, span: Span) -> Ident {
     Ident::new(Symbol::intern(name), span)
 }
 
+/// Spell `::std::boxed::Box` from the crate root, so a source declaration named `Box` cannot shadow a closure's box.
+pub(crate) fn boxed_path(span: Span) -> ast::Path {
+    let mut segments = thin_vec![ast::PathSegment::path_root(span)];
+    for name in ["std", "boxed", "Box"] {
+        segments.push(ast::PathSegment::from_ident(ident(name, span)));
+    }
+    ast::Path {
+        span,
+        segments,
+        tokens: None,
+    }
+}
+
 /// Declare the exact owned or borrowed runtime handle, leaving other plan types to their ordinary declaration path.
 fn generator_signature_ty(kind: &PlanType, span: Span) -> Option<Box<ast::Ty>> {
     let (name, leaf, depth, mutability) = match kind {
@@ -153,13 +166,15 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
         }
         PlanType::FunctionPointer(signature) => function_pointer_ast(signature, span),
         PlanType::Closure(signature) => {
-            let mut path = ast::Path::from_ident(ident("Box", span));
-            path.segments[0].args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
-                span,
-                args: thin_vec![ast::AngleBracketedArg::Arg(ast::GenericArg::Type(callable_object_ast(
-                    signature, span
-                )))],
-            })));
+            let mut path = boxed_path(span);
+            if let Some(segment) = path.segments.last_mut() {
+                segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
+                    span,
+                    args: thin_vec![ast::AngleBracketedArg::Arg(ast::GenericArg::Type(callable_object_ast(
+                        signature, span
+                    )))],
+                })));
+            }
             ast::TyKind::Path(None, path)
         }
         PlanType::ClosureRef(signature) => ast::TyKind::Ref(

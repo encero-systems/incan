@@ -338,7 +338,7 @@ fn validate_declarations(
                         model.name
                     ));
                 }
-                validate_generic_adoptions(&model.traits, program)?;
+                validate_generic_adoptions(&model.traits, program, type_info)?;
                 continue;
             }
             Declaration::Class(class) => {
@@ -349,7 +349,7 @@ fn validate_declarations(
                         class.name
                     ));
                 }
-                validate_generic_adoptions(&class.traits, program)?;
+                validate_generic_adoptions(&class.traits, program, type_info)?;
                 continue;
             }
             Declaration::Enum(value) => {
@@ -365,7 +365,7 @@ fn validate_declarations(
                 continue;
             }
             Declaration::Newtype(newtype) if incan_frontend::body_ir::is_direct_replacement_plain_newtype(newtype) => {
-                validate_generic_adoptions(&newtype.traits, program)?;
+                validate_generic_adoptions(&newtype.traits, program, type_info)?;
                 continue;
             }
             Declaration::Newtype(_) => "nonplain Newtype",
@@ -515,18 +515,21 @@ fn declares_trait(program: &incan_frontend::ast::Program, name: &str) -> bool {
     )
 }
 
-/// Refuse a generic adoption of a trait this module does not declare.
+/// Refuse a generic adoption of a trait this module does not declare, unless the standard library declares it.
 ///
-/// Body IR instantiates only source-local trait defaults; an imported generic trait's implementation facts are not
-/// retained, so admitting the adoption could lose behavior.
+/// Body IR instantiates only source-local trait defaults; another module's generic trait's implementation facts are
+/// not retained, so admitting the adoption could lose behavior. A standard-library or SDK protocol's slots are retained
+/// where the adopter's own method fills them, and a call that needs one of its defaults refuses by name where lowered.
 fn validate_generic_adoptions(
     adoptions: &[incan_frontend::ast::Spanned<incan_frontend::ast::TraitBound>],
     program: &incan_frontend::ast::Program,
+    type_info: &incan_frontend::typechecker::TypeCheckInfo,
 ) -> Result<(), String> {
-    if adoptions
-        .iter()
-        .any(|adoption| !adoption.node.type_args.is_empty() && !declares_trait(program, &adoption.node.name))
-    {
+    if adoptions.iter().any(|adoption| {
+        !adoption.node.type_args.is_empty()
+            && !declares_trait(program, &adoption.node.name)
+            && !type_info.traits.is_standard_trait(&adoption.node.name)
+    }) {
         return Err("unsupported source generic adoption of an imported trait on the native route".to_owned());
     }
     Ok(())

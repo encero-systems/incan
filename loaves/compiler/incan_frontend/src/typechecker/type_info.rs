@@ -23,7 +23,7 @@ use incan_semantics_core::{
     CanonicalStableDeclarationContext, CanonicalSymbolId, CompilerNodeId, IncanCallableParam, IncanCallableParamKind,
     IncanPrimitiveType, IncanType, SemanticFact, SemanticFactKind, SemanticFactStore, SemanticFactValue,
     SemanticRegistryEntry, SemanticRegistrySubjectKind, SemanticRegistryValue, SemanticSourceTarget,
-    SemanticSourceTargetKind, SymbolNamespace,
+    SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
 };
 
 use super::{ConstValue, const_eval};
@@ -687,6 +687,23 @@ pub struct TraitArtifacts {
 }
 
 impl TraitArtifacts {
+    /// Whether a visible trait name resolves to a standard-library or compiled SDK protocol: the checker recorded slots
+    /// for it, and every one carries such an identity.
+    pub fn is_standard_trait(&self, name: &str) -> bool {
+        let mut slots = self
+            .method_identities
+            .iter()
+            .filter(|((trait_name, _), _)| trait_name == name)
+            .peekable();
+        slots.peek().is_some() && slots.all(|(_, identity)| self.is_standard_slot(identity))
+    }
+
+    /// Whether a trait slot belongs to a standard-library or compiled SDK protocol.
+    pub fn is_standard_slot(&self, identity: &CanonicalSymbolId) -> bool {
+        self.sdk_method_identities.contains(identity)
+            || matches!(&identity.origin, SymbolOrigin::Module(path) if incan_lang::lang::stdlib::is_any_stdlib_path(path))
+    }
+
     /// Retain one visible slot's identity under its trait key, and whether its checked declaration has a default body.
     pub(crate) fn record_method(&mut self, trait_name: &str, method_name: &str, method: &MethodInfo) {
         let Some(identity) = &method.identity else {

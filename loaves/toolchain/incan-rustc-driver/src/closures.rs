@@ -60,7 +60,8 @@ fn block(stmts: ThinVec<ast::Stmt>, span: Span) -> Box<ast::Block> {
     })
 }
 
-/// Declare `Box::new(move |_: A, ...| -> R { let _ = (&capture, ...); loop {} })` as the constructor's tail.
+/// Declare `::std::boxed::Box::new(move |_: A, ...| -> R { let _ = (&capture, ...); loop {} })` as the constructor's
+/// tail, spelled from the crate root so a source declaration named `Box` cannot shadow it.
 ///
 /// The placeholder borrows every capture so the `move` closure owns each one by value in parameter order while staying
 /// `Fn`; it never runs, because the closure's MIR is replaced by [`callback`]. Preflight has proved the constructor
@@ -134,7 +135,7 @@ pub fn declaration_body(function: &Function, span: Span) -> Option<Box<ast::Bloc
         })),
         span,
     );
-    let mut boxing = ast::Path::from_ident(identifier("Box", span));
+    let mut boxing = declarations::boxed_path(span);
     boxing
         .segments
         .push(ast::PathSegment::from_ident(identifier("new", span)));
