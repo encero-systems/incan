@@ -180,6 +180,22 @@ pub fn library_type_identities(type_info: &TypeCheckInfo) -> Vec<CanonicalSymbol
         .collect()
 }
 
+/// Collect the named leaves of `ty` with their structural paths below `path`, through generic arguments and tuple
+/// items, as `ResultVariant::has_complete_canonical_types` walks them.
+fn named_leaf_paths(ty: &IncanType, path: &mut Vec<usize>, out: &mut Vec<(Vec<usize>, String)>) {
+    match ty {
+        IncanType::Named(name) => out.push((path.clone(), name.clone())),
+        IncanType::Tuple(items) | IncanType::Generic { args: items, .. } => {
+            for (index, item) in items.iter().enumerate() {
+                path.push(index);
+                named_leaf_paths(item, path, out);
+                path.pop();
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Prepare one manifest-free parsed module so it satisfies [`build_body_ir_module_v0`]'s input contract.
 ///
 /// This lives beside the boundary it governs rather than inside any one caller, because every manifest-free caller owes
@@ -1034,6 +1050,33 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if settled != recorded && !self.leaves_type_open(&settled) {
             self.settled_types.insert((span.start, span.end), settled);
         }
+    }
+
+    /// The canonical identities of a constructed `Result`'s named leaves when its sides were settled at a destination
+    /// (see [`Self::settle_open_result_value`]): the checker's identity at a path it recorded, otherwise the module
+    /// binding the leaf names. A leaf with neither stays absent, so the construction refuses its payload identity
+    /// rather than guessing one.
+    pub(super) fn settled_result_identities(
+        &self,
+        result_ty: &IncanType,
+        recorded: &std::collections::BTreeMap<Vec<usize>, CanonicalSymbolId>,
+    ) -> std::collections::BTreeMap<Vec<usize>, CanonicalSymbolId> {
+        let mut leaves = Vec::new();
+        if let IncanType::Generic { args, .. } = result_ty {
+            for (index, side) in args.iter().enumerate() {
+                named_leaf_paths(side, &mut vec![index], &mut leaves);
+            }
+        }
+        leaves
+            .into_iter()
+            .filter_map(|(path, name)| {
+                recorded
+                    .get(&path)
+                    .or_else(|| self.type_info.declarations.named_type_identities.get(&name))
+                    .cloned()
+                    .map(|identity| (path, identity))
+            })
+            .collect()
     }
 
     /// Fill each part of `recorded` this body leaves open with the matching part of `settled`, keeping every part

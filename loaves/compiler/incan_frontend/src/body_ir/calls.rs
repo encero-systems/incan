@@ -928,19 +928,26 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 );
             };
             let payload = self.lower_expr_to_operand(payload, scope, out);
+            let recorded = self
+                .type_info
+                .expressions
+                .expression_type_identities
+                .get(&(span.start, span.end))
+                .cloned()
+                .unwrap_or_default();
+            // A side its destination settled can name leaves the checker's own constructor type does not.
+            let canonical_types = if self.settled_types.contains_key(&(span.start, span.end)) {
+                self.settled_result_identities(&result_ty, &recorded)
+            } else {
+                recorded
+            };
             return self.push_assign_temp(
                 bir::Rvalue::ResultVariant(bir::ResultVariant {
                     kind,
                     payload,
                     ok_type: ok_type.clone(),
                     error_type: error_type.clone(),
-                    canonical_types: self
-                        .type_info
-                        .expressions
-                        .expression_type_identities
-                        .get(&(span.start, span.end))
-                        .cloned()
-                        .unwrap_or_default(),
+                    canonical_types,
                 }),
                 result_ty,
                 scope,
