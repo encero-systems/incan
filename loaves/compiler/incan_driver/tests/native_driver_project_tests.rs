@@ -12838,3 +12838,45 @@ fn validation_error_carrier_output_matches_legacy() -> Result<(), Box<dyn std::e
     )?;
     Ok(())
 }
+
+/// Both original error-carrier fixtures reach the checked primitive-method boundary after native ABI admission.
+#[test]
+fn validation_error_fixtures_reach_checked_method_boundary() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    for (case, source) in [
+        (
+            "validation-receiver-methods",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/lowering_expressions/receiver_aware_method_kinds_issue1668.incn"
+            ),
+        ),
+        (
+            "validation-string-bytes",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/snapshots_collections_and_strings/str_encode_bytes_decode.incn"
+            ),
+        ),
+    ] {
+        let root = fixture.scratch(case)?;
+        let path = root.join("main.incn");
+        fs::write(&path, source)?;
+        let binary = root.join("native");
+        let output = corpus::source_command(
+            &fixture.driver_binary("debug"),
+            &path,
+            &binary,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?;
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("unsupported Body IR list Method on non-list"),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!binary.exists());
+    }
+    Ok(())
+}
