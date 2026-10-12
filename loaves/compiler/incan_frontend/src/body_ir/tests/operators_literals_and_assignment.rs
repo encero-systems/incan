@@ -677,6 +677,51 @@ fn list_equality_stays_a_primitive_because_that_is_what_the_other_backend_emits(
 
 /// Equality borrows collection operands while a later final use still transfers the original binding.
 #[test]
+fn bytes_equality_retains_shared_reads_and_later_moves() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def buffers(left: bytes, right: bytes) -> bool:\n    return left == right\n\ndef retained_bytes() -> bytes:\n    values = b\"ab\"\n    same = values != b\"cd\"\n    return values\n",
+        &["byte_comparison_reads"],
+    )?;
+    for name in ["buffers", "retained_bytes"] {
+        let body = body_named(&module, name)?;
+        let operands = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Assign {
+                    rvalue: bir::Rvalue::BinaryOp(_, left, right),
+                    ..
+                } => Some([left, right]),
+                _ => None,
+            })
+            .ok_or("byte comparison missing")?;
+        for operand in operands {
+            let bir::Operand::Place(read) = operand else {
+                return Err("byte comparison must retain a place".into());
+            };
+            assert_eq!(read.fact, bir::OwnershipFact::Borrow);
+            assert!(!read.last_use);
+        }
+    }
+    let body = body_named(&module, "retained_bytes")?;
+    let returned = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Return {
+                value: Some(bir::Operand::Place(read)),
+            } => Some(read),
+            _ => None,
+        })
+        .ok_or("byte return missing")?;
+    assert_eq!(returned.fact, bir::OwnershipFact::Move);
+    Ok(())
+}
+
+/// Equality borrows collection operands while a later final use still transfers the original binding.
+#[test]
 fn collection_equality_retains_shared_reads_and_later_moves() -> Result<(), Box<dyn std::error::Error>> {
     let module = build(
         "def lists(xs: list[int], ys: list[int]) -> bool:\n    return xs == ys\n\ndef sets(xs: Set[int], ys: Set[int]) -> bool:\n    return xs != ys\n\ndef maps(xs: dict[int, int], ys: dict[int, int]) -> bool:\n    return xs == ys\n\ndef retained() -> list[int]:\n    values = [1]\n    same = values == [1]\n    return values\n",

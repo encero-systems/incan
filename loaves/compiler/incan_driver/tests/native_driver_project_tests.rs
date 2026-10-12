@@ -10407,3 +10407,114 @@ fn static_collection_defaults_across_modules_match_legacy() -> Result<(), Box<dy
         ),
     )
 }
+
+/// Byte literals, returned buffers and parameters compare through shared storage without consuming later reads.
+#[test]
+fn bytes_comparison_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("bytes-io-comparison")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def same(left: bytes, right: bytes) -> bool:
+    return left == right
+
+def buffer() -> bytes:
+    return b"ab"
+
+def retained() -> bytes:
+    values = b""
+    equal = values == b""
+    println(equal)
+    return values
+
+def main() -> None:
+    data = b"ab"
+    println(data == b"ab")
+    println(data != b"ac")
+    println(same(data, buffer()))
+    println(len(data))
+    println(len(retained()))
+"#,
+    )
+}
+
+/// Once bytes equality retains its shared reads, the I/O fixture reaches its traits-owned imported method refusal.
+#[test]
+fn bytes_io_trait_method_refusal_is_retained() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("bytes-io-trait-refusal")?;
+    let source = root.join("io.incn");
+    fs::write(
+        &source,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/bytes_io_read_through_a_guard.incn"
+        ),
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let binary = root.join("native");
+    let refused = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &source,
+        &binary,
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("unsupported Body IR nonlocal or trait-object Method"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(!binary.exists());
+    Ok(())
+}
+
+/// A stored hasher's returned bytes compare with one-shot digest bytes without moving comparison operands.
+#[test]
+fn stored_hasher_comparison_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("stored-hasher-comparison")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_collections_and_strings/storable_sha256_hasher.incn"
+        ),
+    )
+}
+
+/// Keep the classes-owned method-on-value partial refusal explicit while ordinary model captures are admitted.
+#[test]
+fn model_method_partial_body_ir_refusal_is_retained() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("model-method-partial-refusal")?;
+    let source = root.join("partial.incn");
+    fs::write(
+        &source,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/codegen_functions_and_aliases/local_partials_of_methods_of_values.incn"
+        ),
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let binary = root.join("native");
+    let refused = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &source,
+        &binary,
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("unsupported Body IR type Unknown in make local 1"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(!binary.exists());
+    Ok(())
+}
