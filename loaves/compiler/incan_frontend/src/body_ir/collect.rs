@@ -430,7 +430,7 @@ pub(super) fn collect_local_nominal_declarations(
                     }
                     derives
                 } else {
-                    type_info.declarations.model_derives.get(name)?.clone()
+                    type_info.declarations.body_ir_model_derives.get(name)?.clone()
                 },
                 field_types: fields
                     .iter()

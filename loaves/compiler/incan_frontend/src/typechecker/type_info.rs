@@ -991,6 +991,9 @@ pub struct DeclarationArtifacts {
     /// decorator comes first (the order of a Rust derive list has no observable effect). Derived Display remains a
     /// semantic selection, not a Rust macro.
     pub model_derives: HashMap<String, Vec<String>>,
+    /// Body IR-only native derive paths after checked RFC 024 module and trait expansion. Descriptor is omitted
+    /// because its checked structural opt-in has no native macro; legacy keeps consuming `model_derives` unchanged.
+    pub body_ir_model_derives: HashMap<String, Vec<String>>,
     /// The same native derive selection for source classes, whose automatic derives match a model's.
     pub class_derives: HashMap<String, Vec<String>>,
     /// Serde derives a source class's trait adoptions imply, directly or through a supertrait, keyed by class name.

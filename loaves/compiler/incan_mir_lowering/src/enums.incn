@@ -161,13 +161,16 @@ pub def native_source_type(
 
 
 pub def lower_enum_declarations(
-    module: &RustBodyIrModule, file: str, intrinsics: list[EnumDeclaration] = [],
+    module: &RustBodyIrModule,
+    file: str,
+    intrinsics: list[EnumDeclaration] = [],
 ) -> Result[list[EnumDeclaration], str]:
     """
     Copy checked source-order variants and derives into the native declaration plan.
 
     A source enum also takes the serde derives a serde-deriving declaration's fields require of it, as legacy
-    propagates them; a value enum keeps its raw values, which its serde form writes and reads as legacy's does.
+    propagates them. A value enum reached this way stays refused until propagated raw-value serialization has parity
+    evidence; explicitly selected value-enum serde keeps its proven raw-value form.
     """
     reached = serde_propagation(module)?
     mut declarations: list[EnumDeclaration] = []
@@ -176,7 +179,9 @@ pub def lower_enum_declarations(
         for variant in declaration.variants:
             mut fields: list[PlanType] = []
             for ty in variant.fields:
-                fields.append(retained_source_type(module.nominal_declarations, module.enum_declarations, [], ty, intrinsics)?)
+                fields.append(
+                    retained_source_type(module.nominal_declarations, module.enum_declarations, [], ty, intrinsics)?,
+                )
             variants.append(EnumVariant(name=str(variant.name), fields=fields))
         # A stdlib enum is the SDK crate's own type; its derives and storage belong to that crate.
         item = library_enum_item(declaration)
@@ -184,6 +189,12 @@ pub def lower_enum_declarations(
         if item != "":
             derives = []
         raw_kind, raw_values = value_enum_raw_values(module, declaration)?
+        serialize, deserialize = reached
+        if raw_kind != "" and item == "" and (
+            str(declaration.name) in serialize
+            or str(declaration.name) in deserialize
+        ):
+            return Err(f"unsupported Body IR serde derive propagation to value enum {declaration.name}")
         declarations.append(
             EnumDeclaration(
                 name=str(declaration.name),

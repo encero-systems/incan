@@ -3488,6 +3488,55 @@ impl TypeChecker {
         native_derives
     }
 
+    /// Expand checked module and trait derive selections for Body IR without altering legacy's selection table.
+    ///
+    /// The checker owns import resolution and RFC 024 metadata. Body IR must retain the selected Rust paths here,
+    /// including TOML bundles and aliases, instead of compensating for their source spellings in plan lowering.
+    /// Descriptor checks structural snapshots but emits no Rust macro. A derive with no expansion stays named so
+    /// the direct admission predicate refuses it rather than silently discarding behavior.
+    fn body_ir_model_derive_selection(&mut self, selection: &[String]) -> Vec<String> {
+        let mut result = Vec::new();
+        for name in selection {
+            if name == "Descriptor" {
+                continue;
+            }
+            let mut paths = Vec::new();
+            if let Some(module) = self.module_path_for_imported_name(name)
+                && let Some(traits) = self.lookup_derivable_traits(&module)
+            {
+                for trait_name in traits {
+                    paths.extend(self.body_ir_trait_derive_paths(&module, &trait_name));
+                }
+            } else {
+                let path = self.derive_trait_path(name);
+                if let Some((trait_name, module)) = path.split_last() {
+                    paths = self.body_ir_trait_derive_paths(module, trait_name);
+                }
+            }
+            if paths.is_empty() {
+                paths.push(name.clone());
+            }
+            for path in paths {
+                if !result.contains(&path) {
+                    result.push(path);
+                }
+            }
+        }
+        result
+    }
+
+    /// Return imported or stdlib Rust derive metadata for one checked trait identity, in declaration order.
+    fn body_ir_trait_derive_paths(&mut self, module: &[String], trait_name: &str) -> Vec<String> {
+        let key = format!("{}.{}", module.join("."), trait_name);
+        if let Some(paths) = self.dependency_trait_rust_derive_paths.get(&key) {
+            return paths.clone();
+        }
+        self.stdlib_cache
+            .lookup_trait_meta(module, trait_name)
+            .map(|meta| meta.rust_derive_paths)
+            .unwrap_or_default()
+    }
+
     /// Validate a model declaration after collection, including decorators, trait conformance, fields, and methods.
     fn check_model(&mut self, model: &ModelDecl) {
         self.symbols.enter_scope(ScopeKind::Model);
@@ -3508,6 +3557,11 @@ impl TypeChecker {
                 .insert(model.name.clone());
         }
         let native_derives = self.native_derive_selection(&derives, declared);
+        let body_ir_derives = self.body_ir_model_derive_selection(&native_derives);
+        self.type_info
+            .declarations
+            .body_ir_model_derives
+            .insert(model.name.clone(), body_ir_derives);
         self.type_info
             .declarations
             .model_derives

@@ -517,19 +517,6 @@ fn validate_declarations(
 
 /// Name the first unsupported model feature without relaxing the frontend's declaration admission predicate.
 fn model_refusal_feature(model: &incan_frontend::ast::ModelDecl) -> String {
-    // ---- Structural declaration features ----
-    let generic_model = !model.type_params.is_empty();
-    let generic_adoption = model.traits.iter().any(|adoption| !adoption.node.type_args.is_empty());
-    let aliases = !model.method_aliases.is_empty();
-    if [generic_model, generic_adoption, aliases]
-        .iter()
-        .filter(|present| **present)
-        .count()
-        > 1
-    {
-        return "type parameters, generic trait adoption and method aliases combined".to_owned();
-    }
-
     // ---- Member binding features ----
     if !incan_frontend::body_ir::has_direct_replacement_method_partials(
         &model.type_params,

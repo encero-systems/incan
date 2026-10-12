@@ -41,7 +41,8 @@ fn retains_model_with_type_parameters_trait_adoption_and_alias() -> Result<(), B
     assert_eq!(owner.name, "Cell");
     assert_eq!(owner.type_parameter_count, 1);
     let read = body_named(&module, "read")?;
-    assert_eq!(read.type_parameters, ["T"]);
+    assert_eq!(owner.type_parameters, ["T"]);
+    assert_eq!(read.name, "read");
     let implementation = module
         .trait_implementations
         .first()

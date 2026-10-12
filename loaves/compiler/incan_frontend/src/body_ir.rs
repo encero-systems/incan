@@ -514,17 +514,15 @@ pub fn is_direct_replacement_plain_model(model: &ast::ModelDecl) -> bool {
         && has_direct_replacement_model_shape(model)
 }
 
-/// Admit JSON derives only after checking resolves all selections to canonical supported serde paths, Copy only after
-/// checking accepted it for every field, and `@rust.derive(...)` only when checking classified every derive it names
-/// as a Rust builtin retained among the model's derives. A field alias crosses the boundary in the retained
-/// declaration, so a serde form can rename the field as legacy does.
+/// Admit serde derives only after checked derive metadata resolves all selections to canonical supported paths, Copy only after checking accepted it for every field, and `@rust.derive(...)` only when checking classified every derive it names as a Rust builtin retained among the model's derives.
+/// A field alias crosses the boundary in the retained declaration, so a serde form can rename the field as legacy does.
 pub fn is_direct_replacement_checked_model(model: &ast::ModelDecl, type_info: &TypeCheckInfo) -> bool {
     if is_direct_replacement_plain_model(model) {
         return true;
     }
     has_checked_native_derives(
         &model.decorators,
-        type_info.declarations.model_derives.get(&model.name),
+        type_info.declarations.body_ir_model_derives.get(&model.name),
         type_info.declarations.rust_builtin_derive_models.contains(&model.name),
     ) && has_direct_replacement_model_shape(model)
 }
@@ -687,11 +685,7 @@ pub fn has_direct_replacement_properties(
 /// ([`has_direct_replacement_method_partials`]) and computed properties getter bodies
 /// ([`has_direct_replacement_properties`]). Methods may carry only the builtin static and class method markers.
 fn has_direct_replacement_model_shape(model: &ast::ModelDecl) -> bool {
-    has_at_most_one_open_shape_feature(
-        !model.type_params.is_empty(),
-        model.traits.iter().any(|adoption| !adoption.node.type_args.is_empty()),
-        !model.method_aliases.is_empty(),
-    ) && has_direct_replacement_method_partials(
+    has_direct_replacement_method_partials(
         &model.type_params,
         &model.methods,
         &model.method_aliases,
