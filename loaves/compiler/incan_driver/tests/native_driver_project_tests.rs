@@ -11585,6 +11585,52 @@ def main() -> None:
     )
 }
 
+/// A closure retains its captured list snapshot when later source changes leave the original value live.
+#[test]
+fn list_capture_snapshot_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_collection_family_source(
+        "list-capture-snapshot",
+        r#"def main() -> None:
+    mut items: list[int] = []
+    size = () => len(items)
+    items.append(1)
+    println(f"{size()} {len(items)}")
+    println(size())
+"#,
+    )
+}
+
+/// A text-capturing callback receives a retained model payload by value and reads its source method.
+#[test]
+fn model_callback_input_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_collection_family_source(
+        "model-callback-input",
+        r#"model Failure:
+    detail: str
+    def message(self) -> str:
+        return self.detail
+def lookup(key: str) -> Result[str, Failure]:
+    return Err(Failure(detail=key))
+def fetch(key: str) -> Result[str, str]:
+    return lookup(key).map_err((failure) => key + failure.message())
+def main() -> None:
+    match fetch("x"):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+"#,
+    )
+}
+
+/// A captured collection changed by its closure stays refused until its checked callable capability is retained.
+#[test]
+fn mutable_list_capture_refusal_is_retained() -> Result<(), Box<dyn std::error::Error>> {
+    check_collection_family_refusal(
+        "mutable-list-capture",
+        "def main() -> None:\n    mut items = [1, 2]\n    mut pick = () => items.pop()\n    println(pick())\n    println(pick())\n",
+        "unsupported Body IR closure capture outside scalars, owned text and models",
+    )
+}
+
 /// Keep nested carrier owners intact through indexed collection reads and replacement.
 #[test]
 fn nested_collection_carriers_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
