@@ -1,6 +1,7 @@
 //! Rust crate roots enter the existing test inventory, scheduler and reports through native libtest metadata.
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use incan_provider::FeatureSelection;
@@ -28,7 +29,7 @@ pub(super) struct PreparedRustRoot {
     executable: PathBuf,
     environment: BTreeMap<String, String>,
     working_directory: PathBuf,
-    _selection: OvenDirectRustcPlanSelection,
+    _selection: Arc<OvenDirectRustcPlanSelection>,
 }
 
 /// Locate the nearest authored project for either a directory or source-file selection.
@@ -193,7 +194,7 @@ fn prepare_inner(
         request = request.with_build_unit_input(key, value);
     }
     let receipt = receipt_generated_project(&request)?;
-    let selection = incan_driver::build::oven_project::select_oven_direct_rustc_plan_with_native_sdk(
+    let selection = incan_driver::build::oven_project::select_retained_oven_direct_rustc_plan(
         &context.store,
         &receipt,
         &dependencies,

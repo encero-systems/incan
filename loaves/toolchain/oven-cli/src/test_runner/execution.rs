@@ -2745,7 +2745,7 @@ fn run_file_tests_batch_oven(
         None => None,
     };
     let owned_plan_selection = if shared_plan_selection.is_none() {
-        match incan_driver::build::oven_project::select_oven_direct_rustc_plan_with_native_sdk(
+        match incan_driver::build::oven_project::select_retained_oven_direct_rustc_plan(
             &command_context.store,
             &receipt,
             &inline_path_dependencies,
@@ -2766,7 +2766,7 @@ fn run_file_tests_batch_oven(
     } else {
         None
     };
-    let plan_selection = match shared_plan_selection.or(owned_plan_selection.as_ref()) {
+    let plan_selection = match shared_plan_selection.or(owned_plan_selection.as_deref()) {
         Some(selection) => selection,
         None => return failure("Oven test dependency plan selection lost its exact authority".to_string()),
     };
