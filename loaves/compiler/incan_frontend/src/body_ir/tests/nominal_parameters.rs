@@ -3,6 +3,34 @@
 use super::{IncanPrimitiveType, IncanType, bir, body_named, build, named_targets};
 use crate::{lexer, parser, symbols::ResolvedType, typechecker::TypeChecker};
 
+/// An owned Result payload clones a generic field from its model, like an ordinary by-value argument.
+#[test]
+fn generic_field_result_retains_owned_payload() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "model Box[T]:\n    pub value: T\n\ndef unwrap[T](boxed: Box[T]) -> Result[T, str]:\n    return Ok(boxed.value)\n",
+        &["m", "generic_field_result"],
+    )?;
+    let body = body_named(&module, "unwrap")?;
+    let payload = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::ResultVariant(variant),
+                ..
+            } => Some(&variant.payload),
+            _ => None,
+        })
+        .ok_or("missing intrinsic Result payload")?;
+    assert!(
+        matches!(payload, bir::Operand::Place(read) if read.fact == bir::OwnershipFact::Clone),
+        "{}",
+        body.render_snapshot()
+    );
+    Ok(())
+}
+
 /// Executable constructor/call facts supplement the contextual checker view without rewriting legacy inference.
 #[test]
 fn executable_call_facts_preserve_legacy_context() -> Result<(), Box<dyn std::error::Error>> {
