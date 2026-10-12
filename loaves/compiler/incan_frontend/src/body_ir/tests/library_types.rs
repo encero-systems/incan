@@ -229,6 +229,46 @@ fn reflection_metadata_retains_native_layout() -> Result<(), Box<dyn std::error:
             "extra"
         ]
     );
+    assert_eq!(
+        declaration.field_types[0],
+        IncanType::Primitive(IncanPrimitiveType::FrozenStr)
+    );
+    let module = build(source, &["m", "native_reflection"])?;
+    let main = body_named(&module, "main")?;
+    let loop_body = main
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Loop { body } => Some(body),
+            _ => None,
+        })
+        .ok_or("missing metadata iteration")?;
+    let projection = loop_body
+        .stmts
+        .iter()
+        .find_map(|statement| {
+            let bir::StatementKind::Call { args, .. } = &statement.kind else {
+                return None;
+            };
+            args.iter()
+                .filter_map(bir::ArgumentElement::as_one)
+                .find_map(|argument| {
+                    let bir::Operand::Place(read) = argument else {
+                        return None;
+                    };
+                    read.place
+                        .projection
+                        .iter()
+                        .find(|projection| matches!(projection, bir::PlaceElem::Field { name, .. } if name == "name"))
+                })
+        })
+        .ok_or("missing metadata field read")?;
+    assert!(
+        matches!(projection, bir::PlaceElem::Field { canonical: Some(identity), .. }
+        if identity == &declaration.field_identities[0]),
+        "{projection:?}"
+    );
     Ok(())
 }
 
