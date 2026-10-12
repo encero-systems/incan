@@ -969,6 +969,7 @@ mod tests {
     /// Synthetic module context used only for codec and public-closure invariants.
     fn module(bodies: Vec<Body>) -> BodyIrModule {
         BodyIrModule {
+            decorated_bindings: Vec::new(),
             constant_declarations: Vec::new(),
             type_alias_declarations: Vec::new(),
             trait_declarations: Vec::new(),

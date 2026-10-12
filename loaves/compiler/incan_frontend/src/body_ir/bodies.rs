@@ -247,7 +247,8 @@ pub(super) fn lower_function_body(
         .type_info
         .declarations
         .decorated_function_bindings_by_span
-        .contains_key(&(decl_span.start, decl_span.end));
+        .contains_key(&(decl_span.start, decl_span.end))
+        && !decorated_bindings::supports_function(function, decl_span, lowering_facts);
     let (stmts, extern_delegation) = lower_declaration_statements(
         &mut builder,
         decorator_rebinding(rebound, &function.name)

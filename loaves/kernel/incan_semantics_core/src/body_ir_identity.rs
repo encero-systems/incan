@@ -24,6 +24,12 @@ impl BodyIrModule {
     /// initializer's body must carry the static's own canonical identity and declaration id, so a module cannot attach
     /// another declaration's body to it.
     pub fn is_well_formed_static_declaration(&self, declaration: &crate::body_ir::StaticDeclaration) -> bool {
+        if declaration.canonical.kind == SemanticSourceTargetKind::Function {
+            return self.decorated_bindings.iter().any(|binding| {
+                binding.original_body.canonical.as_ref() == Some(&declaration.canonical)
+                    && self.is_well_formed_decorated_binding(binding)
+            });
+        }
         let Some(declaration_id) = self.declaration_id_for_canonical(
             &declaration.canonical,
             SymbolNamespace::OrdinaryLexical,
@@ -37,6 +43,40 @@ impl BodyIrModule {
             return false;
         }
         static_initializer_matches(&declaration.ty, &declaration.initial)
+    }
+
+    /// Prove an RFC 036 original and its replacement belong to the same physical source declaration and that the
+    /// replacement initializer returns its exact checked callable carrier. Originals never replace ordinary lookup.
+    pub fn is_well_formed_decorated_binding(&self, binding: &crate::body_ir::DecoratedBinding) -> bool {
+        let original = &binding.original_body;
+        let mut replacements = self
+            .static_declarations
+            .iter()
+            .filter(|storage| original.canonical.as_ref() == Some(&storage.canonical));
+        let Some(replacement) = replacements.next() else {
+            return false;
+        };
+        if replacements.next().is_some() {
+            return false;
+        }
+        let StaticInitializer::Computed(initializer) = &replacement.initial else {
+            return false;
+        };
+        original.canonical.as_ref() == Some(&replacement.canonical)
+            && replacement.canonical.kind == SemanticSourceTargetKind::Function
+            && original.type_parameters.is_empty()
+            && !original.is_async
+            && self.body_has_canonical_direct_call_id(original)
+            && initializer.canonical == original.canonical
+            && initializer.decl_id == original.decl_id
+            && self.bodies.iter().any(|body| {
+                body.canonical == original.canonical
+                    && matches!(&replacement.ty, IncanType::Function { params, return_type }
+                        if params.len() == body.params.len()
+                            && params.iter().zip(&body.params).all(|(left, right)| left.ty == right.ty && left.is_mut == right.mutable)
+                            && **return_type == body.return_type)
+            })
+            && static_initializer_matches(&replacement.ty, &replacement.initial)
     }
 
     /// Whether a normal enum layout belongs to this module and every variant identity belongs to its declared owner.

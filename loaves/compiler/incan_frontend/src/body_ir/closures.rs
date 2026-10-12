@@ -149,6 +149,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.materialized_range_locals = saved_materialized_range_locals;
 
         let closure_body = bir::ClosureBody {
+            original_callable: None,
             function_item: false,
             capture_locals,
             stmts: body_stmts,
@@ -387,6 +388,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         );
 
         let closure_body = bir::ClosureBody {
+            original_callable: None,
             function_item: false,
             capture_locals,
             stmts: body_stmts,

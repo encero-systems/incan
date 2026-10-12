@@ -207,6 +207,7 @@ fn resolve_from_catalog(
         let owner = canonical_module_identity(&identity)
             .ok_or_else(|| package.unusable(malformed("declaration has no module owner")))?;
         let module = modules.entry(owner.clone()).or_insert_with(|| BodyIrModule {
+            decorated_bindings: Vec::new(),
             constant_declarations: Vec::new(),
             type_alias_declarations: Vec::new(),
             trait_declarations: Vec::new(),

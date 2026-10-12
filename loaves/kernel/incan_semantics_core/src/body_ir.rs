@@ -58,6 +58,9 @@ use crate::{AbiV0RuntimeRequirement, CanonicalSymbolId, CompilerNodeId, HirSourc
 /// One module's lowered function/method bodies and direct-execution declaration facts.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BodyIrModule {
+    /// RFC 036 originals retained separately from the initialized, module-visible callable bindings.
+    #[serde(default)]
+    pub decorated_bindings: Vec<DecoratedBinding>,
     /// Checker-evaluated scalar and text constants, addressed by their declaring canonical identity.
     #[serde(default)]
     pub constant_declarations: Vec<ConstantDeclaration>,
@@ -71,7 +74,8 @@ pub struct BodyIrModule {
     /// implementations are absent and must refuse.
     #[serde(default)]
     pub stdlib_delegations: Vec<StdlibDelegation>,
-    /// Source-local statics with effect-free literal initializers; all other initializers must refuse.
+    /// Source-local persistent storage, including RFC 036 replacement callables, with literal or computed
+    /// initialization.
     #[serde(default)]
     pub static_declarations: Vec<StaticDeclaration>,
     /// Identity of the owning module, matching [`crate::HirModule::id`].
@@ -139,6 +143,18 @@ pub struct StaticDeclaration {
     pub ty: IncanType,
     /// Initialization value; repeated reads must not reinitialize an assigned cell.
     pub initial: StaticInitializer,
+}
+
+/// One checked decorator replacement and the source callable it receives during initialization.
+///
+/// The original and the visible wrapper share a source declaration, but are different runtime items. Only the
+/// initializer's explicit original-callable read may select this body; ordinary calls select the visible wrapper.
+/// The replacement's carrier and initializer live once in [`BodyIrModule::static_declarations`], under the original's
+/// canonical source identity.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DecoratedBinding {
+    /// Executable source body and original signature, before applying user-defined decorators.
+    pub original_body: Body,
 }
 
 /// Checked storage initialization, independent of its eventual native representation.
@@ -1910,6 +1926,10 @@ impl DefaultComputation {
 /// own parameters and captures show up in the ordinary `locals:` listing like any other local.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ClosureBody {
+    /// Compiler-retained original callable read during RFC 036 initialization. This must resolve to exactly one
+    /// decorated binding, and is never inferred from a forwarding closure's source spelling.
+    #[serde(default)]
+    pub original_callable: Option<CanonicalSymbolId>,
     /// Whether this computation came from a named function read. Its canonical item identity lives once in the
     /// forwarding call. A source closure expression or partial remains distinct even when it forwards the same
     /// arguments without captures.
@@ -4499,6 +4519,7 @@ mod tests {
                             false,
                         )],
                         body: Box::new(ClosureBody {
+                            original_callable: None,
                             function_item: false,
                             capture_locals: vec![capture_local],
                             stmts: Vec::new(),
@@ -4660,6 +4681,7 @@ mod tests {
     #[test]
     fn body_ir_module_snapshot_wraps_bodies() {
         let module = BodyIrModule {
+            decorated_bindings: Vec::new(),
             constant_declarations: Vec::new(),
             type_alias_declarations: Vec::new(),
             module_id: CompilerNodeId::new(CompilerNodeKind::Module, "m"),

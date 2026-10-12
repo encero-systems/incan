@@ -18,6 +18,7 @@ pub def project_context(
     context.trait_declarations.clear()
     context.trait_implementations.clear()
     context.static_declarations.clear()
+    context.decorated_bindings.clear()
     context.stdlib_delegations.clear()
     mut checked: list[BodyIrModule] = []
     for module in modules:
@@ -57,6 +58,8 @@ pub def project_context(
         for index in range(len(module.static_declarations)):
             declaration = module.static_declarations[index].clone()
             context.static_declarations.push(declaration.clone())
+        for index in range(len(module.decorated_bindings)):
+            context.decorated_bindings.push(module.decorated_bindings[index].clone())
         for index in range(len(module.stdlib_delegations)):
             declaration = module.stdlib_delegations[index].clone()
             context.stdlib_delegations.push(declaration.clone())

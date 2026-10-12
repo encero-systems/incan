@@ -340,6 +340,20 @@ pub def source_function_item(
     """Select a function item only from the frontend's explicit named-read fact and canonical forwarding identity."""
     match value:
         RustRvalue.Closure(params=parameters, captured_operands=captures, body=closure) =>
+            match closure.original_callable:
+                Some(identity) =>
+                    if len(captures) != 0 or len(closure.capture_locals) != 0 or len(closure.stmts) != 0:
+                        return Err("invalid Body IR original callable computation")
+                    for binding in module.decorated_bindings:
+                        if binding.original_body.canonical == Some(identity):
+                            name, ty = item_signature(module, builder, parameters, binding.original_body)?
+                            match ty:
+                                PlanType.FunctionItem(_item, signature) =>
+                                    original_name = f"{name}__incan_original"
+                                    return Ok(Some((original_name, PlanType.FunctionItem(original_name, signature))))
+                                _ => return Err("invalid Body IR original callable signature")
+                    return Err("unsupported Body IR unretained original callable")
+                None => pass
             if not closure.function_item:
                 return Ok(None)
             if len(captures) != 0 or len(closure.capture_locals) != 0 or len(closure.stmts) != 1:

@@ -388,9 +388,14 @@ fn build_body_ir_module_v0_with_provider_operations(
             }
         })
         .collect::<Vec<_>>();
+    let mut static_declarations = collect::collect_statics(program, &lowering_facts);
+    let decorated_bindings =
+        decorated_bindings::collect(program, &lowering_facts, &mut bodies, &mut static_declarations);
     apply_top_level_input_contract_refusal(program, &mut bodies);
     let enum_declarations = collect_local_enum_declarations(program, &module_identity, type_info);
+    static_declarations.sort_by_key(|declaration| declaration.canonical.declaration_span.start);
     bir::BodyIrModule {
+        decorated_bindings,
         constant_declarations,
         type_alias_declarations: collect::collect_type_aliases(program, type_info),
         trait_declarations: collect::collect_local_trait_declarations(program, type_info),
@@ -402,7 +407,7 @@ fn build_body_ir_module_v0_with_provider_operations(
         ),
         enum_declarations,
         stdlib_delegations: stdlib_delegations::collect(type_info),
-        static_declarations: collect::collect_statics(program, &lowering_facts),
+        static_declarations,
         module_id,
         nominal_declarations,
         fieldless_enum_declarations,
@@ -1736,6 +1741,7 @@ mod reads;
 
 mod carrier_projection;
 mod collect;
+mod decorated_bindings;
 mod static_aliases;
 
 mod bodies;

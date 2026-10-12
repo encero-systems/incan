@@ -375,6 +375,7 @@ fn join_published_module(owner: &mut BodyIrModule, module: BodyIrModule) {
 /// An empty module for one stdlib module identity, holding only the declarations the program needs from it.
 fn declaration_module(owner: String) -> BodyIrModule {
     BodyIrModule {
+        decorated_bindings: Vec::new(),
         constant_declarations: Vec::new(),
         type_alias_declarations: Vec::new(),
         enum_declarations: Vec::new(),

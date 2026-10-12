@@ -387,6 +387,9 @@ def validate_project_module(module: &BodyIrModule, modules: &list[BodyIrModule])
 
 def validate_declarations_and_bodies(module: &BodyIrModule) -> Result[int, str]:
     """Validate a module's retained declarations and bodies; trait implementations are validated by the caller."""
+    for binding in module.decorated_bindings:
+        if not module.is_well_formed_decorated_binding(binding):
+            return Err("invalid Body IR decorated binding identity")
     for declaration in module.static_declarations:
         if not module.is_well_formed_static_declaration(declaration):
             return Err("invalid Body IR static declaration")
@@ -1566,6 +1569,9 @@ def stored_callable(mut builder: Builder, operand: &RustOperand, span: SourceSpa
     """Read the callable an assignment stores; a partial moves out whole, because its binding carries its flags."""
     match operand:
         RustOperand.Place(read) =>
+            match read.place.global():
+                Some(_global) => return value_operand(builder, operand, span)
+                None => pass
             source = scalar_place(builder, read.place, span)?
             match partial_flags(builder, source.local):
                 Some(_flags) =>
@@ -4914,6 +4920,29 @@ def lower_computed_statics(
     mut keys: list[int] = []
     for slot in range(len(module.static_declarations)):
         declaration = module.static_declarations[slot]
+        for binding in module.decorated_bindings:
+            if binding.original_body.canonical == Some(declaration.canonical):
+                mut owner_index = -1
+                for index in range(len(owners)):
+                    if owners[index] == static_owner(declaration):
+                        owner_index = index
+                if owner_index < 0:
+                    return Err("unsupported Body IR original callable without source provenance")
+                original, original_runtime, original_pending, original_synthesized = lower_function(
+                    module,
+                    binding.original_body,
+                    unions,
+                    sources[owner_index],
+                    files[owner_index],
+                    intrinsics,
+                    [],
+                )?
+                mut original_function = original
+                original_function.name = f"{function_name(module, binding.original_body)}__incan_original"
+                functions.append(original_function)
+                append_synthesized(functions, original_synthesized)?
+                merge_externals(externals, original_runtime)
+                instances.extend(original_pending)
         match declaration.initial:
             RustStaticInitializer.Computed(body) =>
                 owner = static_owner(declaration)
