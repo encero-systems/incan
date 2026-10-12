@@ -6604,3 +6604,52 @@ def main() -> None:
 "#,
     )
 }
+
+/// `Type.default()` and `T.default()` under a `Default` bound build the model from its declared field defaults, and a
+/// field declaring none takes its type's default, a nested derived default included, as legacy's derived Default does.
+#[test]
+fn derived_default_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("derived-default")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"@derive(Default)
+model Settings:
+    theme: str = "dark"
+    font_size: int = 14
+    retries: int
+    ratio: float
+    tags: list[str]
+    counts: dict[str, int]
+    note: Option[str]
+
+@derive(Default)
+model Inner:
+    x: int = 5
+
+@derive(Default)
+model Outer:
+    inner: Inner
+    flag: bool
+
+def make[T with Default]() -> T:
+    return T.default()
+
+def main() -> None:
+    settings = Settings.default()
+    println(settings.theme)
+    println(settings.font_size)
+    println(settings.retries)
+    println(settings.ratio)
+    println(len(settings.tags))
+    println(len(settings.counts))
+    println(settings.note is None)
+    made: Settings = make()
+    println(made.theme)
+    println(Outer.default().inner.x)
+    println(Outer.default().flag)
+"#,
+    )
+}
