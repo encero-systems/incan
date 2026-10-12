@@ -5521,6 +5521,33 @@ fn check_declaration_case(
     text: &str,
     panic_message: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let (actual, expected) = declaration_case_outputs(name, text)?;
+    if let Some(message) = panic_message {
+        let expected_error = String::from_utf8_lossy(&expected.stderr);
+        let actual_error = String::from_utf8_lossy(&actual.stderr);
+        assert_eq!(
+            expected_error.lines().find(|line| line.starts_with("AssertionError")),
+            Some(message),
+            "{expected_error}"
+        );
+        assert_eq!(
+            actual_error.lines().find(|line| line.starts_with("AssertionError")),
+            Some(message),
+            "{actual_error}"
+        );
+    } else {
+        success(&actual, "declaration execution");
+    }
+    Ok(())
+}
+
+/// Build one declaration on both routes, run both binaries, and require identical output streams and exit codes.
+///
+/// Returns the direct route's output first and legacy's second, for checks on what the shared streams contain.
+fn declaration_case_outputs(
+    name: &str,
+    text: &str,
+) -> Result<(std::process::Output, std::process::Output), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     let root = fixture.scratch(name)?;
     let source = root.join(format!("{name}.incn"));
@@ -5553,23 +5580,7 @@ fn check_declaration_case(
     assert_eq!(actual.stdout, expected.stdout);
     assert_eq!(actual.stderr, expected.stderr);
     assert_eq!(actual.status.code(), expected.status.code());
-    if let Some(message) = panic_message {
-        let expected_error = String::from_utf8_lossy(&expected.stderr);
-        let actual_error = String::from_utf8_lossy(&actual.stderr);
-        assert_eq!(
-            expected_error.lines().find(|line| line.starts_with("AssertionError")),
-            Some(message),
-            "{expected_error}"
-        );
-        assert_eq!(
-            actual_error.lines().find(|line| line.starts_with("AssertionError")),
-            Some(message),
-            "{actual_error}"
-        );
-    } else {
-        success(&actual, "declaration execution");
-    }
-    Ok(())
+    Ok((actual, expected))
 }
 
 /// Source async calls defer discarded body effects and evaluate arguments before their immediately ready awaits.
@@ -8162,6 +8173,29 @@ def main() -> None:
 "#,
         b"2024-2-29\nmonth must be in 1..12\nday is out of range for month\n",
     )
+}
+
+/// A `main` returning `Result[None, E]` is the binary's entry point as legacy's is: its output before an `Err` is kept,
+/// and the error is reported on stderr with a failing exit code.
+#[test]
+fn result_main_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let (actual, _expected) = declaration_case_outputs(
+        "result_main_err",
+        r#"def main() -> Result[None, str]:
+    println("before failure")
+    return Err("failed on purpose")
+"#,
+    )?;
+    assert_eq!(actual.stdout, b"before failure\n");
+    assert_eq!(actual.stderr, b"Error: \"failed on purpose\"\n");
+    assert_eq!(actual.status.code(), Some(1));
+    let (actual, _expected) = declaration_case_outputs(
+        "result_main_ok",
+        "def main() -> Result[None, str]:\n    println(\"done\")\n    return Ok(None)\n",
+    )?;
+    assert_eq!(actual.stdout, b"done\n");
+    assert_eq!(actual.status.code(), Some(0));
+    Ok(())
 }
 
 /// Same-module functions sharing one name are distinct overloads: each call runs the one the checker selected by
