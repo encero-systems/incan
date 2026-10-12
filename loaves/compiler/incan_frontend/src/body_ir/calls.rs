@@ -767,7 +767,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     }
 
     /// Construct `Type.Variant(payload)` as an [`bir::AggregateKind::EnumVariant`], binding the payload against the
-    /// variant's checked parameters when the checker recorded them and positionally otherwise.
+    /// variant's checked parameters when the checker recorded them and positionally otherwise. Retained payload
+    /// layouts provide ordinary parameter slots with their exact types when no callable-parameter record is present.
     #[allow(clippy::too_many_arguments)]
     fn lower_enum_variant_call(
         &mut self,
@@ -786,12 +787,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.enum_payload_types(&target.variant_canonical, &self.resolve_ty(span))
                     .map(|fields| {
                         fields
-                            .iter()
-                            .map(|_| DeclaredSlot {
+                            .into_iter()
+                            .map(|ty| DeclaredSlot {
                                 name: None,
                                 has_default: false,
                                 is_partial_preset: false,
                                 is_rest: false,
+                                kind: ast::ParamKind::Normal,
+                                ty,
                                 is_mut: false,
                             })
                             .collect()
