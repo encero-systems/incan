@@ -947,7 +947,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     }
 
     /// Retain, for an `Ok(...)` or `Err(...)` value and each list, set, dict or tuple literal holding one, the type
-    /// its destination settled for the side the constructor leaves open (#1561).
+    /// its destination settled for the side the constructor leaves open (#1561), and the destination's union for a
+    /// side the constructor fixes as one of that union's members.
     ///
     /// The checker settles such a side where the value flows: a generic call's argument takes the parameter type the
     /// call's other arguments or the enclosing function's `Result` side fix, a closure's result takes the closure's
@@ -1019,25 +1020,35 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
     }
 
-    /// Retain `destination`'s parts for the parts the type recorded at `span` leaves open, when that closes it (see
-    /// [`Self::settle_open_result_value`]). A span with no recorded type, or one already closed, keeps what it has.
+    /// Retain `destination`'s parts for the parts the type recorded at `span` leaves open, and its unions for the
+    /// members `span` fixes in their place, when the result is closed (see [`Self::settle_open_result_value`] and
+    /// [`Self::fill_open_type_parts`]). A span with no recorded type, or one the destination changes nothing in, keeps
+    /// what it has.
     fn settle_open_value_type(&mut self, span: ast::Span, destination: &IncanType) {
         let recorded = self.resolve_ty(span);
-        if matches!(recorded, IncanType::Unknown) || !self.leaves_type_open(&recorded) {
+        if matches!(recorded, IncanType::Unknown) {
             return;
         }
         let settled = self.fill_open_type_parts(&recorded, destination);
-        if !self.leaves_type_open(&settled) {
+        if settled != recorded && !self.leaves_type_open(&settled) {
             self.settled_types.insert((span.start, span.end), settled);
         }
     }
 
     /// Fill each part of `recorded` this body leaves open with the matching part of `settled`, keeping every part
     /// `recorded` fixes and every part whose shape differs from `settled`'s.
+    ///
+    /// A fixed part that is one member of the union `settled` declares in its place takes that union: legacy builds
+    /// `Ok("fine")` for a `Result[int | str, str]` destination as the union's `str` member.
     fn fill_open_type_parts(&self, recorded: &IncanType, settled: &IncanType) -> IncanType {
         match (recorded, settled) {
             (IncanType::Unknown | IncanType::Infer, _) => settled.clone(),
             (IncanType::TypeVar(name), _) if !self.type_parameters.contains(name) => settled.clone(),
+            (_, IncanType::Generic { base, args })
+                if base == "Union" && recorded != settled && args.iter().any(|member| member == recorded) =>
+            {
+                settled.clone()
+            }
             (
                 IncanType::Generic { base, args },
                 IncanType::Generic {

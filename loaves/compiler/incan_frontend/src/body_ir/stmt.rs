@@ -85,6 +85,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.lower_chained_assignment(chained_assignment, remaining, scope, span, out)
             }
             ast::Statement::Return(value) => {
+                // A returned `Ok(...)` or `Err(...)` builds the sides the declared return type settles for it.
+                if let Some(returned) = value.as_ref() {
+                    let destination = self.owner_return_type.clone();
+                    self.settle_open_result_value(returned, &destination);
+                }
                 let value = value.as_ref().map(|v| {
                     let operand = self.lower_expr_to_operand(v, scope, out);
                     self.owned_parameter_operand(v, operand)
