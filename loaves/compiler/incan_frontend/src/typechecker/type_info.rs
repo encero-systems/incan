@@ -1009,6 +1009,9 @@ pub struct DeclarationArtifacts {
     /// Active module-scope nominal identities from source and package bindings, retained before lexical checker
     /// context is discarded.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
+    /// Active compiler-owned native nominal bindings for Body IR only. Legacy continues to consume the ordinary
+    /// nominal table; a real source binding under the same spelling cannot authorize this foreign ABI.
+    pub body_ir_native_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
     /// Exact selected foreign origins retained from accepted bindings for native representation projection.
     pub named_type_origins: std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>,
     /// Checked local model field types keyed by exact field declaration span.
