@@ -171,7 +171,16 @@ fn layout_dependencies(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache)
 /// confirms.
 pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::NominalDeclaration> {
     let mut cache = StdlibAstCache::new();
-    type_identities(type_info, &mut cache)
+    let mut identities = type_identities(type_info, &mut cache);
+    if uses_implicit_field_info(type_info) {
+        let path = vec!["std".to_owned(), "reflection".to_owned()];
+        if let Some(identity) = cache.lookup_identity(&path, "FieldInfo")
+            && let Some(identity) = declaring_identity(&identity, &mut cache)
+        {
+            identities.insert(identity);
+        }
+    }
+    identities
         .iter()
         .filter_map(|identity| match identity.kind {
             SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class => library_nominal(identity, &mut cache),
@@ -179,6 +188,19 @@ pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::NominalDeclaration>
             _ => None,
         })
         .collect()
+}
+
+/// Compiler-provided reflection results name FieldInfo without a lexical import. A checked project owner always
+/// wins over that implicit result spelling, so a user declaration cannot acquire the native metadata layout.
+fn uses_implicit_field_info(type_info: &TypeCheckInfo) -> bool {
+    if type_info.declarations.named_type_identities.contains_key("FieldInfo") {
+        return false;
+    }
+    type_info.expressions.expr_types.values().any(|ty| {
+        let mut names = BTreeSet::new();
+        super::library_calls::named_leaves(&semantic_type_from_resolved(ty), &mut names);
+        names.contains("FieldInfo")
+    })
 }
 
 /// Read one plain stdlib newtype as a single public slot holding its underlying value, the slot its own identity
@@ -206,6 +228,7 @@ fn library_newtype(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> 
     }
     let module = incan_semantics_core::canonical_module_identity(identity)?;
     Some(bir::NominalDeclaration {
+        native_item: String::new(),
         direct_declaration_id: CompilerNodeId::declaration_span(
             &module,
             identity.declaration_span.start,
@@ -267,6 +290,7 @@ fn library_nominal(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> 
     let has_field_defaults = fields.iter().any(|(_, field)| field.has_default);
     let module = incan_semantics_core::canonical_module_identity(identity)?;
     Some(bir::NominalDeclaration {
+        native_item: bir::native_nominal_item(identity).unwrap_or_default(),
         direct_declaration_id: CompilerNodeId::declaration_span(
             &module,
             identity.declaration_span.start,
