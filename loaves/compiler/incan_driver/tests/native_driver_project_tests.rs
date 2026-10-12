@@ -4508,6 +4508,65 @@ def main() -> None:
     )
 }
 
+/// Prove capturing generator expressions byte-identical to legacy: an element and a filter read captured integers,
+/// text and lists, which keep the value they had when the expression was built; text items, whether from a list or
+/// from an iterator, are expanded through the same lazy chain; and `flat_map` over a function returning such a
+/// generator draws each expansion one item at a time.
+#[test]
+fn capturing_generator_expression_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("capturing-generator-expression")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"static produced: list[int] = []
+
+def note(n: int) -> int:
+    produced.append(n)
+    println(f"note {n}")
+    return n
+
+def scaled(xs: list[int], factor: int) -> Generator[int]:
+    return (x * factor for x in xs if x > 1)
+
+def labeled(words: list[str], prefix: str) -> Generator[str]:
+    return (f"{prefix}{w}" for w in words if w != prefix)
+
+def offsets(xs: list[int], extra: list[int]) -> Generator[int]:
+    return (x + len(extra) + extra[0] for x in xs)
+
+def tracked(n: int) -> Generator[int]:
+    return (note(n * 10 + step) for step in [0, 1, 2])
+
+def main() -> None:
+    a: list[int] = scaled([1, 2, 3], 3).collect()
+    println(f"{a[0]} {a[1]} {len(a)}")
+    b: list[str] = labeled(["a", ">", "b"], ">").collect()
+    println(" ".join(b))
+    extra = [7, 8, 9]
+    c: list[int] = offsets([1, 2, 3], extra).collect()
+    println(" ".join([str(v) for v in c]))
+    println(len(extra))
+    words = ["a", "b", "c"]
+    d: list[str] = (w for w in words.iter().skip(1)).collect()
+    println(" ".join(d))
+    upper: list[str] = (w.upper() for w in words if w != "b").collect()
+    println(" ".join(upper))
+    mut limit = 1
+    e = (note(v) for v in [1, 2, 3] if v > limit)
+    limit = 5
+    println(limit)
+    first: list[int] = e.take(1).collect()
+    println(first[0])
+    taken: list[int] = [1, 2, 3].iter().flat_map(tracked).take(1).collect()
+    println(f"{taken[0]} {len(produced)}")
+    crossing: list[int] = [4, 5].iter().flat_map(tracked).take(4).collect()
+    println(f"{crossing[3]} {len(produced)}")
+"#,
+    )
+}
+
 /// Prove unit and payload construction, enum passing/returning, and variant-bound match output against legacy.
 #[test]
 fn source_enum_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
