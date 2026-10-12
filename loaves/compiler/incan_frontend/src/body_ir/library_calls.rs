@@ -244,3 +244,6 @@ fn self_as(ty: &IncanType, owner: &str) -> IncanType {
         other => other.clone(),
     }
 }
+
+#[cfg(test)]
+mod tests;

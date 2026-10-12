@@ -8594,6 +8594,72 @@ def main() -> None:
     )
 }
 
+/// Stdlib static methods and generic assertion helpers pass their declaration-owned omitted defaults in the three
+/// fixtures this defaults slice admits, with output byte-identical to legacy.
+#[test]
+fn stdlib_omitted_defaults_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    for (name, source) in [
+        (
+            "condition-defaults",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/struct_literals_in_condition_positions.incn"
+            ),
+        ),
+        (
+            "static-method-defaults",
+            include_str!("../../incan_test_support/fixtures/behavior/snapshots_stdlib/imported_stdlib_defaults.incn"),
+        ),
+        (
+            "assertion-defaults",
+            include_str!("../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_testing_assertions.incn"),
+        ),
+    ] {
+        corpus::check_builtin_source(
+            &fixture.driver_binary("debug"),
+            &fixture.scratch(name)?,
+            &fixture.sysroot,
+            &fixture.formatting,
+            source,
+        )?;
+    }
+    Ok(())
+}
+
+/// Expanding the imported const default reaches the collection-equality boundary, which remains a named refusal
+/// until that independent slice retains shared reads for owned bytes returned by stdlib calls.
+#[test]
+fn stdlib_const_default_reaches_collection_equality_refusal() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("stdlib-const-default-boundary")?;
+    let source = root.join("default.incn");
+    fs::write(
+        &source,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/cli_values_and_calls/stdlib_const_default_omitted.incn"
+        ),
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let binary = root.join("native");
+    let refused = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &source,
+        &binary,
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr)
+            .contains("unsupported Body IR collection equality without retained shared read"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(!binary.exists());
+    Ok(())
+}
+
 /// A call to an overloaded stdlib function runs the overload the checker selected by arity, as that overload's own SDK
 /// crate item instantiated with the call's type argument, beside a call to a function with one declaration.
 #[test]

@@ -5959,6 +5959,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/library_calls/tests.rs": {
+      "disposition": "keep",
+      "notes": "Body IR-only stdlib crate-call defaults retain literal and declaration-owned const values and refuse computed defaults.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/stdlib_delegations.rs": {
       "disposition": "keep",
       "notes": "Canonical SDK Package forwarding proof rejects wrong owners and stale declaration spans without emitted spelling dispatch.",
