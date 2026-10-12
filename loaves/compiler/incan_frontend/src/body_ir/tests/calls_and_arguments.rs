@@ -5,6 +5,69 @@
 
 use super::*;
 
+/// A capability-bounded call retains its inferred argument even when its body and result do not use it.
+#[test]
+fn capability_bound_calls_retain_checked_arguments() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "from std.rust import Send, Sync\n\ndef run[T with Send, Sync](_value: T) -> None:\n  pass\n\ndef main() -> None:\n  run(1)\n",
+        &["m", "capability_bound_arguments"],
+    )?;
+    let targets = named_targets(&module, "main");
+    let target = targets
+        .iter()
+        .find(|target| target.name == "run")
+        .ok_or("missing capability-bounded call")?;
+    assert_eq!(
+        target.type_args,
+        [IncanType::Primitive(IncanPrimitiveType::Int)],
+        "{}",
+        module.render_snapshot()
+    );
+    Ok(())
+}
+
+/// A generic call retains checked arguments even when its result omits the binders and its input is a tuple list.
+#[test]
+fn unused_result_generics_retain_checked_call_arguments() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def run[T](_value: T) -> None:\n  pass\n\ndef count_pairs[K, V](items: list[tuple[K, V]]) -> int:\n  return len(items)\n\ndef main() -> None:\n  run(1)\n  println(count_pairs([(\"host\", 1), (\"port\", 8080)]))\n";
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let path = vec!["m".to_string(), "literal_generic_arguments".to_string()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(path.clone()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let facts = checker.type_info();
+    let module = build_body_ir_module_v0(&program, &path, facts);
+    let targets = named_targets(&module, "main");
+    for (name, expected) in [
+        ("run", vec![IncanType::Primitive(IncanPrimitiveType::Int)]),
+        (
+            "count_pairs",
+            vec![
+                IncanType::Primitive(IncanPrimitiveType::Str),
+                IncanType::Primitive(IncanPrimitiveType::Int),
+            ],
+        ),
+    ] {
+        let target = targets
+            .iter()
+            .find(|target| target.name == name)
+            .ok_or("missing generic call")?;
+        assert_eq!(
+            target.type_args,
+            expected,
+            "{}\nmonomorph={:?}\nparams={:?}\ndeclarations={:?}",
+            module.render_snapshot(),
+            facts.calls.call_site_monomorph_type_args,
+            facts.calls.call_site_callable_params,
+            facts.declarations.function_bindings
+        );
+    }
+    Ok(())
+}
+
 /// A selected overload keeps its checked slots when this module does not physically own its executable body.
 #[test]
 fn a_selected_external_overload_retains_its_parameter_binding() -> Result<(), Box<dyn std::error::Error>> {

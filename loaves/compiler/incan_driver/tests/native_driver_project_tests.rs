@@ -18,6 +18,58 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// Tuple-list literals and unused capability-bounded parameters retain concrete native instances, as legacy infers.
+#[test]
+fn checked_generic_arguments_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("checked-generic-arguments")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"from std.rust import Send, Sync, Static, Fn, FnMut, FnOnce
+
+def count_pairs[K, V](items: list[tuple[K, V]]) -> int:
+    return len(items)
+
+def weights[T](items: list[tuple[T, int]]) -> list[str]:
+    mut out: list[str] = []
+    for position, pair in enumerate(items):
+        out.append(f"{position}:{pair[1]}")
+    return out
+
+def run[T with Send, Sync](_value: T) -> None:
+    pass
+
+def run_all[T with Send, Sync, Static](_value: T) -> None:
+    pass
+
+def run_fn[F with Fn[int]](_function: F) -> None:
+    pass
+
+def run_fn_mut[F with FnMut[int], Send](_function: F) -> None:
+    pass
+
+def run_fn_once[F with FnOnce[int], Static](_function: F) -> None:
+    pass
+
+def double(value: int) -> int:
+    return value * 2
+
+def main() -> None:
+    println(count_pairs([("host", 1), ("port", 8080)]))
+    for line in weights([("x", 5), ("y", 7)]):
+        println(line)
+    run(1)
+    run_all(2.5)
+    run_fn(double)
+    run_fn_mut(double)
+    run_fn_once(double)
+    println("ran")
+"#,
+    )
+}
+
 /// Derived models, enums and newtypes sort beside tuples, nested lists and optional values through the same Ord path.
 #[test]
 fn derived_ordered_sort_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
