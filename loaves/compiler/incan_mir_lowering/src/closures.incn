@@ -30,7 +30,7 @@ from pub::incan_mir_plan import (
 from pub::incan_mir_plan import block as plan_block, place as plan_place
 from types import primitive_type
 from classes import function_name, receiver_mode
-from collections import is_collection
+from collections import is_collection, is_owned_collection
 from layout_types import native_source_type, callable_parameter_type
 from lists import is_list, is_owned_list, parameter_storage_type, is_exclusive_borrow
 from numerics import numeric_carrier
@@ -154,7 +154,8 @@ pub def return_representation(body: &RustBody, ty: PlanType) -> Result[PlanType,
 pub def closure_arguments(signature: list[PlanType]) -> Result[list[PlanType], str]:
     """
     Pack scalar/text inputs, owned models and enums, shared collection views and the exclusive borrows `mut`
-    parameters take with their exact checked call representations. Results may also own a list, transferred from the lifted function to its caller.
+    parameters take with their exact checked call representations. Results may also own a list, set or dictionary, transferred from the lifted function
+    to its caller under the same checked layout.
     """
     if len(signature) == 0:
         return Err("invalid Body IR callable signature without return type")
@@ -174,8 +175,8 @@ pub def closure_arguments(signature: list[PlanType]) -> Result[list[PlanType], s
                 PlanType.EnumMutRef(_index, _name) => pass
                 _ => return Err("unsupported Body IR closure input outside scalars, text, collection views and borrows")
         elements.append(input)
-    if not closure_value_type(signature[-1]) and not is_owned_list(signature[-1]):
-        return Err("unsupported Body IR closure result outside scalars, owned text and lists")
+    if not closure_value_type(signature[-1]) and not is_owned_collection(signature[-1]):
+        return Err("unsupported Body IR closure result outside scalars, owned text and collections")
     return Ok(elements)
 
 

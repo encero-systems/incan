@@ -1130,13 +1130,18 @@ fn external_signature_type(ty: &Scalar) -> bool {
 }
 
 /// Callable objects accept scalars of any numeric carrier, text, owned models and enums, shared collection views and
-/// the exclusive borrows a `mut` parameter receives as inputs; their result is a scalar, owned text, an owned list, or
-/// an owned generator, which a generator expression's capturing step returns.
+/// the exclusive borrows a `mut` parameter receives as inputs; their result is a scalar, owned text, an owned list, set or dictionary, or an
+/// owned generator, which a generator expression's capturing step returns. Collection results retain their full layout
+/// and transfer ownership to the caller; borrowed collection results remain outside this signature contract.
 fn callable_object_signature(signature: &[Scalar]) -> bool {
     let Some((result, inputs)) = signature.split_last() else {
         return false;
     };
-    (callable_object_value(result) || matches!(result, Scalar::List(_, _) | Scalar::Generator(_, _)))
+    (callable_object_value(result)
+        || matches!(
+            result,
+            Scalar::List(_, _) | Scalar::Set(_) | Scalar::Dict(_, _) | Scalar::Generator(_, _)
+        ))
         && inputs.iter().all(|ty| {
             callable_object_value(ty)
                 || matches!(
