@@ -1113,9 +1113,10 @@ impl TypeChecker {
         methods.sort_by(|left, right| left.method.cmp(&right.method));
     }
 
-    /// Expand checked source derive bundles for Body IR only; the legacy native selection is left intact.
+    /// Expand checked source derive bundles from the Body IR snapshot; the legacy native selection is left intact.
+    /// This preserves executable derives retained before the legacy inspection-mode selection changes.
     fn record_body_ir_expanded_derives(&mut self, owner: &str, derives: &[String]) {
-        let Some(original) = self.type_info.declarations.model_derives.get(owner) else {
+        let Some(original) = self.type_info.declarations.body_ir_model_derives.get(owner) else {
             return;
         };
         let mut expanded = original.clone();

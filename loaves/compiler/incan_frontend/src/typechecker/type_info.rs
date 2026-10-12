@@ -1507,7 +1507,8 @@ pub enum PartialProjectionTargetKind {
 pub struct CallArtifacts {
     /// Complete argument types for Body IR native instances, normalized from checked call relationships only.
     ///
-    /// Legacy never reads this additive table: its own contextual types and monomorph decisions remain untouched.
+    /// Concrete constructor carriers and ordinary checked arguments share this ordered fact. Legacy never reads this
+    /// additive table: its own contextual types and monomorph decisions remain untouched.
     pub body_ir_call_type_arguments: HashMap<(usize, usize), Vec<ResolvedType>>,
     /// Executable constructor carriers recovered from original declared fields and checked values after contextual
     /// checking substituted a callee's open parameters into those fields. Only Body IR reads this additive fact.
