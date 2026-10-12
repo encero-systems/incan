@@ -9505,6 +9505,54 @@ def main() -> Result[None, EnvironError]:
     )
 }
 
+/// Both raises forms defer the callable, accept String and static panic payloads, and preserve failure messages.
+#[test]
+fn stdlib_raises_assertions_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("stdlib-raises-forms")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"from std.testing import assert_raises as check_error
+
+def explode() -> None:
+    println("called")
+    _ = int("bad")
+
+def fail_assertion() -> None:
+    assert false
+
+def main() -> None:
+    assert explode() raises ValueError, "failure"
+    println("statement passed")
+    check_error[ValueError](explode, "failure")
+    check_error[AssertionError](fail_assertion, "")
+    println("helper passed")
+"#,
+    )?;
+    for (name, source, expected) in [
+        (
+            "raises_no_error",
+            "def quiet() -> None:\n    pass\n\ndef main() -> None:\n    assert quiet() raises ValueError\n",
+            "AssertionError: expected ValueError to be raised",
+        ),
+        (
+            "raises_wrong_error",
+            "from std.testing import assert_raises\n\ndef bad() -> None:\n    _ = int(\"bad\")\n\ndef main() -> None:\n    assert_raises[IndexError](bad, \"\")\n",
+            "AssertionError: expected IndexError to be raised, got ValueError: cannot convert 'bad' to int",
+        ),
+        (
+            "raises_custom_message",
+            "from std.testing import assert_raises\n\ndef quiet() -> None:\n    pass\n\ndef main() -> None:\n    assert_raises[ValueError](quiet, \"wanted failure\")\n",
+            "AssertionError: wanted failure",
+        ),
+    ] {
+        check_declaration_case(name, source, Some(expected))?;
+    }
+    Ok(())
+}
+
 /// A stdlib trait call returns its actual SDK layout without importing it. Iteration keeps its independent missing
 /// canonical-method refusal until the protocol boundary retains that identity.
 #[test]

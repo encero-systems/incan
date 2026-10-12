@@ -29,6 +29,7 @@ mod operators_literals_and_assignment;
 mod patterns_and_assertions;
 mod properties;
 mod provider_plans;
+mod raises_assertions;
 mod static_storage;
 
 use helpers::{
