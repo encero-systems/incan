@@ -951,6 +951,26 @@ def capture(value: int | str) -> int:
     Ok(())
 }
 
+/// A member pattern over an optional union selects the builtin `Some` constructor first, then the checker-selected
+/// member of its union payload, binding the name from inside both.
+#[test]
+fn optional_union_member_pattern_selects_some_then_the_member() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def describe(value: int | str | None) -> str:
+    match value:
+        int(number) => return str(number)
+        str(text) => return text
+        None => return "missing"
+"#;
+    let module = build(source, &["optional_union_facts"])?;
+    let snapshot = module.render_snapshot();
+    assert!(snapshot.contains("Some(union int(bind("), "{snapshot}");
+    assert!(snapshot.contains("Some(union str(bind("), "{snapshot}");
+    assert!(snapshot.contains("canonical=builtin:builtin::Some"), "{snapshot}");
+    assert!(!snapshot.contains("unsupported("), "{snapshot}");
+    Ok(())
+}
+
 // ---- #1561: a pattern whose arm changes part of a writable place binds that part in place ----
 
 #[test]

@@ -6596,6 +6596,53 @@ def main() -> None:
     )
 }
 
+/// Prove member patterns over an optional union byte-identical to legacy: each member and `None` selected in a
+/// `match` over a parameter, a member pattern with a nested branch, and a member pattern beside a wildcard over a loop
+/// variable.
+#[test]
+fn optional_union_member_pattern_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("optional-union-member-pattern")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def describe(value: int | str | None) -> str:
+    match value:
+        int(number) => return f"int {number}"
+        str(text) => return f"str {text}"
+        None => return "missing"
+
+def flags(value: Option[bool | int]) -> str:
+    match value:
+        bool(flag) =>
+            if flag:
+                return "yes"
+            return "no"
+        int(count) => return f"count {count + 1}"
+        None => return "absent"
+
+def first_text(values: list[int | str | None]) -> str:
+    for value in values:
+        match value:
+            str(text) => return text
+            _ => pass
+    return "none"
+
+def main() -> None:
+    println(describe(3))
+    println(describe("three"))
+    println(describe(None))
+    println(flags(Some(true)))
+    println(flags(Some(false)))
+    println(flags(Some(4)))
+    println(flags(None))
+    println(first_text([1, None, "found", "later"]))
+    println(first_text([None]))
+"#,
+    )
+}
+
 /// Prove `mut` parameters reached through callable values byte-identical to legacy: a function, a closure and a
 /// function-pointer local passed as a callable type whose input is `mut`, an inferred and an annotated callable local,
 /// a `mut` parameter handed on to another `mut` parameter, and `mut` list and text inputs; every change reaches the
