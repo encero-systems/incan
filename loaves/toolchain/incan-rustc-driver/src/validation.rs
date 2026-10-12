@@ -1153,8 +1153,9 @@ fn validate_closure_constructor(function: &Function) -> Result<(), PlanError> {
 
 /// Reject unsupported hashed leaves and invalid dimensions before constructing native types, including unused locals.
 ///
-/// A model is a set element or dictionary key only when its declaration derives Eq and Hash, which hashing bounds;
-/// lowering refuses the keyed dictionary lookups whose runtime also bounds Display before a plan names them.
+/// A model or enum is a set element or dictionary key only when its layout hashes (see [`hashable_model`] and
+/// [`hashable_enum`]); lowering refuses the keyed dictionary lookups whose runtime also bounds Display before a plan
+/// names them.
 fn validate_array_length(plan: &Plan, function: &Function, ty: Scalar) -> Result<(), PlanError> {
     match ty {
         Scalar::Generator(_, depth)
@@ -1178,6 +1179,16 @@ fn validate_array_length(plan: &Plan, function: &Function, ty: Scalar) -> Result
         Scalar::Dict(_, Leaf::Tuple(_))
         | Scalar::DictRef(_, Leaf::Tuple(_))
         | Scalar::DictMutRef(_, Leaf::Tuple(_)) => Err(invalid(function, "tuple dictionary values are not admitted")),
+        Scalar::Set(Leaf::Enum(index))
+        | Scalar::SetRef(Leaf::Enum(index))
+        | Scalar::SetMutRef(Leaf::Enum(index))
+        | Scalar::Dict(Leaf::Enum(index), _)
+        | Scalar::DictRef(Leaf::Enum(index), _)
+        | Scalar::DictMutRef(Leaf::Enum(index), _)
+            if hashable_enum(plan, index) =>
+        {
+            Ok(())
+        }
         Scalar::Set(Leaf::Enum(_))
         | Scalar::SetRef(Leaf::Enum(_))
         | Scalar::SetMutRef(Leaf::Enum(_))
@@ -1582,6 +1593,49 @@ fn hashable_model(plan: &Plan, index: i64) -> bool {
             .iter()
             .all(|required| declaration.derives.iter().any(|derive| derive == required))
     })
+}
+
+/// Whether the planned enum at `index` hashes, the authority a hashed collection element needs.
+///
+/// A source enum must derive Eq and Hash. An `Option` or `Result` carrier aliases the standard type, which hashes when
+/// every payload does; a payload enum must precede its carrier, as nested carriers are planned first, so the check
+/// always terminates. A stdlib enum's derives belong to its compiled crate and never qualify.
+fn hashable_enum(plan: &Plan, index: i64) -> bool {
+    let Some(declaration) = enum_declaration(plan, index) else {
+        return false;
+    };
+    if !declaration.library_item.is_empty() {
+        return false;
+    }
+    if declaration.carrier.is_empty() {
+        return ["Eq", "Hash"]
+            .iter()
+            .all(|required| declaration.derives.iter().any(|derive| derive == required));
+    }
+    matches!(declaration.carrier.as_str(), "Option" | "Result")
+        && declaration
+            .variants
+            .iter()
+            .flat_map(|variant| &variant.fields)
+            .all(|field| hashable_payload(plan, &scalar(field), index))
+}
+
+/// Whether a carrier payload hashes: a nonfloating scalar or text, a tuple of those, or a hashable model or an
+/// earlier hashable enum.
+fn hashable_payload(plan: &Plan, ty: &Scalar, carrier: i64) -> bool {
+    match ty {
+        Scalar::Int
+        | Scalar::Bool
+        | Scalar::Unit
+        | Scalar::U8
+        | Scalar::String
+        | Scalar::Decimal
+        | Scalar::FrozenStr => true,
+        Scalar::Tuple(elements) => elements.iter().all(|element| hashable_payload(plan, element, carrier)),
+        Scalar::Model(index) => hashable_model(plan, *index),
+        Scalar::Enum(index) => *index < carrier && hashable_enum(plan, *index),
+        _ => false,
+    }
 }
 
 /// Require flat scalar/text tuple layouts and consistent nominal declaration identities.

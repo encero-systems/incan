@@ -8,6 +8,7 @@ from models import model_type, hashed_element
 from tuples import tuple_element
 from enums import enum_type
 from closures import signature_input
+from decls import library_enum_item
 
 
 pub def native_source_type(
@@ -40,8 +41,10 @@ pub def native_source_type(
                 match element:
                     PlanType.List(leaf, depth) => return Ok(PlanType.List(leaf, depth + 1))
                     _ => return Ok(PlanType.List(collection_leaf(element)?, 1))
+            if base == "Set" and len(arguments) == 1:
+                return Ok(PlanType.Set(hashed_leaf(nominals, enums, arguments[0], intrinsics)?))
             if base == "Dict" and len(arguments) == 2:
-                key = hashed_element(nominals, arguments[0])?
+                key = hashed_leaf(nominals, enums, arguments[0], intrinsics)?
                 value = native_source_type(nominals, enums, unions, arguments[1], intrinsics)?
                 return Ok(PlanType.Dict(key, collection_leaf(value)?))
             if base == "Iterator" and len(arguments) == 1:
@@ -54,6 +57,45 @@ pub def native_source_type(
         RustType.Tuple(elements) => return layout_tuple_type(nominals, enums, unions, elements, intrinsics)
         _ => pass
     return model_type(nominals, ty)
+
+
+def hashed_leaf(
+    nominals: list[NominalDeclaration],
+    enums: list[RustEnumDeclaration],
+    ty: &RustType,
+    intrinsics: list[EnumDeclaration],
+) -> Result[ListLeaf, str]:
+    """
+    Admit an enum set element or dictionary key only when its retained layout hashes.
+
+    A source enum must derive Eq and Hash. An `Option` or `Result` carrier hashes when every type argument does, as
+    the standard carrier's own bounds require. A stdlib enum's derives belong to its compiled crate and stay refused.
+    Models and primitives keep their existing hashed leaves.
+    """
+    match enum_type(enums, ty):
+        Some(found) =>
+            match found:
+                PlanType.Enum(index, name) =>
+                    declaration = enums[index]
+                    if library_enum_item(declaration) != "":
+                        return Err(f"unsupported Body IR stdlib enum hashed key {name}")
+                    if "Eq" not in declaration.derives or "Hash" not in declaration.derives:
+                        return Err(f"unsupported Body IR enum hashed key {name} without derived Eq and Hash")
+                    return Ok(ListLeaf.Enum(index, name))
+                _ => return Err(f"unsupported Body IR enum hashed key {ty}")
+        None => pass
+    match ty:
+        RustType.Generic(base=base, args=arguments) =>
+            if base == "Option" or base == "Result":
+                for argument in arguments:
+                    hashed_leaf(nominals, enums, argument, intrinsics)?
+                for index in range(len(intrinsics)):
+                    carrier = intrinsics[index]
+                    if carrier.carrier == str(base) and carrier.source_type == str(ty):
+                        return Ok(ListLeaf.Enum(len(enums) + index, carrier.name))
+                return Err(f"unsupported Body IR unretained carrier hashed key {ty}")
+        _ => pass
+    return hashed_element(nominals, ty)
 
 
 def layout_tuple_type(

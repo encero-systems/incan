@@ -135,8 +135,9 @@ pub def collection_call(
     """Retain hashed runtime signatures with exactly their checked generic instantiation."""
     if len(parameters) != len(operands):
         return Err("unsupported Body IR collection runtime arity")
-    if displays_model_key(ty, operation):
-        return Err("unsupported Body IR keyed lookup in a dictionary with model keys")
+    kind = undisplayed_key(ty, operation)
+    if kind != "":
+        return Err(f"unsupported Body IR keyed lookup in a dictionary with {kind} keys")
     for index in range(len(operands)):
         if value_type(builder, operands[index])? != parameters[index]:
             return Err("unsupported Body IR collection runtime argument coercion")
@@ -154,20 +155,24 @@ pub def collection_call(
     return Ok(None)
 
 
-def displays_model_key(ty: PlanType, operation: str) -> bool:
+def undisplayed_key(ty: PlanType, operation: str) -> str:
     """
-    Whether a runtime dictionary operation renders its key with Display, which a model key does not implement.
+    Name the key kind, `model` or `enum`, when a runtime dictionary operation renders its key with Display, which
+    neither implements; otherwise nothing.
 
-    Legacy's keyed lookups share that bound, so such a lookup on a model-keyed dictionary does not build there either.
+    Legacy's keyed lookups share that bound, so such a lookup on a model- or enum-keyed dictionary does not build there
+    either.
     """
+    if operation not in ["get", "borrow_mut", "optional", "values", "default", "extend"]:
+        return ""
     match collection_owned(ty):
         PlanType.Dict(key, _value) =>
             match key:
-                ListLeaf.Model(_owner, _name) =>
-                    return operation in ["get", "borrow_mut", "optional", "values", "default", "extend"]
+                ListLeaf.Model(_owner, _name) => return "model"
+                ListLeaf.Enum(_owner, _name) => return "enum"
                 _ => pass
         _ => pass
-    return false
+    return ""
 
 
 pub def borrow_collection(mut builder: Builder, place: Place, mutable: bool, span: SourceSpan) -> Result[Operand, str]:

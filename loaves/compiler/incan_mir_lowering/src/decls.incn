@@ -1,6 +1,6 @@
 """Runtime layouts of checked source-local declarations; erased aliases have no storage."""
 
-from rust::incan_semantics_core import SymbolOrigin
+from rust::incan_semantics_core import SymbolOrigin, IncanType as RustType
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
     NominalDeclaration,
@@ -76,6 +76,7 @@ pub def lower_model_declarations(module: &BodyIrModule, file: str, intrinsics: l
     derives Default: a Rust derive would give every field its zero value instead.
     """
     unions = collect_unions(module)
+    reached = serde_propagation(module)?
     mut models: list[ModelDeclaration] = []
     for declaration in module.nominal_declarations:
         item = library_item(declaration)
@@ -92,6 +93,9 @@ pub def lower_model_declarations(module: &BodyIrModule, file: str, intrinsics: l
             # The SDK crate already derives and implements everything its layout carries.
             derives = []
         else:
+            # Only a plain newtype would take a propagated serde derive; another reached nominal keeps its own derives.
+            if len(declaration.fields) == 1 and str(declaration.fields[0]) == "0":
+                require_serde_derives(derives, str(declaration.name), reached)?
             for slot in range(len(declaration.fields)):
                 fields.append(
                     Parameter(
@@ -119,6 +123,89 @@ pub def lower_model_declarations(module: &BodyIrModule, file: str, intrinsics: l
             ),
         )
     return Ok(models)
+
+
+pub def serde_propagation(module: &BodyIrModule) -> Result[tuple[list[str], list[str]], str]:
+    """
+    Name the nominals a serde-deriving declaration's fields hold, as legacy's serde derive propagation collects them:
+    the names reached under Serialize, then those reached under Deserialize.
+
+    Legacy adds a model's serde derives to each source enum and plain newtype its field types name, so the generated
+    derive compiles without annotating every nested type; the direct route refuses such a declaration that lacks the
+    derive until it propagates them too. Field types are walked through lists, sets, dictionaries, tuples, `Option` and
+    `Result` carriers and other type arguments, one level deep: a reached model's own fields propagate nothing. Legacy
+    propagates within one module's declarations, so a reached declaration of another module takes nothing. A stdlib
+    layout's derives belong to its crate, so it neither propagates nor receives a derive.
+    """
+    mut serialize: list[str] = []
+    mut deserialize: list[str] = []
+    for declaration in module.nominal_declarations:
+        if library_item(declaration) != "":
+            continue
+        if "serde::Serialize" not in declaration.derives and "serde::Deserialize" not in declaration.derives:
+            continue
+        mut reached: list[str] = []
+        for ty in declaration.field_types:
+            reached = reached_names(ty, reached)?
+        for name in reached:
+            if not declared_beside(module, name, declaration):
+                continue
+            if "serde::Serialize" in declaration.derives and name not in serialize:
+                serialize.append(name)
+            if "serde::Deserialize" in declaration.derives and name not in deserialize:
+                deserialize.append(name)
+    return Ok((serialize, deserialize))
+
+
+def declared_beside(module: &BodyIrModule, name: str, source: &NominalDeclaration) -> bool:
+    """Whether `name` is a source enum or nominal declared in the same module as `source`."""
+    for declaration in module.enum_declarations:
+        if str(declaration.name) == name:
+            return declaration.canonical.origin == source.canonical.origin
+    for declaration in module.nominal_declarations:
+        if str(declaration.name) == name:
+            return declaration.canonical.origin == source.canonical.origin
+    return false
+
+
+def reached_names(ty: &RustType, names: list[str]) -> Result[list[str], str]:
+    """
+    Add the nominal names one field type holds to `names`.
+
+    A union field is refused: the direct route's union layout carries no serde derive.
+    """
+    mut result = names
+    match ty:
+        RustType.Named(name) =>
+            if str(name) not in result:
+                result.append(str(name))
+        RustType.Generic(base=base, args=arguments) =>
+            if base == "Union":
+                return Err("unsupported Body IR serde derive propagation through a union field")
+            for argument in arguments:
+                result = reached_names(argument, result)?
+        RustType.Tuple(elements) =>
+            for element in elements:
+                result = reached_names(element, result)?
+        RustType.Ref(inner) =>
+            result = reached_names(inner, result)?
+        RustType.RefMut(inner) =>
+            result = reached_names(inner, result)?
+        _ => pass
+    return Ok(result)
+
+
+pub def require_serde_derives(derives: list[str], name: str, reached: tuple[list[str], list[str]]) -> Result[None, str]:
+    """
+    Refuse a source enum or plain newtype that a serde-deriving declaration's fields hold without its own derive of
+    that serde trait: legacy adds the derive, which the direct route does not propagate yet.
+    """
+    serialize, deserialize = reached
+    if name in serialize and "serde::Serialize" not in derives:
+        return Err(f"unsupported Body IR serde derive propagation to {name}")
+    if name in deserialize and "serde::Deserialize" not in derives:
+        return Err(f"unsupported Body IR serde derive propagation to {name}")
+    return Ok(None)
 
 
 def library_fields(
