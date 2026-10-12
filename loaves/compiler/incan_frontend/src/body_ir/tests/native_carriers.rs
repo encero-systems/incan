@@ -22,6 +22,7 @@ fn validation_error_retains_builtin_native_carrier() -> Result<(), Box<dyn std::
         .ok_or("missing native error carrier")?;
     assert_eq!(error.canonical.origin, SymbolOrigin::Builtin);
     assert_eq!(error.native_item, "incan_std_core::validation::ValidationError");
+    assert_eq!(error.derives, ["Debug", "Clone", "PartialEq", "Eq"]);
     assert!(
         error.fields.is_empty(),
         "the error ABI stays opaque until field operations are proved"
