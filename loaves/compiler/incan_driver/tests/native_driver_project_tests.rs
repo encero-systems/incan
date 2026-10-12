@@ -9470,8 +9470,8 @@ def main() -> None:
     )
 }
 
-/// A method partial retains its receiver snapshot across reassignment and repeated calls, including a generic
-/// receiver, a method alias, and a shared `self` receiver. Its output must remain byte-identical to legacy.
+/// Model snapshots persist across repeated closure calls and source reassignment, including a generic model and a
+/// shared `self` receiver. The output stays byte-identical to legacy.
 #[test]
 fn model_capture_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
@@ -9480,8 +9480,72 @@ fn model_capture_output_matches_legacy() -> Result<(), Box<dyn std::error::Error
         &fixture.scratch("model-capture")?,
         &fixture.sysroot,
         &fixture.formatting,
-        include_str!(
-            "../../incan_test_support/fixtures/behavior/codegen_functions_and_aliases/local_partials_of_methods_of_values.incn"
-        ),
+        r#"model User:
+    name: str
+
+    def label(self, prefix: str, suffix: str) -> str:
+        return prefix + self.name + suffix
+
+model Box[T]:
+    value: T
+
+    def pair(self, other: T, sep: str) -> list[T]:
+        return [self.value, other]
+
+class Greeter:
+    pub greeting: str
+
+    def greet(self, name: str, punct: str) -> str:
+        return self.greeting + " " + name + punct
+
+    def make(self) -> str:
+        hello = (name: str) => self.greet(name, "!")
+        return hello("you") + " " + hello("me")
+
+def main() -> None:
+    mut user = User(name="ann")
+    label = (prefix: str, suffix: str) => user.label(prefix, suffix)
+    show = () => user.name
+    user = User(name="bob")
+    println(label("x", "!"))
+    println(label("y", "?"))
+    println(show())
+    println(show())
+    println(user.name)
+    b = Box(value=1)
+    joined = (other: int) => b.pair(other, "-")
+    println(joined(2))
+    println(joined(3))
+    g = Greeter(greeting="hi")
+    println(g.make())
+"#,
+    )
+}
+
+/// A list's contains method uses legacy membership comparisons through static defaults and retained local lists.
+#[test]
+fn list_contains_method_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("list-contains-method")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"static ITEMS: list[str] = ["a"]
+
+def has(value: str = "a") -> bool:
+    return ITEMS.contains(value)
+
+def main() -> None:
+    println(has())
+    println(has("b"))
+    values = [1, 2, 3]
+    println(values.contains(2))
+    println(values.contains(4))
+    println(len(values))
+    floats = [1.5, 2.5]
+    println(floats.contains(1.5))
+    println(floats.contains(0.0))
+"#,
     )
 }
