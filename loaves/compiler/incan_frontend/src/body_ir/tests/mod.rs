@@ -24,6 +24,7 @@ mod input_contract_and_refusals;
 mod library_types;
 mod method_partials;
 mod methods_and_defaults;
+mod native_carriers;
 mod newtypes;
 mod nominal_parameters;
 mod operators_literals_and_assignment;

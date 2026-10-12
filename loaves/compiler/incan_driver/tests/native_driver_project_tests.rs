@@ -12824,3 +12824,18 @@ fn reflection_metadata_carrier_output_matches_legacy() -> Result<(), Box<dyn std
     }
     Ok(())
 }
+
+/// An unused function's builtin error parameter and result use the exact runtime ABI, with live legacy byte parity.
+#[test]
+fn validation_error_carrier_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("validation-error-carrier")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "def forward(error: ValidationError) -> ValidationError:\n    return error\n\ndef main() -> None:\n    println(\"validation carrier\")\n",
+        "validation carrier\n",
+    )?;
+    Ok(())
+}
