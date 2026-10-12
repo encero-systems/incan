@@ -1154,3 +1154,73 @@ fn enumeration_named_user_function_keeps_its_checked_call() -> Result<(), Box<dy
     assert_eq!(calls, vec![None]);
     Ok(())
 }
+
+/// Direct zip retains separate original source polls and exclusive ownership only for the changed operand.
+#[test]
+fn zip_retains_original_sources_and_operand_specific_ownership() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def grow(mut rows: list[list[int]], extra: list[int]) -> None:\n  for row, n in zip(rows, extra):\n    row.append(n)\n",
+        &["m", "zip_sources"],
+    )?;
+    let body = body_named(&module, "grow")?;
+    let rows = body.params[0].local;
+    let extra = body.params[1].local;
+    let reads: Vec<_> = body
+        .block
+        .stmts
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
+                ..
+            } => Some((read.place.local_id(), read.fact)),
+            _ => None,
+        })
+        .collect();
+    assert!(reads.contains(&(Some(rows), bir::OwnershipFact::MutBorrow)));
+    assert!(reads.contains(&(Some(extra), bir::OwnershipFact::Borrow)));
+    let loop_body = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Loop { body } => Some(body),
+            _ => None,
+        })
+        .ok_or("missing zip loop")?;
+    assert_eq!(
+        loop_body
+            .stmts
+            .iter()
+            .filter(|statement| matches!(statement.kind, bir::StatementKind::IterNext { .. }))
+            .count(),
+        2
+    );
+    Ok(())
+}
+
+/// Direct dictionary values poll original keys and retain the changed value as an exclusive indexed place.
+#[test]
+fn dictionary_values_retain_the_original_indexed_value() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def grow(mut table: dict[str, list[int]]) -> None:\n  for value in table.values():\n    value.append(3)\n",
+        &["m", "dictionary_values"],
+    )?;
+    let body = body_named(&module, "grow")?;
+    assert!(!body.block.stmts.iter().any(|statement| matches!(&statement.kind,
+        bir::StatementKind::Call { callee: bir::Callee::Method(target), .. }
+            if target.canonical.as_ref().is_some_and(|identity| identity.declaration_name == "Dict.values"))));
+    let loop_body = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Loop { body } => Some(body),
+            _ => None,
+        })
+        .ok_or("missing value loop")?;
+    assert!(loop_body.stmts.iter().any(|statement| matches!(&statement.kind,
+        bir::StatementKind::Assign { rvalue: bir::Rvalue::Use(bir::Operand::Place(read)), .. }
+            if read.fact == bir::OwnershipFact::MutBorrow && matches!(read.place.projection.first(), Some(bir::PlaceElem::Index(_))))));
+    Ok(())
+}

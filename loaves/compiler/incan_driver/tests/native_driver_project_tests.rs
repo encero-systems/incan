@@ -12022,15 +12022,54 @@ fn model_derived_iteration_output_matches_legacy() -> Result<(), Box<dyn std::er
     )
 }
 
-/// Zip source mutation remains refused after the direct enumeration source boundary is admitted.
+/// A comprehension's changes reach original enumeration, zip, dictionary-value and projected list storage.
 #[test]
-fn comprehension_zip_source_refusal_is_retained() -> Result<(), Box<dyn std::error::Error>> {
-    check_collection_family_refusal(
+fn derived_comprehension_items_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_collection_family_source(
         "comprehension-element-mutation",
         include_str!(
             "../../incan_test_support/fixtures/behavior/ownership_values_and_fields/comprehensions_changing_their_items.incn"
         ),
-        "unsupported Body IR zip iteration source ownership",
+    )
+}
+
+/// Direct zip changes only the operand whose item is changed, including ranges and tuple-valued dictionary views.
+#[test]
+fn zip_operand_mutation_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_collection_family_source(
+        "zip-operand-mutation",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/zip_loop_changing_one_operand_in_place.incn"
+        ),
+    )
+}
+
+/// A direct value view keeps its dictionary storage, while ordinary aliases made from an item keep owned copies.
+#[test]
+fn dictionary_value_iteration_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_collection_family_source(
+        "dictionary-value-iteration",
+        r#"model Cell:
+    pub value: int
+    def bump(mut self) -> None:
+        self.value += 1
+def main() -> None:
+    mut table: dict[str, list[int]] = {"x": [1, 2]}
+    println([value.pop() for value in table.values()])
+    println(table["x"])
+    mut pairs: dict[str, tuple[list[int], int]] = {"x": ([3], 4)}
+    for items, n in pairs.values():
+        items.append(n)
+        n += 10
+    println(pairs["x"][0])
+    println(pairs["x"][1])
+    mut cells: dict[str, Cell] = {"x": Cell(value=5)}
+    for cell in cells.values():
+        mut copied = cell
+        copied.bump()
+        cell.bump()
+    println(cells["x"].value)
+"#,
     )
 }
 
