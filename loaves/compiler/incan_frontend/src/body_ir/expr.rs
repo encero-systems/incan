@@ -353,6 +353,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Place {
+        let ty = self.resolve_ty(expr.span);
+        if ty == IncanType::Primitive(IncanPrimitiveType::FrozenBytes)
+            && matches!(expr.node, ast::Expr::Ident(_) | ast::Expr::Field(..))
+        {
+            // Const receivers need their retained value, just like argument reads; a global const has no mutable cell.
+            let operand = self.lower_expr_to_operand(expr, scope, out);
+            return self.materialize_operand_to_place(operand, ty, scope, hir_span(expr.span), out);
+        }
         match &expr.node {
             ast::Expr::Ident(name) => {
                 let ty = self.resolve_ty(expr.span);
