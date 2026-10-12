@@ -17,9 +17,9 @@ use rustc_span::{Ident, Span, Spanned, Symbol};
 use thin_vec::{ThinVec, thin_vec};
 
 /// Report whether a capture of this type moves into the environment and is cloned out for each call: owned text and
-/// owned lists. Every other admitted capture is a Copy scalar.
+/// owned lists and model snapshots. Every other admitted capture is a Copy scalar.
 pub fn owned_capture(ty: &PlanType) -> bool {
-    matches!(ty, PlanType::String | PlanType::List(_, _))
+    matches!(ty, PlanType::String | PlanType::List(_, _) | PlanType::Model(_, _))
 }
 
 /// Identify a closure constructor by its one `ClosureBody` call, returning the lifted function and its capture count.
@@ -157,8 +157,8 @@ pub fn declaration_body(function: &Function, span: Span) -> Option<Box<ast::Bloc
 ///
 /// rustc retains the closure's `Fn` ABI and by-value capture layout. The call passes each capture, then each input in
 /// order; the lifted function's result is the closure's result. A Copy capture is copied from the shared environment.
-/// Owned text and lists are cloned out of it first, because an `Fn` closure can run again and the lifted function takes
-/// its captures by value.
+/// Owned text, lists and models are cloned out of it first, because an `Fn` closure can run again and the lifted
+/// function takes its captures by value.
 pub fn callback<'tcx>(
     tcx: TyCtxt<'tcx>,
     def: LocalDefId,

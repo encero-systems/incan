@@ -89,15 +89,15 @@ pub(crate) fn bind_pattern_names(pattern: &ast::Pattern, bound: &mut HashSet<Str
         }
     }
 }
-/// Recursively collect free variables from an expression, given the names already bound at this point in `bound`.
-/// Constructs that introduce their own bindings for a sub-expression (comprehension/`for`-clause patterns, nested
-/// closures' own parameters, or a nested expression-position `if`/`loop`'s own statement-block bindings) extend a
-/// *cloned* copy of `bound` before recursing into that sub-expression, so a binding introduced in one branch never
-/// leaks into a sibling branch or back out to the caller -- unlike [`BodyBuilder`]'s own flat `self.bindings` map,
-/// which this analysis runs entirely independently of (see [`free_vars_in_closure_body`]'s docs).
+/// Collect expression reads, including the receiver spelled `self`, without resolving them through enclosing locals.
+///
+/// Expressions that introduce bindings delegate to [`collect_free_vars_in_scoped_expr`], which keeps their bound names
+/// private. This analysis is independent of [`BodyBuilder`]'s binding map; [`free_vars_in_closure_body`] uses its
+/// result to construct explicit capture locals.
 pub(super) fn collect_free_vars_in_expr(expr: &ast::Expr, bound: &mut HashSet<String>, free: &mut Vec<String>) {
     match expr {
         ast::Expr::Ident(name) => push_free(name, bound, free),
+        ast::Expr::SelfExpr => push_free("self", bound, free),
         ast::Expr::Binary(l, _, r) => {
             collect_free_vars_in_expr(&l.node, bound, free);
             collect_free_vars_in_expr(&r.node, bound, free);
@@ -169,6 +169,17 @@ pub(super) fn collect_free_vars_in_expr(expr: &ast::Expr, bound: &mut HashSet<St
                 }
             }
         }
+        _ => collect_free_vars_in_scoped_expr(expr, bound, free),
+    }
+}
+
+/// Walk conditional and deferred expressions without leaking a branch or pattern's bindings into its siblings.
+///
+/// A match reads its subject in the enclosing scope, then walks each guard and body with that arm's own pattern-bound
+/// names. A yielded value is an ordinary nested read and still contributes captures. The caller handles simple
+/// expression forms.
+fn collect_free_vars_in_scoped_expr(expr: &ast::Expr, bound: &mut HashSet<String>, free: &mut Vec<String>) {
+    match expr {
         ast::Expr::If(if_expr) => {
             collect_free_vars_in_expr(&if_expr.condition.node, bound, free);
             let mut then_bound = bound.clone();
@@ -227,13 +238,7 @@ pub(super) fn collect_free_vars_in_expr(expr: &ast::Expr, bound: &mut HashSet<St
                 collect_free_vars_in_expr(&arg.value.node, bound, free);
             }
         }
-        // Mirrors `count_reads_in_expr`'s `Yield` arm: a yielded value is an ordinary nested expression for
-        // free-variable purposes, so a name it reads from an enclosing closure scope must still be captured.
         ast::Expr::Yield(Some(value)) => collect_free_vars_in_expr(&value.node, bound, free),
-        // The scrutinee is read in the enclosing scope like any other sub-expression. Each arm gets its own
-        // *cloned* `bound` set (matching the `If`/`Loop` arms above) extended with that arm's own pattern-bound
-        // names before walking its guard and body, so one arm's bindings never leak into a sibling arm or shadow an
-        // outer free variable of the same name.
         ast::Expr::Match(subject, arms) => {
             collect_free_vars_in_expr(&subject.node, bound, free);
             for arm in arms {
