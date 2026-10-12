@@ -11396,15 +11396,41 @@ def main() -> None:
     )
 }
 
-/// Keep the original chained fixture refused at its separate dictionary-returning closure boundary.
+/// Chained assignment evaluates boxed collection-returning callables once and preserves every target's type.
 #[test]
-fn chained_dictionary_closure_refusal_is_retained() -> Result<(), Box<dyn std::error::Error>> {
-    check_collection_family_refusal(
+fn chained_assignment_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_collection_family_source(
         "chained-dictionary-closure",
         include_str!(
             "../../incan_test_support/fixtures/behavior/cli_values_and_calls/chained_assignment_reassigns_names_inside_a_loop.incn"
         ),
-        "unsupported Body IR closure result outside scalars, owned text and lists",
+    )
+}
+
+/// Repeated boxed collection results have independent owners and retain their signature through callable parameters.
+#[test]
+fn collection_closure_results_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_collection_family_source(
+        "collection-closure-results",
+        r#"def index() -> dict[str, int]:
+    return {"x": 1}
+def labels() -> set[int]:
+    return {1, 2}
+def use(producer: () -> dict[str, int]) -> int:
+    return producer()["x"]
+def main() -> None:
+    maker = () => index()
+    mut one = maker()
+    one["x"] = 9
+    two = maker()
+    println(f"{one["x"]} {two["x"]} {use(maker)}")
+    tags = () => labels()
+    mut left = tags()
+    left.add(3)
+    right = tags()
+    println(f"{len(left)} {len(right)}")
+    println(use(index))
+"#,
     )
 }
 
