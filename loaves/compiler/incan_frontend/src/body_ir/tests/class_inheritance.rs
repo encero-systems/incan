@@ -84,3 +84,41 @@ fn inherited_class_slots_select_the_nearest_checked_override() -> Result<(), Box
     assert_eq!(module.bodies.iter().filter(|body| body.name == "score").count(), 2);
     Ok(())
 }
+
+/// Malformed layouts cannot omit, reorder or change ancestor storage, forge slots, or attach class edges to newtypes.
+#[test]
+fn malformed_class_inheritance_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(SOURCE, &["inheritance_malformed"])?;
+    let child = module
+        .nominal_declarations
+        .iter()
+        .find(|item| item.name == "Child")
+        .ok_or("child missing")?;
+    let mut missing = child.clone();
+    missing.fields.clear();
+    missing.field_identities.clear();
+    missing.field_types.clear();
+    missing.field_public.clear();
+    assert!(!module.is_well_formed_nominal_declaration(&missing));
+    let mut changed = child.clone();
+    changed.field_public[0] = !changed.field_public[0];
+    assert!(!module.is_well_formed_nominal_declaration(&changed));
+    let mut reordered = child.clone();
+    reordered.fields.reverse();
+    reordered.field_identities.reverse();
+    reordered.field_types.reverse();
+    reordered.field_public.reverse();
+    assert!(!module.is_well_formed_nominal_declaration(&reordered));
+    let mut encoded = serde_json::to_value(child)?;
+    encoded["class_inheritance"]["methods"] = serde_json::json!([]);
+    let missing_slots = serde_json::from_value(encoded)?;
+    assert!(!module.is_well_formed_nominal_declaration(&missing_slots));
+    let tokens = build("type Token = newtype int\n", &["inheritance_newtype"])?;
+    let token = tokens.nominal_declarations.first().ok_or("newtype missing")?;
+    assert!(tokens.is_well_formed_nominal_declaration(token));
+    let mut forged = serde_json::to_value(token)?;
+    forged["class_inheritance"] = serde_json::to_value(child)?["class_inheritance"].clone();
+    let forged = serde_json::from_value(forged)?;
+    assert!(!tokens.is_well_formed_nominal_declaration(&forged));
+    Ok(())
+}
