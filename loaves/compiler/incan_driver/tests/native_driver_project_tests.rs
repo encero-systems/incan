@@ -9778,3 +9778,123 @@ def main() -> None:
 "#,
     )
 }
+
+/// Model snapshots persist across repeated closure calls and source reassignment, including a generic model and a
+/// shared `self` receiver. The output stays byte-identical to legacy.
+#[test]
+fn model_capture_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("model-capture")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"model User:
+    name: str
+
+    def label(self, prefix: str, suffix: str) -> str:
+        return prefix + self.name + suffix
+
+model Box[T]:
+    value: T
+
+    def pair(self, other: T, sep: str) -> list[T]:
+        return [self.value, other]
+
+class Greeter:
+    pub greeting: str
+
+    def greet(self, name: str, punct: str) -> str:
+        return self.greeting + " " + name + punct
+
+    def make(self) -> str:
+        hello: (str) -> str = (name) => self.greet(name, "!")
+        return hello("you") + " " + hello("me")
+
+def main() -> None:
+    mut user = User(name="ann")
+    label: (str, str) -> str = (prefix, suffix) => user.label(prefix, suffix)
+    show = () => user.name
+    user = User(name="bob")
+    println(label("x", "!"))
+    println(label("y", "?"))
+    println(show())
+    println(show())
+    println(user.name)
+    b = Box(value=1)
+    joined: (int) -> list[int] = (other) => b.pair(other, "-")
+    println(joined(2))
+    println(joined(3))
+    g = Greeter(greeting="hi")
+    println(g.make())
+"#,
+    )
+}
+
+/// A list's contains method uses legacy membership comparisons through static defaults and retained local lists.
+#[test]
+fn list_contains_method_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("list-contains-method")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"static ITEMS: list[str] = ["a"]
+
+def has(value: str = "a") -> bool:
+    return ITEMS.contains(value)
+
+def main() -> None:
+    println(has())
+    println(has("b"))
+    values = [1, 2, 3]
+    println(values.contains(2))
+    println(values.contains(4))
+    println(len(values))
+    floats = [1.5, 2.5]
+    println(floats.contains(1.5))
+    println(floats.contains(0.0))
+"#,
+    )
+}
+
+/// Defaults that read module-owned statics retain their declaring module across calls from a different module.
+#[test]
+fn static_collection_defaults_across_modules_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("static-collection-defaults")?;
+    let project = root.join("builtin-parity");
+    fs::create_dir_all(&project)?;
+    for (name, source) in [
+        (
+            "helpers",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/default_static_reads_across_modules/helpers.incn"
+            ),
+        ),
+        (
+            "caller",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/default_static_reads_across_modules/caller.incn"
+            ),
+        ),
+        (
+            "config",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/default_static_reads_across_modules/config.incn"
+            ),
+        ),
+    ] {
+        fs::write(project.join(format!("{name}.incn")), source)?;
+    }
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &root,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/default_static_reads_across_modules/main.incn"
+        ),
+    )
+}
