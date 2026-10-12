@@ -6337,10 +6337,12 @@ def lower_builtin_method(
     receiver_type = argument_type(builder, arguments, 0, span)?
     match receiver_type:
         PlanType.FrozenCollection(name, _elements) =>
-            if member == f"{name.lower()}.len":
+            if member == f"{name}.len":
                 return lower_list_builtin(builder, arguments, destination, span)
-            if name == "FrozenDict" and member == "frozendict.contains_key":
+            if name == "FrozenDict" and member == "FrozenDict.contains_key":
                 return frozen_dictionary_contains(builder, arguments, destination, false, span)
+            if name == "FrozenSet" and member == "FrozenSet.contains":
+                return collection_contains(builder, false, arguments, destination, span)
         _ => pass
     if receiver_type == PlanType.FrozenBytes and member == "frozenbytes.len":
         return lower_list_builtin(builder, arguments, destination, span)
