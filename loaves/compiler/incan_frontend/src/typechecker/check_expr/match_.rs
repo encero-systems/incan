@@ -669,8 +669,17 @@ impl TypeChecker {
                             }
                         }
                         ConstructorId::None => {
-                            self.record_pattern_lexical_identity(ctor_name, name.span);
-                            return;
+                            // A qualified `Maybe.None` over a non-`Option` subject names that enum's own `None`
+                            // variant, which the enum path below resolves; only an `Option` takes the builtin.
+                            let option_subject = matches!(
+                                subject_ty,
+                                ResolvedType::Generic(type_name, _)
+                                    if type_name == collections::as_str(CollectionTypeId::Option)
+                            );
+                            if enum_qualifier_opt.is_none() || option_subject {
+                                self.record_pattern_lexical_identity(ctor_name, name.span);
+                                return;
+                            }
                         }
                     }
                 }

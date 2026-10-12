@@ -6393,7 +6393,27 @@ def collection_value(mut builder: Builder, read: &RustPlaceOperand, span: Source
         return Ok(read_place(place, true, span))
     if read.fact != OwnershipFact.Clone and read.fact != OwnershipFact.Borrow:
         return Err("unsupported Body IR collection value ownership")
-    reference = borrow_collection(builder, place, false, span)?
+    return cloned_collection(builder, place, span)
+
+
+def cloned_collection(mut builder: Builder, place: Place, span: SourceSpan) -> Result[Operand, str]:
+    """
+    Copy a set or dictionary into a new owned temporary that drops when its scope ends.
+
+    A whole local is borrowed, or reborrowed when it is a parameter view; a projected one, such as an enum payload,
+    is owned where it lives and is borrowed in place.
+    """
+    ty = place_type(builder.locals, place)
+    owned = collection_owned(ty)
+    mut reference = literal(Constant.Unit, span)
+    if place.projection == Projection.Whole:
+        reference = borrow_collection(builder, place, false, span)?
+    else:
+        if ty != owned:
+            return Err("unsupported Body IR projected collection view")
+        view = temporary(builder, collection_reference(ty, false), span)
+        builder.emit(plan_assign(view, RvalueKind.Borrow(place), span))
+        reference = read_place(view, false, span)
     output = temporary(builder, owned, span)
     collection_call(builder, ty, "clone", [collection_reference(ty, false)], owned, [reference], output, span)?
     return Ok(read_place(output, true, span))
@@ -7378,6 +7398,8 @@ def enum_payload_read(
         return Ok(read_place(place, false, span))
     if is_list(place_type(builder.locals, place)):
         return carrier_payload_value(builder, place, span)
+    if is_collection(place_type(builder.locals, place)):
+        return cloned_collection(builder, place, span)
     # Legacy matches a cloned enum by value. Cloning just the selected payload preserves that owned-binding contract
     # while the canonical match scrutinee stays borrowed; unselected payloads remain owned by their original enum.
     if place_type(builder.locals, place) == PlanType.String:
