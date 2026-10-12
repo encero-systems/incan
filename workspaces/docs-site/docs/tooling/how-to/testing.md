@@ -61,6 +61,8 @@ oven tests --jobs 4
 oven tests --rust-only -k parse
 ```
 
+Use `--jobs N` to run up to N independent Rust cases concurrently, each in a fresh process. Incan cases retain their worker-batch fixture scopes; the scheduler never combines the two languages into one harness. Serial and resource constraints still limit concurrency.
+
 Rust listing may prepare a native test harness. Ignored Rust tests stay skipped, and selected tests execute afresh on every run. See the [command reference](../reference/cli_reference.md#oven-tests) for root selection and preparation constraints.
 
 ## Test Discovery
