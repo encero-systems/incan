@@ -1339,6 +1339,78 @@ mod tests {
         Ok(())
     }
 
+    /// Declared function binders remain portable; an undeclared variable cannot enter a published body.
+    #[test]
+    fn published_functions_cover_only_declared_type_parameters() -> Result<(), Box<dyn std::error::Error>> {
+        let mut declared = body("identity", 1);
+        declared.type_parameters = vec!["T".into()];
+        declared.return_type = IncanType::TypeVar("T".into());
+        let mut undeclared = body("unbound", 2);
+        undeclared.return_type = IncanType::TypeVar("T".into());
+        let bytes = publish(
+            &module(vec![declared, undeclared]),
+            &BTreeSet::from([identity("identity", 1), identity("unbound", 2)]),
+        )?;
+        let reader = SurfaceReader::open(&bytes)?;
+        assert!(reader.covers(&identity("identity", 1)));
+        assert!(matches!(
+            reader.index().coverage(&identity("unbound", 2))?,
+            DeclarationCoverage::Uncovered(CoverageReason::UnresolvedReference)
+        ));
+        Ok(())
+    }
+
+    /// A generic nominal layout and its receiver method share the owner's binders, with canonical use requirements.
+    #[test]
+    fn published_nominals_cover_their_declared_parameters() -> Result<(), Box<dyn std::error::Error>> {
+        let mut owner = identity("Holder", 2);
+        owner.kind = SemanticSourceTargetKind::Model;
+        owner.declaration_span = HirSourceSpan::new(200, 499);
+        let mut field = identity("value", 3);
+        field.kind = SemanticSourceTargetKind::Field;
+        field.namespace = SymbolNamespace::Member;
+        let mut method = body("get", 4);
+        let mut method_id = identity("get", 4);
+        method_id.kind = SemanticSourceTargetKind::Method;
+        method_id.namespace = SymbolNamespace::Member;
+        method.canonical = Some(method_id.clone());
+        method.return_type = IncanType::TypeVar("T".into());
+        let mut user = body("use_holder", 1);
+        user.return_type = IncanType::Generic {
+            base: "Holder".into(),
+            args: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
+        };
+        let mut module = module(vec![method, user]);
+        module.nominal_declarations.push(crate::body_ir::NominalDeclaration {
+            direct_declaration_id: CompilerNodeId::declaration_span("lib", 200, 499),
+            canonical: owner.clone(),
+            name: "Holder".into(),
+            fields: vec!["value".into()],
+            field_identities: vec![field.clone()],
+            field_types: vec![IncanType::TypeVar("T".into())],
+            field_public: vec![true],
+            public: true,
+            has_field_defaults: false,
+            field_default_body: None,
+            method_partial_defaults: Vec::new(),
+            derives: Vec::new(),
+            named_type_identities: Default::default(),
+            type_parameters: vec!["T".into()],
+            type_parameter_count: 1,
+        });
+        let public = BTreeSet::from([owner.clone(), field, method_id.clone(), identity("use_holder", 1)]);
+        let bytes = publish(&module, &public)?;
+        let reader = SurfaceReader::open(&bytes)?;
+        assert!(reader.covers(&owner));
+        assert!(reader.covers(&method_id));
+        let DeclarationCoverage::Covered { requirements, .. } = reader.index().coverage(&identity("use_holder", 1))?
+        else {
+            return Err("generic nominal use is uncovered".into());
+        };
+        assert!(requirements.contains(&owner));
+        Ok(())
+    }
+
     /// Class fields resolve through a covered class; a field cannot use an unrelated declaration kind as its owner.
     #[test]
     fn public_class_field_context_is_admitted() -> Result<(), Box<dyn std::error::Error>> {

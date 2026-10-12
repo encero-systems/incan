@@ -6197,6 +6197,57 @@ fn direct_route_packages_match_legacy() -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
+/// Published generic functions and receiver methods execute with the consumer's checked concrete arguments.
+#[test]
+fn published_generic_declarations_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("published-generic-declarations")?;
+    let project = root.join("builtin-parity");
+    let provider = project.join("deps/generic_items");
+    fs::create_dir_all(provider.join("src"))?;
+    fs::write(
+        project.join("loaf.toml"),
+        "[project]\nname = \"generic_consumer\"\nversion = \"0.1.0\"\n[dependencies]\ngeneric_items = { path = \"deps/generic_items\" }\n",
+    )?;
+    fs::write(
+        provider.join("loaf.toml"),
+        "[project]\nname = \"generic_items\"\nversion = \"0.1.0\"\n",
+    )?;
+    fs::write(
+        provider.join("src/lib.incn"),
+        r#"pub model Holder[T]:
+    pub value: T
+
+    def get(self) -> T:
+        return self.value
+
+    def first[U](self, values: list[U]) -> U:
+        return values[0]
+
+pub def first[T](values: list[T]) -> T:
+    return values[0]
+"#,
+    )?;
+    let mut publish = support::cli_project::configured_incan_command(&provider, &["oven", "bake", "--project", "."]);
+    support::configure_explicit_oven_bake_command(&mut publish)?;
+    publish.env("INCAN_OVEN_BAKE_PROFILES", "debug,release");
+    success(&publish.output()?, "generic package publication");
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &root,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"from pub::generic_items import Holder, first
+
+def main() -> None:
+    holder = Holder[int](value=7)
+    println(holder.get())
+    println(holder.first(["first", "second"]))
+    println(first([42, 43]))
+"#,
+    )
+}
+
 /// A checked package module binding selects callable bodies without requesting a namespace fragment.
 #[test]
 fn direct_route_package_module_binding_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

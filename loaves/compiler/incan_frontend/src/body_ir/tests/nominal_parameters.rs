@@ -2,6 +2,31 @@
 
 use super::{IncanPrimitiveType, IncanType, bir, body_named, build, named_targets};
 
+/// A trait default declares the owner and method binders its portable body needs, including nested callable types.
+#[test]
+fn trait_default_declared_parameters_cover_callable_types() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        r#"trait Source[T]:
+    def transform[U](self, f: (T) -> U, value: T) -> U:
+        return f(value)
+"#,
+        &["m", "trait_parameter_publication"],
+    )?;
+    let body = body_named(&module, "transform")?;
+    assert_eq!(body.type_parameters, ["T", "U"]);
+    let callable = body
+        .params
+        .iter()
+        .find(|parameter| parameter.name == "f")
+        .ok_or("missing callable")?;
+    let IncanType::Function { params, return_type } = &callable.ty else {
+        return Err("missing callable type".into());
+    };
+    assert_eq!(params[0].ty, IncanType::TypeVar("T".into()));
+    assert_eq!(**return_type, IncanType::TypeVar("U".into()));
+    Ok(())
+}
+
 /// Inferred owner arguments on a constructor retain the concrete checked carrier inside a generic call.
 #[test]
 fn inferred_model_constructor_carriers_are_closed() -> Result<(), Box<dyn std::error::Error>> {
