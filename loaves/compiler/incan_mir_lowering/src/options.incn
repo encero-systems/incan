@@ -7,6 +7,7 @@ from rust::incan_semantics_core::body_ir import (
     Pattern as RustPattern,
     ResultVariantKind,
     Constant as RustConstant,
+    StaticInitializer,
 )
 from pub::incan_mir_plan import (
     BinaryOp,
@@ -144,7 +145,7 @@ pub def intrinsic_pattern(declaration: EnumDeclaration, pattern: &RustPattern) -
 
 
 pub def intrinsic_declarations(module: &BodyIrModule, file: str) -> Result[list[EnumDeclaration], str]:
-    """Collect concrete non-template carriers; checked function instances add their closed layouts when scheduled."""
+    """Collect concrete declaration, frame and computed-static carriers; function instances add closed layouts when scheduled."""
     mut declarations: list[EnumDeclaration] = []
     for declaration in module.nominal_declarations:
         for ty in declaration.field_types:
@@ -157,6 +158,11 @@ pub def intrinsic_declarations(module: &BodyIrModule, file: str) -> Result[list[
         if len(body.type_parameters) != 0:
             continue
         retain_body_carriers(module, declarations, body, file)?
+    for declaration in module.static_declarations:
+        retain_carrier(module, declarations, declaration.ty, file)?
+        match declaration.initial:
+            StaticInitializer.Computed(body) => retain_body_carriers(module, declarations, body, file)?
+            _ => pass
     return Ok(declarations)
 
 

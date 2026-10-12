@@ -1,7 +1,13 @@
 """Anonymous unions reuse native enum layouts and legacy's normalized payload order and names."""
 
 from rust::incan_semantics_core import IncanType as RustType
-from rust::incan_semantics_core::body_ir import BodyIrModule, Body, NominalDeclaration, EnumDeclaration as RustEnumDeclaration
+from rust::incan_semantics_core::body_ir import (
+    BodyIrModule,
+    Body,
+    NominalDeclaration,
+    EnumDeclaration as RustEnumDeclaration,
+    StaticInitializer,
+)
 from pub::incan_mir_plan import (
     ListLeaf,
     list_leaf_type,
@@ -39,6 +45,11 @@ pub def collect_unions(module: &BodyIrModule) -> list[RustType]:
         for variant in declaration.variants:
             for ty in variant.fields:
                 retain_union(unions, ty)
+    for declaration in module.static_declarations:
+        retain_union(unions, declaration.ty)
+        match declaration.initial:
+            StaticInitializer.Computed(body) => retain_body_unions(unions, body)
+            _ => pass
     return unions
 
 
