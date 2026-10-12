@@ -309,6 +309,36 @@ fn rust_derived_builtins_and_newtype_serde_adoption_are_retained() -> Result<(),
     Ok(())
 }
 
+/// A normal enum's methods and the trait slot it fills are retained over its layout: the bodies and the
+/// implementation pass the module's identity validation with the enum as their owner, and a `Self` return names the
+/// enum, as the checker reads it.
+#[test]
+fn enum_methods_and_trait_slots_are_retained() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Labeled:\n    def label(self) -> str\n\nenum Signal with Labeled:\n    Start\n    Stop\n\n    def label(self) -> str:\n        return \"signal\"\n\n    def default() -> Self:\n        return Signal.Start\n",
+        &["m", "enum_methods"],
+    )?;
+    let [declaration] = module.enum_declarations.as_slice() else {
+        return Err("expected one retained enum".into());
+    };
+    let [implementation] = module.trait_implementations.as_slice() else {
+        return Err(format!("expected one trait slot: {:?}", module.trait_implementations).into());
+    };
+    assert_eq!(implementation.owner, declaration.canonical);
+    assert!(module.is_well_formed_trait_implementation(implementation));
+    for name in ["label", "default"] {
+        assert!(
+            module.body_has_canonical_direct_call_id(body_named(&module, name)?),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        body_named(&module, "default")?.return_type,
+        IncanType::Named("Signal".to_owned())
+    );
+    Ok(())
+}
+
 /// A model deriving Copy is retained with that derive, so its values copy exactly where checking said they do.
 #[test]
 fn copy_model_is_retained_with_its_derive() -> Result<(), Box<dyn std::error::Error>> {

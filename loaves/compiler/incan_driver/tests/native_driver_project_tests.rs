@@ -8063,6 +8063,47 @@ def main() -> None:
     )
 }
 
+/// An enum's own methods, the trait slot it fills and an associated constructor returning `Self` run as legacy's impl
+/// blocks do, through a concrete receiver, a temporary and a list element.
+#[test]
+fn enum_methods_and_trait_adoption_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("enum-methods-and-traits")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"trait Labeled:
+    def label(self) -> str
+
+enum Signal with Labeled:
+    Start
+    Stop
+
+    def label(self) -> str:
+        match self:
+            Signal.Start => return "start"
+            Signal.Stop => return "stop"
+
+    def rank(self) -> int:
+        match self:
+            Signal.Start => return 0
+            Signal.Stop => return 1
+
+    def default() -> Self:
+        return Signal.Start
+
+def main() -> None:
+    signal = Signal.Stop
+    println(signal.label())
+    println(Signal.default().label())
+    println(Signal.Start.rank() + signal.rank())
+    signals = [Signal.Start, Signal.Stop]
+    println(signals[1].rank())
+"#,
+    )
+}
+
 /// A keyed lookup in a dictionary with model keys renders a missing key through Display, which a model lacks, so the
 /// direct route refuses it by name rather than handing rustc an unsatisfiable bound.
 #[test]
