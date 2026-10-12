@@ -8107,6 +8107,39 @@ def main() -> None:
     )
 }
 
+/// A call to an overloaded stdlib function runs the overload the checker selected by arity, as that overload's own SDK
+/// crate item instantiated with the call's type argument, beside a call to a function with one declaration.
+#[test]
+fn stdlib_overloaded_functions_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "stdlib_overloaded_functions",
+        r#"from std.environ import EnvironError, get_as, get_optional
+
+const KEY: str = "INCAN_DIRECT_ROUTE_UNSET_OVERLOAD_KEY"
+
+
+def read() -> Result[None, EnvironError]:
+    optional: Option[int] = get_as[int](KEY)?
+    match optional:
+        Some(value) => println(value)
+        None => println("absent")
+    defaulted: int = get_as[int](KEY, 7)?
+    println(defaulted)
+    match get_optional(KEY):
+        Some(value) => println(value)
+        None => println("fallback")
+    return Ok(None)
+
+
+def main() -> None:
+    match read():
+        Ok(_) => pass
+        Err(error) => println(error.message())
+"#,
+        b"absent\n7\nfallback\n",
+    )
+}
+
 /// `list.repeat` builds a list of clones of its value through legacy's runtime helper: scalars, text read from a
 /// binding that stays usable, nested lists, models, a zero count and arguments written by name.
 #[test]
