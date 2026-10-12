@@ -12072,9 +12072,17 @@ fn zip_source_exhaustion_output_matches_legacy() -> Result<(), Box<dyn std::erro
     for name, row in zip(names, empty):
         row.append(len(name))
     println(empty)
-    for i, n in zip(range(3), range(7, 0, -3)):
-        println(i + n)
 "#,
+    )
+}
+
+/// Frozen legacy cannot build two canonical range operands; retain a named refusal rather than inventing parity.
+#[test]
+fn zip_two_ranges_refusal_is_retained() -> Result<(), Box<dyn std::error::Error>> {
+    check_collection_family_refusal(
+        "zip-two-ranges-refusal",
+        "def main() -> None:\n    for i, n in zip(range(3), range(7, 0, -3)):\n        println(i + n)\n",
+        "unsupported Body IR zip non-list operands",
     )
 }
 
