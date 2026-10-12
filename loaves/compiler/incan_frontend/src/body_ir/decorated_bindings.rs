@@ -2,7 +2,101 @@
 
 use super::args::fixed_elements;
 use super::*;
+use crate::typechecker::MethodDecoratorReceiverRole;
 use incan_lang::lang::decorators;
+
+/// Admit a checked, nongeneric nominal method chain whose receiver and ordinary inputs remain unchanged.
+pub(super) fn supports_method(method: &ast::MethodDecl, owner: &str, type_info: &TypeCheckInfo) -> bool {
+    let Some(binding) = type_info
+        .declarations
+        .decorated_method_bindings
+        .get(&(owner.to_string(), method.name.clone()))
+    else {
+        return false;
+    };
+    let (ResolvedType::Function(original, _), ResolvedType::Function(replacement, _)) =
+        (&binding.original_unbound_ty, &binding.unbound_ty)
+    else {
+        return false;
+    };
+    method.receiver.is_some()
+        && method.type_params.is_empty()
+        && !method.is_async()
+        && original.len() == replacement.len()
+        && original
+            .iter()
+            .zip(replacement)
+            .all(|(left, right)| left.ty == right.ty && left.is_mut == right.is_mut)
+        && method.decorators.iter().all(
+            |decorator| match decorators::from_segments(&decorator.node.path.segments) {
+                Some(decorators::DecoratorId::RustExtern) => false,
+                Some(_) => true,
+                None => decorator.node.path.segments.len() == 1,
+            },
+        )
+}
+
+/// Rewrite only shared receiver positions that the existing checker planned for a complete method chain.
+/// This operates on Body IR types only; the checker and legacy signature tables are never modified.
+pub(super) fn planned_type(ty: IncanType, type_info: &TypeCheckInfo) -> IncanType {
+    let mut shapes = Vec::new();
+    for (span, slot) in &type_info.declarations.method_decorator_receiver_slots {
+        if slot.mutable {
+            continue;
+        }
+        let Some(binding) = type_info.declarations.function_bindings_by_span.get(span) else {
+            continue;
+        };
+        let accepted = binding
+            .params
+            .first()
+            .map(|param| parameter_types::checked_semantic_type(&param.ty, type_info));
+        let result = parameter_types::checked_semantic_type(&binding.return_type, type_info);
+        let replacements = match slot.role {
+            MethodDecoratorReceiverRole::Decorator => vec![accepted, Some(result)],
+            MethodDecoratorReceiverRole::Factory => {
+                if let IncanType::Function { params, return_type } = &result {
+                    vec![params.first().map(|param| param.ty.clone()), Some(*return_type.clone())]
+                } else {
+                    Vec::new()
+                }
+            }
+            MethodDecoratorReceiverRole::Replacement => {
+                let original = parameter_types::checked_semantic_type(
+                    &ResolvedType::Function(binding.params.clone(), Box::new(binding.return_type.clone())),
+                    type_info,
+                );
+                vec![Some(original)]
+            }
+        };
+        shapes.extend(replacements.into_iter().flatten());
+    }
+    apply_shared_shapes(ty, &shapes)
+}
+
+/// Rewrite a planned callable shape once, including the callable shapes nested in factory results.
+fn apply_shared_shapes(mut ty: IncanType, shapes: &[IncanType]) -> IncanType {
+    if shapes.contains(&ty) {
+        return shared_callable_receiver(ty);
+    }
+    if let IncanType::Function { params, return_type } = &mut ty {
+        for parameter in params {
+            parameter.ty = apply_shared_shapes(parameter.ty.clone(), shapes);
+        }
+        **return_type = apply_shared_shapes(*return_type.clone(), shapes);
+    }
+    ty
+}
+
+/// Replace the first input of a proven shared callable shape with its passing reference.
+fn shared_callable_receiver(mut shape: IncanType) -> IncanType {
+    if let IncanType::Function { params, .. } = &mut shape {
+        if let Some(receiver) = params.first_mut() {
+            receiver.ty = IncanType::Ref(Box::new(receiver.ty.clone()));
+        }
+    }
+    shape
+}
 
 /// Admit only nongeneric function decorators whose checked path can be read as a source callable.
 /// Generic originals, extern delegations and method receivers retain their existing named refusal until
@@ -50,6 +144,39 @@ pub(super) fn collect(
 ) -> Vec<bir::DecoratedBinding> {
     let mut retained = Vec::new();
     for declaration in &program.declarations {
+        let owner = match &declaration.node {
+            ast::Declaration::Class(class) if class.type_params.is_empty() => Some((&class.name, &class.methods)),
+            ast::Declaration::Model(model) if model.type_params.is_empty() => Some((&model.name, &model.methods)),
+            _ => None,
+        };
+        if let Some((owner, methods)) = owner {
+            for method in methods {
+                if !supports_method(&method.node, owner, facts.type_info) {
+                    continue;
+                }
+                let Some(binding) = facts
+                    .type_info
+                    .declarations
+                    .decorated_method_bindings
+                    .get(&(owner.clone(), method.node.name.clone()))
+                else {
+                    continue;
+                };
+                let Some(body) = bodies.iter_mut().find(|body| body.span == hir_span(method.span)) else {
+                    continue;
+                };
+                retain_binding(
+                    &method.node.decorators,
+                    method.span,
+                    facts,
+                    body,
+                    parameter_types::checked_semantic_type(&binding.original_unbound_ty, facts.type_info),
+                    parameter_types::checked_semantic_type(&binding.unbound_ty, facts.type_info),
+                    &mut retained,
+                    statics,
+                );
+            }
+        }
         let ast::Declaration::Function(function) = &declaration.node else {
             continue;
         };
@@ -67,30 +194,53 @@ pub(super) fn collect(
         let Some(body) = bodies.iter_mut().find(|body| body.span == hir_span(declaration.span)) else {
             continue;
         };
-        let Some(canonical) = body.canonical.clone() else {
-            continue;
-        };
         let ty = parameter_types::checked_semantic_type(&binding.ty, facts.type_info);
         let original_ty = parameter_types::checked_semantic_type(&binding.original_ty, facts.type_info);
-        let initializer = initializer(function, declaration.span, facts, body, &original_ty, &ty);
-        let replacement = bir::StaticDeclaration {
-            canonical,
-            ty: ty.clone(),
-            initial: bir::StaticInitializer::Computed(Box::new(initializer)),
-        };
-        let original_body = body.clone();
-        if let Some(wrapper) = wrapper(&original_body, &replacement) {
-            *body = wrapper;
-            retained.push(bir::DecoratedBinding { original_body });
-            statics.push(replacement);
-        }
+        retain_binding(
+            &function.decorators,
+            declaration.span,
+            facts,
+            body,
+            original_ty,
+            ty,
+            &mut retained,
+            statics,
+        );
     }
     retained
 }
 
+/// Attach a once-initialized replacement to the original declaration's canonical identity.
+fn retain_binding(
+    decorators: &[ast::Spanned<ast::Decorator>],
+    span: ast::Span,
+    facts: &BodyIrLoweringFacts<'_, '_>,
+    body: &mut bir::Body,
+    original_ty: IncanType,
+    ty: IncanType,
+    retained: &mut Vec<bir::DecoratedBinding>,
+    statics: &mut Vec<bir::StaticDeclaration>,
+) {
+    let Some(canonical) = body.canonical.clone() else {
+        return;
+    };
+    let initializer = initializer(decorators, span, facts, body, &original_ty, &ty);
+    let replacement = bir::StaticDeclaration {
+        canonical,
+        ty,
+        initial: bir::StaticInitializer::Computed(Box::new(initializer)),
+    };
+    let original_body = body.clone();
+    if let Some(wrapper) = wrapper(&original_body, &replacement) {
+        *body = wrapper;
+        retained.push(bir::DecoratedBinding { original_body });
+        statics.push(replacement);
+    }
+}
+
 /// Compute a decorator chain bottom-up from an explicitly identified original callable, without rechecking source.
 fn initializer(
-    function: &ast::FunctionDecl,
+    decorators: &[ast::Spanned<ast::Decorator>],
     span: ast::Span,
     facts: &BodyIrLoweringFacts<'_, '_>,
     original: &bir::Body,
@@ -98,10 +248,23 @@ fn initializer(
     replacement_ty: &IncanType,
 ) -> bir::Body {
     let mut builder = BodyBuilder::new(facts, replacement_ty.clone());
+    builder.shared_method_chain = original
+        .locals
+        .first()
+        .is_some_and(|local| matches!(local.origin, bir::LocalOrigin::Receiver { mutable: false }));
     let scope = builder.new_scope(None, hir_span(span));
     let mut statements = Vec::new();
     let mut parameters = original.params.clone();
-    for parameter in &mut parameters {
+    let IncanType::Function {
+        params: original_parameters,
+        ..
+    } = original_ty
+    else {
+        return original.clone();
+    };
+    for (parameter, ty) in parameters.iter_mut().zip(original_parameters) {
+        parameter.ty = ty.ty.clone();
+        parameter.mutable = ty.is_mut;
         parameter.local = builder.new_temp(parameter.ty.clone(), scope, hir_span(span));
     }
     let mut value = builder.push_assign_temp(
@@ -121,7 +284,7 @@ fn initializer(
         hir_span(span),
         &mut statements,
     );
-    for decorator in function.decorators.iter().rev() {
+    for decorator in decorators.iter().rev() {
         if decorators::from_segments(&decorator.node.path.segments).is_some() {
             continue;
         }
@@ -226,6 +389,12 @@ fn wrapper(original: &bir::Body, replacement: &bir::StaticDeclaration) -> Option
     body.return_type = *return_type.clone();
     body.locals.truncate(body.params.len());
     for (parameter, ty) in body.params.iter_mut().zip(params) {
+        if matches!(
+            body.locals[parameter.local.index()].origin,
+            bir::LocalOrigin::Receiver { .. }
+        ) {
+            continue;
+        }
         parameter.ty = ty.ty.clone();
         parameter.mutable = ty.is_mut;
         body.locals[parameter.local.index()].ty = ty.ty.clone();
@@ -262,7 +431,17 @@ fn wrapper(original: &bir::Body, replacement: &bir::StaticDeclaration) -> Option
         .map(|parameter| {
             bir::Operand::place(
                 bir::Place::from_local(parameter.local),
-                if parameter.mutable {
+                if matches!(
+                    body.locals[parameter.local.index()].origin,
+                    bir::LocalOrigin::Receiver { mutable: true }
+                ) {
+                    bir::OwnershipFact::MutBorrow
+                } else if matches!(
+                    body.locals[parameter.local.index()].origin,
+                    bir::LocalOrigin::Receiver { mutable: false }
+                ) {
+                    bir::OwnershipFact::Borrow
+                } else if parameter.mutable {
                     bir::OwnershipFact::MutBorrow
                 } else if parameter.ty.abi_v0_facts().ownership.is_trivially_copy() {
                     bir::OwnershipFact::Copy

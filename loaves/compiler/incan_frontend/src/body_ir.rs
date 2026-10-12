@@ -529,7 +529,7 @@ pub fn is_direct_replacement_plain_model(model: &ast::ModelDecl) -> bool {
         .decorators
         .iter()
         .all(|decorator| is_direct_replacement_model_derive(&decorator.node))
-        && has_direct_replacement_model_shape(model)
+        && has_direct_replacement_model_shape(model, None)
 }
 
 /// Admit serde derives only after checked derive metadata resolves all selections to canonical supported paths, Copy
@@ -544,7 +544,7 @@ pub fn is_direct_replacement_checked_model(model: &ast::ModelDecl, type_info: &T
         &model.decorators,
         type_info.declarations.body_ir_model_derives.get(&model.name),
         type_info.declarations.rust_builtin_derive_models.contains(&model.name),
-    ) && has_direct_replacement_model_shape(model)
+    ) && has_direct_replacement_model_shape(model, Some(type_info))
 }
 
 /// Admit a model or class whose decorators are all the bare builtin `derive` and whose checked native selection
@@ -702,17 +702,19 @@ pub fn has_direct_replacement_properties(
 /// layout or wrapper declaration. Method partials retain deferred preset frames
 /// ([`has_direct_replacement_method_partials`]) and computed properties getter bodies
 /// ([`has_direct_replacement_properties`]). Methods may carry only the builtin static and class method markers.
-fn has_direct_replacement_model_shape(model: &ast::ModelDecl) -> bool {
+fn has_direct_replacement_model_shape(model: &ast::ModelDecl, type_info: Option<&TypeCheckInfo>) -> bool {
     has_direct_replacement_method_partials(
         &model.type_params,
         &model.methods,
         &model.method_aliases,
         &model.method_partials,
     ) && has_direct_replacement_properties(&model.type_params, &model.properties)
-        && model
-            .methods
-            .iter()
-            .all(|method| has_direct_replacement_method_decorators(&method.node))
+        && model.methods.iter().all(|method| {
+            has_direct_replacement_method_decorators(&method.node)
+                || model.type_params.is_empty()
+                    && type_info
+                        .is_some_and(|info| decorated_bindings::supports_method(&method.node, &model.name, info))
+        })
 }
 
 /// Admit only the bare builtin derive decorator whose complete native trait selection Body IR retains.
@@ -770,7 +772,7 @@ pub fn is_direct_replacement_plain_newtype(newtype: &ast::NewtypeDecl) -> bool {
 /// deferred computations models use, and
 /// builtin `@staticmethod` and `@classmethod` markers the checker's method facts, and method partials deferred preset
 /// frames and computed properties getter bodies, as on models; lint suppressions change nothing at run time.
-/// Inheritance and user-defined decorators remain refused.
+/// Inheritance remains refused; checked nongeneric method replacement chains retain originals and initialized bindings.
 pub fn is_direct_replacement_checked_class(class: &ast::ClassDecl, type_info: &TypeCheckInfo) -> bool {
     has_checked_native_derives(
         &class.decorators,
@@ -786,10 +788,11 @@ pub fn is_direct_replacement_checked_class(class: &ast::ClassDecl, type_info: &T
         && has_direct_replacement_properties(&class.type_params, &class.properties)
         && class.declarative_members.is_empty()
         && class.fields.iter().all(|field| field.node.metadata.alias.is_none())
-        && class
-            .methods
-            .iter()
-            .all(|method| has_direct_replacement_method_decorators(&method.node))
+        && class.methods.iter().all(|method| {
+            has_direct_replacement_method_decorators(&method.node)
+                || class.type_params.is_empty()
+                    && decorated_bindings::supports_method(&method.node, &class.name, type_info)
+        })
 }
 
 /// Determine whether an enum carries the narrow source-local fieldless normal-enum declaration fact.
@@ -982,6 +985,8 @@ struct BodyBuilder<'type_info, 'source> {
     /// target is lowered. The checker checks such a value once per target but records one type per span, so each
     /// evaluation installs its own target's types here and clears them afterwards; it is empty everywhere else.
     type_overrides: HashMap<(usize, usize), IncanType>,
+    /// Only a checker-planned shared method chain may rewrite its callable receiver signature positions.
+    shared_method_chain: bool,
     /// Whether the pattern being lowered matches its scrutinee in place: an arm changes a part of a writable place
     /// through a name the pattern binds (#1561), so each such name borrows that part mutably instead of reading a
     /// copy.
@@ -1032,6 +1037,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             runtime_requirements: Vec::new(),
             panic_facts: Vec::new(),
             type_overrides: HashMap::new(),
+            shared_method_chain: false,
             in_place_pattern: false,
             settled_types: HashMap::new(),
             coercions_in_progress: HashSet::new(),

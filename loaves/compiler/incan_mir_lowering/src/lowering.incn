@@ -3490,6 +3490,7 @@ pub def call_argument_operand(
         text = display_operand(builder, value, span)?
         return Ok(read_place(text, true, span))
     match ty:
+        PlanType.ModelRef(_owner, _name) => return shared_model_argument(builder, value, ty, span)
         PlanType.StringMutRef => return mutable_argument(builder, value, ty, span)
         PlanType.ModelMutRef(_owner, _name) => return mutable_argument(builder, value, ty, span)
         PlanType.EnumMutRef(_owner, _name) => return mutable_argument(builder, value, ty, span)
@@ -3498,6 +3499,39 @@ pub def call_argument_operand(
     operand = boundary_operand(builder, value, ty, span)?
     coerced = coerce_numeric_operand(builder, operand, ty, span)?
     return function_argument(builder, ty, coerced, span)
+
+
+def shared_model_argument(
+    mut builder: Builder,
+    value: &RustOperand,
+    ty: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Pass a checked method-chain receiver by shared reference, retaining a reference already on its frame."""
+    match value:
+        RustOperand.Place(read) =>
+            mut receiver = model_place(
+                builder.nominals,
+                builder.locals[builder.local_offset:],
+                read.place,
+                span,
+                builder.enums,
+                builder.unions,
+                builder.intrinsics,
+            )?
+            receiver.local += builder.local_offset
+            source = place_type(builder.locals, receiver)
+            if source == ty:
+                return Ok(read_place(receiver, false, span))
+            match source:
+                PlanType.Model(owner, name) =>
+                    if ty != PlanType.ModelRef(owner, name):
+                        return Err("unsupported Body IR shared receiver owner mismatch")
+                    reference = temporary(builder, ty, span)
+                    builder.emit(plan_assign(reference, RvalueKind.Borrow(receiver), span))
+                    return Ok(read_place(reference, false, span))
+                _ => return Err("unsupported Body IR shared receiver outside its nominal frame")
+        _ => return Err("unsupported Body IR shared receiver without a place")
 
 
 def owned_collection(ty: PlanType) -> bool:

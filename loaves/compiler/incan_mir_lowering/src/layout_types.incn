@@ -26,6 +26,14 @@ pub def native_source_type(
         Some(result) => return Ok(result)
         None => pass
     match ty:
+        RustType.Ref(inner) =>
+            match native_source_type(nominals, enums, unions, inner, intrinsics)?:
+                PlanType.Model(index, name) => return Ok(PlanType.ModelRef(index, name))
+                _ => return Err("unsupported Body IR shared callable receiver outside a nominal layout")
+        RustType.RefMut(inner) =>
+            match native_source_type(nominals, enums, unions, inner, intrinsics)?:
+                PlanType.Model(index, name) => return Ok(PlanType.ModelMutRef(index, name))
+                _ => return Err("unsupported Body IR mutable callable receiver outside a nominal layout")
         RustType.Function(params=parameters, return_type=result) =>
             mut signature: list[PlanType] = []
             for parameter in parameters:

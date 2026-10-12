@@ -197,21 +197,46 @@ pub(super) fn lower_function_body(
         .function_bindings_by_span
         .get(&(decl_span.start, decl_span.end));
     let type_parameters = crate::body_ir_parameter_names::source_parameter_names(&function.type_params);
+    let shared_method_chain = lowering_facts
+        .type_info
+        .declarations
+        .method_decorator_receiver_slots
+        .get(&(decl_span.start, decl_span.end))
+        .is_some_and(|slot| !slot.mutable);
     let owner_return_type = binding
         .map(|binding| parameter_types::checked_semantic_type(&binding.return_type, lowering_facts.type_info))
         .map(|ty| parameter_types::retain_parameter_type(ty, &type_parameters))
+        .map(|ty| {
+            if shared_method_chain {
+                decorated_bindings::planned_type(ty, lowering_facts.type_info)
+            } else {
+                ty
+            }
+        })
         .unwrap_or(IncanType::Unknown);
 
     let mut builder = BodyBuilder::new(lowering_facts, owner_return_type.clone());
+    builder.shared_method_chain = shared_method_chain;
     builder.type_parameters = type_parameters;
     let root_scope = builder.new_scope(None, hir_span(decl_span));
 
     let mut param_locals = Vec::with_capacity(function.params.len());
     for (index, param) in function.params.iter().enumerate() {
-        let ty = binding
+        let mut ty = binding
             .and_then(|b| b.params.get(index))
             .map(|p| builder.checked_type(&p.ty))
             .unwrap_or(IncanType::Unknown);
+        let shared_replacement = lowering_facts
+            .type_info
+            .declarations
+            .method_decorator_receiver_slots
+            .get(&(decl_span.start, decl_span.end))
+            .is_some_and(|slot| {
+                !slot.mutable && slot.role == crate::typechecker::MethodDecoratorReceiverRole::Replacement
+            });
+        if index == 0 && shared_replacement {
+            ty = IncanType::Ref(Box::new(ty));
+        }
         let local = builder.declare_new_local(
             param.node.name.clone(),
             super::variadics::parameter_storage_type(ty, param.node.kind),
@@ -430,7 +455,8 @@ pub(super) fn lower_method_body(
         .type_info
         .declarations
         .decorated_method_bindings
-        .contains_key(&(owner_name.to_string(), method.name.clone()));
+        .contains_key(&(owner_name.to_string(), method.name.clone()))
+        && !decorated_bindings::supports_method(method, owner_name, lowering_facts.type_info);
     let (stmts, extern_delegation) = lower_declaration_statements(
         &mut builder,
         decorator_rebinding(rebound, &method.name)

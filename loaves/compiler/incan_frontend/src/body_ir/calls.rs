@@ -133,6 +133,34 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         bir::Operand::Place(source)
     }
 
+    /// Retain the caller's owner when a checked method-chain input passes its shared receiver reference.
+    fn share_argument_slots(
+        &mut self,
+        operands: &mut [bir::ArgumentElement],
+        binding: &bir::ArgumentBinding,
+        shared: &[usize],
+    ) {
+        let bir::ArgumentBinding::Resolved { arguments, .. } = binding else {
+            return;
+        };
+        for (element, argument) in operands.iter_mut().zip(arguments) {
+            if !shared.contains(&argument.slot) {
+                continue;
+            }
+            let bir::ArgumentElement::One(bir::Operand::Place(read)) = element else {
+                continue;
+            };
+            if read.fact == bir::OwnershipFact::Move
+                && read.place.projection.is_empty()
+                && let Some(local) = read.place.local_id()
+            {
+                self.moved_out.remove(&local);
+            }
+            read.fact = bir::OwnershipFact::Borrow;
+            read.last_use = false;
+        }
+    }
+
     /// Lower planned call arguments in written source order, then place them into declaration-slot order.
     ///
     /// Both orders are part of the source contract and they differ whenever a caller writes named arguments out of
@@ -1191,13 +1219,19 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             // for a later executor instead of re-deriving it from the local's source spelling.
             let place = bir::Place::from_local(local);
             let (fact, last_use) = self.ownership_fact_for_place(&place, &self.locals[local.index()].ty.clone());
-            let (operands, binding) =
+            let (mut operands, binding) =
                 match self.bind_declared_args(&format!("local callable `{name}`"), Some(slots), args, scope, out) {
                     Ok(bound) => bound,
                     Err(description) => {
                         return self.unsupported_operand(description, scope, hir_span_value, out);
                     }
                 };
+            let shared = params
+                .iter()
+                .enumerate()
+                .filter_map(|(index, parameter)| matches!(parameter.ty, IncanType::Ref(_)).then_some(index))
+                .collect::<Vec<_>>();
+            self.share_argument_slots(&mut operands, &binding, &shared);
             let callee = bir::Callee::Function(bir::CallableTarget::Local(bir::LocalCallableTarget {
                 operand: bir::PlaceOperand { place, fact, last_use },
                 binding,
@@ -1240,6 +1274,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if let Some(identity) = &declaration.canonical {
             self.settle_declared_enum_arguments(identity, args);
         }
+        let shared_receiver = declaration.canonical.as_ref().is_some_and(|identity| {
+            incan_semantics_core::canonical_module_identity(identity).as_deref() == Some(self.module_identity)
+                && self
+                    .type_info
+                    .declarations
+                    .method_decorator_receiver_slots
+                    .get(&(identity.declaration_span.start, identity.declaration_span.end))
+                    .is_some_and(|slot| {
+                        !slot.mutable && slot.role == crate::typechecker::MethodDecoratorReceiverRole::Replacement
+                    })
+        });
         let (mut operands, binding) =
             match self.bind_declared_args(&format!("function `{name}`"), declaration.slots, args, scope, out) {
                 Ok(bound) => bound,
@@ -1249,6 +1294,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             };
         if declaration.builtin == Some(BuiltinFnId::Print) {
             self.display_type_parameter_arguments(args, &mut operands, scope, out);
+        }
+        if shared_receiver {
+            self.share_argument_slots(&mut operands, &binding, &[0]);
         }
 
         // The checked expression type is the eventual output for immediately awaited source calls. Body IR

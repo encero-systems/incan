@@ -179,15 +179,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         params: &[ast::Spanned<ast::Param>],
         expr_span: ast::Span,
     ) -> Vec<IncanType> {
-        let resolved = self.type_info.expr_type(expr_span).and_then(|ty| match ty {
-            ResolvedType::Function(callable_params, _) => Some(
-                callable_params
-                    .iter()
-                    .map(|p| semantic_type_from_resolved(&p.ty))
-                    .collect::<Vec<_>>(),
-            ),
+        let resolved = match self.resolve_ty(expr_span) {
+            IncanType::Function {
+                params: callable_params,
+                ..
+            } => Some(callable_params.iter().map(|p| p.ty.clone()).collect::<Vec<_>>()),
             _ => None,
-        });
+        };
         match resolved {
             Some(types) if types.len() == params.len() => types,
             _ => vec![IncanType::Unknown; params.len()],
@@ -276,6 +274,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 _ => None,
             });
         let target_default_sources = self.function_default_sources.get(&target_name).cloned();
+        let (forwarded_params, forwarded_result) = match self.resolve_ty(expr_span) {
+            IncanType::Function { params, return_type } => (params, Some(*return_type)),
+            _ => (Vec::new(), None),
+        };
         let closure_scope = self.new_scope(Some(scope), hir_span_value);
 
         // ---- Lower each preset value once, at the partial-creation site, as a captured operand ----
@@ -309,7 +311,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     out,
                 );
             };
-            let ty = super::variadics::parameter_storage_type(self.checked_type(&param.ty), param.kind);
+            let ty = forwarded_params
+                .get(index)
+                .map(|parameter| parameter.ty.clone())
+                .unwrap_or_else(|| self.checked_type(&param.ty));
+            let ty = super::variadics::parameter_storage_type(ty, param.kind);
             let previous = self.bindings.get(param_name).copied();
             let local =
                 self.declare_new_local_with_reads(param_name.clone(), ty.clone(), closure_scope, hir_span_value, 1);
@@ -351,7 +357,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .iter()
             .zip(&binding.params)
             .map(|(&local, param)| {
-                let ty = super::variadics::parameter_storage_type(self.checked_type(&param.ty), param.kind);
+                let ty = self.locals[local.index()].ty.clone();
                 let place = bir::Place::from_local(local);
                 let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
                 let operand = bir::Operand::place(place, fact, last_use);
@@ -362,7 +368,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 }
             })
             .collect();
-        let ret_ty = semantic_type_from_resolved(&binding.return_type);
+        let ret_ty = forwarded_result.unwrap_or_else(|| self.checked_type(&binding.return_type));
         // The synthesized forwarding call supplies every declared parameter of the target, in declaration order:
         // preset slots are filled from the captured locals and residual slots from the closure's own parameters.
         let forwarding_binding = bir::ArgumentBinding::resolved_positional(call_args.len());

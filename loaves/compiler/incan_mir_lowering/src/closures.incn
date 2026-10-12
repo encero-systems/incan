@@ -29,7 +29,7 @@ from pub::incan_mir_plan import (
 )
 from pub::incan_mir_plan import block as plan_block, place as plan_place
 from types import primitive_type
-from classes import function_name
+from classes import function_name, receiver_mode
 from collections import is_collection
 from layout_types import native_source_type, callable_parameter_type
 from lists import is_list, is_owned_list, parameter_storage_type, is_exclusive_borrow
@@ -393,6 +393,8 @@ def item_component(builder: Builder, ty: &RustType) -> Result[PlanType, str]:
         Err(reason) =>
             match native_source_type(builder.nominals, builder.enums, builder.unions, ty, builder.intrinsics):
                 Ok(PlanType.Model(index, name)) => return Ok(PlanType.Model(index, name))
+                Ok(PlanType.ModelRef(index, name)) => return Ok(PlanType.ModelRef(index, name))
+                Ok(PlanType.ModelMutRef(index, name)) => return Ok(PlanType.ModelMutRef(index, name))
                 Ok(PlanType.Enum(index, name)) => return Ok(PlanType.Enum(index, name))
                 Ok(PlanType.FunctionPointer(signature)) => return Ok(PlanType.FunctionPointer(signature))
                 _ => return Err(reason)
@@ -466,10 +468,21 @@ def item_signature(
         return Err("invalid Body IR function-item parameter count")
     mut signature: list[PlanType] = []
     for index in range(len(parameters)):
-        if parameters[index].ty != body.params[index].ty:
-            return Err("unsupported Body IR function-item parameter contract")
-        component = item_component(builder, body.params[index].ty)?
-        input = signature_input(component, body.params[index].mutable)
+        match receiver_mode(body.locals[int(body.params[index].local.index())].origin):
+            Some(mutable) =>
+                match parameters[index].ty:
+                    RustType.Ref(inner) =>
+                        if mutable or not same_receiver_type(inner.as_ref(), body.params[index].ty):
+                            return Err("unsupported Body IR original callable shared receiver contract")
+                    RustType.RefMut(inner) =>
+                        if not mutable or not same_receiver_type(inner.as_ref(), body.params[index].ty):
+                            return Err("unsupported Body IR original callable mutable receiver contract")
+                    _ => return Err("unsupported Body IR original callable receiver passing contract")
+            None =>
+                if parameters[index].ty != body.params[index].ty:
+                    return Err("unsupported Body IR function-item parameter contract")
+        component = item_component(builder, parameters[index].ty)?
+        input = signature_input(component, parameters[index].mutable)
         if body.is_generator() and input != component:
             return Err("unsupported Body IR generator function item with borrowed parameters")
         signature.append(input)
@@ -477,3 +490,8 @@ def item_signature(
     # Generator entrypoints retain their ordinary constructor symbol beside the separately named producer.
     name = function_name(module, body)
     return Ok((name, PlanType.FunctionItem(name, signature)))
+
+
+def same_receiver_type(left: &RustType, right: &RustType) -> bool:
+    """Compare the referenced payloads without the Rust enum pattern's Box storage crossing the equality boundary."""
+    return left == right

@@ -19,12 +19,31 @@ use crate::{
     SymbolNamespace, canonical_module_identity,
 };
 
+/// Match an initialized method's explicit passing reference against its receiver frame's nominal type and mode.
+/// Ordinary inputs must agree exactly; this does not authorize another owner or a different receiver mode.
+fn decorated_parameter_matches(
+    body: &Body,
+    left: &crate::IncanCallableParam,
+    right: &crate::body_ir::CallableParam,
+) -> bool {
+    match body.locals.get(right.local.index()).map(|local| &local.origin) {
+        Some(LocalOrigin::Receiver { mutable }) => match (&left.ty, mutable) {
+            (IncanType::Ref(inner), false) | (IncanType::RefMut(inner), true) => **inner == right.ty && !left.is_mut,
+            _ => false,
+        },
+        _ => left.ty == right.ty && left.is_mut == right.mutable,
+    }
+}
+
 impl BodyIrModule {
     /// Prove a static belongs to this module and its initializer matches its exact retained carrier. A computed
     /// initializer's body must carry the static's own canonical identity and declaration id, so a module cannot attach
     /// another declaration's body to it.
     pub fn is_well_formed_static_declaration(&self, declaration: &crate::body_ir::StaticDeclaration) -> bool {
-        if declaration.canonical.kind == SemanticSourceTargetKind::Function {
+        if matches!(
+            declaration.canonical.kind,
+            SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Method
+        ) {
             return self.decorated_bindings.iter().any(|binding| {
                 binding.original_body.canonical.as_ref() == Some(&declaration.canonical)
                     && self.is_well_formed_decorated_binding(binding)
@@ -63,7 +82,7 @@ impl BodyIrModule {
             return false;
         };
         original.canonical.as_ref() == Some(&replacement.canonical)
-            && replacement.canonical.kind == SemanticSourceTargetKind::Function
+            && matches!(replacement.canonical.kind, SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Method)
             && original.type_parameters.is_empty()
             && !original.is_async
             && self.body_has_canonical_direct_call_id(original)
@@ -73,7 +92,7 @@ impl BodyIrModule {
                 body.canonical == original.canonical
                     && matches!(&replacement.ty, IncanType::Function { params, return_type }
                         if params.len() == body.params.len()
-                            && params.iter().zip(&body.params).all(|(left, right)| left.ty == right.ty && left.is_mut == right.mutable)
+                            && params.iter().zip(&body.params).all(|(left, right)| decorated_parameter_matches(body, left, right))
                             && **return_type == body.return_type)
             })
             && static_initializer_matches(&replacement.ty, &replacement.initial)

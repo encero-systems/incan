@@ -1027,7 +1027,7 @@ fn shared_reference(ty: &Scalar) -> bool {
 
 /// Source signatures expose scalars, owned text and the exclusive text reference a `mut str` parameter receives,
 /// models, callables, and tuples of admitted types; formatting views stay internal. A function pointer's inputs also
-/// admit the exclusive model reference a `mut` model parameter receives, as a declared parameter does.
+/// admit shared and exclusive model references retained by method decorators, as receiver frames do.
 fn source_signature_type(ty: &Scalar) -> bool {
     if let Scalar::TupleMutRef(elements) = ty {
         return source_signature_type(&Scalar::Tuple(elements.clone()));
@@ -1037,9 +1037,9 @@ fn source_signature_type(ty: &Scalar) -> bool {
             return false;
         };
         return source_signature_type(result)
-            && inputs
-                .iter()
-                .all(|input| source_signature_type(input) || matches!(input, Scalar::ModelMutRef(_)));
+            && inputs.iter().all(|input| {
+                source_signature_type(input) || matches!(input, Scalar::ModelRef(_) | Scalar::ModelMutRef(_))
+            });
     }
     if let Scalar::Closure(signature) | Scalar::ClosureRef(signature) = ty {
         return callable_object_signature(signature);

@@ -1,6 +1,9 @@
 //! Preserve declaration-bound placeholders while projecting checked types into Body IR.
 
-use super::{BodyBuilder, IncanType, SemanticSourceTargetKind, TypeCheckInfo, ast, bir, semantic_type_from_resolved};
+use super::{
+    BodyBuilder, IncanType, SemanticSourceTargetKind, TypeCheckInfo, ast, bir, decorated_bindings,
+    semantic_type_from_resolved,
+};
 
 /// Project checked nominal spellings onto their declaring carrier names, without resolving source syntax again.
 ///
@@ -99,7 +102,12 @@ pub(super) fn retain_parameter_type(ty: IncanType, parameters: &[String]) -> Inc
 impl BodyBuilder<'_, '_> {
     /// Convert a checked type while retaining the active declaration's explicit placeholder bindings.
     pub(super) fn checked_type(&self, ty: &crate::symbols::ResolvedType) -> IncanType {
-        retain_parameter_type(checked_semantic_type(ty, self.type_info), &self.type_parameters)
+        let ty = retain_parameter_type(checked_semantic_type(ty, self.type_info), &self.type_parameters);
+        if self.shared_method_chain {
+            decorated_bindings::planned_type(ty, self.type_info)
+        } else {
+            ty
+        }
     }
 
     /// Retain an owned value read from a field at a return or by-value argument boundary.
