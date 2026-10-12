@@ -9420,3 +9420,52 @@ fn serde_derive_propagation_is_refused() -> Result<(), Box<dyn std::error::Error
     assert!(!binary.exists());
     Ok(())
 }
+
+/// Mutable list arguments and loops through container elements change the retained storage, with output identical
+/// to legacy for nested dictionaries, list elements, and nominal fields.
+#[test]
+fn projected_list_mutation_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("projected-list-mutation")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"class Holder:
+    pub rows: list[list[int]]
+
+class Registry:
+    pub groups: dict[str, list[int]]
+
+    def add(mut self, value: int) -> None:
+        self.groups["a"].append(value)
+
+def main() -> None:
+    mut holders = [Holder(rows=[[1], [2]])]
+    for row in holders[0].rows:
+        row.append(3)
+    mut by_name: dict[str, Holder] = {"a": Holder(rows=[[4]])}
+    for row in by_name["a"].rows:
+        row.append(5)
+    mut nested: dict[str, dict[str, list[int]]] = {"a": {"b": []}}
+    nested["a"]["b"].append(7)
+    mut rows: list[dict[str, list[int]]] = [{"a": []}]
+    rows[0]["a"].append(8)
+    mut registry = Registry(groups={"a": []})
+    registry.add(9)
+    registry.groups["a"].append(10)
+    mut grid: dict[str, list[list[int]]] = {"a": [[], []]}
+    for row in grid["a"]:
+        row.append(11)
+    mut lists: list[list[int]] = [[1], [2]]
+    lists[-1].append(3)
+    println(holders[0].rows)
+    println(by_name["a"].rows)
+    println(nested["a"]["b"])
+    println(rows[0]["a"])
+    println(registry.groups["a"])
+    println(grid["a"])
+    println(lists)
+"#,
+    )
+}
