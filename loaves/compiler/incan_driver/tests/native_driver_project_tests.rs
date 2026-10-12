@@ -8985,6 +8985,39 @@ def main() -> None:
     )
 }
 
+/// Normal enum serde uses a shared view of the exact derived layout, including a closed Serialize-bound function.
+#[test]
+fn enum_json_serialization_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("enum-json-serialization")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"from std.serde import json
+
+@derive(Clone, json.Serialize)
+enum Color:
+    Red
+    Rgb(int, int, int)
+
+def encode[T with json.Serialize](value: T) -> str:
+    return value.to_json()
+
+def main() -> None:
+    plain = Color.Red
+    mixed = Color.Rgb(1, 2, 3)
+    println(plain.to_json())
+    println(encode(plain))
+    println(json_stringify(mixed))
+    println(encode(mixed))
+    match mixed:
+        Color.Rgb(red, green, blue) => println(red + green + blue)
+        Color.Red => println(0)
+"#,
+    )
+}
+
 /// A generic enum's imported variant alias names the same canonical payload slot in a pattern as its declaration.
 #[test]
 fn generic_enum_alias_pattern_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
