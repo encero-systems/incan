@@ -8,7 +8,7 @@ use super::*;
 /// Rest annotations retain their collection storage, and each call supplies one resolved operand per slot.
 #[test]
 fn rest_parameter_storage_and_bindings_are_retained() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def collect(prefix: str, *items: int, **labels: str) -> int:\n  return len(items)\n\ndef main() -> None:\n  xs = [2, 3]\n  kw = {\"name\": \"spread\"}\n  collect(\"x\", 1, *xs, name=\"inline\", **kw)\n  collect(\"empty\")\n";
+    let source = "def collect(prefix: str, *items: int, **labels: str) -> int:\n  return len(items)\n\ndef main() -> None:\n  xs = [2, 3]\n  kw = {\"name\": \"spread\"}\n  collect(\"x\", 1, *xs, name=\"inline\", **kw)\n  collect(\"empty\")\n  f = collect\n  println(f(\"bound\", *xs, **kw))\n";
     let module = build(source, &["m", "rest_storage"])?;
     let declaration = body_named(&module, "collect")?;
     assert_eq!(declaration.params[1].ty.to_string(), "List[int]");
@@ -28,6 +28,13 @@ fn rest_parameter_storage_and_bindings_are_retained() -> Result<(), Box<dyn std:
         assert!(defaulted_slots.is_empty());
     }
     let snapshot = body_named(&module, "main")?.render_snapshot();
+    assert!(
+        body_named(&module, "main")?
+            .locals
+            .iter()
+            .all(|local| local.ty != IncanType::Unknown),
+        "{snapshot}"
+    );
     assert!(snapshot.contains("spread"), "{snapshot}");
     assert!(!snapshot.contains("unsupported("), "{snapshot}");
     Ok(())
