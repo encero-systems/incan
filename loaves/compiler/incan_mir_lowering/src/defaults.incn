@@ -14,6 +14,7 @@ from lowering import BodyIrModule, call_argument_operand, lower_statement, list_
 from frame import Builder, drop_owned
 from lists import is_list
 from collections import is_collection
+from numerics import numeric_carrier
 
 
 pub def model_default_arguments(
@@ -153,14 +154,17 @@ def borrowed_default_owner(mut builder: Builder, value: &RustOperand, span: Sour
 
 
 pub def default_type(ty: PlanType) -> Result[None, str]:
-    """Admit scalar, string, enum-carried and borrowed list or hashed-collection default representations."""
-    if is_list(ty) or is_collection(ty):
+    """
+    Admit default representations a call slot owns or borrows: scalars of any numeric carrier, text, borrowed lists and
+    hashed collections, and owned models, enums (including `Option`, `Result` and unions) and tuples.
+    """
+    if is_list(ty) or is_collection(ty) or numeric_carrier(ty):
         return Ok(None)
     match ty:
-        PlanType.Int => return Ok(None)
-        PlanType.Float => return Ok(None)
         PlanType.Bool => return Ok(None)
         PlanType.String => return Ok(None)
-        # Option, Result and source enum values move out of the default's frame like any owned result.
-        PlanType.Enum(_owner, _name) => return Ok(None)
+        # Models, Option, Result, source enum and tuple values move out of the default's frame like any owned result.
+        PlanType.Model(_index, _name) => return Ok(None)
+        PlanType.Enum(_index, _name) => return Ok(None)
+        PlanType.Tuple(_elements) => return Ok(None)
         _ => return Err("unsupported Body IR defaulted parameter type")

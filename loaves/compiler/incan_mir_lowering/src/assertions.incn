@@ -12,6 +12,7 @@ from frame import external_call, literal, place_type
 from text_plan import owned_literal
 from lowering import scalar_operand, display_operand, scalar_place, bind_enum_payload
 from options import carrier_layout, intrinsic_pattern, variant_condition
+from patterns import has_refutable_payload
 from frame import Builder, read_place, temporary
 
 
@@ -96,6 +97,9 @@ def lower_pattern_assertion(
         Some(_) => return Err("unsupported Body IR computed pattern Assert message")
         None => pass
     _owner, declaration = carrier_layout(builder, place_type(builder.locals, source))?
+    # A literal or nested payload would need its own tests; the assertion compares only the variant.
+    if has_refutable_payload(pattern):
+        return Err("unsupported Body IR nested pattern Assert")
     slot = intrinsic_pattern(declaration, pattern)?
     if slot < 0:
         return Err("unsupported Body IR wildcard pattern Assert")

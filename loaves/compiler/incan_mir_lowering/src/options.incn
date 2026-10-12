@@ -15,6 +15,7 @@ from pub::incan_mir_plan import (
     Constant,
     EnumDeclaration,
     EnumVariant,
+    FieldProjection,
     Operand,
     OperandKind,
     Place,
@@ -37,6 +38,7 @@ from frame import (
     track_rvalue_moves,
     terminate_call,
     place_type as frame_place_type,
+    appended_field,
 )
 from enums import validate_payload_patterns
 from layout_types import native_source_type
@@ -398,6 +400,13 @@ pub def lower_carrier_method_plan(
         None => return Err("unsupported Body IR carrier missing default")
 
 
+def carrier_payload_place(source: Place, variant: int, ty: PlanType, span: SourceSpan) -> Result[Place, str]:
+    """Project a carrier's payload where the carrier lives, keeping the field or reference path that reached it."""
+    if source.projection == Projection.Whole:
+        return Ok(Place(local=source.local, projection=Projection.VariantField(variant, 0, ty), span=span))
+    return appended_field(source, FieldProjection(slot=0, ty=ty, variant=variant), span)
+
+
 def lower_carrier_unwrap(
     mut builder: Builder,
     declaration: EnumDeclaration,
@@ -420,17 +429,13 @@ def lower_carrier_unwrap(
         unwrap_failure(builder, "unwrap_none", [], [], unit, span)
     else:
         error_type = declaration.variants[1 - present].fields[0]
-        error_place = Place(
-            local=source.local,
-            projection=Projection.VariantField(1 - present, 0, error_type),
-            span=span,
-        )
+        error_place = carrier_payload_place(source, 1 - present, error_type, span)?
         error = carrier_payload_value(builder, error_place, span)?
         unwrap_failure(builder, "unwrap_err", [error_type], [error], unit, span)
     builder.finish(TerminatorKind.Unreachable, span)
     builder.current = selected
     builder.owned = incoming
-    projected = Place(local=source.local, projection=Projection.VariantField(present, 0, payload_type), span=span)
+    projected = carrier_payload_place(source, present, payload_type, span)?
     payload = carrier_payload_value(builder, projected, span)?
     track_rvalue_moves(builder, RvalueKind.Use(payload))
     builder.emit(plan_assign(target, RvalueKind.Use(payload), span))
@@ -483,7 +488,7 @@ def lower_carrier_default(
     condition = variant_condition(builder, source, present, span)
     builder.finish(TerminatorKind.SwitchBool(condition, missing, selected), span)
     builder.current = selected
-    projected = Place(local=source.local, projection=Projection.VariantField(present, 0, payload_type), span=span)
+    projected = carrier_payload_place(source, present, payload_type, span)?
     payload = carrier_payload_value(builder, projected, span)?
     track_rvalue_moves(builder, RvalueKind.Use(payload))
     builder.emit(plan_assign(target, RvalueKind.Use(payload), span))

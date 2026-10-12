@@ -95,21 +95,37 @@ pub def pattern_variant(declaration: &RustEnumDeclaration, pattern: &RustPattern
 
 
 pub def validate_payload_patterns(patterns: &list[RustPattern]) -> Result[None, str]:
-    """Refuse refutable/nested payload patterns until their comparison and ownership paths are represented."""
+    """
+    Admit payload patterns whose tests and bindings are represented: bindings with a known ownership, literals,
+    nested carrier and tuple patterns, and alternations of those; anything else stays refused by name.
+    """
     for pattern in patterns:
-        match pattern:
-            RustPattern.Wildcard => pass
-            RustPattern.Var(binding) =>
-                # A moved payload binding reads like a cloned one: legacy matches a cloned enum by value. A payload
-                # its arm changes in place is borrowed exclusively from the scrutinee instead.
-                match binding.fact:
-                    OwnershipFact.Copy => pass
-                    OwnershipFact.Clone => pass
-                    OwnershipFact.Borrow => pass
-                    OwnershipFact.Move => pass
-                    OwnershipFact.MutBorrow => pass
-                    _ => return Err("unsupported Body IR enum payload binding ownership")
-            _ => return Err("unsupported Body IR nested enum payload pattern")
+        validate_payload_pattern(pattern)?
+    return Ok(None)
+
+
+def validate_payload_pattern(pattern: &RustPattern) -> Result[None, str]:
+    """Admit one payload pattern, recursing into the payloads a nested pattern names."""
+    match pattern:
+        RustPattern.Wildcard => pass
+        RustPattern.Literal(_value) => pass
+        RustPattern.FieldlessEnumVariant(_target) => pass
+        RustPattern.Var(binding) =>
+            # A moved payload binding reads like a cloned one: legacy matches a cloned enum by value. A payload its
+            # arm changes in place is borrowed exclusively from the scrutinee instead.
+            match binding.fact:
+                OwnershipFact.Copy => pass
+                OwnershipFact.Clone => pass
+                OwnershipFact.Borrow => pass
+                OwnershipFact.Move => pass
+                OwnershipFact.MutBorrow => pass
+                _ => return Err("unsupported Body IR enum payload binding ownership")
+        RustPattern.Enum(canonical=_identity, name=_name, variant=_variant, fields=fields) =>
+            return validate_payload_patterns(fields)
+        RustPattern.Result(variant=_variant, fields=fields) => return validate_payload_patterns(fields)
+        RustPattern.Tuple(items) => return validate_payload_patterns(items)
+        RustPattern.Or(alternatives) => return validate_payload_patterns(alternatives)
+        _ => return Err("unsupported Body IR nested enum payload pattern")
     return Ok(None)
 
 

@@ -164,7 +164,7 @@ from decls import lower_model_declarations, static_slot, static_accessors
 from model_lists import model_list_read, structural_prefix, prefix_place
 from element_places import is_element_place, element_place_type
 from element_borrows import element_method_owner, element_method_receiver, borrow_element_mut
-from option_tests import is_option_carrier, is_union_carrier, option_isinstance, option_union_payload, enum_tag
+from option_tests import is_option_carrier, is_union_carrier, option_isinstance, enum_tag
 from derived_defaults import is_derived_default, lower_derived_default
 from models import field_projection
 from models import model_type, model_place, constructor_index, field_slot
@@ -177,14 +177,13 @@ from model_values import (
     lower_model_from_json,
     compare_models,
 )
-from enums import lower_enum_declarations, enum_owner, variant_index, unit_variant, pattern_variant
+from enums import lower_enum_declarations, enum_owner, variant_index, unit_variant
 from enums import validate_unit_comparison, validate_unit_ordering
 from value_enums import value_variant, value_method_owner
 from unions import (
     native_source_type,
     collect_unions,
     retain_body_unions,
-    union_pattern_slot,
     union_test_slots,
     test_union_tag,
     union_members,
@@ -205,7 +204,6 @@ from text_plan import format_parts, clone_text, owned_literal
 from options import (
     intrinsic_declarations,
     retain_body_carriers,
-    intrinsic_pattern,
     propagate_result,
     carrier_layout,
     assign_carrier,
@@ -231,7 +229,15 @@ from numerics import (
 )
 from builtins import scalar_builtin, list_call, emit_boolean_operator, emit_power_operator
 from strings import text_helper, emit_text_helper, text_helper_arity, text_method
-from patterns import pattern_tests, pattern_binds, binds_in_place, nominal_field
+from patterns import (
+    pattern_tests,
+    pattern_binds,
+    binds_in_place,
+    nominal_field,
+    carrier_pattern_slot,
+    carrier_payload_types,
+    has_refutable_payload,
+)
 from resize import resize_policy, emit_resize
 from equality import emit_collection_equality, equality_shape
 from frame import (
@@ -1330,12 +1336,13 @@ def lower_local_assignment(
                         return Err("unsupported Body IR nonnumeric implicit conversion")
                     operation = RvalueKind.NumericCast(operand, source_type, ty)
             else:
+                payload = option_payload_operand(builder, operand, place_type(builder.locals, target), span)?
                 operation = carrier_injection(
                     builder.nominals,
                     builder.enums,
                     builder.unions,
-                    operand,
-                    operand_type(builder, operand)?,
+                    payload,
+                    operand_type(builder, payload)?,
                     place_type(builder.locals, target),
                     builder.intrinsics,
                 )?
@@ -6095,31 +6102,18 @@ def lower_enum_match(
     mut arm_ends: list[int] = []
     mut arm_owners: list[list[int]] = []
     for arm in arms:
-        mut slot = -1
-        if owner < len(builder.enums):
-            slot = pattern_variant(builder.enums[owner], arm.pattern)?
-        else:
-            if builder.intrinsics[owner - len(builder.enums)].carrier == "":
-                slot = union_pattern_slot(builder.nominals, builder.enums, builder.unions, owner, arm.pattern, builder.intrinsics)?
-            else:
-                slot = intrinsic_pattern(builder.intrinsics[owner - len(builder.enums)], arm.pattern)?
         selected = builder.new_block(span)
         next_arm = builder.new_block(span)
-        if slot < 0:
-            builder.finish(TerminatorKind.Goto(selected), span)
+        mut slot = -2
+        if is_binding_alternation(arm.pattern):
+            bound = bind_alternatives(builder, source, arm.pattern, selected, next_arm, owners, span)?
+            builder.current = selected
+            builder.owned = bound
         else:
-            condition = temporary(builder, PlanType.Bool, span)
-            builder.emit(
-                plan_assign(
-                    condition,
-                    RvalueKind.Binary(BinaryOp.Equal, read_place(tag, false, span), literal(Constant.Int(slot), span)),
-                    span,
-                ),
-            )
-            builder.finish(TerminatorKind.SwitchBool(read_place(condition, false, span), next_arm, selected), span)
-        builder.current = selected
-        builder.owned = owners
-        bind_enum_payload(builder, source, slot, arm.pattern, span)?
+            slot = dispatch_enum_arm(builder, source, owner, tag, arm.pattern, selected, next_arm, span)?
+            builder.current = selected
+            builder.owned = owners
+            bind_enum_payload(builder, source, slot, arm.pattern, span)?
         lower_arm_guard(module, builder, arm, owners, next_arm, span)?
         lower_enum_arm_body(module, builder, arm)?
         if not builder.closed[builder.current]:
@@ -6136,7 +6130,7 @@ def lower_enum_match(
         builder.current = next_arm
         builder.owned = owners
         # A catch-all arm ends the dispatch unless its guard can still reject.
-        if slot < 0 and arm.guard.is_none():
+        if slot == -1 and arm.guard.is_none():
             break
     builder.finish(TerminatorKind.Unreachable, span)
     join_owners = join_branch_owners(builder, join, arm_ends, arm_owners, span)?
@@ -6148,6 +6142,99 @@ def lower_enum_match(
     if reaches_join and (ty == PlanType.String or is_nominal_type(ty) or is_owned_collection(ty)):
         builder.owned.append(target.local)
     return Ok(None)
+
+
+def dispatch_enum_arm(
+    mut builder: Builder,
+    source: Place,
+    owner: int,
+    tag: Place,
+    pattern: &RustPattern,
+    selected: int,
+    rejected: int,
+    span: SourceSpan,
+) -> Result[int, str]:
+    """
+    Branch to `selected` when an arm's pattern matches the scrutinee and to `rejected` otherwise; return the variant.
+
+    A plain variant pattern compares the tag the match already read. A pattern with a literal or nested payload, or an
+    alternation, runs the full pattern tests in source order. A wildcard selects every value (-1), and an alternation
+    names no single variant to bind (-2).
+    """
+    if has_refutable_payload(pattern):
+        pattern_tests(builder, source, pattern, selected, rejected, span)?
+        match pattern:
+            RustPattern.Or(_alternatives) => return Ok(-2)
+            _ => return carrier_pattern_slot(builder, owner, pattern)
+    slot = carrier_pattern_slot(builder, owner, pattern)?
+    if slot < 0:
+        builder.finish(TerminatorKind.Goto(selected), span)
+        return Ok(slot)
+    condition = temporary(builder, PlanType.Bool, span)
+    builder.emit(
+        plan_assign(
+            condition,
+            RvalueKind.Binary(BinaryOp.Equal, read_place(tag, false, span), literal(Constant.Int(slot), span)),
+            span,
+        ),
+    )
+    builder.finish(TerminatorKind.SwitchBool(read_place(condition, false, span), rejected, selected), span)
+    return Ok(slot)
+
+
+def is_binding_alternation(pattern: &RustPattern) -> bool:
+    """Report whether an arm's pattern is an alternation whose alternatives bind names."""
+    match pattern:
+        RustPattern.Or(_alternatives) => return pattern_binds(pattern)
+        _ => return false
+
+
+def bind_alternatives(
+    mut builder: Builder,
+    source: Place,
+    pattern: &RustPattern,
+    selected: int,
+    rejected: int,
+    incoming: list[int],
+    span: SourceSpan,
+) -> Result[list[int], str]:
+    """
+    Test each alternative of a binding alternation in source order; the first that matches binds and selects the arm.
+
+    The checker requires every alternative to bind the same names, which share one local each, so every path reaches
+    `selected` owning the same bound locals. The owners at `selected` are returned.
+    """
+    mut bound: list[int] = []
+    mut first = true
+    match pattern:
+        RustPattern.Or(alternatives) =>
+            for alternative in alternatives:
+                matched = builder.new_block(span)
+                next_alternative = builder.new_block(span)
+                pattern_tests(builder, source, alternative, matched, next_alternative, span)?
+                builder.current = matched
+                builder.owned = incoming
+                bind_structural_pattern(builder, source, alternative, span)?
+                if first:
+                    bound = builder.owned
+                    first = false
+                elif not same_owners(builder.owned, bound):
+                    return Err("unsupported Body IR binding alternation ownership")
+                builder.finish(TerminatorKind.Goto(selected), span)
+                builder.current = next_alternative
+            builder.finish(TerminatorKind.Goto(rejected), span)
+            return Ok(bound)
+        _ => return Err("invalid Body IR binding alternation")
+
+
+def same_owners(left: list[int], right: list[int]) -> bool:
+    """Report whether two owner ledgers hold the same locals, in any order."""
+    if len(left) != len(right):
+        return false
+    for local in left:
+        if local not in right:
+            return false
+    return true
 
 
 def match_scrutinee_place(
@@ -6260,9 +6347,14 @@ def lower_structural_match(
     for arm in arms:
         selected = builder.new_block(span)
         next_arm = builder.new_block(span)
-        pattern_tests(builder, source, arm.pattern, selected, next_arm, span)?
-        builder.current = selected
-        bind_structural_pattern(builder, source, arm.pattern, span)?
+        if is_binding_alternation(arm.pattern):
+            bound = bind_alternatives(builder, source, arm.pattern, selected, next_arm, owners, span)?
+            builder.current = selected
+            builder.owned = bound
+        else:
+            pattern_tests(builder, source, arm.pattern, selected, next_arm, span)?
+            builder.current = selected
+            bind_structural_pattern(builder, source, arm.pattern, span)?
         lower_arm_guard(module, builder, arm, owners, next_arm, span)?
         lower_enum_arm_body(module, builder, arm)?
         if not builder.closed[builder.current]:
@@ -6390,7 +6482,14 @@ def bind_structural_pattern(
                 return Err("unsupported Body IR binding alternation")
         RustPattern.Wildcard => pass
         RustPattern.Literal(_value) => pass
-        _ => return Err("unsupported Body IR structural pattern binding")
+        _ =>
+            # A carrier pattern inside a structure binds its payload names like a match over that carrier.
+            if pattern_binds(pattern):
+                match place_type(builder.locals, source):
+                    PlanType.Enum(owner, _name) =>
+                        slot = carrier_pattern_slot(builder, owner, pattern)?
+                        return bind_enum_payload(builder, source, slot, pattern, span)
+                    _ => return Err("unsupported Body IR structural pattern binding")
     return Ok(None)
 
 
@@ -6732,13 +6831,7 @@ def boundary_plan_operand(mut builder: Builder, value: Operand, target: PlanType
                         text = display_plan_operand(builder, operand, span)?
                         operand = read_place(text, true, span)
             _ => pass
-    # An Option of a union wraps a bare member in that union first, as legacy's `Some(Union::Vn(value))` does.
-    match option_union_payload(builder, target):
-        Some(payload) =>
-            source = operand_type(builder, operand)?
-            if source != target and source != payload:
-                operand = boundary_plan_operand(builder, operand, payload, span)?
-        None => pass
+    operand = option_payload_operand(builder, operand, target.clone(), span)?
     operation = carrier_injection(
         builder.nominals,
         builder.enums,
@@ -6756,6 +6849,39 @@ def boundary_plan_operand(mut builder: Builder, value: Operand, target: PlanType
             builder.emit(plan_assign(output, operation, span))
             builder.owned.append(output.local)
             return Ok(read_place(output, true, span))
+
+
+def option_payload_operand(
+    mut builder: Builder,
+    value: Operand,
+    target: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """
+    Bring a value written into an `Option` to the type of that `Option`'s payload, which then wraps it in `Some`.
+
+    A value written into an `Option` of an `Option` or union is first injected into that inner carrier, so each layer
+    wraps it, and a number written into an `Option` of another numeric type converts first, as legacy writes it.
+    Every other value is returned unchanged.
+    """
+    mut payload = PlanType.Unit
+    match target:
+        PlanType.Enum(owner, _name) =>
+            if owner < len(builder.enums):
+                return Ok(value)
+            declaration = builder.intrinsics[owner - len(builder.enums)]
+            if declaration.carrier != "Option":
+                return Ok(value)
+            payload = declaration.variants[1].fields[0]
+        _ => return Ok(value)
+    source = operand_type(builder, value)?
+    if source == target or source == payload:
+        return Ok(value)
+    if numeric_carrier(source) and numeric_carrier(payload):
+        return coerce_numeric_operand(builder, value, payload, span)
+    match payload:
+        PlanType.Enum(_owner, _name) => return boundary_plan_operand(builder, value, payload, span)
+        _ => return Ok(value)
 # =====================================================================================================================
 # Lists: borrowing and runtime calls
 # =====================================================================================================================
@@ -6839,8 +6965,33 @@ def bind_enum_fields(
                     builder.emit(plan_assign(plan_place(local, span), RvalueKind.Use(value), span))
                     if ty == PlanType.String or is_nominal_type(ty):
                         builder.owned.append(local)
-            _ => pass
+            _ =>
+                if pattern_binds(fields[slot]):
+                    bind_nested_payload(builder, source, variant, slot, fields[slot], span)?
     return Ok(None)
+
+
+def bind_nested_payload(
+    mut builder: Builder,
+    source: Place,
+    variant: int,
+    slot: int,
+    pattern: &RustPattern,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Bind the names a nested carrier or tuple payload pattern names, from the payload its tests already matched."""
+    mut owner = -1
+    match place_type(builder.locals, source):
+        PlanType.Enum(index, _name) =>
+            owner = index
+        _ => return Err("invalid Body IR nested payload carrier")
+    types = carrier_payload_types(builder, owner, variant)?
+    payload = appended_field(source, FieldProjection(slot=slot, ty=types[slot], variant=variant), span)?
+    match place_type(builder.locals, payload):
+        PlanType.Enum(nested_owner, _name) =>
+            nested = carrier_pattern_slot(builder, nested_owner, pattern)?
+            return bind_enum_payload(builder, payload, nested, pattern, span)
+        _ => return bind_structural_pattern(builder, payload, pattern, span)
 
 
 def bind_payload_in_place(mut builder: Builder, local: int, payload: Place, span: SourceSpan) -> Result[None, str]:
@@ -7282,8 +7433,7 @@ def lower_carrier_method(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Materialize intrinsic call arguments, then delegate the carrier's branch and ownership operations."""
-    receiver = argument_place(builder, arguments, 0, span)?
-    source = whole_carrier(builder, receiver, span)?
+    source = carrier_receiver(builder, arguments, span)?
     _owner, declaration = carrier_layout(builder, place_type(builder.locals, source))?
     if method.intrinsic_carrier != Some(declaration.carrier):
         return Err("invalid Body IR intrinsic carrier method identity")
@@ -7310,26 +7460,45 @@ def lower_carrier_method(
     return lower_carrier_method_plan(builder, name, source, target, fallback, span)
 
 
-def whole_carrier(mut builder: Builder, source: Place, span: SourceSpan) -> Result[Place, str]:
+def carrier_receiver(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    span: SourceSpan,
+) -> Result[Place, str]:
     """
-    Clone a carrier reached through a field into a temporary, leaving its owner whole.
+    The place a carrier method reads: the receiver itself, or a copy of a list element.
 
-    The carrier's tag and payload are projected from one whole local, so a field's carrier is read out first; the
-    clone keeps an owned payload in the field for later reads.
+    An element is read out of its list as any element read is, as legacy's checked `list_get` reads it; the copy drops
+    when its scope ends.
     """
-    if source.projection == Projection.Whole:
-        return Ok(source)
-    ty = place_type(builder.locals, source)
-    match ty:
-        PlanType.Enum(index, name) =>
-            reference = temporary(builder, PlanType.EnumRef(index, name), span)
-            builder.emit(plan_assign(reference, RvalueKind.Borrow(source), span))
-            held = temporary(builder, ty, span)
-            lower_callable_result(
-                builder, CalleeKind.CloneEnum(index, name), [read_place(reference, false, span)], held, ty, span,
-            )?
-            return Ok(held)
-        _ => return Err("unsupported Body IR projected carrier receiver")
+    if len(arguments) == 0:
+        return Err("invalid Body IR intrinsic carrier method arity")
+    match arguments[0].as_one():
+        Some(value) =>
+            match value:
+                RustOperand.Place(read) =>
+                    if indexes_a_list(read.place):
+                        return element_copy(builder, read.place, span)
+                _ => pass
+        None => pass
+    return argument_place(builder, arguments, 0, span)
+
+
+def indexes_a_list(place: &RustPlace) -> bool:
+    """Report whether a place reaches its value through a list index."""
+    for projection in place.projection:
+        match projection:
+            PlaceElem.Index(_index) => return true
+            _ => pass
+    return false
+
+
+def element_copy(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+    """Read a list element into an owned copy and return its place."""
+    match indexed_read(builder, source, span)?.kind:
+        OperandKind.Move(place) => return Ok(place)
+        OperandKind.Copy(place) => return Ok(place)
+        _ => return Err("unsupported Body IR carrier receiver element")
 
 
 def typed_carrier_operand(
