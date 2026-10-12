@@ -180,7 +180,13 @@ from model_values import (
 )
 from enums import lower_enum_declarations, enum_owner, variant_index, unit_variant
 from enums import validate_unit_comparison, validate_unit_ordering
-from value_enums import value_variant, value_method_owner, validate_layout
+from value_enums import (
+    value_variant,
+    value_method_owner,
+    validate_layout,
+    enum_message_layout,
+    value_enum_from_value_owner,
+)
 from unions import (
     native_source_type,
     collect_unions,
@@ -2169,28 +2175,12 @@ def select_value_enum_raw(
 ) -> Result[None, str]:
     """Write the raw value of the variant `source` holds into `output`, selected by its native tag."""
     declaration = builder.value_enums[owner]
-    raw_tag = temporary(builder, PlanType.EnumTag, span)
-    tag = temporary(builder, PlanType.Int, span)
-    builder.emit(plan_assign(raw_tag, RvalueKind.Discriminant(source), span))
-    builder.emit(plan_assign(tag, RvalueKind.TagToInt(read_place(raw_tag, false, span)), span))
     result_type = value_enum_raw_type(builder, owner)
     join = builder.new_block(span)
     owners = builder.owned
-    for slot in range(len(declaration.variants)):
-        mut next = join
-        if slot + 1 < len(declaration.variants):
-            selected = builder.new_block(span)
-            next = builder.new_block(span)
-            condition = temporary(builder, PlanType.Bool, span)
-            builder.emit(
-                plan_assign(
-                    condition,
-                    RvalueKind.Binary(BinaryOp.Equal, read_place(tag, false, span), literal(Constant.Int(slot), span)),
-                    span,
-                ),
-            )
-            builder.finish(TerminatorKind.SwitchBool(read_place(condition, false, span), next, selected), span)
-            builder.current = selected
+    branches = tag_branches(builder, source, len(declaration.variants), span)
+    for slot in range(len(branches)):
+        builder.current = branches[slot]
         raw_value: RustConstant = declaration.variants[slot].raw_value.clone()
         operand: RustOperand = RustOperand.Constant(raw_value)
         if result_type == PlanType.String:
@@ -2200,11 +2190,172 @@ def select_value_enum_raw(
             value = value_operand(builder, operand, span)?
             builder.emit(plan_assign(output, RvalueKind.Use(value), span))
         builder.finish(TerminatorKind.Goto(join), span)
-        builder.current = next
         builder.owned = owners
     builder.current = join
     if result_type == PlanType.String:
         builder.owned.append(output.local)
+    return Ok(None)
+
+
+def tag_branches(mut builder: Builder, source: Place, count: int, span: SourceSpan) -> list[int]:
+    """
+    Branch on the native tag of the enum `source` holds, returning one block per variant in variant order.
+
+    Each returned block runs only for its variant; the caller fills it and ends it with a jump to its own join.
+    """
+    raw_tag = temporary(builder, PlanType.EnumTag, span)
+    tag = temporary(builder, PlanType.Int, span)
+    builder.emit(plan_assign(raw_tag, RvalueKind.Discriminant(source), span))
+    builder.emit(plan_assign(tag, RvalueKind.TagToInt(read_place(raw_tag, false, span)), span))
+    mut branches: list[int] = []
+    for slot in range(count):
+        if slot + 1 == count:
+            branches.append(builder.current)
+            continue
+        selected = builder.new_block(span)
+        next = builder.new_block(span)
+        condition = temporary(builder, PlanType.Bool, span)
+        builder.emit(
+            plan_assign(
+                condition,
+                RvalueKind.Binary(BinaryOp.Equal, read_place(tag, false, span), literal(Constant.Int(slot), span)),
+                span,
+            ),
+        )
+        builder.finish(TerminatorKind.SwitchBool(read_place(condition, false, span), next, selected), span)
+        branches.append(selected)
+        builder.current = next
+    return branches
+
+
+def lower_value_enum_from_value(
+    mut builder: Builder,
+    owner: int,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Select the variant whose raw value equals the argument, as the generated `from_value()` does: `Some` of the first
+    variant in declaration order that matches, or `None` when none does.
+    """
+    if len(arguments) != 1:
+        return Err("unsupported Body IR value enum from_value arguments")
+    layout = value_enum_layout(builder, owner)?
+    raw_type = value_enum_raw_type(builder, owner)
+    value = argument_value(builder, arguments, 0, span)?
+    if operand_type(builder, value)? != raw_type:
+        return Err("unsupported Body IR value enum from_value argument")
+    raw = temporary(builder, raw_type, span)
+    track_rvalue_moves(builder, RvalueKind.Use(value))
+    builder.emit(plan_assign(raw, RvalueKind.Use(value), span))
+    if raw_type == PlanType.String:
+        builder.owned.append(raw.local)
+    output = call_destination(builder, destination, PlanType.Unit, span)?
+    carrier, declaration = carrier_layout(builder, place_type(builder.locals, output))?
+    element = PlanType.Enum(layout, str(builder.enums[layout].name))
+    if declaration.carrier != "Option" or declaration.variants[1].fields != [element] or output.local in builder.owned:
+        return Err("unsupported Body IR value enum from_value destination")
+    join = builder.new_block(span)
+    owners = builder.owned
+    for slot in range(len(builder.value_enums[owner].variants)):
+        raw_value: RustConstant = builder.value_enums[owner].variants[slot].raw_value.clone()
+        condition = raw_value_matches(builder, raw, raw_value, span)?
+        matched = builder.new_block(span)
+        next = builder.new_block(span)
+        builder.finish(TerminatorKind.SwitchBool(condition, next, matched), span)
+        builder.current = matched
+        variant = temporary(builder, element, span)
+        builder.emit(plan_assign(variant, RvalueKind.Enum(layout, slot, []), span))
+        assign_carrier(builder, output, carrier, 1, [read_place(variant, true, span)], span)
+        builder.finish(TerminatorKind.Goto(join), span)
+        builder.owned = owners
+        builder.current = next
+    assign_carrier(builder, output, carrier, 0, [], span)
+    builder.finish(TerminatorKind.Goto(join), span)
+    builder.owned = owners
+    builder.current = join
+    builder.owned.append(output.local)
+    drop_owned(builder, raw.local, span)
+    return Ok(None)
+
+
+def value_enum_layout(builder: Builder, owner: int) -> Result[int, str]:
+    """Find the retained source enum layout of value enum `owner`."""
+    for index in range(len(builder.enums)):
+        if builder.enums[index].canonical == builder.value_enums[owner].canonical:
+            validate_layout(builder.enums[index], builder.value_enums[owner])?
+            return Ok(index)
+    return Err("unsupported Body IR unretained value enum layout")
+
+
+def raw_value_matches(mut builder: Builder, raw: Place, value: RustConstant, span: SourceSpan) -> Result[Operand, str]:
+    """Compare a value enum's raw argument with one variant's raw value: integers natively, text through the runtime."""
+    condition = temporary(builder, PlanType.Bool, span)
+    if place_type(builder.locals, raw) == PlanType.Int:
+        operand = value_operand(builder, RustOperand.Constant(value), span)?
+        builder.emit(
+            plan_assign(condition, RvalueKind.Binary(BinaryOp.Equal, read_place(raw, false, span), operand), span),
+        )
+        return Ok(read_place(condition, false, span))
+    mut text = ""
+    match value:
+        RustConstant.Str(spelling) =>
+            text = str(spelling)
+        _ => return Err("unsupported Body IR value enum raw value")
+    literal = owned_literal(builder, text, span)
+    left = temporary(builder, PlanType.StringRef, span)
+    builder.emit(plan_assign(left, RvalueKind.Borrow(raw), span))
+    right = temporary(builder, PlanType.StringRef, span)
+    builder.emit(plan_assign(right, RvalueKind.Borrow(literal), span))
+    operands = [read_place(left, false, span), read_place(right, false, span)]
+    result = emit_text_helper(
+        builder,
+        "equal_text",
+        PlanType.Bool,
+        [PlanType.StringRef, PlanType.StringRef],
+        operands,
+        span,
+    )
+    drop_owned(builder, literal.local, span)
+    return Ok(read_place(result, false, span))
+
+
+def lower_enum_message(
+    mut builder: Builder,
+    index: int,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Spell the name of the variant a source enum holds, as the generated `message()` does."""
+    if len(arguments) != 1:
+        return Err("unsupported Body IR enum message arguments")
+    source = argument_place(builder, arguments, 0, span)?
+    output = call_destination(builder, destination, PlanType.String, span)?
+    if place_type(builder.locals, output) != PlanType.String or output.local in builder.owned:
+        return Err("unsupported Body IR enum message destination")
+    variants = builder.enums[index].variants
+    join = builder.new_block(span)
+    owners = builder.owned
+    branches = tag_branches(builder, source, len(variants), span)
+    for slot in range(len(branches)):
+        builder.current = branches[slot]
+        name = str(variants[slot].name)
+        texts = [text_literal(name, span), text_literal("", span)]
+        external_call(
+            builder,
+            "incan_std_core::strings::str_concat",
+            [PlanType.StrRef, PlanType.StrRef],
+            PlanType.String,
+            texts,
+            output,
+            span,
+        )
+        builder.finish(TerminatorKind.Goto(join), span)
+        builder.owned = owners
+    builder.current = join
+    builder.owned.append(output.local)
     return Ok(None)
 
 
@@ -2240,6 +2391,17 @@ def lower_method_call(
             index = owner_method_index(module, target, owner, builder.intrinsics)?
             reference = element_method_receiver(module, builder, index, arguments[0], span)?
             return call_method_body(module, builder, target, index, reference, arguments, destination, span)
+        None => pass
+    match enum_message_layout(
+        module,
+        target,
+        builder.locals[builder.local_offset:],
+        arguments[0],
+        span,
+        builder.unions,
+        builder.intrinsics,
+    )?:
+        Some(index) => return lower_enum_message(builder, index, arguments, destination, span)
         None => pass
     match value_method_owner(
         module, target, builder.locals[builder.local_offset:], arguments[0], span, builder.unions, builder.intrinsics,
@@ -2483,6 +2645,9 @@ def lower_named_target(
         return lower_derived_default(module, builder, target, destination, span)
     if is_json_deserialize_method(target):
         return lower_model_from_json(module, builder, target, arguments, destination, span)
+    match value_enum_from_value_owner(module, target)?:
+        Some(owner) => return lower_value_enum_from_value(builder, owner, arguments, destination, span)
+        None => pass
     match target.canonical:
         None => return Err("unsupported Body IR builtin or unproven NamedCallableTarget")
         Some(_identity) =>

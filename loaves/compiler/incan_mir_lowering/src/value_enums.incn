@@ -7,6 +7,7 @@ from rust::incan_semantics_core::body_ir import (
     ValueEnumDeclaration,
     ValueEnumVariantTarget,
     MethodTarget,
+    NamedCallableTarget,
     ArgumentElement,
     Operand as RustOperand,
 )
@@ -76,6 +77,53 @@ pub def value_method_owner(
         validate_getter(declaration, target)?
         return Ok(Some(owner))
     return Ok(None)
+
+
+pub def value_enum_from_value_owner(module: &BodyIrModule, target: &NamedCallableTarget) -> Result[Option[int], str]:
+    """Admit the checker-generated `from_value()` member only for its exact value enum owner."""
+    match target.canonical:
+        Some(identity) =>
+            if identity.declaration_name != "from_value" or identity.namespace != SymbolNamespace.Member or identity.kind != SemanticSourceTargetKind.Method:
+                return Ok(None)
+            for owner in range(len(module.value_enum_declarations)):
+                declaration = module.value_enum_declarations[owner].canonical
+                if identity.origin == declaration.origin and identity.scope_discriminant == declaration.scope_discriminant and identity.declaration_span == declaration.declaration_span:
+                    if len(target.type_args) != 0:
+                        return Err("unsupported Body IR generic value enum from_value")
+                    return Ok(Some(owner))
+            return Ok(None)
+        None => return Ok(None)
+
+
+pub def enum_message_layout(
+    module: &BodyIrModule,
+    target: &MethodTarget,
+    locals: list[Local],
+    argument: &ArgumentElement,
+    span: SourceSpan,
+    unions: list[RustType],
+    intrinsics: list[NativeEnumDeclaration],
+) -> Result[Option[int], str]:
+    """
+    Admit the checker-generated `message()` member only for its exact source enum owner, value enums included.
+
+    The generated member carries its owner's origin, scope and declaration span; a method an enum declares itself has
+    its own span and keeps the ordinary method path.
+    """
+    match target.canonical:
+        Some(identity) =>
+            if identity.declaration_name != "message" or identity.namespace != SymbolNamespace.Member or identity.kind != SemanticSourceTargetKind.Method:
+                return Ok(None)
+            index = receiver_layout(module, locals, argument, span, unions, intrinsics)?
+            if index < 0 or index >= len(module.enum_declarations):
+                return Ok(None)
+            owner = module.enum_declarations[index].canonical
+            if identity.origin != owner.origin or identity.scope_discriminant != owner.scope_discriminant or identity.declaration_span != owner.declaration_span:
+                return Ok(None)
+            if len(target.type_args) != 0:
+                return Err("unsupported Body IR generic enum message")
+            return Ok(Some(index))
+        None => return Ok(None)
 
 
 def receiver_layout(
