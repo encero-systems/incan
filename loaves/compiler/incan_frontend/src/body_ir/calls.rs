@@ -388,13 +388,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 candidates
                     .iter()
                     .find(|candidate| candidate.identity.as_ref() == Some(selected))
-                    .map(|candidate| &candidate.info)
+                    .map(|candidate| (candidate.info.is_async, candidate.info.params.as_slice()))
             }),
-            None => self.type_info.declarations.function_bindings.get(name),
+            None => self
+                .type_info
+                .declarations
+                .function_bindings
+                .get(name)
+                .map(|binding| (binding.is_async, binding.params.as_slice())),
         };
         Ok(DirectCallDeclaration {
-            is_async: signature.is_some_and(|signature| signature.is_async),
-            slots: signature.map(|signature| signature.params.iter().map(DeclaredSlot::from_checked_param).collect()),
+            is_async: signature.is_some_and(|(is_async, _)| is_async),
+            slots: signature.map(|(_, parameters)| parameters.iter().map(DeclaredSlot::from_checked_param).collect()),
             direct_call_id: None,
             builtin,
             canonical,
