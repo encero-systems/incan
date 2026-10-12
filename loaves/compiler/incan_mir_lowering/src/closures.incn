@@ -444,10 +444,9 @@ def item_signature(
     parameters: &list[RustParameter],
     body: &RustBody,
 ) -> Result[tuple[str, PlanType], str]:
-    """The plan item and signature of a checked function declaration used as a value."""
-    # Async and generator declarations lower to evaluator or producer frames, not to a callable item.
-    if body.is_async or body.is_generator():
-        return Err("unsupported Body IR async or generator function item")
+    """Select a checked function's callable item; a generator names its lazy constructor, never its producer frame."""
+    if body.is_async:
+        return Err("unsupported Body IR async function item")
     if len(parameters) != len(body.params):
         return Err("invalid Body IR function-item parameter count")
     mut signature: list[PlanType] = []
@@ -455,8 +454,11 @@ def item_signature(
         if parameters[index].ty != body.params[index].ty:
             return Err("unsupported Body IR function-item parameter contract")
         component = item_component(builder, body.params[index].ty)?
-        signature.append(signature_input(component, body.params[index].mutable))
+        input = signature_input(component, body.params[index].mutable)
+        if body.is_generator() and input != component:
+            return Err("unsupported Body IR generator function item with borrowed parameters")
+        signature.append(input)
     signature.append(item_result(builder, body.return_type)?)
-    # The item names the same plan symbol a direct call to this declaration uses.
+    # Generator entrypoints retain their ordinary constructor symbol beside the separately named producer.
     name = function_name(module, body)
     return Ok((name, PlanType.FunctionItem(name, signature)))

@@ -160,6 +160,18 @@ def map_adapter(
     element = source_element(source_type)?
     signature = [element, mapped]
     pointer = adapter_callable(builder, transform, signature, span)?
+    if element == PlanType.String:
+        return text_callable_adapter(
+            builder,
+            "map_text_callable_generator",
+            source,
+            source_type,
+            pointer,
+            mapped,
+            result,
+            output,
+            span,
+        )
     name = f"map_{element_family(element)?}_generator"
     generator_runtime_call(
         builder,
@@ -187,11 +199,40 @@ def flat_map_adapter(
 
     An expansion is a list, or a generator whose own items are drawn only as the result is polled.
     """
-    if source_type != PlanType.Generator(ListLeaf.Int, 0):
-        return Err("unsupported Body IR generator flat_map element outside int")
     result = builder.locals[output.local].ty
     leaf, depth = require_generator(result)?
     mapped = generator_element(leaf, depth)
+    if source_type == PlanType.Generator(ListLeaf.Str, 0):
+        signature = [PlanType.String, PlanType.List(leaf, depth + 1)]
+        pointer = adapter_callable(builder, expand, signature, span)?
+        return text_callable_adapter(
+            builder,
+            "flat_map_text_callable_generator",
+            source,
+            source_type,
+            pointer,
+            mapped,
+            result,
+            output,
+            span,
+        )
+    if source_type != PlanType.Generator(ListLeaf.Int, 0):
+        return Err("unsupported Body IR generator flat_map element outside int")
+    if expansion_result(builder, expand)? == PlanType.Set(ListLeaf.Int):
+        if result != source_type:
+            return Err("unsupported Body IR set expansion outside integer generator")
+        signature = [PlanType.Int, PlanType.Set(ListLeaf.Int)]
+        pointer = adapter_callable(builder, expand, signature, span)?
+        external_call(
+            builder,
+            "incan_native_runtime::flat_map_int_set_generator",
+            [source_type, PlanType.FunctionPointer(signature)],
+            result,
+            [source, pointer],
+            output,
+            span,
+        )
+        return Ok(None)
     mut signature = [PlanType.Int, PlanType.List(leaf, depth + 1)]
     mut name = "flat_map_int_generator"
     if expands_to_generators(builder, expand, result)?:
@@ -208,6 +249,46 @@ def flat_map_adapter(
         output,
         span,
     )
+    return Ok(None)
+
+
+def expansion_result(builder: Builder, expand: Operand) -> Result[PlanType, str]:
+    """Read the retained callback result without assuming every flat_map expansion is a list."""
+    match value_type(builder, expand)?:
+        PlanType.FunctionPointer(signature) =>
+            if len(signature) == 2:
+                return Ok(signature[1])
+        PlanType.FunctionItem(_name, signature) =>
+            if len(signature) == 2:
+                return Ok(signature[1])
+        _ => pass
+    return Err("unsupported Body IR generator adapter callable signature")
+
+
+def text_callable_adapter(
+    mut builder: Builder,
+    name: str,
+    source: Operand,
+    source_type: PlanType,
+    callable: Operand,
+    element: PlanType,
+    result: PlanType,
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Instantiate the runtime's by-value text callable boundary with the checked result and function-pointer types."""
+    pointer = value_type(builder, callable)?
+    path = f"incan_native_runtime::{name}"
+    builder.externals.append(
+        ExternalFunction(
+            path=path,
+            type_arguments=[element, pointer],
+            parameters=[source_type, pointer],
+            return_type=result,
+            span=span,
+        ),
+    )
+    terminate_call(builder, CalleeKind.InstantiatedPair(path, element, pointer), [source, callable], output, span)
     return Ok(None)
 
 

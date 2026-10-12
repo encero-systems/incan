@@ -1615,6 +1615,10 @@ def lower_closure(
     for capture in captures:
         operand = scalar_operand(builder, capture, span)?
         ty = operand_type(builder, operand)?
+        match ty:
+            PlanType.ZipIterator(_left, _right) =>
+                return Err("unsupported Body IR iterator closure capture without FnOnce contract")
+            _ => pass
         if not closure_capture_type(ty):
             return Err("unsupported Body IR closure capture outside scalars, owned text and models")
         operands.append(operand)

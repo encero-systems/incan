@@ -147,6 +147,35 @@ pub def flat_map_int_generators[U with (Clone, Static)](
     return (item for value in values for item in expand(value))
 
 
+pub def flat_map_int_set_generator(values: Generator[int], expand: (int) -> set[int]) -> Generator[int]:
+    """Expand each integer into a set and yield its distinct values when the expansion is polled."""
+    return (item for value in values for item in expand(value))
+
+
+pub def map_text_callable_generator[U with (Clone, Static), F with (Callable1[str, U], Static)](
+    values: Generator[str],
+    transform: F,
+) -> Generator[U]:
+    """Transform owned text through a callable taking each item by value, matching the direct callable boundary."""
+    return (transform(value) for value in values)
+
+
+pub def flat_map_text_callable_generator[U with (Clone, Static), F with (Callable1[str, list[U]], Static)](
+    values: Generator[str],
+    expand: F,
+) -> Generator[U]:
+    """Expand each owned text item through a callable returning a list, drawing that list only when polled."""
+    return (item for value in values for item in expand(value))
+
+
+pub def any_text_callable_generator[F with Callable1[str, bool]](values: Generator[str], predicate: F) -> bool:
+    """Stop at the first accepted text item, leaving later generator items unpolled."""
+    for value in values:
+        if predicate(value):
+            return true
+    return false
+
+
 pub def enumerate_generator[T with (Clone, Static)](values: Generator[T]) -> Generator[tuple[int, T]]:
     """Pair each item with its zero-based position when it is polled."""
     return (pair for pair in values.enumerate())
