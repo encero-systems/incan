@@ -163,11 +163,13 @@ pub def receiver_fills_slot(
     """
     match receiver_owner(module, locals, argument, span, unions, intrinsics):
         Ok(owner) =>
-            owner_identity = module.nominal_declarations[owner].canonical
-            for implementation in module.trait_implementations:
-                if implementation.owner == owner_identity and Some(implementation.method) == target.canonical:
-                    return true
-            return false
+            match owner_identity(module, owner):
+                Ok(identity) =>
+                    for implementation in module.trait_implementations:
+                        if implementation.owner == identity and Some(implementation.method) == target.canonical:
+                            return true
+                    return false
+                Err(_error) => return false
         Err(_error) => return false
 
 
