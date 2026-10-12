@@ -67,6 +67,9 @@ pub def method_default_arguments(
                 types,
             ) + 1:
                 return Err("invalid Body IR method-partial frame")
+            # One generic owner contributes a frame per closed layout; the retained receiver selects this instance.
+            if frame.params[0].ty != body.params[0].ty:
+                continue
             for index in range(len(frame.params)):
                 if frame.params[index].name != body.params[index].name or frame.params[index].ty != body.params[index].ty:
                     return Err("invalid Body IR method-partial parameter")
