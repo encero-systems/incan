@@ -193,12 +193,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         if let ast::Expr::Call(callee, type_args, args) = &call.node
+            && let ast::Expr::Ident(name) = &callee.node
             && type_args.is_empty()
             && args.is_empty()
             && self
-                .type_info
-                .call_site_callable_params(call.span)
-                .is_some_and(|params| params.is_empty())
+                .declared_slots_for_direct_call(name, callee.span, call.span)
+                .is_ok_and(|declaration| {
+                    !declaration.is_async && declaration.slots.is_some_and(|slots| slots.is_empty())
+                })
             && self.resolve_ty(call.span) == IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Unit)
             && self
                 .type_info
