@@ -5,6 +5,34 @@
 
 use super::*;
 
+/// Rest annotations retain their collection storage, and each call supplies one resolved operand per slot.
+#[test]
+fn rest_parameter_storage_and_bindings_are_retained() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def collect(prefix: str, *items: int, **labels: str) -> int:\n  return len(items)\n\ndef main() -> None:\n  xs = [2, 3]\n  kw = {\"name\": \"spread\"}\n  collect(\"x\", 1, *xs, name=\"inline\", **kw)\n  collect(\"empty\")\n";
+    let module = build(source, &["m", "rest_storage"])?;
+    let declaration = body_named(&module, "collect")?;
+    assert_eq!(declaration.params[1].ty.to_string(), "List[int]");
+    assert_eq!(declaration.params[2].ty.to_string(), "Dict[str, str]");
+    for target in named_targets(&module, "main") {
+        if target.name != "collect" {
+            continue;
+        }
+        let bir::ArgumentBinding::Resolved {
+            arguments,
+            defaulted_slots,
+        } = &target.binding
+        else {
+            return Err("rest call must retain its complete aggregate slot binding".into());
+        };
+        assert_eq!(arguments.len(), 3);
+        assert!(defaulted_slots.is_empty());
+    }
+    let snapshot = body_named(&module, "main")?.render_snapshot();
+    assert!(snapshot.contains("spread"), "{snapshot}");
+    assert!(!snapshot.contains("unsupported("), "{snapshot}");
+    Ok(())
+}
+
 /// A model or class field read by value, as an argument or a returned value, clones from its owner, as legacy's
 /// ownership policy does (#241).
 #[test]
@@ -1207,10 +1235,9 @@ fn an_overload_set_that_changes_arity_does_not_refuse_a_valid_call() -> Result<(
     Ok(())
 }
 
+/// Positional rest values are packed into one collection operand bound to the rest declaration slot.
 #[test]
 fn a_rest_parameter_callee_still_lowers_its_positional_arguments() -> Result<(), Box<dyn std::error::Error>> {
-    // Variadics are a delivered language capability. Routing the direct path through the shared planner must not
-    // silently narrow what Body IR represents; the call keeps lowering, it simply makes no declared-slot claim.
     let source = "def total(a: int, *xs: int) -> int:\n  return a\n\ndef use() -> int:\n  return total(1, 2, 3)\n";
     let module = build(source, &["m", "rest"])?;
     let snapshot = module.render_snapshot();
@@ -1220,8 +1247,8 @@ fn a_rest_parameter_callee_still_lowers_its_positional_arguments() -> Result<(),
         "a positional call into a rest-parameter signature must still lower: {snapshot}"
     );
     assert!(
-        snapshot.contains("call fn:total unbound(const(1), const(2), const(3))"),
-        "a rest signature has no one-to-one declared slots, so the binding must say so: {snapshot}"
+        !snapshot.contains("call fn:total unbound") && snapshot.contains("List[int]"),
+        "the packed rest list fills one resolved declaration slot: {snapshot}"
     );
     Ok(())
 }

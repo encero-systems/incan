@@ -18,6 +18,46 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// Prove positional and keyword rest packing, bound function values, method calls and empty rest collections against
+/// legacy.
+#[test]
+fn rest_arguments_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("rest-arguments")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"model Thing:
+    name: str
+
+def collect(prefix: str, *items: int, **labels: str) -> int:
+    println(f"{prefix} {len(items)} {labels["name"]}")
+    return sum(items)
+
+def takes_rest(value: Thing, *rest: int) -> str:
+    return f"{value.name} {len(rest)} {sum(rest)}"
+
+class Collector:
+    def collect(self, *items: int, **labels: str) -> int:
+        println(labels["name"])
+        return sum(items)
+
+def main() -> None:
+    xs = [2, 3]
+    kw = {"name": "spread"}
+    println(collect("direct", 1, *xs, name="inline", **kw))
+    f = collect
+    println(f("bound", 4, *xs, name="inline", **kw))
+    collector = Collector()
+    println(collector.collect(5, *xs, name="inline", **kw))
+    thing = Thing(name="thing")
+    println(takes_rest(thing, 1, 2, 3))
+    println(takes_rest(thing))
+"#,
+    )
+}
+
 /// Replace `destination` with a copy of the source tree, without admitting a checkout's generated targets.
 ///
 /// The destination is removed first: in a kept workspace, a source file deleted from the checkout must not survive
