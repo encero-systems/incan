@@ -48,7 +48,8 @@ def main() -> None:
     for task in source:
         println(task.name)
     levels = sorted([Level.High, Level.Low])
-    println(levels[0] == Level.Low)
+    for level in levels:
+        println(level == Level.Low)
     ranks = sorted([Rank(3), Rank(1)])
     for rank in ranks:
         println(rank.0)
