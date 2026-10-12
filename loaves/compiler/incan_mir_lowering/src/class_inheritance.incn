@@ -44,9 +44,8 @@ def instantiate_body(body: &Body, owner: &NominalDeclaration) -> Result[Body, st
     """Close only the explicit receiver; other ancestor-typed self values remain a named unsupported boundary."""
     if len(body.locals) == 0 or len(body.params) == 0 or len(body.type_parameters) != 0 or body.is_async:
         return Err("unsupported Body IR inherited class receiver frame")
-    match body.locals[0].origin:
-        LocalOrigin.Receiver(mutable=_mutable) => pass
-        _ => return Err("unsupported Body IR inherited class method without instance receiver")
+    if not instance_receiver(body.locals[0].origin):
+        return Err("unsupported Body IR inherited class method without instance receiver")
     for index in range(1, len(body.locals)):
         if body.locals[index].ty == body.locals[0].ty:
             return Err("unsupported Body IR inherited class self value beyond the receiver")
@@ -57,6 +56,13 @@ def instantiate_body(body: &Body, owner: &NominalDeclaration) -> Result[Body, st
     result.locals[0].ty = receiver
     result.params[0].ty = parameter
     return Ok(result)
+
+
+def instance_receiver(origin: &LocalOrigin) -> bool:
+    """Keep the foreign enum in a typed boundary while its pattern-only import emission is tracked by #459."""
+    match origin:
+        LocalOrigin.Receiver(mutable=_mutable) => return true
+        _ => return false
 
 
 def concrete_receiver(owner: str) -> RustType:
