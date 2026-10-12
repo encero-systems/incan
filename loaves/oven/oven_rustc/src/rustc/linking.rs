@@ -534,7 +534,9 @@ fn linux_link(linker: &Path, root: &Path, target: &str) -> Result<PinnedLink, Ov
 
 #[cfg(test)]
 mod tests {
-    use super::{fs, pinned_link, rustc_host_target};
+    use super::fs;
+    #[cfg(target_os = "macos")]
+    use super::{pinned_link, rustc_host_target};
 
     /// Warm native inputs read no artifact bytes; normalized symlinks and preserved-mtime edits remain observed.
     #[cfg(unix)]

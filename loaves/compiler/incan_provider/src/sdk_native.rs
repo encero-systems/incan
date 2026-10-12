@@ -461,6 +461,11 @@ pub fn prepare_sdk_native_closure(
             local_failures.push(format!("SDK component {}: {error}", component.id));
         }
     }
+    // A failed companion leaves a later facade compile with an unresolved crate, which names only the symptom; the
+    // cause is reported here as well as in the closure report.
+    for failure in &local_failures {
+        tracing::warn!(%failure, "SDK local compilation failed");
+    }
     let mut report =
         serde_json::to_value(closure.report()).map_err(|error| ProviderError::failure(error.to_string()))?;
     report["local_failures"] =
