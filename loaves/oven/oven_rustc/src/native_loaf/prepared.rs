@@ -73,8 +73,12 @@ pub struct NativeLoafConsumerReport {
     pub current_local_sources: usize,
     /// Actual registry binding/edge replays; unchanged privately retained lock authority requires none.
     pub current_registry_bindings: usize,
-    /// Current source candidates demanded by local dependency selection, without acquiring their native owners.
+    /// Distinct source candidate facts retained for dependency selection, without acquiring their native owners.
     pub current_local_dependency_candidates: usize,
+    /// Demanded package candidate maps actually reconstructed during this request.
+    pub dependency_candidate_projections: usize,
+    /// Demanded candidate lookups served by the original observed declarations without reconstruction.
+    pub dependency_candidate_reuses: usize,
     /// Native executable-owner selections during current-input replay; cached reuse requires none.
     pub native_tool_owner_checks: usize,
     /// Actual current compiler standard-library closure observations.
@@ -176,7 +180,7 @@ impl NativeLoafConsumerPreparation {
         current.finish_index()?;
         report.prepared_reuse = true;
         report.retained_reuse = true;
-        finish_report(&self.closure, &current, &mut report, started);
+        finish_report(&self.closure, &current, &mut report, started)?;
         self.report = report;
         self.local = current.local;
         self.local_declarations = current.local_declarations;
@@ -215,7 +219,8 @@ struct Current {
     local_declarations: Option<ObservedDeclarations>,
     declarations_checked: bool,
     link: Option<Option<String>>,
-    candidates: BTreeMap<String, Vec<CurrentCandidate>>,
+    candidate_projections: usize,
+    candidate_reuses: usize,
     index: Option<current_inputs::PinnedIndexBatch>,
 }
 
@@ -223,6 +228,8 @@ struct Current {
 struct ObservedDeclarations {
     manifests: Vec<toml::Value>,
     inputs: InputObservations,
+    /// Projection of these declarations and the same graph/lock key, moved with their original observations.
+    candidates: BTreeMap<String, Vec<CurrentCandidate>>,
 }
 
 /// Current source-only candidate facts; this descriptor confers no physical or semantic execution authority.
@@ -310,7 +317,7 @@ fn prepare_with_store(
                     tracing::trace!(target: "incan::invocation", decision = "reuse", input = %current.key, preparation_calls = 0_u64);
                     report.prepared_reuse = true;
                     current.finish_index()?;
-                    finish_report(&closure, &current, &mut report, started);
+                    finish_report(&closure, &current, &mut report, started)?;
                     return Ok(NativeLoafConsumerPreparation {
                         closure,
                         report,
@@ -358,7 +365,7 @@ fn prepare_with_store(
     ) {
         report.hint_persistence_error = Some(error.to_string());
     }
-    finish_report(&closure, &current, &mut report, started);
+    finish_report(&closure, &current, &mut report, started)?;
     Ok(NativeLoafConsumerPreparation {
         closure,
         report,
@@ -400,6 +407,7 @@ impl Current {
                 graph_digest,
                 oven_store::digest_bytes(&lock_bytes),
                 request.index.canonicalize().map_err(failed)?,
+                request.blobs,
                 &rustc,
                 &compiler,
                 request.target,
@@ -419,7 +427,8 @@ impl Current {
             local_declarations: None,
             declarations_checked: false,
             link: None,
-            candidates: BTreeMap::new(),
+            candidate_projections: 0,
+            candidate_reuses: 0,
             index: None,
         })
     }
@@ -716,15 +725,24 @@ impl Current {
         Ok(true)
     }
 
-    /// Load only demanded package candidates from current source coordinates, never unrelated native owners.
+    /// Project demanded candidates once per observed declaration generation, never acquiring unrelated native owners.
+    ///
+    /// The containing preparation moves these facts only after the graph/lock/compiler request key matches. Every
+    /// local declaration, including unselected facets, remains observed. Unselected registry archives join the same
+    /// observations before reading; selected declarations remain authenticated by their original owner handoffs.
     fn current_candidates(
         &mut self,
         request: &NativeLoafConsumerRequest<'_>,
         closure: &NativeLoafClosure,
         loaf: &str,
     ) -> Result<&[CurrentCandidate]> {
-        if !self.candidates.contains_key(loaf) {
-            self.read_local_declarations()?;
+        self.read_local_declarations()?;
+        let declarations = self
+            .local_declarations
+            .as_mut()
+            .ok_or_else(|| refused("current local declarations missing"))?;
+        if !declarations.candidates.contains_key(loaf) {
+            let _projection = tracing::trace_span!(target: "incan::invocation", "oven_rustc::project_native_dependency_candidates", input = loaf).entered();
             let mut candidates = Vec::new();
             for binding in self.seed.units.iter().filter(|binding| binding.loaf == loaf) {
                 let selected = closure.graph.units.values().find(|unit| {
@@ -736,8 +754,10 @@ impl Current {
                 });
                 let manifest = match selected {
                     Some(unit) => source_manifest(unit)?,
-                    None => current_inputs::registry_source_manifest(request.blobs, binding)
-                        .map_err(NativeLoafError::Failed)?,
+                    None => current_inputs::registry_source_manifest(request.blobs, binding, |archive| {
+                        declarations.inputs.observe(archive);
+                    })
+                    .map_err(NativeLoafError::Failed)?,
                 };
                 candidates.push(CurrentCandidate {
                     loaf: binding.loaf.clone(),
@@ -752,13 +772,7 @@ impl Current {
                     origin: NativeLoafOrigin::Registry,
                 });
             }
-            for (facet, manifest) in self.graph.facets.iter().zip(
-                self.local_declarations
-                    .as_ref()
-                    .ok_or_else(|| refused("current local declarations missing"))?
-                    .manifests
-                    .iter(),
-            ) {
+            for (facet, manifest) in self.graph.facets.iter().zip(&declarations.manifests) {
                 let project = manifest
                     .get("project")
                     .ok_or_else(|| refused("current local candidate has no project"))?;
@@ -785,9 +799,14 @@ impl Current {
                     origin: NativeLoafOrigin::Local,
                 });
             }
-            self.candidates.insert(loaf.to_string(), candidates);
+            declarations.candidates.insert(loaf.to_string(), candidates);
+            self.candidate_projections += 1;
+        } else {
+            self.candidate_reuses += 1;
+            tracing::trace!(target: "incan::invocation", decision = "retained_dependency_candidates", input = loaf, projection_calls = 0_u64);
         }
-        self.candidates
+        declarations
+            .candidates
             .get(loaf)
             .map(Vec::as_slice)
             .ok_or_else(|| refused("current local dependency candidates missing"))
@@ -838,6 +857,7 @@ impl Current {
     /// Graph order and candidate multiplicity remain authoritative; unselected declarations are also observed so new
     /// compatible candidates cannot hide behind retained selected units. Full source mapping is guarded separately.
     fn read_local_declarations(&mut self) -> Result<()> {
+        let _reconciliation = tracing::trace_span!(target: "incan::invocation", "oven_rustc::reconcile_local_declarations", already_checked = self.declarations_checked).entered();
         if self.declarations_checked {
             return Ok(());
         }
@@ -860,7 +880,11 @@ impl Current {
             if inputs.supports_retention() && !inputs.current() {
                 return Err(refused("local declarations changed during parsing"));
             }
-            self.local_declarations = Some(ObservedDeclarations { manifests, inputs });
+            self.local_declarations = Some(ObservedDeclarations {
+                manifests,
+                inputs,
+                candidates: BTreeMap::new(),
+            });
         }
         self.declarations_checked = true;
         Ok(())
@@ -947,7 +971,13 @@ fn finish_report(
     current: &Current,
     report: &mut NativeLoafConsumerReport,
     started: Instant,
-) {
+) -> Result<()> {
+    if let Some(declarations) = &current.local_declarations
+        && declarations.inputs.supports_retention()
+        && !declarations.inputs.current()
+    {
+        return Err(refused("native candidate inputs changed during reconciliation"));
+    }
     report.selected_units = closure.graph.units.len();
     report.selected_native_owners = closure
         .graph
@@ -959,7 +989,13 @@ fn finish_report(
     report.current_local_sources = current.local.loads;
     // Cached native products need no installed build tools.
     report.native_tool_owner_checks = 0;
-    report.current_local_dependency_candidates = current.candidates.values().map(Vec::len).sum();
+    report.current_local_dependency_candidates = current
+        .local_declarations
+        .as_ref()
+        .map(|declarations| declarations.candidates.values().map(Vec::len).sum())
+        .unwrap_or_default();
+    report.dependency_candidate_projections = current.candidate_projections;
+    report.dependency_candidate_reuses = current.candidate_reuses;
     if let Some(index) = &current.index {
         let work = index.work();
         report.index_git_processes = work.processes;
@@ -970,6 +1006,7 @@ fn finish_report(
         report.index_blob_bytes = work.blob_bytes;
     }
     report.seconds = started.elapsed().as_secs_f64();
+    Ok(())
 }
 
 #[cfg(all(test, unix))]

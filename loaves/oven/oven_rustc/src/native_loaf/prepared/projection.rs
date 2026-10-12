@@ -259,7 +259,7 @@ impl Candidate {
         }
         let manifest = match self.origin {
             Origin::Registry(index) => {
-                current_inputs::registry_source_manifest(request.blobs, &current.seed.units[index])
+                current_inputs::registry_source_manifest(request.blobs, &current.seed.units[index], |_| {})
                     .map_err(NativeLoafError::Failed)?
             }
             Origin::Local(index) => {

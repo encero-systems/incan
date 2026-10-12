@@ -11,8 +11,13 @@ use crate::native_loaf::{NativeLoafOrigin, NativeLoafRecord};
 pub(crate) use super::index_batch::PinnedIndexBatch;
 pub(crate) use super::local::{LocalDependencyCandidate, local_dependency_demands, select_local_dependency};
 
-/// Read a genuinely unselected registry candidate's source manifest without acquiring its native owner.
-pub(crate) fn registry_source_manifest(blobs: &Path, binding: &SdkLockedUnit) -> Result<toml::Value, Error> {
+/// Read an unselected registry candidate without acquiring its native owner, observing its archive before use.
+/// The caller's existing input observer can retain derived facts; cold projectors need no retained observation.
+pub(crate) fn registry_source_manifest(
+    blobs: &Path,
+    binding: &SdkLockedUnit,
+    observe: impl FnOnce(&Path),
+) -> Result<toml::Value, Error> {
     let hex = binding
         .archive_digest
         .strip_prefix("sha256:")
@@ -20,10 +25,9 @@ pub(crate) fn registry_source_manifest(blobs: &Path, binding: &SdkLockedUnit) ->
     if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err("invalid current candidate archive digest".into());
     }
-    let archive = oven_store::source_archive::VerifiedLoafArchive::read(
-        &blobs.join(format!("{hex}.tar")),
-        &binding.archive_digest,
-    )?;
+    let path = blobs.join(format!("{hex}.tar"));
+    observe(&path);
+    let archive = oven_store::source_archive::VerifiedLoafArchive::read(&path, &binding.archive_digest)?;
     let manifest: toml::Value = toml::from_str(std::str::from_utf8(archive.manifest()?)?)?;
     if manifest
         .get("project")
