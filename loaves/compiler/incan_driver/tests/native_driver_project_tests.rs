@@ -4663,6 +4663,42 @@ def main() -> None:
     )
 }
 
+/// Prove generator expressions with later `for` clauses byte-identical to legacy: a later clause reads the earlier
+/// clauses' items, captured lists and its own filters; clauses nest three deep, draw from a list or a builtin range the
+/// earlier item bounds, and yield text; and taking a prefix runs each element only as it is drawn.
+#[test]
+fn later_clause_generator_expression_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("later-clause-generator-expression")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def note(n: int) -> int:
+    println(f"note {n}")
+    return n
+
+def positives(xs: list[int], ys: list[int]) -> Generator[int]:
+    return (x * y for x in xs if x > 0 for y in ys if y > x)
+
+def main() -> None:
+    values: list[int] = positives([1, 2, 3], [2, 3, 4]).take(3).collect()
+    println(f"{values[0]} {values[1]} {values[2]}")
+    println(len(positives([1, 2, 3], [2, 3, 4]).collect()))
+    sums: list[int] = (x + y + z for x in [100] for y in [10, 20] for z in [1, 2]).collect()
+    println(" ".join([str(v) for v in sums]))
+    ranged: list[int] = (y for x in [1, 2, 3] for y in range(x)).collect()
+    println(" ".join([str(v) for v in ranged]))
+    drawn: list[int] = (note(x * 10 + y) for x in [1, 2] for y in [0, 1]).take(3).collect()
+    println(len(drawn))
+    words = ["a", "b"]
+    suffixes = ["x", "y"]
+    joined: list[str] = (w + s for w in words for s in suffixes if s != w).collect()
+    println(" ".join(joined))
+"#,
+    )
+}
+
 /// Prove unit and payload construction, enum passing/returning, and variant-bound match output against legacy.
 #[test]
 fn source_enum_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
