@@ -188,6 +188,8 @@ from element_borrows import (
 from option_tests import is_option_carrier, is_union_carrier, option_isinstance, enum_tag
 from derived_defaults import is_derived_default, lower_derived_default
 from models import field_path, field_projection
+from newtype_hooks import lower_newtype_hook_result
+from validation_errors import lower_validation_error, display_validation_error
 from models import model_type, model_place, constructor_index, field_slot
 from model_values import (
     debug_model_operand,
@@ -1029,6 +1031,7 @@ def text_comparison(
 def is_nominal_type(ty: PlanType) -> bool:
     """Identify nominal, generator, zip, and tuple values whose owned payloads require transfer or destruction."""
     match ty:
+        PlanType.ValidationError => return true
         PlanType.Enum(_index, _name) => return true
         PlanType.Model(_index, _name) => return true
         PlanType.ZipIterator(_left, _right) => return true
@@ -3400,7 +3403,7 @@ def library_call_operands(
     return ordered_slot_operands(builder, binding, arguments, types, span, offset, true, positional)
 
 
-def instantiated_external_call(
+pub def instantiated_external_call(
     mut builder: Builder,
     path: str,
     type_arguments: list[PlanType],
@@ -3656,7 +3659,7 @@ def function_argument(mut builder: Builder, ty: PlanType, value: Operand, span: 
         _ => return Ok(value)
 
 
-def fixed_arguments(
+pub def fixed_arguments(
     mut builder: Builder,
     elements: &list[RustArgumentElement],
     span: SourceSpan,
@@ -3754,6 +3757,9 @@ def lower_runtime_helper(
             operands = fixed_arguments(builder, arguments, span)?
             external_call(builder, path, int_triple, PlanType.Unit, operands, output, span)
             return Ok(None)
+        RustHelper.NewtypeHookExtract => return lower_newtype_hook_result(builder, arguments, destination, span)
+        RustHelper.ValidationErrorNew => return lower_validation_error(builder, arguments, destination, false, span)
+        RustHelper.ValidationErrorWithCode => return lower_validation_error(builder, arguments, destination, true, span)
         RustHelper.NewtypeConstraintValidate =>
             if len(arguments) != 3:
                 return Err("invalid Body IR NewtypeConstraintValidate arity")
@@ -4320,6 +4326,10 @@ pub def clone_nominal_operand(mut builder: Builder, value: Place, span: SourceSp
     A shared model reference, such as a receiver, already is the borrow that Clone takes.
     """
     match place_type(builder.locals, value):
+        PlanType.ValidationError => return carrier_payload_value(builder, value, span)
+        PlanType.ValidationErrorRef =>
+            owned = Place(local=value.local, projection=Projection.Deref(PlanType.ValidationError), span=span)
+            return carrier_payload_value(builder, owned, span)
         PlanType.ModelRef(index, name) =>
             result = temporary(builder, PlanType.Model(index, name), span)
             terminate_call(builder, CalleeKind.CloneModel(index, name), [read_place(value, false, span)], result, span)
@@ -4642,6 +4652,8 @@ def display_value_operand(
                 operand = value_operand(builder, value, span)?
                 return display_plan_value(builder, operand, span, type_parameter)
             match place_type(builder.locals, place):
+                PlanType.ValidationError => return display_validation_error(builder, place, span)
+                PlanType.ValidationErrorRef => return display_validation_error(builder, place, span)
                 PlanType.Enum(owner, name) =>
                     if owner >= len(builder.enums) and builder.intrinsics[owner - len(builder.enums)].carrier != "":
                         result = format_carrier(builder, place, span)?
@@ -9544,7 +9556,7 @@ def lower_join_helper(
     return Ok(None)
 
 
-def argument_type(
+pub def argument_type(
     mut builder: Builder,
     arguments: &list[RustArgumentElement],
     index: int,

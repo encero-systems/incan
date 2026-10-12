@@ -305,6 +305,11 @@ pub(super) fn collect_local_enum_declarations(
                 .declaration_identities
                 .get(&(declaration.span.start, declaration.span.end))?
                 .clone();
+            let parameter_names = value
+                .type_params
+                .iter()
+                .map(|parameter| parameter.name.clone())
+                .collect::<Vec<_>>();
             let variants = value
                 .variants
                 .iter()
@@ -323,16 +328,7 @@ pub(super) fn collect_local_enum_declarations(
                                 .declarations
                                 .enum_payload_types
                                 .get(&(field.span.start, field.span.end))
-                                .map(|ty| {
-                                    parameter_types::retain_parameter_type(
-                                        parameter_types::checked_semantic_type(ty, type_info),
-                                        &value
-                                            .type_params
-                                            .iter()
-                                            .map(|parameter| parameter.name.clone())
-                                            .collect::<Vec<_>>(),
-                                    )
-                                })
+                                .map(|ty| parameter_types::checked_parameter_type(ty, type_info, &parameter_names))
                         })
                         .collect::<Option<Vec<_>>>()?;
                     Some(bir::EnumVariantDeclaration {
@@ -544,18 +540,19 @@ pub(super) fn collect_local_nominal_declarations(
                                 .fields
                                 .iter()
                                 .find(|checked| checked.name == field.node.name)
-                                .map(|checked| parameter_types::checked_semantic_type(&checked.ty, type_info))
+                                .map(|checked| {
+                                    parameter_types::checked_parameter_type(&checked.ty, type_info, &type_parameters)
+                                })
                                 .unwrap_or(IncanType::Unknown)
                         } else {
                             type_info
                                 .declarations
                                 .model_field_types
                                 .get(&(field.span.start, field.span.end))
-                                .map(|ty| parameter_types::checked_semantic_type(ty, type_info))
+                                .map(|ty| parameter_types::checked_parameter_type(ty, type_info, &type_parameters))
                                 .unwrap_or(IncanType::Unknown)
                         }
                     })
-                    .map(|ty| parameter_types::retain_parameter_type(ty, &type_parameters))
                     .collect(),
                 named_type_identities: type_info.declarations.named_type_identities.clone(),
                 type_parameter_count: type_parameters.len(),
@@ -622,8 +619,9 @@ fn retain_inherited_layout(
 
 /// Retain a newtype's checked carrier as one canonical tuple slot, with declaration-owned placeholders that only
 /// checked concrete uses may specialize. Integer primitive constraints retain a raw carrier layout while construction
-/// sites retain their validation; the layout alone does not authorize unchecked construction. Validation hooks,
-/// noninteger constraints, and constrained serde deserialization remain outside this profile.
+/// sites retain their validation; the layout alone does not authorize unchecked construction. Nongeneric source hooks
+/// retain canonical checked ingress. Generic hooks, noninteger constraints, and validated serde reconstruction remain
+/// refused.
 fn collect_plain_newtype(
     span: ast::Span,
     newtype: &ast::NewtypeDecl,
@@ -634,7 +632,9 @@ fn collect_plain_newtype(
         return None;
     }
     let facts = type_info.declarations.newtype_construction.get(&newtype.name)?;
-    if facts.checked_constructor.is_some() {
+    if facts.checked_constructor.is_some()
+        && (!facts.type_params.is_empty() || facts.checked_constructor_identity.is_none())
+    {
         return None;
     }
     let canonical = type_info
@@ -642,10 +642,7 @@ fn collect_plain_newtype(
         .declaration_identities
         .get(&(span.start, span.end))?
         .clone();
-    let underlying = parameter_types::retain_parameter_type(
-        parameter_types::checked_semantic_type(&facts.underlying, type_info),
-        &facts.type_params,
-    );
+    let underlying = parameter_types::checked_parameter_type(&facts.underlying, type_info, &facts.type_params);
     if !facts.constraints.is_empty() && underlying != IncanType::Primitive(IncanPrimitiveType::Int) {
         return None;
     }

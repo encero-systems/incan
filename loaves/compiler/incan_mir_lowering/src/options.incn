@@ -104,6 +104,7 @@ pub def propagate_result(
     value = Place(local=source.local, projection=Projection.VariantField(0, 0, input.variants[0].fields[0]), span=span)
     builder.emit(plan_assign(destination, RvalueKind.Use(read_place(value, true, span)), span))
     match frame_place_type(builder.locals, destination):
+        PlanType.ValidationError => builder.owned.append(destination.local)
         PlanType.String => builder.owned.append(destination.local)
         PlanType.Enum(_owner, _name) => builder.owned.append(destination.local)
         PlanType.Model(_owner, _name) => builder.owned.append(destination.local)
@@ -345,6 +346,8 @@ pub def carrier_payload_value(mut builder: Builder, place: Place, span: SourceSp
     mut reference_type = PlanType.StringRef
     match ty:
         PlanType.String => pass
+        PlanType.ValidationError =>
+            reference_type = PlanType.ValidationErrorRef
         PlanType.List(leaf, depth) =>
             reference_type = PlanType.ListRef(leaf, depth)
         PlanType.Set(leaf) =>

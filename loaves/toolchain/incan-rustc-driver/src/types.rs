@@ -119,6 +119,8 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::CheckedInt => Ty::new_tup(tcx, &[tcx.types.i64, tcx.types.bool]),
         PlanType::String => string_type(tcx)?,
         PlanType::Decimal => decimal_type(tcx)?,
+        PlanType::ValidationError => validation_error_type(tcx)?,
+        PlanType::ValidationErrorRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, validation_error_type(tcx)?),
         PlanType::FrozenStr => frozen_type(tcx)?,
         PlanType::FrozenBytes => frozen_bytes_type(tcx)?,
         PlanType::FrozenCollection(name, elements) => frozen_collection_type(tcx, name, elements)?,
@@ -324,6 +326,12 @@ fn string_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
 /// Recover Decimal128 from the canonical runtime constructor's return type, preserving its dependency identity.
 fn decimal_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
     let definition = crate::callees::external(tcx, "incan_native_runtime::decimal_from_parts")?;
+    Ok(tcx.fn_sig(definition).instantiate_identity().skip_binder().output())
+}
+
+/// Recover the dependency-owned builtin error from its canonical Incan wrapper, preserving its actual Rust identity.
+fn validation_error_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
+    let definition = crate::callees::external(tcx, "incan_native_runtime::make_validation_error")?;
     Ok(tcx.fn_sig(definition).instantiate_identity().skip_binder().output())
 }
 

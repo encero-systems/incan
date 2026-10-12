@@ -145,6 +145,9 @@ pub enum PlanType:
     # Exact static string storage, including generic arguments; StrRef remains a body-local formatting view.
     StaticText
     StaticBytes
+    # Dependency-owned builtin validation storage; the reference borrows its message and optional code.
+    ValidationError
+    ValidationErrorRef
     StrRef
     StringArray(int)
     StrArray(int)

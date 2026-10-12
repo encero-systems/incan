@@ -241,7 +241,9 @@ impl<'a> PublicationAudit<'a> {
         match ty {
             IncanType::SelfType if self.trait_self => Ok(()),
             IncanType::TypeVar(name) if self.type_parameters.contains(name) => Ok(()),
-            IncanType::Primitive(_) | IncanType::Never | IncanType::Decimal { .. } => Ok(()),
+            IncanType::Primitive(_) | IncanType::Never | IncanType::Decimal { .. } | IncanType::NativeBuiltin(_) => {
+                Ok(())
+            }
             IncanType::Named(name) => self.named_type(name),
             IncanType::Generic { base, args } => {
                 // Compiler collections have no declaration requirement; a generic nominal retains its checked base.
@@ -272,7 +274,8 @@ impl<'a> PublicationAudit<'a> {
             | IncanType::SelfType
             | IncanType::RustInteropPath(_)
             | IncanType::Infer
-            | IncanType::Unknown => Err(CoverageReason::UnresolvedReference),
+            | IncanType::Unknown
+            | IncanType::Unsupported(_) => Err(CoverageReason::UnresolvedReference),
         }
     }
 
@@ -460,6 +463,9 @@ impl<'a> PublicationAudit<'a> {
             }
             Rvalue::FieldlessEnumVariant(target) => self.fieldless_variant(target)?,
             Rvalue::ResultVariant(value) => {
+                if !value.has_complete_canonical_types() {
+                    return Err(CoverageReason::UnresolvedReference);
+                }
                 self.operand(&mut value.payload)?;
                 for identity in value.canonical_types.values_mut() {
                     self.identity(identity, true)?;

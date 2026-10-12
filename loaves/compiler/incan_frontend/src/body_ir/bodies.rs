@@ -207,8 +207,14 @@ pub(super) fn lower_function_body(
         .get(&(decl_span.start, decl_span.end))
         .is_some_and(|slot| !slot.mutable);
     let owner_return_type = binding
-        .map(|binding| parameter_types::checked_semantic_type(&binding.return_type, lowering_facts.type_info))
-        .map(|ty| parameter_types::retain_parameter_type(ty, &type_parameters))
+        .map(|binding| {
+            parameter_types::checked_context_type(
+                &binding.return_type,
+                lowering_facts.type_info,
+                &type_parameters,
+                lowering_facts.runtime_type_conflicts,
+            )
+        })
         .map(|ty| {
             if shared_method_chain {
                 decorated_bindings::planned_type(ty, lowering_facts.type_info)
@@ -381,8 +387,14 @@ pub(super) fn lower_method_body(
     let mut type_parameters = owner_parameter_names(receiver_ty, owner_name, lowering_facts.type_info);
     type_parameters.extend(method.type_params.iter().map(|parameter| parameter.name.clone()));
     let owner_return_type = binding
-        .map(|binding| parameter_types::checked_semantic_type(&binding.return_type, lowering_facts.type_info))
-        .map(|ty| parameter_types::retain_parameter_type(ty, &type_parameters))
+        .map(|binding| {
+            parameter_types::checked_context_type(
+                &binding.return_type,
+                lowering_facts.type_info,
+                &type_parameters,
+                lowering_facts.runtime_type_conflicts,
+            )
+        })
         .map(|ty| close_self_type(ty, receiver_ty))
         .unwrap_or(IncanType::Unknown);
 
@@ -552,7 +564,7 @@ pub(super) fn owner_self_type(owner_name: &str, owner_type_params: &[ast::TypePa
 ///
 /// Only a trait default keeps `Self` open: its receiver type is `Self` itself, so closing changes nothing there, and
 /// trait specialization closes it for each adopter.
-fn close_self_type(ty: IncanType, receiver_ty: &IncanType) -> IncanType {
+pub(super) fn close_self_type(ty: IncanType, receiver_ty: &IncanType) -> IncanType {
     match ty {
         IncanType::SelfType => receiver_ty.clone(),
         IncanType::Generic { base, args } => IncanType::Generic {

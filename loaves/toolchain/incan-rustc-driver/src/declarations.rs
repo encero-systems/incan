@@ -89,6 +89,19 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
                 .push(ast::PathSegment::from_ident(ident("FrozenBytesCarrier", span)));
             ast::TyKind::Path(None, path)
         }
+        PlanType::ValidationError => {
+            let mut path = ast::Path::from_ident(ident("incan_native_runtime", span));
+            path.segments
+                .push(ast::PathSegment::from_ident(ident("ValidationErrorCarrier", span)));
+            ast::TyKind::Path(None, path)
+        }
+        PlanType::ValidationErrorRef => ast::TyKind::Ref(
+            None,
+            ast::MutTy {
+                ty: ty(&PlanType::ValidationError, span),
+                mutbl: ast::Mutability::Not,
+            },
+        ),
         PlanType::List(leaf, depth) => {
             let mut element = ty(&list_leaf_type((*leaf).clone()), span);
             for _ in 0..*depth {

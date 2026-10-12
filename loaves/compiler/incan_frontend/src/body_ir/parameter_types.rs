@@ -14,11 +14,149 @@ pub(super) fn checked_semantic_type(ty: &crate::symbols::ResolvedType, facts: &T
     retain_checked_nominal_names(semantic_type_from_resolved(ty), facts)
 }
 
-/// Normalize nested nominal spellings and structural union order before they cross the Body IR boundary.
+/// Classify declaration binders before builtin storage projection so a same-spelled parameter keeps its own category.
+pub(super) fn checked_parameter_type(
+    ty: &crate::symbols::ResolvedType,
+    facts: &TypeCheckInfo,
+    parameters: &[String],
+) -> IncanType {
+    retain_checked_nominal_names(
+        retain_parameter_type(semantic_type_from_resolved(ty), parameters),
+        facts,
+    )
+}
+
+/// Retain signature storage only where both the current module and its checked provider context agree on provenance.
+pub(super) fn checked_context_type(
+    ty: &crate::symbols::ResolvedType,
+    facts: &TypeCheckInfo,
+    parameters: &[String],
+    conflicts: &std::collections::BTreeSet<String>,
+) -> IncanType {
+    refuse_runtime_conflicts(checked_parameter_type(ty, facts, parameters), conflicts)
+}
+
+/// Collect same-spelled source types from the already checked provider modules, including function-only imports.
+pub(super) fn runtime_name_conflicts(context: &[bir::BodyIrModule]) -> std::collections::BTreeSet<String> {
+    context
+        .iter()
+        .flat_map(|module| {
+            module
+                .nominal_declarations
+                .iter()
+                .map(|declaration| &declaration.canonical)
+                .chain(
+                    module
+                        .enum_declarations
+                        .iter()
+                        .map(|declaration| &declaration.canonical),
+                )
+                .chain(
+                    module
+                        .fieldless_enum_declarations
+                        .iter()
+                        .map(|declaration| &declaration.canonical),
+                )
+                .chain(
+                    module
+                        .value_enum_declarations
+                        .iter()
+                        .map(|declaration| &declaration.canonical),
+                )
+                .chain(
+                    module
+                        .type_alias_declarations
+                        .iter()
+                        .map(|declaration| &declaration.canonical),
+                )
+                .chain(module.trait_declarations.iter())
+                .chain(
+                    module
+                        .bodies
+                        .iter()
+                        .flat_map(|body| body.named_type_identities.values()),
+                )
+                .chain(
+                    module
+                        .nominal_declarations
+                        .iter()
+                        .flat_map(|declaration| declaration.named_type_identities.values()),
+                )
+                .chain(
+                    module
+                        .type_alias_declarations
+                        .iter()
+                        .flat_map(|declaration| declaration.named_type_identities.values()),
+                )
+        })
+        .filter(|identity| {
+            identity.declaration_name == incan_semantics_core::RuntimeBuiltinType::ValidationError.binding_name()
+                && incan_semantics_core::RuntimeBuiltinType::from_identity(identity).is_none()
+        })
+        .map(|identity| identity.declaration_name.clone())
+        .collect()
+}
+
+/// Refuse an unresolved runtime-name collision in every nested storage position; source nominal aliases stay source
+/// types.
+fn refuse_runtime_conflicts(ty: IncanType, conflicts: &std::collections::BTreeSet<String>) -> IncanType {
+    match ty {
+        IncanType::NativeBuiltin(ref builtin) if conflicts.contains(builtin.binding_name()) => {
+            IncanType::Unsupported(format!("ambiguous builtin {} type provenance", builtin.binding_name()))
+        }
+        IncanType::Generic { base, args } => IncanType::Generic {
+            base,
+            args: args
+                .into_iter()
+                .map(|argument| refuse_runtime_conflicts(argument, conflicts))
+                .collect(),
+        },
+        IncanType::Tuple(items) => IncanType::Tuple(
+            items
+                .into_iter()
+                .map(|item| refuse_runtime_conflicts(item, conflicts))
+                .collect(),
+        ),
+        IncanType::Ref(inner) => IncanType::Ref(Box::new(refuse_runtime_conflicts(*inner, conflicts))),
+        IncanType::RefMut(inner) => IncanType::RefMut(Box::new(refuse_runtime_conflicts(*inner, conflicts))),
+        IncanType::TypeToken(inner) => IncanType::TypeToken(Box::new(refuse_runtime_conflicts(*inner, conflicts))),
+        IncanType::Function {
+            mut params,
+            return_type,
+        } => {
+            for parameter in &mut params {
+                parameter.ty = refuse_runtime_conflicts(parameter.ty.clone(), conflicts);
+            }
+            IncanType::Function {
+                params,
+                return_type: Box::new(refuse_runtime_conflicts(*return_type, conflicts)),
+            }
+        }
+        ty => ty,
+    }
+}
+
+/// Normalize nested nominal spellings, checked runtime storage and structural union order at the Body IR boundary.
 /// Imported metadata may list an equivalent union in another order; retaining one order keeps nested return and
 /// parameter positions on the same layout without changing the legacy checker's representation.
 fn retain_checked_nominal_names(ty: IncanType, facts: &TypeCheckInfo) -> IncanType {
     match ty {
+        IncanType::Named(ref name)
+            if facts
+                .declarations
+                .body_ir_native_type_identities
+                .get(name)
+                .is_some_and(|identity| {
+                    identity.declaration_name == *name
+                        && incan_semantics_core::RuntimeBuiltinType::from_identity(identity).is_some()
+                }) =>
+        {
+            if ambiguous_runtime_name(name, facts) {
+                IncanType::Unsupported(format!("ambiguous builtin {name} type provenance"))
+            } else {
+                IncanType::NativeBuiltin(incan_semantics_core::RuntimeBuiltinType::ValidationError)
+            }
+        }
         IncanType::Named(name) => IncanType::Named(
             facts
                 .declarations
@@ -59,6 +197,26 @@ fn retain_checked_nominal_names(ty: IncanType, facts: &TypeCheckInfo) -> IncanTy
         }
         ty => ty,
     }
+}
+
+/// Refuse bare provider leaves that share a builtin's name until exact annotation and signature provenance survives
+/// projection.
+fn ambiguous_runtime_name(name: &str, facts: &TypeCheckInfo) -> bool {
+    facts
+        .declarations
+        .named_type_identities
+        .values()
+        .chain(
+            facts
+                .declarations
+                .qualified_type_references
+                .values()
+                .map(|reference| &reference.identity),
+        )
+        .any(|identity| {
+            identity.declaration_name == name
+                && incan_semantics_core::RuntimeBuiltinType::from_identity(identity).is_none()
+        })
 }
 
 /// Distinguish declared binders from nominal types using the active declaration's retained parameter set.
@@ -102,7 +260,7 @@ pub(super) fn retain_parameter_type(ty: IncanType, parameters: &[String]) -> Inc
 impl BodyBuilder<'_, '_> {
     /// Convert a checked type while retaining the active declaration's explicit placeholder bindings.
     pub(super) fn checked_type(&self, ty: &crate::symbols::ResolvedType) -> IncanType {
-        let ty = retain_parameter_type(checked_semantic_type(ty, self.type_info), &self.type_parameters);
+        let ty = checked_context_type(ty, self.type_info, &self.type_parameters, self.runtime_type_conflicts);
         if self.shared_method_chain {
             decorated_bindings::planned_type(ty, self.type_info)
         } else {

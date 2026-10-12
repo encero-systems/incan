@@ -1805,10 +1805,17 @@ impl ResultVariant {
     /// Require exactly one declaration identity for every named payload-type leaf before execution.
     pub fn has_complete_canonical_types(&self) -> bool {
         /// Collect named leaves using the same structural child positions retained in the type facts.
-        fn paths(ty: &IncanType, path: &mut Vec<usize>, out: &mut std::collections::BTreeSet<Vec<usize>>) {
+        fn paths(
+            ty: &IncanType,
+            path: &mut Vec<usize>,
+            out: &mut std::collections::BTreeMap<Vec<usize>, Option<crate::RuntimeBuiltinType>>,
+        ) {
             match ty {
                 IncanType::Named(_) => {
-                    out.insert(path.clone());
+                    out.insert(path.clone(), None);
+                }
+                IncanType::NativeBuiltin(builtin) => {
+                    out.insert(path.clone(), Some(builtin.clone()));
                 }
                 IncanType::Tuple(items) | IncanType::Generic { args: items, .. } => {
                     for (index, item) in items.iter().enumerate() {
@@ -1820,12 +1827,15 @@ impl ResultVariant {
                 _ => {}
             }
         }
-        let mut required = std::collections::BTreeSet::new();
+        let mut required = std::collections::BTreeMap::new();
         paths(&self.ok_type, &mut vec![0], &mut required);
         paths(&self.error_type, &mut vec![1], &mut required);
         required.len() == self.canonical_types.len()
-            && required.iter().all(|path| {
+            && required.iter().all(|(path, builtin)| {
                 self.canonical_types.get(path).is_some_and(|identity| {
+                    if let Some(builtin) = builtin {
+                        return crate::RuntimeBuiltinType::from_identity(identity).as_ref() == Some(builtin);
+                    }
                     identity.scope_discriminant.is_none()
                         && matches!(
                             identity.kind,
@@ -3471,6 +3481,12 @@ pub enum HelperOp {
     RangeValidate,
     /// Fail-fast validation of a constrained newtype's saved input: checked predicates, target label, constraint label.
     NewtypeConstraintValidate,
+    /// Extract a checker-selected source hook's successful wrapper or raise its legacy validation failure.
+    NewtypeHookExtract,
+    /// Construct the dependency-owned builtin validation error from its checked message.
+    ValidationErrorNew,
+    /// Construct the dependency-owned builtin validation error from its checked message and code.
+    ValidationErrorWithCode,
 }
 
 impl HelperOp {
@@ -3504,6 +3520,9 @@ impl HelperOp {
         match self {
             Self::RangeValidate => "range_validate",
             Self::NewtypeConstraintValidate => "newtype_constraint_validate",
+            Self::NewtypeHookExtract => "newtype_hook_extract",
+            Self::ValidationErrorNew => "validation_error_new",
+            Self::ValidationErrorWithCode => "validation_error_with_code",
             Self::StrConcat => "str_concat",
             Self::StrEq => "str_eq",
             Self::StrNe => "str_ne",

@@ -196,6 +196,7 @@ def reached_names(ty: &RustType, names: list[str]) -> Result[list[str], str]:
     """
     mut result = names
     match ty:
+        RustType.NativeBuiltin(_builtin) => return Err("unsupported Body IR serde of a builtin runtime carrier")
         RustType.Named(name) =>
             if str(name) not in result:
                 result.append(str(name))

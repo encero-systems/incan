@@ -1,6 +1,6 @@
 """Resolve complete checked carrier and collection types against one retained native layout context."""
 
-from rust::incan_semantics_core import IncanType as RustType, IncanCallableParam, IncanCallableParamKind
+from rust::incan_semantics_core import IncanType as RustType, IncanCallableParam, IncanCallableParamKind, RuntimeBuiltinType
 from rust::incan_semantics_core::body_ir import NominalDeclaration, EnumDeclaration as RustEnumDeclaration
 from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
 from pub::incan_mir_plan import PlanType, ListLeaf, EnumDeclaration, TupleElement
@@ -34,6 +34,8 @@ pub def native_source_type(
             match native_source_type(nominals, enums, unions, inner, intrinsics)?:
                 PlanType.Model(index, name) => return Ok(PlanType.ModelMutRef(index, name))
                 _ => return Err("unsupported Body IR mutable callable receiver outside a nominal layout")
+        RustType.Unsupported(description) => return Err(f"unsupported Body IR type {description}")
+        RustType.NativeBuiltin(RuntimeBuiltinType.ValidationError) => return Ok(PlanType.ValidationError)
         RustType.Function(params=parameters, return_type=result) =>
             mut signature: list[PlanType] = []
             for parameter in parameters:

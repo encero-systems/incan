@@ -84,6 +84,8 @@ enum Scalar {
     FrozenCollection(String, Vec<Scalar>),
     StaticText,
     StaticBytes,
+    ValidationError,
+    ValidationErrorRef,
     StrRef,
     StringArray(i64),
     StrArray(i64),
@@ -233,6 +235,8 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::CheckedInt => Scalar::CheckedInt,
         PlanType::String => Scalar::String,
         PlanType::Decimal => Scalar::Decimal,
+        PlanType::ValidationError => Scalar::ValidationError,
+        PlanType::ValidationErrorRef => Scalar::ValidationErrorRef,
         PlanType::FrozenStr => Scalar::FrozenStr,
         PlanType::FrozenBytes => Scalar::FrozenBytes,
         PlanType::FrozenCollection(name, elements) => {
@@ -557,6 +561,7 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
         }
         Projection::Deref(field_type) => {
             let pointee = match ty {
+                Scalar::ValidationErrorRef => Scalar::ValidationError,
                 Scalar::ModelRef(owner) | Scalar::ModelMutRef(owner) => Scalar::Model(owner),
                 Scalar::EnumRef(owner) => Scalar::Enum(owner),
                 Scalar::ZipIteratorRef(left, right) | Scalar::ZipIteratorMutRef(left, right) => {
@@ -686,7 +691,9 @@ fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, 
 /// Reject implicit copies of any recursively owned value, including tuple string fields.
 fn owns_values(ty: &Scalar) -> bool {
     match ty {
-        Scalar::String | Scalar::StringArray(_) | Scalar::Model(_) | Scalar::Closure(_) => true,
+        Scalar::String | Scalar::StringArray(_) | Scalar::Model(_) | Scalar::Closure(_) | Scalar::ValidationError => {
+            true
+        }
         Scalar::Tuple(elements) => elements.iter().any(owns_values),
         _ => false,
     }
@@ -1016,6 +1023,7 @@ fn borrow_result(plan: &Plan, function: &Function, value: &Place, mutable: bool)
         Scalar::Set(leaf) => Ok(Scalar::SetRef(leaf)),
         Scalar::Dict(key, value) => Ok(Scalar::DictRef(key, value)),
         Scalar::String => Ok(Scalar::StringRef),
+        Scalar::ValidationError => Ok(Scalar::ValidationErrorRef),
         Scalar::StringArray(count) => Ok(Scalar::StringArrayRef(count)),
         Scalar::StrArray(count) => Ok(Scalar::StrArrayRef(count)),
         _ => Err(invalid(function, "shared borrow requires an owned formatting value")),
@@ -1027,6 +1035,7 @@ fn shared_reference(ty: &Scalar) -> bool {
     matches!(
         ty,
         Scalar::StringRef
+            | Scalar::ValidationErrorRef
             | Scalar::StrRef
             | Scalar::EnumRef(_)
             | Scalar::ModelRef(_)
@@ -1094,6 +1103,7 @@ fn source_signature_type(ty: &Scalar) -> bool {
                 | Scalar::FrozenStr
                 | Scalar::FrozenBytes
                 | Scalar::FrozenCollection(_, _)
+                | Scalar::ValidationError
                 | Scalar::Model(_)
                 | Scalar::Enum(_)
                 | Scalar::List(_, _)
@@ -1115,6 +1125,7 @@ fn external_signature_type(ty: &Scalar) -> bool {
         || matches!(
             ty,
             Scalar::ZipIteratorRef(_, _)
+                | Scalar::ValidationErrorRef
                 | Scalar::StringRef
                 | Scalar::StrRef
                 | Scalar::StaticText

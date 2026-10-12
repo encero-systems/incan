@@ -526,9 +526,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Lower a value the checker coerces into a newtype where it is used (RFC 017).
     ///
-    /// A single raw wrapper or integer-constrained wrapper evaluates its input once, retains any checked predicates,
-    /// then constructs its canonical tuple slot. Validation hooks, aggregate-field failure collection, chains and
-    /// unretained owners stay refused rather than supplying an unchecked value to their consumer.
+    /// Source-local nongeneric chains evaluate the input once and retain every selected hook or predicate before its
+    /// canonical wrapper. Aggregate-field error collection and unretained owners remain specifically refused.
     pub(super) fn lower_newtype_coercion(
         &mut self,
         expr: &ast::Spanned<ast::Expr>,
@@ -536,61 +535,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
-        let span = hir_span(expr.span);
-        let declaration = match coercion.steps.as_slice() {
-            [step] if step.ctor.is_none() => self
-                .local_nominal_declarations
-                .get(&step.newtype_name)
-                .filter(|declaration| {
-                    declaration.canonical.kind == SemanticSourceTargetKind::Newtype && declaration.fields == ["0"]
-                })
-                .cloned(),
-            _ => None,
-        };
-        let Some(declaration) = declaration else {
-            return self.unsupported_operand("validated-newtype coercion".to_string(), scope, span, out);
-        };
-        let constraints = &coercion.steps[0].constraints;
-        if !constraints.is_empty()
-            && matches!(
-                coercion.mode,
-                crate::typechecker::ValidatedNewtypeCoercionMode::AggregateField { .. }
-            )
-        {
-            return self.unsupported_typed_operand(
-                "constrained-newtype aggregate-field validation".to_owned(),
-                self.checked_type(&coercion.target_type),
-                scope,
-                span,
-                out,
-            );
-        }
-        let key = (expr.span.start, expr.span.end);
-        self.coercions_in_progress.insert(key);
-        let value = self.lower_expr_to_operand(expr, scope, out);
-        self.coercions_in_progress.remove(&key);
-        let value = if constraints.is_empty() {
-            value
-        } else {
-            self.constrained_newtype_input(&declaration.name, value, constraints, scope, span, out)
-        };
-        let ty = self.checked_type(&coercion.target_type);
-        self.push_assign_temp(
-            bir::Rvalue::Aggregate(
-                bir::AggregateKind::Constructor(Box::new(bir::ConstructorTarget {
-                    name: declaration.name.clone(),
-                    canonical: Some(declaration.canonical.clone()),
-                    direct_declaration_id: Some(declaration.direct_declaration_id.clone()),
-                    canonical_field_layout: Some(declaration.fields.clone()),
-                    binding: bir::ArgumentBinding::resolved_positional(1),
-                })),
-                fixed_elements(vec![value]),
-            ),
-            ty,
-            scope,
-            span,
-            out,
-        )
+        self.lower_newtype_ingress(expr, coercion, scope, out)
     }
 
     /// Lower a `model`/`class` or plain-newtype construction into a [`bir::AggregateKind::Constructor`] aggregate.
@@ -691,6 +636,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 )
             })
             .unwrap_or((None, None));
+        if let Some(checked) =
+            self.checked_newtype_construction(name, canonical.as_ref(), &operands, &ty, scope, hir_span_value, out)
+        {
+            return checked;
+        }
         let operands = self.constrain_nominal_arguments(name, canonical.as_ref(), operands, scope, hir_span_value, out);
         self.push_assign_temp(
             bir::Rvalue::Aggregate(
@@ -1056,6 +1006,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         if let Some(value) = self.lower_checked_length_call(args, span, scope, out) {
             return value;
+        }
+        if let Some(error) = self.lower_validation_error_construction(callee, type_args, args, span, scope, out) {
+            return error;
         }
         if self.type_info.resolved_builtin_call(span) == Some(BuiltinFnId::IsInstance) {
             return self.lower_checked_isinstance_call(type_args, args, span, scope, out);

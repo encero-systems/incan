@@ -420,11 +420,13 @@ fn a_prefix_surface_keyword_that_is_not_await_is_refused_rather_than_treated_as_
     let published_constants = HashMap::new();
     let published_callable_returns = HashMap::new();
     let local_enum_declarations = HashMap::new();
+    let runtime_type_conflicts = std::collections::BTreeSet::new();
     let lowering_facts = BodyIrLoweringFacts {
         local_enum_declarations: &local_enum_declarations,
         published_callable_returns: &published_callable_returns,
         published_constants: &published_constants,
         type_info: &type_info,
+        runtime_type_conflicts: &runtime_type_conflicts,
         function_default_sources: &function_default_sources,
         local_function_declarations: &local_function_declarations,
         local_receiver_methods: &[],

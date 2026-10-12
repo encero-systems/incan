@@ -191,11 +191,20 @@ pub fn library_type_identities(type_info: &TypeCheckInfo) -> Vec<CanonicalSymbol
     identities.into_iter().collect()
 }
 
-/// Collect the named leaves of `ty` with their structural paths below `path`, through generic arguments and tuple
-/// items, as `ResultVariant::has_complete_canonical_types` walks them.
-fn named_leaf_paths(ty: &IncanType, path: &mut Vec<usize>, out: &mut Vec<(Vec<usize>, String)>) {
+/// A type leaf whose retained canonical identity must survive Result-side settlement.
+enum RetainedTypeLeaf {
+    /// A source or package nominal binding.
+    Named(String),
+    /// A builtin runtime carrier with exact root binding proof.
+    NativeBuiltin(incan_semantics_core::RuntimeBuiltinType),
+}
+
+/// Collect the identity-bearing leaves of `ty` with their structural paths below `path`, through generic arguments and
+/// tuple items, as `ResultVariant::has_complete_canonical_types` walks them.
+fn named_leaf_paths(ty: &IncanType, path: &mut Vec<usize>, out: &mut Vec<(Vec<usize>, RetainedTypeLeaf)>) {
     match ty {
-        IncanType::Named(name) => out.push((path.clone(), name.clone())),
+        IncanType::Named(name) => out.push((path.clone(), RetainedTypeLeaf::Named(name.clone()))),
+        IncanType::NativeBuiltin(builtin) => out.push((path.clone(), RetainedTypeLeaf::NativeBuiltin(builtin.clone()))),
         IncanType::Tuple(items) | IncanType::Generic { args: items, .. } => {
             for (index, item) in items.iter().enumerate() {
                 path.push(index);
@@ -332,6 +341,7 @@ fn build_body_ir_module_v0_with_provider_operations(
         }
     }
     let published_callable_returns = collect::collect_published_callable_returns(context);
+    let runtime_type_conflicts = parameter_types::runtime_name_conflicts(context);
     let lowering_facts = BodyIrLoweringFacts {
         local_enum_declarations: &local_enum_declarations,
         published_callable_returns: &published_callable_returns,
@@ -343,6 +353,7 @@ fn build_body_ir_module_v0_with_provider_operations(
         local_nominal_declarations: &local_nominal_declarations,
         local_fieldless_enum_declarations: &local_fieldless_enum_declarations,
         local_value_enum_declarations: &local_value_enum_declarations,
+        runtime_type_conflicts: &runtime_type_conflicts,
         module_identity: &module_identity,
         provider_operations,
         rust_module: program.rust_module_path.as_ref().map(|path| path.node.as_str()),
@@ -504,6 +515,8 @@ struct BodyIrLoweringFacts<'type_info, 'source> {
     published_callable_returns: &'source HashMap<CanonicalSymbolId, IncanType>,
     published_constants: &'source HashMap<CanonicalSymbolId, bir::Constant>,
     type_info: &'type_info TypeCheckInfo,
+    /// Checked provider type names that cannot be distinguished from an ambient builtin by a bare signature leaf.
+    runtime_type_conflicts: &'source std::collections::BTreeSet<String>,
     function_default_sources: &'source FunctionDefaultSources,
     local_function_declarations: &'source LocalFunctionDeclarations,
     local_receiver_methods: &'source [LocalReceiverMethod],
@@ -753,20 +766,20 @@ pub fn is_direct_replacement_model_derive(decorator: &ast::Decorator) -> bool {
 /// Admit raw tuple wrappers with checked native derives, owner and method parameters, and trait adoptions.
 ///
 /// A trait adopted with type arguments is instantiated from the checker-recorded arguments. Integer primitive
-/// constraints retain their checked predicates at construction sites; validation hooks and noninteger constraints
-/// remain refused by the declaration collector. Constrained serde deserialization remains outside this profile until
-/// its decoder retains validation. Same-type method aliases, and short rebindings naming one of the newtype's own
-/// methods, keep the checked target identity, as aliases on models do, unless combined with a generic trait adoption
-/// or owner parameters; lint suppressions change nothing at run time. Associated type targets are resolved by checking
-/// into the retained method frames and trait implementation identities. Interop edges and method partials require
-/// additional representation facts and remain outside this profile. Bare and module-qualified JSON protocol derives
-/// use the checker's canonical serde selections, as on models.
+/// constraints retain their checked predicates at construction sites; source-local nongeneric hooks retain canonical
+/// calls followed by checked-result extraction. Noninteger constraints and validated serde deserialization remain
+/// outside this profile until their ingress is represented. Same-type method aliases, and short rebindings naming one
+/// of the newtype's own methods, keep the checked target identity, as aliases on models do, unless combined with a
+/// generic trait adoption or owner parameters; lint suppressions change nothing at run time. Associated type targets
+/// are resolved by checking into the retained method frames and trait implementation identities. Interop edges and
+/// method partials require additional representation facts and remain outside this profile. Bare and module-qualified
+/// JSON protocol derives use the checker's canonical serde selections, as on models.
 pub fn is_direct_replacement_checked_newtype(newtype: &ast::NewtypeDecl, type_info: &TypeCheckInfo) -> bool {
     let selections = newtype_derives::checked_newtype_derives(newtype, type_info);
     let Some(facts) = type_info.declarations.newtype_construction.get(&newtype.name) else {
         return false;
     };
-    if !facts.constraints.is_empty()
+    if (!facts.constraints.is_empty() || facts.checked_constructor.is_some())
         && selections
             .iter()
             .flatten()
@@ -951,6 +964,8 @@ struct BodyBuilder<'type_info, 'source> {
     /// Immutable values decoded from the selected package representation, indexed by canonical declaration.
     published_constants: &'source HashMap<CanonicalSymbolId, bir::Constant>,
     type_info: &'type_info TypeCheckInfo,
+    /// Canonical provider context that requires an explicit refusal for ambiguous bare builtin spellings.
+    runtime_type_conflicts: &'source std::collections::BTreeSet<String>,
     /// Source defaults for top-level partial targets, retained only until they lower into Body IR.
     function_default_sources: &'source FunctionDefaultSources,
     /// Exact declarations physically present in this module, used only to retain same-module call identities.
@@ -1052,6 +1067,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             local_enum_declarations: lowering_facts.local_enum_declarations,
             published_callable_returns: lowering_facts.published_callable_returns,
             type_info: lowering_facts.type_info,
+            runtime_type_conflicts: lowering_facts.runtime_type_conflicts,
             function_default_sources: lowering_facts.function_default_sources,
             local_function_declarations: lowering_facts.local_function_declarations,
             local_receiver_methods: lowering_facts.local_receiver_methods,
@@ -1299,12 +1315,23 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         leaves
             .into_iter()
-            .filter_map(|(path, name)| {
-                recorded
-                    .get(&path)
-                    .or_else(|| self.type_info.declarations.named_type_identities.get(&name))
-                    .cloned()
-                    .map(|identity| (path, identity))
+            .filter_map(|(path, leaf)| {
+                let identity = match leaf {
+                    RetainedTypeLeaf::Named(name) => recorded
+                        .get(&path)
+                        .or_else(|| self.type_info.declarations.named_type_identities.get(&name)),
+                    RetainedTypeLeaf::NativeBuiltin(builtin) => recorded.get(&path).or_else(|| {
+                        self.type_info
+                            .declarations
+                            .body_ir_native_type_identities
+                            .get(builtin.binding_name())
+                            .filter(|identity| {
+                                incan_semantics_core::RuntimeBuiltinType::from_identity(identity).as_ref()
+                                    == Some(&builtin)
+                            })
+                    }),
+                };
+                identity.cloned().map(|identity| (path, identity))
             })
             .collect()
     }
@@ -1824,6 +1851,9 @@ mod match_;
 mod newtype_derives;
 
 mod newtype_constraints;
+mod newtype_hooks;
+mod newtype_ingress;
+mod validation_errors;
 
 mod closures;
 

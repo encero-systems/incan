@@ -751,7 +751,11 @@ fn is_getter_frame(body: &Body, canonical: &CanonicalSymbolId) -> bool {
 /// the default generic after specialization.
 fn is_closed_type(ty: &IncanType) -> bool {
     match ty {
-        IncanType::TypeVar(_) | IncanType::SelfType | IncanType::Infer | IncanType::Unknown => false,
+        IncanType::TypeVar(_)
+        | IncanType::SelfType
+        | IncanType::Infer
+        | IncanType::Unknown
+        | IncanType::Unsupported(_) => false,
         IncanType::Generic { args, .. } | IncanType::Tuple(args) => args.iter().all(is_closed_type),
         IncanType::Function { params, return_type } => {
             params.iter().all(|param| is_closed_type(&param.ty)) && is_closed_type(return_type)
@@ -761,6 +765,7 @@ fn is_closed_type(ty: &IncanType) -> bool {
         | IncanType::Primitive(_)
         | IncanType::Named(_)
         | IncanType::Decimal { .. }
-        | IncanType::RustInteropPath(_) => true,
+        | IncanType::RustInteropPath(_)
+        | IncanType::NativeBuiltin(_) => true,
     }
 }

@@ -41,6 +41,8 @@ pub def type_name(ty: &RustType) -> str:
         RustType.Ref(_inner) => return "Ref"
         RustType.RefMut(_inner) => return "RefMut"
         RustType.RustInteropPath(_path) => return "RustInteropPath"
+        RustType.NativeBuiltin(_builtin) => return str(ty)
+        RustType.Unsupported(description) => return f"Unsupported[{description}]"
         RustType.Never => return "Never"
         RustType.SelfType => return "SelfType"
         RustType.Infer => return "Infer"
@@ -159,8 +161,9 @@ pub def carrier_element(element: TupleElement) -> bool:
 
 
 pub def owned_carrier(ty: PlanType) -> bool:
-    """Report whether an owned list, model or enum field must keep its enclosing tuple initialized when read."""
+    """Report whether a list, nominal or dependency-owned validation error keeps its enclosing tuple initialized."""
     match ty:
+        PlanType.ValidationError => return true
         PlanType.List(_leaf, _depth) => return true
         PlanType.Enum(_owner, _name) => return true
         PlanType.Model(_owner, _name) => return true
