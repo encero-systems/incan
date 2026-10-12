@@ -180,7 +180,7 @@ from model_values import (
 )
 from enums import lower_enum_declarations, enum_owner, variant_index, unit_variant
 from enums import validate_unit_comparison, validate_unit_ordering
-from value_enums import value_variant, value_method_owner
+from value_enums import value_variant, value_method_owner, validate_layout
 from unions import (
     native_source_type,
     collect_unions,
@@ -2136,7 +2136,6 @@ def lower_call(
 
 
 def lower_value_enum_method(
-    module: &BodyIrModule,
     mut builder: Builder,
     owner: int,
     arguments: &list[RustArgumentElement],
@@ -2146,20 +2145,35 @@ def lower_value_enum_method(
     """Select the retained raw value by native tag, preserving repeated reads and text ownership."""
     if len(arguments) != 1:
         return Err("unsupported Body IR value enum getter arguments")
-    declaration = builder.value_enums[owner]
     source = argument_place(builder, arguments, 0, span)?
+    result_type = value_enum_raw_type(builder, owner)
+    output = call_destination(builder, destination, result_type, span)?
+    if place_type(builder.locals, output) != result_type or output.local in builder.owned:
+        return Err("unsupported Body IR value enum getter destination")
+    return select_value_enum_raw(builder, owner, source, output, span)
+
+
+def value_enum_raw_type(builder: Builder, owner: int) -> PlanType:
+    """The raw value a value enum's variants carry: text or an integer."""
+    match builder.value_enums[owner].backing:
+        ValueEnumBacking.Str => return PlanType.String
+        ValueEnumBacking.Int => return PlanType.Int
+
+
+def select_value_enum_raw(
+    mut builder: Builder,
+    owner: int,
+    source: Place,
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Write the raw value of the variant `source` holds into `output`, selected by its native tag."""
+    declaration = builder.value_enums[owner]
     raw_tag = temporary(builder, PlanType.EnumTag, span)
     tag = temporary(builder, PlanType.Int, span)
     builder.emit(plan_assign(raw_tag, RvalueKind.Discriminant(source), span))
     builder.emit(plan_assign(tag, RvalueKind.TagToInt(read_place(raw_tag, false, span)), span))
-    mut result_type = PlanType.Int
-    match declaration.backing:
-        ValueEnumBacking.Str =>
-            result_type = PlanType.String
-        ValueEnumBacking.Int => pass
-    output = call_destination(builder, destination, result_type, span)?
-    if place_type(builder.locals, output) != result_type or output.local in builder.owned:
-        return Err("unsupported Body IR value enum getter destination")
+    result_type = value_enum_raw_type(builder, owner)
     join = builder.new_block(span)
     owners = builder.owned
     for slot in range(len(declaration.variants)):
@@ -2179,12 +2193,12 @@ def lower_value_enum_method(
             builder.current = selected
         raw_value: RustConstant = declaration.variants[slot].raw_value.clone()
         operand: RustOperand = RustOperand.Constant(raw_value)
-        raw: RustRvalue = RustRvalue.Use(operand)
         if result_type == PlanType.String:
+            raw: RustRvalue = RustRvalue.Use(operand)
             lower_string_assignment(builder, output, raw, span)?
         else:
-            operation = scalar_rvalue(module, builder, raw, result_type, span)?
-            builder.emit(plan_assign(output, operation, span))
+            value = value_operand(builder, operand, span)?
+            builder.emit(plan_assign(output, RvalueKind.Use(value), span))
         builder.finish(TerminatorKind.Goto(join), span)
         builder.current = next
         builder.owned = owners
@@ -2230,7 +2244,7 @@ def lower_method_call(
     match value_method_owner(
         module, target, builder.locals[builder.local_offset:], arguments[0], span, builder.unions, builder.intrinsics,
     )?:
-        Some(owner) => return lower_value_enum_method(module, builder, owner, arguments, destination, span)
+        Some(owner) => return lower_value_enum_method(builder, owner, arguments, destination, span)
         None => pass
     # A stdlib method runs in the SDK crate that compiled it, through the frontend's crate-call record.
     for delegation in module.stdlib_delegations:
@@ -3899,7 +3913,7 @@ pub def display_operand(mut builder: Builder, value: &RustOperand, span: SourceS
     match value:
         RustOperand.Place(read) =>
             place = scalar_place(builder, read.place, span)?
-            if is_list(place_type(builder.locals, place)):
+            if is_list(place_type(builder.locals, place)) or is_collection(place_type(builder.locals, place)):
                 operand = value_operand(builder, value, span)?
                 return display_plan_operand(builder, operand, span)
             match place_type(builder.locals, place):
@@ -3909,6 +3923,9 @@ pub def display_operand(mut builder: Builder, value: &RustOperand, span: SourceS
                         if read.fact == OwnershipFact.Move:
                             drop_owned(builder, place.local, span)
                         return Ok(result)
+                    value_enum = value_enum_owner(builder, owner)?
+                    if value_enum >= 0:
+                        return display_value_enum(builder, value_enum, place, span)
                 _ => pass
         _ => pass
     # A cloned or borrowed string is copied into a new owned string; the original stays where it is.
@@ -3926,10 +3943,35 @@ pub def display_operand(mut builder: Builder, value: &RustOperand, span: SourceS
     return display_plan_operand(builder, operand, span)
 
 
+def value_enum_owner(builder: Builder, index: int) -> Result[int, str]:
+    """Find the value enum whose retained layout is source enum `index`, or -1 for any other enum."""
+    if index >= len(builder.enums):
+        return Ok(-1)
+    for owner in range(len(builder.value_enums)):
+        if builder.enums[index].canonical == builder.value_enums[owner].canonical:
+            validate_layout(builder.enums[index], builder.value_enums[owner])?
+            return Ok(owner)
+    return Ok(-1)
+
+
+def display_value_enum(mut builder: Builder, owner: int, source: Place, span: SourceSpan) -> Result[Place, str]:
+    """Display a value enum as its raw value, as legacy's Display does: the text itself, or the integer's digits."""
+    ty = value_enum_raw_type(builder, owner)
+    raw = temporary(builder, ty, span)
+    select_value_enum_raw(builder, owner, source, raw, span)?
+    if ty == PlanType.String:
+        return Ok(raw)
+    return display_plan_operand(builder, read_place(raw, false, span), span)
+
+
 def display_plan_operand(mut builder: Builder, operand: Operand, span: SourceSpan) -> Result[Place, str]:
-    """Format a materialized scalar without re-reading its source ownership fact."""
+    """
+    Format a materialized scalar without re-reading its source ownership fact.
+
+    A list, set or dictionary displays through its structure, as legacy's Debug spells it.
+    """
     ty = operand_type(builder, operand)?
-    if is_owned_list(ty):
+    if is_owned_list(ty) or is_owned_collection(ty):
         return debug_plan_operand(builder, operand, span)
     if ty == PlanType.String:
         return display_string_operand(builder, operand, span)
