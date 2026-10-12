@@ -10667,6 +10667,61 @@ fn bytes_io_trait_method_refusal_is_retained() -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
+/// Indexing a tuple copied from a collection and iterating a list slice retain legacy output and source storage.
+#[test]
+fn collection_projection_reads_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("collection-projection-reads")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def main() -> None:
+    pairs = [(1, "a"), (2, "b")]
+    println(pairs[0][0])
+    println(pairs[-1][-1])
+    rows = [1, 2, 3, 4]
+    for value in rows[1:3]:
+        println(value)
+    for value in rows[::-1]:
+        println(value)
+    words = ["a", "b", "c"]
+    for word in words[1:]:
+        println(word)
+    println(len(rows))
+    println(pairs[0][1])
+"#,
+    )
+}
+
+/// Dictionary entry writes through a generic model's field change that retained field rather than a copied map.
+#[test]
+fn generic_dictionary_field_mutation_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("generic-dictionary-field-mutation")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/ownership_numerics_and_bounds/generic_functions_hash_through_dict_and_set_types.incn"
+        ),
+    )
+}
+
+/// An environment argument list can be sliced for iteration while its original storage remains readable.
+#[test]
+fn environment_argument_slice_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("environment-argument-slice")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!("../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_environ_args.incn"),
+    )
+}
+
 /// A stored hasher's returned bytes compare with one-shot digest bytes without moving comparison operands.
 #[test]
 fn stored_hasher_comparison_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
