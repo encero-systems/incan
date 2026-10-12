@@ -3340,15 +3340,11 @@ def instantiated_external_call(
     output: Place,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Declare one instantiation of a generic external and call it, keyed by its type arguments beside its path."""
+    """Declare one generic external instantiation and preserve owned-result replacement and cleanup."""
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=type_arguments, parameters=parameters, return_type=result, span=span),
     )
-    terminate_call(builder, CalleeKind.Instantiated(path, type_arguments), operands, output, span)
-    # A returned String is a new owner, as `external_call` records for a monomorphic external.
-    if result == PlanType.String:
-        builder.owned.append(output.local)
-    return Ok(None)
+    return lower_callable_result(builder, CalleeKind.Instantiated(path, type_arguments), operands, output, result, span)
 
 
 def ordered_arguments(
