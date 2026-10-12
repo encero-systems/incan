@@ -18,5 +18,12 @@ fn decorated_function_retains_original_body_and_replacement() -> Result<(), Box<
     let original = &facts["decorated_bindings"][0]["original_body"];
     assert_eq!(original["return_type"], serde_json::to_value(&IncanType::Str)?);
     assert_eq!(body_named(&module, "run")?.return_type, IncanType::Int);
+    let [storage] = module.static_declarations.as_slice() else {
+        return Err("expected one initialized decorated replacement".into());
+    };
+    assert!(module.is_well_formed_static_declaration(storage));
+    let mut malformed = module.clone();
+    malformed.static_declarations[0].ty = IncanType::Bool;
+    assert!(!malformed.is_well_formed_static_declaration(&malformed.static_declarations[0]));
     Ok(())
 }
