@@ -9151,15 +9151,12 @@ def main() -> None:
     )
 }
 
-/// A compression error carries the SDK's Codec enum even when the consumer imports only the decompressor.
+/// A compression error retains its nested Codec identity; the SDK's absent executable enum representation stays
+/// refused until that independent layout is admitted.
 #[test]
 fn stdlib_nested_signature_types_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    let fixture = driver_fixture()?;
-    corpus::check_builtin_source(
-        &fixture.driver_binary("debug"),
-        &fixture.scratch("stdlib-nested-signature-types")?,
-        &fixture.sysroot,
-        &fixture.formatting,
+    check_project_refusal(
+        "stdlib_nested_signature_types",
         r#"from std.compression.gzip import decompress
 
 def main() -> None:
@@ -9167,6 +9164,7 @@ def main() -> None:
         Ok(_) => println("value")
         Err(_) => println("error")
 "#,
+        "unsupported Body IR nominal type Codec",
     )
 }
 

@@ -135,14 +135,19 @@ pub(super) fn signature_type_identities(
     let SymbolOrigin::Package { library, module_path } = &published.origin else {
         return Vec::new();
     };
-    let Some(call) = library_call(callee, cache) else {
-        return Vec::new();
-    };
     let path = std::iter::once(stdlib::STDLIB_ROOT.to_owned())
         .chain(module_path.iter().cloned())
         .collect::<Vec<_>>();
+    let types = match library_call(callee, cache) {
+        Some(call) => call
+            .parameters
+            .into_iter()
+            .chain(std::iter::once(call.return_type))
+            .collect(),
+        None => trait_signature_types(&published, &path, cache),
+    };
     let mut names = BTreeSet::new();
-    for ty in call.parameters.iter().chain(std::iter::once(&call.return_type)) {
+    for ty in &types {
         named_leaves(ty, &mut names);
     }
     names
@@ -175,6 +180,36 @@ pub(super) fn signature_type_identities(
             Some(identity)
         })
         .collect()
+}
+
+/// Retain a trait method's signature types even when its call needs concrete-adopter dispatch rather than a crate
+/// delegation. Matching the complete checked method identity keeps same-named methods on other traits out.
+fn trait_signature_types(identity: &CanonicalSymbolId, path: &[String], cache: &mut StdlibAstCache) -> Vec<IncanType> {
+    if identity.kind != SemanticSourceTargetKind::Method {
+        return Vec::new();
+    }
+    for (_, declaration) in cache.list_traits(path) {
+        let Some(method) = declaration.methods.get(&identity.declaration_name) else {
+            continue;
+        };
+        let Some(mut declared) = method.identity.clone() else {
+            continue;
+        };
+        if declared.origin != SymbolOrigin::Module(path.to_vec()) {
+            continue;
+        }
+        declared.origin = identity.origin.clone();
+        if declared != *identity {
+            continue;
+        }
+        return method
+            .params
+            .iter()
+            .map(|param| semantic_type_from_resolved(&param.ty))
+            .chain(std::iter::once(semantic_type_from_resolved(&method.return_type)))
+            .collect();
+    }
+    Vec::new()
 }
 
 /// Collect the nominal names a type mentions, through generic arguments, tuples and references.
