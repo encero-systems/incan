@@ -44,7 +44,7 @@ pub def serialize_enum_operand(
                     )
                     terminate_call(
                         builder,
-                        CalleeKind.Instantiated(path, ty),
+                        CalleeKind.Instantiated(path, [ty]),
                         [read_place(reference, false, span)],
                         destination,
                         span,

@@ -2195,11 +2195,11 @@ def main() -> None:
 /// Generic displays use the bound value's own display, including integral float spelling, through owner methods
 /// and operator hooks as well as ordinary functions.
 #[test]
-fn type_parameter_display_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+fn type_parameter_owner_display_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     corpus::check_builtin_source(
         &fixture.driver_binary("debug"),
-        &fixture.scratch("type-parameter-display")?,
+        &fixture.scratch("type-parameter-owner-display")?,
         &fixture.sysroot,
         &fixture.formatting,
         r#"def text[T with Display](value: T) -> str:
