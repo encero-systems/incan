@@ -8543,6 +8543,57 @@ def main() -> None:
     )
 }
 
+/// Stdlib Result combinators retain all checked type arguments, including the callback, and apply that callback only
+/// to the matching variant; their native output is byte-identical to legacy for both Result variants.
+#[test]
+fn stdlib_result_combinators_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("stdlib-result-combinators")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"from std.result import map, map_err, and_then
+
+
+def parse(text: str) -> Result[int, str]:
+    if text == "7":
+        return Ok(7)
+    return Err(f"bad {text}")
+
+
+def double(value: int) -> int:
+    println("double")
+    return value * 2
+
+
+def shout(error: str) -> str:
+    println("shout")
+    return f"{error}!"
+
+
+def reparse(value: int) -> Result[int, str]:
+    println("reparse")
+    return parse(str(value))
+
+
+def show(result: Result[int, str]) -> None:
+    match result:
+        Ok(value) => println(value)
+        Err(error) => println(error)
+
+
+def main() -> None:
+    show(map(parse("7"), double))
+    show(map(parse("x"), double))
+    show(map_err(parse("x"), shout))
+    show(map_err(parse("7"), shout))
+    show(and_then(parse("7"), reparse))
+    show(and_then(parse("y"), reparse))
+"#,
+    )
+}
+
 /// A call to an overloaded stdlib function runs the overload the checker selected by arity, as that overload's own SDK
 /// crate item instantiated with the call's type argument, beside a call to a function with one declaration.
 #[test]
