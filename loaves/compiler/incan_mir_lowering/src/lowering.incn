@@ -165,6 +165,8 @@ from pair_generators import pair_generator_locals, pair_generator_type
 from generator_consumers import is_generator_consumer, consumer_result, generator_consumer
 from project import project_context
 from nominal_instances import specialize_nominals, instance_arguments
+from enum_instances import specialize_enums
+from display_methods import display_functions
 from traits import method_index, owner_method_index, receiver_fills_slot, specialize_traits, validate_static_receiver
 from decls import lower_model_declarations, static_slot, static_accessors, library_item, library_enum_item
 from model_lists import model_list_read, structural_prefix, prefix_place
@@ -1883,6 +1885,7 @@ def lifted_frame(builder: Builder, name: str, arguments: list[PlanType], result:
         synthesized=[],
         scoped_locals=scoped_locals,
         scope_parents=builder.scope_parents,
+        display_functions=builder.display_functions,
     )
     _ = lifted.new_block(span)
     return lifted
@@ -4242,7 +4245,7 @@ def checked_aggregate(
     """Materialize a tuple or a proven plain-model constructor with its retained field order and ownership."""
     match kind:
         RustAggregateKind.EnumVariant(target) =>
-            owner, variant = variant_index(builder.enums, target)?
+            owner, variant = variant_index(builder.enums, target, expected)?
             if len(elements) != len(builder.enums[owner].variants[variant].fields):
                 return Err("invalid Body IR enum constructor payload count")
             mut operands: list[Operand] = []
@@ -4915,7 +4918,7 @@ pub def lower_program(
     for module in modules:
         _ = validate_project_module(module, modules)?
     source_context, checked = project_context(modules, entry)?
-    context = specialize_nominals(source_context)?
+    context = specialize_enums(specialize_nominals(source_context)?)?
     mut has_main = false
     for body in checked[entry].bodies:
         if function_name(context, body) == "main":
@@ -5108,7 +5111,7 @@ def body_refusals(
     for module in modules:
         _ = validate_project_module(module, modules)?
     source_context, checked = project_context(modules, entry)?
-    context = specialize_nominals(source_context)?
+    context = specialize_enums(specialize_nominals(source_context)?)?
     unions = collect_unions(context)
     mut intrinsics = intrinsic_declarations(context, files[entry])?
     _models = lower_model_declarations(context, files[entry], intrinsics)?
@@ -5151,7 +5154,7 @@ pub def lower_module(module: &BodyIrModule, source: str, file: str) -> Result[Pl
     """Validate declarations first, then lower ordinary bodies and each checked type-parameter instance used by them."""
     _ = validate_module(module)?
     traits = specialize_traits(module)?
-    specialized = specialize_nominals(traits)?
+    specialized = specialize_enums(specialize_nominals(traits)?)?
     return lower_concrete_module(specialized, source, file)
 
 
@@ -5447,6 +5450,7 @@ def lower_function(
         iteration_locals=list_iterator_locals(body.block),
         scoped_locals=scoped_locals,
         scope_parents=scope_parents,
+        display_functions=display_functions(module, intrinsics)?,
     )
     _ = builder.new_block(span)
     if body.is_generator():

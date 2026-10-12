@@ -17,6 +17,7 @@ from pub::incan_mir_plan import EnumDeclaration, EnumVariant, PlanType, SourceSp
 from models import model_type as plain_model_type
 from layout_types import native_source_type as retained_source_type
 from decls import library_enum_item, serde_propagation, with_serde_derives
+from nominal_instances import nominal_symbol
 
 
 pub def enum_type(declarations: list[RustEnumDeclaration], ty: &RustType) -> Option[PlanType]:
@@ -26,6 +27,11 @@ pub def enum_type(declarations: list[RustEnumDeclaration], ty: &RustType) -> Opt
             for index in range(len(declarations)):
                 if declarations[index].name == str(name):
                     return Some(PlanType.Enum(index, str(name)))
+        RustType.Generic(base=base, args=arguments) =>
+            name = nominal_symbol(str(base), arguments.clone())
+            for index in range(len(declarations)):
+                if declarations[index].name == name:
+                    return Some(PlanType.Enum(index, name))
         _ => pass
     return None
 
@@ -33,9 +39,15 @@ pub def enum_type(declarations: list[RustEnumDeclaration], ty: &RustType) -> Opt
 pub def variant_index(
     declarations: list[RustEnumDeclaration],
     target: &EnumVariantTarget,
+    expected: PlanType,
 ) -> Result[tuple[int, int], str]:
     """Resolve construction by exact variant and owner identities; written owner aliases remain diagnostic spelling."""
     for owner in range(len(declarations)):
+        match expected:
+            PlanType.Enum(selected, _name) =>
+                if owner != selected:
+                    continue
+            _ => return Err("unsupported Body IR enum constructor destination")
         declaration = declarations[owner]
         for slot in range(len(declaration.variants)):
             variant = declaration.variants[slot]

@@ -374,6 +374,11 @@ pub struct NominalDeclaration {
     /// together with its exact target method identity.
     #[serde(default)]
     pub method_partial_defaults: Vec<MethodPartialDefaults>,
+    /// Checker-selected source method that renders this nominal: an explicit string method or an Error message
+    /// fallback. None retains the checked derived-Display path; consumers must prove a matching receiver and result
+    /// signature before calling this identity. Older publications cannot authorize a custom display call.
+    #[serde(default)]
+    pub display_method: Option<CanonicalSymbolId>,
     /// Checked builtin and implicit nominal derives, retained in legacy normalization order. A selected `Default`
     /// over source field defaults requires a custom implementation rather than a Rust derive macro; consumers that
     /// cannot implement it must refuse that combination.
@@ -435,6 +440,10 @@ pub struct EnumDeclaration {
     pub name: String,
     /// Checked source visibility.
     pub public: bool,
+    /// Ordered declaration binders selected by checking; payload placeholders close only at checked concrete uses.
+    /// Older publications retain an empty list and cannot authorize a generic payload layout.
+    #[serde(default)]
+    pub type_parameters: Vec<String>,
     /// Source-ordered variants; native discriminants use these exact indices.
     pub variants: Vec<EnumVariantDeclaration>,
     /// Explicit and automatic derives selected by the checker.

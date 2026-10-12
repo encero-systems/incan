@@ -33,6 +33,13 @@ from rust::incan_semantics_core::body_ir import (
 )
 
 
+pub model DisplayFunction:
+    """One validated shared-receiver source body rendering a retained nominal as owned text."""
+
+    pub owner: int
+    pub symbol: str
+
+
 pub model Builder:
     """
     Construction state for one function's native frame.
@@ -98,6 +105,7 @@ pub model Builder:
     # Each break contributes its initialized owners to the loop's exit join.
     pub loop_exit_blocks: list[list[int]] = []
     pub loop_exit_owners: list[list[list[int]]] = []
+    pub display_functions: list[DisplayFunction] = []
 
     def new_block(mut self, span: SourceSpan) -> int:
         """Allocate a block before connecting edges, preserving index stability."""

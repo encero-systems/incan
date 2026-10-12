@@ -1317,6 +1317,7 @@ mod tests {
             canonical: owner.clone(),
             name: "Signal".into(),
             public: true,
+            type_parameters: Vec::new(),
             variants: vec![crate::body_ir::EnumVariantDeclaration {
                 direct_declaration_id: CompilerNodeId::declaration_span("lib", 300, 399),
                 canonical: variant.clone(),
@@ -1462,6 +1463,7 @@ mod tests {
             has_field_defaults: false,
             field_default_body: None,
             method_partial_defaults: Vec::new(),
+            display_method: None,
             derives: vec![],
             named_type_identities: Default::default(),
             type_parameters: Vec::new(),
@@ -1596,6 +1598,7 @@ mod tests {
             has_field_defaults: false,
             field_default_body: None,
             method_partial_defaults: Vec::new(),
+            display_method: None,
             derives: vec![],
             named_type_identities: Default::default(),
             type_parameters: Vec::new(),

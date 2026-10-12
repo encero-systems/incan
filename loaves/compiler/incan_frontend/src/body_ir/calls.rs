@@ -741,7 +741,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     pub(super) fn checked_enum_variant_target(
         &self,
         base: &ast::Spanned<ast::Expr>,
-        variant_name: &str,
+        _variant_name: &str,
         variant_span: ast::Span,
     ) -> Option<bir::EnumVariantTarget> {
         let ast::Expr::Ident(enum_name) = &base.node else {
@@ -759,7 +759,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .clone();
         Some(bir::EnumVariantTarget {
             enum_name: enum_name.clone(),
-            variant_name: variant_name.to_string(),
+            variant_name: variant_canonical.declaration_name.clone(),
             enum_canonical: self.type_info.resolved_identity(base.span).cloned(),
             variant_canonical,
             binding: bir::ArgumentBinding::resolved_positional(0),

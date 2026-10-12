@@ -803,7 +803,9 @@ pub fn is_direct_replacement_fieldless_enum(enum_decl: &ast::EnumDecl) -> bool {
 }
 
 /// Admit plain value-enum layouts, and normal enum layouts with undecorated methods and trait adoptions but without
-/// aliases or generic substitution.
+/// generic substitution in methods. An enum with type parameters is admitted only without user methods or trait
+/// adoptions; its ordered binders and payload placeholders close through checked layout instantiation. Variant aliases
+/// keep the selected canonical variant identity rather than adding a second payload slot.
 ///
 /// A normal enum's methods are ordinary bodies over its retained layout, and the trait slots its adopted local traits
 /// fill are retained in the module implementation registry, as for a model. A value enum also retains its separate
@@ -811,9 +813,8 @@ pub fn is_direct_replacement_fieldless_enum(enum_decl: &ast::EnumDecl) -> bool {
 /// nothing at run time.
 pub fn is_direct_native_enum(value: &ast::EnumDecl) -> bool {
     is_direct_replacement_value_enum(value)
-        || (value.type_params.is_empty()
+        || ((value.type_params.is_empty() || (value.methods.is_empty() && value.traits.is_empty()))
             && value.value_type.is_none()
-            && value.variant_aliases.is_empty()
             && value.methods.iter().all(|method| method.node.decorators.is_empty())
             && value
                 .decorators

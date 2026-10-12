@@ -168,10 +168,26 @@ pub def display_model_operand(
         Some(place) =>
             match place_type(builder.locals, place):
                 PlanType.Model(owner, _name) =>
+                    match builder.nominals[owner].display_method:
+                        Some(_selected) => return Ok(Some(display_checked_model(builder, owner, place, span)?))
+                        None => pass
                     if "Display" not in builder.nominals[owner].derives:
                         return Err("unsupported Body IR model display without derived Display")
                 _ => return Err("unsupported Body IR model display carrier")
             return Ok(Some(debug_model(builder, place, span)?))
+
+
+def display_checked_model(mut builder: Builder, owner: int, place: Place, span: SourceSpan) -> Result[Place, str]:
+    """Call the exact source body whose retained display target and shared receiver were validated for this layout."""
+    for function in builder.display_functions:
+        if function.owner != owner:
+            continue
+        argument = borrow_model(builder, place, place_type(builder.locals, place), span)?
+        result = temporary(builder, PlanType.String, span)
+        terminate_call(builder, CalleeKind.Planned(function.symbol), [argument], result, span)
+        builder.owned.append(result.local)
+        return Ok(result)
+    return Err(f"unsupported Body IR unavailable checked display body on {builder.nominals[owner].name}")
 
 
 pub def serialize_model_operand(

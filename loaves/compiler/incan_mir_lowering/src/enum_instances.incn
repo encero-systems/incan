@@ -1,0 +1,127 @@
+"""Concrete enum payload layouts selected from checked Body IR declaration binders and uses."""
+
+from rust::incan_semantics_core import IncanType as RustType
+from rust::incan_semantics_core::body_ir import BodyIrModule, EnumDeclaration
+from nominal_instances import nominal_symbol
+from type_parameters import substitute
+
+
+model EnumInstance:
+    """One enum declaration and its closed checked arguments, with a dependency lineage for recursion refusal."""
+
+    declaration: EnumDeclaration
+    arguments: list[RustType]
+    ancestors: list[str]
+
+
+pub def specialize_enums(module: &BodyIrModule) -> Result[BodyIrModule, str]:
+    """Close payload layouts before native type selection; open templates never become physical declarations."""
+    mut instances: list[EnumInstance] = []
+    for body in module.bodies:
+        for local in body.locals:
+            _ = collect_type(module, local.ty, instances, [])?
+        _ = collect_type(module, body.return_type, instances, [])?
+    for declaration in module.nominal_declarations:
+        for field in declaration.field_types:
+            _ = collect_type(module, field, instances, [])?
+    mut result = module.clone()
+    result.enum_declarations.clear()
+    for declaration in module.enum_declarations:
+        if len(declaration.type_parameters) == 0:
+            result.enum_declarations.push(declaration.clone())
+            for variant in declaration.variants:
+                for field in variant.fields:
+                    _ = collect_type(module, field, instances, [])?
+    mut cursor = 0
+    while cursor < len(instances):
+        instance = instances[cursor]
+        cursor += 1
+        declaration = close_layout(instance)?
+        for retained in result.enum_declarations:
+            if retained.name == declaration.name:
+                return Err(f"unsupported Body IR enum instance symbol collision {declaration.name}")
+        lineage = instance.ancestors + [instance.declaration.canonical.render_compact()]
+        for variant in declaration.variants:
+            for field in variant.fields:
+                _ = collect_type(module, field, instances, lineage)?
+        result.enum_declarations.push(declaration.clone())
+    return Ok(result)
+
+
+def collect_type(
+    module: &BodyIrModule,
+    ty: &RustType,
+    mut instances: list[EnumInstance],
+    ancestors: list[str],
+) -> Result[None, str]:
+    """Visit checked aggregate positions, retaining only closed enum uses and their exact declared argument order."""
+    match ty:
+        RustType.Generic(base=base, args=arguments) =>
+            for argument in arguments:
+                _ = collect_type(module, argument, instances, ancestors)?
+            if not closed_arguments(arguments):
+                return Ok(None)
+            for declaration in module.enum_declarations:
+                if declaration.name != str(base) or len(declaration.type_parameters) == 0:
+                    continue
+                if len(declaration.type_parameters) != len(arguments):
+                    return Err(f"unsupported Body IR enum type argument arity on {base}")
+                if declaration.canonical.render_compact() in ancestors:
+                    return Err(f"unsupported Body IR recursive enum payload instantiation on {base}")
+                return retain_instance(declaration, arguments.clone(), instances, ancestors)
+        RustType.Tuple(elements) =>
+            for element in elements:
+                _ = collect_type(module, element, instances, ancestors)?
+        RustType.Ref(inner) => return collect_type(module, inner, instances, ancestors)
+        RustType.RefMut(inner) => return collect_type(module, inner, instances, ancestors)
+        _ => pass
+    return Ok(None)
+
+
+def retain_instance(
+    declaration: &EnumDeclaration,
+    arguments: list[RustType],
+    mut instances: list[EnumInstance],
+    ancestors: list[str],
+) -> Result[None, str]:
+    """Deduplicate a layout by its canonical declaration and arguments, independently of a written alias."""
+    for retained in instances:
+        if retained.declaration.canonical == declaration.canonical and retained.arguments == arguments:
+            return Ok(None)
+    instances.append(EnumInstance(declaration=declaration.clone(), arguments=arguments, ancestors=ancestors))
+    return Ok(None)
+
+
+def closed_arguments(arguments: &list[RustType]) -> bool:
+    """Keep unresolved placeholders out of executable enum layouts, including nested aggregate arguments."""
+    for argument in arguments:
+        match argument:
+            RustType.TypeVar(_name) => return false
+            RustType.SelfType => return false
+            RustType.Unknown => return false
+            RustType.Infer => return false
+            RustType.Generic(base=_base, args=elements) =>
+                if not closed_arguments(elements):
+                    return false
+            RustType.Tuple(elements) =>
+                if not closed_arguments(elements):
+                    return false
+            RustType.Ref(inner) => return false
+            RustType.RefMut(inner) => return false
+            _ => pass
+    return true
+
+
+def close_layout(instance: EnumInstance) -> Result[EnumDeclaration, str]:
+    """Substitute payload fields while keeping each source variant's declaration and canonical identities."""
+    mut result = instance.declaration.clone()
+    result.name = nominal_symbol(str(instance.declaration.name), instance.arguments)
+    result.variants.clear()
+    for variant in instance.declaration.variants:
+        mut closed = variant.clone()
+        closed.fields.clear()
+        for field in variant.fields:
+            concrete: RustType = substitute(field, instance.declaration.type_parameters, instance.arguments)?
+            closed.fields.push(concrete.clone())
+        result.variants.push(closed.clone())
+    return Ok(result)

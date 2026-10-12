@@ -544,7 +544,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     bir::Pattern::Enum {
                         canonical: self.type_info.resolved_identity(name.span).cloned(),
                         name: String::new(),
-                        variant: name.node.clone(),
+                        variant: self
+                            .type_info
+                            .resolved_identity(name.span)
+                            .filter(|identity| identity.kind == SemanticSourceTargetKind::Variant)
+                            .map_or_else(|| name.node.clone(), |identity| identity.declaration_name.clone()),
                         fields: positional_fields,
                     }
                 }

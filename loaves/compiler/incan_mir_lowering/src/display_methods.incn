@@ -1,0 +1,35 @@
+"""Source-body symbols for checker-selected nominal display methods."""
+
+from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType
+from rust::incan_semantics_core::body_ir import BodyIrModule
+from pub::incan_mir_plan import PlanType, EnumDeclaration
+from frame import DisplayFunction
+from classes import frame_type, function_name
+
+
+pub def display_functions(
+    module: &BodyIrModule,
+    intrinsics: list[EnumDeclaration],
+) -> Result[list[DisplayFunction], str]:
+    """Resolve only the retained selected identity with its exact shared receiver and string-returning signature."""
+    mut functions: list[DisplayFunction] = []
+    for owner in range(len(module.nominal_declarations)):
+        declaration = module.nominal_declarations[owner]
+        match declaration.display_method:
+            None => continue
+            Some(selected) =>
+                for body in module.bodies:
+                    if body.canonical != Some(selected.clone()) or len(body.type_parameters) != 0:
+                        continue
+                    if len(body.params) != 1 or len(body.locals) == 0:
+                        continue
+                    match body.return_type:
+                        RustType.Primitive(IncanPrimitiveType.Str) => pass
+                        _ => continue
+                    if frame_type(module, body.locals[0], intrinsics)? != PlanType.ModelRef(owner, str(declaration.name)):
+                        continue
+                    for retained in functions:
+                        if retained.owner == owner:
+                            return Err(f"unsupported Body IR ambiguous checked display body on {declaration.name}")
+                    functions.append(DisplayFunction(owner=owner, symbol=function_name(module, body)))
+    return Ok(functions)

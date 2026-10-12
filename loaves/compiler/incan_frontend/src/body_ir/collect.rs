@@ -242,7 +242,16 @@ pub(super) fn collect_local_enum_declarations(
                                 .declarations
                                 .enum_payload_types
                                 .get(&(field.span.start, field.span.end))
-                                .map(|ty| parameter_types::checked_semantic_type(ty, type_info))
+                                .map(|ty| {
+                                    parameter_types::retain_parameter_type(
+                                        parameter_types::checked_semantic_type(ty, type_info),
+                                        &value
+                                            .type_params
+                                            .iter()
+                                            .map(|parameter| parameter.name.clone())
+                                            .collect::<Vec<_>>(),
+                                    )
+                                })
                         })
                         .collect::<Option<Vec<_>>>()?;
                     Some(bir::EnumVariantDeclaration {
@@ -266,6 +275,11 @@ pub(super) fn collect_local_enum_declarations(
                 canonical,
                 name: value.name.clone(),
                 public: value.visibility == ast::Visibility::Public,
+                type_parameters: value
+                    .type_params
+                    .iter()
+                    .map(|parameter| parameter.name.clone())
+                    .collect(),
                 variants,
                 derives: type_info.declarations.enum_derives.get(&value.name)?.clone(),
             })
@@ -437,6 +451,7 @@ pub(super) fn collect_local_nominal_declarations(
                 has_field_defaults: fields.iter().any(|field| field.node.default.is_some()),
                 field_default_body: None,
                 method_partial_defaults: Vec::new(),
+                display_method: checked_display_method(&declaration.node, type_info),
                 derives: if class_layout.is_some() {
                     // The class's own derive selection, plus the serde derives its trait adoptions imply.
                     let mut derives = type_info.declarations.class_derives.get(name)?.clone();
@@ -536,12 +551,33 @@ fn collect_plain_newtype(
         has_field_defaults: false,
         field_default_body: None,
         method_partial_defaults: Vec::new(),
+        display_method: None,
         derives,
         named_type_identities: type_info.declarations.named_type_identities.clone(),
         type_parameters: facts.type_params.clone(),
         type_parameter_count: facts.type_params.len(),
     })
 }
+
+/// Retain the checked string method, preferring an explicit declaration to the Error message fallback selected for
+/// the type. Derive-only Display keeps its existing Debug rendering and has no source method identity here.
+fn checked_display_method(declaration: &ast::Declaration, type_info: &TypeCheckInfo) -> Option<CanonicalSymbolId> {
+    let (name, methods) = match declaration {
+        ast::Declaration::Model(model) => (&model.name, &model.methods),
+        ast::Declaration::Class(class) => (&class.name, &class.methods),
+        _ => return None,
+    };
+    if let Some(method) = methods.iter().find(|method| method.node.name == "__str__") {
+        return type_info
+            .declarations
+            .method_bindings_by_span
+            .get(&(method.span.start, method.span.end))?
+            .identity
+            .clone();
+    }
+    type_info.error_message_display_type(name)?.identity.clone()
+}
+
 /// Retain exact source-local fieldless normal-enum declaration and unit-member facts in source order.
 ///
 /// Only this registry reaches the direct runtime. It deliberately has no payload layouts, aliases, match facts, or
