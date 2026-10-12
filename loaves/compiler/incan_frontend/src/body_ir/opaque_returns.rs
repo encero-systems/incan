@@ -97,7 +97,10 @@ fn return_carrier(body: &bir::Body) -> Option<IncanType> {
                 }
                 concrete = Some(ty);
             }
-            bir::StatementKind::Assign { .. } | bir::StatementKind::Call { .. } | bir::StatementKind::Drop { .. } => {}
+            bir::StatementKind::Assign { .. }
+            | bir::StatementKind::Call { .. }
+            | bir::StatementKind::Drop { .. }
+            | bir::StatementKind::Expr { .. } => {}
             _ => return None,
         }
     }
