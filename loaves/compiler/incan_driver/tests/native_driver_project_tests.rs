@@ -6821,6 +6821,76 @@ def main() -> None:
     )
 }
 
+/// Prove match guards that make the last use of an owned value, and alternations nested as tuple items, byte-identical
+/// to legacy: a guard taking a text parameter after a tuple alternation, a literal alternation and a carrier arm, with
+/// the arms that skip it; an alternation inside a tuple item, at the top of an arm and below a top-level alternation,
+/// each binding through the first alternative that matches; and a match value that moves an owner in one arm.
+#[test]
+fn guard_and_nested_alternation_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("guard-and-nested-alternation")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def approved(name: str) -> bool:
+    return len(name) > 2
+
+def confirm(pair: tuple[int, str], reviewer: str) -> str:
+    match pair:
+        (1, "yes") | (1, "y") if approved(reviewer) => return "confirmed"
+        _ => return "unconfirmed"
+
+def small(n: int, label: str) -> str:
+    match n:
+        1 | 2 if approved(label) => return "small"
+        _ => return "other"
+
+def tag_of(value: Option[int], note: str) -> str:
+    match value:
+        Some(n) if approved(note) => return f"some {n}"
+        Some(n) => return f"plain {n}"
+        None => return "none"
+
+def code(pair: tuple[Result[int, int], int]) -> str:
+    match pair:
+        (Ok(1), n) | (Ok(n) | Err(n), _) if n != 0 => return f"{n}"
+        _ => return "other"
+
+def either(pair: tuple[Result[int, int], str]) -> str:
+    match pair:
+        (Ok(n) | Err(n), "x") => return f"x {n}"
+        (_, label) => return label
+
+def describe(n: int, text: str) -> str:
+    result = match n:
+        0 => text
+        _ => "taken"
+    return result
+
+def main() -> None:
+    println(confirm((1, "y"), "ada"))
+    println(confirm((1, "yes"), "al"))
+    println(confirm((0, "yes"), "ada"))
+    println(small(2, "label"))
+    println(small(2, "ab"))
+    println(small(5, "label"))
+    println(tag_of(Some(3), "note"))
+    println(tag_of(Some(4), "n"))
+    println(tag_of(None, "note"))
+    println(code((Ok(1), 0)))
+    println(code((Ok(2), 0)))
+    println(code((Ok(1), 5)))
+    println(code((Err(3), 0)))
+    println(code((Err(0), 0)))
+    println(either((Err(7), "x")))
+    println(either((Ok(8), "y")))
+    println(describe(0, "kept"))
+    println(describe(1, "kept"))
+"#,
+    )
+}
+
 /// Prove member patterns over an optional union byte-identical to legacy: each member and `None` selected in a
 /// `match` over a parameter, a member pattern with a nested branch, and a member pattern beside a wildcard over a loop
 /// variable.
