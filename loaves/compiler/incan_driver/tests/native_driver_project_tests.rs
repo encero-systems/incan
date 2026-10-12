@@ -4951,6 +4951,58 @@ def main() -> None:
     )
 }
 
+/// Prove the generated enum helpers byte-identical to legacy: `message()` spells the variant name of a value enum, a
+/// unit variant and a payload variant, and `from_value()` finds a text or integer value enum's variant by its raw value
+/// from a literal or a local, or reports `None`.
+#[test]
+fn enum_message_and_from_value_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("enum-message-and-from-value")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"pub enum Env(str):
+    Dev = "development"
+    Prod = "production"
+
+
+pub enum Code(int):
+    Ok = 200
+    NotFound = 404
+
+
+enum State:
+    Ready
+    Busy
+    Pair(int, str)
+
+
+def main() -> None:
+    println(Env.Dev.message())
+    state = State.Busy
+    println(state.message())
+    println(State.Pair(1, "x").message())
+    match Env.from_value("production"):
+        Some(env) => println(f"parsed {env.message()}")
+        None => println("unknown")
+    match Env.from_value("staging"):
+        Some(env) => println(f"parsed {env.message()}")
+        None => println("unknown")
+    match Code.from_value(404):
+        Some(code) => println(f"parsed {code.message()}")
+        None => println("unknown")
+    match Code.from_value(500):
+        Some(code) => println(f"parsed {code.message()}")
+        None => println("unknown")
+    key = "development"
+    match Env.from_value(key):
+        Some(env) => println(env.value())
+        None => println("unknown")
+"#,
+    )
+}
+
 /// Prove unit and payload construction, enum passing/returning, and variant-bound match output against legacy.
 #[test]
 fn source_enum_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
