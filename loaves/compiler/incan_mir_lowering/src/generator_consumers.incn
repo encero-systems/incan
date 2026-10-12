@@ -84,7 +84,7 @@ def text_any(
             span=span,
         ),
     )
-    terminate_call(builder, CalleeKind.Instantiated(path, pointer), [source, callable], output, span)
+    terminate_call(builder, CalleeKind.Instantiated(path, [pointer]), [source, callable], output, span)
     return Ok(None)
 
 
