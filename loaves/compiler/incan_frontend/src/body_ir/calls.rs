@@ -781,7 +781,22 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let declared: Option<Vec<DeclaredSlot>> = self
             .type_info
             .call_site_callable_params(span)
-            .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect());
+            .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect())
+            .or_else(|| {
+                self.enum_payload_types(&target.variant_canonical, &self.resolve_ty(span))
+                    .map(|fields| {
+                        fields
+                            .iter()
+                            .map(|_| DeclaredSlot {
+                                name: None,
+                                has_default: false,
+                                is_partial_preset: false,
+                                is_rest: false,
+                                is_mut: false,
+                            })
+                            .collect()
+                    })
+            });
         let what = format!("enum variant `{}.{}`", target.enum_name, target.variant_name);
         let (operands, binding) = match self.bind_declared_args(&what, declared, args, scope, out) {
             Ok(bound) => bound,

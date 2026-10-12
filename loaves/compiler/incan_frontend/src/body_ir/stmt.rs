@@ -193,6 +193,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             ty = returned;
         }
         let materializes_range = self.expr_has_materialized_range_layout(&assignment.value);
+        self.settle_open_result_value(&assignment.value, &ty);
         let value = self.lower_expr_to_operand(&assignment.value, scope, out);
         // Future construction is a distinct Body IR value even when the surface checker exposes its output type.
         // Preserve that carrier through a binding or alias instead of silently turning it into a scalar copy.

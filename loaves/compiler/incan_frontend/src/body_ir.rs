@@ -279,6 +279,12 @@ fn build_body_ir_module_v0_with_provider_operations(
         .collect::<HashMap<_, _>>();
     let function_default_sources = collect_function_default_sources(program);
     let local_function_declarations = collect_local_function_declarations(program);
+    let enum_declarations = collect_local_enum_declarations(program, &module_identity, type_info);
+    let local_enum_declarations = enum_declarations
+        .iter()
+        .chain(context.iter().flat_map(|module| module.enum_declarations.iter()))
+        .map(|declaration| (declaration.canonical.clone(), declaration.clone()))
+        .collect::<HashMap<_, _>>();
     let mut nominal_declarations = collect_local_nominal_declarations(program, &module_identity, type_info);
     let mut local_nominal_declarations = nominal_declarations
         .iter()
@@ -312,6 +318,7 @@ fn build_body_ir_module_v0_with_provider_operations(
     }
     let published_callable_returns = collect::collect_published_callable_returns(context);
     let lowering_facts = BodyIrLoweringFacts {
+        local_enum_declarations: &local_enum_declarations,
         published_callable_returns: &published_callable_returns,
         published_constants: &published_constants,
         type_info,
@@ -392,7 +399,6 @@ fn build_body_ir_module_v0_with_provider_operations(
     let decorated_bindings =
         decorated_bindings::collect(program, &lowering_facts, &mut bodies, &mut static_declarations);
     apply_top_level_input_contract_refusal(program, &mut bodies);
-    let enum_declarations = collect_local_enum_declarations(program, &module_identity, type_info);
     static_declarations.sort_by_key(|declaration| declaration.canonical.declaration_span.start);
     bir::BodyIrModule {
         decorated_bindings,
@@ -482,6 +488,8 @@ type LocalValueEnumDeclarations = HashMap<String, bir::ValueEnumDeclaration>;
 /// identities and representations a later direct executor needs. Keeping the bundle explicit avoids widening any
 /// individual lowering helper's parameter surface as profiles add one bounded source-local fact at a time.
 struct BodyIrLoweringFacts<'type_info, 'source> {
+    /// Checked local and published payload layouts indexed by their exact declaring identity.
+    local_enum_declarations: &'source HashMap<CanonicalSymbolId, bir::EnumDeclaration>,
     /// Closed return carriers retained by a callable's providing module, keyed by its proven identity.
     published_callable_returns: &'source HashMap<CanonicalSymbolId, IncanType>,
     published_constants: &'source HashMap<CanonicalSymbolId, bir::Constant>,
@@ -894,6 +902,8 @@ const fn hir_span(span: ast::Span) -> HirSourceSpan {
 /// Per-function lowering state: fresh local/scope allocation, current name bindings, and accumulated body-level
 /// facts (runtime requirements, panic facts, which locals have been moved out of their declaring scope).
 struct BodyBuilder<'type_info, 'source> {
+    /// The same retained layouts used to close constructor destinations and pattern payload facts.
+    local_enum_declarations: &'source HashMap<CanonicalSymbolId, bir::EnumDeclaration>,
     /// Provider-owned closed return carriers; a private import alias is never a consumer-side layout key.
     published_callable_returns: &'source HashMap<CanonicalSymbolId, IncanType>,
     /// Immutable values decoded from the selected package representation, indexed by canonical declaration.
@@ -991,6 +1001,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Start a fresh builder for one function body, with no locals, scopes, or accumulated facts yet.
     fn new(lowering_facts: &BodyIrLoweringFacts<'type_info, 'source>, owner_return_type: IncanType) -> Self {
         Self {
+            local_enum_declarations: lowering_facts.local_enum_declarations,
             published_callable_returns: lowering_facts.published_callable_returns,
             type_info: lowering_facts.type_info,
             function_default_sources: lowering_facts.function_default_sources,
@@ -1115,6 +1126,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// shape differs from the destination's settle nothing.
     fn settle_open_result_value(&mut self, value: &ast::Spanned<ast::Expr>, destination: &IncanType) {
         if self.leaves_type_open(destination) {
+            return;
+        }
+        if self.settle_enum_result_value(value, destination) {
             return;
         }
         match &value.node {
@@ -1742,6 +1756,7 @@ mod decorated_bindings;
 mod static_aliases;
 
 mod bodies;
+mod enum_types;
 mod parameter_types;
 mod partials;
 

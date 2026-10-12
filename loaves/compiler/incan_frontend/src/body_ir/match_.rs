@@ -495,6 +495,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 let mut positional_fields = Vec::new();
                 let mut has_named = false;
                 let mut positional_index = 0usize;
+                let payload_types = self
+                    .type_info
+                    .resolved_identity(name.span)
+                    .and_then(|identity| self.enum_payload_types(identity, expected_ty));
                 for arg in args {
                     match arg {
                         ast::PatternArg::Named(field, pat) => {
@@ -520,6 +524,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                             field_place
                                 .projection
                                 .push(bir::PlaceElem::structural_field(positional_index.to_string()));
+                            if let Some(ty) = payload_types.as_ref().and_then(|fields| fields.get(positional_index)) {
+                                self.settled_types.insert((pat.span.start, pat.span.end), ty.clone());
+                            }
                             positional_index += 1;
                             let lowered = self.lower_match_pattern(
                                 pat,
