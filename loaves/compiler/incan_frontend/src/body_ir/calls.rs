@@ -418,8 +418,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let Some(resolved) = self
             .type_info
             .calls
-            .call_site_monomorph_type_args
+            .body_ir_call_type_arguments
             .get(&(span.start, span.end))
+            .or_else(|| {
+                self.type_info
+                    .calls
+                    .call_site_monomorph_type_args
+                    .get(&(span.start, span.end))
+            })
         else {
             if type_args.is_empty() {
                 return Ok(Vec::new());

@@ -196,11 +196,7 @@ pub(super) fn lower_function_body(
         .declarations
         .function_bindings_by_span
         .get(&(decl_span.start, decl_span.end));
-    let type_parameters: Vec<_> = function
-        .type_params
-        .iter()
-        .map(|parameter| parameter.name.clone())
-        .collect();
+    let type_parameters = crate::body_ir_parameter_names::source_parameter_names(&function.type_params);
     let owner_return_type = binding
         .map(|binding| parameter_types::checked_semantic_type(&binding.return_type, lowering_facts.type_info))
         .map(|ty| parameter_types::retain_parameter_type(ty, &type_parameters))
@@ -267,11 +263,7 @@ pub(super) fn lower_function_body(
     }
 
     bir::Body {
-        type_parameters: function
-            .type_params
-            .iter()
-            .map(|parameter| parameter.name.clone())
-            .collect(),
+        type_parameters: builder.type_parameters,
         decl_id,
         direct_call_id,
         canonical: binding.and_then(|binding| binding.identity.clone()),
