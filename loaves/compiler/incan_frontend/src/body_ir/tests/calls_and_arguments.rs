@@ -8,7 +8,7 @@ use super::*;
 /// A selected overload keeps its checked slots when this module does not physically own its executable body.
 #[test]
 fn a_selected_external_overload_retains_its_parameter_binding() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def pick(value: int) -> int:\n  return value\n\ndef pick(left: str, right: int) -> str:\n  return left\n\ndef main() -> None:\n  println(pick(right=2, left=\"x\"))\n";
+    let source = "def pick(value: int) -> int:\n  return value\n\ndef pick(left: str, right: int) -> str:\n  return left\n\ndef main() -> None:\n  println(pick(4))\n  println(pick(right=2, left=\"x\"))\n";
     let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
     let mut program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
     let path = vec!["m".to_string(), "external_overload".to_string()];
@@ -23,14 +23,15 @@ fn a_selected_external_overload_retains_its_parameter_binding() -> Result<(), Bo
     );
     let module = build_body_ir_module_v0(&program, &path, checker.type_info());
     let targets = named_targets(&module, "main");
-    let target = targets
-        .iter()
-        .find(|target| target.name == "pick")
-        .ok_or("missing selected overload call")?;
-    assert!(target.direct_call_id.is_none());
-    assert!(
-        matches!(&target.binding, bir::ArgumentBinding::Resolved { arguments, defaulted_slots } if arguments.len() == 2 && defaulted_slots.is_empty())
-    );
+    let targets: Vec<_> = targets.iter().filter(|target| target.name == "pick").collect();
+    assert_eq!(targets.len(), 2);
+    for (target, arity) in targets.into_iter().zip([1, 2]) {
+        assert!(target.direct_call_id.is_none());
+        assert!(
+            matches!(&target.binding, bir::ArgumentBinding::Resolved { arguments, defaulted_slots } if arguments.len() == arity && defaulted_slots.is_empty()),
+            "{target:?}"
+        );
+    }
     assert!(
         !module.render_snapshot().contains("unsupported("),
         "{}",
