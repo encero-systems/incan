@@ -278,6 +278,7 @@ pub(super) fn lower_function_body(
         root_scope,
         hir_span(decl_span),
     );
+    builder.retain_empty_collection_context(&stmts);
 
     if builder
         .locals
@@ -465,6 +466,7 @@ pub(super) fn lower_method_body(
         root_scope,
         hir_span(decl_span),
     );
+    builder.retain_empty_collection_context(&stmts);
 
     if builder
         .locals
