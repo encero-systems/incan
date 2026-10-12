@@ -2378,8 +2378,7 @@ def lower_named_target(
             # Without a retained project body, only a frontend-proven stdlib forwarder may reach a native Rust call.
             match program_body_index(module, target):
                 None =>
-                    if len(target.type_args) != 0:
-                        return Err("unsupported Body IR nonlocal function with type parameters")
+                    # A generic stdlib crate call checks its type arguments against its record's type parameters.
                     return lower_stdlib_delegation(module, builder, target, arguments, destination, span)
                 Some(index) =>
                     body = module.bodies[index]
@@ -2694,19 +2693,33 @@ def lower_delegated_call(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Emit the external call for one matched delegation: a proven forwarder's Rust callee or the SDK crate item itself."""
+    """
+    Emit the external call for one matched delegation: a proven forwarder's Rust callee or the SDK crate item itself.
+
+    A generic crate item takes the call's checked type arguments for its declared type parameters, in order, and the
+    driver instantiates the item with them before checking its signature.
+    """
+    mut names: list[str] = []
+    for name in delegation.type_parameters:
+        names.append(str(name))
+    if len(target.type_args) != len(names):
+        return Err("unsupported Body IR nonlocal function with type parameters")
+    mut closed: list[RustType] = []
+    if len(names) != 0:
+        closed = checked_type_arguments(builder, target.type_args)?
     mut parameters: list[PlanType] = []
     for parameter in delegation.parameters:
+        instantiated: RustType = substitute(parameter, names, closed)?
         parameters.append(
-            native_source_type(builder.nominals, builder.enums, builder.unions, parameter, builder.intrinsics)?,
+            native_source_type(builder.nominals, builder.enums, builder.unions, instantiated, builder.intrinsics)?,
         )
-    result = native_source_type(
-        builder.nominals,
-        builder.enums,
-        builder.unions,
-        delegation.return_type,
-        builder.intrinsics,
-    )?
+    returned: RustType = substitute(delegation.return_type, names, closed)?
+    result = native_source_type(builder.nominals, builder.enums, builder.unions, returned, builder.intrinsics)?
+    mut type_arguments: list[PlanType] = []
+    for argument in closed:
+        type_arguments.append(
+            native_source_type(builder.nominals, builder.enums, builder.unions, argument, builder.intrinsics)?,
+        )
     operands = ordered_slot_operands(builder, target.binding, arguments, parameters, span, 0, true)?
     mut output = temporary(builder, result, span)
     match destination:
@@ -2716,8 +2729,38 @@ def lower_delegated_call(
     match delegation.rust_path():
         None => return Err("unsupported Body IR stdlib delegation native identity")
         Some(path) =>
-            external_call(builder, path, parameters, result, operands, output, span)
-            return Ok(None)
+            if len(type_arguments) == 0:
+                external_call(builder, path, parameters, result, operands, output, span)
+                return Ok(None)
+            return instantiated_external_call(builder, path, type_arguments, parameters, result, operands, output, span)
+
+
+def instantiated_external_call(
+    mut builder: Builder,
+    path: str,
+    type_arguments: list[PlanType],
+    parameters: list[PlanType],
+    result: PlanType,
+    operands: list[Operand],
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Declare one instantiation of a generic external and call it, keyed by its type arguments beside its path."""
+    if len(type_arguments) > 2:
+        return Err("unsupported Body IR stdlib generic call with more than two type parameters")
+    builder.externals.append(
+        ExternalFunction(
+            path=path, type_arguments=type_arguments, parameters=parameters, return_type=result, span=span,
+        ),
+    )
+    mut callee = CalleeKind.Instantiated(path, type_arguments[0])
+    if len(type_arguments) == 2:
+        callee = CalleeKind.InstantiatedPair(path, type_arguments[0], type_arguments[1])
+    terminate_call(builder, callee, operands, output, span)
+    # A returned String is a new owner, as `external_call` records for a monomorphic external.
+    if result == PlanType.String:
+        builder.owned.append(output.local)
+    return Ok(None)
 
 
 def ordered_arguments(

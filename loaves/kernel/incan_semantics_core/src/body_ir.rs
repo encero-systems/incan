@@ -162,6 +162,10 @@ pub struct StdlibDelegation {
     pub parameters: Vec<IncanType>,
     /// The declared wrapper result type, verified against native metadata before execution.
     pub return_type: IncanType,
+    /// The callee's own type parameters in declaration order, which `parameters` and `return_type` name. A call
+    /// instantiates them with its checked type arguments, in the same order; a nongeneric callee has none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub type_parameters: Vec<String>,
 }
 
 impl StdlibDelegation {

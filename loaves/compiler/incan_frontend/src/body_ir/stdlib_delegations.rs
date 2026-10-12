@@ -93,6 +93,7 @@ fn delegation(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Optio
         target,
         parameters,
         return_type,
+        type_parameters: Vec::new(),
     };
     fact.rust_path()?;
     Some(fact)

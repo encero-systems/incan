@@ -18,7 +18,8 @@ use crate::symbols::{CallableParam, ResolvedType, SymbolKind, TypeInfo};
 use crate::typechecker::stdlib_loader::StdlibAstCache;
 use incan_lang::lang::stdlib;
 
-/// Collect a crate-call record for every nongeneric stdlib function or model/class method one module resolves.
+/// Collect a crate-call record for every stdlib function, generic ones included, and every nongeneric model, class or
+/// newtype method one module resolves.
 pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::StdlibDelegation> {
     let identities = type_info
         .references
@@ -51,14 +52,18 @@ fn library_call(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Opt
     let mut item = std::iter::once(library.clone())
         .chain(module_path.iter().cloned())
         .collect::<Vec<_>>();
-    let (parameters, return_type) = match identity.kind {
+    let (parameters, return_type, type_parameters) = match identity.kind {
         SemanticSourceTargetKind::Method => {
             let (owner, receiver, params, result) = method_signature(identity, &path, cache)?;
             item.push(owner.clone());
             item.push(identity.declaration_name.clone());
             let mut parameters = receiver.into_iter().collect::<Vec<_>>();
             parameters.extend(owned_parameters(&params)?);
-            (parameters, self_as(&semantic_type_from_resolved(&result), &owner))
+            (
+                parameters,
+                self_as(&semantic_type_from_resolved(&result), &owner),
+                Vec::new(),
+            )
         }
         _ => {
             cache.callable_source_identity(identity)?;
@@ -66,14 +71,16 @@ fn library_call(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Opt
             else {
                 return None;
             };
-            if function.is_async || !function.type_params.is_empty() || function.emitted_name.is_some() {
+            if function.is_async || function.emitted_name.is_some() {
                 return None;
             }
             // A free function compiles under its full canonical identity, which the consumer's checked identity is.
+            // A generic one keeps its type parameters, which each call instantiates with its checked type arguments.
             item.push(encode_incan_symbol_identity(identity));
             (
                 owned_parameters(&function.params)?,
                 semantic_type_from_resolved(&function.return_type),
+                function.type_params.clone(),
             )
         }
     };
@@ -89,6 +96,7 @@ fn library_call(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Opt
         },
         parameters,
         return_type,
+        type_parameters,
     })
 }
 
