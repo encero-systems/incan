@@ -9,8 +9,7 @@ from rust::std::clone import Clone as RuntimeClone
 from rust::std::fmt import Display
 from rust::std::cmp import PartialEq
 from rust::std::convert import Into
-from rust::incan_std_core::errors import raise as raise_error
-from rust::incan_lang::errors import key_not_found_in_dict
+from rust::incan_std_core::errors import raise_key_error
 from std.rust import Static
 
 
@@ -95,7 +94,7 @@ pub def frozen_dict_text_get[K with (Display, Static), V with (RuntimeClone, Sta
     for stored, item in value.iter():
         if str(stored) == key:
             return RuntimeClone.clone(item)
-    return raise_error(key_not_found_in_dict(key))
+    return raise_key_error(f"'{key}' not found in dict")
 
 
 pub def frozen_dict_get[K with (PartialEq, Display, Static), V with (RuntimeClone, Static)](
@@ -106,7 +105,7 @@ pub def frozen_dict_get[K with (PartialEq, Display, Static), V with (RuntimeClon
     for stored, item in value.iter():
         if PartialEq.eq(stored, key):
             return RuntimeClone.clone(item)
-    return raise_error(key_not_found_in_dict(key))
+    return raise_key_error(f"'{key}' not found in dict")
 
 
 pub def frozen_dict_text_contains[K with (Display, Static), V with Static](
