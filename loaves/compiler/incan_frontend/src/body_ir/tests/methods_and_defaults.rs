@@ -3,6 +3,44 @@
 //! trait and byte-string defaults, refused defaults that restore ownership state, and newtype and enum method bodies.
 
 use super::*;
+
+/// A checked generic enum destination closes unit and payload constructor temporaries and retains positional slots.
+#[test]
+fn generic_enum_constructors_keep_destination_and_slots() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "enum Shape[T]:\n  Filled(T)\n  Empty\n\ndef read(value: Shape[int]) -> int:\n  match value:\n    Shape.Filled(n) => return n\n    Shape.Empty => return 0\n\ndef main() -> None:\n  empty: Shape[int] = Shape.Empty\n  println(read(Shape.Filled(7)))\n",
+        &["enum_destination"],
+    )?;
+    let body = body_named(&module, "main")?;
+    assert!(
+        body.locals
+            .iter()
+            .all(|local| local.ty != IncanType::Named("Shape".to_owned())),
+        "{body:#?}"
+    );
+    for statement in &body.block.stmts {
+        if let bir::StatementKind::Assign {
+            rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::EnumVariant(target), _),
+            ..
+        } = &statement.kind
+        {
+            assert!(
+                matches!(target.binding, bir::ArgumentBinding::Resolved { .. }),
+                "{target:#?}"
+            );
+        }
+    }
+    let read = body_named(&module, "read")?;
+    assert_eq!(
+        read.locals
+            .iter()
+            .find(|local| local.name.as_deref() == Some("n"))
+            .ok_or("payload local missing")?
+            .ty,
+        IncanType::Primitive(IncanPrimitiveType::Int)
+    );
+    Ok(())
+}
 /// Ordered enum binders and checked payload placeholders survive the Body IR boundary, including variant aliases.
 #[test]
 fn generic_enum_retains_ordered_binders_and_payloads() -> Result<(), Box<dyn std::error::Error>> {

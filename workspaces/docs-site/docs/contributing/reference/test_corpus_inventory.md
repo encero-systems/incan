@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3836 | 252 | 431 |
+| keep | 3837 | 252 | 431 |
 | re-point | 1487 | 91 | 1058 |
 | retire | 1507 | 153 | 0 |
 | unaffected | 1977 | 212 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8807** | **708** | **1494** |
+| **Total** | **8808** | **708** | **1494** |
 
 - Retire-class tests: 1507, of which twinned 1022, dies 295, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -1833,7 +1833,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
 
-### `loaves/compiler/incan_frontend` (2288 tests in 127 files: keep 2275, unaffected 13)
+### `loaves/compiler/incan_frontend` (2289 tests in 127 files: keep 2276, unaffected 13)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -1851,7 +1851,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_frontend/src/body_ir/tests/input_contract_and_refusals.rs` | 13 | 523 | 523 | keep | - | - | - | #1561 | replacement 5, checker 5, parser 5 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/library_types.rs` | 7 | 202 | 202 | keep | - | - | - | #1337 | - | Body IR-only SDK type identity and nested declaration retention on the direct route. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/method_partials.rs` | 1 | 62 | 62 | keep | - | - | - | #1337 | - | Checked method-partial frames and presets retained for direct-route execution; relocated from methods_and_defaults.rs. |
-| `loaves/compiler/incan_frontend/src/body_ir/tests/methods_and_defaults.rs` | 50 | 1635 | 1635 | keep | - | - | required | #1561 | replacement 1, checker 1, parser 1 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/body_ir/tests/methods_and_defaults.rs` | 51 | 1673 | 1673 | keep | - | - | required | #1561 | replacement 1, checker 1, parser 1 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/newtypes.rs` | 3 | 69 | 69 | keep | - | - | - | #1337 | - | Canonical newtype layouts, owner parameters, trait targets and explicit raw-construction boundary; direct Body IR facts without legacy emission. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/nominal_parameters.rs` | 6 | 197 | 197 | keep | - | - | - | #1337 | - | Checked model owner binders, method frames and deferred field defaults retained for direct-route specialization; frontend facts without legacy emission. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/operators_literals_and_assignment.rs` | 61 | 1429 | 1429 | keep | - | - | - | #1561 | - | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
