@@ -628,7 +628,7 @@ fn collect_plain_newtype(
     module_identity: &str,
     type_info: &TypeCheckInfo,
 ) -> Option<bir::NominalDeclaration> {
-    if !is_direct_replacement_plain_newtype(newtype) {
+    if !is_direct_replacement_checked_newtype(newtype, type_info) {
         return None;
     }
     let facts = type_info.declarations.newtype_construction.get(&newtype.name)?;
@@ -654,9 +654,9 @@ fn collect_plain_newtype(
         }
         derives.push("Copy".to_owned());
     }
-    for selection in &facts.explicit_derives {
-        if !derives.contains(selection) {
-            derives.push(selection.clone());
+    for selection in newtype_derives::checked_newtype_derives(newtype, type_info)? {
+        if !derives.contains(&selection) {
+            derives.push(selection);
         }
     }
     Some(bir::NominalDeclaration {
@@ -1138,7 +1138,7 @@ pub(super) fn collect_local_trait_implementations(
             ast::Declaration::Class(class) if is_direct_replacement_checked_class(class, type_info) => {
                 (&class.traits, &class.methods, &class.properties)
             }
-            ast::Declaration::Newtype(newtype) if is_direct_replacement_plain_newtype(newtype) => {
+            ast::Declaration::Newtype(newtype) if is_direct_replacement_checked_newtype(newtype, type_info) => {
                 (&newtype.traits, &newtype.methods, &[])
             }
             ast::Declaration::Enum(value) if is_direct_native_enum(value) => (&value.traits, &value.methods, &[]),

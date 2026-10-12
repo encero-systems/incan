@@ -750,7 +750,7 @@ pub fn is_direct_replacement_model_derive(decorator: &ast::Decorator) -> bool {
         })
 }
 
-/// Admit raw tuple wrappers with builtin derives, checked owner and method parameters, and trait adoptions.
+/// Admit raw tuple wrappers with checked native derives, owner and method parameters, and trait adoptions.
 ///
 /// A trait adopted with type arguments is instantiated from the checker-recorded arguments. Checked construction hooks
 /// and constraints remain refused by the declaration collector. Same-type method aliases, and short rebindings naming
@@ -758,11 +758,14 @@ pub fn is_direct_replacement_model_derive(decorator: &ast::Decorator) -> bool {
 /// generic trait adoption or owner parameters; lint suppressions change nothing at run time. Associated type targets
 /// are resolved by checking into the retained method frames and trait implementation identities. Interop edges and
 /// method partials require additional representation facts and remain outside this profile.
-pub fn is_direct_replacement_plain_newtype(newtype: &ast::NewtypeDecl) -> bool {
+/// Bare and module-qualified JSON protocol derives use the checker's canonical serde selections, as on models.
+pub fn is_direct_replacement_checked_newtype(newtype: &ast::NewtypeDecl, type_info: &TypeCheckInfo) -> bool {
     !newtype.is_rusttype
-        && newtype.decorators.iter().all(|decorator| {
-            is_direct_replacement_model_derive(&decorator.node) || is_lint_suppression_decorator(&decorator.node)
-        })
+        && has_checked_native_derives(
+            &newtype.decorators,
+            newtype_derives::checked_newtype_derives(newtype, type_info).as_ref(),
+            false,
+        )
         && newtype.rebindings.iter().all(|rebinding| {
             matches!(&rebinding.node.target.node, ast::Expr::Ident(target)
                 if newtype.methods.iter().any(|method| method.node.name == *target))
@@ -1790,6 +1793,8 @@ const fn lower_unary_op(op: ast::UnaryOp) -> bir::UnOp {
 }
 
 mod match_;
+
+mod newtype_derives;
 
 mod closures;
 

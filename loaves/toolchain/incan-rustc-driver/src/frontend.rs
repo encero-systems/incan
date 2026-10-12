@@ -516,7 +516,9 @@ fn validate_declarations(
                 }
                 continue;
             }
-            Declaration::Newtype(newtype) if incan_frontend::body_ir::is_direct_replacement_plain_newtype(newtype) => {
+            Declaration::Newtype(newtype)
+                if incan_frontend::body_ir::is_direct_replacement_checked_newtype(newtype, type_info) =>
+            {
                 validate_generic_adoptions(&newtype.traits, program, type_info)?;
                 continue;
             }
