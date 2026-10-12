@@ -8,7 +8,7 @@ use super::{
 };
 use crate::typechecker::PartialProjectionTargetKind;
 
-/// The exact same-module function a Partial forwards to, with its deferred source defaults.
+/// The exact physically retained function a Partial forwards to, with its deferred source defaults.
 struct PartialFunctionTarget {
     name: String,
     canonical: CanonicalSymbolId,
@@ -16,7 +16,7 @@ struct PartialFunctionTarget {
     defaults: Vec<FunctionDefaultSource>,
 }
 
-/// The retained same-module model or class a constructor Partial builds, with its fields' deferred source defaults.
+/// The physically retained model or class a constructor Partial builds, with its fields' deferred source defaults.
 struct PartialConstructorTarget {
     declaration: bir::NominalDeclaration,
     defaults: Vec<FunctionDefaultSource>,
@@ -73,10 +73,7 @@ fn constructor_target(
     let declaration = facts
         .local_nominal_declarations
         .values()
-        .find(|declaration| {
-            &declaration.canonical == canonical
-                && incan_semantics_core::canonical_module_identity(canonical).as_deref() == Some(facts.module_identity)
-        })
+        .find(|declaration| &declaration.canonical == canonical)
         .ok_or_else(|| "source Partial over an unretained or nonlocal constructor".to_string())?;
     let defaults = facts
         .function_default_sources
@@ -90,6 +87,10 @@ fn constructor_target(
 }
 
 /// Prove a Partial's target is one physically retained, checked function rather than resolving a backend spelling.
+///
+/// The physical declaration's span-keyed checked identity must match the selected binding in full. Package
+/// publication gives that identity a package origin while this module still uses its source-module path; comparing
+/// those path spellings would incorrectly refuse a physically local target.
 fn function_target(
     partial: &ast::PartialDecl,
     facts: &BodyIrLoweringFacts<'_, '_>,
@@ -107,9 +108,6 @@ fn function_target(
         .identity
         .as_ref()
         .filter(|identity| identity.kind == SemanticSourceTargetKind::Function)
-        .filter(|identity| {
-            incan_semantics_core::canonical_module_identity(identity).as_deref() == Some(facts.module_identity)
-        })
         .ok_or_else(|| "source Partial with a constructor, Partial, or nonlocal target".to_string())?;
     let name = &canonical.declaration_name;
     let spans = facts
@@ -119,6 +117,16 @@ fn function_target(
     let [span] = spans.as_slice() else {
         return Err("source Partial with an overloaded target".to_string());
     };
+    let physically_owned = facts
+        .type_info
+        .declarations
+        .function_bindings_by_span
+        .get(&(span.start, span.end))
+        .and_then(|binding| binding.identity.as_ref())
+        == Some(canonical);
+    if !physically_owned {
+        return Err("source Partial without its checked physical target identity".to_string());
+    }
     let defaults = facts
         .function_default_sources
         .get(name)
