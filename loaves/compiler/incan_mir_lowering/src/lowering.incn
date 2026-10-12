@@ -562,6 +562,10 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
                 Projection.VariantField(_variant, _slot, _ty) => return enum_payload_read(builder, target, fact, span)
                 _ =>
                     selected_type = place_type(builder.locals, target)
+                    # A checked borrow of a value of an open type parameter, a field of a generic model say, reads a
+                    # copy once the instance makes it a concrete scalar, which owns nothing the borrow would protect.
+                    if numeric_carrier(selected_type) or selected_type == PlanType.Bool or selected_type == PlanType.Unit:
+                        return Ok(Operand(kind=OperandKind.Copy(target), span=span))
                     site = f"{builder.file}:{span.line}:{span.column} in {builder.name}"
                     detail = f"projection {target.projection:?}; selected type {selected_type:?}"
                     return Err(f"unsupported Body IR ownership Borrow outside formatting at {site}; {detail}")
@@ -4127,8 +4131,8 @@ def display_value_operand(
     match value:
         RustOperand.Place(read) =>
             match read.fact:
-                OwnershipFact.Clone => return clone_display_place(builder, read.place, span)
-                OwnershipFact.Borrow => return clone_display_place(builder, read.place, span)
+                OwnershipFact.Clone => return clone_display_place(builder, read.place, span, type_parameter)
+                OwnershipFact.Borrow => return clone_display_place(builder, read.place, span, type_parameter)
                 _ => pass
         RustOperand.Constant(constant) =>
             match literal_text(constant):
@@ -4252,16 +4256,22 @@ def display_string_operand(mut builder: Builder, operand: Operand, span: SourceS
         _ => return Err("unsupported Body IR string display ownership")
 
 
-def clone_display_place(mut builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+def clone_display_place(
+    mut builder: Builder,
+    value: &RustPlace,
+    span: SourceSpan,
+    type_parameter: bool,
+) -> Result[Place, str]:
     """
-    Clone borrowed owned text for display; copyable decimal, frozen and scalar carriers keep their exact values.
+    Clone borrowed owned text for display; copyable decimal and frozen carriers keep their exact values.
 
-    A field of a type parameter is read by borrow; once its frame is closed over a scalar, the copy displays it.
+    A scalar a type parameter's checked clone or borrow fact reads, once its instance or closed binding makes it
+    concrete, displays from a copy, in the type-parameter display style when the value's checked type is one.
     """
     place = scalar_place(builder, value, span)?
     ty = place_type(builder.locals, place)
-    if ty in [PlanType.Decimal, PlanType.FrozenStr, PlanType.Bool] or numeric_carrier(ty):
-        return display_plan_operand(builder, read_place(place, false, span), span)
+    if ty in [PlanType.Decimal, PlanType.FrozenStr] or numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit:
+        return display_plan_value(builder, read_place(place, false, span), span, type_parameter)
     if place_type(builder.locals, place) != PlanType.String:
         return Err("unsupported Body IR nonscalar display borrow")
     return clone_text(builder, place, span)

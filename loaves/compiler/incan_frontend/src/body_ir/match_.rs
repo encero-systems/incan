@@ -259,7 +259,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// fallback for a node the checker recorded no type for: [`Self::lower_match`]'s scrutinee type for the root,
     /// [`tuple_element_types`] for `Tuple` elements, and [`result_type_parts`] for an intrinsic `Result` payload.
     /// A generic constructor's sub-patterns thread [`IncanType::Unknown`], because lowering has no payload
-    /// resolution of its own and must not grow one that could disagree with the checker's.
+    /// resolution of its own and must not grow one that could disagree with the checker's. A recorded type the checker
+    /// left open (an undeclared type parameter) yields to a closed threaded expectation: the checker types the arms of
+    /// `match unwrap(Decoded(value=9))` over `unwrap`'s open `T`, while the scrutinee's own executable type, closed by
+    /// its constructor argument (`inferred_call_result_types`), threads `int`.
     #[allow(clippy::too_many_arguments)] // Carries one recursive pattern-lowering context; see the rustdoc above.
     pub(super) fn lower_match_pattern(
         &mut self,
@@ -274,8 +277,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let span = hir_span(pattern.span);
 
         // ---- The checker's recorded type for this node outranks the threaded expectation ----
+        // One the checker left open, such as the type parameter of a generic call whose result a constructor argument
+        // closes only for Body IR, yields to an expectation the scrutinee's closed type threads.
         let checked_ty = self.resolve_ty(pattern.span);
-        let expected_ty = if matches!(checked_ty, IncanType::Unknown) {
+        let expected_ty = if matches!(checked_ty, IncanType::Unknown)
+            || (self.leaves_type_open(&checked_ty) && !self.leaves_type_open(expected_ty))
+        {
             expected_ty
         } else {
             &checked_ty
