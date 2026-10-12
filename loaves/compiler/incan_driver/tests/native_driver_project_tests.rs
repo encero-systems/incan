@@ -71,6 +71,11 @@ def main() -> None:
     println(optional(Some("value")))
     println(optional(None))
 "#,
+    )?;
+    census::require_named_refusal(
+        "emit_dependency_unions_and_surfaces",
+        "dependency_unions_across_the_package_boundary",
+        "unsupported Body IR unresolved ArgumentBinding",
     )
 }
 

@@ -512,6 +512,32 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Require one original fixture to reach its measured next-stage refusal after a construct family advances.
+///
+/// This runs only the named fixture and retains the original source and expected observables. A later implementation
+/// must update the pin deliberately rather than silently skipping the unresolved frontier.
+pub(super) fn require_named_refusal(area: &str, name: &str, expected: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = all_fixtures()?
+        .into_iter()
+        .find_map(|(found_area, fixture)| (found_area == area && fixture.name == name).then_some(fixture))
+        .ok_or("missing next-stage fixture")?;
+    let graph = driver_fixture()?;
+    let root = graph.scratch(&format!("next-stage-{name}"))?;
+    let mut closure = corpus::runtime_closure(&graph.formatting)?;
+    closure.extend_with(&sdk_closure(graph)?)?;
+    let (observed, detail) = measure(
+        &fixture,
+        &root,
+        &graph.driver_binary("debug"),
+        &graph.sysroot,
+        &closure,
+        Duration::from_secs(180),
+    )?;
+    assert_eq!(observed, "refused", "{area}/{name}: {detail}");
+    assert!(detail.contains(expected), "{area}/{name}: {detail}");
+    Ok(())
+}
+
 /// Different source payloads for one refused type belong to the same ranked construct.
 #[cfg(unix)]
 #[test]
