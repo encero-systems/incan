@@ -406,7 +406,7 @@ fn library_module<'modules>(
     carried: &mut std::collections::BTreeSet<incan_semantics_core::CanonicalSymbolId>,
     identity: &incan_semantics_core::CanonicalSymbolId,
 ) -> Option<&'modules mut BodyIrModule> {
-    let owner = incan_semantics_core::body_ir::native_nominal_module(identity)?;
+    let owner = incan_semantics_core::canonical_module_identity(identity)?;
     if !carried.insert(identity.clone()) {
         return None;
     }

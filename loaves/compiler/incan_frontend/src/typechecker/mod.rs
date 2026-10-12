@@ -7320,25 +7320,6 @@ impl TypeChecker {
         self.type_info.declarations.foreign_pub_type_remappings = self.foreign_pub_type_remappings.clone();
         self.type_info.declarations.named_type_origins = self.checked_nominal_type_origins();
         self.type_info.declarations.named_type_identities = self.checked_nominal_type_identities();
-        self.type_info.declarations.body_ir_native_type_identities = self.checked_native_nominal_type_identities();
-    }
-
-    /// Retain active native builtin owners in an independent direct-route table, without changing legacy lookup.
-    /// The kernel whitelist validates the entire identity; source shadows and unrelated builtins yield nothing.
-    fn checked_native_nominal_type_identities(&self) -> std::collections::BTreeMap<String, CanonicalSymbolId> {
-        self.symbols
-            .all_symbols()
-            .iter()
-            .enumerate()
-            .filter_map(|(id, symbol)| {
-                if symbol.scope != 0 || !self.symbols.is_active_lookup_binding(id) {
-                    return None;
-                }
-                let identity = self.symbols.identity_of(id)?;
-                incan_semantics_core::body_ir::native_builtin_nominal(identity)?;
-                Some((symbol.name.clone(), identity.clone()))
-            })
-            .collect()
     }
 
     /// Retain active module-scope nominal bindings from both source modules and admitted packages.
