@@ -10139,6 +10139,48 @@ def main() -> None:
     )
 }
 
+/// A decorator initializes once before main and calls its replacement, including when its result type changes.
+#[test]
+fn decorated_function_binding_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("decorated-function-binding")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_functions_and_projections/user_defined_decorators.incn"
+        ),
+    )
+}
+
+/// Decorator chains receive the original callable and retain declaration order and one-time effects.
+#[test]
+fn decorated_original_callable_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("decorated-original-callable")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def keep(func: (int) -> int) -> (int) -> int:
+    println("keep")
+    println(func(3))
+    return func
+
+@keep
+@keep
+def double(value: int) -> int:
+    return value * 2
+
+def main() -> None:
+    println("main")
+    println(double(7))
+    println(double(9))
+"#,
+    )
+}
+
 /// An imported module's computed static initializes when the importer first reads it, after the importer's earlier
 /// statements, as legacy's read of an imported static first initializes its declaring module's statics.
 #[test]

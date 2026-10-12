@@ -16,6 +16,7 @@ mod async_and_race;
 mod calls_and_arguments;
 mod closures_comprehensions_and_generators;
 mod control_flow_and_loops;
+mod decorated_bindings;
 mod for_patterns;
 mod identities_and_imports;
 mod input_contract_and_refusals;
