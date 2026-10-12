@@ -10179,11 +10179,13 @@ model Reading with Read[int]:
     def value(self) -> int:
         return self.number
 
-def reading() -> Read[int]:
-    return Reading(number=7)
+def reading(number: int) -> Read[int]:
+    println(number)
+    return Reading(number=number)
 
 def main() -> None:
-    println(reading().value())
+    reading(7)
+    reading(9)
 "#,
     )?;
     check_project_refusal(
