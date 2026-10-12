@@ -312,10 +312,10 @@ pub struct TraitTypeArgument {
     pub argument: IncanType,
 }
 
-/// The exact local declaration and canonical field layout for one direct-executable plain model or class.
+/// The exact local declaration and canonical field layout for one direct-executable model, class, or raw newtype.
 ///
-/// The record belongs to its declaring module and excludes enums and inheritance. Classes retain ordered type
-/// parameters for specialization from checked uses; models and newtypes in this profile remain concrete. Nominal
+/// The record belongs to its declaring module and excludes enums. Nominal owners retain ordered type parameters for
+/// specialization from checked uses, including a newtype's underlying tuple slot. Nominal
 /// methods and adopted trait defaults remain separate canonical bodies with receiver origins. A consumer may load
 /// this canonical context from a package artifact. Its field order is the checked constructor-slot order; a direct
 /// runtime must compare it with [`ConstructorTarget::canonical_field_layout`] before applying

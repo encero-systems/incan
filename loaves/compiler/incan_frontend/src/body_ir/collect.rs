@@ -461,7 +461,8 @@ pub(super) fn collect_local_nominal_declarations(
         .collect()
 }
 
-/// Retain a plain newtype's checked carrier as one canonical tuple slot; its owner identity authorizes that slot.
+/// Retain a raw newtype's checked carrier as one canonical tuple slot, with declaration-owned placeholders that only
+/// checked concrete uses may specialize. Validation hooks and constraints remain outside raw construction.
 fn collect_plain_newtype(
     span: ast::Span,
     newtype: &ast::NewtypeDecl,
@@ -480,7 +481,10 @@ fn collect_plain_newtype(
         .declaration_identities
         .get(&(span.start, span.end))?
         .clone();
-    let underlying = parameter_types::checked_semantic_type(&facts.underlying, type_info);
+    let underlying = parameter_types::retain_parameter_type(
+        parameter_types::checked_semantic_type(&facts.underlying, type_info),
+        &facts.type_params,
+    );
     let mut derives = facts.automatic_derives.clone();
     if matches!(
         underlying,
@@ -511,8 +515,8 @@ fn collect_plain_newtype(
         method_partial_defaults: Vec::new(),
         derives,
         named_type_identities: type_info.declarations.named_type_identities.clone(),
-        type_parameters: Vec::new(),
-        type_parameter_count: 0,
+        type_parameters: facts.type_params.clone(),
+        type_parameter_count: facts.type_params.len(),
     })
 }
 /// Retain exact source-local fieldless normal-enum declaration and unit-member facts in source order.
@@ -801,7 +805,8 @@ fn adopted_local_traits<'program>(
 /// Select the body that fills one trait slot for an adopter, with the type arguments its default needs.
 ///
 /// The adopter's own method wins, then the slot trait's default, then the default a directly adopted subtrait of the
-/// slot trait declares, taking those subtraits by name: the order legacy trait expansion fills a slot in.
+/// slot trait declares, taking those subtraits by name: the order legacy trait expansion fills a slot in. A targeted
+/// method answers only the checker-recorded slot of its target, never another trait's same-named slot.
 fn slot_implementation(
     type_info: &TypeCheckInfo,
     adopted: &[AdoptedTrait<'_>],
@@ -809,9 +814,15 @@ fn slot_implementation(
     slot: &ast::Spanned<ast::MethodDecl>,
     methods: &[ast::Spanned<ast::MethodDecl>],
 ) -> Option<(CanonicalSymbolId, Vec<bir::TraitTypeArgument>)> {
+    let identity = type_info
+        .traits
+        .method_identities
+        .get(&(slot_trait.declaration.name.clone(), slot.node.name.clone()))?;
     let candidates = methods
         .iter()
-        .filter(|candidate| candidate.node.name == slot.node.name)
+        .filter(|candidate| {
+            candidate.node.name == slot.node.name && method_fills_trait_slot(type_info, &candidate.node, identity)
+        })
         .collect::<Vec<_>>();
     match candidates.as_slice() {
         [candidate] => type_info
@@ -854,6 +865,20 @@ fn slot_implementation(
         }
         _ => None,
     }
+}
+
+/// Match an explicit method target through its checked slot identity; unqualified methods can fill any compatible
+/// slot. Explicit target arguments still refuse because no checked target instantiation is retained for that clause.
+fn method_fills_trait_slot(type_info: &TypeCheckInfo, method: &ast::MethodDecl, slot: &CanonicalSymbolId) -> bool {
+    let Some(target) = &method.trait_target else {
+        return true;
+    };
+    target.node.type_args.is_empty()
+        && type_info
+            .traits
+            .method_identities
+            .get(&(target.node.name.clone(), method.name.clone()))
+            == Some(slot)
 }
 
 /// Retain trait slots and their checked concrete implementation identities for each admitted adopter.
@@ -1078,7 +1103,9 @@ fn imported_slot_implementation(
 ) -> Option<CanonicalSymbolId> {
     let candidates = methods
         .iter()
-        .filter(|candidate| candidate.node.name == slot_name)
+        .filter(|candidate| {
+            candidate.node.name == slot_name && method_fills_trait_slot(type_info, &candidate.node, method)
+        })
         .collect::<Vec<_>>();
     match candidates.as_slice() {
         [candidate] => type_info

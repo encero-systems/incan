@@ -240,7 +240,6 @@ impl BodyIrModule {
                 && declaration.field_types.len() == 1
                 && declaration.field_public == [true]
                 && declaration.field_aliases.iter().all(Option::is_none)
-                && declaration.type_parameter_count == 0
                 && !declaration.has_field_defaults
                 && declaration.method_partial_defaults.is_empty();
         }

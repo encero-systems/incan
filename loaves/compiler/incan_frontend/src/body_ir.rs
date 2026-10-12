@@ -710,25 +710,25 @@ pub fn is_direct_replacement_model_derive(decorator: &ast::Decorator) -> bool {
         })
 }
 
-/// Admit concrete tuple wrappers with builtin derives, ordinary methods, and trait adoptions.
+/// Admit raw tuple wrappers with builtin derives, checked owner and method parameters, and trait adoptions.
 ///
 /// A trait adopted with type arguments is instantiated from the checker-recorded arguments. Checked construction hooks
 /// and constraints remain refused by the declaration collector. Same-type method aliases, and short rebindings naming
 /// one of the newtype's own methods, keep the checked target identity, as aliases on models do, unless combined with a
-/// generic trait adoption; lint suppressions change nothing at run time. Interop edges, associated types, and generic
-/// methods require additional representation facts and remain outside this profile.
+/// generic trait adoption or owner parameters; lint suppressions change nothing at run time. Associated type targets
+/// are resolved by checking into the retained method frames and trait implementation identities. Interop edges and
+/// method partials require additional representation facts and remain outside this profile.
 pub fn is_direct_replacement_plain_newtype(newtype: &ast::NewtypeDecl) -> bool {
     !newtype.is_rusttype
         && newtype.decorators.iter().all(|decorator| {
             is_direct_replacement_model_derive(&decorator.node) || is_lint_suppression_decorator(&decorator.node)
         })
-        && newtype.type_params.is_empty()
         && newtype.rebindings.iter().all(|rebinding| {
             matches!(&rebinding.node.target.node, ast::Expr::Ident(target)
                 if newtype.methods.iter().any(|method| method.node.name == *target))
         })
         && has_at_most_one_open_shape_feature(
-            false,
+            !newtype.type_params.is_empty(),
             newtype
                 .traits
                 .iter()
@@ -736,16 +736,11 @@ pub fn is_direct_replacement_plain_newtype(newtype: &ast::NewtypeDecl) -> bool {
             !newtype.method_aliases.is_empty() || !newtype.rebindings.is_empty(),
         )
         && newtype.method_partials.is_empty()
-        && newtype.associated_types.is_empty()
         && newtype.interop_edges.is_empty()
-        && newtype.methods.iter().all(|method| {
-            method.node.type_params.is_empty()
-                && method
-                    .node
-                    .decorators
-                    .iter()
-                    .all(|decorator| is_lint_suppression_decorator(&decorator.node))
-        })
+        && newtype
+            .methods
+            .iter()
+            .all(|method| has_direct_replacement_method_decorators(&method.node))
 }
 
 /// Admit source classes whose fields and method bodies have complete direct-route facts.
