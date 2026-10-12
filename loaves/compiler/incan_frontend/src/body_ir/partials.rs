@@ -6,6 +6,7 @@ use super::{
     FunctionDefaultSource, HirSourceSpan, IncanType, SemanticSourceTargetKind, ast, bir, hir_span,
     semantic_type_from_resolved,
 };
+use crate::typechecker::PartialProjectionTargetKind;
 
 /// The exact same-module function a Partial forwards to, with its deferred source defaults.
 struct PartialFunctionTarget {
@@ -13,6 +14,79 @@ struct PartialFunctionTarget {
     canonical: CanonicalSymbolId,
     direct_call_id: CompilerNodeId,
     defaults: Vec<FunctionDefaultSource>,
+}
+
+/// The retained same-module model or class a constructor Partial builds, with its fields' deferred source defaults.
+struct PartialConstructorTarget {
+    declaration: bir::NominalDeclaration,
+    defaults: Vec<FunctionDefaultSource>,
+}
+
+/// The checked target a source Partial forwards its complete parameter surface to.
+enum PartialTarget {
+    Function(PartialFunctionTarget),
+    Constructor(PartialConstructorTarget),
+}
+
+impl PartialTarget {
+    /// The target's deferred source defaults, one per forwarded parameter.
+    fn defaults(&self) -> &[FunctionDefaultSource] {
+        match self {
+            Self::Function(target) => &target.defaults,
+            Self::Constructor(target) => &target.defaults,
+        }
+    }
+}
+
+/// Select a Partial's target from the checker's recorded projection kind: a model or class constructor, or otherwise
+/// a function.
+fn partial_target(partial: &ast::PartialDecl, facts: &BodyIrLoweringFacts<'_, '_>) -> Result<PartialTarget, String> {
+    match facts
+        .type_info
+        .partial_projection(&partial.name)
+        .map(|projection| &projection.target_kind)
+    {
+        Some(PartialProjectionTargetKind::ModelConstructor | PartialProjectionTargetKind::ClassConstructor) => {
+            constructor_target(partial, facts).map(PartialTarget::Constructor)
+        }
+        _ => function_target(partial, facts).map(PartialTarget::Function),
+    }
+}
+
+/// Prove a constructor Partial's target is one retained model or class of this module, by its checked identity.
+///
+/// The forwarded surface is the declaration's complete field layout in order, so a field the checker projected in
+/// another order, or a declaration without retained layout facts, keeps the Partial refused.
+fn constructor_target(
+    partial: &ast::PartialDecl,
+    facts: &BodyIrLoweringFacts<'_, '_>,
+) -> Result<PartialConstructorTarget, String> {
+    let [name] = partial.target.segments.as_slice() else {
+        return Err("source Partial with a nonlocal constructor target".to_string());
+    };
+    let canonical = facts
+        .type_info
+        .declarations
+        .named_type_identities
+        .get(name)
+        .ok_or_else(|| "source Partial without a checked constructor target".to_string())?;
+    let declaration = facts
+        .local_nominal_declarations
+        .values()
+        .find(|declaration| {
+            &declaration.canonical == canonical
+                && incan_semantics_core::canonical_module_identity(canonical).as_deref() == Some(facts.module_identity)
+        })
+        .ok_or_else(|| "source Partial over an unretained or nonlocal constructor".to_string())?;
+    let defaults = facts
+        .function_default_sources
+        .get(name)
+        .filter(|defaults| defaults.len() == declaration.fields.len())
+        .ok_or_else(|| "source Partial without retained constructor field defaults".to_string())?;
+    Ok(PartialConstructorTarget {
+        declaration: declaration.clone(),
+        defaults: defaults.clone(),
+    })
 }
 
 /// Prove a Partial's target is one physically retained, checked function rather than resolving a backend spelling.
@@ -63,7 +137,7 @@ fn partial_parameters(
     builder: &mut BodyBuilder<'_, '_>,
     binding: &crate::typechecker::FunctionBindingInfo,
     partial: &ast::PartialDecl,
-    target: Option<&PartialFunctionTarget>,
+    target: Option<&PartialTarget>,
     scope: bir::ScopeId,
     span: HirSourceSpan,
 ) -> Vec<bir::CallableParam> {
@@ -101,7 +175,7 @@ fn partial_parameters(
             .map(|preset| &preset.value)
             .or_else(|| {
                 target
-                    .and_then(|target| target.defaults.get(index))
+                    .and_then(|target| target.defaults().get(index))
                     .and_then(|source| source.default.as_ref())
             });
         parameter.default = if source.is_none() && binding.params[index].has_default {
@@ -117,9 +191,12 @@ fn partial_parameters(
 }
 
 /// Forward all declaration slots once, preserving the target's mutable passing contract and exact identity.
+///
+/// A function target is called; a constructor target builds its declaration from the slots, which must be its
+/// complete field layout in order.
 fn forward_partial(
     builder: &mut BodyBuilder<'_, '_>,
-    target: PartialFunctionTarget,
+    target: PartialTarget,
     params: &[bir::CallableParam],
     scope: bir::ScopeId,
     span: HirSourceSpan,
@@ -138,23 +215,58 @@ fn forward_partial(
             }
         })
         .collect::<Vec<_>>();
-    let result = builder.push_call_temp(
-        bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
-            receiver_type: None,
-            name: target.name,
-            direct_call_id: Some(target.direct_call_id),
-            canonical: Some(target.canonical),
-            builtin: None,
-            type_args: Vec::new(),
-            binding: bir::ArgumentBinding::resolved_positional(operands.len()),
-        })),
-        fixed_elements(operands),
-        builder.owner_return_type.clone(),
-        scope,
-        span,
-        false,
-        out,
-    );
+    let ty = builder.owner_return_type.clone();
+    let result = match target {
+        PartialTarget::Function(target) => builder.push_call_temp(
+            bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
+                receiver_type: None,
+                name: target.name,
+                direct_call_id: Some(target.direct_call_id),
+                canonical: Some(target.canonical),
+                builtin: None,
+                type_args: Vec::new(),
+                binding: bir::ArgumentBinding::resolved_positional(operands.len()),
+            })),
+            fixed_elements(operands),
+            ty,
+            scope,
+            span,
+            false,
+            out,
+        ),
+        PartialTarget::Constructor(target) => {
+            if !params
+                .iter()
+                .map(|parameter| &parameter.name)
+                .eq(target.declaration.fields.iter())
+            {
+                builder.push_unsupported_stmt(
+                    "source Partial whose parameters differ from its constructor's field layout".to_string(),
+                    span,
+                    out,
+                );
+                return;
+            }
+            let declaration = target.declaration;
+            let construction = bir::ConstructorTarget {
+                name: declaration.name,
+                canonical: Some(declaration.canonical),
+                direct_declaration_id: Some(declaration.direct_declaration_id),
+                canonical_field_layout: Some(declaration.fields),
+                binding: bir::ArgumentBinding::resolved_positional(operands.len()),
+            };
+            builder.push_assign_temp(
+                bir::Rvalue::Aggregate(
+                    bir::AggregateKind::Constructor(Box::new(construction)),
+                    fixed_elements(operands),
+                ),
+                ty,
+                scope,
+                span,
+                out,
+            )
+        }
+    };
     out.push(bir::Statement {
         kind: bir::StatementKind::Return { value: Some(result) },
         span,
@@ -180,7 +292,7 @@ pub(super) fn lower_source_partial(
         .unwrap_or(IncanType::Unknown);
     let mut builder = BodyBuilder::new(facts, return_type.clone());
     let scope = builder.new_scope(None, span);
-    let target = function_target(partial, facts);
+    let target = partial_target(partial, facts);
     let params = binding
         .map(|binding| partial_parameters(&mut builder, binding, partial, target.as_ref().ok(), scope, span))
         .unwrap_or_default();

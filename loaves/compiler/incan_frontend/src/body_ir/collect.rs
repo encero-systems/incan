@@ -199,7 +199,9 @@ pub(super) fn collect_local_enum_declarations(
         .collect()
 }
 
-/// Collect the source expressions a synthesized local partial needs to retain target defaults in Body IR.
+/// Collect the source expressions a synthesized partial needs to retain target defaults in Body IR: a function's
+/// parameter defaults, and a model's or class's field defaults for a partial over its constructor, in declaration
+/// order.
 pub(super) fn collect_function_default_sources(program: &ast::Program) -> FunctionDefaultSources {
     program
         .declarations
@@ -216,7 +218,20 @@ pub(super) fn collect_function_default_sources(program: &ast::Program) -> Functi
                     })
                     .collect(),
             )),
+            ast::Declaration::Model(model) => Some((model.name.clone(), field_default_sources(&model.fields))),
+            ast::Declaration::Class(class) => Some((class.name.clone(), field_default_sources(&class.fields))),
             _ => None,
+        })
+        .collect()
+}
+
+/// Retain each declared field's default expression in declaration order, as a constructor's parameter defaults.
+fn field_default_sources(fields: &[ast::Spanned<ast::FieldDecl>]) -> Vec<FunctionDefaultSource> {
+    fields
+        .iter()
+        .map(|field| FunctionDefaultSource {
+            param_span: field.span,
+            default: field.node.default.clone(),
         })
         .collect()
 }
