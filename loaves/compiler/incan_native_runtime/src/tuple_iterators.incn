@@ -1,4 +1,4 @@
-"""Legacy zip snapshots and materialized builtin enumeration of lists and text."""
+"""Legacy zip snapshots, materialized builtin enumeration of lists and text, and text iteration items."""
 
 from std.derives.collection import Iterator, ListIterator, ZipIterator
 from std.derives.copying import Clone
@@ -47,3 +47,11 @@ pub def enumerate_text(values: &str) -> list[tuple[int, str]]:
         pairs.append((index, value))
         index += 1
     return pairs
+
+
+pub def text_items(values: &str) -> list[str]:
+    """List a text's Unicode scalar values as one-character strings, in the order a loop over the text draws them."""
+    mut items: list[str] = []
+    for value in values:
+        items.append(value)
+    return items

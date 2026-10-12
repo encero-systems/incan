@@ -1258,6 +1258,8 @@ def lower_local_assignment(
     if is_list(place_type(builder.locals, target)):
         return list_assignment(builder, target, value, span)
     if place_type(builder.locals, target) == PlanType.String:
+        if target.local in builder.iteration_locals:
+            return initialize_text_iterator(builder, target, value, span)
         return lower_string_assignment(builder, target, value, span)
     if place_type(builder.locals, target) == PlanType.FrozenStr:
         match value:
@@ -4159,6 +4161,7 @@ def lower_function(
         function_pointer_locals=function_pointer_storage(body),
         name=evaluator_name(module, body),
         synthesized=[],
+        iteration_locals=list_iterator_locals(body.block),
     )
     _ = builder.new_block(span)
     if body.is_generator():
@@ -5252,6 +5255,39 @@ def inherit_borrowed_item(mut builder: Builder, target: Place, value: &RustRvalu
         _ => pass
 
 
+def initialize_text_iterator(
+    mut builder: Builder,
+    target: Place,
+    value: &RustRvalue,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Materialize a text iterable's characters once, before its loop, as the one-character strings legacy's loop draws.
+
+    The checked iterator slot then holds that list and is polled through the ordinary list cursor.
+    """
+    match value:
+        RustRvalue.Use(operand) =>
+            reference = borrow_text_operand(builder, operand, span)?
+            items = PlanType.List(ListLeaf.Str, 1)
+            builder.locals[target.local].ty = items
+            external_call(
+                builder,
+                "incan_native_runtime::text_items",
+                [PlanType.StringRef],
+                items,
+                [reference],
+                target,
+                span,
+            )
+            builder.owned.append(target.local)
+            cursor = temporary(builder, PlanType.Int, span)
+            builder.emit(plan_assign(cursor, RvalueKind.Use(literal(Constant.Int(0), span)), span))
+            builder.iterators.append((target.local, cursor.local))
+            return Ok(None)
+        _ => return Err("unsupported Body IR text iterator initialization")
+
+
 def initialize_list_iterator(mut builder: Builder, iterator: Place, source: &RustOperand, span: SourceSpan) -> None:
     """Retain cursor storage for Body IR's borrowed builtin iterable materialization."""
     match source:
@@ -5321,7 +5357,15 @@ def list_next(
     drop_owned(builder, target.local, span)
     if element == PlanType.String or is_list(element) or is_nominal_type(element):
         borrow_iteration_item(builder, target.local)
-    iterable_call(builder, ty, "nth", [PlanType.Int], element, [item_reference, position], target, span)?
+    # A bytes value's items are unsigned bytes, which legacy's loop widens to the checked `int` item.
+    widened = element == PlanType.U8 and place_type(builder.locals, target) == PlanType.Int
+    mut item = target
+    if widened:
+        item = temporary(builder, PlanType.U8, span)
+    iterable_call(builder, ty, "nth", [PlanType.Int], element, [item_reference, position], item, span)?
+    if widened:
+        byte = read_place(item, false, span)
+        builder.emit(plan_assign(target, RvalueKind.NumericCast(byte, PlanType.U8, PlanType.Int), span))
     # The cursor cannot overflow: a successful poll is bounded by the native collection length.
     pair = temporary(builder, PlanType.CheckedInt, span)
     one = Operand(kind=OperandKind.Literal(Constant.Int(1)), span=span)
