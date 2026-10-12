@@ -338,10 +338,6 @@ pub struct TraitTypeArgument {
 /// [`ConstructorTarget::binding`], rather than treating constructor argument spelling as layout evidence.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NominalDeclaration {
-    /// Exact foreign runtime item selected by the direct-route bridge. Empty keeps the ordinary source or SDK
-    /// declaration; consumers validate a nonempty item against its retained canonical owner before linking it.
-    #[serde(default)]
-    pub native_item: String,
     /// Exact source-local declaration identity, derived from the declaration source span.
     pub direct_declaration_id: CompilerNodeId,
     /// RFC 120 identity minted by the checker for this declaration.
@@ -394,20 +390,6 @@ pub struct NominalDeclaration {
     pub type_parameters: Vec<String>,
     /// Number of declared type parameters, agreeing with [`Self::type_parameters`].
     pub type_parameter_count: usize,
-}
-
-/// Foreign runtime ownership for a compiler-known nominal whose stdlib declaration describes its public surface.
-/// This direct-route bridge does not alter source resolution or legacy emission. A user declaration, including one
-/// with the same name, never selects a foreign item; ordinary SDK layouts keep their compiled source item.
-pub fn native_nominal_item(identity: &CanonicalSymbolId) -> Option<String> {
-    let crate::SymbolOrigin::Package { library, module_path } = &identity.origin else {
-        return None;
-    };
-    (library == "incan_stdlib_core"
-        && module_path == &["reflection".to_owned()]
-        && identity.declaration_name == "FieldInfo"
-        && identity.kind == crate::SemanticSourceTargetKind::Class)
-        .then(|| "incan_std_core::reflection::FieldInfo".to_owned())
 }
 
 /// The deferred defaults of one same-owner method partial (`short = partial label(prefix="x")`), without a second
