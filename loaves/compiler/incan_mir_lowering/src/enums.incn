@@ -190,10 +190,9 @@ pub def lower_enum_declarations(
             derives = []
         raw_kind, raw_values = value_enum_raw_values(module, declaration)?
         serialize, deserialize = reached
-        if raw_kind != "" and item == "" and (
-            str(declaration.name) in serialize
-            or str(declaration.name) in deserialize
-        ):
+        adds_serialize = str(declaration.name) in serialize and "serde::Serialize" not in declaration.derives
+        adds_deserialize = str(declaration.name) in deserialize and "serde::Deserialize" not in declaration.derives
+        if raw_kind != "" and item == "" and (adds_serialize or adds_deserialize):
             return Err(f"unsupported Body IR serde derive propagation to value enum {declaration.name}")
         declarations.append(
             EnumDeclaration(
