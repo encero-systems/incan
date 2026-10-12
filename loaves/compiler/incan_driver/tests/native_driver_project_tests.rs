@@ -9845,7 +9845,8 @@ def main() -> None:
     )
 }
 
-/// Frozen collections retain structural display, exact static key storage, and owned nested element reads.
+/// Frozen collections retain structural display, exact static key storage, owned nested reads, and source constructor
+/// parity.
 #[test]
 fn stdlib_frozen_collection_reads_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
@@ -9879,14 +9880,16 @@ def main() -> None:
         println(len(chunk))
 "#,
     )?;
-    for (name, source, reason) in [
-        (
-            "frozen_list_constructor_follow_on",
-            include_str!(
-                "../../incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/comprehensions_and_list_constructor_sources.incn"
-            ),
-            "unsupported Body IR builtin or unproven NamedCallableTarget",
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("frozen-list-source-constructors")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/comprehensions_and_list_constructor_sources.incn"
         ),
+    )?;
+    for (name, source, reason) in [
         (
             "frozen_membership_call_fact_follow_on",
             include_str!(
@@ -9906,14 +9909,14 @@ def main() -> None:
             include_str!(
                 "../../incan_test_support/fixtures/behavior/snapshots_values_and_control_flow/consts_and_statics.incn"
             ),
-            "unsupported source Static initializer or carrier on the native route",
+            "unsupported Body IR unretained global storage `A`",
         ),
         (
             "frozen_descriptor_follow_on",
             include_str!(
                 "../../incan_test_support/fixtures/behavior/snapshots_values_and_control_flow/descriptor_const_with_empty_frozen_list.incn"
             ),
-            "unsupported source Model decorator @derive",
+            "unsupported Body IR unretained global storage `INITIAL_LIFECYCLE`",
         ),
     ] {
         check_project_refusal(name, source, reason)?;

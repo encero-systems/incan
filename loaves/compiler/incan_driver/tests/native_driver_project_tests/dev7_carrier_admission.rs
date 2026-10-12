@@ -44,6 +44,7 @@ fn baked_carrier_caller(fixture: &DriverFixture, scratch: &str) -> Result<PathBu
         "closures",
         "declarations",
         "error",
+        "frozen_values",
         "plan",
         "spans",
         "statics",
