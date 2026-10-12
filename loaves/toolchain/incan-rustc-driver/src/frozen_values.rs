@@ -72,7 +72,7 @@ fn storage<'tcx>(
 }
 
 /// Allocate source-ordered scalar, pair, or nested frozen elements with target-derived stride and alignment.
-fn allocate(tcx: TyCtxt<'_>, element: Ty<'_>, values: &[FrozenValue]) -> Result<(AllocId, u64), PlanError> {
+fn allocate<'tcx>(tcx: TyCtxt<'tcx>, element: Ty<'tcx>, values: &[FrozenValue]) -> Result<(AllocId, u64), PlanError> {
     let layout = tcx
         .layout_of(ty::TypingEnv::fully_monomorphized().as_query_input(element))
         .map_err(|error| invalid(format!("element layout: {error:?}")))?;
@@ -109,11 +109,11 @@ fn allocate(tcx: TyCtxt<'_>, element: Ty<'_>, values: &[FrozenValue]) -> Result<
 }
 
 /// Write one literal according to its exact native type, including pointer provenance for static strings and slices.
-fn write(
-    tcx: TyCtxt<'_>,
+fn write<'tcx>(
+    tcx: TyCtxt<'tcx>,
     allocation: &mut Allocation,
     offset: Size,
-    ty: Ty<'_>,
+    ty: Ty<'tcx>,
     value: &FrozenValue,
 ) -> Result<(), PlanError> {
     let layout = tcx

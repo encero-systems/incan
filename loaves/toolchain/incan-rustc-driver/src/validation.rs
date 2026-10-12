@@ -744,7 +744,10 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             }
             Ok(Scalar::FrozenBytes)
         }
-        RvalueKind::FrozenCollection(ty, _values) => Ok(scalar(ty)),
+        RvalueKind::FrozenCollection(ty, values) => {
+            validate_frozen_values(plan, function, ty, values)?;
+            Ok(scalar(ty))
+        }
         RvalueKind::NumericCast(value, source, target) => {
             let source = scalar(source);
             let target = scalar(target);
@@ -1086,6 +1089,7 @@ fn source_signature_type(ty: &Scalar) -> bool {
                 | Scalar::Decimal
                 | Scalar::FrozenStr
                 | Scalar::FrozenBytes
+                | Scalar::FrozenCollection(_, _)
                 | Scalar::Model(_)
                 | Scalar::Enum(_)
                 | Scalar::List(_, _)
@@ -1713,6 +1717,22 @@ fn hashable_payload(plan: &Plan, ty: &Scalar, carrier: i64) -> bool {
 /// Require flat scalar/text tuple layouts and consistent nominal declaration identities.
 fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
     match ty {
+        PlanType::FrozenCollection(name, elements) => {
+            let arity = match name.as_str() {
+                "FrozenList" | "FrozenSet" => 1,
+                "FrozenDict" => 2,
+                _ => 0,
+            };
+            if arity == 0 || elements.len() != arity {
+                return Err(PlanError::Invalid {
+                    function: "frozen collection".into(),
+                    reason: "unsupported frozen collection storage arity".into(),
+                });
+            }
+            for element in elements {
+                validate_model_type(plan, element)?;
+            }
+        }
         PlanType::CallableArguments(inputs) => {
             let mut signature: Vec<_> = inputs.iter().map(scalar).collect();
             signature.push(Scalar::Unit);
@@ -1821,6 +1841,40 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
                 function: name.clone(),
                 reason: "nominal type differs from its declaration".into(),
             });
+        }
+    }
+    Ok(())
+}
+
+/// Require static data to match every retained storage argument before native allocation or declaration injection.
+fn validate_frozen_values(
+    plan: &Plan,
+    function: &Function,
+    ty: &PlanType,
+    values: &[crate::plan::FrozenValue],
+) -> Result<(), PlanError> {
+    use crate::plan::FrozenValue;
+    validate_model_type(plan, ty)?;
+    let PlanType::FrozenCollection(_, elements) = ty else {
+        return Err(invalid(function, "unsupported noncollection frozen data"));
+    };
+    if !values.len().is_multiple_of(elements.len()) {
+        return Err(invalid(function, "unsupported incomplete frozen collection data"));
+    }
+    for (index, value) in values.iter().enumerate() {
+        let element = &elements[index % elements.len()];
+        match (element, value) {
+            (PlanType::Int, FrozenValue::Scalar(Constant::Int(_)))
+            | (PlanType::Bool, FrozenValue::Scalar(Constant::Bool(_)))
+            | (PlanType::StrRef, FrozenValue::Scalar(Constant::Text(_))) => {}
+            (PlanType::StaticBytes, FrozenValue::Bytes(bytes))
+                if bytes.iter().all(|byte| u8::try_from(*byte).is_ok()) => {}
+            (PlanType::FrozenCollection(..), FrozenValue::Collection(child, data))
+                if scalar(element) == scalar(child) =>
+            {
+                validate_frozen_values(plan, function, child, data)?
+            }
+            _ => return Err(invalid(function, "unsupported frozen literal storage type")),
         }
     }
     Ok(())
