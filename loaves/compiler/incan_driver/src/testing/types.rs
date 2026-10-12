@@ -8,7 +8,7 @@ use crate::cargo_policy::CargoPolicy;
 /// Output format for `incan test` results.
 ///
 /// The `clap` derive rides the `cli` feature: the runner owns the choice, the command line is one way to make it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 pub enum TestOutputFormat {
     /// Human-oriented pytest-style console output.
@@ -184,7 +184,8 @@ pub struct TestRunConfig<'a> {
 ///
 /// The runner does not discover workspaces itself: it only projects this context into JSON Lines test records and
 /// summaries after the CLI has validated scope selection.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WorkspaceTestContext {
     pub workspace_root: PathBuf,
     pub scope_origin: String,

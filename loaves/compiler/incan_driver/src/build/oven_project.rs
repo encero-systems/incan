@@ -139,6 +139,7 @@ pub fn prepare_oven_project(
         authority_context,
         None,
         None,
+        None,
     )
     .map(|(prepared, _)| prepared)
 }
@@ -162,6 +163,7 @@ pub(super) fn prepare_oven_project_with_session(
     authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
     retained_session: Option<Arc<CompilationSession>>,
     mut retained_dependencies: Option<RetainedExecutableDependencies>,
+    retained_native_context: Option<Arc<super::NativeSdkCommandContext>>,
 ) -> CliResult<(OvenPreparedProject, Option<ExecutableDependencyInputs>)> {
     let retain_native_inputs = retained_session.is_some() && authority_context.is_none();
     let _invocation =
@@ -413,9 +415,12 @@ pub(super) fn prepare_oven_project_with_session(
         let _native_admission_trace =
             tracing::trace_span!(target: "incan::invocation", "incan_driver::native_dependency_admission").entered();
         let native_admission_start = Instant::now();
-        let context = match authority_context.as_deref_mut() {
-            Some(context) => context.native_sdk_context()?,
-            None => super::NativeSdkCommandContext::discover()?,
+        let context = match retained_native_context {
+            Some(context) => Some(context),
+            None => match authority_context.as_deref_mut() {
+                Some(context) => context.native_sdk_context()?,
+                None => super::NativeSdkCommandContext::discover()?,
+            },
         };
         let inputs = crate::build_unit::oven_build_unit_inputs_with_native_sdk(
             &provider_plan,

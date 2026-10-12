@@ -568,6 +568,8 @@ incan test [OPTIONS] [PATH]
 
 Collects and runs the tests under `PATH` (default `.`).
 
+On Unix, test commands automatically connect to the same compatible project owner as builds. It retains canonical project and dependency-session preparation while reading current test and conftest sources for each request. Build and test share native dependency admission under the same reconciled lock, compiler and provider identity; changed selected native inputs discard that admission before it can be reused. Each execution runs fresh test processes and fixtures; passing results are never cached. Console output, JSON Lines records and diagnostics return to the requesting CLI, including output from parallel workers. `--list` uses parser-only preparation and does not prepare or execute test artifacts. Other platforms invoke the same runner within the command process.
+
 | Option | Effect |
 | --- | --- |
 | `-k <EXPR>` | Select the tests whose stable test id contains `EXPR`. |

@@ -70,6 +70,13 @@ struct RetainedSession {
     inputs: ModelInputs,
     session: Arc<CompilationSession>,
     executable: Option<RetainedExecutableDependencies>,
+    native_admission: Option<ObservedNativeAdmission>,
+}
+
+/// Original native dependency owners shared by build and test within one reconciled lock/session generation.
+struct ObservedNativeAdmission {
+    context: Arc<NativeSdkCommandContext>,
+    inputs: ModelInputs,
 }
 
 /// Exact command configuration and existing typed dependency declarations, compared without another encoding.
@@ -367,6 +374,7 @@ impl RetainedProjectInputs {
                 inputs,
                 session: Arc::clone(&session),
                 executable: None,
+                native_admission: None,
             },
         );
         Ok(session)
@@ -383,6 +391,51 @@ impl RetainedProjectInputs {
             .get_mut(&SessionPurpose::Artifacts)?
             .executable
             .take()
+    }
+
+    /// Borrow native owners only from the exact artifact session reconciled by the current request.
+    /// Changed physical inputs discard the old admission before canonical discovery. Original leases stay alive
+    /// while consumers hold the returned context; unsupported observations never authorize a retained hit.
+    pub(super) fn native_dependency_context(
+        &mut self,
+        root: &Path,
+        session: &Arc<CompilationSession>,
+    ) -> CliResult<Option<Arc<NativeSdkCommandContext>>> {
+        let Some(retained) = self
+            .projects
+            .get_mut(root)
+            .and_then(|project| project.sessions.get_mut(&SessionPurpose::Artifacts))
+            .filter(|retained| Arc::ptr_eq(&retained.session, session))
+        else {
+            return NativeSdkCommandContext::discover();
+        };
+        let _trace =
+            tracing::trace_span!(target: "incan::invocation", "incan_driver::shared_native_admission").entered();
+        if let Some(admitted) = &retained.native_admission
+            && admitted.inputs.supports_retention()
+            && admitted.inputs.current()
+        {
+            tracing::trace!(target: "incan::invocation", decision = "reuse_native_admission");
+            return Ok(Some(Arc::clone(&admitted.context)));
+        }
+        retained.native_admission = None;
+        let Some(context) = NativeSdkCommandContext::discover()? else {
+            return Ok(None);
+        };
+        let mut inputs = ModelInputs::default();
+        context.visit_retained_inputs(&mut |path| inputs.observe(path));
+        context.verify()?;
+        if inputs.supports_retention() {
+            if !inputs.current() {
+                return Err(CliError::failure("native dependency inputs changed during observation"));
+            }
+            retained.native_admission = Some(ObservedNativeAdmission {
+                context: Arc::clone(&context),
+                inputs,
+            });
+        }
+        tracing::trace!(target: "incan::invocation", decision = "admit_native_dependencies");
+        Ok(Some(context))
     }
 
     /// Return a completed original plan to the same observed dependency generation, without a second cache.

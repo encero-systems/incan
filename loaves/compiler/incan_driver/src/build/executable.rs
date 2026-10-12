@@ -161,18 +161,61 @@ impl ExecutableBuildOwner {
         features: &FeatureSelection,
         sdk_profile: Option<&str>,
     ) -> CliResult<std::sync::Arc<crate::session::CompilationSession>> {
+        self.test_session(root, entry, features, sdk_profile, SessionPurpose::Collection)
+    }
+
+    /// Borrow canonical artifact preparation for fresh test execution, retaining no test outcomes or fixtures.
+    /// The existing project, lock and provider observations guard the same artifact-purpose session used by builds.
+    pub fn test_execution_session(
+        &mut self,
+        root: &Path,
+        entry: &Path,
+        features: &FeatureSelection,
+        sdk_profile: Option<&str>,
+    ) -> CliResult<std::sync::Arc<crate::session::CompilationSession>> {
+        self.test_session(root, entry, features, sdk_profile, SessionPurpose::Artifacts)
+    }
+
+    /// Share the existing native dependency admission between build and test after session reconciliation.
+    /// The canonical lock/compiler/provider generation owns this state; standalone inputs keep canonical discovery.
+    pub fn native_dependency_context(
+        &mut self,
+        session: &std::sync::Arc<crate::session::CompilationSession>,
+    ) -> CliResult<Option<std::sync::Arc<super::NativeSdkCommandContext>>> {
+        let Some(manifest) = session.manifest.as_ref() else {
+            return super::NativeSdkCommandContext::discover();
+        };
+        let root =
+            std::fs::canonicalize(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?;
+        self.authority.retained_inputs.native_dependency_context(&root, session)
+    }
+
+    /// Select the original discovery mode for one reconciled test request without a second session cache.
+    fn test_session(
+        &mut self,
+        root: &Path,
+        entry: &Path,
+        features: &FeatureSelection,
+        sdk_profile: Option<&str>,
+        purpose: SessionPurpose,
+    ) -> CliResult<std::sync::Arc<crate::session::CompilationSession>> {
         self.authority.begin_request();
         if !root.join(oven_model::manifest::LOAF_MANIFEST_FILENAME).is_file() {
-            return Ok(std::sync::Arc::new(
-                crate::session::CompilationSession::discover_for_collection_with_selections(
-                    entry,
-                    features,
-                    sdk_profile,
-                )?,
-            ));
+            return Ok(std::sync::Arc::new(match purpose {
+                SessionPurpose::Collection => {
+                    crate::session::CompilationSession::discover_for_collection_with_selections(
+                        entry,
+                        features,
+                        sdk_profile,
+                    )?
+                }
+                SessionPurpose::Artifacts => {
+                    crate::session::CompilationSession::discover_for_oven(entry, features, sdk_profile)?
+                }
+            }));
         }
         self.authority
-            .compilation_session(root, entry, features, sdk_profile, SessionPurpose::Collection)
+            .compilation_session(root, entry, features, sdk_profile, purpose)
     }
 
     /// Select and execute a receipt-bound native executable through existing Oven operations, retaining the same
@@ -320,6 +363,11 @@ impl ExecutableBuildOwner {
             .map(|root| self.authority.take_executable_dependencies(root))
             .transpose()?
             .flatten();
+        let native_context = session
+            .as_ref()
+            .map(|session| self.native_dependency_context(session))
+            .transpose()?
+            .flatten();
         let (prepared, mut dependency_inputs) = prepare_oven_project_with_session(
             file_path,
             output_dir.map(String::as_str),
@@ -334,6 +382,7 @@ impl ExecutableBuildOwner {
             None,
             session,
             dependencies,
+            native_context,
         )?;
         if let Some(inputs) = dependency_inputs.as_mut()
             && !inputs.observe_plan(&prepared)?

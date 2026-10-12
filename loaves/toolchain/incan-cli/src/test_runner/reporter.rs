@@ -13,15 +13,19 @@ pub trait TestReporter {
     fn on_file_discovered(&mut self, _path: &std::path::Path) {}
 
     /// Called when test collection is complete.
+    /// Report an empty collected inventory on the standalone reporter.
     fn on_collection_complete(&mut self, test_count: usize);
 
     /// Called when a test run begins.
+    /// Identify the next test when verbose reporting is enabled.
     fn on_test_start(&mut self, test: &TestInfo);
 
     /// Called when a test completes.
+    /// Render a completed outcome and its failure detail.
     fn on_test_complete(&mut self, test: &TestInfo, result: &TestResult);
 
     /// Called when all tests have completed.
+    /// Render the final outcome counts and elapsed duration.
     fn on_run_complete(&mut self, summary: &TestSummary);
 }
 
@@ -33,11 +37,13 @@ pub struct ConsoleReporter {
 }
 
 impl ConsoleReporter {
+    /// Select verbosity and terminal color for the standalone console reporter.
     pub fn new(verbose: bool, use_color: bool) -> Self {
         Self { verbose, use_color }
     }
 }
 
+/// Apply terminal styling only when the caller requested color.
 pub(crate) fn style<T: fmt::Display>(text: T, code: &str, use_color: bool) -> String {
     if use_color {
         format!("\x1b[{}m{}\x1b[0m", code, text)
@@ -47,18 +53,21 @@ pub(crate) fn style<T: fmt::Display>(text: T, code: &str, use_color: bool) -> St
 }
 
 impl TestReporter for ConsoleReporter {
+    /// Report an empty collected inventory on the standalone reporter.
     fn on_collection_complete(&mut self, test_count: usize) {
         if test_count == 0 {
             eprintln!("No tests collected");
         }
     }
 
+    /// Identify the next test when verbose reporting is enabled.
     fn on_test_start(&mut self, test: &TestInfo) {
         if self.verbose {
             eprint!("{} ... ", test.function_name);
         }
     }
 
+    /// Render a completed outcome and its failure detail.
     fn on_test_complete(&mut self, test: &TestInfo, result: &TestResult) {
         let use_color = self.use_color;
         let status = match result {
@@ -102,6 +111,7 @@ impl TestReporter for ConsoleReporter {
         }
     }
 
+    /// Render the final outcome counts and elapsed duration.
     fn on_run_complete(&mut self, summary: &TestSummary) {
         let use_color = self.use_color;
         if !self.verbose {
@@ -131,7 +141,14 @@ impl TestReporter for ConsoleReporter {
     }
 }
 
-pub(crate) fn print_test_result(test: &TestInfo, result: &TestResult, verbose: bool, use_color: bool) {
+/// Render one result through the destination owned by its command request.
+pub(crate) fn print_test_result(
+    test: &TestInfo,
+    result: &TestResult,
+    verbose: bool,
+    use_color: bool,
+    output: &super::output::TestOutputSink,
+) {
     let file_stem = test.file_path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
 
     let status = match result {
@@ -170,5 +187,5 @@ pub(crate) fn print_test_result(test: &TestInfo, result: &TestResult, verbose: b
         .parametrize_call
         .as_ref()
         .map_or_else(|| test.function_name.as_str(), |p| p.display_id.as_str());
-    println!("{}::{} {}", file_stem, display_name, status);
+    output.line(format_args!("{}::{} {}", file_stem, display_name, status));
 }
