@@ -10717,6 +10717,51 @@ fn bytes_io_trait_method_refusal_is_retained() -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
+/// A closure's captured canonical zip retains legacy snapshot and cursor behavior.
+#[test]
+fn canonical_zip_capture_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("canonical-zip-capture")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/execution_collections/executes_a_closure_that_captures_canonical_zip.incn"
+        ),
+    )
+}
+
+/// Iterator text callbacks keep their contextual parameter types and legacy output.
+#[test]
+fn contextual_iterator_callbacks_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("contextual-iterator-callbacks")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/closure_parameters_from_their_context.incn"
+        ),
+    )
+}
+
+/// A flat_map callback may expand an integer into a set, a generator or a list.
+#[test]
+fn iterable_flat_map_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("iterable-flat-map")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/iterator_flat_map_over_iterables.incn"
+        ),
+    )
+}
+
 /// Indexing a tuple copied from a collection and iterating a list slice retain legacy output and source storage.
 #[test]
 fn collection_projection_reads_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
