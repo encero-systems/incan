@@ -757,9 +757,9 @@ pub fn is_direct_replacement_plain_newtype(newtype: &ast::NewtypeDecl) -> bool {
 ///
 /// Ordered owner parameters and method parameters are retained for checked instance scheduling, and trait
 /// adoptions, including ones with checked type arguments, are retained in the implementation registry. Type
-/// parameters, a generic trait adoption and same-type method aliases (which keep the checked target identity, as on
-/// models) are admitted one at a time; combinations stay refused until they have parity evidence. Derives use the
-/// checked selection shared with models, field defaults the declaration-owned deferred computations models use, and
+/// parameters, generic trait adoptions and same-type method aliases keep their independent checked identities and
+/// can occur together. Derives use the checked selection shared with models, field defaults the declaration-owned
+/// deferred computations models use, and
 /// builtin `@staticmethod` and `@classmethod` markers the checker's method facts, and method partials deferred preset
 /// frames and computed properties getter bodies, as on models; lint suppressions change nothing at run time.
 /// Inheritance and user-defined decorators remain refused.
@@ -768,10 +768,6 @@ pub fn is_direct_replacement_checked_class(class: &ast::ClassDecl, type_info: &T
         &class.decorators,
         type_info.declarations.class_derives.get(&class.name),
         false,
-    ) && has_at_most_one_open_shape_feature(
-        !class.type_params.is_empty(),
-        class.traits.iter().any(|adoption| !adoption.node.type_args.is_empty()),
-        !class.method_aliases.is_empty(),
     ) && class.extends.is_none()
         && has_direct_replacement_method_partials(
             &class.type_params,

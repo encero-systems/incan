@@ -79,12 +79,12 @@ def is_protocol_slot(slot: &CanonicalSymbolId) -> bool:
 
 
 def fills_its_slot(implementation: &TraitImplementation) -> bool:
-    """Require a member slot and a method of the same spelling: the adopter's own, or the slot's default itself."""
+    """Require a member slot filled by its default or the checked own method, including an alias's canonical target."""
     slot = implementation.method
     filled = implementation.implementation
     if slot.namespace != SymbolNamespace.Member or slot.kind != SemanticSourceTargetKind.Method:
         return false
-    if filled.kind != SemanticSourceTargetKind.Method or filled.declaration_name != slot.declaration_name:
+    if filled.kind != SemanticSourceTargetKind.Method:
         return false
     if filled == slot:
         return true

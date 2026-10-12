@@ -561,15 +561,6 @@ fn class_refusal_feature(class: &incan_frontend::ast::ClassDecl) -> String {
     if class.extends.is_some() {
         return "inheritance".to_owned();
     }
-    let open_features = [
-        !class.type_params.is_empty(),
-        class.traits.iter().any(|adoption| !adoption.node.type_args.is_empty()),
-        !class.method_aliases.is_empty(),
-    ];
-    if open_features.iter().filter(|present| **present).count() > 1 {
-        return "type parameters, generic trait adoption and method aliases combined".to_owned();
-    }
-
     // ---- Member binding features ----
     if !incan_frontend::body_ir::has_direct_replacement_method_partials(
         &class.type_params,

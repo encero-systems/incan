@@ -214,7 +214,8 @@ impl BodyIrModule {
     /// bodies.
     ///
     /// A default belongs to a retained trait: the slot's own or a subtrait's. An explicit implementation must belong
-    /// to the concrete owner and takes no trait type arguments; a default's type arguments must be closed types.
+    /// to the concrete owner and takes no trait type arguments; its name may differ from the slot for a checked
+    /// method alias. A default's type arguments must be closed types and its name must still match its slot.
     /// Matching method spellings never suffice to establish any of these relationships.
     pub fn is_well_formed_trait_implementation(&self, value: &crate::body_ir::TraitImplementation) -> bool {
         let owned = declares_member(&value.owner, &value.implementation);
@@ -231,7 +232,7 @@ impl BodyIrModule {
                 .all(|binding| is_closed_type(&binding.argument))
         };
         value.method.namespace == SymbolNamespace::Member
-            && value.method.declaration_name == value.implementation.declaration_name
+            && (owned || value.method.declaration_name == value.implementation.declaration_name)
             && value.implementation.kind == SemanticSourceTargetKind::Method
             && (self
                 .nominal_declarations

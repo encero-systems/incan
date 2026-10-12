@@ -836,15 +836,17 @@ fn slot_implementation(
     slot_trait: &AdoptedTrait<'_>,
     slot: &ast::Spanned<ast::MethodDecl>,
     methods: &[ast::Spanned<ast::MethodDecl>],
+    owner: &CanonicalSymbolId,
 ) -> Option<(CanonicalSymbolId, Vec<bir::TraitTypeArgument>)> {
     let identity = type_info
         .traits
         .method_identities
         .get(&(slot_trait.declaration.name.clone(), slot.node.name.clone()))?;
+    let selected_name = checked_slot_method_name(type_info, owner, &slot.node.name);
     let candidates = methods
         .iter()
         .filter(|candidate| {
-            candidate.node.name == slot.node.name && method_fills_trait_slot(type_info, &candidate.node, identity)
+            candidate.node.name == selected_name && method_fills_trait_slot(type_info, &candidate.node, identity)
         })
         .collect::<Vec<_>>();
     match candidates.as_slice() {
@@ -969,7 +971,7 @@ pub(super) fn collect_local_trait_implementations(
                     continue;
                 }
                 let Some((implementation, type_arguments)) =
-                    slot_implementation(type_info, &adopted, slot_trait, slot, methods)
+                    slot_implementation(type_info, &adopted, slot_trait, slot, methods, owner)
                 else {
                     continue;
                 };
@@ -1022,7 +1024,8 @@ fn imported_trait_implementations(
             }
             // A protocol whose behavior a Rust derive provides keeps the slots it leaves on that derive.
             let defaults = !generic && !(protocol && derive_backed_protocol(type_info, trait_key, method));
-            if let Some(implementation) = imported_slot_implementation(type_info, method, slot_name, methods, defaults)
+            if let Some(implementation) =
+                imported_slot_implementation(type_info, method, slot_name, methods, defaults, owner)
             {
                 implementations.push(bir::TraitImplementation {
                     owner: owner.clone(),
@@ -1123,11 +1126,13 @@ fn imported_slot_implementation(
     slot_name: &str,
     methods: &[ast::Spanned<ast::MethodDecl>],
     defaults: bool,
+    owner: &CanonicalSymbolId,
 ) -> Option<CanonicalSymbolId> {
+    let selected_name = checked_slot_method_name(type_info, owner, slot_name);
     let candidates = methods
         .iter()
         .filter(|candidate| {
-            candidate.node.name == slot_name && method_fills_trait_slot(type_info, &candidate.node, method)
+            candidate.node.name == selected_name && method_fills_trait_slot(type_info, &candidate.node, method)
         })
         .collect::<Vec<_>>();
     match candidates.as_slice() {
@@ -1139,6 +1144,32 @@ fn imported_slot_implementation(
         [] if defaults && type_info.traits.default_method_identities.contains(method) => Some(method.clone()),
         _ => None,
     }
+}
+
+/// Follow the checker's same-owner alias projection before selecting the physical method body for a trait slot.
+///
+/// Only the recorded alias map participates; source spellings do not introduce a new relationship. The finite walk
+/// also keeps a corrupted cyclic map from hanging the bridge, although ordinary checked input excludes cycles.
+fn checked_slot_method_name<'facts>(
+    type_info: &'facts TypeCheckInfo,
+    owner: &CanonicalSymbolId,
+    slot_name: &'facts str,
+) -> &'facts str {
+    let Some(aliases) = type_info
+        .declarations
+        .type_method_rebindings
+        .get(&owner.declaration_name)
+    else {
+        return slot_name;
+    };
+    let mut name = slot_name;
+    for _ in 0..=aliases.len() {
+        let Some(target) = aliases.get(name) else {
+            return name;
+        };
+        name = target;
+    }
+    slot_name
 }
 
 /// Whether a trait slot can be filled by a body of the project or of a package dependency.
