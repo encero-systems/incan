@@ -145,6 +145,9 @@ def close_layout(instance: NominalInstance) -> Result[NominalDeclaration, str]:
             closed: Body = close_owner_body(body, instance)?
             result.field_default_body = Some(closed.into_box())
         None => pass
+    for index in range(len(result.method_partial_defaults)):
+        closed: Body = close_owner_body(instance.declaration.method_partial_defaults[index].frame, instance)?
+        result.method_partial_defaults[index].frame = closed.into_box()
     return Ok(result)
 
 

@@ -108,23 +108,21 @@ pub(super) fn attach_method_partial_defaults(
             ),
             _ => continue,
         };
-        let Some(declaration) = declarations
-            .iter_mut()
-            .find(|value| value.name == *name && value.type_parameters.is_empty())
-        else {
+        let Some(declaration) = declarations.iter_mut().find(|value| value.name == *name) else {
             continue;
         };
         for partial in partials {
-            if let Some(frame) = method_partial_frame(name, methods, aliases, partial, facts) {
+            if let Some(frame) = method_partial_frame(declaration, methods, aliases, partial, facts) {
                 declaration.method_partial_defaults.push(frame);
             }
         }
     }
 }
 
-/// Lower one method partial's frame: its target method's surface with the presets as defaults and an empty block.
+/// Lower one method partial's frame with its retained owner arguments, presets as defaults and an empty block.
+/// The receiver is the same checked owner template the target method uses; layout specialization closes both together.
 fn method_partial_frame(
-    owner: &str,
+    owner: &bir::NominalDeclaration,
     methods: &[ast::Spanned<ast::MethodDecl>],
     aliases: &[ast::Spanned<ast::MethodAliasDecl>],
     partial: &ast::Spanned<ast::MethodPartialDecl>,
@@ -152,13 +150,15 @@ fn method_partial_frame(
             .find(|parameter| parameter.node.name == preset.name)?;
         parameter.node.default = Some(preset.value.clone());
     }
-    let frame = lower_method_body(
-        &frame_source,
-        method.span,
-        owner,
-        &IncanType::Named(owner.to_string()),
-        facts,
-    )?;
+    let receiver = if owner.type_parameters.is_empty() {
+        IncanType::Named(owner.name.clone())
+    } else {
+        IncanType::Generic {
+            base: owner.name.clone(),
+            args: owner.type_parameters.iter().cloned().map(IncanType::TypeVar).collect(),
+        }
+    };
+    let frame = lower_method_body(&frame_source, method.span, &owner.name, &receiver, facts)?;
     Some(bir::MethodPartialDefaults {
         name: partial.node.name.clone(),
         span: hir_span(partial.span),

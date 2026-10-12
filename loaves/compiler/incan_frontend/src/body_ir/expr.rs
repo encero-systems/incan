@@ -28,6 +28,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Numeric spelling alone proves nothing: only an in-bounds element of the existing checked tuple shape is
     /// structural. Checked member fields use the canonical declaration's name and identity together, so an alias
     /// cannot become a second storage slot. Unresolved fields preserve their source spelling and remain unproven.
+    /// A newtype's wrapped-value slot uses the method's retained concrete receiver when the expression fact keeps Self
+    /// open; an open trait receiver cannot authorize that physical projection.
     pub(super) fn lower_checked_field_projection(
         &self,
         base: &ast::Spanned<ast::Expr>,
@@ -35,6 +37,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         span: ast::Span,
     ) -> bir::PlaceElem {
         let ty = self.resolve_ty(base.span);
+        // The checker keeps a Self-typed parameter open in expression facts even when this method's retained receiver
+        // is concrete. Use that receiver fact for physical wrapped-value projection; trait defaults keep Self open.
+        let ty = if ty == IncanType::SelfType {
+            self.bindings
+                .get("self")
+                .and_then(|local| self.locals.get(local.index()))
+                .map(|local| local.ty.clone())
+                .unwrap_or(ty)
+        } else {
+            ty
+        };
         if name == "0"
             && let IncanType::Named(owner) = &ty
             && let Some(declaration) = self.local_nominal_declarations.values().find(|declaration| {

@@ -638,34 +638,32 @@ pub(crate) fn method_partial_target<'a>(
     }
 }
 
-/// Determine whether every method partial of a nominal owner has a retained default frame: the owner is not generic,
-/// and each partial targets, directly or through a method alias, exactly one non-generic receiver method whose
-/// parameters its presets name.
+/// Determine whether every method partial of a nominal owner has a retained default frame: each partial targets,
+/// directly or through a method alias, exactly one non-generic receiver method whose parameters its presets name.
+/// Owner parameters close with the owner's retained layout and preset frame at each checked instantiation.
 ///
 /// A call of such a partial is a call of its target method whose omitted presets are defaulted slots, so the frame
 /// carrying the presets as defaults is the whole executable fact (see [`bir::MethodPartialDefaults`]).
 pub fn has_direct_replacement_method_partials(
-    owner_type_params: &[ast::TypeParam],
+    _owner_type_params: &[ast::TypeParam],
     methods: &[ast::Spanned<ast::MethodDecl>],
     aliases: &[ast::Spanned<ast::MethodAliasDecl>],
     partials: &[ast::Spanned<ast::MethodPartialDecl>],
 ) -> bool {
-    partials.is_empty()
-        || owner_type_params.is_empty()
-            && partials.iter().all(|partial| {
-                method_partial_target(methods, aliases, &partial.node).is_some_and(|method| {
-                    method.node.receiver.is_some()
-                        && method.node.type_params.is_empty()
-                        && method.node.body.is_some()
-                        && partial.node.args.iter().all(|preset| {
-                            method
-                                .node
-                                .params
-                                .iter()
-                                .any(|parameter| parameter.node.name == preset.name)
-                        })
+    partials.iter().all(|partial| {
+        method_partial_target(methods, aliases, &partial.node).is_some_and(|method| {
+            method.node.receiver.is_some()
+                && method.node.type_params.is_empty()
+                && method.node.body.is_some()
+                && partial.node.args.iter().all(|preset| {
+                    method
+                        .node
+                        .params
+                        .iter()
+                        .any(|parameter| parameter.node.name == preset.name)
                 })
-            })
+        })
+    })
 }
 
 /// Determine whether every computed property of a nominal owner has a getter body Body IR lowers and calls: the owner
