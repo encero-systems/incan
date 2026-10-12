@@ -3360,6 +3360,107 @@ def main() -> None:
     )
 }
 
+/// Prove `mut` text, model and enum parameters byte-identical to legacy: a `mut str` parameter takes a literal, the
+/// caller's variable and a copy of a loop variable; a `mut` `Option`, model or enum parameter changed through a field
+/// or a pattern binding changes the caller's value, including a nested `Option`, while one only read leaves the
+/// caller's value alone; and a loop over a `mut` list of `Option`s or a match on a list element changes the element
+/// in place.
+#[test]
+fn exclusive_parameter_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("exclusive-parameter")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"model Holder:
+    pub inner: Option[list[int]]
+    pub count: int
+
+enum Slot:
+    Pair(list[int], int)
+    Empty
+
+def bump(mut text: str) -> None:
+    println(text + "!")
+
+def width(mut s: str) -> int:
+    return len(s)
+
+def by_match(mut box: Option[list[int]]) -> None:
+    match box:
+        Some(xs) => xs.append(1)
+        None => pass
+
+def total(mut box: Option[list[int]]) -> int:
+    match box:
+        Some(xs) => return len(xs)
+        None => return 0
+
+def by_field(mut h: Holder) -> None:
+    h.count += 1
+    match h.inner:
+        Some(xs) => xs.append(4)
+        None => pass
+
+def by_nested(mut box: Option[Option[list[int]]]) -> None:
+    match box:
+        Some(inner) =>
+            match inner:
+                Some(xs) => xs.append(6)
+                None => pass
+        None => pass
+
+def paired(mut s: Slot) -> int:
+    match s:
+        Slot.Pair(items, n) =>
+            items.append(n)
+            return n + len(items)
+        Slot.Empty => return 0
+
+def by_loop_view(mut rows: list[Option[list[int]]]) -> None:
+    for row in rows:
+        if let Some(xs) = row:
+            xs.append(5)
+
+def main() -> None:
+    bump("hello")
+    mut name = "name"
+    bump(name)
+    println(name)
+    names: list[str] = ["a", "bc"]
+    mut w = 0
+    for item in names:
+        w += width(item)
+    println(w)
+    mut box = Some([0])
+    by_match(box)
+    println(box)
+    println(total(box))
+    kept = Some([1, 2])
+    println(total(kept))
+    println(kept)
+    mut h = Holder(inner=Some([0]), count=0)
+    by_field(h)
+    println(f"{h.inner} {h.count}")
+    mut nested = Some(Some([0]))
+    by_nested(nested)
+    println(nested)
+    mut s = Slot.Pair([1], 5)
+    println(paired(s))
+    println(paired(s))
+    mut rows = [Some([0]), None]
+    by_loop_view(rows)
+    println(rows)
+    mut slots: list[Option[list[int]]] = [Some([1])]
+    match slots[0]:
+        Some(xs) => xs.append(2)
+        None => pass
+    println(slots)
+"#,
+    )
+}
+
 /// Prove closure captures beyond `int`, `float` and `bool` byte-identical to legacy: an `f32` and an `i32` capture
 /// keep their carrier, and a captured `str` stays owned by the closure across repeated calls while the captured
 /// local is still read after the closure is built.
