@@ -110,6 +110,7 @@ fn library_newtype(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> 
         field_identities: vec![identity.clone()],
         field_types: vec![semantic_type_from_resolved(&newtype.underlying)],
         field_public: vec![true],
+        field_aliases: Vec::new(),
         fields: vec!["0".to_owned()],
         public: true,
         has_field_defaults: false,
@@ -175,6 +176,7 @@ fn library_nominal(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> 
             .iter()
             .map(|(_, field)| field.visibility == ast::Visibility::Public)
             .collect(),
+        field_aliases: Vec::new(),
         fields: fields.into_iter().map(|(name, _)| name).collect(),
         public: true,
         has_field_defaults,

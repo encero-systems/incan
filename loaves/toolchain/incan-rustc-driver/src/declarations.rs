@@ -562,7 +562,10 @@ fn model_tokens(model: &crate::plan::ModelDeclaration, span: Span) -> ast::token
     use ast::tokenstream::{AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, LazyAttrTokenStream, Spacing};
     let mut fields = Vec::new();
     let tuple = model.fields.len() == 1 && model.fields[0].name == "0";
-    for (field, public) in model.fields.iter().zip(&model.field_public) {
+    for (slot, (field, public)) in model.fields.iter().zip(&model.field_public).enumerate() {
+        if let Some(serde_name) = model.field_serde_names.get(slot).filter(|name| !name.is_empty()) {
+            fields.extend(serde_rename_tokens(serde_name, span));
+        }
         if *public {
             fields.push(keyword_token("pub", span));
         }
@@ -602,6 +605,37 @@ fn model_tokens(model: &crate::plan::ModelDeclaration, span: Span) -> ast::token
         ));
     }
     LazyAttrTokenStream::new_direct(AttrTokenStream::new(tokens))
+}
+
+/// `#[serde(rename = "name")]` before a field in the derive input, as legacy writes it for an aliased field.
+///
+/// The attribute exists only for serde's derive, which reads it as its helper; the injected AST field needs none.
+fn serde_rename_tokens(name: &str, span: Span) -> Vec<ast::tokenstream::AttrTokenTree> {
+    use ast::token::{Delimiter, Lit, LitKind, Token, TokenKind};
+    use ast::tokenstream::{AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, Spacing};
+    let literal = Lit::new(LitKind::Str, Symbol::intern(&name.escape_default().to_string()), None);
+    let arguments = AttrTokenStream::new(vec![
+        name_token("rename", span),
+        AttrTokenTree::Token(Token::new(TokenKind::Eq, span), Spacing::Alone),
+        AttrTokenTree::Token(Token::new(TokenKind::Literal(literal), span), Spacing::Alone),
+    ]);
+    vec![
+        AttrTokenTree::Token(Token::new(TokenKind::Pound, span), Spacing::JointHidden),
+        AttrTokenTree::Delimited(
+            DelimSpan::from_single(span),
+            DelimSpacing::new(Spacing::JointHidden, Spacing::Alone),
+            Delimiter::Bracket,
+            AttrTokenStream::new(vec![
+                name_token("serde", span),
+                AttrTokenTree::Delimited(
+                    DelimSpan::from_single(span),
+                    DelimSpacing::new(Spacing::Alone, Spacing::Alone),
+                    Delimiter::Parenthesis,
+                    arguments,
+                ),
+            ]),
+        ),
+    ]
 }
 
 /// Turn an admitted AST identifier into a token with the same source span and hygiene.

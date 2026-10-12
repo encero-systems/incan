@@ -515,8 +515,8 @@ pub fn is_direct_replacement_plain_model(model: &ast::ModelDecl) -> bool {
 
 /// Admit JSON derives only after checking resolves all selections to canonical supported serde paths, Copy only after
 /// checking accepted it for every field, and `@rust.derive(...)` only when checking classified every derive it names
-/// as a Rust builtin retained among the model's derives. Serde field renames remain refused until their checked
-/// metadata crosses the Body IR and plan boundary.
+/// as a Rust builtin retained among the model's derives. A field alias crosses the boundary in the retained
+/// declaration, so a serde form can rename the field as legacy does.
 pub fn is_direct_replacement_checked_model(model: &ast::ModelDecl, type_info: &TypeCheckInfo) -> bool {
     if is_direct_replacement_plain_model(model) {
         return true;
@@ -525,8 +525,7 @@ pub fn is_direct_replacement_checked_model(model: &ast::ModelDecl, type_info: &T
         &model.decorators,
         type_info.declarations.model_derives.get(&model.name),
         type_info.declarations.rust_builtin_derive_models.contains(&model.name),
-    ) && model.fields.iter().all(|field| field.node.metadata.alias.is_none())
-        && has_direct_replacement_model_shape(model)
+    ) && has_direct_replacement_model_shape(model)
 }
 
 /// Admit a model or class whose decorators are all the bare builtin `derive` and whose checked native selection

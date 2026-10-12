@@ -231,6 +231,7 @@ impl BodyIrModule {
                 && declaration.field_identities == [declaration.canonical.clone()]
                 && declaration.field_types.len() == 1
                 && declaration.field_public == [true]
+                && declaration.field_aliases.iter().all(Option::is_none)
                 && declaration.type_parameter_count == 0
                 && !declaration.has_field_defaults
                 && declaration.method_partial_defaults.is_empty();
@@ -251,6 +252,7 @@ impl BodyIrModule {
             && declaration.fields.len() == declaration.field_identities.len()
             && declaration.fields.len() == declaration.field_types.len()
             && declaration.fields.len() == declaration.field_public.len()
+            && (declaration.field_aliases.is_empty() || declaration.fields.len() == declaration.field_aliases.len())
             && declaration.fields.iter().collect::<BTreeSet<_>>().len() == declaration.fields.len()
             && declaration.field_identities.iter().collect::<BTreeSet<_>>().len() == declaration.field_identities.len()
             && declaration

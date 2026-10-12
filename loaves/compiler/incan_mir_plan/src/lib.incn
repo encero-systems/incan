@@ -523,6 +523,9 @@ pub model ModelDeclaration:
     # A stdlib layout names the compiled SDK crate item that owns its storage; the plan never declares it. With no
     # fields the layout is opaque: its values move and drop, but no field is read or written.
     pub library_item: str = ""
+    # Per field, the name a serde form uses where a checked alias renames it, as legacy's `#[serde(rename)]`
+    # does; an empty entry keeps the field name, and no entries means no field is renamed.
+    pub field_serde_names: list[str] = []
 
 
 @derive(Clone, PartialEq)

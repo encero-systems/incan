@@ -1814,6 +1814,18 @@ fn valid_library_item(library_item: &str) -> bool {
     segments.len() >= 2 && segments.iter().all(|segment| identifier(segment))
 }
 
+/// Accept serde field names only as one entry per named field of a declaration that derives serde, the only derive
+/// that reads them.
+fn valid_serde_names(declaration: &crate::plan::ModelDeclaration, tuple: bool) -> bool {
+    declaration.field_serde_names.is_empty()
+        || (!tuple
+            && declaration.field_serde_names.len() == declaration.fields.len()
+            && declaration
+                .derives
+                .iter()
+                .any(|derive| matches!(derive.as_str(), "serde::Serialize" | "serde::Deserialize")))
+}
+
 /// Validate named model layouts and single-slot newtypes, rejecting cyclic layouts before invoking rustc.
 fn validate_models(plan: &Plan) -> Result<(), PlanError> {
     let mut names: BTreeSet<_> = plan.functions.iter().map(|function| function.name.clone()).collect();
@@ -1833,6 +1845,7 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
                 && declaration.source_name != declaration.name
                 && !names.insert(crate::declarations::model_module_name(declaration)))
             || declaration.fields.len() != declaration.field_public.len()
+            || !valid_serde_names(declaration, tuple)
             || !derives_valid
             || !valid_library_item(&declaration.library_item)
         {

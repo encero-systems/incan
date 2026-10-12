@@ -86,6 +86,7 @@ pub def lower_model_declarations(module: &BodyIrModule, file: str, intrinsics: l
                 derives.append(derive)
         mut fields: list[Parameter] = []
         mut field_public = declaration.field_public
+        mut serde_names: list[str] = []
         if item != "":
             fields = library_fields(module, declaration, file, intrinsics)
             if len(fields) != len(declaration.fields):
@@ -96,6 +97,7 @@ pub def lower_model_declarations(module: &BodyIrModule, file: str, intrinsics: l
             # Only a plain newtype would take a propagated serde derive; another reached nominal keeps its own derives.
             if len(declaration.fields) == 1 and str(declaration.fields[0]) == "0":
                 require_serde_derives(derives, str(declaration.name), reached)?
+            serde_names = serde_field_names(declaration)
             for slot in range(len(declaration.fields)):
                 fields.append(
                     Parameter(
@@ -120,6 +122,7 @@ pub def lower_model_declarations(module: &BodyIrModule, file: str, intrinsics: l
                 source_name=str(declaration.canonical.declaration_name),
                 span=SourceSpan(file=file, line=1, column=1),
                 library_item=item,
+                field_serde_names=serde_names,
             ),
         )
     return Ok(models)
@@ -270,3 +273,24 @@ def library_path(origin: &SymbolOrigin, name: str) -> str:
             segments.append(name)
             return "::".join(segments)
         _ => return ""
+
+
+def serde_field_names(declaration: &NominalDeclaration) -> list[str]:
+    """
+    Name each aliased field by its alias in the declaration's serde form, as legacy's `#[serde(rename)]` does.
+
+    Legacy renames only when the declaration derives serde; without any alias every field keeps its name.
+    """
+    mut names: list[str] = []
+    if "serde::Serialize" not in declaration.derives and "serde::Deserialize" not in declaration.derives:
+        return names
+    mut renamed = false
+    for alias in declaration.field_aliases:
+        match alias:
+            Some(name) =>
+                names.append(str(name))
+                renamed = true
+            None => names.append("")
+    if not renamed:
+        return []
+    return names

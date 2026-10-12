@@ -326,6 +326,10 @@ pub struct NominalDeclaration {
     pub field_types: Vec<IncanType>,
     /// Checker-resolved public visibility, in the same order as the fields.
     pub field_public: Vec<bool>,
+    /// Checked RFC 021 field aliases in the same order, `None` where a field declares none. A serde form names an
+    /// aliased field by its alias, as legacy's `#[serde(rename)]` does. Older artifacts carry no aliases.
+    #[serde(default)]
+    pub field_aliases: Vec<Option<String>>,
     /// Whether the source nominal declaration is public.
     pub public: bool,
     /// Whether any declared field has a default; missing executable default facts must refuse omitted fields.

@@ -395,6 +395,7 @@ pub(super) fn collect_local_nominal_declarations(
                         }
                     })
                     .collect::<Option<Vec<_>>>()?,
+                field_aliases: fields.iter().map(|field| field.node.metadata.alias.clone()).collect(),
                 public: visibility == ast::Visibility::Public,
                 has_field_defaults: fields.iter().any(|field| field.node.default.is_some()),
                 field_default_body: None,
@@ -489,6 +490,7 @@ fn collect_plain_newtype(
         fields: vec!["0".to_owned()],
         field_types: vec![underlying],
         field_public: vec![true],
+        field_aliases: vec![None],
         public: newtype.visibility == ast::Visibility::Public,
         has_field_defaults: false,
         field_default_body: None,
