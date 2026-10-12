@@ -8758,3 +8758,115 @@ def main() -> None:
 "#,
     )
 }
+
+/// Prove hashed enum leaves byte-identical to legacy: a source enum deriving Eq and Hash is a set element and a
+/// dictionary key, and `Option` and `Result` carriers over hashable payloads are set elements, read by membership,
+/// length and a loop over a one-element set.
+#[test]
+fn hashed_enum_and_carrier_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("hashed-enum-and-carrier")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"@derive(Eq, Hash)
+enum Tag:
+    A
+    B
+    Named(str)
+
+def count(tags: set[Tag]) -> int:
+    return len(tags)
+
+def main() -> None:
+    tags = {Tag.A, Tag.B, Tag.A, Tag.Named("x"), Tag.Named("x")}
+    println(count(tags))
+    println(Tag.A in tags)
+    println(Tag.Named("y") in tags)
+    for tag in {Tag.B}:
+        match tag:
+            Tag.A => println("a")
+            Tag.B => println("b")
+            Tag.Named(name) => println(name)
+    mut weights: dict[Tag, int] = {Tag.A: 1}
+    weights[Tag.Named("z")] = 2
+    println(Tag.Named("z") in weights)
+    println(len(weights))
+    for result in {Ok(6)}:
+        match result:
+            Ok(value) => println(value)
+            Err(_) => println("error")
+    names = {Some("a"), Some("a"), None}
+    println(len(names))
+    println(Some("a") in names)
+    pairs = {Some((1, "a")), Some((1, "a")), Some((2, "b"))}
+    println(len(pairs))
+    println(Some((2, "b")) in pairs)
+"#,
+    )
+}
+
+/// A keyed lookup in a dictionary with enum keys renders a missing key through Display, which an enum lacks, so the
+/// direct route refuses it by name, as it does for model keys.
+#[test]
+fn enum_dictionary_key_lookup_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("enum-dictionary-key-lookup")?;
+    let source = root.join("lookup.incn");
+    fs::write(
+        &source,
+        "@derive(Eq, Hash)\nenum Tag:\n    A\n    B\n\ndef main() -> None:\n    seen: dict[Tag, int] = {Tag.A: 1}\n    println(seen[Tag.A])\n",
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let binary = root.join("native");
+    let refused = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &source,
+        &binary,
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr)
+            .contains("unsupported Body IR keyed lookup in a dictionary with enum keys"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(!binary.exists());
+    Ok(())
+}
+
+/// Legacy adds a serde-deriving model's serde derives to the enums and newtypes its fields hold; until the direct
+/// route propagates them too, it refuses such a declaration by name rather than handing rustc an unsatisfied
+/// `Serialize` bound.
+#[test]
+fn serde_derive_propagation_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("serde-derive-propagation")?;
+    let source = root.join("payload.incn");
+    fs::write(
+        &source,
+        "from std.serde.json import Serialize\n\n@derive(Serialize)\nmodel Payload:\n    tags: list[Tag]\n\nenum Tag:\n    A\n    B\n\ndef main() -> None:\n    println(Payload(tags=[Tag.A]).to_json())\n",
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let binary = root.join("native");
+    let refused = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &source,
+        &binary,
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("unsupported Body IR serde derive propagation to Tag"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(!binary.exists());
+    Ok(())
+}
