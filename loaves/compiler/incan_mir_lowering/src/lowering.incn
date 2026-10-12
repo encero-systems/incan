@@ -164,7 +164,7 @@ from traits import method_index, owner_method_index, receiver_fills_slot, specia
 from decls import lower_model_declarations, static_slot, static_accessors, library_item, library_enum_item
 from model_lists import model_list_read, structural_prefix, prefix_place
 from element_places import is_element_place, element_place_type
-from element_borrows import element_method_owner, element_method_receiver, borrow_element_mut
+from element_borrows import element_method_owner, element_method_receiver, borrow_element_mut, mutable_element_place
 from option_tests import is_option_carrier, is_union_carrier, option_isinstance, enum_tag
 from derived_defaults import is_derived_default, lower_derived_default
 from models import field_projection
@@ -442,7 +442,13 @@ pub def scalar_place(builder: Builder, value: &RustPlace, span: SourceSpan) -> R
             return Ok(target)
         None => pass
     mut target = model_place(
-        builder.nominals, builder.locals[builder.local_offset:], value, span, builder.enums, builder.unions, builder.intrinsics,
+        builder.nominals,
+        builder.locals[builder.local_offset:],
+        value,
+        span,
+        builder.enums,
+        builder.unions,
+        builder.intrinsics,
     )?
     target.local += builder.local_offset
     return Ok(target)
@@ -548,7 +554,8 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
                 PlanType.Enum(_owner, _name) =>
                     match target.projection:
                         Projection.Field(_slot, _ty) => return clone_nominal_operand(builder, target, span)
-                        Projection.VariantField(_variant, _slot, _ty) => return clone_nominal_operand(builder, target, span)
+                        Projection.VariantField(_variant, _slot, _ty) =>
+                            return clone_nominal_operand(builder, target, span)
                         Projection.Fields(_fields) => return clone_nominal_operand(builder, target, span)
                         _ => pass
                 PlanType.Model(_owner, _name) =>
@@ -797,8 +804,13 @@ def scalar_rvalue(
                     None => pass
             if operator == BinOp.Div:
                 if not float_operand(
-                    builder.nominals, builder.locals[builder.local_offset:], left, span,
-                    builder.enums, builder.unions, builder.intrinsics,
+                    builder.nominals,
+                    builder.locals[builder.local_offset:],
+                    left,
+                    span,
+                    builder.enums,
+                    builder.unions,
+                    builder.intrinsics,
                 )? or not float_operand(
                     builder.nominals,
                     builder.locals[builder.local_offset:],
@@ -905,7 +917,13 @@ def text_comparison_operand(builder: Builder, value: &RustOperand, span: SourceS
             mut ty = PlanType.Unit
             match read.place.global():
                 Some(global) =>
-                    ty = native_source_type(builder.nominals, builder.enums, builder.unions, global.ty, builder.intrinsics)?
+                    ty = native_source_type(
+                        builder.nominals,
+                        builder.enums,
+                        builder.unions,
+                        global.ty,
+                        builder.intrinsics,
+                    )?
                 None =>
                     place = scalar_place(builder, read.place, span)?
                     ty = place_type(builder.locals, place)
@@ -2415,7 +2433,13 @@ def lower_method_call(
         Some(index) => return lower_enum_message(builder, index, arguments, destination, span)
         None => pass
     match value_method_owner(
-        module, target, builder.locals[builder.local_offset:], arguments[0], span, builder.unions, builder.intrinsics,
+        module,
+        target,
+        builder.locals[builder.local_offset:],
+        arguments[0],
+        span,
+        builder.unions,
+        builder.intrinsics,
     )?:
         Some(owner) => return lower_value_enum_method(builder, owner, arguments, destination, span)
         None => pass
@@ -2427,7 +2451,13 @@ def lower_method_call(
                     return lower_library_method(module, builder, delegation, target, arguments, destination, span)
             None => pass
     index = method_index(
-        module, target, builder.locals[builder.local_offset:], arguments[0], span, builder.unions, builder.intrinsics,
+        module,
+        target,
+        builder.locals[builder.local_offset:],
+        arguments[0],
+        span,
+        builder.unions,
+        builder.intrinsics,
     )?
     receiver_type, borrow = method_receiver(
         module,
@@ -2944,7 +2974,13 @@ def callable_argument(
                     constructor = f"{name}_new"
                     synthesize(builder, closure_constructor(constructor, name, [source], signature, span))
                     boxed = temporary(builder, PlanType.Closure(signature), span)
-                    terminate_call(builder, CalleeKind.Planned(constructor), [read_place(place, false, span)], boxed, span)
+                    terminate_call(
+                        builder,
+                        CalleeKind.Planned(constructor),
+                        [read_place(place, false, span)],
+                        boxed,
+                        span,
+                    )
                     builder.owned.append(boxed.local)
                     return callable_object(builder, boxed, signature, span)
                 _ => return callable_object(builder, place, signature, span)
@@ -3047,9 +3083,7 @@ def instantiated_external_call(
     if len(type_arguments) > 2:
         return Err("unsupported Body IR stdlib generic call with more than two type parameters")
     builder.externals.append(
-        ExternalFunction(
-            path=path, type_arguments=type_arguments, parameters=parameters, return_type=result, span=span,
-        ),
+        ExternalFunction(path=path, type_arguments=type_arguments, parameters=parameters, return_type=result, span=span),
     )
     mut callee = CalleeKind.Instantiated(path, type_arguments[0])
     if len(type_arguments) == 2:
@@ -5123,9 +5157,13 @@ def checked_list_argument(
             if mutable and read.fact != OwnershipFact.MutBorrow and read.fact != OwnershipFact.Move:
                 return Err("unsupported Body IR list argument without mutable borrow fact")
             # A shared parameter reads an indexed or sliced list through a copy that stays owned until its scope ends.
-            if not mutable and is_element_place(builder, read.place)?:
-                copied = materialized_receiver(builder, read.place, span)?
-                return list_borrow(builder, copied, false, span)
+            if is_element_place(builder, read.place)?:
+                if not mutable:
+                    copied = materialized_receiver(builder, read.place, span)?
+                    return list_borrow(builder, copied, false, span)
+                # An exclusive argument reaches the list stored in the container, so its change lands there.
+                stored = mutable_element_place(builder, read.place, span)?
+                return list_borrow(builder, stored, true, span)
             root = list_root_place(builder, read.place, span)?
             return list_borrow(builder, root, mutable, span)
         RustOperand.Constant(constant) =>
@@ -5342,8 +5380,12 @@ def read_element_field(
 ) -> Result[Place, str]:
     """Read one field of a model element already copied out of a list, copying scalars and cloning owned values."""
     selected = field_projection(
-        builder.nominals, place_type(builder.locals, place), projection,
-        builder.enums, builder.unions, builder.intrinsics,
+        builder.nominals,
+        place_type(builder.locals, place),
+        projection,
+        builder.enums,
+        builder.unions,
+        builder.intrinsics,
     )?
     field = appended_field(place, selected, span)?
     ty = selected.ty
@@ -5357,7 +5399,16 @@ def read_element_field(
         leaf, depth = require_list_shape(ty, "invalid Body IR list element field")?
         reference = list_borrow(builder, field, false, span)?
         output = temporary(builder, ty, span)
-        list_call(builder, "clone_list", list_element(leaf, depth), [PlanType.ListRef(leaf, depth)], ty, [reference], output, span)
+        list_call(
+            builder,
+            "clone_list",
+            list_element(leaf, depth),
+            [PlanType.ListRef(leaf, depth)],
+            ty,
+            [reference],
+            output,
+            span,
+        )
         return Ok(output)
     if not numeric_carrier(ty) and ty != PlanType.Bool:
         return Err("unsupported Body IR list element field type")
@@ -6085,8 +6136,10 @@ def indexed_assignment_at(
     )?
     element = list_element(leaf, depth)
     match value:
-        RustRvalue.Use(RustOperand.Constant(RustConstant.None)) => argument = none_operand(builder, element, span)?
-        _ => argument = element_plan_operand(builder, argument, element, span)?
+        RustRvalue.Use(RustOperand.Constant(RustConstant.None)) =>
+            argument = none_operand(builder, element, span)?
+        _ =>
+            argument = element_plan_operand(builder, argument, element, span)?
     subscript = list_index_operand(builder, destination, len(destination.projection) - 1, span)?
     reference = list_borrow(builder, receiver, true, span)?
     unit = temporary(builder, PlanType.Unit, span)
@@ -6337,7 +6390,7 @@ def iterator_assignment(
                         OwnershipFact.MutBorrow =>
                             exclusive = true
                         _ => return Err("unsupported Body IR list iterator initialization ownership")
-                    root = list_root_place(builder, read.place, span)?
+                    root = iteration_root(builder, read.place, exclusive, span)?
                     if exclusive and not is_list(place_type(builder.locals, root)):
                         return Err("unsupported Body IR in-place iteration over a set or dictionary")
                     reference = list_borrow(builder, root, exclusive, span)?
@@ -6348,6 +6401,16 @@ def iterator_assignment(
                     return Ok(None)
                 _ => return Err("unsupported Body IR list iterator constant")
         _ => return Err("unsupported Body IR list iterator initialization")
+
+
+def iteration_root(mut builder: Builder, value: &RustPlace, exclusive: bool, span: SourceSpan) -> Result[Place, str]:
+    """
+    Select the list a loop iterates: a loop changing the items of a list held by a list element or dictionary value
+    iterates the stored list itself, reached through the container's checked reborrows.
+    """
+    if exclusive and is_element_place(builder, value)?:
+        return mutable_element_place(builder, value, span)
+    return list_root_place(builder, value, span)
 
 
 pub def list_root_place(mut builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
@@ -6364,9 +6427,12 @@ pub def list_root_place(mut builder: Builder, value: &RustPlace, span: SourceSpa
                 mut ty = builder.locals[int(local.index()) + 1 + builder.local_offset].ty
                 # A receiver reference projects its model's fields.
                 match ty:
-                    PlanType.ModelRef(owner, name) => ty = PlanType.Model(owner, name)
-                    PlanType.ModelMutRef(owner, name) => ty = PlanType.Model(owner, name)
-                    PlanType.EnumMutRef(owner, name) => ty = PlanType.Enum(owner, name)
+                    PlanType.ModelRef(owner, name) =>
+                        ty = PlanType.Model(owner, name)
+                    PlanType.ModelMutRef(owner, name) =>
+                        ty = PlanType.Model(owner, name)
+                    PlanType.EnumMutRef(owner, name) =>
+                        ty = PlanType.Enum(owner, name)
                     _ => pass
                 for projection in value.projection:
                     match projection:
@@ -6967,7 +7033,17 @@ def tuple_paths(
                 builder.current = matched
                 mut chosen = choices.clone()
                 chosen[index] = choice
-                owners = tuple_paths(builder, fields, items, index + 1, chosen, selected, next_alternative, incoming, span)?
+                owners = tuple_paths(
+                    builder,
+                    fields,
+                    items,
+                    index + 1,
+                    chosen,
+                    selected,
+                    next_alternative,
+                    incoming,
+                    span,
+                )?
                 if choice == 0:
                     bound = owners
                 elif not same_owners(owners, bound):
@@ -7680,7 +7756,12 @@ def element_plan_operand(
     return coerce_numeric_operand(builder, operand, element, span)
 
 
-def boundary_plan_operand(mut builder: Builder, value: Operand, target: PlanType, span: SourceSpan) -> Result[Operand, str]:
+def boundary_plan_operand(
+    mut builder: Builder,
+    value: Operand,
+    target: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
     """Inject a previously evaluated member without reading its source or executing its effects a second time."""
     match target:
         PlanType.FunctionPointer(_signature) =>
@@ -7756,27 +7837,6 @@ def option_payload_operand(
     match payload:
         PlanType.Enum(_owner, _name) => return boundary_plan_operand(builder, value, payload, span)
         _ => return Ok(value)
-# =====================================================================================================================
-# Lists: borrowing and runtime calls
-# =====================================================================================================================
-# =====================================================================================================================
-# Lists: owned values and indexed reads
-# =====================================================================================================================
-# =====================================================================================================================
-# Lists: checked arguments and methods
-# =====================================================================================================================
-# =====================================================================================================================
-# Lists: indexed mutation
-# =====================================================================================================================
-# =====================================================================================================================
-# Lists: iteration
-# =====================================================================================================================
-# =====================================================================================================================
-# Hashed collections: shared frame operations
-# =====================================================================================================================
-# =====================================================================================================================
-# Persistent scalar storage
-# =====================================================================================================================
 
 
 def lower_union_isinstance(
@@ -7978,7 +8038,14 @@ def lower_list_repeat(
             Some(value) => operands.append(call_argument_operand(builder, value, types[index], span, true)?)
             None => return Err("unsupported Body IR list_repeat spread")
     list_call(
-        builder, "repeat_list", element, [element, PlanType.Int], PlanType.List(leaf, depth), operands, output, span,
+        builder,
+        "repeat_list",
+        element,
+        [element, PlanType.Int],
+        PlanType.List(leaf, depth),
+        operands,
+        output,
+        span,
     )
     return Ok(None)
 
