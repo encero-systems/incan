@@ -8846,6 +8846,98 @@ fn imported_model_alias_output_matches_legacy() -> Result<(), Box<dyn std::error
     )
 }
 
+/// Generic enum payloads and empty variants close from checked uses, including a generic model's generic method result.
+#[test]
+fn generic_enum_payload_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("generic-enum-payload")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"@derive(Clone)
+enum Holder[Elem with Clone]:
+    Names(list[str])
+    Items(list[Elem])
+    Empty
+
+@derive(Clone)
+model Maker[T with Clone]:
+    seed: T
+    def build[Picked with Clone](self) -> Holder[Picked]:
+        return Holder.Items([])
+
+def build[U with Clone]() -> Holder[U]:
+    return Holder.Items([])
+
+def show[E with Clone](holder: Holder[E]) -> str:
+    match holder:
+        Holder.Items(values) => return f"{len(values)}"
+        Holder.Names(values) => return f"{len(values)}"
+        Holder.Empty => return "empty"
+
+def main() -> None:
+    maker = Maker[int](seed=1)
+    first: Holder[str] = maker.build[str]()
+    second: Holder[int] = build[int]()
+    empty: Holder[str] = Holder.Empty
+    println(show(first))
+    println(show(second))
+    println(show(empty))
+"#,
+    )
+}
+
+/// A generic enum's imported variant alias names the same canonical payload slot in a pattern as its declaration.
+#[test]
+fn generic_enum_alias_pattern_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_case(
+        "generic_enum_alias_pattern",
+        "from shapes import Shape\n\ndef read(value: Shape[int]) -> int:\n  match value:\n    Full(n) => return n\n    Shape.Empty => return 0\n\ndef main() -> None:\n  println(read(Shape.Filled(7)))\n  empty: Shape[int] = Shape.Empty\n  println(read(empty))\n",
+        &[(
+            "shapes.incn",
+            "pub enum Shape[T]:\n  Filled(T)\n  Empty\n  Full = alias Filled\n",
+        )],
+        b"7\n0\n",
+    )
+}
+
+/// Error fallback renders its checked message, an explicit string method wins, and generic Display preserves both.
+#[test]
+fn error_model_display_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("error-model-display")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"from std.traits.error import Error
+
+model Failure with Error:
+    detail: str
+    def message(self) -> str:
+        return self.detail
+
+model Loud with Error:
+    def message(self) -> str:
+        return "quiet"
+    def __str__(self) -> str:
+        return "LOUD"
+
+def show[T with Display](value: T) -> str:
+    return f"{value}"
+
+def main() -> None:
+    failure = Failure(detail="bad")
+    println(f"{failure}")
+    println(str(failure))
+    println(failure)
+    println(show(failure))
+    println(show(Loud()))
+"#,
+    )
+}
+
 /// Compare a program of several modules in the minimal project layout, pinning its output.
 ///
 /// `modules` names further source files beside `src/main.incn`, each with its text, as a multi-module behavior

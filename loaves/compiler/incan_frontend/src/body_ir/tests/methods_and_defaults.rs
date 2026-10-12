@@ -3,6 +3,48 @@
 //! trait and byte-string defaults, refused defaults that restore ownership state, and newtype and enum method bodies.
 
 use super::*;
+/// Ordered enum binders and checked payload placeholders survive the Body IR boundary, including variant aliases.
+#[test]
+fn generic_enum_retains_ordered_binders_and_payloads() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "@derive(Clone)\nenum Holder[Elem with Clone]:\n  Items(list[Elem])\n  Empty\n  Full = alias Items\n",
+        &["m", "generic_enum_layout"],
+    )?;
+    let declaration = module.enum_declarations.first().ok_or("generic enum layout missing")?;
+    let encoded = serde_json::to_value(declaration)?;
+    assert_eq!(encoded.get("type_parameters"), Some(&serde_json::json!(["Elem"])));
+    assert_eq!(declaration.variants.len(), 2);
+    assert_eq!(
+        declaration.variants[0].fields,
+        [incan_semantics_core::generic(
+            "List".to_owned(),
+            vec![IncanType::TypeVar("Elem".to_owned())]
+        )]
+    );
+    assert!(module.is_well_formed_native_enum_declaration(declaration));
+    Ok(())
+}
+
+/// Error fallback and a user's own string method retain their selected canonical targets; derived Display keeps Debug.
+#[test]
+fn nominal_display_retains_checked_method_selection() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "from std.traits.error import Error\n\nmodel Failure with Error:\n  detail: str\n  def message(self) -> str:\n    return self.detail\n\nmodel Loud with Error:\n  def message(self) -> str:\n    return \"quiet\"\n  def __str__(self) -> str:\n    return \"LOUD\"\n\n@derive(Display)\nmodel Point:\n  x: int\n",
+        &["m", "nominal_display_selection"],
+    )?;
+    let selected = |owner: &str| -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+        let declaration = module
+            .nominal_declarations
+            .iter()
+            .find(|declaration| declaration.name == owner)
+            .ok_or("display owner missing")?;
+        Ok(serde_json::to_value(declaration)?)
+    };
+    assert_eq!(selected("Failure")?["display_method"]["declaration_name"], "message");
+    assert_eq!(selected("Loud")?["display_method"]["declaration_name"], "__str__");
+    assert!(selected("Point")?["display_method"].is_null());
+    Ok(())
+}
 
 /// A newtype's wrapped-value reads through self and a Self-typed parameter retain the same storage identity.
 #[test]
