@@ -203,11 +203,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Resolve the declaration surface and exact local identity for a direct named call.
     ///
-    /// A direct executable target must be physically represented by this Body-IR module. Imports and unresolved
-    /// names deliberately retain their existing call representation with no direct declaration identity, so this
-    /// frontend does not turn a source-representation gap into a new source diagnostic. The replacement executor
-    /// then refuses those targets at the original call span. Every unshadowed core builtin has a registry identity;
-    /// individual consumers still admit only their documented subset, such as `range` for counting-loop lowering.
+    /// A direct declaration identity names only an executable body physically represented by this module. Imports
+    /// retain their selected canonical identity and checked signature for project assembly to resolve elsewhere.
+    /// Unresolved targets stay explicit refusals. Every unshadowed core builtin has a registry identity; individual
+    /// consumers still admit only their documented subset, such as `range` for counting-loop lowering.
     ///
     /// Overloads are why this is resolved per call site rather than per name. `function_bindings` is keyed by bare
     /// source name, so for two same-name declarations it holds only one of them; binding a call against the wrong
@@ -238,27 +237,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .map_or(name, |identity| identity.declaration_name.as_str());
         let local_declarations = self.local_function_declarations.get(declaration_name);
         let Some(local_declarations) = local_declarations else {
-            let canonical = self.type_info.resolved_identity(callee_span).cloned();
-            let builtin = self.type_info.resolved_builtin_call(call_span);
-            let canonical_builtin_id = canonical.as_ref().and_then(canonical_builtin);
-            if builtin != canonical_builtin_id && (builtin.is_some() || canonical_builtin_id.is_some()) {
-                return Err(format!(
-                    "checked builtin call `{name}` does not retain its canonical builtin identity"
-                ));
-            }
-            return Ok(DirectCallDeclaration {
-                is_async: declarations
-                    .function_bindings
-                    .get(name)
-                    .is_some_and(|binding| binding.is_async),
-                slots: declarations
-                    .function_bindings
-                    .get(name)
-                    .map(|binding| binding.params.iter().map(DeclaredSlot::from_checked_param).collect()),
-                direct_call_id: None,
-                builtin,
-                canonical,
-            });
+            return self.external_call_declaration(name, callee_span, call_span);
         };
         let is_overloaded = local_declarations.len() > 1;
 
@@ -386,6 +365,42 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Retain the checker's ordered explicit or inferred call-site type arguments, refusing unresolved explicit
     /// arguments.
     ///
+    /// Retain a nonlocal callable's checked signature by the exact selected identity, including imported overloads.
+    ///
+    /// An overload-set spelling cannot select a signature. Its canonical call-site identity must match a retained
+    /// candidate; absent proof keeps the binding unresolved rather than borrowing another overload's slots.
+    fn external_call_declaration(
+        &self,
+        name: &str,
+        callee_span: ast::Span,
+        call_span: ast::Span,
+    ) -> Result<DirectCallDeclaration, String> {
+        let canonical = self.type_info.resolved_identity(callee_span).cloned();
+        let builtin = self.type_info.resolved_builtin_call(call_span);
+        let canonical_builtin_id = canonical.as_ref().and_then(canonical_builtin);
+        if builtin != canonical_builtin_id && (builtin.is_some() || canonical_builtin_id.is_some()) {
+            return Err(format!(
+                "checked builtin call `{name}` does not retain its canonical builtin identity"
+            ));
+        }
+        let signature = match self.type_info.function_overloads(name) {
+            Some(candidates) => canonical.as_ref().and_then(|selected| {
+                candidates
+                    .iter()
+                    .find(|candidate| candidate.identity.as_ref() == Some(selected))
+                    .map(|candidate| &candidate.info)
+            }),
+            None => self.type_info.declarations.function_bindings.get(name),
+        };
+        Ok(DirectCallDeclaration {
+            is_async: signature.is_some_and(|signature| signature.is_async),
+            slots: signature.map(|signature| signature.params.iter().map(DeclaredSlot::from_checked_param).collect()),
+            direct_call_id: None,
+            builtin,
+            canonical,
+        })
+    }
+
     /// Type arguments are part of a call's resolved identity, so Body IR takes the typechecker's
     /// monomorphized selection rather than re-lowering the written AST type nodes -- which is also the only way a
     /// `_` placeholder resolves to a real type instead of an unknown. A call that wrote type arguments the
