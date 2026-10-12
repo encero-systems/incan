@@ -9818,7 +9818,7 @@ fn computed_static_projection_mutation_is_refused() -> Result<(), Box<dyn std::e
     .output()?;
     assert!(!output.status.success());
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("unsupported Body IR computed static replacement carrier"),
+        String::from_utf8_lossy(&output.stderr).contains("unsupported Body IR projected static collection method"),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
