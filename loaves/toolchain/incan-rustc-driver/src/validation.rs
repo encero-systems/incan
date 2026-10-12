@@ -1852,11 +1852,21 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
             || !valid_serde_names(declaration, tuple)
             || !derives_valid
             || !valid_library_item(&declaration.library_item)
+            || (declaration.library_item.is_empty() && !declaration.library_type_arguments.is_empty())
         {
             return Err(PlanError::Invalid {
                 function: declaration.name.clone(),
                 reason: "invalid plain model declaration".into(),
             });
+        }
+        for argument in &declaration.library_type_arguments {
+            if !source_signature_type(&scalar(argument)) {
+                return Err(PlanError::Invalid {
+                    function: declaration.name.clone(),
+                    reason: "unsupported SDK alias type argument".into(),
+                });
+            }
+            validate_model_type(plan, argument)?;
         }
         let mut fields = BTreeSet::new();
         for field in &declaration.fields {

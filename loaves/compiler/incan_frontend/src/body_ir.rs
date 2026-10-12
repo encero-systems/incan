@@ -163,7 +163,8 @@ pub fn library_nominal_declarations(type_info: &TypeCheckInfo) -> Vec<bir::Nomin
     library_nominals::collect(type_info)
 }
 
-/// Crate-call records for the stdlib functions and model or class methods one module calls.
+/// Crate-call records for the stdlib functions and model or class methods one module calls, retaining their type
+/// parameters.
 ///
 /// Each record names the compiled SDK crate item and the signature that crate compiled, with owned parameters and a
 /// shared or exclusive receiver. A consumer linking the SDK crates calls the item only after checking that signature

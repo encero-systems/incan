@@ -30,7 +30,7 @@ pub(super) fn type_identities(type_info: &TypeCheckInfo, cache: &mut StdlibAstCa
         .resolved_identities
         .values()
         .filter(|identity| {
-            matches!(identity.origin, SymbolOrigin::Package { .. })
+            sdk_identity(identity).is_some()
                 && matches!(
                     identity.kind,
                     SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Method
@@ -50,14 +50,13 @@ pub(super) fn type_identities(type_info: &TypeCheckInfo, cache: &mut StdlibAstCa
         .chain(expression_leaves)
         .chain(signature_leaves)
         .filter(|identity| {
-            matches!(identity.origin, SymbolOrigin::Package { .. })
-                && matches!(
-                    identity.kind,
-                    SemanticSourceTargetKind::Model
-                        | SemanticSourceTargetKind::Class
-                        | SemanticSourceTargetKind::Enum
-                        | SemanticSourceTargetKind::Newtype
-                )
+            matches!(
+                identity.kind,
+                SemanticSourceTargetKind::Model
+                    | SemanticSourceTargetKind::Class
+                    | SemanticSourceTargetKind::Enum
+                    | SemanticSourceTargetKind::Newtype
+            )
         })
         .filter_map(|identity| declaring_identity(&identity, cache))
         .collect::<BTreeSet<_>>();
@@ -75,7 +74,8 @@ pub(super) fn type_identities(type_info: &TypeCheckInfo, cache: &mut StdlibAstCa
 
 /// Follow a checked facade binding to the declaring module only when its complete declaration identity agrees.
 fn declaring_identity(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Option<CanonicalSymbolId> {
-    let SymbolOrigin::Package { library, module_path } = &identity.origin else {
+    let published = sdk_identity(identity)?;
+    let SymbolOrigin::Package { library, module_path } = &published.origin else {
         return None;
     };
     let path = std::iter::once(stdlib::STDLIB_ROOT.to_owned())
@@ -97,6 +97,29 @@ fn declaring_identity(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) 
     };
     cache.callable_source_identity(&declared)?;
     Some(declared)
+}
+
+/// Rebase a checked stdlib source identity onto the SDK package assigned by the source catalog.
+///
+/// Source bindings, including facade annotations, can retain module origins even when the consumer links an SDK.
+/// Other modules and Rust imports yield nothing; callers still validate the full declaration against source.
+pub(super) fn sdk_identity(identity: &CanonicalSymbolId) -> Option<CanonicalSymbolId> {
+    let SymbolOrigin::Module(path) = &identity.origin else {
+        return matches!(identity.origin, SymbolOrigin::Package { .. }).then(|| identity.clone());
+    };
+    if !stdlib::is_any_stdlib_path(path) {
+        return None;
+    }
+    let sources = crate::provider::stdlib_sources::StdlibSources::discover()?;
+    let owner = sources.owner_of(path.get(1)?)?;
+    let manifest = oven_model::manifest::ProjectManifest::load(&owner.project_root.join("loaf.toml")).ok()?;
+    let library = manifest.project?.name?;
+    let mut published = identity.clone();
+    published.origin = SymbolOrigin::Package {
+        library,
+        module_path: path[1..].to_vec(),
+    };
+    Some(published)
 }
 
 /// Collect each type a retained SDK declaration holds, resolving field names in that declaration's module.
@@ -206,8 +229,8 @@ fn library_newtype(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> 
     })
 }
 
-/// Read one nongeneric stdlib layout in declaration order, keeping the consumer's package identity for the owner
-/// and rebasing each field identity onto it. A declaration the stdlib catalog does not own yields nothing.
+/// Read one stdlib layout and its declared type parameters in declaration order, keeping the package identity for the
+/// owner and rebasing each field identity onto it. A declaration the stdlib catalog does not own yields nothing.
 fn library_nominal(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Option<bir::NominalDeclaration> {
     if !matches!(identity.origin, SymbolOrigin::Package { .. }) {
         return None;
@@ -216,10 +239,10 @@ fn library_nominal(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> 
     let SymbolOrigin::Module(path) = &source.origin else {
         return None;
     };
-    let (order, fields, derives) = match cache.lookup_type(path, &identity.declaration_name)? {
-        TypeInfo::Model(model) if model.type_params.is_empty() => (model.field_order, model.fields, model.derives),
-        TypeInfo::Class(class) if class.type_params.is_empty() && class.extends.is_none() => {
-            (class.field_order, class.fields, class.derives)
+    let (order, fields, derives, type_parameters) = match cache.lookup_type(path, &identity.declaration_name)? {
+        TypeInfo::Model(model) => (model.field_order, model.fields, model.derives, model.type_params),
+        TypeInfo::Class(class) if class.extends.is_none() => {
+            (class.field_order, class.fields, class.derives, class.type_params)
         }
         _ => return None,
     };
@@ -267,7 +290,7 @@ fn library_nominal(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> 
         method_partial_defaults: Vec::new(),
         derives,
         named_type_identities: Default::default(),
-        type_parameters: Vec::new(),
-        type_parameter_count: 0,
+        type_parameter_count: type_parameters.len(),
+        type_parameters,
     })
 }

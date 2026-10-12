@@ -22,6 +22,49 @@ pub def nominal_symbol(base: str, arguments: list[RustType]) -> str:
     return name
 
 
+pub def instance_arguments(module: &BodyIrModule, declaration: &NominalDeclaration) -> Result[list[RustType], str]:
+    """Recover a closed layout's arguments from the checked types that scheduled its specialization."""
+    if declaration.type_parameter_count == 0:
+        return Ok([])
+    base = str(declaration.canonical.declaration_name)
+    name = str(declaration.name)
+    for body in module.bodies:
+        match find_instance_arguments(body.return_type, base, name):
+            Some(arguments) => return Ok(arguments)
+            None => pass
+        for local in body.locals:
+            match find_instance_arguments(local.ty, base, name):
+                Some(arguments) => return Ok(arguments)
+                None => pass
+    for owner in module.nominal_declarations:
+        for field in owner.field_types:
+            match find_instance_arguments(field, base, name):
+                Some(arguments) => return Ok(arguments)
+                None => pass
+    return Err(f"unsupported Body IR unretained SDK type arguments on {name}")
+
+
+def find_instance_arguments(ty: &RustType, base: str, name: str) -> Option[list[RustType]]:
+    """Match the exact closed specialization key and recurse through retained enclosing types."""
+    match ty:
+        RustType.Generic(base=owner, args=arguments) =>
+            if str(owner) == base and nominal_symbol(base, arguments.clone()) == name:
+                return Some(arguments.clone())
+            for argument in arguments:
+                match find_instance_arguments(argument, base, name):
+                    Some(found) => return Some(found)
+                    None => pass
+        RustType.Tuple(elements) =>
+            for element in elements:
+                match find_instance_arguments(element, base, name):
+                    Some(found) => return Some(found)
+                    None => pass
+        RustType.Ref(inner) => return find_instance_arguments(inner, base, name)
+        RustType.RefMut(inner) => return find_instance_arguments(inner, base, name)
+        _ => pass
+    return None
+
+
 pub def specialize_nominals(module: &BodyIrModule) -> Result[BodyIrModule, str]:
     """Build a derived lowering context; validate the original module before calling this boundary."""
     mut instances: list[NominalInstance] = []

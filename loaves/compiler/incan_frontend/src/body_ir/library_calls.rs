@@ -18,15 +18,15 @@ use crate::symbols::{CallableParam, ResolvedType, SymbolKind, TypeInfo};
 use crate::typechecker::stdlib_loader::StdlibAstCache;
 use incan_lang::lang::stdlib;
 
-/// Collect a crate-call record for every stdlib function, generic and overloaded ones included, and every nongeneric
-/// model, class or newtype method one module resolves.
+/// Collect a crate-call record for every stdlib function and model or class method one module resolves, including
+/// declared type parameters. Nongeneric newtype methods keep their existing admission.
 pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::StdlibDelegation> {
     let identities = type_info
         .references
         .resolved_identities
         .values()
         .filter(|identity| {
-            matches!(identity.origin, SymbolOrigin::Package { .. })
+            super::library_nominals::sdk_identity(identity).is_some()
                 && matches!(
                     identity.kind,
                     SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Method
@@ -44,7 +44,8 @@ pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::StdlibDelegation> {
 /// Build one record after confirming the stdlib source declares exactly this identity, with what each of its parameters
 /// takes when a call omits it.
 fn library_call(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Option<bir::StdlibDelegation> {
-    let SymbolOrigin::Package { library, module_path } = &identity.origin else {
+    let published = super::library_nominals::sdk_identity(identity)?;
+    let SymbolOrigin::Package { library, module_path } = &published.origin else {
         return None;
     };
     let path = std::iter::once(stdlib::STDLIB_ROOT.to_owned())
@@ -56,7 +57,7 @@ fn library_call(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Opt
     let name = &identity.declaration_name;
     let (parameters, return_type, type_parameters, parameter_defaults) = match identity.kind {
         SemanticSourceTargetKind::Method => {
-            let (owner, receiver, params, result) = method_signature(identity, &path, cache)?;
+            let (owner, receiver, params, result, names) = method_signature(&published, &path, cache)?;
             item.push(owner.clone());
             item.push(name.clone());
             let ordinary = owned_parameters(&params)?;
@@ -65,20 +66,20 @@ fn library_call(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Opt
             parameters.extend(ordinary);
             (
                 parameters,
-                self_as(&semantic_type_from_resolved(&result), &owner),
-                Vec::new(),
+                self_as(&semantic_type_from_resolved(&result), &owner_type(&owner, &names)),
+                names,
                 defaults,
             )
         }
         _ => {
             // One overload of a same-name set is selected by its own declaration span and records no defaults; any
             // other function has the module's single declaration under its name.
-            let (function, single) = match cache.callable_source_identity(identity) {
+            let (function, single) = match cache.callable_source_identity(&published) {
                 Some(_) => match cache.lookup_function_symbol(&path, name)? {
                     SymbolKind::Function(function) => (function, true),
                     _ => return None,
                 },
-                None => (cache.overload_function_info(identity)?, false),
+                None => (cache.overload_function_info(&published)?, false),
             };
             if function.is_async {
                 return None;
@@ -86,7 +87,7 @@ fn library_call(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Opt
             // A free function compiles under its full canonical identity, which the consumer's checked identity is:
             // an overload's names its own declaration span, so each overload is its own crate item. A generic one
             // keeps its type parameters, which each call instantiates with its checked type arguments.
-            item.push(encode_incan_symbol_identity(identity));
+            item.push(encode_incan_symbol_identity(&published));
             let parameters = owned_parameters(&function.params)?;
             let defaults = if single {
                 library_defaults::function_defaults(&path, name, &parameters, cache)
@@ -128,7 +129,10 @@ pub(super) fn signature_type_identities(
     callee: &CanonicalSymbolId,
     cache: &mut StdlibAstCache,
 ) -> Vec<CanonicalSymbolId> {
-    let SymbolOrigin::Package { library, module_path } = &callee.origin else {
+    let Some(published) = super::library_nominals::sdk_identity(callee) else {
+        return Vec::new();
+    };
+    let SymbolOrigin::Package { library, module_path } = &published.origin else {
         return Vec::new();
     };
     let Some(call) = library_call(callee, cache) else {
@@ -179,7 +183,13 @@ pub(super) fn named_leaves(ty: &IncanType, names: &mut BTreeSet<String>) {
         IncanType::Named(name) => {
             names.insert(name.clone());
         }
-        IncanType::Generic { args, .. } | IncanType::Tuple(args) => {
+        IncanType::Generic { base, args } => {
+            names.insert(base.clone());
+            for arg in args {
+                named_leaves(arg, names);
+            }
+        }
+        IncanType::Tuple(args) => {
             for arg in args {
                 named_leaves(arg, names);
             }
@@ -189,8 +199,8 @@ pub(super) fn named_leaves(ty: &IncanType, names: &mut BTreeSet<String>) {
     }
 }
 
-/// Find the nongeneric model, class or newtype declaring this method and return its owner name, receiver parameter,
-/// ordinary parameters and result. A static method has no receiver parameter.
+/// Find the model, class or nongeneric newtype declaring this method and return its owner name, receiver parameter,
+/// ordinary parameters, result and owner binders. A static method has no receiver parameter.
 ///
 /// The stdlib source records each method under its source module; rebased onto the consumer's package origin it must
 /// equal the checked identity exactly, and the owner type must itself be a declaration that SDK package owns.
@@ -198,7 +208,7 @@ fn method_signature(
     identity: &CanonicalSymbolId,
     path: &[String],
     cache: &mut StdlibAstCache,
-) -> Option<(String, Option<IncanType>, Vec<CallableParam>, ResolvedType)> {
+) -> Option<(String, Option<IncanType>, Vec<CallableParam>, ResolvedType, Vec<String>)> {
     let source_origin = SymbolOrigin::Module(path.to_vec());
     let rebased = |declared: &CanonicalSymbolId| {
         let mut rebased = declared.clone();
@@ -208,11 +218,13 @@ fn method_signature(
         rebased
     };
     for (owner, info) in cache.list_types(path) {
-        let (methods, generic) = match &info {
-            TypeInfo::Model(model) => (&model.methods, !model.type_params.is_empty()),
-            TypeInfo::Class(class) => (&class.methods, !class.type_params.is_empty()),
+        let (methods, names) = match &info {
+            TypeInfo::Model(model) => (&model.methods, &model.type_params),
+            TypeInfo::Class(class) => (&class.methods, &class.type_params),
             // A rusttype's methods belong to the Rust type it names, not to an item the SDK crate compiled.
-            TypeInfo::Newtype(newtype) if !newtype.is_rusttype => (&newtype.methods, !newtype.type_params.is_empty()),
+            TypeInfo::Newtype(newtype) if !newtype.is_rusttype && newtype.type_params.is_empty() => {
+                (&newtype.methods, &newtype.type_params)
+            }
             _ => continue,
         };
         let Some(method) = methods.get(&identity.declaration_name) else {
@@ -223,17 +235,23 @@ fn method_signature(
         }
         let owner_identity = rebased(&cache.lookup_identity(path, &owner)?);
         cache.callable_source_identity(&owner_identity)?;
-        if generic || method.is_async || !method.has_body || !method.type_params.is_empty() {
+        if method.is_async || !method.has_body || !method.type_params.is_empty() {
             return None;
         }
         let receiver = method.receiver.as_ref().map(|receiver| {
-            let owner_type = Box::new(IncanType::Named(owner.clone()));
+            let owner_type = Box::new(owner_type(&owner, names));
             match receiver {
                 ast::Receiver::Immutable => IncanType::Ref(owner_type),
                 ast::Receiver::Mutable => IncanType::RefMut(owner_type),
             }
         });
-        return Some((owner, receiver, method.params.clone(), method.return_type.clone()));
+        return Some((
+            owner,
+            receiver,
+            method.params.clone(),
+            method.return_type.clone(),
+            names.clone(),
+        ));
     }
     None
 }
@@ -247,14 +265,26 @@ fn owned_parameters(params: &[CallableParam]) -> Option<Vec<IncanType>> {
 }
 
 /// Name `Self` in a method result by its owner, as the compiled item's signature does.
-fn self_as(ty: &IncanType, owner: &str) -> IncanType {
+fn self_as(ty: &IncanType, owner: &IncanType) -> IncanType {
     match ty {
-        IncanType::SelfType => IncanType::Named(owner.to_owned()),
+        IncanType::SelfType => owner.clone(),
         IncanType::Generic { base, args } => IncanType::Generic {
             base: base.clone(),
             args: args.iter().map(|arg| self_as(arg, owner)).collect(),
         },
         other => other.clone(),
+    }
+}
+
+/// Keep a method owner's declared placeholders until its checked receiver or static call closes them.
+fn owner_type(owner: &str, names: &[String]) -> IncanType {
+    if names.is_empty() {
+        IncanType::Named(owner.to_owned())
+    } else {
+        IncanType::Generic {
+            base: owner.to_owned(),
+            args: names.iter().cloned().map(IncanType::TypeVar).collect(),
+        }
     }
 }
 

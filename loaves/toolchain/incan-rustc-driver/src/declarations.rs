@@ -422,7 +422,13 @@ pub(crate) fn model_items(
     span: Span,
 ) -> Vec<Box<ast::Item>> {
     if !model.library_item.is_empty() {
-        return vec![library_alias(&model.name, &model.library_item, model.public, span)];
+        return vec![library_alias(
+            &model.name,
+            &model.library_item,
+            model.public,
+            &model.library_type_arguments,
+            span,
+        )];
     }
     let mut declaration = self::model(model, span);
     for derive in model.derives.iter().filter(|derive| derive.as_str() != "Display") {
@@ -472,11 +478,22 @@ pub(crate) fn model_items(
 
 /// Name a stdlib layout's or enum's compiled crate item under the plan's name, so MIR uses that crate's own ADT and
 /// nothing about its storage is declared here.
-fn library_alias(name: &str, library_item: &str, public: bool, span: Span) -> Box<ast::Item> {
+fn library_alias(name: &str, library_item: &str, public: bool, arguments: &[PlanType], span: Span) -> Box<ast::Item> {
     let mut segments = library_item.split("::");
     let mut path = ast::Path::from_ident(ident(segments.next().unwrap_or_default(), span));
     for segment in segments {
         path.segments.push(ast::PathSegment::from_ident(ident(segment, span)));
+    }
+    if !arguments.is_empty()
+        && let Some(last) = path.segments.last_mut()
+    {
+        last.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
+            span,
+            args: arguments
+                .iter()
+                .map(|argument| ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(argument, span))))
+                .collect(),
+        })));
     }
     let mut alias = item(
         ast::ItemKind::TyAlias(Box::new(ast::TyAlias {
@@ -854,7 +871,7 @@ pub fn enum_declaration(value: &crate::plan::EnumDeclaration, span: Span) -> Box
         return carrier_alias(value, span);
     }
     if !value.library_item.is_empty() {
-        return library_alias(&value.name, &value.library_item, value.public, span);
+        return library_alias(&value.name, &value.library_item, value.public, &[], span);
     }
     let variants = value
         .variants

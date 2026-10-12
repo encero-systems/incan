@@ -10,6 +10,7 @@ from rust::incan_semantics_core::body_ir import (
 )
 from pub::incan_mir_plan import EnumDeclaration, ModelDeclaration, Parameter, SourceSpan, PlanType, ListLeaf
 from unions import native_source_type, collect_unions
+from nominal_instances import instance_arguments
 
 
 pub def static_slot(declarations: list[StaticDeclaration], value: &GlobalPlace) -> Result[int, str]:
@@ -84,6 +85,7 @@ pub def lower_model_declarations(
     mut models: list[ModelDeclaration] = []
     for declaration in module.nominal_declarations:
         item = library_item(declaration)
+        mut library_arguments: list[PlanType] = []
         mut derives: list[str] = []
         for derive in declaration.derives:
             if derive != "Default":
@@ -92,6 +94,16 @@ pub def lower_model_declarations(
         mut field_public = declaration.field_public
         mut serde_names: list[str] = []
         if item != "":
+            for argument in instance_arguments(module, declaration)?:
+                library_arguments.append(
+                    native_source_type(
+                        module.nominal_declarations,
+                        module.enum_declarations,
+                        unions,
+                        argument,
+                        intrinsics,
+                    )?,
+                )
             fields = library_fields(module, declaration, file, intrinsics)
             if len(fields) != len(declaration.fields):
                 field_public = []
@@ -126,6 +138,7 @@ pub def lower_model_declarations(
                 source_name=str(declaration.canonical.declaration_name),
                 span=SourceSpan(file=file, line=1, column=1),
                 library_item=item,
+                library_type_arguments=library_arguments,
                 field_serde_names=serde_names,
             ),
         )

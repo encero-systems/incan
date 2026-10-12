@@ -164,7 +164,7 @@ from generator_adapters import is_generator_adapter, generator_adapter, iterator
 from pair_generators import pair_generator_locals, pair_generator_type
 from generator_consumers import is_generator_consumer, consumer_result, generator_consumer
 from project import project_context
-from nominal_instances import specialize_nominals
+from nominal_instances import specialize_nominals, instance_arguments
 from traits import method_index, owner_method_index, receiver_fills_slot, specialize_traits, validate_static_receiver
 from decls import lower_model_declarations, static_slot, static_accessors, library_item, library_enum_item
 from model_lists import model_list_read, structural_prefix, prefix_place
@@ -2610,22 +2610,21 @@ def lower_library_method(
     if len(delegation.parameters) == 0 or len(arguments) == 0:
         return Err("unsupported Body IR stdlib method without a receiver")
     receiver_type = delegation.parameters[0]
+    mut names: list[str] = []
+    for name in delegation.type_parameters:
+        names.append(str(name))
     reference = library_receiver(module, builder, receiver_type, arguments[0], span)?
+    closed = library_receiver_arguments(module, builder, reference, len(names))?
     mut parameters = [place_type(builder.locals, reference)]
     mut ordinary_types: list[PlanType] = []
     for index in range(1, len(delegation.parameters)):
-        parameter = delegation.parameters[index]
+        parameter: RustType = substitute(delegation.parameters[index], names, closed)?
         ordinary_types.append(
             native_source_type(builder.nominals, builder.enums, builder.unions, parameter, builder.intrinsics)?,
         )
     parameters.extend(ordinary_types)
-    result = native_source_type(
-        builder.nominals,
-        builder.enums,
-        builder.unions,
-        delegation.return_type,
-        builder.intrinsics,
-    )?
+    returned: RustType = substitute(delegation.return_type, names, closed)?
+    result = native_source_type(builder.nominals, builder.enums, builder.unions, returned, builder.intrinsics)?
     ordinary = library_call_operands(builder, delegation, target.binding, arguments, ordinary_types, span, 1, false)?
     mut operands = [read_place(reference, true, span)]
     operands.extend(ordinary)
@@ -2637,8 +2636,46 @@ def lower_library_method(
     match delegation.rust_path():
         None => return Err("unsupported Body IR stdlib method native identity")
         Some(path) =>
+            if len(closed) != 0:
+                mut type_arguments: list[PlanType] = []
+                for argument in closed:
+                    type_arguments.append(
+                        native_source_type(builder.nominals, builder.enums, builder.unions, argument, builder.intrinsics)?,
+                    )
+                return instantiated_external_call(
+                    builder,
+                    path,
+                    type_arguments,
+                    parameters,
+                    result,
+                    operands,
+                    output,
+                    span,
+                )
             external_call(builder, path, parameters, result, operands, output, span)
             return Ok(None)
+
+
+def library_receiver_arguments(
+    module: &BodyIrModule,
+    builder: Builder,
+    receiver: Place,
+    count: int,
+) -> Result[list[RustType], str]:
+    """Close an SDK method's owner binders only with its checked receiver type arguments."""
+    if count == 0:
+        return Ok([])
+    mut owner = -1
+    match place_type(builder.locals, receiver):
+        PlanType.ModelRef(index, _name) =>
+            owner = index
+        PlanType.ModelMutRef(index, _name) =>
+            owner = index
+        _ => return Err("unsupported Body IR SDK method receiver type arguments")
+    arguments = instance_arguments(module, builder.nominals[owner])?
+    if len(arguments) == count:
+        return Ok(arguments)
+    return Err("unsupported Body IR SDK method owner type arguments")
 
 
 def library_receiver(
@@ -3117,11 +3154,17 @@ def lower_delegated_call(
     mut names: list[str] = []
     for name in delegation.type_parameters:
         names.append(str(name))
-    if len(target.type_args) != len(names):
-        return Err("unsupported Body IR nonlocal function with type parameters")
     mut closed: list[RustType] = []
     if len(names) != 0:
-        closed = checked_type_arguments(builder, target.type_args)?
+        match target.receiver_type:
+            Some(RustType.Generic(base=_base, args=arguments)) =>
+                if len(target.type_args) != 0:
+                    return Err("unsupported Body IR SDK owner and method type arguments")
+                closed = arguments.clone()
+            _ =>
+                closed = checked_type_arguments(builder, target.type_args)?
+    if len(closed) != len(names) or (len(names) == 0 and len(target.type_args) != 0):
+        return Err("unsupported Body IR nonlocal function with type parameters")
     mut parameters: list[PlanType] = []
     for parameter in delegation.parameters:
         instantiated: RustType = substitute(parameter, names, closed)?
