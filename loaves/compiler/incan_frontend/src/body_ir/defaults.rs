@@ -81,6 +81,92 @@ pub(super) fn attach_nominal_field_defaults(
     }
 }
 
+/// Retain each admitted model or class's method partials as frames of their target methods whose defaults are the
+/// presets (see [`bir::MethodPartialDefaults`]).
+///
+/// The frame is the target method lowered with an empty block and each preset as its parameter's default, so a preset
+/// is evaluated exactly as a source default is, only where a call omits it. A partial whose target or checked identity
+/// is unavailable retains no frame; a call that omits its preset then refuses at lowering.
+pub(super) fn attach_method_partial_defaults(
+    program: &ast::Program,
+    declarations: &mut [bir::NominalDeclaration],
+    facts: &BodyIrLoweringFacts<'_, '_>,
+) {
+    for source in &program.declarations {
+        let (name, methods, aliases, partials) = match &source.node {
+            ast::Declaration::Model(model) => (
+                &model.name,
+                &model.methods,
+                &model.method_aliases,
+                &model.method_partials,
+            ),
+            ast::Declaration::Class(class) => (
+                &class.name,
+                &class.methods,
+                &class.method_aliases,
+                &class.method_partials,
+            ),
+            _ => continue,
+        };
+        let Some(declaration) = declarations
+            .iter_mut()
+            .find(|value| value.name == *name && value.type_parameters.is_empty())
+        else {
+            continue;
+        };
+        for partial in partials {
+            if let Some(frame) = method_partial_frame(name, methods, aliases, partial, facts) {
+                declaration.method_partial_defaults.push(frame);
+            }
+        }
+    }
+}
+
+/// Lower one method partial's frame: its target method's surface with the presets as defaults and an empty block.
+fn method_partial_frame(
+    owner: &str,
+    methods: &[ast::Spanned<ast::MethodDecl>],
+    aliases: &[ast::Spanned<ast::MethodAliasDecl>],
+    partial: &ast::Spanned<ast::MethodPartialDecl>,
+    facts: &BodyIrLoweringFacts<'_, '_>,
+) -> Option<bir::MethodPartialDefaults> {
+    let method = method_partial_target(methods, aliases, &partial.node)?;
+    let target = facts
+        .type_info
+        .declarations
+        .method_bindings_by_span
+        .get(&(method.span.start, method.span.end))?
+        .identity
+        .clone()?;
+    if target.kind != SemanticSourceTargetKind::Method
+        || incan_semantics_core::canonical_module_identity(&target).as_deref() != Some(facts.module_identity)
+    {
+        return None;
+    }
+    let mut frame_source = method.node.clone();
+    frame_source.body = Some(Vec::new());
+    for preset in &partial.node.args {
+        let parameter = frame_source
+            .params
+            .iter_mut()
+            .find(|parameter| parameter.node.name == preset.name)?;
+        parameter.node.default = Some(preset.value.clone());
+    }
+    let frame = lower_method_body(
+        &frame_source,
+        method.span,
+        owner,
+        &IncanType::Named(owner.to_string()),
+        facts,
+    )?;
+    Some(bir::MethodPartialDefaults {
+        name: partial.node.name.clone(),
+        span: hir_span(partial.span),
+        target,
+        frame: Box::new(frame),
+    })
+}
+
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Lower one source-declared default into a deferred Body-IR computation.
     ///

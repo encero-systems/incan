@@ -92,6 +92,12 @@ pub(super) fn project_nominal(
         nominal.field_default_body = Some(Box::new(projected.body));
         audit.requirements.extend(projected.requirements);
     }
+    for binding in &mut nominal.method_partial_defaults {
+        audit.identity(&mut binding.target, true)?;
+        let projected = project_body(&binding.frame, module, library, public)?;
+        binding.frame = Box::new(projected.body);
+        audit.requirements.extend(projected.requirements);
+    }
     nominal.named_type_identities = audit.used_nominal_types;
     Ok((nominal, audit.requirements))
 }

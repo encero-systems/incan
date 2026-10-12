@@ -321,6 +321,7 @@ fn build_body_ir_module_v0_with_provider_operations(
         rust_module: program.rust_module_path.as_ref().map(|path| path.node.as_str()),
     };
     defaults::attach_nominal_field_defaults(program, &mut nominal_declarations, &lowering_facts);
+    defaults::attach_method_partial_defaults(program, &mut nominal_declarations, &lowering_facts);
     let mut bodies = program
         .declarations
         .iter()
@@ -601,16 +602,69 @@ fn has_direct_replacement_method_decorators(method: &ast::MethodDecl) -> bool {
         .all(|decorator| is_direct_replacement_method_decorator(&decorator.node))
 }
 
+/// Resolve the method a same-owner method partial targets: the method its target names, or the one a method alias of
+/// that name rebinds. `None` unless exactly one method of the owner answers.
+pub(crate) fn method_partial_target<'a>(
+    methods: &'a [ast::Spanned<ast::MethodDecl>],
+    aliases: &[ast::Spanned<ast::MethodAliasDecl>],
+    partial: &ast::MethodPartialDecl,
+) -> Option<&'a ast::Spanned<ast::MethodDecl>> {
+    let target = aliases
+        .iter()
+        .find(|alias| alias.node.name == partial.target)
+        .map_or(partial.target.as_str(), |alias| alias.node.target.as_str());
+    let mut candidates = methods.iter().filter(|method| method.node.name == target);
+    match (candidates.next(), candidates.next()) {
+        (Some(method), None) => Some(method),
+        _ => None,
+    }
+}
+
+/// Determine whether every method partial of a nominal owner has a retained default frame: the owner is not generic,
+/// and each partial targets, directly or through a method alias, exactly one non-generic receiver method whose
+/// parameters its presets name.
+///
+/// A call of such a partial is a call of its target method whose omitted presets are defaulted slots, so the frame
+/// carrying the presets as defaults is the whole executable fact (see [`bir::MethodPartialDefaults`]).
+pub fn has_direct_replacement_method_partials(
+    owner_type_params: &[ast::TypeParam],
+    methods: &[ast::Spanned<ast::MethodDecl>],
+    aliases: &[ast::Spanned<ast::MethodAliasDecl>],
+    partials: &[ast::Spanned<ast::MethodPartialDecl>],
+) -> bool {
+    partials.is_empty()
+        || owner_type_params.is_empty()
+            && partials.iter().all(|partial| {
+                method_partial_target(methods, aliases, &partial.node).is_some_and(|method| {
+                    method.node.receiver.is_some()
+                        && method.node.type_params.is_empty()
+                        && method.node.body.is_some()
+                        && partial.node.args.iter().all(|preset| {
+                            method
+                                .node
+                                .params
+                                .iter()
+                                .any(|parameter| parameter.node.name == preset.name)
+                        })
+                })
+            })
+}
+
 /// Keep the structural admission boundary shared by builtin and checked serde derive selections.
 /// Same-type method aliases keep the checked target identity and use its retained method body; they add no native
-/// layout or wrapper declaration. Methods may carry only the builtin static and class method markers.
+/// layout or wrapper declaration. Method partials retain deferred preset frames
+/// ([`has_direct_replacement_method_partials`]). Methods may carry only the builtin static and class method markers.
 fn has_direct_replacement_model_shape(model: &ast::ModelDecl) -> bool {
     has_at_most_one_open_shape_feature(
         !model.type_params.is_empty(),
         model.traits.iter().any(|adoption| !adoption.node.type_args.is_empty()),
         !model.method_aliases.is_empty(),
-    ) && model.method_partials.is_empty()
-        && model.properties.is_empty()
+    ) && has_direct_replacement_method_partials(
+        &model.type_params,
+        &model.methods,
+        &model.method_aliases,
+        &model.method_partials,
+    ) && model.properties.is_empty()
         && model
             .methods
             .iter()
@@ -675,8 +729,9 @@ pub fn is_direct_replacement_plain_newtype(newtype: &ast::NewtypeDecl) -> bool {
 /// parameters, a generic trait adoption and same-type method aliases (which keep the checked target identity, as on
 /// models) are admitted one at a time; combinations stay refused until they have parity evidence. Derives use the
 /// checked selection shared with models, field defaults the declaration-owned deferred computations models use, and
-/// builtin `@staticmethod` and `@classmethod` markers the checker's method facts; lint suppressions change nothing at
-/// run time. Inheritance, properties, partials and user-defined decorators remain refused.
+/// builtin `@staticmethod` and `@classmethod` markers the checker's method facts, and method partials deferred preset
+/// frames, as on models; lint suppressions change nothing at run time. Inheritance, properties and user-defined
+/// decorators remain refused.
 pub fn is_direct_replacement_checked_class(class: &ast::ClassDecl, type_info: &TypeCheckInfo) -> bool {
     has_checked_native_derives(
         &class.decorators,
@@ -687,7 +742,12 @@ pub fn is_direct_replacement_checked_class(class: &ast::ClassDecl, type_info: &T
         class.traits.iter().any(|adoption| !adoption.node.type_args.is_empty()),
         !class.method_aliases.is_empty(),
     ) && class.extends.is_none()
-        && class.method_partials.is_empty()
+        && has_direct_replacement_method_partials(
+            &class.type_params,
+            &class.methods,
+            &class.method_aliases,
+            &class.method_partials,
+        )
         && class.properties.is_empty()
         && class.declarative_members.is_empty()
         && class.fields.iter().all(|field| field.node.metadata.alias.is_none())

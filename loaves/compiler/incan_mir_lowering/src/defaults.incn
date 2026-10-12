@@ -5,6 +5,7 @@ from rust::incan_semantics_core::body_ir import (
     ArgumentElement,
     Body,
     CallableParamDefault,
+    MethodTarget,
     Operand as RustOperand,
 )
 from pub::incan_mir_plan import Operand, OperandKind, Constant, PlanType, SourceSpan, Local
@@ -38,6 +39,46 @@ pub def model_default_arguments(
                 )
             return default_arguments(module, builder, binding, elements, body, types, span, 0)
         None => return Err(f"unsupported Body IR unavailable field defaults on {declaration.name}")
+
+
+pub def method_default_arguments(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[ArgumentElement],
+    body: &Body,
+    types: list[PlanType],
+    span: SourceSpan,
+) -> Result[Option[list[Operand]], str]:
+    """
+    Fill a method call's omitted slots from the frame that declares them, receiver excluded.
+
+    A method partial's call carries its target's identity under the partial's own name; its presets are defaults of
+    the owner's retained frame for that name and target, whose parameters must be the target body's own. Every
+    partial of an admitted owner retains such a frame, so any other call with omitted slots, under the method's name
+    or a method alias of it, takes the method's own defaults. `None` means no slot was omitted.
+    """
+    for owner in module.nominal_declarations:
+        for preset_binding in owner.method_partial_defaults:
+            if preset_binding.name != target.name or Some(preset_binding.target.clone()) != target.canonical:
+                continue
+            frame = preset_binding.frame
+            if frame.canonical != body.canonical or len(frame.params) != len(body.params) or len(frame.params) != len(
+                types,
+            ) + 1:
+                return Err("invalid Body IR method-partial frame")
+            for index in range(len(frame.params)):
+                if frame.params[index].name != body.params[index].name or frame.params[index].ty != body.params[index].ty:
+                    return Err("invalid Body IR method-partial parameter")
+            values = default_arguments(module, builder, target.binding, arguments[1:], frame, types, span, 1)?
+            return Ok(Some(values))
+    match target.binding:
+        ArgumentBinding.Resolved(arguments=_bindings, defaulted_slots=defaults) =>
+            if len(defaults) == 0:
+                return Ok(None)
+            values = default_arguments(module, builder, target.binding, arguments[1:], body, types, span, 1)?
+            return Ok(Some(values))
+        _ => return Ok(None)
 
 
 pub def default_arguments(

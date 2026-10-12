@@ -396,7 +396,12 @@ fn model_refusal_feature(model: &incan_frontend::ast::ModelDecl) -> String {
     }
 
     // ---- Member binding features ----
-    if !model.method_partials.is_empty() {
+    if !incan_frontend::body_ir::has_direct_replacement_method_partials(
+        &model.type_params,
+        &model.methods,
+        &model.method_aliases,
+        &model.method_partials,
+    ) {
         return "method partials".to_owned();
     }
     if !model.properties.is_empty() {
@@ -428,7 +433,12 @@ fn class_refusal_feature(class: &incan_frontend::ast::ClassDecl) -> String {
     }
 
     // ---- Member binding features ----
-    if !class.method_partials.is_empty() {
+    if !incan_frontend::body_ir::has_direct_replacement_method_partials(
+        &class.type_params,
+        &class.methods,
+        &class.method_aliases,
+        &class.method_partials,
+    ) {
         return "method partials".to_owned();
     }
     if !class.properties.is_empty() {

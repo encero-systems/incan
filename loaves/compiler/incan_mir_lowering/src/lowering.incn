@@ -296,7 +296,7 @@ from lists import (
 )
 from assertions import lower_assertion
 from async_ import future_type, future_declarations, construct_future, await_future, async_entry, evaluator_name
-from defaults import default_arguments, default_type, model_default_arguments
+from defaults import default_arguments, default_type, method_default_arguments, model_default_arguments
 from type_parameters import Instance, instantiate, substitute
 from closures import (
     validate_callable_representation,
@@ -2266,11 +2266,11 @@ def call_method_body(
     for position in range(1, len(body.params)):
         types.append(call_parameter_type(builder, body, body.params[position])?)
     mut ordinary: list[Operand] = []
-    if has_defaulted_slots(target.binding):
-        # The receiver is bound separately, so the ordinary slots start after it in the declaration's frame.
-        ordinary = default_arguments(module, builder, target.binding, arguments[1:], body, types, span, 1)?
-    else:
-        ordinary = ordered_slot_operands(builder, target.binding, arguments, types, span, 1)?
+    match method_default_arguments(module, builder, target, arguments, body, types, span)?:
+        Some(values) =>
+            ordinary = values
+        None =>
+            ordinary = ordered_slot_operands(builder, target.binding, arguments, types, span, 1)?
     mut operands = [read_place(reference, true, span)]
     for operand in ordinary:
         operands.append(operand)

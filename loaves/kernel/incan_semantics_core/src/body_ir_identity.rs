@@ -241,7 +241,11 @@ impl BodyIrModule {
                 && declaration.field_types.len() == 1
                 && declaration.field_public == [true]
                 && declaration.type_parameter_count == 0
-                && !declaration.has_field_defaults;
+                && !declaration.has_field_defaults
+                && declaration.method_partial_defaults.is_empty();
+        }
+        if !self.are_well_formed_method_partial_defaults(declaration) {
+            return false;
         }
 
         matches!(
@@ -270,6 +274,39 @@ impl BodyIrModule {
                         && declares_member(&declaration.canonical, identity)
                         && identity.declaration_name == *name
                 })
+    }
+
+    /// Whether each method-partial frame of a model or class is a uniquely named binding inside its owner whose frame
+    /// is the target method's own surface: the checked target is a method of this owner, and the frame carries that
+    /// method's identity, name, span and direct call id, with the owner's receiver first.
+    fn are_well_formed_method_partial_defaults(&self, declaration: &NominalDeclaration) -> bool {
+        let partials = &declaration.method_partial_defaults;
+        partials
+            .iter()
+            .map(|binding| &binding.name)
+            .collect::<BTreeSet<_>>()
+            .len()
+            == partials.len()
+            && partials.iter().all(|binding| {
+                !binding.name.is_empty()
+                    && binding.span.start < binding.span.end
+                    && binding.span.start >= declaration.canonical.declaration_span.start
+                    && binding.span.end <= declaration.canonical.declaration_span.end
+                    && binding.target.kind == SemanticSourceTargetKind::Method
+                    && declares_member(&declaration.canonical, &binding.target)
+                    && binding.frame.canonical.as_ref() == Some(&binding.target)
+                    && binding.frame.name == binding.target.declaration_name
+                    && self.declaration_id_for_canonical(
+                        &binding.target,
+                        SymbolNamespace::Member,
+                        SemanticSourceTargetKind::Method,
+                    ) == Some(binding.frame.direct_call_id.clone())
+                    && binding
+                        .frame
+                        .params
+                        .first()
+                        .is_some_and(|receiver| receiver.ty == nominal_receiver_type(declaration))
+            })
     }
 
     /// Whether a retained fieldless enum is bound to this module, owner and members alike.

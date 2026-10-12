@@ -331,6 +331,10 @@ pub struct NominalDeclaration {
     /// a checked constructor binding. Older artifacts without this frame must refuse omitted fields.
     #[serde(default)]
     pub field_default_body: Option<Box<Body>>,
+    /// Declaration-owned frames of the owner's method partials, one per partial binding, each selected at a call only
+    /// together with its exact target method identity.
+    #[serde(default)]
+    pub method_partial_defaults: Vec<MethodPartialDefaults>,
     /// Checked builtin and implicit nominal derives, retained in legacy normalization order. A selected `Default`
     /// over source field defaults requires a custom implementation rather than a Rust derive macro; consumers that
     /// cannot implement it must refuse that combination.
@@ -342,6 +346,26 @@ pub struct NominalDeclaration {
     pub type_parameters: Vec<String>,
     /// Number of declared type parameters, agreeing with [`Self::type_parameters`].
     pub type_parameter_count: usize,
+}
+
+/// The deferred defaults of one same-owner method partial (`short = partial label(prefix="x")`), without a second
+/// semantic method identity.
+///
+/// Checking gives a call of the partial the target method's identity, with each preset the call omits as a defaulted
+/// slot. The frame is the target method's parameter surface, receiver first, whose defaults are the partial's presets
+/// and the target's own remaining defaults. A consumer evaluates only the selected default computations, never the
+/// frame's empty block, and must match both [`Self::name`] and [`Self::target`] before using it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MethodPartialDefaults {
+    /// Source binding name of the partial within its nominal owner.
+    pub name: String,
+    /// Source span of the partial binding, inside its owner's declaration.
+    pub span: HirSourceSpan,
+    /// Exact canonical method the checker selected as the partial's target, through any method alias.
+    pub target: CanonicalSymbolId,
+    /// The target-shaped default frame: the target's identity, name, span and parameters, with the presets as
+    /// defaults.
+    pub frame: Box<Body>,
 }
 
 /// One source-local fieldless normal enum retained for direct identity comparison.
@@ -1018,7 +1042,10 @@ impl Place {
                 PlaceElem::UnionMember { ty } => {
                     let _ = write!(&mut out, ".union[{ty}]");
                 }
-                PlaceElem::OptionPayload { option_type, payload_type } => {
+                PlaceElem::OptionPayload {
+                    option_type,
+                    payload_type,
+                } => {
                     let _ = write!(&mut out, ".some[{option_type}->{payload_type}]");
                 }
                 PlaceElem::Index(operand) => {
