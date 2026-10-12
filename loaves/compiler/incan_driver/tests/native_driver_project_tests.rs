@@ -18,6 +18,86 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// Derived models, enums and newtypes sort beside tuples, nested lists and optional values through the same Ord path.
+#[test]
+fn derived_ordered_sort_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("derived-ordered-sort")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"@derive(Ord)
+model Task:
+    priority: int
+    name: str
+
+@derive(Ord)
+enum Level:
+    Low
+    High
+
+@derive(Ord)
+type Rank = newtype int
+
+def main() -> None:
+    source = [Task(priority=2, name="b"), Task(priority=1, name="a")]
+    tasks = sorted(source)
+    println(f"{tasks[0].name} {source[0].name}")
+    levels = sorted([Level.High, Level.Low])
+    println(levels[0] == Level.Low)
+    ranks = sorted([Rank(3), Rank(1)])
+    println(ranks[0].0)
+    pairs = sorted([(2, "b"), (1, "a")])
+    println(pairs[0][1])
+    nested = sorted([[3, 1], [2]])
+    println(nested[0][0])
+    options = sorted([Some(2), None, Some(1)])
+    println(options[0] == None)
+"#,
+    )
+}
+
+/// A source ordering protocol without a native Ord implementation stays named rather than reaching a Rust error.
+#[test]
+fn sorting_custom_ordering_keeps_a_named_refusal() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("custom-ordering-sort")?;
+    let source = root.join("custom.incn");
+    fs::write(
+        &source,
+        r#"from std.derives.comparison import Ord
+
+model Reverse with Ord:
+    value: int
+
+    def __eq__(self, other: Reverse) -> bool:
+        return self.value == other.value
+
+    def __lt__(self, other: Reverse) -> bool:
+        return self.value > other.value
+
+def main() -> None:
+    println(sorted([Reverse(value=1), Reverse(value=2)])[0].value)
+"#,
+    )?;
+    let output = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &source,
+        &root.join("native"),
+        &fixture.sysroot,
+        &corpus::runtime_closure(&fixture.formatting)?,
+    )
+    .output()?;
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unsupported Body IR Sorted nominal without a retained Ord derive"),
+        "{stderr}"
+    );
+    Ok(())
+}
+
 /// Minimum and maximum preserve integer, float, boolean and text list results without consuming their sources.
 #[test]
 fn extrema_builtins_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
