@@ -2192,6 +2192,43 @@ def main() -> None:
     )
 }
 
+/// Generic displays use the bound value's own display, including integral float spelling, through owner methods
+/// and operator hooks as well as ordinary functions.
+#[test]
+fn type_parameter_display_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("type-parameter-display")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def text[T with Display](value: T) -> str:
+    return f"{value}"
+
+class Box[T with Display]:
+    pub value: T
+    def text(self) -> str:
+        return f"{self.value}"
+
+model Column[T with Display]:
+    sql: str
+    def __mul__(self, other: T) -> Column[T]:
+        return Column[T](sql=f"({self.sql} * {other})")
+
+def main() -> None:
+    println(text(2.0))
+    println(text(2.5))
+    println(text(7))
+    println(text("word"))
+    println(Box[float](value=3.0).text())
+    println(Box[float](value=3.5).text())
+    column = Column[float](sql="amount")
+    println((column * 2.0).sql)
+    println((column * 2.5).sql)
+"#,
+    )
+}
+
 /// A generic Index adopter and a Self-returning adopter dispatch their indexing hooks exactly as legacy does.
 #[test]
 fn generic_class_index_adoption_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

@@ -136,6 +136,18 @@ class Cell[U with Clone] with Read[int]:
     Ok(())
 }
 
+/// Formatting a declared type parameter keeps its source-level display contract after owner specialization.
+#[test]
+fn type_parameter_display_is_retained_before_specialization() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "class Box[T with Display]:\n    pub value: T\n    def text(self) -> str:\n        return f\"{self.value}\"\n",
+        &["m", "type_parameter_display"],
+    )?;
+    let snapshot = body_named(&module, "text")?.render_snapshot();
+    assert!(snapshot.contains(":type-parameter-display"), "{snapshot}");
+    Ok(())
+}
+
 /// Model binders remain ordered placeholders in layouts, receiver methods, and deferred default frames.
 #[test]
 fn model_owner_parameter_frames_are_retained() -> Result<(), Box<dyn std::error::Error>> {
