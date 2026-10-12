@@ -2062,3 +2062,22 @@ fn list_repeat_lowers_to_its_helper_in_slot_order() -> Result<(), Box<dyn std::e
     );
     Ok(())
 }
+
+/// A pattern over a generic call's result that a constructor argument closes binds its payload at the closed type, not
+/// at the callee's type parameter the checker leaves on the arms.
+#[test]
+fn a_matched_generic_call_result_closed_by_a_constructor_argument_binds_closed_payloads()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = concat!(
+        "model Decoded[T]:\n  value: T\n\n",
+        "def unwrap[T](decoded: Decoded[T]) -> Result[T, str]:\n  return Ok(decoded.value)\n\n",
+        "def main() -> None:\n  match unwrap(Decoded(value=9)):\n    Ok(number) => println(number)\n",
+        "    Err(message) => println(message)\n",
+    );
+    let module = build(source, &["m", "closed_generic_match"])?;
+    let main = body_named(&module, "main")?;
+    let rendered = main.render_snapshot();
+    assert!(rendered.contains("number : int [binding]"), "{rendered}");
+    assert!(rendered.contains("message : str [binding]"), "{rendered}");
+    Ok(())
+}

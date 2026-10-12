@@ -3056,6 +3056,43 @@ def main() -> None:
     )
 }
 
+/// A generic call whose result a constructor argument closes is matched with its payloads at the closed type, and the
+/// callee's instance reads its type-parameter field of a generic model by copy for a scalar and by clone for a string,
+/// as legacy does.
+#[test]
+fn matched_generic_results_closed_by_constructor_arguments_output_matches_legacy()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("closed-generic-match")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"model Decoded[T]:
+    value: T
+
+
+def unwrap[T](decoded: Decoded[T]) -> Result[T, str]:
+    return Ok(decoded.value)
+
+
+def main() -> None:
+    match unwrap(Decoded(value=9)):
+        Ok(number) => println(number)
+        Err(message) => println(message)
+    match unwrap(Decoded(value=true)):
+        Ok(flag) => println(flag)
+        Err(message) => println(message)
+    match unwrap(Decoded(value="text")):
+        Ok(text) => println(text)
+        Err(message) => println(message)
+    match unwrap(Decoded(value=2.0)):
+        Ok(amount) => println(f"{amount} {amount}")
+        Err(message) => println(message)
+"#,
+    )
+}
+
 /// Prove canonical scalar casts and default values byte-identical to legacy.
 #[test]
 fn numeric_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
