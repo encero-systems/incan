@@ -18,6 +18,36 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// Literal and checked tuple spreads bind fixed function, rest, keyword and method parameters with legacy output.
+#[test]
+fn fixed_call_spreads_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("fixed-call-spreads")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def combine(a: int, b: str, *rest: int, **labels: str) -> str:
+    return labels["city"]
+
+def route(path: str, method: str) -> str:
+    return f"{method} {path}"
+
+class Counter:
+    def add(self, left: int, right: int) -> int:
+        return left + right
+
+def main() -> None:
+    xy: tuple[int, str, int] = (1, "Ada", 7)
+    counter = Counter()
+    println(combine(*[1, "Ada", 7], **{"city": "London", "name": "Ada"}))
+    println(combine(*xy, **{"city": "Paris", "name": "Grace"}))
+    println(route(**{"path": "/status", "method": "GET"}))
+    println(counter.add(*(5, 6)))
+"#,
+    )
+}
+
 /// Tuple-list literals and unused capability-bounded parameters retain concrete native instances, as legacy infers.
 #[test]
 fn checked_generic_arguments_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

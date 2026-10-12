@@ -5,6 +5,33 @@
 
 use super::*;
 
+/// A checked tuple variable supplies fixed and rest slots without leaving an unresolved spread or unknown carrier.
+#[test]
+fn tuple_variable_spreads_retain_fixed_slots() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def combine(a: int, b: str, *rest: int) -> str:\n  return b\n\ndef main() -> None:\n  xy: tuple[int, str, int] = (1, \"Ada\", 7)\n  println(combine(*xy))\n",
+        &["m", "tuple_variable_spread"],
+    )?;
+    let snapshot = module.render_snapshot();
+    assert!(!snapshot.contains("unsupported("), "{snapshot}");
+    let target = named_targets(&module, "main")
+        .into_iter()
+        .find(|target| target.name == "combine")
+        .ok_or("missing tuple spread call")?;
+    assert!(
+        matches!(&target.binding, bir::ArgumentBinding::Resolved { arguments, defaulted_slots } if arguments.len() == 3 && defaulted_slots.is_empty()),
+        "{snapshot}"
+    );
+    assert!(
+        body_named(&module, "main")?
+            .locals
+            .iter()
+            .all(|local| local.ty != IncanType::Unknown),
+        "{snapshot}"
+    );
+    Ok(())
+}
+
 /// A capability-bounded call retains its inferred argument even when its body and result do not use it.
 #[test]
 fn capability_bound_calls_retain_checked_arguments() -> Result<(), Box<dyn std::error::Error>> {
