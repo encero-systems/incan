@@ -13,10 +13,10 @@ from pub::incan_mir_plan import assign as plan_assign
 from pub::incan_mir_plan import place as plan_place
 from frame import external_call, literal, place_type
 from text_plan import owned_literal
-from lowering import scalar_operand, display_operand, scalar_place, bind_enum_payload, operand_type
+from lowering import scalar_operand, display_operand, scalar_place, bind_enum_payload
 from options import carrier_layout, intrinsic_pattern, variant_condition
 from patterns import has_refutable_payload
-from frame import Builder, read_place, temporary
+from frame import Builder, read_place, temporary, value_type
 from closures import function_assignment
 
 
@@ -69,7 +69,7 @@ def lower_raises_assertion(
         None => pass
     operand = scalar_operand(builder, call, span)?
     pointer_type = PlanType.FunctionPointer([PlanType.Unit])
-    source_type = operand_type(builder, operand)?
+    source_type = value_type(builder, operand)?
     match source_type:
         PlanType.FunctionItem(_name, signature) =>
             if signature != [PlanType.Unit]:
