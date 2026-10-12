@@ -13190,3 +13190,59 @@ fn validation_error_fixtures_reach_checked_method_boundary() -> Result<(), Box<d
     }
     Ok(())
 }
+
+/// Inherited self-calls reach the nearest subclass override while ancestor calls keep their original behavior.
+#[test]
+fn inherited_class_dispatch_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "inherited-class-dispatch",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/subtrait_default_and_class_override.incn"
+        ),
+        b"child\nchild\n2\n4\n1\n",
+    )
+}
+
+/// Inherited fields keep their ABI positions through shared and mutable receiver calls at several depths.
+#[test]
+fn inherited_class_fields_and_mutation_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "inherited-class-fields",
+        r#"class Ancestor:
+    pub total: int
+
+    def score(self) -> int:
+        return self.total
+
+    def add(mut self, increment: int) -> int:
+        self.total += increment
+        return self.score()
+
+    def report(self) -> int:
+        return self.score()
+
+class Child extends Ancestor:
+    pub extra: int
+
+    def score(self) -> int:
+        return self.total + self.extra
+
+class Leaf extends Child:
+    pub marker: int
+
+    def twice(self) -> int:
+        return self.report() + self.report()
+
+def main() -> None:
+    mut child = Child(extra=5, total=2)
+    println(child.add(3))
+    println(child.report())
+    println(Ancestor(total=2).report())
+    mut leaf = Leaf(extra=7, total=1, marker=100)
+    println(leaf.add(2))
+    println(leaf.twice())
+    println(leaf.marker)
+"#,
+        b"10\n10\n2\n10\n20\n100\n",
+    )
+}
