@@ -41,7 +41,7 @@ pub model Builder:
     `closed` marks blocks whose terminator is final, so an `if` whose branches both return leaves its join closed.
     `parameter_count` separates invocation-long argument storage from locals with explicit storage lifetimes.
     `loops` holds each enclosing loop's (header, after) blocks, and `loop_owners` the owners live when it began.
-    `iterators` pairs borrowed iterable slots with cursor storage; `borrowed_items` prevents mutations of cloned iteration items whose source contract remains borrowed.
+    `iterators` pairs borrowed iterable slots with cursor storage; `borrowed_items` prevents mutations of cloned iteration items whose source contract remains borrowed, and `in_place_items` lists items that are exclusive references to the elements a loop changes in place.
     `module_identity` is the caller body's canonical owner, so local-call admission remains module-relative in a project plan.
     `generator_handle` is the provisional yield-handle slot in a producer, or -1 in an ordinary function; completed producer plans move it into their parameter slot.
     `type_parameters` and `type_arguments` retain the current closed declaration binding; `instances` records checked calls that need their own concrete native function.
@@ -65,6 +65,7 @@ pub model Builder:
     pub closed: list[bool]
     pub iterators: list[tuple[int, int]]
     pub borrowed_items: list[int]
+    pub in_place_items: list[int]
     pub nominals: list[RustNominalDeclaration]
     pub enums: list[RustEnumDeclaration]
     pub unions: list[RustType]

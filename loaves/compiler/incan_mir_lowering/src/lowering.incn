@@ -1556,6 +1556,7 @@ def lifted_frame(builder: Builder, name: str, arguments: list[PlanType], result:
         nominals=builder.nominals,
         iterators=[],
         borrowed_items=[],
+        in_place_items=[],
         enums=builder.enums,
         intrinsics=builder.intrinsics,
         statics=builder.statics,
@@ -2591,6 +2592,10 @@ pub def call_argument_operand(
         # An SDK crate takes its collection parameters by value; a borrowed argument is cloned, as legacy passes it.
         return value_operand(builder, value, span)
     if is_list(ty) or is_collection(ty):
+        if is_mutable_list_reference(ty):
+            match loop_variable_copy(builder, value, span)?:
+                Some(copy) => return list_borrow(builder, copy, true, span)
+                None => pass
         return checked_list_argument(builder, value, is_mutable_list_reference(ty), span)
     if is_generator_reference(ty):
         match value:
@@ -2615,6 +2620,27 @@ def owned_collection(ty: PlanType) -> bool:
         PlanType.Set(_leaf) => return true
         PlanType.Dict(_key, _value) => return true
         _ => return false
+
+
+def loop_variable_copy(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Option[Place], str]:
+    """
+    Copy a list loop variable, or a list field of one, that a function's `mut` parameter receives.
+
+    Legacy passes such a parameter `&mut item.clone()`, whether the loop copies its items or iterates them in place,
+    so the callee's changes never reach the iterated list. A method receiver is not an argument and changes the item.
+    """
+    match value:
+        RustOperand.Place(read) =>
+            match read.place.global():
+                Some(_global) => return Ok(None)
+                None => pass
+            root = list_root_place(builder, read.place, span)?
+            if not is_list(place_type(builder.locals, root)):
+                return Ok(None)
+            if root.local in builder.borrowed_items or root.local in builder.in_place_items:
+                return Ok(Some(cloned_list(builder, root, span)?))
+            return Ok(None)
+        _ => return Ok(None)
 
 
 def function_argument(mut builder: Builder, ty: PlanType, value: Operand, span: SourceSpan) -> Result[Operand, str]:
@@ -4182,6 +4208,7 @@ def lower_function(
         nominals=module.nominal_declarations,
         iterators=[],
         borrowed_items=[],
+        in_place_items=[],
         enums=module.enum_declarations,
         intrinsics=intrinsics,
         statics=module.static_declarations,
@@ -4352,11 +4379,11 @@ def checked_list_argument(
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """
-    Preserve checked exclusive-access authority before borrowing a local for an Incan parameter.
+    Preserve checked exclusive-access authority before borrowing a local for an Incan parameter or method receiver.
 
-    A `mut` parameter borrows a value the caller last uses (a list literal, a temporary) in place, since nothing reads
-    it again. A loop variable, or a field of one, reaches it as a fresh copy, as legacy passes it, so the callee's
-    changes never reach the iterated list.
+    An exclusive borrow also takes a value the caller last uses (a list literal, a temporary) in place, since nothing
+    reads it again. A copied loop variable stays refused for an exclusive borrow, because a change to it could never
+    reach the iterated list.
     """
     match value:
         RustOperand.Place(read) =>
@@ -4371,9 +4398,6 @@ def checked_list_argument(
                 copied = materialized_receiver(builder, read.place, span)?
                 return list_borrow(builder, copied, false, span)
             root = list_root_place(builder, read.place, span)?
-            if mutable and root.local in builder.borrowed_items and is_list(place_type(builder.locals, root)):
-                copy = cloned_list(builder, root, span)?
-                return list_borrow(builder, copy, true, span)
             return list_borrow(builder, root, mutable, span)
         RustOperand.Constant(constant) =>
             match constant:
@@ -5323,10 +5347,10 @@ def initialize_text_iterator(
 
 
 def initialize_list_iterator(mut builder: Builder, iterator: Place, source: &RustOperand, span: SourceSpan) -> None:
-    """Retain cursor storage for Body IR's borrowed builtin iterable materialization."""
+    """Retain cursor storage for Body IR's borrowed builtin iterable materialization, shared or exclusive."""
     match source:
         RustOperand.Place(read) =>
-            if read.fact == OwnershipFact.Borrow:
+            if read.fact == OwnershipFact.Borrow or read.fact == OwnershipFact.MutBorrow:
                 cursor = temporary(builder, PlanType.Int, span)
                 zero = Operand(kind=OperandKind.Literal(Constant.Int(0)), span=span)
                 builder.emit(plan_assign(cursor, RvalueKind.Use(zero), span))
@@ -5386,20 +5410,23 @@ def list_next(
     next_block = builder.new_block(span)
     builder.finish(TerminatorKind.SwitchBool(read_place(condition, false, span), builder.loops[-1][1], next_block), span)
     builder.current = next_block
-    item_reference = list_borrow(builder, receiver, false, span)?
     target = list_root_place(builder, destination, span)?
-    drop_owned(builder, target.local, span)
-    if element == PlanType.String or is_list(element) or is_nominal_type(element):
-        borrow_iteration_item(builder, target.local)
-    # A bytes value's items are unsigned bytes, which legacy's loop widens to the checked `int` item.
-    widened = element == PlanType.U8 and place_type(builder.locals, target) == PlanType.Int
-    mut item = target
-    if widened:
-        item = temporary(builder, PlanType.U8, span)
-    iterable_call(builder, ty, "nth", [PlanType.Int], element, [item_reference, position], item, span)?
-    if widened:
-        byte = read_place(item, false, span)
-        builder.emit(plan_assign(target, RvalueKind.NumericCast(byte, PlanType.U8, PlanType.Int), span))
+    if is_mutable_list_reference(place_type(builder.locals, receiver)):
+        in_place_item(builder, receiver, target, element, position, span)?
+    else:
+        item_reference = list_borrow(builder, receiver, false, span)?
+        drop_owned(builder, target.local, span)
+        if element == PlanType.String or is_list(element) or is_nominal_type(element):
+            borrow_iteration_item(builder, target.local)
+        # A bytes value's items are unsigned bytes, which legacy's loop widens to the checked `int` item.
+        widened = element == PlanType.U8 and place_type(builder.locals, target) == PlanType.Int
+        mut item = target
+        if widened:
+            item = temporary(builder, PlanType.U8, span)
+        iterable_call(builder, ty, "nth", [PlanType.Int], element, [item_reference, position], item, span)?
+        if widened:
+            byte = read_place(item, false, span)
+            builder.emit(plan_assign(target, RvalueKind.NumericCast(byte, PlanType.U8, PlanType.Int), span))
     # The cursor cannot overflow: a successful poll is bounded by the native collection length.
     pair = temporary(builder, PlanType.CheckedInt, span)
     one = Operand(kind=OperandKind.Literal(Constant.Int(1)), span=span)
@@ -5409,21 +5436,74 @@ def list_next(
     return Ok(None)
 
 
+def in_place_item(
+    mut builder: Builder,
+    iterator: Place,
+    item: Place,
+    element: PlanType,
+    position: Operand,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Bind a loop item that the body changes in place as an exclusive reference to its element, as legacy's `iter_mut`.
+
+    The element is reborrowed through the runtime's checked `borrow_list_mut` at the cursor position, so each change
+    lands in the list. A list or model element has an exclusive reference representation; any other element stays
+    refused by name.
+    """
+    leaf, depth = require_list_shape(place_type(builder.locals, iterator), "unsupported Body IR nonlist cursor")?
+    mut reference_type = PlanType.Unit
+    match element:
+        PlanType.List(element_leaf, element_depth) =>
+            reference_type = PlanType.ListMutRef(element_leaf, element_depth)
+        PlanType.Model(owner, name) =>
+            reference_type = PlanType.ModelMutRef(owner, name)
+        _ => return Err("unsupported Body IR in-place iteration over text, carrier or tuple elements")
+    builder.locals[item.local].ty = reference_type
+    if item.local not in builder.in_place_items:
+        builder.in_place_items.append(item.local)
+    exclusive_list = list_borrow(builder, iterator, true, span)?
+    list_call(
+        builder,
+        "borrow_list_mut",
+        element,
+        [PlanType.ListMutRef(leaf, depth), PlanType.Int],
+        reference_type,
+        [exclusive_list, position],
+        item,
+        span,
+    )
+    return Ok(None)
+
+
 def iterator_assignment(
     mut builder: Builder,
     destination: Place,
     value: &RustRvalue,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Materialize the explicit builtin iterator's live shared list view and initialize its cursor once."""
+    """
+    Materialize the explicit builtin iterator's live list view and initialize its cursor once.
+
+    The view is shared, unless the loop changes its items in place: then Body IR borrows the list exclusively and each
+    item becomes an exclusive reference to its element (see `in_place_item`).
+    """
     match value:
         RustRvalue.Use(value) =>
             match value:
                 RustOperand.Place(read) =>
-                    if read.fact != OwnershipFact.Borrow:
-                        return Err("unsupported Body IR list iterator initialization ownership")
+                    mut exclusive = false
+                    match read.fact:
+                        OwnershipFact.Borrow => pass
+                        OwnershipFact.MutBorrow =>
+                            exclusive = true
+                        _ => return Err("unsupported Body IR list iterator initialization ownership")
                     root = list_root_place(builder, read.place, span)?
-                    reference = list_borrow(builder, root, false, span)?
+                    if exclusive and not is_list(place_type(builder.locals, root)):
+                        return Err("unsupported Body IR in-place iteration over a set or dictionary")
+                    reference = list_borrow(builder, root, exclusive, span)?
+                    if exclusive:
+                        builder.locals[destination.local].ty = operand_type(builder, reference)?
                     builder.emit(plan_assign(destination, RvalueKind.Use(reference), span))
                     initialize_list_iterator(builder, destination, value, span)
                     return Ok(None)

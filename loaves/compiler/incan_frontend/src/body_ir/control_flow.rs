@@ -1236,11 +1236,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// into a [`bir::StatementKind::TryPropagate`] ahead of the loop via [`Self::lower_expr_to_place`]'s existing
     /// `Expr::Try` handling -- no special-casing needed for that form.
     ///
-    /// The iterable is always read as a [`bir::OwnershipFact::Borrow`], matching [`Self::lower_method_call`]'s
+    /// The iterable is read as a [`bir::OwnershipFact::Borrow`], matching [`Self::lower_method_call`]'s
     /// established receiver-borrow precedent (never an unsound move, and consistent with obtaining an iterator
     /// conceptually borrowing its source rather than consuming it at this normalized level); the materialized iterator
     /// local is polled with [`bir::OwnershipFact::MutBorrow`] each iteration, since polling advances its internal
-    /// state.
+    /// state. A builtin loop whose body changes its item in place (see [`Self::body_changes_item_in_place`]) reads the
+    /// iterable as a [`bir::OwnershipFact::MutBorrow`] instead, so each item is the element itself, as legacy iterates
+    /// with `iter_mut` (#1561).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn lower_general_iteration(
         &mut self,
@@ -1265,6 +1267,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             None => self.resolve_ty(effective_iter_expr.span),
         };
         let iterator_local = self.new_temp(iterator_ty, outer_scope, span);
+        let iterator_init = out.len();
         match &protocol {
             Some(p) => out.push(bir::Statement {
                 kind: bir::StatementKind::Call {
@@ -1315,6 +1318,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         body_fn(self, loop_scope, &mut body_stmts);
         self.loop_break_targets.pop();
         self.loop_continue_actions.pop();
+        // A builtin loop whose body changes its item in place iterates the list exclusively, as legacy's `iter_mut`.
+        if protocol.is_none() && self.body_changes_item_in_place(&body_stmts, pattern_local) {
+            borrow_iterable_exclusively(&mut out[iterator_init]);
+        }
 
         out.push(bir::Statement {
             kind: bir::StatementKind::Loop {
@@ -1325,5 +1332,109 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             },
             span,
         });
+    }
+
+    /// Return whether a loop body changes its item in place: through a method that changes it, a pattern matched in
+    /// place over it, a write to a part of it, or a nested loop that changes its elements in place.
+    ///
+    /// Legacy iterates such a loop with `iter_mut`, so each change lands in its element. An item passed to a `mut`
+    /// parameter does not count: legacy passes the callee a copy of it (#1561).
+    fn body_changes_item_in_place(&self, stmts: &[bir::Statement], item: bir::LocalId) -> bool {
+        stmts
+            .iter()
+            .any(|stmt| self.statement_changes_item_in_place(stmt, item))
+    }
+
+    /// Report whether one statement, or a block nested in it, changes `item` in place.
+    fn statement_changes_item_in_place(&self, statement: &bir::Statement, item: bir::LocalId) -> bool {
+        match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(_),
+                args,
+                ..
+            } => args
+                .first()
+                .and_then(bir::ArgumentElement::as_one)
+                .is_some_and(|receiver| self.method_changes_item(receiver, statement.span, item)),
+            bir::StatementKind::Assign { place, rvalue } => {
+                (!place.projection.is_empty() && place.local_id() == Some(item))
+                    || self.rvalue_changes_item_in_place(rvalue, item)
+            }
+            bir::StatementKind::If {
+                then_block, else_block, ..
+            } => {
+                self.body_changes_item_in_place(&then_block.stmts, item)
+                    || else_block
+                        .as_ref()
+                        .is_some_and(|block| self.body_changes_item_in_place(&block.stmts, item))
+            }
+            bir::StatementKind::Loop { body } => self.body_changes_item_in_place(&body.stmts, item),
+            _ => false,
+        }
+    }
+
+    /// Report whether a method call at `span` changes its receiver `item`, or a part of it: a collection method that
+    /// borrows it exclusively, or a source method the checker resolved to a `mut self` receiver.
+    fn method_changes_item(&self, receiver: &bir::Operand, span: HirSourceSpan, item: bir::LocalId) -> bool {
+        let bir::Operand::Place(read) = receiver else {
+            return false;
+        };
+        read.place.local_id() == Some(item)
+            && (read.fact == bir::OwnershipFact::MutBorrow
+                || self
+                    .type_info
+                    .method_call_takes_mutable_receiver(ast::Span::new(span.start, span.end)))
+    }
+
+    /// Report whether an assigned value borrows `item` exclusively (a nested loop iterating it in place), or is a
+    /// `match` that binds part of `item` in place or changes it in one of its arms.
+    fn rvalue_changes_item_in_place(&self, rvalue: &bir::Rvalue, item: bir::LocalId) -> bool {
+        match rvalue {
+            bir::Rvalue::Use(operand) => borrows_item_exclusively(operand, item),
+            bir::Rvalue::Match { scrutinee, arms } => {
+                let over_item = matches!(scrutinee, bir::Operand::Place(read) if read.place.local_id() == Some(item));
+                arms.iter().any(|arm| {
+                    (over_item && pattern_binds_in_place(&arm.pattern))
+                        || self.body_changes_item_in_place(&arm.guard_stmts, item)
+                        || self.body_changes_item_in_place(&arm.body_stmts, item)
+                })
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Report whether a pattern binds any name exclusively, which marks a pattern matched in place.
+fn pattern_binds_in_place(pattern: &bir::Pattern) -> bool {
+    match pattern {
+        bir::Pattern::Var(binding) => binding.fact == bir::OwnershipFact::MutBorrow,
+        bir::Pattern::Tuple(items) | bir::Pattern::Or(items) => items.iter().any(pattern_binds_in_place),
+        bir::Pattern::Enum { fields, .. }
+        | bir::Pattern::Result { fields, .. }
+        | bir::Pattern::UnionMember { fields, .. } => fields.iter().any(pattern_binds_in_place),
+        bir::Pattern::Struct { fields, .. } | bir::Pattern::Nominal { fields, .. } => {
+            fields.iter().any(|(_, field)| pattern_binds_in_place(field))
+        }
+        _ => false,
+    }
+}
+
+/// Report whether an operand borrows `item`, or a part of it, exclusively.
+fn borrows_item_exclusively(operand: &bir::Operand, item: bir::LocalId) -> bool {
+    matches!(
+        operand,
+        bir::Operand::Place(read)
+            if read.fact == bir::OwnershipFact::MutBorrow && read.place.local_id() == Some(item)
+    )
+}
+
+/// Read a builtin loop's iterable exclusively, in the statement that materializes the loop's iterator from it.
+fn borrow_iterable_exclusively(statement: &mut bir::Statement) {
+    if let bir::StatementKind::Assign {
+        rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
+        ..
+    } = &mut statement.kind
+    {
+        read.fact = bir::OwnershipFact::MutBorrow;
     }
 }
