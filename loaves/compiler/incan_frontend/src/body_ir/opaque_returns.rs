@@ -7,6 +7,7 @@ struct Carrier {
     function: CanonicalSymbolId,
     declared: IncanType,
     concrete: IncanType,
+    self_results: Vec<CanonicalSymbolId>,
 }
 
 /// Keep local opaque return carriers at the Body IR boundary; unresolved producers retain their original refusal.
@@ -42,13 +43,10 @@ fn carrier(module: &bir::BodyIrModule, body: &bir::Body) -> Option<Carrier> {
         IncanType::Generic { base, .. } => base,
         _ => return None,
     };
-    if !module
+    let trait_owner = module
         .trait_declarations
         .iter()
-        .any(|declaration| declaration.declaration_name == *name)
-    {
-        return None;
-    }
+        .find(|declaration| declaration.declaration_name == *name)?;
     let concrete = return_carrier(body)?;
     let IncanType::Named(owner) = &concrete else {
         return None;
@@ -64,7 +62,27 @@ fn carrier(module: &bir::BodyIrModule, body: &bir::Body) -> Option<Carrier> {
         function: function.clone(),
         declared: body.return_type.clone(),
         concrete,
+        self_results: self_returning_methods(module, trait_owner),
     })
+}
+
+/// Read the local trait's physical default signatures whose checked result is exactly Self.
+fn self_returning_methods(module: &bir::BodyIrModule, owner: &CanonicalSymbolId) -> Vec<CanonicalSymbolId> {
+    module
+        .bodies
+        .iter()
+        .filter_map(|body| {
+            let identity = body.canonical.as_ref()?;
+            (identity.kind == SemanticSourceTargetKind::Method
+                && identity.origin == owner.origin
+                && owner.declaration_span.start <= identity.declaration_span.start
+                && identity.declaration_span.end <= owner.declaration_span.end
+                && body.return_type == IncanType::SelfType
+                && body.params.len() == 1
+                && body.type_parameters.is_empty())
+            .then(|| identity.clone())
+        })
+        .collect()
 }
 
 /// Require every flat return to name the same checked nominal value; control-flow and projected returns stay opaque.
@@ -84,6 +102,48 @@ fn return_carrier(body: &bir::Body) -> Option<IncanType> {
         }
     }
     concrete
+}
+
+/// Keep a proven opaque producer's carrier through its local trait's Self-return contract.
+///
+/// A synthesized target keeps its absent canonical identity and remains non-executable. This retains the checked
+/// signature's ABI only: no body or dispatch permission is granted by the source spelling. Resolved targets must
+/// match the retained physical slot exactly. Unknown receivers and trait parameters keep their original types.
+fn retain_self_result(
+    destination: &bir::Place,
+    target: &bir::MethodTarget,
+    args: &[bir::ArgumentElement],
+    locals: &mut [bir::LocalDecl],
+    carriers: &[Carrier],
+) {
+    if !destination.projection.is_empty() || !target.type_args.is_empty() {
+        return;
+    }
+    let Some(bir::ArgumentElement::One(receiver)) = args.first() else {
+        return;
+    };
+    let Some(receiver) = operand_type(receiver, locals) else {
+        return;
+    };
+    let Some(carrier) = carriers.iter().find(|carrier| {
+        carrier.concrete == receiver
+            && carrier.self_results.iter().any(|slot| {
+                slot.declaration_name == target.name
+                    && target.canonical.as_ref().is_none_or(|identity| identity == slot)
+            })
+    }) else {
+        return;
+    };
+    let Some(local) = destination
+        .local_id()
+        .and_then(|local| usize::try_from(local.0).ok())
+        .and_then(|local| locals.get_mut(local))
+    else {
+        return;
+    };
+    if local.origin == bir::LocalOrigin::Temporary && local.ty == carrier.declared {
+        local.ty = carrier.concrete.clone();
+    }
 }
 
 /// Read only a whole local's existing checked type, refusing globals, projections, and literals.
@@ -127,6 +187,12 @@ fn retain_call_results(block: &mut bir::Block, locals: &mut [bir::LocalDecl], ca
                     local.ty = carrier.concrete.clone();
                 }
             }
+            bir::StatementKind::Call {
+                destination: Some(destination),
+                callee: bir::Callee::Method(target),
+                args,
+                ..
+            } => retain_self_result(destination, target, args, locals, carriers),
             bir::StatementKind::If {
                 then_block, else_block, ..
             } => {

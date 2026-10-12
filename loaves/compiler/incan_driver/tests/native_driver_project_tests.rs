@@ -10162,7 +10162,7 @@ def main() -> None:
     )
 }
 
-/// Concrete and trait-returning fallible streams preserve successful items and propagate the first source error.
+/// Local opaque trait returns retain their concrete carrier; unresolved fallible polling remains explicitly refused.
 #[test]
 fn stdlib_fallible_stream_carrier_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
@@ -10171,9 +10171,27 @@ fn stdlib_fallible_stream_carrier_output_matches_legacy() -> Result<(), Box<dyn 
         &fixture.scratch("stdlib-fallible-stream-carrier")?,
         &fixture.sysroot,
         &fixture.formatting,
+        r#"trait Read[T]:
+    def value(self) -> T: ...
+
+model Reading with Read[int]:
+    number: int
+    def value(self) -> int:
+        return self.number
+
+def reading() -> Read[int]:
+    return Reading(number=7)
+
+def main() -> None:
+    println(reading().value())
+"#,
+    )?;
+    check_project_refusal(
+        "stdlib_fallible_stream_poll_follow_on",
         include_str!(
             "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/fallible_iteration_protocol.incn"
         ),
+        "unsupported Body IR Method without canonical identity",
     )
 }
 
