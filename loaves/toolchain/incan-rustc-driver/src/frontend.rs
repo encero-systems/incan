@@ -144,10 +144,9 @@ fn checked_modules(path: &Path) -> Result<CheckedProgram, String> {
     library_layouts
         .retain(|layout: &incan_semantics_core::body_ir::NominalDeclaration| !published.contains(&layout.canonical));
     let libraries = library_modules(library_layouts, library_calls);
-    let entry = entry + libraries.len();
-    files.splice(0..0, libraries.iter().map(|module| module.module_id.path().to_owned()));
-    sources.splice(0..0, libraries.iter().map(|_| String::new()));
-    bodies.splice(0..0, libraries);
+    for module in libraries {
+        carry_published_module(module, &mut bodies, &mut files, &mut sources, &mut entry);
+    }
     Ok(CheckedProgram {
         modules: bodies,
         sources,
@@ -334,9 +333,18 @@ fn carry_published_module(
     *entry += 1;
 }
 
-/// Join one resolved published module into the module carried for the same stdlib owner, each declaration and body
-/// once by its canonical identity.
+/// Join published declarations, default bodies and crate-call records for the same stdlib owner, retaining each
+/// canonical identity once so lowering never visits an owner's bodies through several module fragments.
 fn join_published_module(owner: &mut BodyIrModule, module: BodyIrModule) {
+    for delegation in module.stdlib_delegations {
+        if !owner
+            .stdlib_delegations
+            .iter()
+            .any(|carried| carried.canonical == delegation.canonical)
+        {
+            owner.stdlib_delegations.push(delegation);
+        }
+    }
     for body in module.bodies {
         if !owner.bodies.iter().any(|carried| carried.canonical == body.canonical) {
             owner.bodies.push(body);

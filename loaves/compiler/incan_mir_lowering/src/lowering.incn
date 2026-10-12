@@ -2610,8 +2610,19 @@ def lower_method_call(
     )?:
         Some(owner) => return lower_value_enum_method(builder, owner, arguments, destination, span)
         None => pass
-    # A stdlib method runs in the SDK crate that compiled it, through the frontend's crate-call record.
+    # A retained source implementation takes priority over the SDK trait's crate-call record. SDK-owned receivers
+    # otherwise call the method in the crate that compiled it.
     for delegation in module.stdlib_delegations:
+        if receiver_fills_slot(
+            module,
+            target,
+            builder.locals[builder.local_offset:],
+            arguments[0],
+            span,
+            builder.unions,
+            builder.intrinsics,
+        ):
+            break
         match target.canonical:
             Some(identity) =>
                 if identity == delegation.canonical:
