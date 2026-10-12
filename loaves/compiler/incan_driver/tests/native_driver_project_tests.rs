@@ -7523,3 +7523,69 @@ def main() -> None:
 "#,
     )
 }
+
+/// A model deriving Copy copies where legacy's does, and one deriving Eq and Hash keys a dictionary: equal keys share
+/// an entry and membership hashes the whole model.
+#[test]
+fn copy_model_and_model_dictionary_key_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("copy-model-dictionary-key")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"@derive(Eq, Hash, Copy)
+model Cell:
+    row: int
+    col: int
+
+def total(cell: Cell) -> int:
+    return cell.row + cell.col
+
+def main() -> None:
+    a = Cell(row=1, col=2)
+    copied = a
+    println(f"{copied.row} {a.col}")
+    println(total(a) + total(a))
+    mut seen: dict[Cell, int] = {}
+    seen[a] = 1
+    seen[Cell(row=1, col=2)] = 2
+    seen[Cell(row=3, col=4)] = 3
+    println(len(seen))
+    println(Cell(row=3, col=4) in seen)
+    println(Cell(row=4, col=3) in seen)
+"#,
+    )
+}
+
+/// A keyed lookup in a dictionary with model keys renders a missing key through Display, which a model lacks, so the
+/// direct route refuses it by name rather than handing rustc an unsatisfiable bound.
+#[test]
+fn model_dictionary_key_lookup_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("model-dictionary-key-lookup")?;
+    let source = root.join("lookup.incn");
+    fs::write(
+        &source,
+        "@derive(Eq, Hash)\nmodel Cell:\n    row: int\n\ndef main() -> None:\n    mut seen: dict[Cell, int] = {}\n    seen[Cell(row=1)] = 1\n    println(seen[Cell(row=1)])\n",
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let binary = root.join("native");
+    let refused = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &source,
+        &binary,
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr)
+            .contains("unsupported Body IR keyed lookup in a dictionary with model keys"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(!binary.exists());
+    Ok(())
+}

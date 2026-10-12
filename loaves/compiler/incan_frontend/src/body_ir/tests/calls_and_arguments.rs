@@ -309,6 +309,24 @@ fn rust_derived_builtins_and_newtype_serde_adoption_are_retained() -> Result<(),
     Ok(())
 }
 
+/// A model deriving Copy is retained with that derive, so its values copy exactly where checking said they do.
+#[test]
+fn copy_model_is_retained_with_its_derive() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "@derive(Eq, Hash, Copy)\nmodel Cell:\n    row: int\n    col: int\n",
+        &["m", "copy_model"],
+    )?;
+    let [declaration] = module.nominal_declarations.as_slice() else {
+        return Err("expected one retained model".into());
+    };
+    assert!(
+        declaration.derives.iter().any(|name| name == "Copy"),
+        "{:?}",
+        declaration.derives
+    );
+    Ok(())
+}
+
 /// A plain newtype's slot and construction share the retained owner identity; hooks stay outside this profile.
 #[test]
 fn plain_newtype_retains_checked_tuple_layout() -> Result<(), Box<dyn std::error::Error>> {
