@@ -6645,6 +6645,41 @@ def main() -> None:
     )
 }
 
+/// Prove list defaults kept by local partials byte-identical to legacy: an empty and a non-empty default list left to
+/// the partial, which builds and views it on every call that omits it, beside a list literal and a caller's list
+/// passed in its place, which the partial only views.
+#[test]
+fn partial_list_default_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("partial-list-default")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def keep(prefix: int, items: list[float] = []) -> int:
+    return prefix + len(items)
+
+def total(base: int, values: list[int] = [1, 2, 3]) -> int:
+    mut sum = base
+    for value in values:
+        sum += value
+    return sum
+
+def main() -> None:
+    deferred = partial keep(prefix=1)
+    println(deferred())
+    println(deferred(items=[1.5, 2.5]))
+    adder = partial total(base=10)
+    println(adder())
+    println(adder(values=[5]))
+    mine = [4, 4]
+    println(adder(values=mine))
+    println(mine)
+    println(adder(base=0))
+"#,
+    )
+}
+
 /// Prove borrowed values handed over as owned ones byte-identical to legacy: a model field passed to a by-value
 /// parameter, `self` and a field of `self` returned from a model or class method, list, nested list and bytes
 /// parameters returned whole, and list and bytes literal defaults returned from the call that omits them.
