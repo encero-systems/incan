@@ -2,6 +2,59 @@
 
 use super::*;
 
+/// A direct call to a planned shared replacement keeps the caller's non-Copy owner for its scope-exit drop.
+#[test]
+fn shared_method_replacement_call_keeps_the_owner() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"class Box:
+    pub text: str
+    @choose
+    def label(self, number: int) -> str:
+        return "original"
+
+def parse(box: Box, number: int) -> str:
+    return f"{box.text}:{number}"
+
+def choose(func: (Box, int) -> str) -> (Box, int) -> str:
+    return parse
+
+def main() -> None:
+    box = Box(text="v")
+    println(parse(box, 3))
+"#;
+    let module = build(source, &["m", "shared_receiver_owner"])?;
+    let main = body_named(&module, "main")?;
+    let owner = main
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("box"))
+        .ok_or("missing box owner")?;
+    let read = main
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+                args,
+                ..
+            } if target.name == "parse" => match args.first() {
+                Some(bir::ArgumentElement::One(bir::Operand::Place(read))) => Some(read),
+                _ => None,
+            },
+            _ => None,
+        })
+        .ok_or("missing shared replacement call")?;
+    assert_eq!(read.fact, bir::OwnershipFact::Borrow);
+    assert!(!read.last_use);
+    assert!(
+        main.block
+            .stmts
+            .iter()
+            .any(|statement| matches!(statement.kind, bir::StatementKind::Drop { local } if local == owner.id))
+    );
+    Ok(())
+}
+
 /// A decorated method retains its receiver on the original and on the initialized replacement signature.
 #[test]
 fn decorated_method_retains_original_receiver_and_replacement() -> Result<(), Box<dyn std::error::Error>> {
@@ -23,6 +76,24 @@ fn decorated_method_retains_original_receiver_and_replacement() -> Result<(), Bo
         return Err("expected the initialized method replacement".into());
     };
     assert!(module.is_well_formed_static_declaration(storage));
+    let decorator = body_named(&module, "as_int")?;
+    let bir::StaticInitializer::Computed(initializer) = &storage.initial else {
+        return Err("expected an executable decorator initializer".into());
+    };
+    let forwarded = initializer
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Closure { params, body, .. },
+                ..
+            } if body.function_item && body.original_callable.is_none() => Some(params),
+            _ => None,
+        })
+        .ok_or("expected a named decorator function item")?;
+    assert_eq!(forwarded[0].ty, decorator.params[0].ty);
+    assert!(matches!(body_named(&module, "parse")?.params[0].ty, IncanType::Ref(_)));
     Ok(())
 }
 

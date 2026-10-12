@@ -10724,6 +10724,46 @@ fn decorator_factory_binding_output_matches_legacy() -> Result<(), Box<dyn std::
 
 /// Method replacements initialize once and preserve shared receiver calls and changed return types.
 #[test]
+fn decorated_shared_original_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("decorated-shared-original")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"class Box:
+    pub text: str
+    @keep
+    def label(self, number: int) -> str:
+        return f"{self.text}:{number}"
+    @choose
+    def replaced(self, number: int) -> str:
+        return "original"
+
+def parse(box: Box, number: int) -> str:
+    return f"{box.text}:{number}"
+
+def keep(func: (Box, int) -> str) -> (Box, int) -> str:
+    println("keep")
+    return func
+
+def choose(func: (Box, int) -> str) -> (Box, int) -> str:
+    println("choose")
+    return parse
+
+def main() -> None:
+    println("main")
+    box = Box(text="v")
+    println(box.label(7))
+    println(box.label(9))
+    println(box.replaced(4))
+    println(parse(box, 3))
+"#,
+    )
+}
+
+/// Method replacements initialize once and preserve shared receiver calls and changed return types.
+#[test]
 fn decorated_method_binding_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     corpus::check_builtin_source(
