@@ -11671,26 +11671,76 @@ fn dictionary_value_mutation_output_matches_legacy() -> Result<(), Box<dyn std::
     )
 }
 
-/// The remaining model enumerate source-view gap stays refused after model tuple layouts are admitted.
+/// Mutating model loop items through a direct enumeration reaches their original list storage.
 #[test]
-fn model_derived_iteration_refusal_is_retained() -> Result<(), Box<dyn std::error::Error>> {
-    check_collection_family_refusal(
+fn model_derived_iteration_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_collection_family_source(
         "model-loop-item-expression",
         include_str!(
             "../../incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/mut_self_call_on_a_loop_item_inside_an_expression.incn"
         ),
-        "unsupported Body IR enumerate nested element layout",
     )
 }
 
-/// Derived comprehension mutation remains refused until its source storage is retained rather than copied.
+/// Zip source mutation remains refused after the direct enumeration source boundary is admitted.
 #[test]
-fn comprehension_derived_iteration_refusal_is_retained() -> Result<(), Box<dyn std::error::Error>> {
+fn comprehension_zip_source_refusal_is_retained() -> Result<(), Box<dyn std::error::Error>> {
     check_collection_family_refusal(
         "comprehension-element-mutation",
         include_str!(
             "../../incan_test_support/fixtures/behavior/ownership_values_and_fields/comprehensions_changing_their_items.incn"
         ),
+        "unsupported Body IR zip iteration source ownership",
+    )
+}
+
+/// Enumeration preserves source mutations, filter indices, ordinary alias copies and temporary-owned elements.
+#[test]
+fn enumerated_collection_items_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_collection_family_source(
+        "enumerated-collection-items",
+        r#"model Cell:
+    pub value: int
+    def bump(mut self) -> int:
+        self.value += 1
+        return self.value
+def fresh() -> list[list[int]]:
+    return [[3, 4], [5]]
+def main() -> None:
+    mut rows: list[list[int]] = [[1, 2], [3, 4]]
+    println([row.pop() + i for i, row in enumerate(rows)])
+    println(rows)
+    mut filtered: list[list[int]] = [[2], [4], [6]]
+    println([i for i, row in enumerate(filtered) if row.pop() > 3])
+    println(filtered)
+    mut cells: list[Cell] = [Cell(value=1), Cell(value=4)]
+    for i, cell in enumerate(cells):
+        mut copied = cell
+        println(copied.bump())
+        println(cell.bump() + i)
+    println(cells[0].value + cells[1].value)
+    mut copied_rows: list[list[int]] = [[7]]
+    for i, row in enumerate(copied_rows):
+        mut alias = row
+        alias.append(i)
+        println(alias)
+    println(copied_rows)
+    println([row.pop() for i, row in enumerate(fresh())])
+    for i, _ in enumerate(fresh()):
+        println(i)
+    pairs = enumerate([8, 9])
+    for i, value in pairs:
+        println(i + value)
+"#,
+    )
+}
+
+/// A stored nested enumeration keeps its separate snapshot-layout refusal rather than acquiring a live source view.
+#[test]
+fn stored_nested_enumeration_refusal_is_retained() -> Result<(), Box<dyn std::error::Error>> {
+    check_collection_family_refusal(
+        "stored-nested-enumeration",
+        "def main() -> None:\n    rows: list[list[int]] = [[1]]\n    snapshot = enumerate(rows)\n    for i, row in snapshot:\n        println(len(row))\n",
         "unsupported Body IR enumerate nested element layout",
     )
 }

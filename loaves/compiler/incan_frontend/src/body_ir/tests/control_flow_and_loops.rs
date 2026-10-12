@@ -1057,3 +1057,77 @@ fn a_loop_that_changes_its_item_in_place_borrows_its_list_exclusively() -> Resul
     assert_eq!(iterable_read(&module, "measure")?, "Borrow");
     Ok(())
 }
+
+/// Direct enumeration polls the original list and binds its changed component exclusively, without an owned
+/// enumeration materialization that would disconnect the write from the source.
+#[test]
+fn enumeration_retains_the_original_list_and_changed_pattern_binding() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def grow(mut rows: list[list[int]]) -> None:\n  for i, row in enumerate(rows):\n    row.append(i)\n",
+        &["m", "enumeration_source"],
+    )?;
+    let body = body_named(&module, "grow")?;
+    assert_eq!(iterable_read(&module, "grow")?, "MutBorrow");
+    assert!(!body.block.stmts.iter().any(|statement| matches!(&statement.kind,
+        bir::StatementKind::Call { callee: bir::Callee::Function(bir::CallableTarget::Named(target)), .. }
+            if target.builtin == Some(bir::BuiltinFnId::Enumerate))));
+    let loop_body = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Loop { body } => Some(body),
+            _ => None,
+        })
+        .ok_or("missing enumeration loop")?;
+    let polled = loop_body
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::IterNext { destination, .. } => destination.local_id(),
+            _ => None,
+        })
+        .ok_or("missing source item")?;
+    let row = body
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("row"))
+        .ok_or("missing row binding")?
+        .id;
+    assert!(loop_body.stmts.iter().any(|statement| matches!(&statement.kind,
+        bir::StatementKind::Assign { place, rvalue: bir::Rvalue::Use(bir::Operand::Place(read)) }
+            if place.local_id() == Some(row) && read.place.local_id() == Some(polled) && read.fact == bir::OwnershipFact::MutBorrow)));
+    Ok(())
+}
+
+/// Changing an ordinary value alias in the body does not turn the loop's pattern into an exclusive source binding.
+#[test]
+fn enumeration_keeps_ordinary_body_aliases_as_values() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def copied(mut rows: list[list[int]]) -> None:\n  for i, row in enumerate(rows):\n    mut alias = row\n    alias.append(i)\n",
+        &["m", "enumeration_alias"],
+    )?;
+    let body = body_named(&module, "copied")?;
+    assert_eq!(iterable_read(&module, "copied")?, "Borrow");
+    let alias = body
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("alias"))
+        .ok_or("missing alias")?
+        .id;
+    let snapshot = module.render_snapshot();
+    assert!(!snapshot.contains("unsupported("), "{snapshot}");
+    let loop_body = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Loop { body } => Some(body),
+            _ => None,
+        })
+        .ok_or("missing enumeration loop")?;
+    assert!(loop_body.stmts.iter().any(|statement| matches!(&statement.kind,
+        bir::StatementKind::Assign { place, rvalue: bir::Rvalue::Use(bir::Operand::Place(read)) }
+            if place.local_id() == Some(alias) && read.fact != bir::OwnershipFact::MutBorrow)));
+    Ok(())
+}
