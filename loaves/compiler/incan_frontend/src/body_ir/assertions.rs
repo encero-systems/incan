@@ -195,8 +195,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if let ast::Expr::Call(callee, type_args, args) = &call.node
             && type_args.is_empty()
             && args.is_empty()
-            && matches!(self.resolve_ty(callee.span), IncanType::Function { params, return_type }
-                if params.is_empty() && *return_type == IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Unit))
+            && self
+                .type_info
+                .call_site_callable_params(call.span)
+                .is_some_and(|params| params.is_empty())
+            && self.resolve_ty(call.span) == IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Unit)
             && self
                 .type_info
                 .resolved_identity(callee.span)

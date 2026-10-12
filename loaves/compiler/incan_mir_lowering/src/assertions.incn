@@ -13,10 +13,10 @@ from pub::incan_mir_plan import assign as plan_assign
 from pub::incan_mir_plan import place as plan_place
 from frame import external_call, literal, place_type
 from text_plan import owned_literal
-from lowering import scalar_operand, display_operand, scalar_place, bind_enum_payload
+from lowering import scalar_operand, display_operand, scalar_place, bind_enum_payload, operand_type
 from options import carrier_layout, intrinsic_pattern, variant_condition
 from patterns import has_refutable_payload
-from frame import Builder, read_place, temporary, operand_type
+from frame import Builder, read_place, temporary
 from closures import function_assignment
 
 
