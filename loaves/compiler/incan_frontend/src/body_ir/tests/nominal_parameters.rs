@@ -2,6 +2,57 @@
 
 use super::{IncanPrimitiveType, IncanType, bir, body_named, build, named_targets};
 
+/// Constructors nested in generic calls keep the concrete checked carrier rather than the callee's open context.
+#[test]
+fn nested_model_constructors_retain_concrete_arguments() -> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/generic_caller_of_a_model_method_formatting_its_payload.incn"
+    );
+    let module = build(source, &["m", "nested_model_arguments"])?;
+    let main = body_named(&module, "main")?;
+    let mut constructors = 0;
+    for local in &main.locals {
+        if let IncanType::Generic { base, args } = &local.ty
+            && matches!(base.as_str(), "Stream" | "Holder")
+        {
+            constructors += 1;
+            assert!(
+                args.iter().all(|ty| matches!(ty, IncanType::Primitive(_))),
+                "{}",
+                main.render_snapshot()
+            );
+        }
+    }
+    assert_eq!(constructors, 4, "{}", main.render_snapshot());
+    Ok(())
+}
+
+/// A generic method call's retained Result carrier uses its checked concrete payload at a concrete caller.
+#[test]
+fn generic_method_results_retain_concrete_payloads() -> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/method_type_param_clone_bound.incn"
+    );
+    let module = build(source, &["m", "generic_method_results"])?;
+    let main = body_named(&module, "main")?;
+    let mut results = 0;
+    for local in &main.locals {
+        if let IncanType::Generic { base, args } = &local.ty
+            && base == "Result"
+        {
+            results += 1;
+            assert!(
+                args.iter()
+                    .all(|ty| matches!(ty, IncanType::Primitive(_) | IncanType::Named(_))),
+                "{}",
+                main.render_snapshot()
+            );
+        }
+    }
+    assert_eq!(results, 6, "{}", main.render_snapshot());
+    Ok(())
+}
+
 /// Associated methods retain owner parameters even without a receiver local, and resolve Self to the owner.
 #[test]
 fn retains_classmethod_owner_parameters_and_return_type() -> Result<(), Box<dyn std::error::Error>> {

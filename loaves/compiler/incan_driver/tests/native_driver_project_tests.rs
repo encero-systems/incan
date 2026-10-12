@@ -2311,6 +2311,36 @@ def main() -> None:
     )
 }
 
+/// Generic callers retain the payloads inferred for nested model constructors and their receiver methods.
+#[test]
+fn generic_model_caller_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("generic-model-caller")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/generic_caller_of_a_model_method_formatting_its_payload.incn"
+        ),
+    )
+}
+
+/// Generic method and function results keep concrete list and decoded payloads, including owned model values.
+#[test]
+fn generic_method_parameter_results_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("generic-method-parameter-results")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/method_type_param_clone_bound.incn"
+        ),
+    )
+}
+
 /// A generic Index adopter and a Self-returning adopter dispatch their indexing hooks exactly as legacy does.
 #[test]
 fn generic_class_index_adoption_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
