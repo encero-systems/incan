@@ -148,8 +148,8 @@ fn handoff_digest(artifact: &LibraryArtifactMetadata) -> Result<String, Box<dyn 
 #[test]
 fn ordinary_admission_source_free_repeat_and_profiles() -> Result<(), Box<dyn std::error::Error>> {
     let (root, artifact, input) = checked_package()?;
-    let first = PreparedLibraryDependencies::admit(&[input.clone()], TARGET, TOOLCHAIN, limits())?;
-    let repeat = PreparedLibraryDependencies::admit(&[input.clone()], TARGET, TOOLCHAIN, limits())?;
+    let first = PreparedLibraryDependencies::admit(std::slice::from_ref(&input), TARGET, TOOLCHAIN, limits())?;
+    let repeat = PreparedLibraryDependencies::admit(std::slice::from_ref(&input), TARGET, TOOLCHAIN, limits())?;
     assert_eq!(
         first.nodes.keys().collect::<Vec<_>>(),
         repeat.nodes.keys().collect::<Vec<_>>()
@@ -241,7 +241,10 @@ fn ordinary_admission_refuses_substituted_or_legacy_authority() -> Result<(), Bo
     let mut wrong = input.clone();
     wrong.handoff_digest = digest_bytes(b"another selected handoff");
     assert!(PreparedLibraryDependencies::admit(&[wrong], TARGET, TOOLCHAIN, limits()).is_err());
-    assert!(PreparedLibraryDependencies::admit(&[input.clone()], "another-target", TOOLCHAIN, limits()).is_err());
+    assert!(
+        PreparedLibraryDependencies::admit(std::slice::from_ref(&input), "another-target", TOOLCHAIN, limits())
+            .is_err()
+    );
     let mut wrong = input.clone();
     wrong.features.insert("injected".into());
     assert!(PreparedLibraryDependencies::admit(&[wrong], TARGET, TOOLCHAIN, limits()).is_err());
@@ -266,7 +269,7 @@ fn ordinary_admission_refuses_substituted_or_legacy_authority() -> Result<(), Bo
 #[test]
 fn ordinary_admission_separates_metadata_from_execution_integrity() -> Result<(), Box<dyn std::error::Error>> {
     let (_root, artifact, input) = checked_package()?;
-    let selected = PreparedLibraryDependencies::admit(&[input.clone()], TARGET, TOOLCHAIN, limits())?;
+    let selected = PreparedLibraryDependencies::admit(std::slice::from_ref(&input), TARGET, TOOLCHAIN, limits())?;
     fs::write(
         artifact.crate_root.join("oven/debug/libprovider.rlib"),
         "changed output",
@@ -471,7 +474,7 @@ fn ordinary_admission_refuses_missing_original_dependency_owner() -> Result<(), 
 #[test]
 fn ordinary_admission_refuses_changed_materialized_facade() -> Result<(), Box<dyn std::error::Error>> {
     let (_root, artifact, input) = checked_package()?;
-    let admitted = PreparedLibraryDependencies::admit(&[input.clone()], TARGET, TOOLCHAIN, limits())?;
+    let admitted = PreparedLibraryDependencies::admit(std::slice::from_ref(&input), TARGET, TOOLCHAIN, limits())?;
     let facade = artifact.crate_root.join("src/lib.rs");
     let previous_modified = fs::metadata(&facade)?.modified()?;
     let original = fs::read_to_string(&facade)?;
@@ -736,7 +739,7 @@ fn ordinary_alias_sharing_refuses_different_physical_owners() -> Result<(), Box<
         fs::canonicalize(&first_artifact.crate_root)?,
         fs::canonicalize(&second_artifact.crate_root)?,
     );
-    let original = PreparedLibraryDependencies::admit(&[first.clone()], TARGET, TOOLCHAIN, limits())?;
+    let original = PreparedLibraryDependencies::admit(std::slice::from_ref(&first), TARGET, TOOLCHAIN, limits())?;
     let transported = PreparedLibraryDependencies::admit(&[second.clone()], TARGET, TOOLCHAIN, limits())?;
     assert_eq!(
         original.nodes.keys().collect::<Vec<_>>(),
@@ -795,7 +798,7 @@ fn ordinary_generation_refuses_substitution_and_missing_authority() -> Result<()
 #[test]
 fn ordinary_generation_checks_correct_raw_source_domain_and_restoration() -> Result<(), Box<dyn std::error::Error>> {
     let (root, artifact, input) = checked_package()?;
-    let admitted = PreparedLibraryDependencies::admit(&[input.clone()], TARGET, TOOLCHAIN, limits())?;
+    let admitted = PreparedLibraryDependencies::admit(std::slice::from_ref(&input), TARGET, TOOLCHAIN, limits())?;
     let node = admitted.nodes.values().next().ok_or("checked node absent")?;
     let source = root.path().join("src/lib.incn");
     let original = fs::read_to_string(&source)?;
@@ -814,7 +817,7 @@ fn ordinary_generation_checks_correct_raw_source_domain_and_restoration() -> Res
         node.metadata.recipe().source_digest
     );
     assert!(admitted.verify().is_err());
-    assert!(PreparedLibraryDependencies::admit(&[input.clone()], TARGET, TOOLCHAIN, limits()).is_err());
+    assert!(PreparedLibraryDependencies::admit(std::slice::from_ref(&input), TARGET, TOOLCHAIN, limits()).is_err());
     let store = OvenStore::with_release(
         packaged_library_loaf_store_root(&artifact.crate_root),
         limits(),

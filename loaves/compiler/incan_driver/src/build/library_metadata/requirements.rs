@@ -278,6 +278,13 @@ impl CheckedLibraryRequirements {
 
     /// Require captured source coverage and complete ABI promises before ordinary native preparation or replay.
     /// Declared physical sources must still bind to the original native request; macro/provider execution is separate.
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "#1698 ordinary library publication: only its tests call it until the ordinary command cutover does"
+        )
+    )]
     pub(crate) fn require_source_inspection_native(&self) -> CliResult<()> {
         self.validate()?;
         self.native_demands

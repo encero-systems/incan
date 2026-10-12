@@ -257,7 +257,7 @@ fn ordinary_source_publication_checks_only_its_owned_modules_as_standard_source_
     let root = source.verified_package_root().map_err(|error| error.to_string())?;
     let plan = Arc::new(ProviderPlan::default().with_standard_source_publication(
         Arc::clone(&source),
-        &root,
+        root,
         "incan_stdlib_core",
         "0.6.0-dev.6",
     )?);

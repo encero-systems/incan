@@ -138,6 +138,7 @@ impl Fixture {
 }
 
 /// Publish exact current native data and immutable records; test outputs never invoke a native compiler.
+#[allow(clippy::too_many_arguments)]
 fn publish_data(
     root: &Path,
     store: &OvenStore,

@@ -241,6 +241,7 @@ fn store(root: &Path) -> OvenStore {
 }
 
 /// Publish inventoried source declarations with explicit producer provenance for root-selection controls.
+#[allow(clippy::too_many_arguments)]
 fn publish_declaration(
     root: &Path,
     store: &OvenStore,

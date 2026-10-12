@@ -584,7 +584,7 @@ fn execute_exchange(engine: &Path, bytes: &[u8]) -> CliResult<Response> {
     let directory = tempfile::tempdir().map_err(|error| CliError::failure(error.to_string()))?;
     let request_path = directory.path().join("request.json");
     let response_path = directory.path().join("response.json");
-    std::fs::write(&request_path, &bytes).map_err(|error| CliError::failure(error.to_string()))?;
+    std::fs::write(&request_path, bytes).map_err(|error| CliError::failure(error.to_string()))?;
     let output = Command::new(engine)
         .arg(&request_path)
         .arg(&response_path)

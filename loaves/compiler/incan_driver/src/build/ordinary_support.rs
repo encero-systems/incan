@@ -28,6 +28,13 @@ pub(crate) struct CompilerSupportSources {
 
 impl CompilerSupportSources {
     /// Select the pinned core declaration and its actual derive dependency beside the canonical executable.
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "#1698 ordinary library publication: only its tests call it until the ordinary command cutover does"
+        )
+    )]
     pub(crate) fn discover() -> CliResult<Option<Self>> {
         let Some(layout) = CompilerOwnedSourceLayout::discover().map_err(failure)? else {
             return Ok(None);
@@ -189,6 +196,13 @@ impl CompilerSupportSources {
 }
 
 /// Require the original declaration to have a package directory.
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "#1698 ordinary library publication: only its tests call it until the ordinary command cutover does"
+    )
+)]
 fn parent(path: &Path) -> CliResult<&Path> {
     path.parent()
         .ok_or_else(|| failure("mandatory native declaration has no parent"))

@@ -10,8 +10,11 @@ use crate::test_support::{request, write_project};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+/// Each path's file bytes (`None` for a directory) and modification time.
+type Inventory = BTreeMap<PathBuf, (Option<Vec<u8>>, SystemTime)>;
+
 /// Complete bytes and modification times, including mutable bookkeeping and abandoned staging.
-fn inventory(root: &Path) -> Result<BTreeMap<PathBuf, (Option<Vec<u8>>, SystemTime)>, Box<dyn std::error::Error>> {
+fn inventory(root: &Path) -> Result<Inventory, Box<dyn std::error::Error>> {
     let mut pending = vec![root.to_path_buf()];
     let mut result = BTreeMap::new();
     while let Some(path) = pending.pop() {

@@ -1620,6 +1620,13 @@ pub fn bake_oven_project_targets(
 /// Publish a standalone ordinary library from original command admissions through the existing bake engine.
 /// This migration caller deliberately exercises metadata preparation on repeats instead of completed-output reuse.
 /// The caller retains its explicit ordinary or temporary SDK route; no standard namespace grant is created here.
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "#1698 ordinary library publication: only its tests call it until the ordinary command cutover does"
+    )
+)]
 pub(crate) fn bake_admitted_library(
     input: &AdmittedLibraryPreparation,
     package_features: &FeatureSelection,
@@ -1911,7 +1918,7 @@ fn bake_oven_project_targets_with_admission(
                                 });
                             }
                         }
-                        let bake = bake_oven_library(&prepared, selected, profile, Some(&mut authority_context))?;
+                        let bake = bake_oven_library(prepared, selected, profile, Some(&mut authority_context))?;
                         let (_, library_relative_path) =
                             canonical_output_file_relative_to_root(&prepared.out_dir, &bake.output)?;
                         let exported = export_selected_package_loaf(
@@ -1988,7 +1995,7 @@ fn bake_oven_project_targets_with_admission(
                     let library_sidecars =
                         library_project_output_sidecars(&prepared.library_manifest, &prepared.out_dir)?;
                     publish_checked_library_package(
-                        &prepared,
+                        prepared,
                         source_authority_digest,
                         package_profiles,
                         *store.limits(),

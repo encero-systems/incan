@@ -194,6 +194,23 @@ pub fn package_desugarer_artifact(out_dir: &Path, artifact: Option<&PendingDesug
     Ok(())
 }
 
+/// Finalize the common checked payload before its ordinary immutable metadata owner is published.
+pub(crate) fn write_checked_library_payload(
+    out_dir: &Path,
+    manifest: &incan_frontend::library_manifest::LibraryManifest,
+    executable: &[u8],
+) -> CliResult<PathBuf> {
+    let path = out_dir.join(format!("{}.incnlib", manifest.name));
+    let surface = incan_frontend::library_manifest::published_layout::executable_surface_path(&path, manifest)
+        .ok_or_else(|| CliError::failure("checked library has no executable surface descriptor"))?;
+    publish_library_file(&surface, executable)?;
+    let bytes = manifest
+        .to_json_string()
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    publish_library_file(&path, bytes.as_bytes())?;
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -252,21 +269,4 @@ mod tests {
         assert!(resolved.dev_dependencies.is_empty());
         Ok(())
     }
-}
-
-/// Finalize the common checked payload before its ordinary immutable metadata owner is published.
-pub(crate) fn write_checked_library_payload(
-    out_dir: &Path,
-    manifest: &incan_frontend::library_manifest::LibraryManifest,
-    executable: &[u8],
-) -> CliResult<PathBuf> {
-    let path = out_dir.join(format!("{}.incnlib", manifest.name));
-    let surface = incan_frontend::library_manifest::published_layout::executable_surface_path(&path, manifest)
-        .ok_or_else(|| CliError::failure("checked library has no executable surface descriptor"))?;
-    publish_library_file(&surface, executable)?;
-    let bytes = manifest
-        .to_json_string()
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    publish_library_file(&path, bytes.as_bytes())?;
-    Ok(path)
 }

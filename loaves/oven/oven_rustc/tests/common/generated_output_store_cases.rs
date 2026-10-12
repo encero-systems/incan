@@ -479,6 +479,10 @@ fn write_project(root: &Path) -> Result<(), std::io::Error> {
 }
 
 /// Exercise real admitted units, including one repeated owner under distinct logical prefixes.
+#[allow(
+    dead_code,
+    reason = "the integration suite runs this case; the unit-test copy of these cases runs only the store cases"
+)]
 pub(super) fn shared_native_plan_retains_multi_store_owners_and_refuses_substitution()
 -> Result<(), Box<dyn std::error::Error>> {
     use super::native_oven::plan::selection::select_receipt_direct_rustc_execution_plan;

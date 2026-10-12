@@ -36,6 +36,13 @@ pub(crate) struct OrdinaryNativeMetadataAuthority {
 impl OrdinaryNativeMetadataAuthority {
     /// Bind actual full producer observations to the explicit consumer and genuine mandatory source declarations.
     /// Empty, unsupported or mismatched profile requests refuse without selecting ambient native authority.
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "#1698 ordinary library publication: only its tests call it until the ordinary command cutover does"
+        )
+    )]
     pub(crate) fn new(
         support: Arc<CompilerSupportSources>,
         observations: BTreeMap<String, NativeLoafRequestObservation>,
@@ -144,7 +151,7 @@ impl OrdinaryNativeMetadataAuthority {
             let package_root = source
                 .verified_package_root()
                 .map_err(|error| invalid(error.to_string()))?;
-            let lock = super::lock_transition::canonical_lock_coordinate(&package_root)?;
+            let lock = super::lock_transition::canonical_lock_coordinate(package_root)?;
             if let Ok(relative) = lock.strip_prefix(standard_root) {
                 return tree
                     .digest_except_exact_file(relative)

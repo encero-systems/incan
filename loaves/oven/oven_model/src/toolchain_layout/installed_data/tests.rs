@@ -298,9 +298,13 @@ fn fixture_paths(root: &Path) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>
     Ok(paths)
 }
 
+/// Each fixture path with its permission mode, size and modification time.
+#[cfg(unix)]
+type FixtureState = Vec<(PathBuf, u32, u64, std::time::SystemTime)>;
+
 /// Capture topology, permissions, modification time and size before and after actual child discovery.
 #[cfg(unix)]
-fn fixture_state(root: &Path) -> Result<Vec<(PathBuf, u32, u64, std::time::SystemTime)>, Box<dyn std::error::Error>> {
+fn fixture_state(root: &Path) -> Result<FixtureState, Box<dyn std::error::Error>> {
     use std::os::unix::fs::PermissionsExt;
 
     fixture_paths(root)?

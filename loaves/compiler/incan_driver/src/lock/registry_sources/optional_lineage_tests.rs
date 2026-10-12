@@ -233,6 +233,10 @@ fn damage_preserving_metadata(path: &Path) -> Result<(), Box<dyn Error>> {
     let first = bytes.first_mut().ok_or("mutation fixture is empty")?;
     *first ^= 1;
     let mut writable = metadata.permissions();
+    #[allow(
+        clippy::permissions_set_readonly_false,
+        reason = "a temporary fixture file, restored to its original permissions below"
+    )]
     writable.set_readonly(false);
     fs::set_permissions(path, writable)?;
     let mut file = File::options().write(true).open(path)?;

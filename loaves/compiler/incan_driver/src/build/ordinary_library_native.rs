@@ -17,6 +17,13 @@ use oven_store::store::OvenStore;
 use oven_store::{OvenBuildIntent, OvenReceipt};
 
 /// Explicit existing resolver output and native producer coordinates for one ordinary library command.
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "#1698 ordinary library publication: only its tests call it until the ordinary command cutover does"
+    )
+)]
 pub(crate) struct OrdinaryLibraryNativeRequest<'a> {
     pub support: Arc<CompilerSupportSources>,
     pub graph: &'a Path,
@@ -39,6 +46,13 @@ pub(crate) struct OrdinaryLibraryNativeProfiles {
 
 impl OrdinaryLibraryNativeProfiles {
     /// Prepare requested profiles in the shared command Store, retaining complete requests without SDK discovery.
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "#1698 ordinary library publication: only its tests call it until the ordinary command cutover does"
+        )
+    )]
     pub(crate) fn prepare(request: OrdinaryLibraryNativeRequest<'_>) -> CliResult<Self> {
         if request.profiles.is_empty()
             || request
@@ -97,6 +111,13 @@ impl OrdinaryLibraryNativeProfiles {
     }
 
     /// Observe real compile/reuse work without synthesizing successful preparation from cached output paths.
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "#1698 ordinary library publication: only its tests call it until the ordinary command cutover does"
+        )
+    )]
     pub(crate) fn reports(&self) -> &BTreeMap<String, NativeLoafPreparationReport> {
         &self.reports
     }

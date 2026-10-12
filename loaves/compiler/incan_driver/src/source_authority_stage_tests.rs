@@ -319,7 +319,7 @@ fn generate_routes<'a>(
         HashMap::from([(path.clone(), routes_info.clone())]),
     );
     let (_, modules) = codegen
-        .try_generate_multi_file_nested(main, &[path.clone()])
+        .try_generate_multi_file_nested(main, std::slice::from_ref(&path))
         .map_err(|error| error.to_string())?;
     modules
         .get(&path)

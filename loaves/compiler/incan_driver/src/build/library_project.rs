@@ -136,6 +136,7 @@ struct CheckedPublicLibraryMetadata {
 ///
 /// Both publication and an unbaked dependency check must use this projection: importing producer source directly
 /// would expose private declarations and trait/default bodies which a public package does not carry.
+#[allow(clippy::too_many_arguments)]
 fn checked_public_library_metadata(
     manifest: &oven_model::manifest::ProjectManifest,
     compilation_session: &CompilationSession,
@@ -153,7 +154,7 @@ fn checked_public_library_metadata(
     let mut checked_exports_by_module: HashMap<String, HashMap<String, Vec<CheckedNamedExport>>> = HashMap::new();
     let mut checked_exports_by_source_module: Vec<(Vec<String>, Vec<CheckedNamedExport>)> = Vec::new();
     let mut api_metadata_modules = Vec::new();
-    let module_idx_by_key = module_key_index(&modules);
+    let module_idx_by_key = module_key_index(modules);
     let mut stdlib_cache = StdlibAstCache::new();
     let mut checked_type_info_by_path = BTreeMap::new();
     #[cfg(feature = "rust_inspect")]
@@ -162,7 +163,7 @@ fn checked_public_library_metadata(
     let typecheck_start = Instant::now();
     for (idx, module) in modules.iter().enumerate() {
         let deps_for_module =
-            imported_module_deps_for_with_provider_plan(&modules, idx, &module_idx_by_key, &provider_plan);
+            imported_module_deps_for_with_provider_plan(modules, idx, &module_idx_by_key, provider_plan);
         let mut checker = typechecker::TypeChecker::new();
         checker.stdlib_cache = stdlib_cache.clone();
         checker.set_current_package_identity(incan_frontend::module::declaration_package_identity(
@@ -170,7 +171,7 @@ fn checked_public_library_metadata(
             Some(&module.path_segments),
         ));
         checker.set_current_module_path(Some(module.path_segments.clone()));
-        register_module_path_segments(&mut checker, &modules);
+        register_module_path_segments(&mut checker, modules);
         checker.set_declared_crate_names(manifest.declared_rust_crate_names());
         checker.set_provider_plan(Arc::clone(provider_plan));
         #[cfg(feature = "rust_inspect")]
@@ -304,8 +305,8 @@ fn checked_public_library_metadata(
         compilation_session
             .contract_model_bundles
             .iter()
+            .filter(|&bundle| bundle.publishable)
             .cloned()
-            .filter(|bundle| bundle.publishable)
             .collect(),
     );
     let mut checked_api = CheckedApiMetadataPackage {
@@ -543,6 +544,13 @@ enum AdmittedLibraryNative {
 
 impl AdmittedLibraryPreparation {
     /// Retain actual admitted dependencies and the original native admission without discovering an SDK.
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "#1698 ordinary library publication: only its tests call it until the ordinary command cutover does"
+        )
+    )]
     pub(crate) fn new(
         session: CompilationSession,
         temporary_native_sdk_context: Arc<super::NativeSdkCommandContext>,
@@ -559,6 +567,13 @@ impl AdmittedLibraryPreparation {
     }
 
     /// Bind an admitted language dependency session to original ordinary native producer requests.
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "#1698 ordinary library publication: only its tests call it until the ordinary command cutover does"
+        )
+    )]
     pub(crate) fn with_ordinary_native(
         session: CompilationSession,
         native: Arc<super::ordinary_library_native::OrdinaryLibraryNativeProfiles>,
@@ -575,6 +590,13 @@ impl AdmittedLibraryPreparation {
     }
 
     /// Revalidate the original chosen native route without discovery or cross-route fallback.
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "#1698 ordinary library publication: only its tests call it until the ordinary command cutover does"
+        )
+    )]
     pub(crate) fn verify_native(&self) -> CliResult<()> {
         match &self.native {
             AdmittedLibraryNative::TemporarySdk(native) => native.verify(),
@@ -613,11 +635,6 @@ pub(crate) struct PreparedAdmittedLibrary<'a> {
 }
 
 impl PreparedAdmittedLibrary<'_> {
-    /// Borrow the ordinary project produced by the shared generator and current-profile planners.
-    pub(crate) fn project(&self) -> &PreparedLibraryProject {
-        &self.project
-    }
-
     /// Finalize ordinary publication without releasing the invoking command's original dependency owners.
     pub(crate) fn project_mut(&mut self) -> &mut PreparedLibraryProject {
         &mut self.project

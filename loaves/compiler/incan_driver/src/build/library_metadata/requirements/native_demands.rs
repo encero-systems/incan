@@ -362,6 +362,13 @@ impl CheckedNativeDemands {
     }
 
     /// Require exact declared-crate coverage for ordinary replay; legacy sysroot facts grant no foreign imports.
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "#1698 ordinary library publication: only its tests call it until the ordinary command cutover does"
+        )
+    )]
     pub(super) fn require_declared_crates(&self, crates: &BTreeSet<String>) -> CliResult<()> {
         let facts = self
             .observed

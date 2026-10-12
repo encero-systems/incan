@@ -26,11 +26,11 @@ pub(super) fn retain_checked_narrowing(place: &mut Place, storage: &IncanType, c
             return;
         }
         let mut candidates = args.iter().filter(|member| contains_checked_type(member, checked));
-        if let Some(member) = candidates.next() {
-            if candidates.next().is_none() {
-                place.projection.push(PlaceElem::UnionMember { ty: member.clone() });
-                retain_checked_narrowing(place, member, checked);
-            }
+        if let Some(member) = candidates.next()
+            && candidates.next().is_none()
+        {
+            place.projection.push(PlaceElem::UnionMember { ty: member.clone() });
+            retain_checked_narrowing(place, member, checked);
         }
     }
 }

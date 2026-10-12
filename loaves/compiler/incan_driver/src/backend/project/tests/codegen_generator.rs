@@ -56,7 +56,7 @@ fn ordinary_source_namespace_projection_preserves_original_roots() -> Result<(),
     let root = source.verified_package_root()?;
     let plan = ProviderPlan::default().with_standard_source_publication(
         Arc::clone(&source),
-        &root,
+        root,
         "incan_stdlib_core",
         "0.6.0-dev.6",
     )?;

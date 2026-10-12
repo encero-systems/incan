@@ -50,6 +50,10 @@ use oven_model::manifest::ProjectManifest;
 /// Shared immutable provider projections indexed by the canonical modules an invocation uses.
 type ProviderPlanCache = Arc<Mutex<BTreeMap<BTreeSet<Vec<String>>, Arc<ProviderPlan>>>>;
 
+/// Source dependencies already checked in one invocation, keyed by package root and enabled features.
+type CheckedSourceDependencies =
+    BTreeMap<(PathBuf, BTreeSet<String>), (incan_frontend::library_manifest::LibraryManifest, Arc<ProviderPlan>)>;
+
 #[cfg(test)]
 thread_local! {
     static COMPILATION_SESSION_ANALYSIS_INVOCATIONS: Cell<Option<usize>> = const { Cell::new(None) };
@@ -281,10 +285,7 @@ impl CompilationSession {
         &mut self,
         features: &PackageFeaturePlan,
         sdk_profile_override: Option<&str>,
-        completed: &mut BTreeMap<
-            (PathBuf, BTreeSet<String>),
-            (incan_frontend::library_manifest::LibraryManifest, Arc<ProviderPlan>),
-        >,
+        completed: &mut CheckedSourceDependencies,
         visiting: &mut BTreeSet<PathBuf>,
     ) -> CliResult<()> {
         let Some(manifest) = self.manifest.as_ref() else {

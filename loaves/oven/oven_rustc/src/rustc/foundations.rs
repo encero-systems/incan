@@ -401,48 +401,6 @@ pub(super) fn digest_regular_file(path: &Path, kind: &'static str) -> Result<Str
     Ok(digest)
 }
 
-#[cfg(test)]
-mod digest_tests {
-    use super::*;
-
-    /// Cached output observations still reject symlink substitutions and detect preserved-mtime edits.
-    #[test]
-    fn caller_file_digest_preserves_path_admission() -> Result<(), Box<dyn std::error::Error>> {
-        let root = tempfile::tempdir()?;
-        let output = root.path().join("output");
-        fs::write(&output, b"native bytes")?;
-        assert_eq!(
-            digest_regular_file(&output, "test output")?,
-            digest_bytes(b"native bytes")
-        );
-        assert_eq!(
-            digest_regular_file(&output, "test output")?,
-            digest_bytes(b"native bytes")
-        );
-        let modified = fs::metadata(&output)?.modified()?;
-        fs::write(&output, b"edited bytes")?;
-        fs::File::options()
-            .write(true)
-            .open(&output)?
-            .set_times(fs::FileTimes::new().set_modified(modified))?;
-        assert_eq!(
-            digest_regular_file(&output, "test output")?,
-            digest_bytes(b"edited bytes")
-        );
-        assert!(digest_regular_file(root.path(), "test output").is_err());
-        #[cfg(unix)]
-        {
-            let link = root.path().join("link");
-            std::os::unix::fs::symlink(&output, &link)?;
-            assert!(matches!(
-                digest_regular_file(&link, "test output"),
-                Err(OvenRustcError::InvalidArtifactPath { .. })
-            ));
-        }
-        Ok(())
-    }
-}
-
 /// Ensure the caller-owned final output cannot become part of the immutable artifact root.
 pub(super) fn caller_output_path(output: &Path, artifact_root: &Path) -> Result<PathBuf, OvenRustcError> {
     if output.as_os_str().is_empty() {
@@ -569,4 +527,46 @@ pub(super) fn validate_edition(edition: &str) -> Result<(), OvenRustcError> {
         field: "edition",
         message: "must be one of 2015, 2018, 2021 or 2024".to_string(),
     })
+}
+
+#[cfg(test)]
+mod digest_tests {
+    use super::*;
+
+    /// Cached output observations still reject symlink substitutions and detect preserved-mtime edits.
+    #[test]
+    fn caller_file_digest_preserves_path_admission() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let output = root.path().join("output");
+        fs::write(&output, b"native bytes")?;
+        assert_eq!(
+            digest_regular_file(&output, "test output")?,
+            digest_bytes(b"native bytes")
+        );
+        assert_eq!(
+            digest_regular_file(&output, "test output")?,
+            digest_bytes(b"native bytes")
+        );
+        let modified = fs::metadata(&output)?.modified()?;
+        fs::write(&output, b"edited bytes")?;
+        fs::File::options()
+            .write(true)
+            .open(&output)?
+            .set_times(fs::FileTimes::new().set_modified(modified))?;
+        assert_eq!(
+            digest_regular_file(&output, "test output")?,
+            digest_bytes(b"edited bytes")
+        );
+        assert!(digest_regular_file(root.path(), "test output").is_err());
+        #[cfg(unix)]
+        {
+            let link = root.path().join("link");
+            std::os::unix::fs::symlink(&output, &link)?;
+            assert!(matches!(
+                digest_regular_file(&link, "test output"),
+                Err(OvenRustcError::InvalidArtifactPath { .. })
+            ));
+        }
+        Ok(())
+    }
 }

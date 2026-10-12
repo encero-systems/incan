@@ -318,17 +318,15 @@ fn project_outputs_with_source_authority(
     let current_receipt = current_project_output_receipt(project_root, target, entrypoint, profile)?;
     let current_fingerprint = baked_project_lock_dependencies_fingerprint(project_root)?;
     let receipt_path = project_bake_receipt_path(project_root, target, entrypoint, profile)?;
-    if first_only {
-        if let Some(located) =
+    if first_only
+        && let Some(located) =
             located_project_output(store, &receipt_path, current_receipt.as_ref(), |manifest, bytes| {
                 manifest_matches(manifest) && payload_matches(manifest, bytes)
             })?
-        {
-            if located.payload.lock_dependencies_fingerprint == current_fingerprint {
-                tracing::trace!(target: "incan::invocation", decision = "reuse_project_output_locator", input = %located.identity);
-                return Ok(vec![located]);
-            }
-        }
+        && located.payload.lock_dependencies_fingerprint == current_fingerprint
+    {
+        tracing::trace!(target: "incan::invocation", decision = "reuse_project_output_locator", input = %located.identity);
+        return Ok(vec![located]);
     }
     let selected = store
         .select_payloads_matching_for_execution(manifest_matches, payload_matches)
@@ -361,10 +359,8 @@ fn project_outputs_with_source_authority(
             output.identity.clone(),
         )
     });
-    if first_only {
-        if let Some(selected) = matches.first() {
-            remember_project_output(&receipt_path, &selected.identity);
-        }
+    if first_only && let Some(selected) = matches.first() {
+        remember_project_output(&receipt_path, &selected.identity);
     }
     Ok(matches)
 }

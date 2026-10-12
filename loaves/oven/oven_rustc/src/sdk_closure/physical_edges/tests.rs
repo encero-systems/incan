@@ -471,7 +471,7 @@ fn dev7_native_loaf_producer_bridge_seals_exact_physical_generation() -> Result<
         source: parent.record().source.clone(),
         intent: parent.record().recipe.intent.clone(),
     };
-    let selected = graph.select(&[selected_root.clone()])?;
+    let selected = graph.select(std::slice::from_ref(&selected_root))?;
     assert_eq!(selected.graph().units().len(), 2);
     assert_eq!(parent.record().dependencies.len(), 1);
     assert_eq!(parent.record().dependencies[0].alias, "actual_renamed_child");

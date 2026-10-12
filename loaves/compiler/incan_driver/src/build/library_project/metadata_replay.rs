@@ -50,20 +50,10 @@ pub(crate) struct MetadataPreparation {
 }
 
 impl MetadataPreparation {
-    /// Observe raw authored source and current checked dependency owners before root source loading or checking.
-    /// Missing old owner authority is an explicit miss; malformed advertised authority is refused.
-    pub fn observe(
-        project: &ProjectManifest,
-        session: &CompilationSession,
-        out_dir: &Path,
-        native_sdk: Option<&NativeSdkPublicationContext<'_>>,
-        authority: Option<&mut OvenProjectBakeAuthorityContext>,
-    ) -> CliResult<Option<Self>> {
-        Self::observe_with_native_context(project, session, out_dir, native_sdk, authority, None)
-    }
-
-    /// Observe the same ordinary authority using an original caller-supplied native admission when present.
-    /// Missing explicit input preserves legacy discovery; a supplied capability never falls back to discovery.
+    /// Observe raw authored source and current checked dependency owners before root source loading or checking, using
+    /// an original caller-supplied native admission when present. Missing old owner authority is an explicit miss;
+    /// malformed advertised authority is refused. Missing explicit input preserves legacy discovery; a supplied
+    /// capability never falls back to discovery.
     pub(crate) fn observe_with_native_context(
         project: &ProjectManifest,
         session: &CompilationSession,

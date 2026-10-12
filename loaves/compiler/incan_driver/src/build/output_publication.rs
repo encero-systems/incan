@@ -100,17 +100,15 @@ impl OutputPublication {
 
     /// Apply the same recovery boundary to errors and late reuse misses without interpreting error messages.
     fn finish_result<T>(self, result: CliResult<T>, rollback: bool) -> CliResult<T> {
-        if rollback {
-            if let Err(rollback) = self.restore() {
-                let cause = match &result {
-                    Err(error) => error.to_string(),
-                    Ok(_) => "completed output handoff was unavailable".to_string(),
-                };
-                return Err(CliError::failure(format!(
-                    "{cause}; output rollback failed: {rollback}; recovery files retained at {}",
-                    self.backup.display()
-                )));
-            }
+        if rollback && let Err(rollback) = self.restore() {
+            let cause = match &result {
+                Err(error) => error.to_string(),
+                Ok(_) => "completed output handoff was unavailable".to_string(),
+            };
+            return Err(CliError::failure(format!(
+                "{cause}; output rollback failed: {rollback}; recovery files retained at {}",
+                self.backup.display()
+            )));
         }
         if let Err(error) = fs::remove_dir_all(&self.backup) {
             eprintln!(

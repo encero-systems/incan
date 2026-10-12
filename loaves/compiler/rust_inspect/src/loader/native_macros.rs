@@ -209,24 +209,6 @@ pub(super) fn contains_unowned_macro_path(value: &serde_json::Value) -> bool {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    /// Every graph level rejects a library path, including a field whose value is null.
-    #[test]
-    fn unowned_macro_paths_are_rejected_in_nested_graphs() {
-        for graph in [
-            serde_json::json!({"crates": [{"proc_macro_dylib_path": "/unowned.so"}]}),
-            serde_json::json!({"sysroot_project": {"crates": [{"proc_macro_dylib_path": "/unowned.so"}]}}),
-            serde_json::json!({"crates": [{"proc_macro_dylib_path": null}]}),
-        ] {
-            assert!(super::contains_unowned_macro_path(&graph));
-        }
-        assert!(!super::contains_unowned_macro_path(
-            &serde_json::json!({"crates": [{"is_proc_macro": true}]})
-        ));
-    }
-}
-
 /// Read the same stable identity and host target used by the native publisher from the selected compiler.
 fn active_compiler_identity(path: &Path) -> Result<(String, String), RustMetadataError> {
     let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
@@ -255,5 +237,23 @@ fn invalid(path: &Path, message: &str) -> RustMetadataError {
     RustMetadataError::LoadWorkspace {
         path: path.to_path_buf(),
         message: message.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Every graph level rejects a library path, including a field whose value is null.
+    #[test]
+    fn unowned_macro_paths_are_rejected_in_nested_graphs() {
+        for graph in [
+            serde_json::json!({"crates": [{"proc_macro_dylib_path": "/unowned.so"}]}),
+            serde_json::json!({"sysroot_project": {"crates": [{"proc_macro_dylib_path": "/unowned.so"}]}}),
+            serde_json::json!({"crates": [{"proc_macro_dylib_path": null}]}),
+        ] {
+            assert!(super::contains_unowned_macro_path(&graph));
+        }
+        assert!(!super::contains_unowned_macro_path(
+            &serde_json::json!({"crates": [{"is_proc_macro": true}]})
+        ));
     }
 }
