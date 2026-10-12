@@ -10718,9 +10718,24 @@ fn generic_dictionary_field_mutation_output_matches_legacy() -> Result<(), Box<d
         &fixture.scratch("generic-dictionary-field-mutation")?,
         &fixture.sysroot,
         &fixture.formatting,
-        include_str!(
-            "../../incan_test_support/fixtures/behavior/ownership_numerics_and_bounds/generic_functions_hash_through_dict_and_set_types.incn"
-        ),
+        r#"class Index[K, V]:
+    entries: dict[K, V]
+
+    def put(mut self, key: K, value: V) -> None:
+        self.entries[key] = value
+
+    def size(self) -> int:
+        return len(self.entries)
+
+def fill[K, V](mut index: Index[K, V], key: K, value: V) -> int:
+    index.put(key, value)
+    return index.size()
+
+def main() -> None:
+    mut index: Index[str, int] = Index(entries={})
+    println(fill(index, "a", 1))
+    println(fill(index, "b", 2))
+"#,
     )
 }
 
