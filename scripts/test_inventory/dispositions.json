@@ -6096,6 +6096,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/opaque_returns.rs": {
+      "disposition": "keep",
+      "notes": "Body IR retains proven concrete carriers of local opaque trait returns without changing legacy checker facts.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/operators_literals_and_assignment.rs": {
       "disposition": "keep",
       "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",

@@ -10162,6 +10162,21 @@ def main() -> None:
     )
 }
 
+/// Concrete and trait-returning fallible streams preserve successful items and propagate the first source error.
+#[test]
+fn stdlib_fallible_stream_carrier_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("stdlib-fallible-stream-carrier")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/fallible_iteration_protocol.incn"
+        ),
+    )
+}
+
 /// A compression error retains its nested Codec identity; the SDK's absent executable enum representation stays
 /// refused until that independent layout is admitted.
 #[test]
