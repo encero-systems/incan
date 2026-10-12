@@ -1,6 +1,53 @@
 //! Declaration-bound model placeholders and checked method frames for native specialization.
 
 use super::{IncanPrimitiveType, IncanType, bir, body_named, build, named_targets};
+use crate::{lexer, parser, symbols::ResolvedType, typechecker::TypeChecker};
+
+/// Executable constructor/call facts supplement the contextual checker view without rewriting legacy inference.
+#[test]
+fn executable_call_facts_preserve_legacy_context() -> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/generic_caller_of_a_model_method_formatting_its_payload.incn"
+    );
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(vec!["m".to_string(), "legacy_context".to_string()]));
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let facts = checker.type_info();
+    assert_eq!(facts.calls.body_ir_call_type_args.len(), 4);
+    for (span, arguments) in &facts.calls.body_ir_call_type_args {
+        assert!(
+            arguments
+                .iter()
+                .all(|ty| matches!(ty, ResolvedType::Int | ResolvedType::Str))
+        );
+        let legacy = facts
+            .calls
+            .call_site_monomorph_type_args
+            .get(span)
+            .ok_or("missing legacy call binding")?;
+        assert!(
+            legacy.iter().any(|ty| matches!(ty, ResolvedType::TypeVar(_))),
+            "{legacy:?}"
+        );
+    }
+    assert_eq!(facts.calls.body_ir_constructor_types.len(), 4);
+    for (span, carrier) in &facts.calls.body_ir_constructor_types {
+        assert!(
+            matches!(carrier, ResolvedType::Generic(_, arguments) if arguments.iter().all(|ty| matches!(ty, ResolvedType::Int | ResolvedType::Str)))
+        );
+        let contextual = facts
+            .expr_type(crate::ast::Span::new(span.0, span.1))
+            .ok_or("missing contextual constructor type")?;
+        assert!(
+            matches!(contextual, ResolvedType::Generic(_, arguments) if arguments.iter().any(|ty| matches!(ty, ResolvedType::TypeVar(_))))
+        );
+    }
+    Ok(())
+}
 
 /// Constructors nested in generic calls keep the concrete checked carrier rather than the callee's open context.
 #[test]
@@ -37,6 +84,7 @@ fn generic_method_results_retain_concrete_payloads() -> Result<(), Box<dyn std::
     let main = body_named(&module, "main")?;
     let mut results = 0;
     for local in &main.locals {
+        assert!(!matches!(local.ty, IncanType::TypeVar(_)), "{}", main.render_snapshot());
         if let IncanType::Generic { base, args } = &local.ty
             && base == "Result"
         {
