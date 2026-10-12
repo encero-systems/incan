@@ -4432,13 +4432,18 @@ def append_format_part(
 
 
 def type_parameter_display_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
-    """Keep a closed floating type parameter's own Display spelling; other carriers retain their existing renderer."""
+    """
+    Keep a closed floating type parameter's own Display spelling; other carriers retain their existing renderer.
+
+    A floating place is observed by Copy inside formatting even when its source field is borrowed; this never moves
+    the owner or reroutes the shared read through ordinary value ownership validation.
+    """
     match value:
         RustOperand.Place(read) =>
             place = scalar_place(builder, read.place, span)?
             ty = place_type(builder.locals, place)
             if ty == PlanType.Float or ty == PlanType.F32 or ty == PlanType.F64:
-                operand = value_operand(builder, value, span)?
+                operand = read_place(place, false, span)
                 path = "incan_native_runtime::display_type_parameter"
                 result = temporary(builder, PlanType.String, span)
                 builder.externals.append(
