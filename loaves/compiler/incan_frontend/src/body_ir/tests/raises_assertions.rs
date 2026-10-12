@@ -56,5 +56,21 @@ fn raises_forms_retain_function_items_instead_of_eager_calls() -> Result<(), Box
         2,
         "each assertion must use its resolver-proven function item"
     );
+    for statement in &run.block.stmts {
+        if let bir::StatementKind::Assign {
+            place,
+            rvalue: bir::Rvalue::Closure { body, .. },
+        } = &statement.kind
+            && body.function_item
+        {
+            let local = place.local_id().ok_or("a function item needs a local")?;
+            assert!(
+                matches!(&run.locals[local.index()].ty, IncanType::Function { params, return_type }
+                if params.is_empty() && return_type.as_ref() == &IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Unit)),
+                "the deferred item must carry the checked callable type: {}",
+                run.render_snapshot()
+            );
+        }
+    }
     Ok(())
 }
