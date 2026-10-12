@@ -78,6 +78,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         {
             bir::PlaceElem::structural_field(name)
         } else {
+            if let Some(identity) = self.retained_native_field_identity(&ty, name) {
+                return bir::PlaceElem::field(name, Some(identity));
+            }
             if let Some(identity) = self.type_info.resolved_identity(span)
                 && identity.namespace == SymbolNamespace::Member
                 && identity.kind == SemanticSourceTargetKind::Field
@@ -91,6 +94,34 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 .or_else(|| self.retained_field_identity(&ty, name));
             bir::PlaceElem::field(name, identity)
         }
+    }
+
+    /// Compiler-provided metadata results have a checked native owner without requiring a lexical import. Select a
+    /// field only from that exact retained runtime layout; any active source owner with the same declaration name
+    /// prevents this path. Source-module stdlib identities normalize to the package identity the bridge retains.
+    fn retained_native_field_identity(&self, ty: &IncanType, name: &str) -> Option<CanonicalSymbolId> {
+        let IncanType::Named(owner_name) = ty else {
+            return None;
+        };
+        let declaration = self.local_nominal_declarations.values().find(|declaration| {
+            declaration.name == *owner_name
+                && !declaration.native_item.is_empty()
+                && bir::native_nominal_item(&declaration.canonical).as_deref() == Some(declaration.native_item.as_str())
+        })?;
+        for owner in self
+            .type_info
+            .declarations
+            .named_type_identities
+            .values()
+            .filter(|owner| owner.declaration_name == *owner_name)
+        {
+            let owner = super::library_nominals::sdk_identity(owner).unwrap_or_else(|| owner.clone());
+            if owner != declaration.canonical {
+                return None;
+            }
+        }
+        let slot = declaration.fields.iter().position(|field| field == name)?;
+        declaration.field_identities.get(slot).cloned()
     }
 
     /// Read a stored slot from a checker-proven owner and its published layout when checking supplied no field target.
