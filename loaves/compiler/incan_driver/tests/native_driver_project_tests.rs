@@ -9847,6 +9847,42 @@ def main() -> None:
 
 /// A closed SDK collection keeps its type arguments through construction, mutation, length, and returned values.
 #[test]
+fn stdlib_frozen_collection_reads_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("stdlib-frozen-collection-reads")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"const NUMBERS: FrozenList[int] = [1, 2]
+const WORDS: FrozenSet[str] = {"alpha", "beta"}
+const VALUES: FrozenDict[str, int] = {"x": 4}
+const TABLE: FrozenDict[str, FrozenList[str]] = {"names": ["alpha", "beta"]}
+const CODES: FrozenDict[FrozenStr, int] = {"a": 7}
+const CHUNKS: FrozenList[FrozenBytes] = [b"ab", b"c"]
+
+def main() -> None:
+    println(NUMBERS)
+    println(WORDS)
+    println(VALUES)
+    println(len(WORDS))
+    println(len(TABLE))
+    println(VALUES["x"])
+    println(CODES["a"])
+    println(TABLE["names"][1])
+    println(TABLE.contains_key("names"))
+    println(TABLE.contains_key("missing"))
+    println("alpha" in WORDS)
+    for word in WORDS:
+        println(word)
+    for chunk in CHUNKS:
+        println(len(chunk))
+"#,
+    )
+}
+
+/// A closed SDK collection keeps its type arguments through construction, mutation, length, and returned values.
+#[test]
 fn stdlib_generic_collection_methods_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     corpus::check_builtin_source(
