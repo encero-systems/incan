@@ -814,26 +814,45 @@ pub(crate) fn validate_required_rust_abi(
 }
 
 /// Reject conflicting aliases or definitions across the complete admitted checked dependency surface.
+///
+/// One canonical path must carry identical facts everywhere. Re-exports of one definition must agree on everything
+/// but their implemented traits: those are solved in the crate that re-exports the type, so `std::time::Duration`
+/// may list traits `core::time::Duration` cannot see without either fact being wrong.
 pub(crate) fn validate_rust_fact_agreement<'a>(
     manifests: impl IntoIterator<Item = &'a LibraryManifest>,
 ) -> CliResult<()> {
-    let mut facts = BTreeMap::new();
+    let competing = |path: &str| CliError::failure(format!("checked library ABI has competing facts for `{path}`"));
+    let mut aliases = BTreeMap::new();
+    let mut definitions = BTreeMap::new();
     for manifest in manifests {
         if let Some(abi) = manifest.rust_abi.as_ref() {
             for item in &abi.items {
-                for path in std::iter::once(&item.canonical_path).chain(item.definition_path.as_ref()) {
-                    if let Some(previous) = facts.insert(path, &item.kind)
-                        && previous != &item.kind
-                    {
-                        return Err(CliError::failure(format!(
-                            "checked library ABI has competing facts for `{path}`"
-                        )));
-                    }
+                if let Some(previous) = aliases.insert(&item.canonical_path, &item.kind)
+                    && previous != &item.kind
+                {
+                    return Err(competing(&item.canonical_path));
+                }
+                let definition = item.definition_path.as_ref().unwrap_or(&item.canonical_path);
+                let view = definition_facts(&item.kind);
+                if let Some(previous) = definitions.insert(definition, view.clone())
+                    && previous != view
+                {
+                    return Err(competing(definition));
                 }
             }
         }
     }
     Ok(())
+}
+
+/// The facts every re-export of one definition shares: all of them except a type's implemented traits, which each
+/// re-export solves in its own crate.
+fn definition_facts(kind: &RustItemKind) -> RustItemKind {
+    let mut facts = kind.clone();
+    if let RustItemKind::Type(info) = &mut facts {
+        info.implemented_traits.clear();
+    }
+    facts
 }
 
 /// Inventory every regular generated source file using safe relative paths and exact content digests.
