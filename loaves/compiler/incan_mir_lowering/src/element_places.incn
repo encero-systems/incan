@@ -6,7 +6,7 @@ materializes a copy, and code that only needs its type must compute it here inst
 """
 
 from rust::incan_semantics_core::body_ir import Place as RustPlace, PlaceElem
-from pub::incan_mir_plan import PlanType
+from pub::incan_mir_plan import PlanType, ListLeaf
 from frame import Builder
 from models import field_projection
 from lists import list_shape, list_element, is_list
@@ -29,6 +29,9 @@ pub def is_element_place(builder: Builder, source: &RustPlace) -> Result[bool, s
             root = builder.locals[int(local.index()) + 1 + builder.local_offset].ty
             if is_list(root) or is_collection(root):
                 return Ok(true)
+            match root:
+                PlanType.FrozenCollection(_name, _elements) => return Ok(true)
+                _ => pass
     match structural_prefix(builder, source)?:
         Some((count, _through_tuple)) => return Ok(count < len(source.projection))
         None => return Ok(false)
@@ -65,6 +68,14 @@ def projected_type(builder: Builder, ty: PlanType, projection: &PlaceElem) -> Re
     """Select one step's type: a list or dictionary element, a list slice, or a structural field or tuple element."""
     match projection:
         PlaceElem.Index(_index) =>
+            match ty:
+                PlanType.FrozenCollection(name, elements) =>
+                    if name == "FrozenDict" and len(elements) == 2:
+                        return Ok(frozen_read_type(elements[1]))
+                    if name == "FrozenList" and len(elements) == 1:
+                        return Ok(frozen_read_type(elements[0]))
+                    return Err("unsupported Body IR frozen collection index type")
+                _ => pass
             match list_shape(ty):
                 Some((leaf, depth)) => return Ok(list_element(leaf, depth))
                 None => pass
@@ -76,6 +87,15 @@ def projected_type(builder: Builder, ty: PlanType, projection: &PlaceElem) -> Re
                 None => return Err("unsupported Body IR slicing non-list")
         _ => pass
     return Ok(field_projection(builder.nominals, ty, projection, builder.enums, builder.unions, builder.intrinsics)?.ty)
+
+
+def frozen_read_type(storage: PlanType) -> PlanType:
+    """Observe ordinary static text and bytes as owned values; explicitly frozen wrappers keep their exact identity."""
+    if storage == PlanType.StaticText:
+        return PlanType.String
+    if storage == PlanType.StaticBytes:
+        return PlanType.List(ListLeaf.U8, 1)
+    return storage
 
 
 def dictionary_value_type(ty: PlanType) -> Result[PlanType, str]:

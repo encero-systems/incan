@@ -45,6 +45,7 @@ pub enum ListLeaf:
 
     `List` and `Dict` are owned collection values held by another collection, such as a dictionary's list values or a
     list's dictionaries. A list of lists keeps one leaf with a greater depth, so `List` never leads a `PlanType.List`.
+    `FrozenStr` and `FrozenBytes` keep dependency-owned Copy wrappers; ordinary strings and bytes own their read data.
     A variant cannot hold its own type directly, so `List` holds its element leaf as the only item of a list, and
     `Dict` holds its key and value leaves, in that order, as the two items of one.
     """
@@ -60,6 +61,7 @@ pub enum ListLeaf:
     Unit
     Decimal
     FrozenStr
+    FrozenBytes
     FunctionPointer(list[PlanType])
     List(list[ListLeaf], int)
     Dict(list[ListLeaf])
@@ -198,6 +200,7 @@ pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
         ListLeaf.Unit => return PlanType.Unit
         ListLeaf.Decimal => return PlanType.Decimal
         ListLeaf.FrozenStr => return PlanType.FrozenStr
+        ListLeaf.FrozenBytes => return PlanType.FrozenBytes
         ListLeaf.FunctionPointer(signature) => return PlanType.FunctionPointer(signature)
         ListLeaf.List(element, depth) => return PlanType.List(element[0], depth)
         ListLeaf.Dict(entry) => return PlanType.Dict(entry[0], entry[1])

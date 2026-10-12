@@ -132,6 +132,7 @@ enum Leaf {
     Unit,
     Decimal,
     FrozenStr,
+    FrozenBytes,
     /// An owned list or dictionary held by another collection, compared as that collection's own type.
     Collection(Box<Scalar>),
 }
@@ -156,6 +157,7 @@ impl Leaf {
             ListLeaf::Unit => Leaf::Unit,
             ListLeaf::Decimal => Leaf::Decimal,
             ListLeaf::FrozenStr => Leaf::FrozenStr,
+            ListLeaf::FrozenBytes => Leaf::FrozenBytes,
             ListLeaf::FunctionPointer(signature) => Leaf::FunctionPointer(signature.iter().map(scalar).collect()),
             ListLeaf::List(..) | ListLeaf::Dict(..) => {
                 Leaf::Collection(Box::new(scalar(&crate::plan::list_leaf_type(leaf.clone()))))
@@ -1872,7 +1874,7 @@ fn validate_frozen_values(
             | (PlanType::Bool, FrozenValue::Scalar(Constant::Bool(_)))
             | (PlanType::StaticText, FrozenValue::Scalar(Constant::Text(_))) => {}
             (PlanType::FrozenStr, FrozenValue::Scalar(Constant::Text(_))) => {}
-            (PlanType::StaticBytes, FrozenValue::Bytes(bytes))
+            (PlanType::StaticBytes | PlanType::FrozenBytes, FrozenValue::Bytes(bytes))
                 if bytes.iter().all(|byte| u8::try_from(*byte).is_ok()) => {}
             (PlanType::FrozenCollection(..), FrozenValue::Collection(child, data))
                 if scalar(element) == scalar(child) =>

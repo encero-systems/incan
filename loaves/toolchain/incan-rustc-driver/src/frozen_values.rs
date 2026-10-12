@@ -160,6 +160,13 @@ fn write<'tcx>(
                 u64::try_from(value.len()).map_err(|_| invalid("text length"))?,
             )
         }
+        (ty::Adt(..), FrozenValue::Bytes(_)) if native_type(tcx, &PlanType::FrozenBytes)? == ty => {
+            let (_, _, field, element) = storage(tcx, ty)?;
+            if element != tcx.types.u8 {
+                return Err(invalid("frozen byte wrapper element"));
+            }
+            write(tcx, allocation, offset + layout.fields.offset(0), field, value)
+        }
         (ty::Ref(region, inner, rustc_hir::Mutability::Not), FrozenValue::Bytes(values))
             if region.is_static() && matches!(inner.kind(), ty::Slice(element) if *element == tcx.types.u8) =>
         {

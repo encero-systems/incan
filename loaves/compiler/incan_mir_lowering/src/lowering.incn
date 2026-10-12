@@ -7081,7 +7081,7 @@ def frozen_list_snapshot_type(ty: PlanType) -> Result[PlanType, str]:
                 if name != "FrozenList":
                     return Err("unsupported Body IR frozen byte set or dictionary snapshot")
                 return Ok(PlanType.List(ListLeaf.U8, 2))
-            if elements[0] not in [PlanType.Int, PlanType.Float, PlanType.Bool, PlanType.FrozenStr]:
+            if elements[0] not in [PlanType.Int, PlanType.Float, PlanType.Bool, PlanType.FrozenStr, PlanType.FrozenBytes]:
                 return Err("unsupported Body IR frozen collection snapshot with nonprimitive elements")
             return Ok(PlanType.List(collection_leaf(elements[0])?, 1))
         _ => return Err("unsupported Body IR nonfrozen snapshot")
@@ -7111,6 +7111,16 @@ def frozen_list_snapshot(mut builder: Builder, value: Operand, span: SourceSpan)
             builder.owned.append(output.local)
             return Ok(output)
         _ => return Err("unsupported Body IR nonfrozen snapshot")
+
+
+def frozen_set_source(mut builder: Builder, source: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+    """Convert a checked frozen set-constructor source into an owned primitive snapshot without consuming static data."""
+    value = value_operand(builder, source, span)?
+    match operand_type(builder, value)?:
+        PlanType.FrozenCollection(_name, _elements) =>
+            snapshot = frozen_list_snapshot(builder, value, span)?
+            return Ok(read_place(snapshot, true, span))
+        _ => return Ok(value)
 
 
 def initialize_frozen_iterator(mut builder: Builder, iterator: Place, span: SourceSpan) -> None:
@@ -7427,7 +7437,7 @@ def collection_assignment(
                     None =>
                         match element:
                             RustArgumentElement.Spread(spread) =>
-                                source = value_operand(builder, spread.source, span)?
+                                source = frozen_set_source(builder, spread.source, span)?
                                 extend_collection(builder, output, source, span)?
                             _ => return Err("unsupported Body IR set spread")
             finish_collection(builder, destination, output, span)
