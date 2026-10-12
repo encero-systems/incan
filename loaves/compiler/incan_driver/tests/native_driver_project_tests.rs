@@ -10930,9 +10930,41 @@ fn check_source_modules_case(
         .output()?,
         "native imported declaration compilation",
     );
-    let generated = root.join("legacy-project");
+    let legacy = compile_source_modules_reference(fixture, name, &source, modules, &closure)?;
+    let expected = Command::new(legacy).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy imported declaration execution");
+    success(&actual, "native imported declaration execution");
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(actual.stdout, expected_stdout);
+    Ok(())
+}
+
+/// Preserve a completed parity reference outside scratch, verifying its inputs and executable bytes on every reuse.
+fn compile_source_modules_reference(
+    fixture: &DriverFixture,
+    name: &str,
+    source: &Path,
+    modules: &[(&str, &str)],
+    closure: &corpus::NativeClosure,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let key = closure.reference_key(source, modules, &fixture.sysroot)?;
+    let cache = fixture.root.join("reference-cache").join(name).join(key);
+    let legacy = cache.join("reference");
+    let digest_record = cache.join("binary.sha256");
+    if legacy.is_file() && digest_record.is_file() {
+        let (_, digest) = oven_store::store::digest_regular_file(&legacy)?;
+        if fs::read_to_string(&digest_record)? == digest {
+            return Ok(legacy);
+        }
+    }
+    if std::env::var_os("INCAN_TEST_REQUIRE_STORED_NATIVE_REUSE").is_some() {
+        return Err("parity reference reuse missed before compilation".into());
+    }
+    fs::create_dir_all(&cache)?;
+    let generated = cache.join("project");
     let reference_build = support::repo_command()
-        .current_dir(&root)
+        .current_dir(source.parent().ok_or("reference source has no parent")?)
         .arg("build")
         .arg(&source)
         .arg(&generated)
@@ -10946,20 +10978,15 @@ fn check_source_modules_case(
     // The build command materializes the complete module tree and SDK facade before its missing-extern failure.
     // Compile those exact files; the debug --emit-rust action emits only one unit with unresolved module markers.
     let reference = generated.join("src/main.rs");
-    let legacy = root.join("legacy");
     success(
         &closure
             .reference_command(&reference, &legacy, &fixture.sysroot)?
             .output()?,
         "legacy imported declaration compilation",
     );
-    let expected = Command::new(legacy).output()?;
-    let actual = Command::new(native).output()?;
-    success(&expected, "legacy imported declaration execution");
-    success(&actual, "native imported declaration execution");
-    assert_eq!(actual.stdout, expected.stdout);
-    assert_eq!(actual.stdout, expected_stdout);
-    Ok(())
+    let (_, digest) = oven_store::store::digest_regular_file(&legacy)?;
+    fs::write(digest_record, digest)?;
+    Ok(legacy)
 }
 
 /// A retained original mutable method writes through its receiver after initialization.

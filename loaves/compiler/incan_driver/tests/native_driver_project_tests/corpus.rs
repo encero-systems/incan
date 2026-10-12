@@ -287,6 +287,28 @@ pub(super) struct NativeClosure {
 }
 
 impl NativeClosure {
+    /// Bind a parity reference to exact source bytes, compiler bytes, and the receipt-selected dependency closure.
+    pub(super) fn reference_key(
+        &self,
+        source: &Path,
+        modules: &[(&str, &str)],
+        sysroot: &Path,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let compiler = super::support::repo_command();
+        let (_, compiler_digest) = oven_store::store::digest_regular_file(Path::new(compiler.get_program()))?;
+        let (_, rustc_digest) = oven_store::store::digest_regular_file(&super::pinned_driver_rustc()?)?;
+        let mut artifacts = Vec::new();
+        for (name, path) in &self.externs {
+            let (_, digest) = oven_store::store::digest_regular_file(path)?;
+            artifacts.push((name, path, digest));
+        }
+        Ok(oven_model::digest::digest_content(&format!(
+            "{:?}{source:?}{modules:?}{sysroot:?}{compiler_digest}{rustc_digest}{artifacts:?}{:?}",
+            fs::read(source)?,
+            self.directories,
+        )))
+    }
+
     /// Compile unedited legacy emission with this same sealed closure, including derives the legacy planner omits.
     pub(super) fn reference_command(
         &self,
