@@ -50,6 +50,19 @@ fn nominal_property_reads_call_checked_getters() -> Result<(), Box<dyn std::erro
         "{}",
         caller.render_snapshot()
     );
+    let label = body_named(&module, "label")?
+        .canonical
+        .as_ref()
+        .ok_or("missing label getter identity")?;
+    assert!(
+        module
+            .trait_implementations
+            .iter()
+            .any(
+                |implementation| implementation.method.kind == SemanticSourceTargetKind::Property
+                    && &implementation.implementation == label
+            )
+    );
     Ok(())
 }
 

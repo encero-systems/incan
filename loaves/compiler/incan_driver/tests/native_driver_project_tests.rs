@@ -2516,11 +2516,17 @@ fn property_owner_frames_output_matches_legacy() -> Result<(), Box<dyn std::erro
         &fixture.scratch("property-owner-frames")?,
         &fixture.sysroot,
         &fixture.formatting,
-        r#"model Counter:
+        r#"trait Named:
+    property label -> str
+
+model Counter with Named:
     pub base: int
     pub property doubled -> int:
         println("read")
         return self.base * 2
+
+    pub property label -> str:
+        return f"count={self.base}"
 
 class Label:
     pub value: int
@@ -2532,6 +2538,9 @@ model Box[T with Clone]:
     pub property selected -> T:
         return self.content
 
+def label_of[T with Named](value: T) -> str:
+    return value.label
+
 def main() -> None:
     mut counter = Counter(base=7)
     println(counter.doubled)
@@ -2539,6 +2548,7 @@ def main() -> None:
     println(counter.doubled)
     println(Label(value=3).text)
     println(Box(content="x").selected)
+    println(label_of(counter))
 "#,
     )
 }
