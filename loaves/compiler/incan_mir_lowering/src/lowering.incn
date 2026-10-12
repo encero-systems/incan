@@ -653,6 +653,7 @@ def scalar_constant(constant: &RustConstant, span: SourceSpan) -> Result[Operand
         RustConstant.FrozenStr(_value) => return Err("Body IR FrozenStr constant requires its retained carrier")
         RustConstant.Bytes(_value) => return Err("unsupported Body IR Bytes constant")
         RustConstant.None => return Err("unsupported Body IR None constant")
+        RustConstant.FrozenAggregate(_ty, _values) => return Err("unsupported Body IR frozen aggregate scalar constant")
 
 
 def operand_type(mut builder: Builder, operand: Operand) -> Result[PlanType, str]:
