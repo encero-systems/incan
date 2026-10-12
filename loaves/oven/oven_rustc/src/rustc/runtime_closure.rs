@@ -291,15 +291,15 @@ pub fn admit_declared_runtime_closure(
     expected_foundation_identity: &str,
     expected_compiler_closure_identity: &str,
 ) -> Result<OvenSelectedRuntimeClosure, OvenRustcError> {
-    if owner.manifest.kind != OvenArtifactKind::NativeRuntimeClosure {
+    if owner.manifest().kind != OvenArtifactKind::NativeRuntimeClosure {
         return Err(OvenRustcError::InvalidStoredPlan {
-            identity: owner.manifest.identity.clone(),
+            identity: owner.manifest().identity.clone(),
             message: "declared runtime closure has the wrong Store kind".to_string(),
         });
     }
-    let payload = serde_json::from_slice::<OvenRuntimeClosurePayload>(&owner.payload).map_err(|error| {
+    let payload = serde_json::from_slice::<OvenRuntimeClosurePayload>(owner.payload()).map_err(|error| {
         OvenRustcError::InvalidStoredPlan {
-            identity: owner.manifest.identity.clone(),
+            identity: owner.manifest().identity.clone(),
             message: format!("runtime closure record cannot be decoded: {error}"),
         }
     })?;
@@ -309,16 +309,16 @@ pub fn admit_declared_runtime_closure(
         || payload.compiler_closure_digest != expected_compiler_closure_identity
     {
         return Err(OvenRustcError::InvalidStoredPlan {
-            identity: owner.manifest.identity.clone(),
+            identity: owner.manifest().identity.clone(),
             message: "declared runtime closure does not match its envelope bindings".to_string(),
         });
     }
     let mut artifacts = BTreeMap::new();
     for unit in &payload.units {
-        let path = owner.artifact_root.join(unit.relative_path());
+        let path = owner.artifact_root().join(unit.relative_path());
         if !path.is_file() {
             return Err(OvenRustcError::InvalidStoredPlan {
-                identity: owner.manifest.identity.clone(),
+                identity: owner.manifest().identity.clone(),
                 message: format!("runtime closure lost its retained output for {}", unit.crate_name),
             });
         }
@@ -326,7 +326,7 @@ pub fn admit_declared_runtime_closure(
     }
     Ok(OvenSelectedRuntimeClosure {
         payload,
-        store_identity: owner.manifest.identity.clone(),
+        store_identity: owner.manifest().identity.clone(),
         artifacts,
         _owner: owner,
     })
@@ -477,22 +477,22 @@ pub fn admit_runtime_closure(
     expected: &OvenRuntimeClosurePayload,
 ) -> Result<Option<OvenSelectedRuntimeClosure>, OvenRustcError> {
     // A different kind is not a candidate at all, so it is an absence.
-    if owner.manifest.kind != OvenArtifactKind::NativeRuntimeClosure {
+    if owner.manifest().kind != OvenArtifactKind::NativeRuntimeClosure {
         return Ok(None);
     }
     // From here the entry *is* a candidate of this kind, and anything this build cannot read about it is a
     // refusal rather than a miss. Both used to return `Ok(None)`, which made a corrupt or newer-than-this-build
     // record indistinguishable from "nothing published yet" — and those two ask for opposite responses: one for a
     // bake, the other for someone to look at the store.
-    let payload = serde_json::from_slice::<OvenRuntimeClosurePayload>(&owner.payload).map_err(|error| {
+    let payload = serde_json::from_slice::<OvenRuntimeClosurePayload>(owner.payload()).map_err(|error| {
         OvenRustcError::InvalidStoredPlan {
-            identity: owner.manifest.identity.clone(),
+            identity: owner.manifest().identity.clone(),
             message: format!("runtime closure record cannot be decoded: {error}"),
         }
     })?;
     if payload.schema_version != OVEN_RUNTIME_CLOSURE_SCHEMA_VERSION {
         return Err(OvenRustcError::InvalidStoredPlan {
-            identity: owner.manifest.identity.clone(),
+            identity: owner.manifest().identity.clone(),
             message: format!(
                 "runtime closure record declares unsupported schema {} (this build reads {OVEN_RUNTIME_CLOSURE_SCHEMA_VERSION})",
                 payload.schema_version
@@ -505,10 +505,10 @@ pub fn admit_runtime_closure(
     }
     let mut artifacts = BTreeMap::new();
     for unit in &payload.units {
-        let path = owner.artifact_root.join(unit.relative_path());
+        let path = owner.artifact_root().join(unit.relative_path());
         if !path.is_file() {
             return Err(OvenRustcError::InvalidStoredPlan {
-                identity: owner.manifest.identity.clone(),
+                identity: owner.manifest().identity.clone(),
                 message: format!("runtime closure lost its retained output for {}", unit.crate_name),
             });
         }
@@ -516,7 +516,7 @@ pub fn admit_runtime_closure(
     }
     Ok(Some(OvenSelectedRuntimeClosure {
         payload,
-        store_identity: owner.manifest.identity.clone(),
+        store_identity: owner.manifest().identity.clone(),
         artifacts,
         _owner: owner,
     }))

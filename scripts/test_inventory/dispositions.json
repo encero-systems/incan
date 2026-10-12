@@ -160,6 +160,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_driver/src/build/executable/tests.rs": {
+      "disposition": "keep",
+      "notes": "Native executable receipt reuse binds original source and output observations, refuses changed or linked receipt authority, and repairs current publication without Cargo.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_driver/src/build/file_freshness.rs": {
       "disposition": "unaffected",
       "notes": "Oven build-input freshness and content identity; shared by both compilation routes.",

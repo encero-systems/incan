@@ -60,10 +60,10 @@ impl OvenRustInspectionToolchain {
     /// Revalidate original compiler bytes, its selected binary std closure and the complete retained source owner.
     pub fn verify(&self) -> Result<(), OvenRustcError> {
         self.owner.verify_admitted_payload()?;
-        if self.owner.manifest.kind != OvenArtifactKind::RustInspectionToolchain
-            || self.owner.manifest.domain != DOMAIN
+        if self.owner.manifest().kind != OvenArtifactKind::RustInspectionToolchain
+            || self.owner.manifest().domain != DOMAIN
             || self.owner.original_native_receipt() != Some(&self.receipt)
-            || self.owner.payload != encode(&self.payload)?
+            || self.owner.payload() != encode(&self.payload)?
             || digest_regular_file(&self.rustc)?.1 != self.payload.compiler.executable_digest
             || crate::sdk_closure::compiler_closure_digest(&self.rustc, &self.payload.compiler.target)
                 .map_err(invalid)?
@@ -131,7 +131,7 @@ impl OvenRustInspectionToolchain {
 
     /// Return the source-owning artifact identity for cache fingerprints and diagnostic evidence.
     pub fn identity(&self) -> &str {
-        &self.owner.manifest.identity
+        &self.owner.manifest().identity
     }
 }
 
@@ -231,13 +231,13 @@ pub fn prepare_rust_inspection_toolchain(
             .pop()
             .ok_or_else(|| invalid("Rust inspection publication returned no original owner"))?,
     );
-    if owner.manifest != expected {
+    if owner.manifest() != &expected {
         return Err(invalid(
             "Rust inspection owner differs from the exact prospective publication",
         ));
     }
     let result = OvenRustInspectionToolchain {
-        source_root: owner.artifact_root.join(SOURCE),
+        source_root: owner.artifact_root().join(SOURCE),
         owner,
         receipt,
         payload,
@@ -359,7 +359,7 @@ mod tests {
         let rustc = super::super::resolve_active_rustc()?;
         let target = rustc_host_target(&rustc)?;
         let started = std::time::Instant::now();
-        let mut first = prepare_rust_inspection_toolchain(&store, &rustc, &target)?;
+        let first = prepare_rust_inspection_toolchain(&store, &rustc, &target)?;
         let first_seconds = started.elapsed().as_secs_f64();
         // Original exact selection needs no new physical admission, even with no headroom for publication.
         let bounded = OvenStore::new(store.root(), OvenStoreLimits::new(1, 1, 1 << 30));
@@ -393,11 +393,18 @@ mod tests {
         assert!(first.verify().is_err());
         fs::remove_file(extra)?;
         first.verify()?;
-        Arc::get_mut(&mut first.owner)
-            .ok_or("unexpected original owner clone")?
-            .payload
-            .push(b' ');
+        let payload_path = first
+            .owner
+            .artifact_root()
+            .parent()
+            .ok_or("original entry absent")?
+            .join("payload");
+        let original_payload = first.owner.payload().to_vec();
+        fs::remove_file(&payload_path)?;
+        fs::write(&payload_path, b"changed original inspection payload")?;
         assert!(first.verify().is_err());
+        fs::write(&payload_path, original_payload)?;
+        first.verify()?;
         Ok(())
     }
 

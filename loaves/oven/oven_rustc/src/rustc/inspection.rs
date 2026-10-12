@@ -219,7 +219,7 @@ impl OvenLoadedProjectInspectionAuthority {
     ) -> Self {
         let stored_constituent_roots = stored_constituents
             .iter()
-            .map(|selected| selected.artifact_root.clone())
+            .map(|selected| selected.artifact_root().to_path_buf())
             .collect();
         Self {
             source_owner,
@@ -232,12 +232,12 @@ impl OvenLoadedProjectInspectionAuthority {
 
     /// Return the immutable Store identity that owns the authority payload and materialized files.
     pub fn identity(&self) -> &str {
-        &self.source_owner.manifest.identity
+        &self.source_owner.manifest().identity
     }
 
     /// Return the materialized root derived from the retained authority owner.
     pub fn artifact_root(&self) -> &Path {
-        &self.source_owner.artifact_root
+        self.source_owner.artifact_root()
     }
 
     /// Revalidate the original authority and every exact retained constituent without acquiring new owners.
@@ -247,8 +247,10 @@ impl OvenLoadedProjectInspectionAuthority {
     /// or mutation of the decoded authority remains an error rather than becoming a recoverable stale result.
     pub fn verify(&self) -> Result<(), OvenRustcError> {
         self.source_owner.verify_admitted_payload()?;
-        let original =
-            super::receipt_selection::decode_project_inspection_authority(self.identity(), &self.source_owner.payload)?;
+        let original = super::receipt_selection::decode_project_inspection_authority(
+            self.identity(),
+            self.source_owner.payload(),
+        )?;
         if original != self.payload {
             return Err(OvenRustcError::InvalidStoredPlan {
                 identity: self.identity().to_string(),
@@ -269,7 +271,7 @@ impl OvenLoadedProjectInspectionAuthority {
         }
         for (selected, original_root) in self.stored_constituents.iter().zip(&self.stored_constituent_roots) {
             selected.verify_admitted_payload()?;
-            if selected.artifact_root != *original_root {
+            if selected.artifact_root() != *original_root {
                 return Err(OvenRustcError::InvalidStoredPlan {
                     identity: self.identity().to_string(),
                     message: "project inspection constituent differs from its original admitted coordinate".to_string(),

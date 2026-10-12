@@ -155,7 +155,7 @@ fn prepare_project_registry_source_authorities_inner(
                     CliError::failure("project inspection authority lost a store constituent during preparation")
                 })?;
                 stored_index += 1;
-                if selected.manifest.domain == "sdk-native-consumer-plan" {
+                if selected.manifest().domain == "sdk-native-consumer-plan" {
                     if optional && !receipt.sources.build_unit_inputs.contains_key("sdk-native-closure") {
                         return Err(CliError::failure(
                             "native project inspection constituent lacks its receipt catalog identity",
@@ -166,7 +166,7 @@ fn prepare_project_registry_source_authorities_inner(
                 let catalogs = match artifact_kind {
                     oven_store::store::OvenArtifactKind::DirectRustcPlan => {
                         let packages =
-                            serde_json::from_slice::<oven_rustc::rustc::OvenRustcArtifactManifest>(&selected.payload)
+                            serde_json::from_slice::<oven_rustc::rustc::OvenRustcArtifactManifest>(selected.payload())
                                 .map_err(|error| {
                                     CliError::failure(format!(
                                         "project inspection direct-plan constituent is invalid: {error}"
@@ -174,18 +174,17 @@ fn prepare_project_registry_source_authorities_inner(
                                 })?
                                 .registry_sources;
                         vec![ResolvedSourceCatalog {
-                            root: selected.artifact_root.clone(),
+                            root: selected.artifact_root().to_path_buf(),
                             packages,
                         }]
                     }
                     oven_store::store::OvenArtifactKind::ProjectPayload => {
-                        let payload =
-                            serde_json::from_slice::<oven_cargo_compat::OvenProjectExtensionPayload>(&selected.payload)
-                                .map_err(|error| {
-                                    CliError::failure(format!(
-                                        "project inspection extension constituent is invalid: {error}"
-                                    ))
-                                })?;
+                        let payload = serde_json::from_slice::<oven_cargo_compat::OvenProjectExtensionPayload>(
+                            selected.payload(),
+                        )
+                        .map_err(|error| {
+                            CliError::failure(format!("project inspection extension constituent is invalid: {error}"))
+                        })?;
                         let base_identity = base_loaf_identity.as_deref().ok_or_else(|| {
                             CliError::failure("project inspection extension constituent omitted its release Loaf")
                         })?;
@@ -213,7 +212,7 @@ fn prepare_project_registry_source_authorities_inner(
                             .collect();
                         vec![
                             ResolvedSourceCatalog {
-                                root: selected.artifact_root.clone(),
+                                root: selected.artifact_root().to_path_buf(),
                                 packages: extension_packages,
                             },
                             ResolvedSourceCatalog {
@@ -360,7 +359,7 @@ fn prepare_project_test_dependency_plan(
             }
         };
         let selected = authority.stored_constituents.remove(stored_index);
-        let admitted = if selected.manifest.domain == "sdk-native-consumer-plan" {
+        let admitted = if selected.manifest().domain == "sdk-native-consumer-plan" {
             native_sdk_context
                 .map(|context| context.owners_for_receipt(&receipt))
                 .transpose()?

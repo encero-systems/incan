@@ -160,7 +160,7 @@ fn reuse_native(
         |_, _| true,
     )?;
     for candidate in candidates {
-        let stored: StoredNativeOutput = serde_json::from_slice(&candidate.payload).map_err(recipe_error)?;
+        let stored: StoredNativeOutput = serde_json::from_slice(candidate.payload()).map_err(recipe_error)?;
         if stored.record.inputs != *expected || stored.environment != *environment {
             continue;
         }

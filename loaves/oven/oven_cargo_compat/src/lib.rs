@@ -1729,8 +1729,8 @@ fn select_existing_project_extension_identity(
     )?;
     let mut identities = Vec::new();
     for candidate in candidates {
-        let identity = candidate.manifest.identity;
-        let payload = serde_json::from_slice::<OvenProjectExtensionPayload>(&candidate.payload).map_err(|error| {
+        let identity = candidate.manifest().identity.clone();
+        let payload = serde_json::from_slice::<OvenProjectExtensionPayload>(candidate.payload()).map_err(|error| {
             OvenLegacyCargoError::Plan(format!(
                 "stored project extension candidate {identity} has an invalid payload: {error}"
             ))
@@ -2387,8 +2387,8 @@ fn select_compiler_test_suite_identity(
     )?;
     let mut identities = Vec::new();
     for candidate in candidates {
-        let identity = candidate.manifest.identity;
-        let payload = serde_json::from_slice::<OvenCompilerTestSuitePayload>(&candidate.payload).map_err(|error| {
+        let identity = candidate.manifest().identity.clone();
+        let payload = serde_json::from_slice::<OvenCompilerTestSuitePayload>(candidate.payload()).map_err(|error| {
             OvenLegacyCargoError::Plan(format!(
                 "stored compiler-suite candidate {identity} has an invalid payload: {error}"
             ))

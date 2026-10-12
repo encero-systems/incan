@@ -115,13 +115,13 @@ pub(super) fn retain_inspection_snapshot(
     let owner = owners
         .pop()
         .ok_or_else(|| invalid_snapshot(output, "inspection owner selection returned no entry"))?;
-    if owner.manifest != snapshot.manifest || owner.payload != snapshot.payload.as_bytes() {
+    if owner.manifest() != &snapshot.manifest || owner.payload() != snapshot.payload.as_bytes() {
         return Err(invalid_snapshot(
             output,
             "retained metadata differs from the selected inspection owner",
         ));
     }
-    let request = snapshot_request(store, output, &owner.artifact_root)?;
+    let request = snapshot_request(store, output, owner.artifact_root())?;
     publication
         .materialized_files
         .extend(request.materialized_files.into_iter().map(|mut file| {

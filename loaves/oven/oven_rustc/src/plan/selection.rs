@@ -287,10 +287,10 @@ pub fn select_receipt_project_extension_execution_plan(
     let mut selected = selected
         .into_iter()
         .filter_map(|candidate| {
-            let payload = serde_json::from_slice::<OvenProjectExtensionPayload>(&candidate.payload).map_err(|error| {
+            let payload = serde_json::from_slice::<OvenProjectExtensionPayload>(candidate.payload()).map_err(|error| {
                 OvenPlanError::selection(format!(
                     "selected Oven project extension Loaf `{}` has an invalid payload: {error}",
-                    candidate.manifest.identity
+                    candidate.manifest().identity
                 ))
             });
             match payload {
@@ -333,7 +333,7 @@ pub fn select_receipt_project_extension_execution_plan(
     if selected.len() != 1 {
         let identities = selected
             .iter()
-            .map(|(candidate, _)| candidate.manifest.identity.as_str())
+            .map(|(candidate, _)| candidate.manifest().identity.as_str())
             .collect::<Vec<_>>()
             .join(", ");
         let first_payload = &selected[0].1;
@@ -342,7 +342,7 @@ pub fn select_receipt_project_extension_execution_plan(
             // Independent projects can therefore publish byte-identical extensions concurrently. They are
             // interchangeable; choose the stable content address rather than rejecting a correct shared closure as
             // ambiguous.
-            selected.sort_by(|(left, _), (right, _)| left.manifest.identity.cmp(&right.manifest.identity));
+            selected.sort_by(|(left, _), (right, _)| left.manifest().identity.cmp(&right.manifest().identity));
         } else {
             return Err(OvenPlanError::selection(format!(
                 "multiple distinct receipt-compatible Oven project extension Loafs are available: {identities}"
@@ -468,12 +468,12 @@ pub fn project_test_dependency_plan_from_constituent_with_native_owners(
     receipt: &OvenReceipt,
     admitted: Option<&super::shared::OvenSharedNativeOwners>,
 ) -> OvenPlanResult<OvenDirectRustcPlanSelection> {
-    if !project_inspection_constituent_matches_receipt(&selected.manifest, selected.manifest.kind, receipt) {
+    if !project_inspection_constituent_matches_receipt(selected.manifest(), selected.manifest().kind, receipt) {
         return Err(OvenPlanError::selection(
             "project inspection test dependency constituent changed kind, receipt, build unit, or intent",
         ));
     }
-    match selected.manifest.kind {
+    match selected.manifest().kind {
         OvenArtifactKind::DirectRustcPlan => {
             let (manifest, artifact_root, payload, lease) = selected.into_parts();
             let artifacts = serde_json::from_slice::<OvenRustcArtifactManifest>(&payload).map_err(|error| {
@@ -506,10 +506,10 @@ pub fn project_test_dependency_plan_from_constituent_with_native_owners(
             )))
         }
         OvenArtifactKind::ProjectPayload => {
-            let payload = serde_json::from_slice::<OvenProjectExtensionPayload>(&selected.payload).map_err(|error| {
+            let payload = serde_json::from_slice::<OvenProjectExtensionPayload>(selected.payload()).map_err(|error| {
                 OvenPlanError::selection(format!(
                     "project inspection test dependency constituent `{}` has an invalid project-extension payload: {error}",
-                    selected.manifest.identity
+                    selected.manifest().identity
                 ))
             })?;
             if payload.schema_version != OVEN_PROJECT_EXTENSION_PAYLOAD_SCHEMA_VERSION {

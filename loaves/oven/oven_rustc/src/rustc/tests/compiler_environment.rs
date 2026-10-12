@@ -250,7 +250,7 @@ fi
         super::super::rustc_sysroot(first.rustc())?.canonicalize()?,
         first.evidence.sysroot
     );
-    let first_identity = first.owner.manifest.identity.clone();
+    let first_identity = first.owner.manifest().identity.clone();
 
     // A warm Store compiler is the batch authority. A mutable ambient sysroot that still reports the same
     // host/toolchain must neither be rescanned nor silently replace the already admitted closure for a new
@@ -271,7 +271,7 @@ fi
     else {
         return Err("compatible compiler owner was not reused".into());
     };
-    assert_eq!(second.owner.manifest.identity, first_identity);
+    assert_eq!(second.owner.manifest().identity, first_identity);
     let inspection = store.inspect()?;
     assert_eq!(inspection.entries.len(), 1);
     assert!(inspection.active_lease_physical_bytes > 0);

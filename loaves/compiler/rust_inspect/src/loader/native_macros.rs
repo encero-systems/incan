@@ -137,14 +137,14 @@ fn select_native_macros_with_probe(
         let selected_store = entry.store.canonicalize()?;
         let owner = owners
             .iter()
-            .find(|(store, owner)| store == &selected_store && owner.manifest.identity == entry.identity)
+            .find(|(store, owner)| store == &selected_store && owner.manifest().identity == entry.identity)
             .map(|(_, owner)| owner)
             .ok_or_else(|| invalid(&path, "native macro owner was not selected"))?;
         owner
             .verify_proven_native_payload()
             .map_err(|error| invalid(&path, &format!("native macro owner is not verified: {error}")))?;
         let root_module = entry.root_module.canonicalize()?;
-        let source_root = owner.artifact_root.join("source").canonicalize()?;
+        let source_root = owner.artifact_root().join("source").canonicalize()?;
         let source_manifest = super::read_inspection_source_manifest(&source_root)?;
         let library = source_manifest.get("lib");
         let declared_module = source_root
@@ -155,10 +155,10 @@ fn select_native_macros_with_probe(
                     .unwrap_or("src/lib.rs"),
             )
             .canonicalize()?;
-        if owner.manifest.receipt_identity != entry.receipt_identity
-            || owner.manifest.domain != "sdk-source-unit-host"
-            || owner.manifest.intent.toolchain != compiler
-            || owner.manifest.intent.target != host
+        if owner.manifest().receipt_identity != entry.receipt_identity
+            || owner.manifest().domain != "sdk-source-unit-host"
+            || owner.manifest().intent.toolchain != compiler
+            || owner.manifest().intent.target != host
             || !root_module.starts_with(&source_root)
             || root_module != declared_module
             || library
@@ -175,8 +175,8 @@ fn select_native_macros_with_probe(
                 "native macro coordinates disagree with their source, receipt or toolchain owner",
             ));
         }
-        let output = owner.artifact_root.join(&entry.relative_path).canonicalize()?;
-        if !output.starts_with(owner.artifact_root.canonicalize()?) {
+        let output = owner.artifact_root().join(&entry.relative_path).canonicalize()?;
+        if !output.starts_with(owner.artifact_root().canonicalize()?) {
             return Err(invalid(&path, "native macro output escapes its retained owner"));
         }
         let mut matching = crates.iter_mut().filter(|record| {

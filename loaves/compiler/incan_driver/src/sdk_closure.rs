@@ -79,7 +79,7 @@ pub(crate) fn install_sdk_inspection_authority_from_selection(
     let selected = selection.owners.clone();
     let mut retained_roots = selected
         .iter()
-        .map(|owner| owner.artifact_root.join("source").canonicalize())
+        .map(|owner| owner.artifact_root().join("source").canonicalize())
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| CliError::failure(error.to_string()))?;
     retained_roots.sort();

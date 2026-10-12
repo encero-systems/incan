@@ -281,7 +281,7 @@ fn compile_local_native_facet_for_target_and_profile(
     let mut unit = prepare_local_unit(project, snapshot.path(), features, domain)?;
     let edges = selected_local_edges(&unit, closure)?;
     for (alias, index) in &edges {
-        if closure.units[*index].owner.manifest.intent.profile != profile {
+        if closure.units[*index].owner.manifest().intent.profile != profile {
             return Err(format!("local dependency {alias} does not match requested {profile} profile").into());
         }
     }
@@ -293,9 +293,9 @@ fn compile_local_native_facet_for_target_and_profile(
         if selected.binding.version != unit.binding.version
             || selected.binding.archive_digest != unit.binding.archive_digest
             || selected.binding.features != unit.binding.features
-            || selected.owner.manifest.intent.target != target
-            || selected.owner.manifest.intent.profile != profile
-            || selected.owner.manifest.intent.toolchain != rustc_identity(rustc)?
+            || selected.owner.manifest().intent.target != target
+            || selected.owner.manifest().intent.profile != profile
+            || selected.owner.manifest().intent.toolchain != rustc_identity(rustc)?
         {
             return Err(format!(
                 "local facet {} conflicts with an already selected binding",
@@ -357,7 +357,7 @@ fn compile_local_native_facet_for_target_and_profile(
         .iter()
         .map(|(name, index)| serde_json::json!({"crate": index, "name": name}))
         .collect();
-    let inspection = inspection_unit(&unit, &owner.artifact_root.join("source"), dependencies)?;
+    let inspection = inspection_unit(&unit, &owner.artifact_root().join("source"), dependencies)?;
     let label = format!("{} {} {domain} {profile}", unit.binding.loaf, unit.binding.version);
     closure.units.push(SdkCompiledUnit {
         binding: unit.binding,
@@ -940,7 +940,7 @@ mod tests {
             )?;
             let unit = &closure.units[0];
             results.push((
-                unit.owner.manifest.build_unit_identity.clone(),
+                unit.owner.manifest().build_unit_identity.clone(),
                 std::fs::read(&unit.output)?,
             ));
         }

@@ -75,10 +75,10 @@ pub(super) fn verify(
 fn verify_reproduced_receipt(owner: &OvenStoreExecutionPayload, receipt: &OvenReceipt) -> Result<(), Error> {
     owner.verify_proven_native_payload()?;
     receipt.verify_identity()?;
-    if owner.manifest.kind != OvenArtifactKind::Engine
-        || owner.manifest.receipt_identity != receipt.identity
-        || owner.manifest.build_unit_identity != receipt.build_unit_identity
-        || serde_json::to_value(&owner.manifest.intent)? != serde_json::to_value(&receipt.intent)?
+    if owner.manifest().kind != OvenArtifactKind::Engine
+        || owner.manifest().receipt_identity != receipt.identity
+        || owner.manifest().build_unit_identity != receipt.build_unit_identity
+        || serde_json::to_value(&owner.manifest().intent)? != serde_json::to_value(&receipt.intent)?
     {
         return Err("physical native recipe differs from its selected Engine owner".into());
     }
@@ -120,12 +120,12 @@ pub(super) fn record(alias: &str, unit: &SdkCompiledUnit) -> Result<SdkPhysicalN
         return Err("physical native edge has an invalid Rust extern alias".into());
     }
     verify_reproduced_receipt(&unit.owner, &unit.reproduced_receipt)?;
-    let admitted: SdkLockedUnit = serde_json::from_slice(&unit.owner.payload)?;
+    let admitted: SdkLockedUnit = serde_json::from_slice(unit.owner.payload())?;
     let mut destination = unit.native_artifact()?;
     destination.binding = destination.binding.identity_binding();
     let receipt = &unit.reproduced_receipt;
     if serde_json::to_value(admitted.identity_binding())? != serde_json::to_value(&destination.binding)?
-        || unit.owner.manifest.domain != format!("sdk-source-unit-{}", destination.binding.domain)
+        || unit.owner.manifest().domain != format!("sdk-source-unit-{}", destination.binding.domain)
         || destination.relative_path.contains(['/', '\\'])
         || receipt.identity != destination.receipt_identity
         || receipt.sources.build_unit_inputs.get("sdk-source-archive") != Some(&destination.binding.archive_digest)
@@ -137,7 +137,7 @@ pub(super) fn record(alias: &str, unit: &SdkCompiledUnit) -> Result<SdkPhysicalN
     }
     let store = unit
         .owner
-        .artifact_root
+        .artifact_root()
         .parent()
         .and_then(Path::parent)
         .and_then(Path::parent)

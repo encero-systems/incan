@@ -285,9 +285,9 @@ mod tests {
             unit_codegen: &[],
         };
         let product = super::prepare_link(&unit, &context, &receipt, &link, &[])?;
-        assert_eq!(product.owner.manifest.identity, entry.identity);
+        assert_eq!(product.owner.manifest().identity, entry.identity);
         assert_eq!(product.name, "shim");
-        let cached = product.owner.artifact_root.join("libshim.a");
+        let cached = product.owner.artifact_root().join("libshim.a");
         std::fs::remove_file(&cached)?;
         std::fs::write(&cached, b"corrupt native archive")?;
         assert!(super::prepare_link(&unit, &context, &receipt, &link, &[]).is_err());

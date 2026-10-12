@@ -266,7 +266,7 @@ impl SelectedNativeLoaf {
 
     /// Borrow the exact durable record coordinate under its held lease.
     pub fn identity(&self) -> &str {
-        &self.record_owner.manifest.identity
+        &self.record_owner.manifest().identity
     }
 
     /// Revalidate both original payloads and consumed native files on each physical handoff.
@@ -282,7 +282,10 @@ impl SelectedNativeLoaf {
     /// Return the native output only after revalidating its original held owner.
     pub fn output(&self) -> Result<PathBuf> {
         self.verify()?;
-        Ok(self.native_owner.artifact_root.join(&self.record.native.relative_path))
+        Ok(self
+            .native_owner
+            .artifact_root()
+            .join(&self.record.native.relative_path))
     }
 
     /// Borrow the verified complete native member inventory while retaining the original owner, excluding sources.
@@ -471,7 +474,7 @@ impl NativeLoafGraph {
             schema: SCHEMA.to_string(),
             source,
             native,
-            native_payload_digest: owner.manifest.payload.digest.clone(),
+            native_payload_digest: owner.manifest().payload.digest.clone(),
             recipe,
             dependencies,
         };
@@ -601,9 +604,9 @@ fn admit(
             .collect::<Vec<_>>();
         pending = BTreeSet::new();
         for owner in select_owners(store, &identities)? {
-            let record: NativeLoafRecord = serde_json::from_slice(&owner.payload).map_err(failed)?;
+            let record: NativeLoafRecord = serde_json::from_slice(owner.payload()).map_err(failed)?;
             pending.extend(record.dependencies.iter().map(|edge| edge.record_identity.clone()));
-            records.insert(owner.manifest.identity.clone(), (record, owner));
+            records.insert(owner.manifest().identity.clone(), (record, owner));
         }
     }
 
@@ -616,7 +619,7 @@ fn admit(
         .collect::<Vec<_>>();
     let native = select_owners(store, &identities)?
         .into_iter()
-        .map(|owner| (owner.manifest.identity.clone(), owner))
+        .map(|owner| (owner.manifest().identity.clone(), owner))
         .collect::<BTreeMap<_, _>>();
     let mut graph = NativeLoafGraph::default();
     let read_only = matches!(store, Store::Published(_));
@@ -805,12 +808,12 @@ fn verify_record_bindings(
     let payload = serde_json::to_vec(record).map_err(failed)?;
     let receipt = record_receipt(record, &payload)?;
     if record.schema != SCHEMA
-        || owner.manifest.kind != OvenArtifactKind::Engine
-        || owner.manifest.domain != DOMAIN
-        || owner.payload != payload
-        || owner.manifest.receipt_identity != receipt.identity
-        || owner.manifest.build_unit_identity != receipt.build_unit_identity
-        || owner.manifest.intent != receipt.intent
+        || owner.manifest().kind != OvenArtifactKind::Engine
+        || owner.manifest().domain != DOMAIN
+        || owner.payload() != payload
+        || owner.manifest().receipt_identity != receipt.identity
+        || owner.manifest().build_unit_identity != receipt.build_unit_identity
+        || owner.manifest().intent != receipt.intent
         || original_store(owner)? != original_store(native)?
     {
         return Err(refused(
@@ -848,16 +851,16 @@ fn verify_native_bindings(record: &NativeLoafRecord, owner: &OvenStoreExecutionP
     source_origin(&record.recipe)?;
     let source = &record.source;
     let native = &record.native;
-    let admitted_source: NativeLoafSource = serde_json::from_slice(&owner.payload).map_err(failed)?;
+    let admitted_source: NativeLoafSource = serde_json::from_slice(owner.payload()).map_err(failed)?;
     let source_input = source_binding_input(source)?;
-    if owner.manifest.kind != OvenArtifactKind::Engine
-        || owner.manifest.identity != native.identity
-        || owner.manifest.receipt_identity != native.receipt_identity
+    if owner.manifest().kind != OvenArtifactKind::Engine
+        || owner.manifest().identity != native.identity
+        || owner.manifest().receipt_identity != native.receipt_identity
         || record.recipe.identity != native.receipt_identity
-        || owner.manifest.domain != native.domain
-        || owner.manifest.build_unit_identity != record.recipe.build_unit_identity
-        || owner.manifest.intent != record.recipe.intent
-        || owner.manifest.payload.digest != record.native_payload_digest
+        || owner.manifest().domain != native.domain
+        || owner.manifest().build_unit_identity != record.recipe.build_unit_identity
+        || owner.manifest().intent != record.recipe.intent
+        || owner.manifest().payload.digest != record.native_payload_digest
         || source.loaf != record.recipe.project.name
         || source.version != record.recipe.project.version
         || admitted_source != *source
@@ -929,7 +932,7 @@ fn source_origin(recipe: &OvenReceipt) -> Result<NativeLoafOrigin> {
 /// Derive the actual canonical Store coordinate from an originally admitted owner, never a caller-provided path.
 fn original_store(owner: &OvenStoreExecutionPayload) -> Result<PathBuf> {
     owner
-        .artifact_root
+        .artifact_root()
         .parent()
         .and_then(Path::parent)
         .and_then(Path::parent)

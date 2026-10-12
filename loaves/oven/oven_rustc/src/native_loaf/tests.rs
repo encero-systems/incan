@@ -547,7 +547,7 @@ fn dev7_native_loaf_declaration_requires_defaults_and_admitted_manifest() -> Tes
         ["libfixture.rlib"]
     );
     replace_owned_fixture(
-        &unit.native_owner.artifact_root.join("source/loaf.toml"),
+        &unit.native_owner.artifact_root().join("source/loaf.toml"),
         b"[project]\nname='substituted'\n",
     )?;
     assert!(unit.plan_members("units/fixture").is_err());
@@ -974,7 +974,11 @@ fn dev7_native_loaf_missing_and_corrupt_owners_refuse_without_fallback() -> Test
     let installed = temp.path().join("missing-native-store");
     copy_tree(native.root(), &installed)?;
     let source_store = std::fs::canonicalize(native.root())?;
-    let entry = unit.native_owner.artifact_root.parent().ok_or("native entry missing")?;
+    let entry = unit
+        .native_owner
+        .artifact_root()
+        .parent()
+        .ok_or("native entry missing")?;
     std::fs::remove_dir_all(installed.join(entry.strip_prefix(&source_store)?))?;
     assert!(matches!(
         NativeLoafClosure::admit_published(
@@ -985,7 +989,7 @@ fn dev7_native_loaf_missing_and_corrupt_owners_refuse_without_fallback() -> Test
     ));
     let record_payload = unit
         .record_owner
-        .artifact_root
+        .artifact_root()
         .parent()
         .ok_or("record entry missing")?
         .join("payload");
@@ -996,7 +1000,7 @@ fn dev7_native_loaf_missing_and_corrupt_owners_refuse_without_fallback() -> Test
     let published_unit = published.graph.units.get(&identity).ok_or("published unit missing")?;
     let native_payload = unit
         .native_owner
-        .artifact_root
+        .artifact_root()
         .parent()
         .ok_or("native entry missing")?
         .join("payload");

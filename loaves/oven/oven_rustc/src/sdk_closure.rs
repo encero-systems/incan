@@ -391,7 +391,7 @@ fn compile_units(units: &[PreparedUnit], context: &CompileContext<'_>) -> Result
                                 .ok_or("compiled dependency has no inspection index")
                         })
                         .collect::<Result<Vec<_>, _>>()?;
-                    let inspection = inspection_unit(unit, &owner.artifact_root.join("source"), dependencies)?;
+                    let inspection = inspection_unit(unit, &owner.artifact_root().join("source"), dependencies)?;
                     inspection_indices.insert(index, selected_units.len());
                     selected_units.push(SdkCompiledUnit {
                         binding: unit.binding.clone(),
@@ -818,11 +818,12 @@ fn compile_unit(
     receipt = environment::bind_environment(&receipt, &plan.compile_environment)?;
     let native = native::prepare(unit, context, &receipt)?;
     for product in &native {
-        plan.native_search_paths.push(product.owner.artifact_root.clone());
+        plan.native_search_paths
+            .push(product.owner.artifact_root().to_path_buf());
         receipt = oven_store::receipt_with_build_unit_input(
             &receipt,
             format!("sdk-native:{}", product.name),
-            &product.owner.manifest.receipt_identity,
+            &product.owner.manifest().receipt_identity,
         )?;
     }
     if !native.is_empty() {
@@ -843,7 +844,7 @@ fn compile_unit(
     };
     let domain = format!("sdk-source-unit-{}", unit.binding.domain);
     if let Some(owner) = select_native_unit(store, &receipt, &domain)? {
-        return Ok((owner.artifact_root.join(&relative), true, owner, receipt));
+        return Ok((owner.artifact_root().join(&relative), true, owner, receipt));
     }
     // Successful raw outputs have no lifetime beyond durable publication. Concurrent producers get independent
     // staging directories; the canonical Store remains the single retained byte cache.
@@ -869,7 +870,7 @@ fn compile_unit(
         bake_trusted_direct_rustc_library(&request)?
     };
     let owner = publish_staged_unit(unit, store, &receipt, domain, result.output, &relative, directory)?;
-    Ok((owner.artifact_root.join(relative), result.reused, owner, receipt))
+    Ok((owner.artifact_root().join(relative), result.reused, owner, receipt))
 }
 
 /// A failed durable publication keeps its task-private output and original sourced error for inspection.
@@ -934,7 +935,7 @@ fn select_native_unit(
     }
     let owner = selected.pop();
     if let Some(owner) = &owner {
-        let _verified = store.select(&owner.manifest.identity)?;
+        let _verified = store.select(&owner.manifest().identity)?;
     }
     Ok(owner)
 }
@@ -1432,7 +1433,7 @@ impl SdkCompiledUnit {
     pub fn native_artifact(&self) -> Result<SdkNativeArtifact, Error> {
         let relative = self
             .output
-            .strip_prefix(&self.owner.artifact_root)?
+            .strip_prefix(self.owner.artifact_root())?
             .to_string_lossy()
             .replace('\\', "/");
         let file = self
@@ -1443,7 +1444,7 @@ impl SdkCompiledUnit {
             .ok_or("native SDK output is absent from its admitted artifact manifest")?;
         Ok(SdkNativeArtifact {
             binding: self.binding.clone(),
-            store_identity: self.owner.manifest.identity.clone(),
+            store_identity: self.owner.manifest().identity.clone(),
             receipt_identity: self.compiled_identity().to_string(),
             relative_path: relative,
             digest: file.digest.clone(),
@@ -1451,12 +1452,12 @@ impl SdkCompiledUnit {
     }
     /// Receipt identity binding source, dependencies, facts, compiler and profile.
     pub fn compiled_identity(&self) -> &str {
-        &self.owner.manifest.receipt_identity
+        &self.owner.manifest().receipt_identity
     }
 
     /// Content-addressed Oven store entry holding this unit's compiled output, the coordinate an asset archive packs.
     pub fn entry_identity(&self) -> &str {
-        &self.owner.manifest.identity
+        &self.owner.manifest().identity
     }
     /// Borrow the immutable selected binding.
     pub fn binding(&self) -> &SdkLockedUnit {
@@ -1468,7 +1469,7 @@ impl SdkCompiledUnit {
     }
     /// Return the source-only immutable root retained by this unit's execution lease.
     pub fn source_root(&self) -> PathBuf {
-        self.owner.artifact_root.join("source")
+        self.owner.artifact_root().join("source")
     }
 }
 
@@ -1575,7 +1576,7 @@ fn publish_native_loaf_units(
             });
         }
         // The native owner's payload carries the exact source selection. Do not promote mutable catalog edges.
-        let admitted: SdkLockedUnit = serde_json::from_slice(&unit.owner.payload)?;
+        let admitted: SdkLockedUnit = serde_json::from_slice(unit.owner.payload())?;
         if serde_json::to_value(admitted.identity_binding())? != serde_json::to_value(unit.binding.identity_binding())?
             || unit
                 .reproduced_receipt
@@ -1590,7 +1591,7 @@ fn publish_native_loaf_units(
         let native = NativeLoafReference {
             identity: artifact.store_identity,
             receipt_identity: artifact.receipt_identity,
-            domain: unit.owner.manifest.domain.clone(),
+            domain: unit.owner.manifest().domain.clone(),
             relative_path: artifact.relative_path,
             digest: artifact.digest,
         };
@@ -1644,7 +1645,7 @@ fn selected_native_bindings(
                 native: crate::native_loaf::NativeLoafReference {
                     identity: artifact.store_identity.clone(),
                     receipt_identity: artifact.receipt_identity.clone(),
-                    domain: unit.owner.manifest.domain.clone(),
+                    domain: unit.owner.manifest().domain.clone(),
                     relative_path: artifact.relative_path.clone(),
                     digest: artifact.digest.clone(),
                 },

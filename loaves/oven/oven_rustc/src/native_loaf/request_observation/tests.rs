@@ -232,8 +232,8 @@ fn dev7_native_request_observation_refuses_original_owner_corruption_and_substit
         .values()
         .find(|unit| unit.record().source.loaf == "unrelated")
         .ok_or("unrelated unit missing")?;
-    let record_payload = payload_path(&unit.record_owner.artifact_root)?;
-    let native_payload = payload_path(&unit.native_owner.artifact_root)?;
+    let record_payload = payload_path(unit.record_owner.artifact_root())?;
+    let native_payload = payload_path(unit.native_owner.artifact_root())?;
     let output = unit.output()?;
     for path in [&record_payload, &native_payload, &output] {
         let original = fs::read(path)?;
@@ -583,7 +583,7 @@ fn dev7_native_request_observation_registry_facts_edges_archives_and_pin() -> Te
     );
     let generated_path = unrelated
         .native_owner
-        .artifact_root
+        .artifact_root()
         .join("source/.oven-out/generated.rs");
     assert_eq!(fs::read(&generated_path)?, generated);
     replace_owned_fixture(&generated_path, b"pub fn value() -> u8 { 8 }\n")?;

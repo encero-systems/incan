@@ -2552,7 +2552,7 @@ pub(crate) fn verify_committed_release_policy_output(
     let held = oven_rustc::loaf::acquire_committed_release_store_member(output, &expected.label)
         .map_err(oven_error)?
         .ok_or_else(|| CliError::failure("committed release policy store member is missing"))?;
-    if held.payload.manifest.identity != expected.artifact_identity {
+    if held.payload.manifest().identity != expected.artifact_identity {
         return Err(CliError::failure(
             "committed release policy store member has the wrong artifact identity",
         ));
@@ -2561,14 +2561,14 @@ pub(crate) fn verify_committed_release_policy_output(
         .payload
         .original_native_receipt()
         .ok_or_else(|| CliError::failure("committed release policy ProjectOutput has no publisher receipt"))?;
-    let payload: OvenProjectOutputPayload = serde_json::from_slice(&held.payload.payload).map_err(|error| {
+    let payload: OvenProjectOutputPayload = serde_json::from_slice(held.payload.payload()).map_err(|error| {
         CliError::failure(format!(
             "committed release policy ProjectOutput payload is invalid: {error}"
         ))
     })?;
     let expected_target = expected_target
         .ok_or_else(|| CliError::failure("committed release policy member has no expected Rust target authority"))?;
-    validate_release_policy_project_output(&held.payload.manifest, &payload, receipt, expected_target)?;
+    validate_release_policy_project_output(held.payload.manifest(), &payload, receipt, expected_target)?;
     Ok(())
 }
 

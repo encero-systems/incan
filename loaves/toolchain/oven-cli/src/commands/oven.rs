@@ -1044,9 +1044,9 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
                     bake_planned_compiler_suite_workspace_libraries(
                         &shard.payload.workspace_libraries,
                         &shard.payload.artifact_closure,
-                        &shard.stored.manifest.intent,
+                        &shard.stored.manifest().intent,
                         &receipt,
-                        &shard.stored.artifact_root,
+                        shard.stored.artifact_root(),
                         &rustc,
                         &options.compiler_root,
                         &shard_output,
@@ -1060,9 +1060,9 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
                 let binary_outputs = bake_planned_compiler_suite_binaries(
                     &shard.payload.binary_targets,
                     &shard.payload.artifact_closure,
-                    &shard.stored.manifest.intent,
+                    &shard.stored.manifest().intent,
                     &receipt,
-                    &shard.stored.artifact_root,
+                    shard.stored.artifact_root(),
                     &rustc,
                     &options.compiler_root,
                     &shard_output,
@@ -1076,7 +1076,7 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
                 // A divided root runs one child per slice, each compiling and inventorying the root itself so
                 // that its slice is derived from the live inventory; every other root runs as one whole child.
                 let slices = case_slices
-                    .get(&shard.stored.manifest.identity)
+                    .get(&shard.stored.manifest().identity)
                     .map(|slices| slices.iter().map(|slice| Some(*slice)).collect::<Vec<_>>())
                     .unwrap_or_else(|| vec![None]);
                 for case_slice in slices {
@@ -1087,8 +1087,8 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
                     prepared_children.push(prepare_compiler_suite_child(
                         &shard.payload.target,
                         &shard.payload.artifact_closure,
-                        &shard.stored.manifest.intent,
-                        &shard.stored.artifact_root,
+                        &shard.stored.manifest().intent,
+                        shard.stored.artifact_root(),
                         &rustc,
                         &options.compiler_root,
                         &child_output,
@@ -2047,9 +2047,9 @@ fn select_compiler_suite_shards(
     let selected = store.select_payloads_for_execution(&identities).map_err(oven_error)?;
     let mut shards = Vec::with_capacity(references.len());
     for (reference, stored) in references.iter().zip(selected) {
-        if stored.manifest.kind != OvenArtifactKind::CompilerTestSuiteShard
-            || stored.manifest.build_unit_identity != receipt.build_unit_identity
-            || stored.manifest.intent != receipt.intent
+        if stored.manifest().kind != OvenArtifactKind::CompilerTestSuiteShard
+            || stored.manifest().build_unit_identity != receipt.build_unit_identity
+            || stored.manifest().intent != receipt.intent
         {
             return Err(CliError::failure(format!(
                 "schema-9 Oven compiler-suite shard `{}` is not authorized by the current compiler receipt",
@@ -2057,7 +2057,7 @@ fn select_compiler_suite_shards(
             )));
         }
         let payload =
-            serde_json::from_slice::<OvenCompilerTestSuiteShardPayload>(&stored.payload).map_err(|error| {
+            serde_json::from_slice::<OvenCompilerTestSuiteShardPayload>(stored.payload()).map_err(|error| {
                 CliError::failure(format!(
                     "stored Oven compiler-suite shard `{}` payload is invalid: {error}",
                     reference.identity
@@ -2131,9 +2131,9 @@ fn select_compiler_suite_foundations(
         .map_err(oven_error)?;
     let mut foundations = BTreeMap::new();
     for (reference, stored) in references.iter().zip(selected) {
-        if stored.manifest.kind != OvenArtifactKind::CompilerTestSuiteFoundation
-            || stored.manifest.build_unit_identity != receipt.build_unit_identity
-            || stored.manifest.intent != receipt.intent
+        if stored.manifest().kind != OvenArtifactKind::CompilerTestSuiteFoundation
+            || stored.manifest().build_unit_identity != receipt.build_unit_identity
+            || stored.manifest().intent != receipt.intent
         {
             return Err(CliError::failure(format!(
                 "schema-10 Oven compiler-suite foundation `{}` is not authorized by the current compiler receipt",
@@ -2141,7 +2141,7 @@ fn select_compiler_suite_foundations(
             )));
         }
         let payload =
-            serde_json::from_slice::<OvenCompilerTestSuiteFoundationPayload>(&stored.payload).map_err(|error| {
+            serde_json::from_slice::<OvenCompilerTestSuiteFoundationPayload>(stored.payload()).map_err(|error| {
                 CliError::failure(format!(
                     "stored Oven compiler-suite foundation `{}` payload is invalid: {error}",
                     reference.identity
@@ -2199,9 +2199,9 @@ fn select_compiler_suite_toolchain_data(
         .map_err(oven_error)?;
     let mut partitions = Vec::with_capacity(references.len());
     for (reference, stored) in references.iter().zip(selected) {
-        if stored.manifest.kind != OvenArtifactKind::CompilerTestSuiteToolchainData
-            || stored.manifest.build_unit_identity != receipt.build_unit_identity
-            || stored.manifest.intent != receipt.intent
+        if stored.manifest().kind != OvenArtifactKind::CompilerTestSuiteToolchainData
+            || stored.manifest().build_unit_identity != receipt.build_unit_identity
+            || stored.manifest().intent != receipt.intent
         {
             return Err(CliError::failure(format!(
                 "schema-13 Oven compiler-suite Loaf data `{}` is not authorized by the current compiler receipt",
@@ -2209,7 +2209,7 @@ fn select_compiler_suite_toolchain_data(
             )));
         }
         let payload =
-            serde_json::from_slice::<OvenCompilerTestSuiteToolchainDataPayload>(&stored.payload).map_err(|error| {
+            serde_json::from_slice::<OvenCompilerTestSuiteToolchainDataPayload>(stored.payload()).map_err(|error| {
                 CliError::failure(format!(
                     "stored Oven compiler-suite Loaf data `{}` payload is invalid: {error}",
                     reference.identity
@@ -2217,7 +2217,7 @@ fn select_compiler_suite_toolchain_data(
             })?;
         if payload.schema_version != OVEN_COMPILER_TEST_SUITE_TOOLCHAIN_DATA_SCHEMA_VERSION
             || payload.label != reference.label
-            || stored.manifest.materialized_files.is_empty()
+            || stored.manifest().materialized_files.is_empty()
         {
             return Err(CliError::failure(format!(
                 "stored Oven compiler-suite Loaf data `{}` does not match its index reference",
@@ -2252,7 +2252,7 @@ fn materialize_compiler_suite_toolchain_data(
     }
     let mut seen_paths = BTreeSet::new();
     for partition in partitions {
-        for file in &partition.stored.manifest.materialized_files {
+        for file in &partition.stored.manifest().materialized_files {
             if !seen_paths.insert(file.relative_path.clone()) {
                 return Err(CliError::failure(format!(
                     "schema-13 Oven compiler-suite Loaf partition `{}` overlaps another partition at `{}`",
@@ -2260,7 +2260,7 @@ fn materialize_compiler_suite_toolchain_data(
                 )));
             }
             let source = compiler_suite_file(
-                &partition.stored.artifact_root,
+                partition.stored.artifact_root(),
                 &file.relative_path,
                 &file.digest,
                 "Loaf data file",
@@ -2339,7 +2339,7 @@ fn compiler_suite_composed_artifact_plan(
             )));
         }
         roots.push(OvenTrustedRustcArtifactRoot {
-            artifact_root: &foundation.stored.artifact_root,
+            artifact_root: foundation.stored.artifact_root(),
             dependency_search_paths: &foundation.payload.artifact_closure.dependency_search_paths,
             native_search_paths: &foundation.payload.artifact_closure.native_search_paths,
             supporting_artifacts: &foundation.payload.artifact_closure.supporting_artifacts,
@@ -2723,10 +2723,10 @@ fn select_compiler_test_suite(
         .map_err(oven_error)?;
     let mut current_schema = Vec::new();
     for candidate in selected {
-        let payload = serde_json::from_slice::<OvenCompilerTestSuitePayload>(&candidate.payload).map_err(|error| {
+        let payload = serde_json::from_slice::<OvenCompilerTestSuitePayload>(candidate.payload()).map_err(|error| {
             CliError::failure(format!(
                 "stored Oven compiler suite {} has an invalid payload: {error}",
-                candidate.manifest.identity
+                candidate.manifest().identity
             ))
         })?;
         if payload.schema_version == OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION {
@@ -2744,7 +2744,7 @@ fn select_compiler_test_suite(
             "multiple current-schema Oven compiler test suites are prepared for one build unit: {}",
             current_schema
                 .iter()
-                .map(|entry| entry.manifest.identity.as_str())
+                .map(|entry| entry.manifest().identity.as_str())
                 .collect::<Vec<_>>()
                 .join(", ")
         ))),

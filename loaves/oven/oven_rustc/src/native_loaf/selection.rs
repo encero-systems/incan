@@ -337,7 +337,7 @@ fn source_declaration_bytes(
 fn source_declaration_member(
     owner: &oven_store::store::OvenStoreExecutionPayload,
 ) -> Result<(PathBuf, &oven_store::store::OvenArtifactMaterializedFileManifest)> {
-    let source_root = owner.artifact_root.join("source");
+    let source_root = owner.artifact_root().join("source");
     let source_metadata = std::fs::symlink_metadata(&source_root).map_err(failed)?;
     if !source_metadata.is_dir() || source_metadata.file_type().is_symlink() {
         return Err(refused(
@@ -349,7 +349,7 @@ fn source_declaration_member(
         .iter()
         .find(|member| member.relative_path == "source/loaf.toml")
         .ok_or_else(|| refused("native owner has no admitted source declaration"))?;
-    let path = owner.artifact_root.join(&member.relative_path);
+    let path = owner.artifact_root().join(&member.relative_path);
     if !std::fs::symlink_metadata(&path).map_err(failed)?.is_file() {
         return Err(refused("native source declaration is not a plain file"));
     }
