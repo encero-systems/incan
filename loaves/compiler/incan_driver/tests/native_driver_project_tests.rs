@@ -2157,6 +2157,56 @@ def main() -> None:
     )
 }
 
+/// A generic class combines a generic trait adoption and an alias that fills a required slot; its default runs
+/// for both concrete owner layouts without replacing the checked alias target or guessing an owner type.
+#[test]
+fn generic_class_trait_alias_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("generic-class-trait-alias")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"trait Read[T with Clone]:
+    def read(self) -> T: ...
+
+    def get(self) -> T:
+        return self.read()
+
+class Cell[U with Clone] with Read[int]:
+    pub value: int
+    pub witness: list[U]
+    read = fetch
+
+    def fetch(self) -> int:
+        return self.value
+
+def main() -> None:
+    integers = Cell[int](value=7, witness=[1])
+    words = Cell[str](value=9, witness=["kind"])
+    println(integers.read())
+    println(integers.get())
+    println(words.read())
+    println(words.get())
+"#,
+    )
+}
+
+/// A generic Index adopter and a Self-returning adopter dispatch their indexing hooks exactly as legacy does.
+#[test]
+fn generic_class_index_adoption_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("generic-class-index-adoption")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/index_trait_adoption.incn"
+        ),
+    )
+}
+
 /// Prove model owner layouts, independent method arguments, defaults, and source Debug names against legacy.
 #[test]
 fn type_parameter_model_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

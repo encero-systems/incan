@@ -90,6 +90,52 @@ def main() -> None:
     Ok(())
 }
 
+/// A generic class's checked alias fills a generic trait slot under the target body's identity.
+#[test]
+fn generic_class_trait_alias_retains_the_checked_slot() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        r#"trait Read[T with Clone]:
+    def read(self) -> T: ...
+
+    def get(self) -> T:
+        return self.read()
+
+class Cell[U with Clone] with Read[int]:
+    pub value: int
+    pub witness: list[U]
+    read = fetch
+
+    def fetch(self) -> int:
+        return self.value
+"#,
+        &["m", "generic_trait_alias"],
+    )?;
+    let [owner] = module.nominal_declarations.as_slice() else {
+        return Err("the generic class layout must be retained".into());
+    };
+    assert_eq!(owner.type_parameters, ["U"]);
+    let read = module
+        .trait_implementations
+        .iter()
+        .find(|record| record.method.declaration_name == "read")
+        .ok_or("the alias must fill the required trait slot")?;
+    assert_eq!(read.implementation.declaration_name, "fetch");
+    assert_eq!(read.owner, owner.canonical);
+    assert!(module.is_well_formed_trait_implementation(read));
+    let get = module
+        .trait_implementations
+        .iter()
+        .find(|record| record.method.declaration_name == "get")
+        .ok_or("the default must remain bound at the adoption's checked arguments")?;
+    assert_eq!(get.type_arguments.len(), 1);
+    assert_eq!(
+        get.type_arguments[0].argument,
+        IncanType::Primitive(IncanPrimitiveType::Int)
+    );
+    assert!(module.is_well_formed_trait_implementation(get));
+    Ok(())
+}
+
 /// Model binders remain ordered placeholders in layouts, receiver methods, and deferred default frames.
 #[test]
 fn model_owner_parameter_frames_are_retained() -> Result<(), Box<dyn std::error::Error>> {
