@@ -38,7 +38,14 @@ pub model SourceSpan:
 
 @derive(Clone, PartialEq)
 pub enum ListLeaf:
-    """Scalar, flat tuple, Copy function pointer, and exact retained nominal/carrier leaves; hash keys still require admitted Eq and Hash authority."""
+    """
+    Scalar, flat tuple, Copy function pointer, and exact retained nominal/carrier leaves; hash keys still require admitted Eq and Hash authority.
+
+    `List` and `Dict` are owned collection values held by another collection, such as a dictionary's list values or a
+    list's dictionaries. A list of lists keeps one leaf with a greater depth, so `List` never leads a `PlanType.List`.
+    A variant cannot hold its own type directly, so `List` holds its element leaf as the only item of a list, and
+    `Dict` holds its key and value leaves, in that order, as the two items of one.
+    """
 
     Int
     Float
@@ -52,6 +59,8 @@ pub enum ListLeaf:
     Decimal
     FrozenStr
     FunctionPointer(list[PlanType])
+    List(list[ListLeaf], int)
+    Dict(list[ListLeaf])
 
 
 @derive(Clone, PartialEq)
@@ -180,6 +189,8 @@ pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
         ListLeaf.Decimal => return PlanType.Decimal
         ListLeaf.FrozenStr => return PlanType.FrozenStr
         ListLeaf.FunctionPointer(signature) => return PlanType.FunctionPointer(signature)
+        ListLeaf.List(element, depth) => return PlanType.List(element[0], depth)
+        ListLeaf.Dict(entry) => return PlanType.Dict(entry[0], entry[1])
 
 
 pub def range_field_types() -> list[PlanType]:

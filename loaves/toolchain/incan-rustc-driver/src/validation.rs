@@ -127,6 +127,8 @@ enum Leaf {
     Unit,
     Decimal,
     FrozenStr,
+    /// An owned list or dictionary held by another collection, compared as that collection's own type.
+    Collection(Box<Scalar>),
 }
 
 impl Leaf {
@@ -150,6 +152,9 @@ impl Leaf {
             ListLeaf::Decimal => Leaf::Decimal,
             ListLeaf::FrozenStr => Leaf::FrozenStr,
             ListLeaf::FunctionPointer(signature) => Leaf::FunctionPointer(signature.iter().map(scalar).collect()),
+            ListLeaf::List(..) | ListLeaf::Dict(..) => {
+                Leaf::Collection(Box::new(scalar(&crate::plan::list_leaf_type(leaf.clone()))))
+            }
         }
     }
 }

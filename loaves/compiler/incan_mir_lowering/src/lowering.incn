@@ -4922,8 +4922,8 @@ pub def projected_element_read(
     """
     Copy the value the indexes, slices and element fields after `start` steps select out of `container`.
 
-    Each index clones its element and each slice copies a new list, so the container stays whole; a field of a copied
-    element is read from that copy.
+    Each index clones its element, or the value its key selects in a dictionary, and each slice copies a new list, so
+    the container stays whole; a field of a copied element is read from that copy.
     """
     mut place = container
     for slot in range(start, len(source.projection)):
@@ -4937,10 +4937,24 @@ pub def projected_element_read(
             PlaceElem.UnionMember(ty=_member) =>
                 place = read_element_field(builder, place, source.projection[slot], span)?
             _ =>
-                argument = list_index_operand(builder, source, slot, span)?
-                place = read_list_element(builder, place, argument, span)?
+                place = read_indexed_element(builder, place, source, slot, span)?
     ty = place_type(builder.locals, place)
-    return Ok(read_place(place, ty == PlanType.String or is_owned_list(ty) or is_nominal_type(ty), span))
+    owned = ty == PlanType.String or is_owned_list(ty) or is_nominal_type(ty) or is_owned_collection(ty)
+    return Ok(read_place(place, owned, span))
+
+
+def read_indexed_element(
+    mut builder: Builder,
+    place: Place,
+    source: &RustPlace,
+    slot: int,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Clone one list element, or the value one key selects in a dictionary, out of the place earlier steps reached."""
+    if is_collection(place_type(builder.locals, place)):
+        return read_dictionary_element(builder, place, source, slot, span)
+    argument = list_index_operand(builder, source, slot, span)?
+    return read_list_element(builder, place, argument, span)
 
 
 pub def read_list_element(
@@ -6184,6 +6198,18 @@ def dictionary_index_read(mut builder: Builder, source: &RustPlace, span: Source
     if len(source.projection) == 0:
         return Err("unsupported Body IR dictionary read without key")
     receiver = list_base_place(builder, source, span)?
+    output = read_dictionary_element(builder, receiver, source, 0, span)?
+    return projected_element_read(builder, source, output, 1, span)
+
+
+def read_dictionary_element(
+    mut builder: Builder,
+    receiver: Place,
+    source: &RustPlace,
+    slot: int,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Clone the value the key at projection `slot` selects, through legacy indexing and its missing-key error."""
     ty = place_type(builder.locals, receiver)
     types = collection_arguments(ty)
     if len(types) != 2:
@@ -6194,7 +6220,7 @@ def dictionary_index_read(mut builder: Builder, source: &RustPlace, span: Source
         PlanType.Unit => return Err("unsupported Body IR unit dictionary key lookup: legacy Display bound")
         _ => pass
     mut key = read_place(receiver, false, span)
-    match source.projection[0]:
+    match source.projection[slot]:
         PlaceElem.Index(index) =>
             key = value_operand(builder, index, span)?
         _ => return Err("unsupported Body IR dictionary slice or field projection")
@@ -6210,10 +6236,10 @@ def dictionary_index_read(mut builder: Builder, source: &RustPlace, span: Source
         output,
         span,
     )?
-    # A cloned nominal value is a new owner, like a cloned list element.
-    if is_nominal_type(types[1]):
+    # A cloned value that owns storage is a new owner, like a cloned list element; the final read moves it out.
+    if is_nominal_type(types[1]) or is_owned_list(types[1]) or is_owned_collection(types[1]):
         builder.owned.append(output.local)
-    return projected_element_read(builder, source, output, 1, span)
+    return Ok(output)
 
 
 def dictionary_index_assignment(

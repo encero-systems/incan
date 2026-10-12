@@ -106,7 +106,11 @@ def pair_layout(
 
 
 pub def collection_leaf(ty: PlanType) -> Result[ListLeaf, str]:
-    """Keep exact source nominal and intrinsic carrier identities alongside the existing primitive leaves."""
+    """
+    Keep exact source nominal and intrinsic carrier identities alongside the existing primitive leaves.
+
+    An owned list or dictionary held by another collection, such as a dictionary's list values, is a collection leaf.
+    """
     match ty:
         PlanType.Int => return Ok(ListLeaf.Int)
         PlanType.Float => return Ok(ListLeaf.Float)
@@ -120,4 +124,6 @@ pub def collection_leaf(ty: PlanType) -> Result[ListLeaf, str]:
         PlanType.Model(owner, name) => return Ok(ListLeaf.Model(owner, name))
         PlanType.Enum(owner, name) => return Ok(ListLeaf.Enum(owner, name))
         PlanType.FunctionPointer(signature) => return Ok(ListLeaf.FunctionPointer(signature))
+        PlanType.List(leaf, depth) => return Ok(ListLeaf.List([leaf], depth))
+        PlanType.Dict(key, value) => return Ok(ListLeaf.Dict([key, value]))
         _ => return Err("unsupported Body IR collection element representation")
