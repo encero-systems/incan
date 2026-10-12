@@ -88,3 +88,39 @@ fn discarded_local_trait_producer_retains_carrier() -> Result<(), Box<dyn std::e
     }
     Ok(())
 }
+
+/// SDK default adapter calls retain the concrete constructors emitted by legacy, without supplying their bodies.
+#[test]
+fn sdk_fallible_adapters_retain_concrete_carriers() -> Result<(), Box<dyn std::error::Error>> {
+    for source in [
+        include_str!(
+            "../../../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/fallible_iterator_take.incn"
+        ),
+        include_str!(
+            "../../../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_derives_collection_adapters.incn"
+        ),
+        include_str!(
+            "../../../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_derives_collection_adapters_with_imported_clone.incn"
+        ),
+    ] {
+        let module = build(source, &["m", "sdk_opaque"])?;
+        let body = body_named(&module, "main")?;
+        assert!(
+            !body
+                .locals
+                .iter()
+                .any(|local| matches!(&local.ty, IncanType::Generic { base, .. } if base == "FallibleIterator")),
+            "{}",
+            body.render_snapshot()
+        );
+        assert!(
+            body.named_type_identities
+                .values()
+                .any(|identity| identity.declaration_name.ends_with("FallibleIterator")
+                    && identity.kind == super::SemanticSourceTargetKind::Model),
+            "the checked concrete adapter owner must accompany its carrier: {}",
+            body.render_snapshot()
+        );
+    }
+    Ok(())
+}
