@@ -23,6 +23,13 @@ pub from generators import (
     filter_int_generator,
     filter_float_generator,
     filter_bool_generator,
+    count_generator,
+    sum_int_generator,
+    fold_int_generator,
+    any_int_generator,
+    all_int_generator,
+    find_int_generator,
+    for_each_int_generator,
 )
 pub from pattern_assertions import (
     missing_some,

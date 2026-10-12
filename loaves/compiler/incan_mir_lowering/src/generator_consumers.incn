@@ -1,0 +1,130 @@
+"""Generator consumers: `count`, `sum`, `fold`, `any`, `all`, `find` and `for_each` drain an owned generator."""
+
+from pub::incan_mir_plan import ListLeaf, Operand, Place, PlanType, SourceSpan
+from frame import Builder, value_type, external_call
+from generators import generator_shape, generator_element, generator_runtime_call
+from generator_adapters import adapter_callable
+from options import carrier_layout
+
+
+pub def is_generator_consumer(member: str) -> bool:
+    """Name the generator members that drain their receiver into one value."""
+    consumers = ["count", "sum", "fold", "any", "all", "find", "for_each"]
+    for name in consumers:
+        if member == f"Generator.{name}":
+            return true
+    return false
+
+
+pub def consumer_result(member: str) -> PlanType:
+    """Return the result a discarded consumer call still produces; `find`'s carrier comes from its destination."""
+    if member == "Generator.any" or member == "Generator.all":
+        return PlanType.Bool
+    if member == "Generator.for_each":
+        return PlanType.Unit
+    return PlanType.Int
+
+
+pub def generator_consumer(
+    mut builder: Builder,
+    member: str,
+    source: Operand,
+    arguments: list[Operand],
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Drain the owned source through the runtime consumer, which legacy's own iterator protocol implements."""
+    source_type = value_type(builder, source)?
+    match generator_shape(source_type):
+        Some((leaf, depth)) =>
+            if source_type != PlanType.Generator(leaf, depth):
+                return Err("unsupported Body IR borrowed generator consumer receiver")
+            if member == "Generator.count":
+                if len(arguments) != 0:
+                    return Err("invalid Body IR generator count arguments")
+                element = generator_element(leaf, depth)
+                require_result(builder, output, PlanType.Int)?
+                generator_runtime_call(
+                    builder,
+                    "count_generator",
+                    element,
+                    [source_type],
+                    PlanType.Int,
+                    [source],
+                    output,
+                    span,
+                )
+                return Ok(None)
+            if source_type != PlanType.Generator(ListLeaf.Int, 0):
+                return Err("unsupported Body IR generator consumer element outside int")
+            return int_consumer(builder, member, source, arguments, output, span)
+        None => return Err("unsupported Body IR generator consumer receiver")
+
+
+def int_consumer(
+    mut builder: Builder,
+    member: str,
+    source: Operand,
+    arguments: list[Operand],
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Drain an integer generator; each function value takes its items by value, as legacy's callable ABI does."""
+    generator = PlanType.Generator(ListLeaf.Int, 0)
+    if member == "Generator.sum":
+        if len(arguments) != 0:
+            return Err("invalid Body IR generator sum arguments")
+        return consume(builder, "sum_int_generator", [generator], PlanType.Int, [source], output, span)
+    if member == "Generator.fold":
+        if len(arguments) != 2 or value_type(builder, arguments[0])? != PlanType.Int:
+            return Err("unsupported Body IR generator fold arguments")
+        signature = [PlanType.Int, PlanType.Int, PlanType.Int]
+        combine = adapter_callable(builder, arguments[1], signature, span)?
+        parameters = [generator, PlanType.Int, PlanType.FunctionPointer(signature)]
+        return consume(
+            builder,
+            "fold_int_generator",
+            parameters,
+            PlanType.Int,
+            [source, arguments[0], combine],
+            output,
+            span,
+        )
+    if len(arguments) != 1:
+        return Err(f"invalid Body IR generator {member} arguments")
+    mut returns = PlanType.Bool
+    if member == "Generator.for_each":
+        returns = PlanType.Unit
+    signature = [PlanType.Int, returns]
+    callable = adapter_callable(builder, arguments[0], signature, span)?
+    parameters = [generator, PlanType.FunctionPointer(signature)]
+    if member == "Generator.find":
+        result = builder.locals[output.local].ty
+        _owner, declaration = carrier_layout(builder, result)?
+        if declaration.carrier != "Option" or declaration.variants[1].fields != [PlanType.Int]:
+            return Err("unsupported Body IR generator find carrier")
+        return consume(builder, "find_int_generator", parameters, result, [source, callable], output, span)
+    name = member.replace("Generator.", "")
+    return consume(builder, f"{name}_int_generator", parameters, returns, [source, callable], output, span)
+
+
+def consume(
+    mut builder: Builder,
+    name: str,
+    parameters: list[PlanType],
+    result: PlanType,
+    operands: list[Operand],
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Call one monomorphic runtime consumer into its checked destination."""
+    require_result(builder, output, result)?
+    external_call(builder, f"incan_native_runtime::{name}", parameters, result, operands, output, span)
+    return Ok(None)
+
+
+def require_result(builder: Builder, output: Place, result: PlanType) -> Result[None, str]:
+    """Refuse a consumer whose checked destination does not hold the runtime result."""
+    if builder.locals[output.local].ty != result:
+        return Err("unsupported Body IR generator consumer result type")
+    return Ok(None)

@@ -89,3 +89,38 @@ pub def filter_float_generator(values: Generator[float], predicate: (float) -> b
 pub def filter_bool_generator(values: Generator[bool], predicate: (bool) -> bool) -> Generator[bool]:
     """Keep the boolean items the predicate accepts, testing each when it is polled."""
     return (value for value in values if predicate(value))
+
+
+pub def count_generator[T with (Clone, Static)](values: Generator[T]) -> int:
+    """Count the remaining items, draining the generator."""
+    return values.count()
+
+
+pub def sum_int_generator(values: Generator[int]) -> int:
+    """Sum the remaining integer items, draining the generator."""
+    return values.sum()
+
+
+pub def fold_int_generator(values: Generator[int], initial: int, combine: (int, int) -> int) -> int:
+    """Combine the remaining integer items from `initial`, in order."""
+    return values.fold(initial, combine)
+
+
+pub def any_int_generator(values: Generator[int], predicate: (int) -> bool) -> bool:
+    """Report whether some integer item is accepted, drawing items only until the first one is."""
+    return values.any(predicate)
+
+
+pub def all_int_generator(values: Generator[int], predicate: (int) -> bool) -> bool:
+    """Report whether every integer item is accepted, drawing items only until the first one is not."""
+    return values.all(predicate)
+
+
+pub def find_int_generator(values: Generator[int], predicate: (int) -> bool) -> Option[int]:
+    """Return the first accepted integer item, drawing items only until it is found."""
+    return values.find(predicate)
+
+
+pub def for_each_int_generator(values: Generator[int], action: (int) -> None) -> None:
+    """Run the action on each remaining integer item, in order."""
+    values.for_each(action)

@@ -7,7 +7,12 @@ from generators import generator_shape, generator_element, generator_runtime_cal
 
 
 pub def is_generator_adapter(member: str) -> bool:
-    """Name the lazy generator members this module chains; `collect` consumes instead."""
+    """
+    Name the lazy generator members this module chains; consumers and `collect` drain instead.
+
+    The checker types the iterator protocol's other adapters as `Iterator` values, whose own members keep their
+    refusal, so only the generator's own `take`, `map` and `filter` chain here.
+    """
     return member == "Generator.take" or member == "Generator.map" or member == "Generator.filter"
 
 
@@ -15,22 +20,21 @@ pub def generator_adapter(
     mut builder: Builder,
     member: str,
     source: Operand,
-    argument: Operand,
+    arguments: list[Operand],
     output: Place,
     span: SourceSpan,
 ) -> Result[None, str]:
     """Chain one lazy adapter onto the owned source; nothing is drawn until a consumer polls the result."""
-    match generator_shape(value_type(builder, source)?):
-        Some((leaf, depth)) =>
-            source_type = PlanType.Generator(leaf, depth)
-            if member == "Generator.take":
-                return take_adapter(builder, source, source_type, argument, output, span)
-            if member == "Generator.filter":
-                return filter_adapter(builder, source, source_type, argument, output, span)
-            if member == "Generator.map":
-                return map_adapter(builder, source, source_type, argument, output, span)
-            return Err(f"unsupported Body IR generator Method {member}")
-        None => return Err("unsupported Body IR generator adapter receiver")
+    source_type = value_type(builder, source)?
+    _ = source_element(source_type)?
+    if len(arguments) != 1:
+        return Err(f"invalid Body IR generator {member} arguments")
+    argument = arguments[0]
+    if member == "Generator.take":
+        return take_adapter(builder, source, source_type, argument, output, span)
+    if member == "Generator.map":
+        return map_adapter(builder, source, source_type, argument, output, span)
+    return filter_adapter(builder, source, source_type, argument, output, span)
 
 
 def take_adapter(
@@ -132,7 +136,7 @@ def element_family(element: PlanType) -> Result[str, str]:
         _ => return Err("unsupported Body IR generator adapter element outside int, float and bool")
 
 
-def adapter_callable(
+pub def adapter_callable(
     mut builder: Builder,
     value: Operand,
     signature: list[PlanType],
