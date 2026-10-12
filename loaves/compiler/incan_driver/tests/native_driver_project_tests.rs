@@ -13246,3 +13246,13 @@ def main() -> None:
         b"10\n10\n2\n10\n20\n100\n",
     )
 }
+
+/// An override's own class-valued local does not require inherited receiver substitution.
+#[test]
+fn own_class_override_local_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "own-class-override-local",
+        "class Base:\n    pub n: int\n    def score(self) -> int:\n        return self.n\n    def report(self) -> int:\n        return self.score()\n\nclass Child extends Base:\n    def score(self) -> int:\n        other = Child(n=9)\n        return self.n + other.n\n\ndef main() -> None:\n    println(Child(n=1).report())\n    println(Base(n=2).report())\n",
+        b"10\n2\n",
+    )
+}

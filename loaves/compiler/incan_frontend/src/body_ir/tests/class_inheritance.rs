@@ -1,6 +1,11 @@
 //! Checked inheritance ownership and dispatch retained separately from original source bodies.
 
 use super::{IncanType, build};
+use incan_semantics_core::SymbolOrigin;
+use incan_semantics_core::executable_representation::{
+    CoverageReason, DeclarationCoverage, SurfaceReader, build_surface,
+};
+use std::collections::BTreeSet;
 
 const SOURCE: &str = "class Base:\n  pub root: int\n  def score(self) -> int:\n    return self.root\n\nclass Child extends Base:\n  pub child: int\n  def score(self) -> int:\n    return self.root + self.child\n\nclass Leaf extends Child:\n  pub leaf: int\n  def read(self) -> int:\n    return self.score() + self.leaf\n";
 
@@ -126,12 +131,6 @@ fn malformed_class_inheritance_is_rejected() -> Result<(), Box<dyn std::error::E
 /// Source-local inheritance remains explicitly uncovered by package publication until its complete closure is proven.
 #[test]
 fn inherited_class_package_publication_is_uncovered() -> Result<(), Box<dyn std::error::Error>> {
-    use incan_semantics_core::SymbolOrigin;
-    use incan_semantics_core::executable_representation::{
-        CoverageReason, DeclarationCoverage, SurfaceReader, build_surface,
-    };
-    use std::collections::BTreeSet;
-
     let mut module = build(SOURCE, &["inheritance_publication"])?;
     let mut child = module
         .nominal_declarations
