@@ -78,7 +78,7 @@ from derived_methods import (
 )
 from result_combinators import result_combinator, lower_result_combinator
 # ---- The checked Body IR, read through Rust interop ----
-from rust::incan_semantics_core import IncanType as RustType, HirSourceSpan as RustSpan
+from rust::incan_semantics_core import IncanType as RustType, HirSourceSpan as RustSpan, generic
 from rust::incan_semantics_core::body_ir import (
     NominalDeclaration as RustNominalDeclaration,
     GlobalPlace as RustGlobalPlace,
@@ -2614,7 +2614,7 @@ def lower_library_method(
     for name in delegation.type_parameters:
         names.append(str(name))
     reference = library_receiver(module, builder, receiver_type, arguments[0], span)?
-    closed = library_receiver_arguments(module, builder, reference, len(names))?
+    closed = library_receiver_arguments(module, builder, reference, names)?
     mut parameters = [place_type(builder.locals, reference)]
     mut ordinary_types: list[PlanType] = []
     for index in range(1, len(delegation.parameters)):
@@ -2660,10 +2660,10 @@ def library_receiver_arguments(
     module: &BodyIrModule,
     builder: Builder,
     receiver: Place,
-    count: int,
+    names: list[str],
 ) -> Result[list[RustType], str]:
-    """Close an SDK method's owner binders only with its checked receiver type arguments."""
-    if count == 0:
+    """Close SDK owner binders from the retained receiver; a trait's Self binder takes that entire concrete owner."""
+    if len(names) == 0:
         return Ok([])
     mut owner = -1
     match place_type(builder.locals, receiver):
@@ -2672,8 +2672,14 @@ def library_receiver_arguments(
         PlanType.ModelMutRef(index, _name) =>
             owner = index
         _ => return Err("unsupported Body IR SDK method receiver type arguments")
-    arguments = instance_arguments(module, builder.nominals[owner])?
-    if len(arguments) == count:
+    declaration = builder.nominals[owner]
+    arguments = instance_arguments(module, declaration)?
+    if names == ["Self"]:
+        if len(arguments) == 0:
+            return Ok([RustType.Named(str(declaration.canonical.declaration_name))])
+        concrete: RustType = generic(str(declaration.canonical.declaration_name), arguments)
+        return Ok([concrete])
+    if len(arguments) == len(names):
         return Ok(arguments)
     return Err("unsupported Body IR SDK method owner type arguments")
 

@@ -14,7 +14,7 @@ use incan_semantics_core::{
 
 use super::{IncanType, TypeCheckInfo, bir, library_defaults, semantic_type_from_resolved};
 use crate::ast;
-use crate::symbols::{CallableParam, ResolvedType, SymbolKind, TypeInfo};
+use crate::symbols::{CallableParam, SymbolKind, TypeInfo};
 use crate::typechecker::stdlib_loader::StdlibAstCache;
 use incan_lang::lang::stdlib;
 
@@ -66,7 +66,7 @@ fn library_call(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Opt
             parameters.extend(ordinary);
             (
                 parameters,
-                self_as(&semantic_type_from_resolved(&result), &owner_type(&owner, &names)),
+                self_as(&result, &owner_type(&owner, &names)),
                 names,
                 defaults,
             )
@@ -234,8 +234,8 @@ pub(super) fn named_leaves(ty: &IncanType, names: &mut BTreeSet<String>) {
     }
 }
 
-/// Find the model, class or nongeneric newtype declaring this method and return its owner name, receiver parameter,
-/// ordinary parameters, result and owner binders. A static method has no receiver parameter.
+/// Find the model, class, nongeneric newtype or nongeneric trait declaring this method and return its owner name,
+/// receiver parameter, ordinary parameters, result and owner binders. A static method has no receiver parameter.
 ///
 /// The stdlib source records each method under its source module; rebased onto the consumer's package origin it must
 /// equal the checked identity exactly, and the owner type must itself be a declaration that SDK package owns.
@@ -243,7 +243,7 @@ fn method_signature(
     identity: &CanonicalSymbolId,
     path: &[String],
     cache: &mut StdlibAstCache,
-) -> Option<(String, Option<IncanType>, Vec<CallableParam>, ResolvedType, Vec<String>)> {
+) -> Option<(String, Option<IncanType>, Vec<CallableParam>, IncanType, Vec<String>)> {
     let source_origin = SymbolOrigin::Module(path.to_vec());
     let rebased = |declared: &CanonicalSymbolId| {
         let mut rebased = declared.clone();
@@ -284,8 +284,51 @@ fn method_signature(
             owner,
             receiver,
             method.params.clone(),
-            method.return_type.clone(),
+            semantic_type_from_resolved(&method.return_type),
             names.clone(),
+        ));
+    }
+    trait_method_signature(identity, path, cache)
+}
+
+/// Name a nongeneric SDK trait method by the trait that owns its checked identity, retaining Self as the trait
+/// item's single type parameter. Metadata validates the concrete receiver's implementation at the native call.
+fn trait_method_signature(
+    identity: &CanonicalSymbolId,
+    path: &[String],
+    cache: &mut StdlibAstCache,
+) -> Option<(String, Option<IncanType>, Vec<CallableParam>, IncanType, Vec<String>)> {
+    for (owner, declaration) in cache.list_traits(path) {
+        if !declaration.type_params.is_empty() {
+            continue;
+        }
+        let Some(method) = declaration.methods.get(&identity.declaration_name) else {
+            continue;
+        };
+        let Some(mut declared) = method.identity.clone() else {
+            continue;
+        };
+        if declared.origin != SymbolOrigin::Module(path.to_vec()) {
+            continue;
+        }
+        declared.origin = identity.origin.clone();
+        if declared != *identity || method.is_async || !method.type_params.is_empty() {
+            continue;
+        }
+        let mut owner_identity = cache.lookup_identity(path, &owner)?;
+        owner_identity.origin = identity.origin.clone();
+        cache.callable_source_identity(&owner_identity)?;
+        let self_type = IncanType::TypeVar("Self".to_owned());
+        let receiver = match method.receiver.as_ref()? {
+            ast::Receiver::Immutable => IncanType::Ref(Box::new(self_type.clone())),
+            ast::Receiver::Mutable => IncanType::RefMut(Box::new(self_type.clone())),
+        };
+        return Some((
+            owner,
+            Some(receiver),
+            method.params.clone(),
+            self_as(&semantic_type_from_resolved(&method.return_type), &self_type),
+            vec!["Self".to_owned()],
         ));
     }
     None
