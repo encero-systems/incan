@@ -5609,6 +5609,51 @@ fn direct_route_tuple_zip_matches_legacy() -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
+/// Prove zip over structured items byte-identical to legacy: a stored zip of a list of lists with a list of ints read
+/// through a parameter, a list of tuple lists zipped with a list of tuples and read through nested loops and fields,
+/// a zip over a list read out of another list and a tuple's list field, and a zip of text with lists.
+#[test]
+fn structured_zip_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("structured-zip")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def typed_zip_target(left: list[list[int]], right: list[int]) -> int:
+    pairs = zip(left, right)
+    mut total = 0
+    for typed_zip_left, typed_zip_right in pairs:
+        total += len(typed_zip_left) + typed_zip_right
+    return total
+
+def main() -> None:
+    println(typed_zip_target([[1, 2], [3]], [10, 20]))
+    left = [[(1, "one")], [(2, "two")]]
+    right = [("first", true), ("second", false)]
+    mut total = 0
+    for group, pair in zip(left, right):
+        for member in group:
+            total += member.0
+            println(member.1)
+        if pair.1:
+            total += 10
+        println(pair.0)
+    println(total)
+    groups = [[(1, "one"), (2, "two")]]
+    labels = ([true, false], 0)
+    for numbered, flag in zip(groups[0], labels.0):
+        println(numbered.1)
+        if flag:
+            println(numbered.0)
+    names = ["a", "bc"]
+    sizes = [[1], [2, 3]]
+    for name, size in zip(names, sizes):
+        println(f"{name} {len(size)}")
+"#,
+    )
+}
+
 /// Prove stored and immediate builtin enumeration, deferred yields, and tuple-string ownership against legacy.
 #[test]
 fn direct_route_enumerate_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
