@@ -82,6 +82,10 @@ pub(super) fn project_nominal(
     library: &str,
     public: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<(crate::body_ir::NominalDeclaration, BTreeSet<CanonicalSymbolId>), CoverageReason> {
+    // Local inheritance is executable only with the validated full source module; package closure is not admitted.
+    if source.class_inheritance.is_some() {
+        return Err(CoverageReason::UnsupportedConstruct);
+    }
     if source.fields.len() != source.field_types.len() || source.fields.len() != source.field_identities.len() {
         return Err(CoverageReason::UnresolvedReference);
     }

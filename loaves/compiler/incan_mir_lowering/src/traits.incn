@@ -235,6 +235,16 @@ pub def owner_method_index(
         Some(_identity) => pass
     identity = owner_identity(module, owner)?
     mut canonical = target.canonical.clone()
+    for declaration in module.nominal_declarations:
+        if declaration.canonical != identity:
+            continue
+        match declaration.class_inheritance:
+            None => pass
+            Some(inheritance) =>
+                for implementation in inheritance.methods:
+                    if Some(implementation.method) == canonical:
+                        canonical = Some(implementation.implementation.clone())
+                        break
     for implementation in module.trait_implementations:
         if implementation.owner == identity and Some(implementation.method) == canonical:
             canonical = Some(implementation.implementation)

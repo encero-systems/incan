@@ -255,6 +255,7 @@ fn library_newtype(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> 
     let module = incan_semantics_core::canonical_module_identity(identity)?;
     Some(bir::NominalDeclaration {
         native_item: String::new(),
+        class_inheritance: None,
         direct_declaration_id: CompilerNodeId::declaration_span(
             &module,
             identity.declaration_span.start,
@@ -320,6 +321,7 @@ fn library_nominal(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> 
     let module = incan_semantics_core::canonical_module_identity(identity)?;
     Some(bir::NominalDeclaration {
         native_item: bir::native_nominal_item(identity).unwrap_or_default(),
+        class_inheritance: None,
         direct_declaration_id: CompilerNodeId::declaration_span(
             &module,
             identity.declaration_span.start,

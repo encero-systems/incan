@@ -4,6 +4,7 @@ from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTarg
 from rust::incan_semantics_core::body_ir import BodyIrModule, Body, NominalDeclaration, LocalOrigin
 from symbols import type_component
 from type_parameters import substitute
+from class_inheritance import specialize_classes
 
 
 model NominalInstance:
@@ -67,6 +68,12 @@ def find_instance_arguments(ty: &RustType, base: str, name: str) -> Option[list[
 
 pub def specialize_nominals(module: &BodyIrModule) -> Result[BodyIrModule, str]:
     """Build a derived lowering context; validate the original module before calling this boundary."""
+    inherited = specialize_classes(module)?
+    return specialize_nominal_layouts(module, inherited)
+
+
+def specialize_nominal_layouts(module: &BodyIrModule, inherited: list[Body]) -> Result[BodyIrModule, str]:
+    """Close checked owner parameters after concrete inherited receiver frames are retained."""
     mut instances: list[NominalInstance] = []
     for body in module.bodies:
         for local in body.locals:
@@ -90,6 +97,8 @@ pub def specialize_nominals(module: &BodyIrModule) -> Result[BodyIrModule, str]:
             _ = collect_nominal_type(module, field, instances, lineage)?
         result.nominal_declarations.push(declaration.clone())
     result.bodies.clear()
+    for body in inherited:
+        result.bodies.push(body.clone())
     for body in module.bodies:
         match owner_template(module, body):
             None => result.bodies.push(body.clone())

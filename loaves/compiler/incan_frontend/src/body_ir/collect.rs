@@ -498,8 +498,9 @@ pub(super) fn collect_local_nominal_declarations(
                         .cloned()
                 })
                 .collect::<Option<Vec<_>>>()?;
-            Some(bir::NominalDeclaration {
+            let retained = bir::NominalDeclaration {
                 native_item: String::new(),
+                class_inheritance: None,
                 direct_declaration_id: CompilerNodeId::declaration_span(
                     module_identity,
                     declaration.span.start,
@@ -534,24 +535,7 @@ pub(super) fn collect_local_nominal_declarations(
                 field_default_body: None,
                 method_partial_defaults: Vec::new(),
                 display_method: checked_display_method(&declaration.node, type_info),
-                derives: if class_layout.is_some() {
-                    // The class's own derive selection, plus the serde derives its trait adoptions imply.
-                    let mut derives = type_info.declarations.class_derives.get(name)?.clone();
-                    for implied in type_info
-                        .declarations
-                        .class_adoption_derives
-                        .get(name)
-                        .into_iter()
-                        .flatten()
-                    {
-                        if !derives.contains(implied) {
-                            derives.push(implied.clone());
-                        }
-                    }
-                    derives
-                } else {
-                    type_info.declarations.body_ir_model_derives.get(name)?.clone()
-                },
+                derives: nominal_derives(name, class_layout.is_some(), type_info)?,
                 field_types: fields
                     .iter()
                     .map(|field| {
@@ -576,9 +560,63 @@ pub(super) fn collect_local_nominal_declarations(
                 named_type_identities: type_info.declarations.named_type_identities.clone(),
                 type_parameter_count: type_parameters.len(),
                 type_parameters,
-            })
+            };
+            retain_inherited_layout(retained, type_info)
         })
         .collect()
+}
+
+/// Retain the checked derive selection and adoption effects without changing legacy normalization tables.
+fn nominal_derives(name: &str, class: bool, type_info: &TypeCheckInfo) -> Option<Vec<String>> {
+    if !class {
+        return type_info.declarations.body_ir_model_derives.get(name).cloned();
+    }
+    let mut derives = type_info.declarations.class_derives.get(name)?.clone();
+    for implied in type_info
+        .declarations
+        .class_adoption_derives
+        .get(name)
+        .into_iter()
+        .flatten()
+    {
+        if !derives.contains(implied) {
+            derives.push(implied.clone());
+        }
+    }
+    Some(derives)
+}
+
+/// Replace only an inherited class's physical fields with the checked parent-first layout and ancestor identities.
+fn retain_inherited_layout(
+    mut retained: bir::NominalDeclaration,
+    type_info: &TypeCheckInfo,
+) -> Option<bir::NominalDeclaration> {
+    let Some(facts) = type_info.declarations.body_ir_class_inheritance.get(&retained.name) else {
+        return Some(retained);
+    };
+    let layout = type_info.declarations.class_layouts.get(&retained.name)?;
+    if facts.field_identities.len() != layout.fields.len()
+        || !layout.missing_fields.is_empty()
+        || !layout.unmaterializable_defaults.is_empty()
+        || layout.fields.iter().any(|field| field.default.is_some())
+    {
+        return None;
+    }
+    retained.fields = layout.fields.iter().map(|field| field.name.clone()).collect();
+    retained.field_identities = facts.field_identities.clone();
+    retained.field_types = layout
+        .fields
+        .iter()
+        .map(|field| parameter_types::checked_semantic_type(&field.ty, type_info))
+        .collect();
+    retained.field_public = layout
+        .fields
+        .iter()
+        .map(|field| field.visibility == ast::Visibility::Public)
+        .collect();
+    retained.class_inheritance = Some(facts.inheritance.clone());
+    retained.has_field_defaults = false;
+    Some(retained)
 }
 
 /// Retain a raw newtype's checked carrier as one canonical tuple slot, with declaration-owned placeholders that only
@@ -622,6 +660,7 @@ fn collect_plain_newtype(
     }
     Some(bir::NominalDeclaration {
         native_item: String::new(),
+        class_inheritance: None,
         direct_declaration_id: CompilerNodeId::declaration_span(module_identity, span.start, span.end),
         field_identities: vec![canonical.clone()],
         canonical,

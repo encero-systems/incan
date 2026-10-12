@@ -344,9 +344,13 @@ impl BodyIrModule {
                 && declaration.field_public == [true]
                 && declaration.field_aliases.iter().all(Option::is_none)
                 && !declaration.has_field_defaults
+                && declaration.class_inheritance.is_none()
                 && declaration.method_partial_defaults.is_empty();
         }
         if !self.are_well_formed_method_partial_defaults(declaration) {
+            return false;
+        }
+        if !self.class_inheritance_is_well_formed(declaration) {
             return false;
         }
 
@@ -369,14 +373,131 @@ impl BodyIrModule {
                 .fields
                 .iter()
                 .zip(&declaration.field_identities)
-                .all(|(name, identity)| {
+                .enumerate()
+                .all(|(index, (name, identity))| {
                     identity.namespace == SymbolNamespace::Member
                         && identity.kind == SemanticSourceTargetKind::Field
                         && identity.scope_discriminant.is_none()
                         && identity.origin == declaration.canonical.origin
-                        && declares_member(&declaration.canonical, identity)
+                        && (declares_member(&declaration.canonical, identity)
+                            || self.inherited_field_matches(declaration, index))
                         && identity.declaration_name == *name
                 })
+    }
+
+    /// Validate a bounded local class edge and complete ancestor-slot mapping without recursively validating bodies.
+    /// Original bodies are validated separately; nearest dispatch is checked against their retained owner spans.
+    fn class_inheritance_is_well_formed(&self, declaration: &NominalDeclaration) -> bool {
+        let Some(inheritance) = &declaration.class_inheritance else {
+            return true;
+        };
+        if declaration.canonical.kind != SemanticSourceTargetKind::Class
+            || declaration.type_parameter_count != 0
+            || declaration.has_field_defaults
+            || !declaration.method_partial_defaults.is_empty()
+        {
+            return false;
+        }
+        let Some(chain) = self.class_owner_chain(declaration) else {
+            return false;
+        };
+        let parent = chain[1];
+        if declaration.fields.len() < parent.fields.len()
+            || !parent.fields.iter().enumerate().all(|(index, name)| {
+                declaration.fields.get(index) == Some(name)
+                    && declaration.field_identities.get(index) == parent.field_identities.get(index)
+                    && declaration.field_types.get(index) == parent.field_types.get(index)
+                    && declaration.field_public.get(index) == parent.field_public.get(index)
+            })
+        {
+            return false;
+        }
+        let ancestors = &chain[1..];
+        let slots: BTreeSet<_> = self
+            .bodies
+            .iter()
+            .filter_map(|body| body.canonical.as_ref())
+            .filter(|method| {
+                method.kind == SemanticSourceTargetKind::Method
+                    && ancestors.iter().any(|owner| declares_member(&owner.canonical, method))
+            })
+            .collect();
+        if inheritance.methods.len() != slots.len() {
+            return false;
+        }
+        let mut recorded = BTreeSet::new();
+        inheritance.methods.iter().all(|record| {
+            slots.contains(&record.method)
+                && recorded.insert(&record.method)
+                && self.nearest_class_body_identity(&chain, &record.method) == Some(&record.implementation)
+                && !self.decorated_bindings.iter().any(|binding| {
+                    binding.original_body.canonical.as_ref() == Some(&record.method)
+                        || binding.original_body.canonical.as_ref() == Some(&record.implementation)
+                })
+        })
+    }
+
+    /// Resolve a local class's concrete-to-oldest owner chain, rejecting cycles, unretained parents and open layouts.
+    fn class_owner_chain<'a>(&'a self, declaration: &'a NominalDeclaration) -> Option<Vec<&'a NominalDeclaration>> {
+        let mut chain = vec![declaration];
+        let mut seen = BTreeSet::from([&declaration.canonical]);
+        let mut current = declaration;
+        while let Some(inheritance) = &current.class_inheritance {
+            let parent = self
+                .nominal_declarations
+                .iter()
+                .find(|owner| owner.canonical == inheritance.parent)?;
+            if !seen.insert(&parent.canonical)
+                || parent.canonical.kind != SemanticSourceTargetKind::Class
+                || parent.type_parameter_count != 0
+                || parent.canonical.origin != declaration.canonical.origin
+                || self.declaration_id_for_canonical(
+                    &parent.canonical,
+                    SymbolNamespace::OrdinaryLexical,
+                    SemanticSourceTargetKind::Class,
+                ) != Some(parent.direct_declaration_id.clone())
+            {
+                return None;
+            }
+            chain.push(parent);
+            current = parent;
+        }
+        Some(chain)
+    }
+
+    /// Check an inherited field at its exact parent-first position, preserving identity, type and visibility.
+    fn inherited_field_matches(&self, declaration: &NominalDeclaration, index: usize) -> bool {
+        let Some(chain) = self.class_owner_chain(declaration) else {
+            return false;
+        };
+        declaration.class_inheritance.is_some()
+            && chain[1..].iter().any(|parent| {
+                parent.field_identities.get(index) == declaration.field_identities.get(index)
+                    && parent.fields.get(index) == declaration.fields.get(index)
+                    && parent.field_types.get(index) == declaration.field_types.get(index)
+                    && parent.field_public.get(index) == declaration.field_public.get(index)
+            })
+    }
+
+    /// Select the nearest retained original method body for one ancestor slot, without minting or rewriting identities.
+    fn nearest_class_body_identity<'a>(
+        &'a self,
+        chain: &[&NominalDeclaration],
+        slot: &CanonicalSymbolId,
+    ) -> Option<&'a CanonicalSymbolId> {
+        for owner in chain {
+            for body in &self.bodies {
+                let Some(method) = &body.canonical else { continue };
+                if method.kind == SemanticSourceTargetKind::Method
+                    && method.declaration_name == slot.declaration_name
+                    && method.origin == owner.canonical.origin
+                    && declares_member(&owner.canonical, method)
+                {
+                    return Some(method);
+                }
+            }
+        }
+        None
     }
 
     /// Whether each method-partial frame of a model or class is a uniquely named binding inside its owner whose frame

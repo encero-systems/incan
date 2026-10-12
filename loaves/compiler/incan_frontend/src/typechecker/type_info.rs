@@ -981,6 +981,8 @@ pub struct MutableRustTypeArgumentProjection {
 /// Declaration-level binding rewrites and visibility facts consumed by lowering.
 #[derive(Debug, Default, Clone)]
 pub struct DeclarationArtifacts {
+    /// Body IR-only checked local inheritance and ordered ancestor field identities; legacy class layouts stay intact.
+    pub body_ir_class_inheritance: HashMap<String, BodyIrClassInheritance>,
     /// Body IR-only source trait slots adopted by checked derive bundles, keyed by the adopting declaration.
     pub body_ir_derived_methods: HashMap<String, Vec<BodyIrDerivedMethod>>,
     /// Checked payload types keyed by their source annotation span; direct lowering never resolves raw annotations.
@@ -1196,6 +1198,15 @@ pub struct DeclarationArtifacts {
     /// recorded too, for their trait defaults expanded into this module; the name keeps them apart from this module's
     /// parameters at the same offsets.
     pub mut_param_markers: HashMap<(usize, usize, String), bool>,
+}
+
+/// Checked local inheritance facts for direct execution, without changing the legacy class or symbol tables.
+#[derive(Debug, Clone)]
+pub struct BodyIrClassInheritance {
+    /// Canonical parent edge and nearest inherited source-method implementations.
+    pub inheritance: incan_semantics_core::body_ir::ClassInheritance,
+    /// Parent-first physical field identities, preserving each field's declaring class.
+    pub field_identities: Vec<CanonicalSymbolId>,
 }
 
 /// A checked source trait slot introduced by a derive bundle; this does not supply its executable body.

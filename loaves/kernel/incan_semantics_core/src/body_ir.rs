@@ -331,7 +331,8 @@ pub struct TraitTypeArgument {
 /// The exact local declaration and canonical field layout for one direct-executable model, class, or raw newtype.
 ///
 /// The record belongs to its declaring module and excludes enums. Nominal owners retain ordered type parameters for
-/// specialization from checked uses, including a newtype's underlying tuple slot. Nominal
+/// specialization from checked uses, including a newtype's underlying tuple slot. Inherited classes retain ancestor field
+/// ownership and nearest method dispatch separately from their physical layout. Nominal
 /// methods and adopted trait defaults remain separate canonical bodies with receiver origins. A consumer may load
 /// this canonical context from a package artifact. Its field order is the checked constructor-slot order; a direct
 /// runtime must compare it with [`ConstructorTarget::canonical_field_layout`] before applying
@@ -342,15 +343,19 @@ pub struct NominalDeclaration {
     /// declaration; consumers validate a nonempty item against its retained canonical owner before linking it.
     #[serde(default)]
     pub native_item: String,
+    /// Checked local class parent and nearest source method implementations; absent for noninherited carriers.
+    #[serde(default)]
+    pub class_inheritance: Option<ClassInheritance>,
     /// Exact source-local declaration identity, derived from the declaration source span.
     pub direct_declaration_id: CompilerNodeId,
     /// RFC 120 identity minted by the checker for this declaration.
     pub canonical: CanonicalSymbolId,
     /// Canonical source declaration name, checked again by consumers as a defense against malformed Body IR.
     pub name: String,
-    /// Canonical declared field names in declaration order; a plain newtype retains its sole tuple slot as `0`.
+    /// Canonical field names in checked constructor order, with inherited fields before local fields. A plain newtype
+    /// retains its sole tuple slot as `0`.
     pub fields: Vec<String>,
-    /// RFC 120 identities of [`Self::fields`] in the same declaration order. A newtype's sole generated tuple slot
+    /// RFC 120 identities of [`Self::fields`] in the same constructor order. A newtype's sole generated tuple slot
     /// retains its owner's identity, because that slot has no independent source declaration.
     ///
     /// The parallel layout is intentional: constructor binding and stored runtime values retain the compact field
@@ -438,6 +443,7 @@ pub fn native_builtin_nominal(identity: &CanonicalSymbolId) -> Option<NominalDec
     let module = native_nominal_module(identity)?;
     Some(NominalDeclaration {
         native_item,
+        class_inheritance: None,
         direct_declaration_id: CompilerNodeId::declaration_span(&module, 0, 0),
         canonical: identity.clone(),
         name: identity.declaration_name.clone(),
@@ -459,6 +465,24 @@ pub fn native_builtin_nominal(identity: &CanonicalSymbolId) -> Option<NominalDec
         type_parameters: Vec::new(),
         type_parameter_count: 0,
     })
+}
+
+/// A checked local class inheritance edge and the nearest implementations of its ancestor source method slots.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ClassInheritance {
+    /// The actual parent declaration identity; aliases cannot mint another class owner.
+    pub parent: CanonicalSymbolId,
+    /// Ancestor slots mapped to the implementation selected by checking, in canonical slot order.
+    pub methods: Vec<ClassMethodImplementation>,
+}
+
+/// One inherited source method slot and its nearest checked implementation for the concrete subclass.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ClassMethodImplementation {
+    /// Canonical ancestor method identity carried by checked calls of that slot.
+    pub method: CanonicalSymbolId,
+    /// Canonical source body to instantiate for this subclass; original bodies keep their own identities.
+    pub implementation: CanonicalSymbolId,
 }
 
 /// The deferred defaults of one same-owner method partial (`short = partial label(prefix="x")`), without a second

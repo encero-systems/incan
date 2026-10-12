@@ -42,6 +42,7 @@
 //! - [`symbols`](super::symbols) – symbol table and scope management
 //! - [`diagnostics`](super::diagnostics) – error types and pretty printing
 
+mod body_ir_classes;
 mod capturing_callables;
 mod check_decl;
 mod check_expr;
@@ -7222,6 +7223,7 @@ impl TypeChecker {
         self.record_trait_adoption_arguments_for_lowering(program);
         self.record_model_field_visibilities_for_lowering(program);
         self.record_class_layouts_for_lowering(program);
+        self.record_body_ir_class_inheritance(program);
         self.record_method_decorator_receiver_slots(program);
 
         // ---- RFC 023: validate rust.module() and @rust.extern rules ----

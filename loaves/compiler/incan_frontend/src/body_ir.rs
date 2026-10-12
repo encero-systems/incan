@@ -791,13 +791,18 @@ pub fn is_direct_replacement_plain_newtype(newtype: &ast::NewtypeDecl) -> bool {
 /// deferred computations models use, and
 /// builtin `@staticmethod` and `@classmethod` markers the checker's method facts, and method partials deferred preset
 /// frames and computed properties getter bodies, as on models; lint suppressions change nothing at run time.
-/// Inheritance remains refused; checked nongeneric method replacement chains retain originals and initialized bindings.
+/// Local concrete instance inheritance uses checked parent, field and nearest-dispatch facts; other inheritance stays
+/// refused. Checked nongeneric method replacement chains retain originals and initialized bindings.
 pub fn is_direct_replacement_checked_class(class: &ast::ClassDecl, type_info: &TypeCheckInfo) -> bool {
     has_checked_native_derives(
         &class.decorators,
         type_info.declarations.class_derives.get(&class.name),
         false,
-    ) && class.extends.is_none()
+    ) && (class.extends.is_none()
+        || type_info
+            .declarations
+            .body_ir_class_inheritance
+            .contains_key(&class.name))
         && has_direct_replacement_method_partials(
             &class.type_params,
             &class.methods,

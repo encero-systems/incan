@@ -1453,6 +1453,7 @@ mod tests {
         let mut module = module(vec![exported]);
         module.nominal_declarations.push(crate::body_ir::NominalDeclaration {
             native_item: String::new(),
+            class_inheritance: None,
             direct_declaration_id: CompilerNodeId::declaration_span("lib", 200, 299),
             canonical: type_id.clone(),
             name: "Record".into(),
@@ -1589,6 +1590,7 @@ mod tests {
         let mut input = module(vec![exported]);
         input.nominal_declarations.push(crate::body_ir::NominalDeclaration {
             native_item: String::new(),
+            class_inheritance: None,
             direct_declaration_id: CompilerNodeId::declaration_span("lib", 200, 299),
             canonical: published_type.clone(),
             name: "Record".into(),
