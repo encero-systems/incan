@@ -27,6 +27,9 @@ use crate::build::provider_compilation::{
     checked_packaged_provider_profiles, checked_provider_compilation_requirements,
     import_packaged_provider_loafs_for_explicit_bake,
 };
+use crate::build::retained_inputs::{
+    ExecutableDependencyInputs, ExecutableDependencyRequest, RetainedExecutableDependencies,
+};
 use crate::build::rust_extern::multi_file_output_identity;
 use crate::build::source_authority::{interop_bootstrap_receipt_path, prepared_oven_receipt_path};
 use crate::build::{
@@ -122,6 +125,45 @@ pub fn prepare_oven_project(
     oven_plan_mode: OvenProjectPlanMode,
     authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
 ) -> CliResult<OvenPreparedProject> {
+    prepare_oven_project_with_session(
+        file_path,
+        output_dir,
+        cargo_policy,
+        package_features,
+        sdk_profile_override,
+        cargo_features,
+        cargo_no_default_features,
+        cargo_all_features,
+        profile,
+        oven_plan_mode,
+        authority_context,
+        None,
+        None,
+    )
+    .map(|(prepared, _)| prepared)
+}
+
+/// Prepare through the same lifecycle with an owner-held dependency session, collecting current source modules.
+///
+/// Only the existing owner may supply retained context after reconciling dependency and compiler identity. Other
+/// callers discover through the ordinary session boundary; no second preparation or backend implementation exists.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn prepare_oven_project_with_session(
+    file_path: &str,
+    output_dir: Option<&str>,
+    cargo_policy: &CargoPolicy,
+    package_features: &FeatureSelection,
+    sdk_profile_override: Option<&str>,
+    cargo_features: Vec<String>,
+    cargo_no_default_features: bool,
+    cargo_all_features: bool,
+    profile: &str,
+    oven_plan_mode: OvenProjectPlanMode,
+    authority_context: Option<&mut OvenProjectBakeAuthorityContext>,
+    retained_session: Option<Arc<CompilationSession>>,
+    mut retained_dependencies: Option<RetainedExecutableDependencies>,
+) -> CliResult<(OvenPreparedProject, Option<ExecutableDependencyInputs>)> {
+    let retain_native_inputs = retained_session.is_some() && authority_context.is_none();
     let _invocation =
         tracing::trace_span!(target: "incan::invocation", "incan_driver::prepare_oven_project", input = file_path)
             .entered();
@@ -139,6 +181,7 @@ pub fn prepare_oven_project(
     // Phase laps of the prepare step, reported in the build report's `timings_ms` so a slow no-change rebuild can be
     // attributed to the stage that spent the time rather than to "prepare" as a whole (#1111).
     let mut prepare_timings = BTreeMap::new();
+    let mut phase = tracing::trace_span!(target: "incan::invocation", "incan_driver::prepare_stage", stage = "prepare_session_and_modules").entered();
     let mut lap = Instant::now();
     let normalized_file_path = if Path::new(file_path).is_absolute() {
         PathBuf::from(file_path)
@@ -149,7 +192,14 @@ pub fn prepare_oven_project(
     };
     let path = normalized_file_path.as_path();
     let inferred_project_root = resolve_project_root(path);
-    let compilation_session = CompilationSession::discover_for_oven(path, package_features, sdk_profile_override)?;
+    let compilation_session = match retained_session {
+        Some(session) => session,
+        None => Arc::new(CompilationSession::discover_for_oven(
+            path,
+            package_features,
+            sdk_profile_override,
+        )?),
+    };
     let manifest = compilation_session.manifest.clone();
     if let Some(manifest) = manifest.as_ref() {
         enforce_project_toolchain_constraint(manifest)?;
@@ -160,8 +210,10 @@ pub fn prepare_oven_project(
     let Some(main_module) = modules.last() else {
         return Err(CliError::failure("No modules found"));
     };
+    drop(phase);
     record_timing(&mut prepare_timings, "prepare_session_and_modules", lap);
     lap = Instant::now();
+    phase = tracing::trace_span!(target: "incan::invocation", "incan_driver::prepare_stage", stage = "prepare_backend_selection").entered();
     // ---- Backend selection (#986) — declared before codegen, refused visibly if unavailable ----
     let backend_selection = select_build_backend(&modules);
     let dep_modules = &modules[..modules.len() - 1];
@@ -173,12 +225,15 @@ pub fn prepare_oven_project(
     let package_feature_plan = compilation_session.package_feature_plan.clone();
     let library_manifest_index = compilation_session.library_manifest_index.clone();
     let mut project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
+    drop(phase);
     record_timing(&mut prepare_timings, "prepare_backend_selection", lap);
     lap = Instant::now();
+    phase = tracing::trace_span!(target: "incan::invocation", "incan_driver::prepare_stage", stage = "prepare_provider_plan").entered();
     let provider_plan = compilation_session.provider_plan_for_modules(&modules)?;
+    drop(phase);
     record_timing(&mut prepare_timings, "prepare_provider_plan", lap);
     lap = Instant::now();
-    let mut caller_owned_libraries = oven_caller_owned_libraries(&provider_plan, profile)?;
+    phase = tracing::trace_span!(target: "incan::invocation", "incan_driver::prepare_stage", stage = "prepare_resolve_dependencies").entered();
     let compiled_sdk_modules = CompiledSdkModules::from_provider_plan(&provider_plan);
     extend_requirements_with_provider_plan(&mut project_requirements, &provider_plan)?;
     ensure_loaf_stdlib_facets(&mut project_requirements.stdlib_facets, loaf_codegen_mode());
@@ -306,8 +361,12 @@ pub fn prepare_oven_project(
     let inspection_dependencies = resolved.dependencies.clone();
     merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
     let inline_path_dependencies = oven_source_inline_dependency_specs(&resolved, &source_inline_crates)?;
+    drop(phase);
     record_timing(&mut prepare_timings, "prepare_resolve_dependencies", lap);
     lap = Instant::now();
+    phase =
+        tracing::trace_span!(target: "incan::invocation", "incan_driver::prepare_stage", stage = "prepare_lock_policy")
+            .entered();
     // Strict flags are Incan lock promises, not authorization to re-enter the Cargo projection path. The Oven
     // validator recomputes the canonical fingerprint from read-only metadata and fails on a missing or stale lock.
     validate_oven_lock_policy(
@@ -319,24 +378,66 @@ pub fn prepare_oven_project(
         package_features,
         sdk_profile_override,
     )?;
+    drop(phase);
     record_timing(&mut prepare_timings, "prepare_lock_policy", lap);
     lap = Instant::now();
-    let native_admission_start = Instant::now();
-    let native_sdk_context = match authority_context.as_deref_mut() {
-        Some(context) => context.native_sdk_context()?,
-        None => super::NativeSdkCommandContext::discover()?,
+    phase = tracing::trace_span!(target: "incan::invocation", "incan_driver::prepare_stage", stage = "prepare_toolchain_identity").entered();
+    let native_request = serde_json::to_vec(&(
+        &project_root,
+        &normalized_file_path,
+        output_dir,
+        profile,
+        &cargo_features,
+        &project_requirements.stdlib_facets,
+    ))
+    .map_err(|error| CliError::failure(error.to_string()))?;
+    let native_request = ExecutableDependencyRequest {
+        configuration: oven_store::digest_bytes(&native_request),
+        dependencies: [
+            resolved.dependencies.clone(),
+            resolved.dev_dependencies.clone(),
+            incan_provider::requirements::semantic_sdk_path_dependencies(&project_requirements),
+        ],
     };
-    record_timing(
-        &mut prepare_timings,
-        "prepare_native_sdk_admission",
-        native_admission_start,
-    );
-    let mut oven_build_inputs = crate::build_unit::oven_build_unit_inputs_with_native_sdk(
-        &provider_plan,
-        &project_requirements,
-        &resolved,
-        native_sdk_context.as_deref(),
-    )?;
+    if retained_dependencies
+        .as_ref()
+        .is_some_and(|record| !record.inputs.matches(&native_request, &provider_plan))
+    {
+        retained_dependencies = None;
+    }
+    let mut dependency_inputs = None;
+    let (native_sdk_context, mut oven_build_inputs) = if let Some(retained) = &retained_dependencies {
+        tracing::trace!(target: "incan::invocation", decision = "reuse_native_dependency_inputs");
+        (retained.inputs.context.clone(), retained.inputs.build_inputs.clone())
+    } else {
+        let _native_admission_trace =
+            tracing::trace_span!(target: "incan::invocation", "incan_driver::native_dependency_admission").entered();
+        let native_admission_start = Instant::now();
+        let context = match authority_context.as_deref_mut() {
+            Some(context) => context.native_sdk_context()?,
+            None => super::NativeSdkCommandContext::discover()?,
+        };
+        let inputs = crate::build_unit::oven_build_unit_inputs_with_native_sdk(
+            &provider_plan,
+            &project_requirements,
+            &resolved,
+            context.as_deref(),
+        )?;
+        record_timing(
+            &mut prepare_timings,
+            "prepare_native_sdk_admission",
+            native_admission_start,
+        );
+        if retain_native_inputs {
+            dependency_inputs = Some(ExecutableDependencyInputs::new(
+                native_request,
+                Arc::clone(&provider_plan),
+                context.clone(),
+                inputs.clone(),
+            ));
+        }
+        (context, inputs)
+    };
     let mut active_runtime_foundation = if loaf_codegen_mode() {
         None
     } else {
@@ -389,11 +490,15 @@ pub fn prepare_oven_project(
             "active runtime dependency closure retained a compiler with the wrong toolchain identity".to_string(),
         ));
     }
+    let mut caller_owned_libraries =
+        oven_caller_owned_libraries(&provider_plan, profile, &rustc_target, &rustc_toolchain, None)?;
     if oven_plan_mode != OvenProjectPlanMode::InteropBootstrap {
         append_oven_interop_execution_build_inputs(&mut oven_build_inputs, manifest.as_ref(), &rustc_target)?;
     }
+    drop(phase);
     record_timing(&mut prepare_timings, "prepare_toolchain_identity", lap);
     lap = Instant::now();
+    phase = tracing::trace_span!(target: "incan::invocation", "incan_driver::prepare_stage", stage = "prepare_store_and_rust_inspect").entered();
     let oven_store = open_default_oven_store()?;
 
     #[allow(unused_mut)]
@@ -500,8 +605,12 @@ pub fn prepare_oven_project(
         rust_inspect_manifest_dir
     };
 
+    drop(phase);
     record_timing(&mut prepare_timings, "prepare_store_and_rust_inspect", lap);
     lap = Instant::now();
+    phase =
+        tracing::trace_span!(target: "incan::invocation", "incan_driver::prepare_stage", stage = "prepare_typecheck")
+            .entered();
     let analysis = compilation_session
         .analyze_modules(
             &modules,
@@ -544,8 +653,10 @@ pub fn prepare_oven_project(
     } else {
         vec![profile]
     };
+    drop(phase);
     record_timing(&mut prepare_timings, "prepare_typecheck", lap);
     lap = Instant::now();
+    phase = tracing::trace_span!(target: "incan::invocation", "incan_driver::prepare_stage", stage = "prepare_provider_profiles").entered();
     let checked_provider_profiles = checked_packaged_provider_profiles(
         &provider_plan,
         &requested_provider_profiles,
@@ -567,8 +678,10 @@ pub fn prepare_oven_project(
     generator.set_dependencies(resolved.dependencies);
     generator.set_dev_dependencies(resolved.dev_dependencies);
 
+    drop(phase);
     record_timing(&mut prepare_timings, "prepare_provider_profiles", lap);
     lap = Instant::now();
+    phase = tracing::trace_span!(target: "incan::invocation", "incan_driver::prepare_stage", stage = "prepare_codegen_and_generate").entered();
     let has_deps = !emitted_dep_modules.is_empty()
         || dep_modules
             .iter()
@@ -594,8 +707,11 @@ pub fn prepare_oven_project(
             .map_err(|error| CliError::failure(format!("Error generating project: {error}")))?;
         digest_output(&[rust_code.as_str()])
     };
+    drop(phase);
     record_timing(&mut prepare_timings, "prepare_codegen_and_generate", lap);
     lap = Instant::now();
+    phase = tracing::trace_span!(target: "incan::invocation", "incan_driver::prepare_stage", stage = "prepare_receipt")
+        .entered();
     let backend_receipt = finalize_backend_receipt(&backend_selection, backend_output_identity)?;
     // Not persisted here: `prepare_oven_project` runs for internal/dependency callers too (see
     // `prepare_oven_project` call sites), and real compilation (the Oven plan selection and rustc bake
@@ -643,8 +759,10 @@ pub fn prepare_oven_project(
     let receipt_path =
         prepared_oven_receipt_path(&project_root, oven_plan_mode, &receipt.intent.target, path, profile)?;
     write_receipt(&receipt, &receipt_path).map_err(|error| CliError::failure(error.to_string()))?;
+    drop(phase);
     record_timing(&mut prepare_timings, "prepare_receipt", lap);
     lap = Instant::now();
+    phase = tracing::trace_span!(target: "incan::invocation", "incan_driver::prepare_stage", stage = "prepare_plan_selection").entered();
     let required_registry_dependencies = format_oven_registry_dependency_requirements(&oven_plan_dependencies);
     // An imported package Loaf is sufficient for a consume-only command, and for an explicit bake of a consumer that
     // declares no direct registry root of its own. The explicit baker must otherwise publish the consumer's own
@@ -668,7 +786,21 @@ pub fn prepare_oven_project(
         None
     };
     let ordinary_plan_selected = packaged_provider_selection.is_none() && ordinary_native.is_some();
-    let plan_preparation = if let Some(selection) = packaged_provider_selection {
+    let retained_selection = if packaged_provider_selection.is_none()
+        && ordinary_native.is_none()
+        && retained_dependencies
+            .as_ref()
+            .is_some_and(|record| record.matches_receipt(&receipt))
+    {
+        retained_dependencies.take().map(|record| {
+            dependency_inputs = Some(record.inputs);
+            tracing::trace!(target: "incan::invocation", decision = "reuse_executable_dependency_plan");
+            record.selection
+        })
+    } else {
+        None
+    };
+    let plan_preparation = if let Some(selection) = retained_selection.or(packaged_provider_selection) {
         Some(OvenDirectRustcPlanPreparation {
             plan_selection: selection,
             materialization: OvenToolchainMaterialization::Reused,
@@ -709,8 +841,17 @@ pub fn prepare_oven_project(
             receipt_path.display(),
         ))
     })?;
+    drop(phase);
     record_timing(&mut prepare_timings, "prepare_plan_selection", lap);
+    if dependency_inputs.is_none() {
+        dependency_inputs = retained_dependencies.map(|record| {
+            let mut inputs = record.inputs;
+            inputs.require_plan_observation();
+            inputs
+        });
+    }
     lap = Instant::now();
+    phase = tracing::trace_span!(target: "incan::invocation", "incan_driver::prepare_stage", stage = "prepare_registry_validation").entered();
     let plan_selection = plan_preparation.plan_selection;
     let registry_authority = registry_leaf_authority_for_plan_selection(&plan_selection)?;
     let full_artifact_plan = plan_selection.artifact_plan();
@@ -762,7 +903,11 @@ pub fn prepare_oven_project(
         ));
     }
 
+    drop(phase);
     record_timing(&mut prepare_timings, "prepare_registry_validation", lap);
+    let _finalize =
+        tracing::trace_span!(target: "incan::invocation", "incan_driver::prepare_stage", stage = "prepare_finalize")
+            .entered();
     let report = BuildReportDraft {
         mode: BuildReportMode::Executable,
         profile: profile.to_string(),
@@ -810,29 +955,32 @@ pub fn prepare_oven_project(
                 .release_envelope_root()
                 .map_err(|error| CliError::failure(error.to_string()))?
             else {
-                return Ok(OvenPreparedProject {
-                    native_sdk_context,
-                    generator,
-                    project_root,
-                    entrypoint: normalized_file_path,
-                    provider_plan,
-                    receipt,
-                    plan_selection,
-                    runtime_foundation: None,
-                    release_generation_guard: active_runtime_foundation,
-                    materialization: plan_preparation.materialization,
-                    cargo_process_started: plan_preparation.cargo_process_started,
-                    rustc,
-                    crate_name: ProjectGenerator::rust_target_name(&project_name),
-                    rust_edition,
-                    caller_owned_libraries,
-                    report,
-                    prepare_timings,
-                    #[cfg(feature = "rust_inspect")]
-                    rust_inspect_manifest_dir: rust_inspect_manifest_dir
-                        .as_ref()
-                        .map(|workspace| workspace.manifest_dir().to_path_buf()),
-                });
+                return Ok((
+                    OvenPreparedProject {
+                        native_sdk_context,
+                        generator,
+                        project_root,
+                        entrypoint: normalized_file_path,
+                        provider_plan,
+                        receipt,
+                        plan_selection,
+                        runtime_foundation: None,
+                        release_generation_guard: active_runtime_foundation,
+                        materialization: plan_preparation.materialization,
+                        cargo_process_started: plan_preparation.cargo_process_started,
+                        rustc,
+                        crate_name: ProjectGenerator::rust_target_name(&project_name),
+                        rust_edition,
+                        caller_owned_libraries,
+                        report,
+                        prepare_timings,
+                        #[cfg(feature = "rust_inspect")]
+                        rust_inspect_manifest_dir: rust_inspect_manifest_dir
+                            .as_ref()
+                            .map(|workspace| workspace.manifest_dir().to_path_buf()),
+                    },
+                    None,
+                ));
             };
             let held = if let Some(held) = active_runtime_foundation.take()
                 && held_release_matches_selected_root(&held.release_root, &root)?
@@ -887,29 +1035,32 @@ pub fn prepare_oven_project(
             None
         }
     };
-    Ok(OvenPreparedProject {
-        native_sdk_context,
-        generator,
-        project_root,
-        entrypoint: normalized_file_path,
-        provider_plan,
-        receipt,
-        plan_selection,
-        runtime_foundation,
-        release_generation_guard,
-        materialization: plan_preparation.materialization,
-        cargo_process_started: plan_preparation.cargo_process_started,
-        rustc,
-        crate_name: ProjectGenerator::rust_target_name(&project_name),
-        rust_edition,
-        caller_owned_libraries,
-        report,
-        prepare_timings,
-        #[cfg(feature = "rust_inspect")]
-        rust_inspect_manifest_dir: rust_inspect_manifest_dir
-            .as_ref()
-            .map(|workspace| workspace.manifest_dir().to_path_buf()),
-    })
+    Ok((
+        OvenPreparedProject {
+            native_sdk_context,
+            generator,
+            project_root,
+            entrypoint: normalized_file_path,
+            provider_plan,
+            receipt,
+            plan_selection,
+            runtime_foundation,
+            release_generation_guard,
+            materialization: plan_preparation.materialization,
+            cargo_process_started: plan_preparation.cargo_process_started,
+            rustc,
+            crate_name: ProjectGenerator::rust_target_name(&project_name),
+            rust_edition,
+            caller_owned_libraries,
+            report,
+            prepare_timings,
+            #[cfg(feature = "rust_inspect")]
+            rust_inspect_manifest_dir: rust_inspect_manifest_dir
+                .as_ref()
+                .map(|workspace| workspace.manifest_dir().to_path_buf()),
+        },
+        dependency_inputs,
+    ))
 }
 
 #[cfg(test)]

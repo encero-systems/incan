@@ -8,7 +8,7 @@ use std::path::Path;
 use crate::backend::ProjectGenerator;
 use crate::build::package_loafs::{read_packaged_library_loaf_manifest, validated_packaged_library_loaf_profile};
 use crate::build::source_authority::project_bake_receipt_path;
-use crate::build::{OvenBakeProjectTarget, OvenProjectBakeAuthorityContext};
+use crate::build::{CheckedPackagedProviderProfile, OvenBakeProjectTarget, OvenProjectBakeAuthorityContext};
 use crate::error::{CliError, CliResult};
 use incan_frontend::library_manifest::published_layout::packaged_library_loaf_manifest_path;
 use incan_frontend::library_manifest::{
@@ -17,7 +17,7 @@ use incan_frontend::library_manifest::{
 use incan_frontend::library_manifest_index::{
     LibraryArtifactKind, LibraryArtifactMetadata, LibraryManifestIndexEntry, load_provider_dependency_artifact,
 };
-use incan_provider::ProviderPlan;
+use incan_provider::{ProviderPlan, ProviderProvenance};
 use oven_interop::{
     default_interop_execution_receipt_path, interop_execution_build_unit_inputs, load_interop_execution_receipt,
     validate_interop_execution_receipt,
@@ -89,18 +89,36 @@ pub fn has_caller_owned_project_libraries(provider_plan: &ProviderPlan) -> bool 
     })
 }
 
-/// Return the checked caller-owned `pub::` Rust libraries that an Oven consumer must attach directly.
+/// Return materialized ordinary package libraries that a consumer must attach directly.
+///
+/// Reserved namespace ownership changes name resolution, not the library link boundary. An ordinary standard
+/// publication uses its retained namespace issuer and sealed profile output through this same attachment path;
+/// legacy SDK providers remain in their selected native plan. Missing ordinary outputs refuse rather than entering
+/// the legacy caller-source rematerializer.
+/// When checked profiles are supplied, public dependencies also use their original sealed output path and digest;
+/// the consumer must not substitute a convenience rlib or rebuild that dependency into another native cohort.
 pub fn oven_caller_owned_libraries(
     provider_plan: &ProviderPlan,
     profile: &str,
+    target: &str,
+    toolchain: &str,
+    checked_profiles: Option<&[CheckedPackagedProviderProfile]>,
 ) -> CliResult<Vec<OvenCallerOwnedRustcLibrary>> {
     let mut libraries = Vec::new();
     for provider in provider_plan.active_records().filter(|provider| {
         matches!(
             provider.authority,
             incan_provider::NamespaceAuthority::ProjectDependency { .. }
-        )
+        ) || matches!(provider.provenance, ProviderProvenance::StandardPublication { .. })
     }) {
+        let ordinary_standard = matches!(provider.provenance, ProviderProvenance::StandardPublication { .. });
+        if ordinary_standard {
+            incan_frontend::provider::namespaces::SelectedProviderNamespace::from_plan(
+                provider_plan,
+                &provider.identity.stable_key(),
+            )
+            .map_err(CliError::failure)?;
+        }
         let artifact = provider.artifact.as_ref().ok_or_else(|| {
             CliError::failure(format!(
                 "Oven Alpha cannot link pub::{} because its generated library artifact is unavailable",
@@ -113,11 +131,56 @@ pub fn oven_caller_owned_libraries(
                 artifact.dependency_key
             )));
         }
-        let output = artifact.crate_root.join("oven").join(profile).join(format!(
-            "lib{}.rlib",
-            ProjectGenerator::rust_target_name(&artifact.manifest_name)
-        ));
+        let (output, expected_digest) = if ordinary_standard {
+            let manifest = read_packaged_library_loaf_manifest(artifact)?
+                .ok_or_else(|| CliError::failure("ordinary package has no sealed library handoff"))?;
+            let checked = validated_packaged_library_loaf_profile(artifact, &manifest, profile, target, toolchain)?
+                .ok_or_else(|| {
+                    CliError::failure(format!(
+                        "ordinary package has no compatible `{profile}` output for the requested target and toolchain"
+                    ))
+                })?;
+            (
+                artifact.crate_root.join(checked.library_relative_path),
+                Some(checked.library_digest),
+            )
+        } else if let Some(profiles) = checked_profiles {
+            let mut matching = profiles.iter().filter(|checked| {
+                checked.dependency_key == artifact.dependency_key
+                    && checked.artifact_root == artifact.crate_root
+                    && checked.profile == profile
+            });
+            let checked = matching.next().ok_or_else(|| {
+                CliError::failure(format!(
+                    "ordinary package pub::{} has no admitted `{profile}` output",
+                    artifact.dependency_key
+                ))
+            })?;
+            if matching.next().is_some() {
+                return Err(CliError::failure(
+                    "ordinary package has ambiguous checked output authority",
+                ));
+            }
+            (
+                artifact.crate_root.join(&checked.package.library_relative_path),
+                Some(checked.package.library_digest.clone()),
+            )
+        } else {
+            (
+                artifact.crate_root.join("oven").join(profile).join(format!(
+                    "lib{}.rlib",
+                    ProjectGenerator::rust_target_name(&artifact.manifest_name)
+                )),
+                None,
+            )
+        };
         if !output.is_file() {
+            if expected_digest.is_some() {
+                return Err(CliError::failure(format!(
+                    "ordinary package pub::{} is missing its admitted `{profile}` output",
+                    artifact.dependency_key
+                )));
+            }
             // `rematerialize_caller_owned_libraries` follows immediately after native-plan selection and rebuilds
             // the receipt-authorized generated source with that exact cohort. Do not turn a missing convenience
             // output into a Cargo fallback or a false prerequisite for a source that is already materialized.
@@ -129,8 +192,14 @@ pub fn oven_caller_owned_libraries(
                 output.display()
             ))
         })?);
+        if expected_digest.as_ref().is_some_and(|expected| expected != &digest) {
+            return Err(CliError::failure(format!(
+                "ordinary package pub::{} output differs from its admitted `{profile}` digest",
+                artifact.dependency_key
+            )));
+        }
         libraries.push(OvenCallerOwnedRustcLibrary {
-            crate_name: artifact.dependency_key.clone(),
+            crate_name: artifact.dependency_key.replace('-', "_"),
             output,
             digest,
             expose_extern: true,

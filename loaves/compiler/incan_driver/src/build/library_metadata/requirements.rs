@@ -278,13 +278,7 @@ impl CheckedLibraryRequirements {
 
     /// Require captured source coverage and complete ABI promises before ordinary native preparation or replay.
     /// Declared physical sources must still bind to the original native request; macro/provider execution is separate.
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "#1698 ordinary library publication: only its tests call it until the ordinary command cutover does"
-        )
-    )]
+    #[cfg(test)]
     pub(crate) fn require_source_inspection_native(&self) -> CliResult<()> {
         self.validate()?;
         self.native_demands
@@ -308,7 +302,13 @@ impl CheckedLibraryRequirements {
 
     /// Require complete loaded source imports before publishing or replaying successfully checked ordinary code.
     /// The retained metadata owner, current source and original native requests remain independent prerequisites.
-    pub(crate) fn require_ordinary_source_inspection_native(&self) -> CliResult<()> {
+    pub(crate) fn require_ordinary_source_inspection_native(
+        &self,
+        admitted: Option<(
+            &crate::build::library_dependencies::PreparedLibraryDependencies,
+            &incan_provider::ProviderPlan,
+        )>,
+    ) -> CliResult<()> {
         self.validate()?;
         if self.schema_version != 2
             || !self.rust_extern_paths.is_empty()
@@ -321,7 +321,7 @@ impl CheckedLibraryRequirements {
                 "ordinary checked source has unsupported native execution demands",
             ));
         }
-        self.native_demands.require_ordinary_source_inspection()
+        self.native_demands.require_ordinary_source_inspection(admitted)
     }
 
     /// Restore current source-derived requirements, then let the existing provider planner add current coordinates.
@@ -507,11 +507,22 @@ fn same_path(left: &Path, right: &Path) -> CliResult<bool> {
         == std::fs::canonicalize(right).map_err(|error| invalid(error.to_string()))?)
 }
 
-/// Require package-owned source provenance; outside modules require a separate explicit current source binding.
-fn source_relative(root: &Path, source: &Path) -> CliResult<String> {
-    let relative = source
-        .strip_prefix(root)
-        .map_err(|_| invalid("checked source is outside its package"))?;
+/// Bind an existing source to its canonical package owner, normalizing declaration coordinates and refusing escaping
+/// symlink targets.
+pub(crate) fn source_relative(root: &Path, source: &Path) -> CliResult<String> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| invalid(format!("cannot resolve checked package `{}`: {error}", root.display())))?;
+    let source = source
+        .canonicalize()
+        .map_err(|error| invalid(format!("cannot resolve checked source `{}`: {error}", source.display())))?;
+    let relative = source.strip_prefix(&root).map_err(|_| {
+        invalid(format!(
+            "checked source `{}` is outside its package `{}`",
+            source.display(),
+            root.display()
+        ))
+    })?;
     let relative = relative
         .to_str()
         .ok_or_else(|| invalid("checked source path is not UTF-8"))?

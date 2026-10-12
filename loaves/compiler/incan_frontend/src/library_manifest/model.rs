@@ -1165,11 +1165,10 @@ impl LibraryRustAbi {
         })
     }
 
-    /// Return metadata for one canonical Rust path.
+    /// Return metadata for the exact queried Rust surface. Definition identity does not transfer surface-specific trait
+    /// proofs.
     pub fn get(&self, canonical_path: &str) -> Option<&RustItemMetadata> {
-        self.items.iter().find(|item| {
-            item.canonical_path == canonical_path || item.definition_path.as_deref() == Some(canonical_path)
-        })
+        self.items.iter().find(|item| item.canonical_path == canonical_path)
     }
 }
 

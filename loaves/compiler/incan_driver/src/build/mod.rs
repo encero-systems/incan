@@ -9,6 +9,7 @@ pub mod backend_selection;
 pub mod bake;
 pub mod caller_facet;
 pub mod caller_owned;
+pub mod executable;
 mod file_freshness;
 pub mod inline_command;
 mod inspection_snapshot;
@@ -25,6 +26,7 @@ pub mod native_runtime_inputs;
 pub mod native_sdk;
 pub(crate) mod native_sdk_plan;
 pub mod native_source_output;
+mod retained_inputs;
 pub use native_sdk_plan::NativeSdkCommandContext;
 pub(crate) mod ordinary_library_native;
 pub(crate) mod ordinary_support;
@@ -145,7 +147,7 @@ pub struct OvenPreparedProject {
     pub rust_inspect_manifest_dir: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BuildCommandOptions {
     pub cargo_policy: CargoPolicy,
     pub package_features: FeatureSelection,
@@ -881,13 +883,17 @@ pub struct CompiledProviderMetadataInputs<'a> {
     pub checked_type_info_by_path: &'a BTreeMap<PathBuf, typechecker::TypeCheckInfo>,
 }
 
-/// Command-local memo for exact project source-authority nodes.
+/// Command-local source-authority memo with observation-guarded typed inputs retained by serial owners.
 ///
 /// One explicit project bake can prepare several targets and profiles that all reach the same provider roots. The
 /// memo avoids walking authored trees again within that command. Rust closure digests additionally have a persistent
-/// stat-guarded cache, checked against observed inputs on every command. Final publication uses a fresh digester.
+/// stat-guarded cache, checked against observed inputs on every command. Serial executable owners clear all final
+/// digests at the start of a request and retain only typed inputs that revalidate their observations. Final publication
+/// uses a fresh digester.
 #[derive(Default)]
 pub struct ProjectSourceAuthorityDigester {
+    /// Typed canonical lock inputs; unlike final source digests, these revalidate their observations on lookup.
+    retained_inputs: retained_inputs::RetainedProjectInputs,
     /// Only this root may omit its own Incan sources when hashing development dependency authority.
     pub development_root: Option<PathBuf>,
     pub project_digests: HashMap<PathBuf, String>,

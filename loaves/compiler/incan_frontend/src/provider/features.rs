@@ -20,7 +20,7 @@ use oven_model::manifest::{ExpandedProjectFeature, LOAF_MANIFEST_FILENAME, Proje
 use super::SdkInventory;
 
 /// Root feature selection supplied by the project manifest and current command.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FeatureSelection {
     /// Explicit root-package features requested by the command or environment.
     pub requested: BTreeSet<String>,

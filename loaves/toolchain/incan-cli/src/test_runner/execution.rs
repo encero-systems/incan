@@ -2388,15 +2388,6 @@ fn run_file_tests_batch_oven(
         Ok(plan) => plan,
         Err(error) => return failure(error.message),
     };
-    // A compiled `pub::` package is a caller-owned direct-Rustc artifact. Keep its prior direct output as an explicit
-    // precondition, then replace it below when a compiler-suite consumer selects a different complete Rustc cohort.
-    // The immutable native plan remains responsible only for compiler-owned SDK/runtime inputs; no missing or stale
-    // library authorizes a Cargo path.
-    let mut caller_owned_libraries =
-        match incan_driver::build::caller_owned::oven_caller_owned_libraries(&provider_plan, "debug") {
-            Ok(libraries) => libraries,
-            Err(error) => return failure(error.message),
-        };
     if let Err(error) =
         incan_provider::inventory::extend_requirements_with_provider_plan(&mut requirements, &provider_plan)
     {
@@ -2430,6 +2421,18 @@ fn run_file_tests_batch_oven(
     let rustc_toolchain = match rustc_identity(&rustc) {
         Ok(identity) => identity,
         Err(error) => return failure(error.to_string()),
+    };
+    // Attach package outputs only after the consumer's target and toolchain are known. Ordinary namespace owners
+    // use the same checked library boundary as public imports; an absent output never authorizes a Cargo path.
+    let mut caller_owned_libraries = match incan_driver::build::caller_owned::oven_caller_owned_libraries(
+        &provider_plan,
+        "debug",
+        &rustc_target,
+        &rustc_toolchain,
+        None,
+    ) {
+        Ok(libraries) => libraries,
+        Err(error) => return failure(error.message),
     };
     let mut build_unit_inputs = match incan_driver::build_unit::oven_build_unit_inputs_with_native_sdk(
         &provider_plan,

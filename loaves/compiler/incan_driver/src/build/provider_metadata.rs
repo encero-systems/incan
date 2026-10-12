@@ -1069,6 +1069,7 @@ pub model Nested:
         Ok(())
     }
 
+    /// Parser-only collection rejects unknown conditions even when their enclosing module is inactive.
     #[test]
     fn unprojected_provider_collection_rejects_unknown_features_in_inactive_modules()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -1086,7 +1087,7 @@ pub model Nested:
             "when feature(\"missing\"):\n    pub model Nested:\n        pub value: int\n",
         )?;
 
-        let session = crate::session::CompilationSession::discover_with_feature_selection(
+        let session = crate::session::CompilationSession::discover_for_collection_with_feature_selection(
             &entry_path,
             &FeatureSelection::default(),
         )?;

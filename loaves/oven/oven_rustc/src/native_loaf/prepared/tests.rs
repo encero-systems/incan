@@ -297,6 +297,17 @@ fn dev7_native_loaf_prepared_repeat_skips_preparation_and_unrelated_owners() -> 
     assert_eq!(repeat.report.current_registry_bindings, 0);
     assert_eq!(repeat.report.compiler_closure_checks, 1);
     assert!(repeat.report.compiled.is_empty());
+    let checks = crate::native_loaf::tests::InventoryChecks::default();
+    let retained = tracing::subscriber::with_default(checks.clone(), || repeat.reconcile(&fixture.request()))?
+        .ok_or("unchanged retained selection missed")?;
+    assert_eq!(retained.report.current_local_sources, 0);
+    assert_eq!(
+        checks.declarations(),
+        0,
+        "unchanged retained declarations must not be parsed again"
+    );
+    assert_eq!(retained.report.graph_verification.record_checks, 1);
+    assert!(retained.report.retained_reuse);
     Ok(())
 }
 
@@ -418,6 +429,7 @@ fn dev7_native_loaf_prepared_source_compiler_edits_and_restoration() -> TestResu
         fixture.rustc.clone(),
         fixture.root.path().join("toolchain/lib/rustlib/fixture-std.rlib"),
     ] {
+        let retained = prepare_with(&fixture.request(), || Err(refused("unchanged preparation")))?;
         let original = std::fs::read(&path)?;
         let modified = std::fs::metadata(&path)?.modified()?;
         let mut replacement = original.clone();
@@ -431,6 +443,7 @@ fn dev7_native_loaf_prepared_source_compiler_edits_and_restoration() -> TestResu
             .write(true)
             .open(&path)?
             .set_times(std::fs::FileTimes::new().set_modified(modified))?;
+        assert!(retained.reconcile(&fixture.request())?.is_none());
         let error = prepare_with(&fixture.request(), || Err(refused("current input preparation miss")))
             .err()
             .ok_or("changed current input accepted")?;
@@ -451,6 +464,102 @@ fn dev7_native_loaf_prepared_source_compiler_edits_and_restoration() -> TestResu
             .prepared_reuse
         );
     }
+    // ---- Source topology and metadata-only edits ----
+    let project = fixture.root.path().join("current");
+    let source = project.join("src/lib.rs");
+    let original = std::fs::read(&source)?;
+    for case in [
+        "add",
+        "remove",
+        "rename",
+        "empty_directory",
+        "atomic_same_content",
+        "directory_same_content",
+        "declaration_same_content",
+        "unrelated_sibling",
+    ] {
+        let retained = prepare_with(&fixture.request(), || Err(refused("unexpected cold preparation")))?
+            .reconcile(&fixture.request())?
+            .ok_or("initial retained selection missed")?;
+        assert_eq!(retained.report.current_local_sources, 0, "{case}");
+        let added = project.join("src/added.rs");
+        let empty = project.join("src/empty");
+        let backup = fixture.root.path().join("source-backup");
+        let declaration = project.join("loaf.toml");
+        match case {
+            "add" => std::fs::write(&added, "pub fn added() {}")?,
+            "remove" => std::fs::remove_file(&source)?,
+            "rename" => std::fs::rename(&source, &added)?,
+            "empty_directory" => std::fs::create_dir(&empty)?,
+            "atomic_same_content" => {
+                std::fs::write(&backup, &original)?;
+                std::fs::rename(&backup, &source)?;
+            }
+            "directory_same_content" => {
+                std::fs::rename(project.join("src"), &backup)?;
+                std::fs::create_dir(project.join("src"))?;
+                std::fs::write(&source, &original)?;
+            }
+            "declaration_same_content" => {
+                std::fs::write(&backup, std::fs::read(&declaration)?)?;
+                std::fs::rename(&backup, &declaration)?;
+            }
+            "unrelated_sibling" => std::fs::write(project.join("Cargo.toml"), "ignored sibling")?,
+            _ => return Err("unknown source topology control".into()),
+        }
+        let result = retained.reconcile(&fixture.request())?;
+        if matches!(case, "add" | "remove" | "rename") {
+            assert!(result.is_none(), "changed source topology accepted: {case}");
+        } else {
+            let selected = result.ok_or("metadata-only edit changed content identity")?;
+            assert_eq!(selected.report.preparation_calls, 0, "{case}");
+            assert_eq!(
+                selected.report.current_local_sources,
+                usize::from(case != "unrelated_sibling"),
+                "{case}"
+            );
+        }
+        match case {
+            "add" => std::fs::remove_file(added)?,
+            "remove" => std::fs::write(&source, &original)?,
+            "rename" => std::fs::rename(added, &source)?,
+            "empty_directory" => std::fs::remove_dir(empty)?,
+            "directory_same_content" => {
+                std::fs::remove_file(&source)?;
+                std::fs::remove_dir(project.join("src"))?;
+                std::fs::rename(backup, project.join("src"))?;
+            }
+            "unrelated_sibling" => std::fs::remove_file(project.join("Cargo.toml"))?,
+            _ => {}
+        }
+    }
+
+    // ---- Links and file/directory replacements must not inherit source authority ----
+    for linked in [false, true] {
+        let retained = prepare_with(&fixture.request(), || Err(refused("unexpected restored preparation")))?
+            .reconcile(&fixture.request())?
+            .ok_or("restored retained selection missed")?;
+        std::fs::remove_file(&source)?;
+        let target = fixture.root.path().join("linked-source.rs");
+        if linked {
+            std::fs::write(&target, &original)?;
+            std::os::unix::fs::symlink(&target, &source)?;
+        } else {
+            std::fs::create_dir(&source)?;
+        }
+        assert!(
+            !matches!(retained.reconcile(&fixture.request()), Ok(Some(_))),
+            "source type change accepted"
+        );
+        if linked {
+            std::fs::remove_file(&source)?;
+            std::fs::remove_file(target)?;
+        } else {
+            std::fs::remove_dir(&source)?;
+        }
+        std::fs::write(&source, &original)?;
+    }
+
     Ok(())
 }
 
@@ -637,6 +746,40 @@ fn dev7_native_loaf_prepared_local_current_candidate_ambiguity_refuses() -> Test
         .report
         .prepared_reuse
     );
+    // An unselected facet can become ambiguous without changing graph/lock bytes or any selected source.
+    let alternative = fixture.root.path().join("alternative/loaf.toml");
+    let original_alternative = std::fs::read_to_string(&alternative)?;
+    std::fs::write(
+        &alternative,
+        original_alternative.replace("name='child'", "name='other'"),
+    )?;
+    input["facets"]
+        .as_array_mut()
+        .ok_or("facets missing")?
+        .push(serde_json::json!({"project":"alternative", "features":["chosen"], "domain":"target"}));
+    std::fs::write(&fixture.graph, serde_json::to_vec(&input)?)?;
+    let current = Current::read(&fixture.request(), &mut NativeLoafConsumerReport::default())?;
+    write_hint(
+        &fixture
+            .output
+            .join("consumer-hints")
+            .join(format!("{}.json", current.key.replace(':', "-"))),
+        &Hint {
+            schema: SCHEMA.to_string(),
+            key: current.key,
+            roots,
+        },
+    )?;
+    let retained = prepare_with(&fixture.request(), || Err(refused("unselected facet preparation")))?;
+    std::fs::write(&alternative, original_alternative)?;
+    let error = retained
+        .reconcile(&fixture.request())
+        .err()
+        .ok_or("retained ambiguous facet accepted")?;
+    assert!(
+        error.to_string().contains("ambiguous selected bindings"),
+        "unexpected {error}"
+    );
     Ok(())
 }
 
@@ -772,7 +915,28 @@ fn dev7_native_loaf_prepared_registry_edges_features_and_corrupt_owner_refuse() 
             assert_eq!(report.index_git_processes, 11); // Capability, admission, eight file processes, listing.
         }
     }
+    let retained_parent = Arc::clone(repeat.closure.graph.units.get(&parent).ok_or("parent missing")?);
+    let retained = repeat
+        .reconcile(&fixture.request())?
+        .ok_or("unchanged selection missed")?;
+    assert!(retained.report.retained_reuse);
+    assert_eq!(retained.report.index_git_processes, 0);
+    assert_eq!(retained.report.index_file_requests, 0);
+    assert_eq!(retained.report.index_blob_reads, 0);
+    assert_eq!(retained.report.current_registry_bindings, 0);
+    assert_eq!(retained.report.graph_verification.edge_checks, 0);
+    assert_eq!(retained.report.preparation_calls, 0);
+    assert!(Arc::ptr_eq(
+        &retained_parent,
+        retained
+            .closure
+            .graph
+            .units
+            .get(&parent)
+            .ok_or("retained parent missing")?
+    ));
     for change in ["edges", "features"] {
+        let retained = prepare_with(&fixture.request(), || Err(refused("unchanged registry preparation")))?;
         let mut changed = lock.clone();
         if change == "edges" {
             changed["units"][1]["edges"][0]["dependency_key"] = serde_json::json!("forged_alias");
@@ -780,6 +944,7 @@ fn dev7_native_loaf_prepared_registry_edges_features_and_corrupt_owner_refuse() 
             changed["units"][0]["features"] = serde_json::json!(["unselected"]);
         }
         std::fs::write(fixture.root.path().join("lock.json"), serde_json::to_vec(&changed)?)?;
+        assert!(retained.reconcile(&fixture.request())?.is_none());
         let changed_current = Current::read(&fixture.request(), &mut NativeLoafConsumerReport::default())?;
         let path = fixture
             .output
@@ -800,10 +965,12 @@ fn dev7_native_loaf_prepared_registry_edges_features_and_corrupt_owner_refuse() 
             error.to_string().contains("requires preparation"),
             "unexpected refusal: {error}"
         );
+        std::fs::write(fixture.root.path().join("lock.json"), serde_json::to_vec(&lock)?)?;
     }
     std::fs::write(fixture.root.path().join("lock.json"), serde_json::to_vec(&lock)?)?;
     let original_graph = std::fs::read(&fixture.graph)?;
     for change in ["fact", "about"] {
+        let retained = prepare_with(&fixture.request(), || Err(refused("unchanged pinned preparation")))?;
         let mut manifest = toml::to_string(&manifests[1])?;
         if change == "fact" {
             manifest.push_str(&format!(
@@ -842,6 +1009,7 @@ fn dev7_native_loaf_prepared_registry_edges_features_and_corrupt_owner_refuse() 
                 &serde_json::json!({"index_commit":revision, "registry_lock":"lock.json", "facets":[]}),
             )?,
         )?;
+        assert!(retained.reconcile(&fixture.request())?.is_none());
         let changed = Current::read(&fixture.request(), &mut NativeLoafConsumerReport::default())?;
         let path = fixture
             .output
@@ -864,9 +1032,12 @@ fn dev7_native_loaf_prepared_registry_edges_features_and_corrupt_owner_refuse() 
             error.to_string().contains("requires preparation"),
             "unexpected {change} refusal: {error}"
         );
+        std::fs::write(&fixture.graph, &original_graph)?;
     }
     std::fs::write(&fixture.graph, original_graph)?;
+    let retained = prepare_with(&fixture.request(), || Err(refused("unchanged original owners")))?;
     replace_owned_fixture(&corrupt_path, b"corrupt selected native owner")?;
+    assert!(retained.reconcile(&fixture.request()).is_err());
     let reached = std::cell::Cell::new(false);
     assert!(
         prepare_with(&fixture.request(), || {

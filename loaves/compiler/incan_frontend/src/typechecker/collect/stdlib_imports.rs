@@ -95,6 +95,7 @@ fn sdk_provider_component_id(provenance: &ProviderProvenance) -> &str {
     match provenance {
         ProviderProvenance::Sdk { component_id, .. } => component_id,
         ProviderProvenance::ProjectDependency { dependency_key, .. } => dependency_key,
+        ProviderProvenance::StandardPublication { package_name, .. } => package_name,
         ProviderProvenance::Compiler => "compiler",
     }
 }
@@ -104,6 +105,7 @@ fn sdk_provider_identity(provenance: &ProviderProvenance) -> &str {
     match provenance {
         ProviderProvenance::Sdk { sdk_identity, .. } => sdk_identity,
         ProviderProvenance::ProjectDependency { dependency_key, .. } => dependency_key,
+        ProviderProvenance::StandardPublication { package_name, .. } => package_name,
         ProviderProvenance::Compiler => "compiler",
     }
 }

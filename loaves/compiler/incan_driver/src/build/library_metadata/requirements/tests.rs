@@ -1,6 +1,6 @@
 //! Actual checked planning capture and current-binding replay controls (#1337/#1698).
 
-use super::{CheckedLibraryCapture, CheckedLibraryRequirements};
+use super::{CheckedLibraryCapture, CheckedLibraryRequirements, source_relative};
 use incan_frontend::library_exports::collect_checked_public_exports;
 use incan_frontend::library_manifest_index::LibraryManifestIndex;
 use incan_frontend::typechecker::TypeChecker;
@@ -90,5 +90,39 @@ fn ordinary_checked_requirements_refuses_missing_or_corrupt_planning_authority()
     payload["checked_exports"][0]["schema_version"] = serde_json::json!(999);
     let corrupted: CheckedLibraryRequirements = serde_json::from_value(payload)?;
     assert!(corrupted.validate().is_err());
+    Ok(())
+}
+
+/// Relative declaration roots and canonical parsed files retain one package-relative source binding.
+#[test]
+fn source_provenance_accepts_equivalent_package_coordinates() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let package = root.path().join("lowering");
+    fs::create_dir(root.path().join("driver"))?;
+    fs::create_dir_all(package.join("src"))?;
+    let source = package.join("src/lib.incn");
+    fs::write(&source, "pub def value() -> int:\n    return 42\n")?;
+    assert_eq!(
+        source_relative(&root.path().join("driver/../lowering"), &source.canonicalize()?)?,
+        "src/lib.incn"
+    );
+    let external = root.path().join("external.incn");
+    fs::write(&external, "pub def value() -> int:\n    return 47\n")?;
+    assert!(source_relative(&package, &external).is_err());
+    Ok(())
+}
+
+/// A lexical package prefix must not authorize a symlink target outside the package.
+#[cfg(unix)]
+#[test]
+fn source_provenance_refuses_external_symlink_target() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let package = root.path().join("package");
+    fs::create_dir(&package)?;
+    let external = root.path().join("external.incn");
+    fs::write(&external, "pub def value() -> int:\n    return 47\n")?;
+    let link = package.join("lib.incn");
+    std::os::unix::fs::symlink(&external, &link)?;
+    assert!(source_relative(&package, &link).is_err());
     Ok(())
 }

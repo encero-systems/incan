@@ -210,6 +210,10 @@ incan build [OPTIONS] [FILE] [OUTPUT_DIR]
 
 Compiles `FILE`, or the project entrypoint, to an executable and prints the generated project path and the binary path. Generated source and the binary go under `target/incan/`, or under `OUTPUT_DIR` when given.
 
+On Unix, ordinary executable builds automatically start or connect to a compatible background build owner. The owner retains the existing project model, canonical `oven.lock`, dependency admission and selected native plans between requests. Commands keep their own output and diagnostics; a failed request does not prevent later requests from using the owner. Other platforms execute the same driver operation within the command process.
+
+Before reusing a completed output, the owner checks the observed inputs for changes. Unchanged directory metadata allows reuse of its previous child list; changed file candidates are read and hashed before deciding whether build inputs changed. Changed manifests, locks, compiler selections or selected output files invalidate the corresponding retained state. An unchanged lock does not hide a source edit, and an invalid replacement never exposes the previous valid record.
+
 With no `FILE`, a project that declares one or more `[[rust.bin]]` entries and no `[project.scripts].main` builds the declared toolchain binaries from stored direct-`rustc` plans. This mode accepts `OUTPUT_DIR`. It refuses `--release`, package-feature options, `--sdk-profile`, lock-policy options, Cargo feature or passthrough controls, generated-Cargo target-directory controls, and build reports. `INCAN_OVEN_COMPILER_SUITE_STORE` selects the compiler-suite store for this mode.
 
 Options:

@@ -147,6 +147,33 @@ pub fn digest_provider_artifact(root: &Path) -> Result<String, ProviderArtifactD
     Ok(digest)
 }
 
+/// Visit the physical inputs checked by provider admission, including directories that reveal new or removed files.
+///
+/// Owners can retain their existing metadata observations over this exact input set. This exposes the artifact's
+/// exclusion policy without adding a second traversal policy, digest implementation or source of provider authority.
+pub fn visit_provider_artifact_inputs(
+    root: &Path,
+    visitor: &mut impl FnMut(&Path),
+) -> Result<(), ProviderArtifactDigestError> {
+    /// Follow the same kept entries as physical integrity hashing; links never authorize retained observations.
+    fn visit(
+        root: &Path,
+        directory: &Path,
+        visitor: &mut impl FnMut(&Path),
+    ) -> Result<(), ProviderArtifactDigestError> {
+        visitor(directory);
+        for entry in artifact_directory_entries(root, directory, false, false)? {
+            if entry.file_type.is_dir() {
+                visit(root, &entry.path, visitor)?;
+            } else {
+                visitor(&entry.path);
+            }
+        }
+        Ok(())
+    }
+    visit(root, root, visitor)
+}
+
 /// Process-wide memo of provider artifact digests, keyed by canonical root and the tree stamp they were taken at.
 fn provider_artifact_digest_memo() -> &'static Mutex<HashMap<PathBuf, (String, String)>> {
     static MEMO: OnceLock<Mutex<HashMap<PathBuf, (String, String)>>> = OnceLock::new();

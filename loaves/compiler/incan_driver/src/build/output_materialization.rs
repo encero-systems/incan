@@ -5,19 +5,14 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use std::{fs, io};
 
-use sha2::Sha256;
-
 use crate::backend::selection::BackendExecutionReceipt;
 use crate::build::backend_selection::{default_backend_receipt_path, write_backend_receipt};
 use crate::build::library_exports::{resolve_library_project_root, validate_library_entrypoint};
 use crate::build::library_outputs::library_publication_receipts;
-use crate::build::output_paths::{
-    normalized_project_entrypoint, project_root_for_completed_output, validated_project_output_relative_path,
-};
+use crate::build::output_paths::{normalized_project_entrypoint, validated_project_output_relative_path};
 use crate::build::output_selection::{
     current_project_output_receipt, has_stale_baked_project_output,
     matching_baked_project_outputs_with_source_authority, restore_project_output_report_paths,
-    select_baked_project_output_with_source_authority,
 };
 use crate::build::plan_authority::explicit_bake_profiles;
 use crate::build::source_authority::{
@@ -38,12 +33,10 @@ use crate::oven_store::open_default_oven_store;
 use crate::project::discover_effective_project_manifest;
 use incan_lang::version::INCAN_VERSION;
 use incan_provider::FeatureSelection;
-use oven_model::manifest::{LOAF_MANIFEST_FILENAME, ProjectManifest};
+use oven_model::manifest::ProjectManifest;
 use oven_rustc::rustc::{resolve_active_rustc, rustc_host_target, rustc_identity};
 use oven_store::digest_bytes;
 use oven_store::store::OvenStore;
-use sha2::Digest as _;
-use std::io::Read;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
@@ -81,6 +74,7 @@ pub fn materialize_completed_executable_output_with_completion<T>(
     backend_receipt: &BackendExecutionReceipt,
     complete: impl FnOnce() -> CliResult<T>,
 ) -> CliResult<T> {
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::materialize_completed_output", input = %project_root.display()).entered();
     if completed_output_default_backend_receipt(output).as_ref() != Some(backend_receipt) {
         return Err(CliError::failure(
             "completed Oven executable output does not carry the backend receipt selected for reuse",
@@ -91,6 +85,7 @@ pub fn materialize_completed_executable_output_with_completion<T>(
         serde_json::to_vec_pretty(backend_receipt).map_err(|error| CliError::failure(error.to_string()))?;
     expected.push(b'\n');
     let current = project_output_projection_is_current(project_root, output)?;
+    tracing::trace!(target: "incan::invocation", projection_current = current);
     if current && fs::read(&receipt_path).is_ok_and(|bytes| bytes == expected) {
         return complete();
     }
@@ -111,6 +106,8 @@ pub fn completed_executable_output_report(
     backend_receipt: &BackendExecutionReceipt,
     total_start: Instant,
 ) -> CliResult<serde_json::Value> {
+    let _invocation =
+        tracing::trace_span!(target: "incan::invocation", "incan_driver::restore_completed_report").entered();
     let snapshot = output.payload.build_report.as_ref().ok_or_else(|| {
         CliError::failure(
             "completed Oven executable output has no sealed build report; rerun `incan oven bake --project .`",
@@ -236,7 +233,7 @@ pub fn completed_library_output_report(
     }
     let report = BuildReportDraft {
         mode: BuildReportMode::Library,
-        profile: "release".to_string(),
+        profile: release.profile.clone(),
         project: manifest_project_report(Some(&manifest), &project_name, project_root),
         entrypoint: Some(entrypoint.to_string_lossy().to_string()),
         library_root: Some(project_root.to_string_lossy().to_string()),
@@ -364,35 +361,19 @@ fn project_output_projection(output: &OvenStoredProjectOutput) -> OvenProjectOut
     }
 }
 
-/// Hash one mutable projection in bounded memory while retaining exact byte-count verification.
+/// Observe one regular projection through the Store's shared metadata-bound digest path.
+///
+/// Replacements and preserved-mtime edits invalidate the observation. Changed bytes are hashed in bounded memory;
+/// unsupported metadata and unavailable cache storage only forfeit acceleration. Callers still compare the returned
+/// length and digest with their admitted output and retain the existing path, receipt and lease checks.
 pub fn digest_project_output_projection_file(path: &Path) -> CliResult<(u64, String)> {
-    let mut file = fs::File::open(path).map_err(|error| {
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::observe_output_projection", input = %path.display()).entered();
+    oven_store::store::digest_regular_file(path).map_err(|error| {
         CliError::failure(format!(
-            "failed to open Oven project-output projection {}: {error}",
+            "failed to verify Oven project-output projection {}: {error}",
             path.display()
         ))
-    })?;
-    let mut hasher = Sha256::new();
-    let mut logical_bytes = 0_u64;
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let read = file.read(&mut buffer).map_err(|error| {
-            CliError::failure(format!(
-                "failed to verify Oven project-output projection {}: {error}",
-                path.display()
-            ))
-        })?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-        let read = u64::try_from(read)
-            .map_err(|_| CliError::failure("Oven project-output projection byte count exceeds the supported range"))?;
-        logical_bytes = logical_bytes.checked_add(read).ok_or_else(|| {
-            CliError::failure("Oven project-output projection byte count exceeds the supported range")
-        })?;
-    }
-    Ok((logical_bytes, format!("sha256:{}", hex::encode(hasher.finalize()))))
+    })
 }
 
 /// Verify the one store-owned executable immediately before a normal `incan run` launches it.
@@ -431,13 +412,20 @@ pub fn verify_stored_project_output_native(output: &OvenStoredProjectOutput) -> 
 
 /// Return whether the caller already holds the exact selected result.
 pub fn project_output_projection_is_current(project_root: &Path, output: &OvenStoredProjectOutput) -> CliResult<bool> {
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::verify_output_projection", input = %project_root.display()).entered();
     let marker_path = project_output_projection_marker_path(project_root, output)?;
     let marker = match fs::read(&marker_path) {
         Ok(bytes) => match serde_json::from_slice::<OvenProjectOutputProjection>(&bytes) {
             Ok(marker) => marker,
-            Err(_) => return Ok(false),
+            Err(_) => {
+                tracing::trace!(target: "incan::invocation", decision = "projection_marker_malformed");
+                return Ok(false);
+            }
         },
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            tracing::trace!(target: "incan::invocation", decision = "projection_marker_missing");
+            return Ok(false);
+        }
         Err(error) => {
             return Err(CliError::failure(format!(
                 "failed to read Oven project-output projection {}: {error}",
@@ -447,6 +435,7 @@ pub fn project_output_projection_is_current(project_root: &Path, output: &OvenSt
     };
     let expected = project_output_projection(output);
     if marker != expected {
+        tracing::trace!(target: "incan::invocation", decision = "projection_marker_differs", recorded = %marker.output_identity, selected = %expected.output_identity);
         return Ok(false);
     }
     for file in &expected.files {
@@ -473,7 +462,10 @@ pub fn project_output_projection_is_current(project_root: &Path, output: &OvenSt
 }
 
 /// Atomically retain the successful caller projection after its immutable source bytes were verified.
-fn write_project_output_projection(project_root: &Path, output: &OvenStoredProjectOutput) -> CliResult<()> {
+///
+/// The caller has either materialized this exact output or published it from the current caller files. This marker
+/// avoids replaying those files; reuse still verifies each caller file and the backend receipt independently.
+pub(super) fn write_project_output_projection(project_root: &Path, output: &OvenStoredProjectOutput) -> CliResult<()> {
     let marker_path = project_output_projection_marker_path(project_root, output)?;
     let parent = marker_path.parent().ok_or_else(|| {
         CliError::failure(format!(
@@ -507,19 +499,39 @@ pub fn select_default_project_output(
     target: OvenBakeProjectTarget,
     profile: &str,
 ) -> CliResult<Option<OvenStoredProjectOutput>> {
+    select_default_project_output_with_inputs(
+        file_path,
+        policy,
+        target,
+        profile,
+        &mut super::ProjectSourceAuthorityDigester::default(),
+    )
+}
+
+/// Share ordinary selection with a serial owner while preserving the existing one-command entry point.
+pub(super) fn select_default_project_output_with_inputs(
+    file_path: &str,
+    policy: &CompletedOutputPolicy<'_>,
+    target: OvenBakeProjectTarget,
+    profile: &str,
+    authority: &mut super::ProjectSourceAuthorityDigester,
+) -> CliResult<Option<OvenStoredProjectOutput>> {
     policy.reject_cargo_feature_controls("build and run")?;
     if policy.package_features != &FeatureSelection::default() || policy.sdk_profile.is_some() {
         return Ok(None);
     }
     let entrypoint = normalized_project_entrypoint(file_path)?;
-    let Some(project_root) = project_root_for_completed_output(&entrypoint)? else {
+    let Some(project_root) = super::output_paths::project_root_for_completed_output_with_inputs(
+        &entrypoint,
+        &mut authority.retained_inputs,
+    )?
+    else {
         return Ok(None);
     };
-    let manifest = ProjectManifest::load(&project_root.join(LOAF_MANIFEST_FILENAME))
-        .map_err(|error| CliError::failure(error.to_string()))?;
-    validate_completed_output_lock_policy(&project_root, &manifest, &entrypoint, policy)?;
+    let project = authority.retained_inputs.project(&project_root)?;
+    validate_completed_output_lock_policy(&project_root, project.authored_manifest(), &entrypoint, policy)?;
     let store = open_default_oven_store()?;
-    select_current_sealed_project_output(&store, &project_root, &entrypoint, target, profile)
+    select_current_sealed_project_output_with_inputs(&store, &project_root, &entrypoint, target, profile, authority)
 }
 
 /// Select the sealed output for exactly this source authority, or `None` when the project must take the source-aware
@@ -532,8 +544,28 @@ pub fn select_current_sealed_project_output(
     target: OvenBakeProjectTarget,
     profile: &str,
 ) -> CliResult<Option<OvenStoredProjectOutput>> {
-    let source_authority_digest = digest_baked_project_source_authority(project_root)?;
-    if let Some(selected) = select_baked_project_output_with_source_authority(
+    select_current_sealed_project_output_with_inputs(
+        store,
+        project_root,
+        entrypoint,
+        target,
+        profile,
+        &mut super::ProjectSourceAuthorityDigester::default(),
+    )
+}
+
+/// Reconcile source authority per request while borrowing revalidated typed inputs from the serial owner.
+fn select_current_sealed_project_output_with_inputs(
+    store: &OvenStore,
+    project_root: &Path,
+    entrypoint: &Path,
+    target: OvenBakeProjectTarget,
+    profile: &str,
+    authority: &mut super::ProjectSourceAuthorityDigester,
+) -> CliResult<Option<OvenStoredProjectOutput>> {
+    let source_authority_digest = authority.digest(project_root)?;
+    let fingerprint = authority.lock_fingerprint(project_root)?;
+    if let Some(selected) = super::output_selection::select_baked_project_output_with_fingerprint(
         store,
         project_root,
         entrypoint,
@@ -541,6 +573,7 @@ pub fn select_current_sealed_project_output(
         profile,
         &source_authority_digest,
         None,
+        &fingerprint,
     )? {
         return Ok(Some(selected));
     }
@@ -599,6 +632,17 @@ pub fn warn_for_completed_output_lock_fingerprint_drift<'a>(
     project_root: &Path,
     outputs: impl IntoIterator<Item = &'a OvenStoredProjectOutput>,
 ) -> CliResult<()> {
+    warn_for_completed_output_lock_fingerprint_drift_with_current(project_root, outputs, || {
+        baked_project_lock_dependencies_fingerprint(project_root)
+    })
+}
+
+/// Preserve the common warning policy using a fingerprint already observed by the request's owner.
+pub(super) fn warn_for_completed_output_lock_fingerprint_drift_with_current<'a>(
+    project_root: &Path,
+    outputs: impl IntoIterator<Item = &'a OvenStoredProjectOutput>,
+    actual: impl FnOnce() -> CliResult<Option<String>>,
+) -> CliResult<()> {
     let mut expected = None;
     for output in outputs {
         let Some(fingerprint) = output.payload.lock_dependencies_fingerprint.as_deref() else {
@@ -617,7 +661,7 @@ pub fn warn_for_completed_output_lock_fingerprint_drift<'a>(
     let Some(expected) = expected else {
         return Ok(());
     };
-    let Some(actual) = baked_project_lock_dependencies_fingerprint(project_root)? else {
+    let Some(actual) = actual()? else {
         return Ok(());
     };
     if actual == expected {
@@ -671,13 +715,15 @@ pub fn select_default_library_project_outputs(
             Some((&target, &toolchain)),
         )?;
         if candidates.is_empty() {
-            if has_stale_baked_project_output(
-                &store,
-                &project_root,
-                &entrypoint,
-                OvenBakeProjectTarget::Library,
-                profile,
-            )? {
+            if super::native_loaf_plan::ConfiguredNativeLoafInputs::discover()?.is_none()
+                && has_stale_baked_project_output(
+                    &store,
+                    &project_root,
+                    &entrypoint,
+                    OvenBakeProjectTarget::Library,
+                    profile,
+                )?
+            {
                 warn_stale_sealed_project_output("library build");
             }
             return Ok(None);
@@ -771,12 +817,15 @@ pub fn select_coherent_library_outputs(
 /// every dependency file. An explicit provider bake retains the portable package-store export; a normal build needs
 /// only the completed output itself.
 pub fn materialize_project_output(project_root: &Path, output: &OvenStoredProjectOutput) -> CliResult<()> {
+    let _invocation =
+        tracing::trace_span!(target: "incan::invocation", "incan_driver::replay_project_output").entered();
     if project_output_projection_is_current(project_root, output)? {
         return Ok(());
     }
     for file in &output.payload.files {
         let destination = caller_project_output_path(project_root, &file.caller_relative_path)?;
-        if let Ok(existing) = fs::read(&destination)
+        let _file = tracing::trace_span!(target: "incan::invocation", "incan_driver::replay_output_file", input = %destination.display()).entered();
+        if let Ok(existing) = fs::read(&destination).inspect(|bytes| { tracing::trace!(target: "incan::invocation", input = %destination.display(), output_bytes_read = bytes.len()); })
             && u64::try_from(existing.len()).ok() == Some(file.logical_bytes)
             && digest_bytes(&existing) == file.digest
         {
@@ -939,6 +988,47 @@ mod tests {
     };
     use oven_store::store::{OvenArtifactKind, OvenStore};
     use oven_store::{OvenGeneratedProjectRequest, digest_bytes, receipt_generated_project};
+
+    /// Projection observations detect same-size edits and replacements even when modification time is restored.
+    #[test]
+    fn projection_digest_observes_preserved_mtime_edits_and_replacements() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let output = root.path().join("program");
+        fs::write(&output, b"original")?;
+        let original = super::digest_project_output_projection_file(&output)?;
+        assert_eq!(original, (8, digest_bytes(b"original")));
+        assert_eq!(super::digest_project_output_projection_file(&output)?, original);
+
+        let modified = fs::metadata(&output)?.modified()?;
+        fs::write(&output, b"modified")?;
+        fs::File::options()
+            .write(true)
+            .open(&output)?
+            .set_times(fs::FileTimes::new().set_modified(modified))?;
+        assert_eq!(
+            super::digest_project_output_projection_file(&output)?,
+            (8, digest_bytes(b"modified"))
+        );
+
+        let replacement = root.path().join("replacement");
+        fs::write(&replacement, b"original")?;
+        fs::File::options()
+            .write(true)
+            .open(&replacement)?
+            .set_times(fs::FileTimes::new().set_modified(modified))?;
+        fs::rename(&replacement, &output)?;
+        assert_eq!(super::digest_project_output_projection_file(&output)?, original);
+        assert!(super::digest_project_output_projection_file(root.path()).is_err());
+        assert!(super::digest_project_output_projection_file(&replacement).is_err());
+        #[cfg(unix)]
+        {
+            let link = root.path().join("linked-program");
+            std::os::unix::fs::symlink(&output, &link)?;
+            // Path admission belongs to the caller; this shared observer preserves the prior helper's link semantics.
+            assert_eq!(super::digest_project_output_projection_file(&link)?, original);
+        }
+        Ok(())
+    }
 
     /// Selecting another compiler publication of identical library bytes must not change provider content.
     #[test]
@@ -1208,7 +1298,9 @@ mod tests {
             dependency_authority_digest: None,
             lock_dependencies_fingerprint: baked_project_lock_dependencies_fingerprint(project.path())?,
             compiler_identity_digest: None,
-            preparation_identity_digest: None,
+            preparation_identity_digest: Some(
+                super::super::source_authority::ordinary_library_preparation_identity_digest(None)?,
+            ),
             compiler_version: INCAN_VERSION.to_string(),
             entrypoint_relative_path: "src/lib.incn".to_string(),
             build_unit_identity: receipt.build_unit_identity.clone(),

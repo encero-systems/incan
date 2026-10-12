@@ -25,6 +25,18 @@ pub struct NativeSdkCommandContext {
 }
 
 impl NativeSdkCommandContext {
+    /// Enumerate this already admitted publication's exact inputs for the ordinary owner's existing observations.
+    ///
+    /// Keeping the context retains its original leases. This visitor does not select units or establish authority;
+    /// unsupported or changed observations must fall back to canonical admission.
+    pub(super) fn visit_retained_inputs(&self, visit: &mut impl FnMut(&Path)) {
+        visit(&self.inventory.root.join(".sealed-native-units.json"));
+        visit(&self.inventory.root.join(".sealed-native-receipts.json"));
+        for owner in &self.selection.owners {
+            owner.visit_admitted_native_inputs(visit);
+        }
+    }
+
     /// Admit a published native SDK once; legacy inventories without native coordinates keep their existing route.
     pub fn discover() -> CliResult<Option<Arc<Self>>> {
         let Some(inventory) = incan_provider::inventory::discover_or_reuse_published_sdk_inventory()? else {

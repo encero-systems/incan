@@ -106,7 +106,12 @@ impl OrdinarySourceDemands {
     }
 
     /// Check exact imports and own namespace use without inferring completeness from a physical native subset.
-    pub(super) fn require_inspection(&self, facts: &NativeDemandFacts) -> CliResult<()> {
+    pub(super) fn require_inspection(
+        &self,
+        facts: &NativeDemandFacts,
+        admitted_modules: &BTreeSet<Vec<String>>,
+        admitted_dependencies: &BTreeSet<String>,
+    ) -> CliResult<()> {
         facts.validate_scalar_coverage()?;
         let roots = self
             .native_imports
@@ -124,17 +129,17 @@ impl OrdinarySourceDemands {
                 })
             })
             || !self.unsupported_native_source.is_empty()
-            || !facts.public_dependency_modules.is_empty()
-            || !facts.provider_contracts.is_empty()
+            || !facts.public_dependency_modules.is_subset(admitted_modules)
             || !facts.rust_derive_probe_paths.is_empty()
             || !matches!(facts.vocab_manifest, ManifestDemand::Absent)
             || !matches!(facts.c_manifest, ManifestDemand::Absent)
-            || !facts.dependency_aliases.is_empty()
+            || facts.dependency_aliases != *admitted_dependencies
             || facts.physical_projections
             || facts.stdlib_facets.iter().any(|facet| !mandatory_native_facet(facet))
             || facts.used_module_paths.iter().any(|path| {
-                path.first().map(String::as_str) != Some("std")
-                    || path.get(1).is_none_or(|root| !self.own_namespace_roots.contains(root))
+                !admitted_modules.contains(path)
+                    && (path.first().map(String::as_str) != Some("std")
+                        || path.get(1).is_none_or(|root| !self.own_namespace_roots.contains(root)))
             })
         {
             return Err(invalid(format!(
@@ -145,6 +150,7 @@ impl OrdinarySourceDemands {
                     "used_modules": facts.used_module_paths, "own_namespace_roots": self.own_namespace_roots,
                     "derive_probes": facts.rust_derive_probe_paths, "facets": facts.stdlib_facets,
                     "dependencies": facts.dependency_aliases, "provider_count": facts.provider_contracts.len(),
+                    "admitted_dependencies": admitted_dependencies, "source_modules": facts.source_modules,
                     "public_dependencies": facts.public_dependency_modules, "physical_projections": facts.physical_projections,
                     "vocabulary": !matches!(facts.vocab_manifest, ManifestDemand::Absent),
                     "c_interop": !matches!(facts.c_manifest, ManifestDemand::Absent),

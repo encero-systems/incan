@@ -156,6 +156,106 @@ fn declared_bootstrap_dependencies_share_command_store() -> TestResult {
             1
         );
     }
+
+    // ---- Retained owner: the same original plan serves the unchanged request ----
+    let checkout = root.join("one");
+    let source = checkout.join("src/main.rs");
+    let generated_request = OvenGeneratedProjectRequest::new(
+        &checkout,
+        "bootstrap-consumer",
+        "1.0.0",
+        rustc_host_target(&rustc)?,
+        rustc_identity(&rustc)?,
+        "debug",
+        Vec::new(),
+    )
+    .with_generated_source("compiler-main", &source);
+    let source_receipt = receipt_generated_project(&generated_request)?;
+    let mut request = crate::build::executable::NativeExecutableBuildRequest {
+        store: store.root().to_path_buf(),
+        limits: OvenStoreLimits::new(64 * 1024 * 1024, 64 * 1024 * 1024, 64 * 1024 * 1024),
+        source_receipt,
+        declaration: checkout.join("loaf.toml"),
+        rustc,
+        graph: checkout.join("graph.json"),
+        index: root.clone(),
+        blobs: root.clone(),
+        preparation_output: checkout.join("native-hints"),
+        source,
+        output: checkout.join("outputs/owner/consumer"),
+        crate_name: "bootstrap_consumer".to_string(),
+        edition: "2024".to_string(),
+        source_key: "compiler-main".to_string(),
+    };
+    let mut owner = crate::build::executable::ExecutableBuildOwner::default();
+    std::fs::create_dir_all(request.output.parent().ok_or("owner output parent missing")?)?;
+    owner.build_native(&request)?;
+    let repeated = owner.build_native(&request)?;
+    assert_eq!(repeated["native_plan_reused"], true);
+    assert_eq!(repeated["reused"], true);
+    assert_eq!(std::process::Command::new(&request.output).output()?.stdout, b"7");
+
+    // ---- Consumer change: keep the dependency plan while compiling the new body ----
+    std::fs::write(
+        &request.source,
+        "fn main() { print!(\"{}\", dependency::VALUE + 1); }\n",
+    )?;
+    request.source_receipt = receipt_generated_project(&generated_request)?;
+    let changed = owner.build_native(&request)?;
+    assert_eq!(changed["native_plan_reused"], true);
+    assert_eq!(changed["reused"], false);
+    assert_eq!(std::process::Command::new(&request.output).output()?.stdout, b"8");
+    let replacement = root.join("replacement");
+    std::fs::write(&replacement, "corrupt projected output")?;
+    std::fs::rename(&replacement, &request.output)?;
+    assert_eq!(owner.build_native(&request)?["native_plan_reused"], true);
+    assert_eq!(std::process::Command::new(&request.output).output()?.stdout, b"8");
+
+    // ---- Original plan and native members: corruption refuses, restoration re-admits ----
+    let plan = inspection
+        .entries
+        .iter()
+        .find(|entry| entry.manifest.domain == super::DOMAIN)
+        .ok_or("ordinary native plan missing")?;
+    let native = inspection
+        .entries
+        .iter()
+        .find(|entry| entry.manifest.domain == "sdk-source-unit-target")
+        .ok_or("native dependency missing")?;
+    let member = native
+        .manifest
+        .materialized_files
+        .iter()
+        .find(|member| member.relative_path.ends_with(".rlib"))
+        .ok_or("native archive missing")?;
+    for path in [
+        plan.path.join("payload"),
+        native.path.join("artifacts").join(&member.relative_path),
+    ] {
+        let original = std::fs::read(&path)?;
+        std::fs::write(&replacement, b"corrupt original input")?;
+        std::fs::rename(&replacement, &path)?;
+        assert!(
+            owner.build_native(&request).is_err(),
+            "changed input accepted: {}",
+            path.display()
+        );
+        std::fs::write(&replacement, original)?;
+        std::fs::rename(&replacement, &path)?;
+        owner.build_native(&request)?;
+        assert_eq!(std::process::Command::new(&request.output).output()?.stdout, b"8");
+    }
+
+    // ---- Declaration change: an old dependency plan cannot satisfy a removed requirement ----
+    let declaration = std::fs::read(&request.declaration)?;
+    std::fs::write(
+        &request.declaration,
+        "[project]\nname='bootstrap-consumer'\nversion='1.0.0'\n",
+    )?;
+    assert!(owner.build_native(&request).is_err());
+    std::fs::write(&request.declaration, declaration)?;
+    owner.build_native(&request)?;
+    assert_eq!(std::process::Command::new(&request.output).output()?.stdout, b"8");
     Ok(())
 }
 

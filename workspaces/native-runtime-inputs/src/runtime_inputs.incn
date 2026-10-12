@@ -173,21 +173,21 @@ def ordered_strings(value: JsonValue, key: str) -> Result[list[str], str]:
 def root_alias(value: str) -> Result[None, str]:
     """Require one exact Rust extern alias; normalization belongs to current declaration selection."""
     if value == "" or value[0] not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_":
-        return Err("ordinary native root has a malformed alias")
+        return Err("ordinary native root has a malformed alias: " + value)
     for character in value:
         if character not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789":
-            return Err("ordinary native root has a malformed alias")
+            return Err("ordinary native root has a malformed alias: " + value)
     return Ok(None)
 
 
 def ordinary_dependency_identity(request: JsonValue) -> Result[str, str]:
-    """Retain the portable declaration contract while refusing competing direct aliases."""
+    """Retain authored declarations and reject collisions after Oven's Rust extern alias normalization."""
     result = dependency_identity(request)?
     field = request.require("dependency_records").map_err((error) => error.message())?
     records = field.expect_array().map_err((error) => error.message())?
     mut aliases: list[str] = []
     for record in records:
-        alias = text(record, "alias")?
+        alias = text(record, "alias")?.replace("-", "_")
         root_alias(alias)?
         if alias in aliases:
             return Err("ordinary native dependency alias is duplicated")

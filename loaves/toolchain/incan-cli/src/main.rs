@@ -12,8 +12,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Compilation recurses over the AST, so run it on a stack sized for deeply nested expressions rather than
     // the default main-thread stack, which a long operator chain can exhaust outright.
-    incan_frontend::compiler_stack::run_on_compiler_stack(|| {
-        incan_cli::run();
+    incan_frontend::compiler_stack::run_on_compiler_stack(|| match incan_cli::project_owner::run_internal() {
+        Ok(true) => {}
+        Ok(false) => incan_cli::run(),
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(error.exit_code.0);
+        }
     });
     Ok(())
 }

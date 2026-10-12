@@ -4,6 +4,16 @@
   "facets": [
     {
       "domain": "target",
+      "features": [],
+      "project": "../../loaves/stdlib/core"
+    },
+    {
+      "domain": "host",
+      "features": [],
+      "project": "../../loaves/stdlib/derive/incan_derive"
+    },
+    {
+      "domain": "target",
       "features": [
         "cli",
         "rust_inspect",

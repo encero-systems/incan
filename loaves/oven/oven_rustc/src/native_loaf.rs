@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use oven_store::store::{
     OvenArtifactKind, OvenArtifactPublishRequest, OvenStore, OvenStoreError, OvenStoreExecutionPayload,
@@ -207,15 +207,40 @@ pub enum NativeLoafError {
 
 type Result<T> = std::result::Result<T, NativeLoafError>;
 
-/// One immutable record and its original native/record execution leases.
+/// One sealed immutable record and its original native/record execution leases.
+///
+/// Construction validates the complete recipe and owner bindings. Private fields prevent substitution afterward;
+/// every physical handoff still verifies the original owners and consumed on-disk members.
 pub struct SelectedNativeLoaf {
     record: NativeLoafRecord,
     record_owner: Arc<OvenStoreExecutionPayload>,
     native_owner: Arc<OvenStoreExecutionPayload>,
     read_only: bool,
+    /// Parsed declaration belongs to this exact leased owner; every reuse still reconciles its source bytes.
+    source_declaration: OnceLock<toml::Value>,
 }
 
 impl SelectedNativeLoaf {
+    /// Seal immutable record/recipe/owner bindings before exposing any selected metadata.
+    ///
+    /// This is the only constructor for producer and Store admission. It grants no freshness exemption: accessors
+    /// and graph selection verify original on-disk payloads, native members and declarations independently.
+    fn new(
+        record: NativeLoafRecord,
+        record_owner: Arc<OvenStoreExecutionPayload>,
+        native_owner: Arc<OvenStoreExecutionPayload>,
+        read_only: bool,
+    ) -> Result<Self> {
+        verify_record_bindings(&record, &record_owner, &native_owner)?;
+        Ok(Self {
+            record,
+            record_owner,
+            native_owner,
+            read_only,
+            source_declaration: OnceLock::new(),
+        })
+    }
+
     /// Borrow the explicit preparation origin authenticated by this native recipe.
     pub fn source_origin(&self) -> Result<NativeLoafOrigin> {
         self.verify()?;
@@ -244,10 +269,14 @@ impl SelectedNativeLoaf {
         &self.record_owner.manifest.identity
     }
 
-    /// Revalidate both original records, consumed native files and the complete recipe binding on each physical
-    /// handoff.
+    /// Revalidate both original payloads and consumed native files on each physical handoff.
+    /// Immutable recipe bindings were sealed by construction and cannot change through this capability.
+    #[track_caller]
     pub fn verify(&self) -> Result<()> {
-        verify_record(&self.record, &self.record_owner, &self.native_owner)
+        let caller = std::panic::Location::caller();
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_rustc::verify_selected_native_loaf", input = %self.identity(), caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
+        self.record_owner.verify_admitted_payload().map_err(failed)?;
+        verify_native_inventory(&self.native_owner, NativeInventory::Execution)
     }
 
     /// Return the native output only after revalidating its original held owner.
@@ -328,7 +357,8 @@ pub struct NativeLoafClosure {
 /// internal file I/O and later independent handoffs; a retained lease does not grant permission to skip those checks.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct NativeLoafVerificationWork {
-    /// Complete record/recipe/native-owner verification attempts, including repeated visits to shared records.
+    /// Original record/native-owner integrity checks, including repeated visits to shared records.
+    /// Immutable recipe bindings are sealed by construction rather than reconstructed on each handoff.
     pub record_checks: usize,
     /// Exact child source/native-coordinate comparisons attempted for sealed physical edges.
     pub edge_checks: usize,
@@ -445,7 +475,7 @@ impl NativeLoafGraph {
             recipe,
             dependencies,
         };
-        verify_native(&record, &owner)?;
+        verify_native(&record, &owner, NativeInventory::Execution)?;
         verify_children(&record, &self.units)?;
         let payload = serde_json::to_vec(&record).map_err(failed)?;
         let receipt = record_receipt(&record, &payload)?;
@@ -460,12 +490,7 @@ impl NativeLoafGraph {
             })
             .map_err(failed)?;
         let record_owner = select_owner(Store::Writable(store), &manifest.identity)?;
-        let unit = Arc::new(SelectedNativeLoaf {
-            record,
-            record_owner,
-            native_owner: owner,
-            read_only: false,
-        });
+        let unit = Arc::new(SelectedNativeLoaf::new(record, record_owner, owner, false)?);
         unit.verify()?;
         self.units.insert(manifest.identity.clone(), unit);
         Ok(manifest.identity)
@@ -552,103 +577,107 @@ enum Store<'a> {
     Published(&'a PublishedOvenStore),
 }
 
-/// Verify each reachable record once, checking every sealed edge while retaining original command-local leases.
+/// Acquire record frontiers and native owners in batches, then run the existing complete graph verifier once.
+///
+/// Discovery supplies coordinates only. Construction seals each record's recipe and owner bindings; `select_with_work`
+/// then verifies original on-disk members and every sealed edge before granting execution authority. Both Store modes
+/// retain their canonical selectors and original leases; batching avoids a manager-lock acquisition and access update
+/// transaction per individual owner.
 fn admit(
     store: Store<'_>,
     roots: &[NativeLoafRoot],
     work: &mut NativeLoafVerificationWork,
 ) -> Result<NativeLoafClosure> {
-    let mut graph = NativeLoafGraph::default();
-    let mut native = BTreeMap::new();
-    let mut visiting = BTreeSet::new();
-    for root in roots {
-        load_forward(
-            store,
-            &root.record_identity,
-            &mut graph,
-            &mut native,
-            &mut visiting,
-            work,
-        )?;
+    // ---- Discovery: retain exact record owners without granting their contents authority ----
+    let mut records = BTreeMap::new();
+    let mut pending = roots
+        .iter()
+        .map(|root| root.record_identity.clone())
+        .collect::<BTreeSet<_>>();
+    while !pending.is_empty() {
+        let identities = pending
+            .into_iter()
+            .filter(|identity| !records.contains_key(identity))
+            .collect::<Vec<_>>();
+        pending = BTreeSet::new();
+        for owner in select_owners(store, &identities)? {
+            let record: NativeLoafRecord = serde_json::from_slice(&owner.payload).map_err(failed)?;
+            pending.extend(record.dependencies.iter().map(|edge| edge.record_identity.clone()));
+            records.insert(owner.manifest.identity.clone(), (record, owner));
+        }
     }
-    // Every retained vertex and edge was checked by load_forward during this handoff. Root aliases and declared
-    // source/intent still need validation, but another full graph selection would repeat all owner inventories.
-    Ok(NativeLoafClosure {
-        roots: validate_roots(roots, &graph.units)?,
-        graph,
-    })
-}
 
-/// Load one durable record and recursively admit its sealed forward destinations, refusing cycles and substitutions.
-fn load_forward(
-    store: Store<'_>,
-    identity: &str,
-    graph: &mut NativeLoafGraph,
-    native: &mut BTreeMap<String, Arc<OvenStoreExecutionPayload>>,
-    visiting: &mut BTreeSet<String>,
-    work: &mut NativeLoafVerificationWork,
-) -> Result<()> {
-    if graph.units.contains_key(identity) {
-        return Ok(());
-    }
-    if !visiting.insert(identity.to_string()) {
-        return Err(refused("native physical dependency cycle"));
-    }
-    let record_owner = select_owner(store, identity)?;
-    let record: NativeLoafRecord = serde_json::from_slice(&record_owner.payload).map_err(failed)?;
-    let owner = if let Some(owner) = native.get(&record.native.identity) {
-        Arc::clone(owner)
-    } else {
-        let owner = select_owner(store, &record.native.identity)?;
-        native.insert(record.native.identity.clone(), Arc::clone(&owner));
-        owner
-    };
+    // ---- Original native owners: one canonical batch, shared by every referencing record ----
+    let identities = records
+        .values()
+        .map(|(record, _)| record.native.identity.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let native = select_owners(store, &identities)?
+        .into_iter()
+        .map(|owner| (owner.manifest.identity.clone(), owner))
+        .collect::<BTreeMap<_, _>>();
+    let mut graph = NativeLoafGraph::default();
     let read_only = matches!(store, Store::Published(_));
-    work.record_checks += 1;
-    verify_record(&record, &record_owner, &owner)?;
-    for edge in &record.dependencies {
-        load_forward(store, &edge.record_identity, graph, native, visiting, work)?;
+    for (identity, (record, record_owner)) in records {
+        let owner = native
+            .get(&record.native.identity)
+            .ok_or_else(|| refused("native owner batch is incomplete"))?;
+        graph.units.insert(
+            identity,
+            Arc::new(SelectedNativeLoaf::new(
+                record,
+                record_owner,
+                Arc::clone(owner),
+                read_only,
+            )?),
+        );
     }
-    verify_child_bindings_with_work(&record, &graph.units, work)?;
-    graph.units.insert(
-        identity.to_string(),
-        Arc::new(SelectedNativeLoaf {
-            record,
-            record_owner,
-            native_owner: owner,
-            read_only,
-        }),
-    );
-    visiting.remove(identity);
-    Ok(())
+    // ---- Admission: the existing verifier refuses cycles, altered owners and substituted edges ----
+    graph.select_with_work(roots, work)
 }
 
 /// Acquire one exact descriptor, payload and lease through the canonical selector, preserving preparation misses.
 /// The record verifier owns complete inventory validation for this admission; selection must not walk it first.
 fn select_owner(store: Store<'_>, identity: &str) -> Result<Arc<OvenStoreExecutionPayload>> {
-    let selected = match store {
-        Store::Writable(store) => store.select_payloads_for_execution(&[identity.to_string()]),
-        Store::Published(store) => store.select_payloads_for_execution(&[identity.to_string()]),
+    select_owners(store, &[identity.to_string()])?
+        .pop()
+        .ok_or_else(|| refused("exact native Loaf selection became empty"))
+}
+
+/// Acquire a deduplicated exact-owner batch through the same canonical selector, preserving preparation misses.
+fn select_owners(store: Store<'_>, identities: &[String]) -> Result<Vec<Arc<OvenStoreExecutionPayload>>> {
+    let Some(first) = identities.first() else {
+        return Ok(Vec::new());
     };
-    let mut selected = selected.map_err(|error| match &error {
-        OvenStoreError::Io { source, .. } if source.kind() == std::io::ErrorKind::NotFound => {
+    let selected = match store {
+        Store::Writable(store) => store.select_payloads_for_execution(identities),
+        Store::Published(store) => store.select_payloads_for_execution(identities),
+    };
+    let selected = selected.map_err(|error| match &error {
+        OvenStoreError::Io { path, source } if source.kind() == std::io::ErrorKind::NotFound => {
+            let missing = identities
+                .iter()
+                .find(|identity| {
+                    let coordinate = identity.replace(':', "-");
+                    path.components().any(|part| part.as_os_str() == coordinate.as_str())
+                })
+                .unwrap_or(first);
             NativeLoafError::Unavailable {
-                identity: identity.to_string(),
+                identity: missing.clone(),
                 source: Box::new(error),
             }
         }
         _ => failed(error),
     })?;
-    if selected.len() != 1 {
+    if selected.len() != identities.len() {
         return Err(NativeLoafError::Unavailable {
-            identity: identity.to_string(),
+            identity: first.clone(),
             source: Box::new(std::io::Error::other("exact native Loaf owner not found")),
         });
     }
-    let owner = selected
-        .pop()
-        .ok_or_else(|| refused("exact native Loaf selection became empty"))?;
-    Ok(Arc::new(owner))
+    Ok(selected.into_iter().map(Arc::new).collect())
 }
 
 /// Check declared source/intent and aliases; the containing traversal independently verifies every root owner.
@@ -744,13 +773,35 @@ fn record_receipt(record: &NativeLoafRecord, payload: &[u8]) -> Result<OvenRecei
     receipt_with_build_unit_input(&record.recipe, INPUT, digest_bytes(payload)).map_err(failed)
 }
 
-/// Check the selected record's complete derived receipt and immutable payload against its original native owner.
+/// Choose the materialized inventory consumed by this handoff; both scopes authenticate the same original owners.
+enum NativeInventory {
+    /// Physical execution consumes native members and separately checks the exact source declaration.
+    Execution,
+    /// Metadata inspection consumes the complete native owner, including its archived source members.
+    Complete,
+}
+
+/// Check the selected record's complete derived receipt and original native owner once for the consumed inventory.
 fn verify_record(
     record: &NativeLoafRecord,
     owner: &OvenStoreExecutionPayload,
     native: &OvenStoreExecutionPayload,
+    inventory: NativeInventory,
 ) -> Result<()> {
+    verify_record_bindings(record, owner, native)?;
     owner.verify_admitted_payload().map_err(failed)?;
+    verify_native_inventory(native, inventory)
+}
+
+/// Validate immutable record, recipe and owner coordinates once before sealing a selected capability.
+/// Physical freshness remains the responsibility of each consuming handoff, never this metadata check.
+fn verify_record_bindings(
+    record: &NativeLoafRecord,
+    owner: &OvenStoreExecutionPayload,
+    native: &OvenStoreExecutionPayload,
+) -> Result<()> {
+    let _invocation =
+        tracing::trace_span!(target: "incan::invocation", "oven_rustc::validate_native_loaf_bindings").entered();
     let payload = serde_json::to_vec(record).map_err(failed)?;
     let receipt = record_receipt(record, &payload)?;
     if record.schema != SCHEMA
@@ -766,17 +817,33 @@ fn verify_record(
             "native record payload, recipe, intent or Store identity differs",
         ));
     }
-    verify_native(record, native)
+    verify_native_bindings(record, native)
 }
 
 /// Revalidate the original native generation and prove the complete extern alias-to-bytes recipe.
-fn verify_native(record: &NativeLoafRecord, owner: &OvenStoreExecutionPayload) -> Result<()> {
-    // Native execution consumes the complete non-source inventory. Source inspection separately verifies the
-    // archived source subtree before reading it; native reuse must not traverse those unconsumed files.
-    owner
-        .verify_admitted_payload_except_directory("source")
-        .map_err(failed)?;
-    selection::verify_native_source_declaration(owner)?;
+/// Metadata inspection chooses the full inventory here, avoiding a second walk over native members afterward.
+fn verify_native(
+    record: &NativeLoafRecord,
+    owner: &OvenStoreExecutionPayload,
+    inventory: NativeInventory,
+) -> Result<()> {
+    verify_native_bindings(record, owner)?;
+    verify_native_inventory(owner, inventory)
+}
+
+/// Check original on-disk payloads and consumed members without reconstructing sealed recipe metadata.
+/// Execution excludes archived source members while independently validating the source declaration.
+fn verify_native_inventory(owner: &OvenStoreExecutionPayload, inventory: NativeInventory) -> Result<()> {
+    match inventory {
+        NativeInventory::Execution => owner.verify_admitted_payload_except_directory("source"),
+        NativeInventory::Complete => owner.verify_admitted_payload(),
+    }
+    .map_err(failed)?;
+    selection::verify_native_source_declaration(owner)
+}
+
+/// Bind the immutable native owner and complete physical extern set to the producer's exact recipe.
+fn verify_native_bindings(record: &NativeLoafRecord, owner: &OvenStoreExecutionPayload) -> Result<()> {
     record.recipe.verify_identity().map_err(failed)?;
     source_origin(&record.recipe)?;
     let source = &record.source;

@@ -1321,6 +1321,16 @@ fn direct_route_tuple_result_identity_matches_legacy() -> Result<(), Box<dyn std
     )
 }
 
+/// Newtype payloads retain their checked declaration identity on both Result sides and inside containers.
+#[test]
+fn direct_route_newtype_result_identity_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    assert_native_legacy_bytes(
+        "newtype_result_identity",
+        "@derive(Clone)\ntype Kind = newtype str\ntype Choice = Kind | str\n\ndef wrapped() -> Result[Kind, str]:\n    return Ok(Kind(\"wrapped\"))\n\ndef choice() -> Result[Choice, str]:\n    return Ok(Kind(\"choice\"))\n\ndef nested() -> Result[list[Kind], str]:\n    return Ok([Kind(\"nested\")])\n\ndef failed() -> Result[int, Kind]:\n    return Err(Kind(\"failed\"))\n\ndef main() -> None:\n    match wrapped():\n        Ok(value) => println(value.0)\n        Err(message) => println(message)\n    match choice():\n        Ok(value) =>\n            if isinstance(value, Kind):\n                println(value.0)\n        Err(message) => println(message)\n    match nested():\n        Ok(values) => println(values[0].0)\n        Err(message) => println(message)\n    match failed():\n        Ok(value) => println(value)\n        Err(error) => println(error.0)\n",
+        b"wrapped\nchoice\nnested\nfailed\n",
+    )
+}
+
 /// Contextual None payloads construct nested intrinsic carriers with their proven types.
 #[test]
 fn direct_route_contextual_none_payloads_match_legacy() -> Result<(), Box<dyn std::error::Error>> {

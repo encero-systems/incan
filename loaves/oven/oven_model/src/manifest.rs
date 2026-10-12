@@ -1185,21 +1185,31 @@ impl ProjectManifest {
     /// the retired `incan.toml` — RFC 117 rule 10 makes that a targeted diagnostic rather than a parse or a silent
     /// walk past it, because such a directory looks like a project root to whoever authored it.
     pub fn discover(start_dir: &Path) -> Result<Option<Self>, ManifestError> {
+        Self::discover_observed(start_dir, &mut |_| {})
+    }
+
+    /// Discover through the ordinary grammar while reporting every filesystem input before it is consulted.
+    ///
+    /// The observer owns freshness policy; this model neither retains state nor assigns content identities. Absent
+    /// discovery candidates and filesystem-dependent parse probes are inputs too. Nested-command overrides retain
+    /// their existing meaning and the actual override content path is reported.
+    pub fn discover_observed(start_dir: &Path, observe: &mut dyn FnMut(&Path)) -> Result<Option<Self>, ManifestError> {
         let manifest_path = match internal_project_root_override().map(|root| root.join(LOAF_MANIFEST_FILENAME)) {
             Some(path) => path,
-            None => match find_manifest(start_dir)? {
+            None => match find_manifest_observed(start_dir, observe)? {
                 Some(path) => path,
                 None => return Ok(None),
             },
         };
 
         let content_path = internal_manifest_override_path().unwrap_or_else(|| manifest_path.clone());
+        observe(&content_path);
         let content = std::fs::read_to_string(&content_path).map_err(|e| ManifestError::Read {
             path: content_path.clone(),
             source: e,
         })?;
 
-        let manifest = parse_manifest_content(&content, &manifest_path)?;
+        let manifest = parse_manifest_content(&content, &manifest_path, observe)?;
         Ok(Some(manifest))
     }
 
@@ -1207,7 +1217,7 @@ impl ProjectManifest {
     ///
     /// Source files need not exist, but existing script paths are resolved to detect library aliases.
     pub fn from_str(content: &str, path: &Path) -> Result<Self, ManifestError> {
-        parse_manifest_content(content, path)
+        parse_manifest_content(content, path, &mut |_| {})
     }
 
     /// Read and parse one manifest at its exact path without applying nested-command discovery overrides.
@@ -1215,11 +1225,17 @@ impl ProjectManifest {
     /// Workspace graph construction uses this boundary to inspect ancestor manifests as they exist on disk. Callers
     /// that need ordinary current-directory project discovery should continue to use [`Self::discover`].
     pub fn load(path: &Path) -> Result<Self, ManifestError> {
+        Self::load_observed(path, &mut |_| {})
+    }
+
+    /// Load an exact manifest through the existing parser, reporting content and path-classification inputs.
+    pub fn load_observed(path: &Path, observe: &mut dyn FnMut(&Path)) -> Result<Self, ManifestError> {
+        observe(path);
         let content = std::fs::read_to_string(path).map_err(|source| ManifestError::Read {
             path: path.to_path_buf(),
             source,
         })?;
-        Self::from_str(&content, path)
+        parse_manifest_content(&content, path, observe)
     }
 
     /// The set of crate names declared in `[rust-dependencies]` (normal deps only).
@@ -1355,6 +1371,14 @@ impl ProjectManifest {
     /// Members never reach this method directly: their `{ workspace = true }` requests are resolved by the workspace
     /// graph against these root-owned declarations. A root cannot itself inherit an identity from another workspace.
     pub fn workspace_shared_dependencies(&self) -> Result<WorkspaceSharedDependencies, ManifestError> {
+        self.workspace_shared_dependencies_observed(&mut |_| {})
+    }
+
+    /// Project shared dependency identities while reporting local Rust classification probes to the graph owner.
+    pub fn workspace_shared_dependencies_observed(
+        &self,
+        observe: &mut dyn FnMut(&Path),
+    ) -> Result<WorkspaceSharedDependencies, ManifestError> {
         let Some(workspace) = self.workspace() else {
             return Ok(WorkspaceSharedDependencies::default());
         };
@@ -1375,7 +1399,7 @@ impl ProjectManifest {
             entries,
             optional: HashMap::new(),
         };
-        let loaf_dependencies = parse_loaf_dependencies(Some(&table), &spans, &self.path)?;
+        let loaf_dependencies = parse_loaf_dependencies(Some(&table), &spans, &self.path, observe)?;
         let mut rust_dependencies = parse_workspace_rust_dependency_table(
             &workspace.rust_dependencies,
             &self.path,
@@ -1394,7 +1418,11 @@ impl ProjectManifest {
             }
         }
         Ok(WorkspaceSharedDependencies {
-            library_dependencies: parse_workspace_library_dependency_table(&workspace.dependencies, &self.path)?,
+            library_dependencies: parse_workspace_library_dependency_table(
+                &workspace.dependencies,
+                &self.path,
+                observe,
+            )?,
             loaf_dependencies,
             rust_dependencies,
             rust_dev_dependencies: parse_workspace_rust_dependency_table(
@@ -1511,8 +1539,15 @@ pub fn discovered_manifest_kind(dir: &Path) -> DiscoveredManifest {
 /// put it there meant it as a project root, and continuing upward would silently build a different project than the
 /// one they were standing in.
 pub fn find_manifest(start_dir: &Path) -> Result<Option<PathBuf>, ManifestError> {
+    find_manifest_observed(start_dir, &mut |_| {})
+}
+
+/// Report both positive and negative nearest-project candidates without changing discovery precedence.
+fn find_manifest_observed(start_dir: &Path, observe: &mut dyn FnMut(&Path)) -> Result<Option<PathBuf>, ManifestError> {
     let mut current = start_dir.to_path_buf();
     loop {
+        observe(&current.join(LOAF_MANIFEST_FILENAME));
+        observe(&current.join(LEGACY_MANIFEST_FILENAME));
         match discovered_manifest_kind(&current) {
             DiscoveredManifest::Loaf(path) => return Ok(Some(path)),
             DiscoveredManifest::LegacyIncanOnly(path) => return Err(ManifestError::LegacyIncanOnly { path }),
@@ -1633,13 +1668,15 @@ pub struct LoafDependency {
 }
 
 /// Identify Rust registry edges and existing local Rust roots without interpreting Cargo files.
-fn is_rust_loaf_entry(entry: &DependencyEntry, manifest_path: &Path) -> bool {
+fn is_rust_loaf_entry(entry: &DependencyEntry, manifest_path: &Path, observe: &mut dyn FnMut(&Path)) -> bool {
     match entry {
         DependencyEntry::Targets(_) => true,
         DependencyEntry::Table(table) => {
             table.loaf.as_deref().is_some_and(|loaf| loaf.starts_with("crates-io/"))
                 || table.path.as_deref().is_some_and(|root| {
                     let root = manifest_path.parent().unwrap_or_else(|| Path::new(".")).join(root);
+                    observe(&root.join("src/lib.rs"));
+                    observe(&root.join("src/main.rs"));
                     root.join("src/lib.rs").is_file() || root.join("src/main.rs").is_file()
                 })
         }
@@ -1673,7 +1710,7 @@ pub fn registry_loaf_dependencies_from_str(
         }
         DependencyEntry::Version(_) => false,
     });
-    parse_loaf_dependencies(Some(&dependencies), &spans, path)
+    parse_loaf_dependencies(Some(&dependencies), &spans, path, &mut |_| {})
 }
 
 /// Admit scoped Rust Loaves, retaining target alternatives before any consumer selection.
@@ -1681,11 +1718,12 @@ fn parse_loaf_dependencies(
     table: Option<&DependencyTable>,
     spans: &ManifestSpans<'_>,
     path: &Path,
+    observe: &mut dyn FnMut(&Path),
 ) -> Result<BTreeMap<String, Vec<LoafDependency>>, ManifestError> {
     let mut result = BTreeMap::new();
     let Some(table) = table else { return Ok(result) };
     for (name, entry) in &table.entries {
-        if !is_rust_loaf_entry(entry, path) {
+        if !is_rust_loaf_entry(entry, path, observe) {
             continue;
         }
         let entries = match entry {
@@ -2657,7 +2695,11 @@ fn byte_offset_to_line_col(content: &str, index: usize) -> (usize, usize) {
 }
 
 /// Parse and validate one complete `loaf.toml` document.
-fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest, ManifestError> {
+fn parse_manifest_content(
+    content: &str,
+    path: &Path,
+    observe: &mut dyn FnMut(&Path),
+) -> Result<ProjectManifest, ManifestError> {
     let document: Document<String> = content
         .parse()
         .map_err(|error| manifest_parse_error(path, content, error))?;
@@ -2682,7 +2724,7 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
     let library_dependencies = raw
         .dependencies
         .as_ref()
-        .map(|table| parse_library_dependency_table(table, &spans, path))
+        .map(|table| parse_library_dependency_table(table, &spans, path, observe))
         .transpose()?
         .unwrap_or_default();
 
@@ -2704,7 +2746,7 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
         .transpose()?
         .unwrap_or_default();
 
-    let loaf_dependencies = parse_loaf_dependencies(raw.dependencies.as_ref(), &spans, path)?;
+    let loaf_dependencies = parse_loaf_dependencies(raw.dependencies.as_ref(), &spans, path, observe)?;
     for (name, entries) in &loaf_dependencies {
         if let [entry] = entries.as_slice()
             && entry.target.is_none()
@@ -2722,7 +2764,7 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
     }
     validate_package_collisions(&rust_dependencies, &rust_dev_dependencies, path)?;
 
-    validate_manifest_metadata(&raw, &spans, path)?;
+    validate_manifest_metadata(&raw, &spans, path, observe)?;
     let rust_facts = raw.rust.as_ref().map(|rust| rust.facts.clone()).unwrap_or_default();
     validate_rust_fact_records(&rust_facts, path, &spans)?;
     let rust_bins = raw.rust.as_ref().map(|rust| rust.bin.clone()).unwrap_or_default();
@@ -2826,9 +2868,14 @@ fn validate_manifest_rust_facet(
 }
 
 /// Validate authority roots and owned metadata before dependency or source consumers run.
-fn validate_manifest_metadata(raw: &RawManifest, spans: &ManifestSpans<'_>, path: &Path) -> Result<(), ManifestError> {
+fn validate_manifest_metadata(
+    raw: &RawManifest,
+    spans: &ManifestSpans<'_>,
+    path: &Path,
+    observe: &mut dyn FnMut(&Path),
+) -> Result<(), ManifestError> {
     validate_requires_incan_constraints(raw, spans, path)?;
-    validate_script_library_collisions(raw, spans, path)?;
+    validate_script_library_collisions(raw, spans, path, observe)?;
     if raw.oven.is_some() {
         return Err(manifest_invalid(
             path,
@@ -2915,17 +2962,20 @@ fn validate_script_library_collisions(
     raw: &RawManifest,
     spans: &ManifestSpans<'_>,
     path: &Path,
+    observe: &mut dyn FnMut(&Path),
 ) -> Result<(), ManifestError> {
     let Some(project) = &raw.project else {
         return Ok(());
     };
     let root = path.parent().unwrap_or_else(|| Path::new("."));
     let library = root.join("src/lib.incn");
+    observe(&library);
     let resolved_library = std::fs::canonicalize(&library).ok();
     let mut scripts = project.scripts.iter().collect::<Vec<_>>();
     scripts.sort_by(|left, right| left.0.cmp(right.0));
     for (name, configured) in scripts {
         let script = root.join(configured);
+        observe(&script);
         let aliases_library = resolved_library
             .as_ref()
             .is_some_and(|library| std::fs::canonicalize(&script).is_ok_and(|resolved| &resolved == library));
@@ -3315,6 +3365,7 @@ fn parse_library_dependency_table(
     table: &DependencyTable,
     spans: &ManifestSpans<'_>,
     path: &Path,
+    observe: &mut dyn FnMut(&Path),
 ) -> Result<ParsedLibraryDependencyTable, ManifestError> {
     if !table.optional.is_empty() {
         return Err(manifest_invalid(
@@ -3327,7 +3378,7 @@ fn parse_library_dependency_table(
     let mut result = ParsedLibraryDependencyTable::default();
     for (name, entry) in &table.entries {
         let location = spans.entry_location(&["dependencies"], name);
-        if is_rust_loaf_entry(entry, path) {
+        if is_rust_loaf_entry(entry, path, observe) {
             continue;
         }
 
@@ -3613,6 +3664,7 @@ fn workspace_rust_dependency_request(
 fn parse_workspace_library_dependency_table(
     entries: &BTreeMap<String, toml::Value>,
     path: &Path,
+    observe: &mut dyn FnMut(&Path),
 ) -> Result<BTreeMap<String, LibraryDependencySpec>, ManifestError> {
     let mut parsed = BTreeMap::new();
     for (name, value) in entries {
@@ -3624,7 +3676,7 @@ fn parse_workspace_library_dependency_table(
                 format!("workspace root dependency `{name}` cannot inherit from another workspace"),
             ));
         }
-        if is_rust_loaf_entry(&entry, path) {
+        if is_rust_loaf_entry(&entry, path, observe) {
             continue;
         }
         parsed.insert(name.clone(), library_dependency_from_entry(name, &entry, path, None)?);

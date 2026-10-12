@@ -70,12 +70,42 @@ pub fn project_relative_entrypoint(project_root: &Path, entrypoint: &Path) -> Op
 /// This avoids assuming a conventional `src/` layout: a custom source root is still an exact project bake, while a
 /// standalone file intentionally remains on the normal explicit-preparation path.
 pub fn project_root_for_completed_output(entrypoint: &Path) -> CliResult<Option<PathBuf>> {
+    project_root_for_completed_output_with_inputs(
+        entrypoint,
+        &mut super::retained_inputs::RetainedProjectInputs::default(),
+    )
+}
+
+/// Find the nearest project without reparsing an already observed effective manifest or workspace.
+///
+/// Nested-command overrides keep their established discovery boundary. Ordinary requests probe manifest location,
+/// then borrow the same guarded model used for source authority and canonical lock selection. Single-file requests
+/// remain outside completed-project reuse.
+pub(super) fn project_root_for_completed_output_with_inputs(
+    entrypoint: &Path,
+    inputs: &mut super::retained_inputs::RetainedProjectInputs,
+) -> CliResult<Option<PathBuf>> {
     let inferred_root = resolve_project_root(entrypoint);
-    let Some(manifest) = discover_effective_project_manifest(&inferred_root)? else {
+    if std::env::var_os(oven_model::manifest::INTERNAL_MANIFEST_OVERRIDE_ENV).is_some()
+        || std::env::var_os(oven_model::manifest::INTERNAL_PROJECT_ROOT_OVERRIDE_ENV).is_some()
+    {
+        let Some(manifest) = discover_effective_project_manifest(&inferred_root)? else {
+            return Ok(None);
+        };
+        enforce_project_toolchain_constraint(&manifest)?;
+        return Ok(Some(manifest.project_root().to_path_buf()));
+    }
+    let Some(manifest_path) =
+        oven_model::manifest::find_manifest(&inferred_root).map_err(|error| CliError::failure(error.to_string()))?
+    else {
         return Ok(None);
     };
-    enforce_project_toolchain_constraint(&manifest)?;
-    Ok(Some(manifest.project_root().to_path_buf()))
+    let root = manifest_path
+        .parent()
+        .ok_or_else(|| CliError::failure("project manifest has no parent directory"))?;
+    let project = inputs.project(root)?;
+    enforce_project_toolchain_constraint(&project.manifest)?;
+    Ok(Some(root.to_path_buf()))
 }
 
 /// Reject a store- or caller-relative path that could escape its declared root.

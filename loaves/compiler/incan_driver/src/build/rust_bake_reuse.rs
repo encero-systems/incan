@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::build::output_selection::{project_output_locator, remember_project_output};
 use crate::build::source_authority::digest_baked_project_source_authority;
 use crate::build::{OvenProjectBakeProfileReport, OvenProjectBakeReport};
 use crate::error::{CliError, CliResult};
@@ -14,7 +15,10 @@ use incan_lang::version::INCAN_VERSION;
 use incan_provider::FeatureSelection;
 use oven_model::manifest::ProjectManifest;
 use oven_rustc::rustc::{resolve_active_rustc, rustc_host_target, rustc_identity};
-use oven_store::store::{OvenArtifactKind, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore};
+use oven_store::store::{
+    OvenArtifactKind, OvenArtifactManifest, OvenArtifactMaterializedFile, OvenArtifactPublishRequest, OvenStore,
+    OvenStoreExecutionPayload,
+};
 use oven_store::{OvenGeneratedProjectRequest, OvenReceipt, digest_bytes, receipt_generated_project, write_receipt};
 
 /// A command-local proof of all inputs used by both profiles of a Rust caller bake.
@@ -184,6 +188,38 @@ fn materialize_rust_caller_output(stored: &Path, output: &Path) -> CliResult<()>
     Ok(())
 }
 
+/// Select a caller through the existing output address before searching the catalog on a missing or mismatched hint.
+///
+/// The hint grants no execution authority: exact Store admission retains payload integrity and the original owner
+/// lease, and the current lookup receipt must still match. Damaged admitted owners refuse rather than falling back.
+fn select_rust_bake_output(
+    store: &OvenStore,
+    receipt_path: &Path,
+    lookup: &OvenReceipt,
+) -> CliResult<Option<OvenStoreExecutionPayload>> {
+    let matches = |header: &OvenArtifactManifest| {
+        header.kind == OvenArtifactKind::ProjectOutput
+            && header.receipt_identity == lookup.identity
+            && header.build_unit_identity == lookup.build_unit_identity
+            && header.intent == lookup.intent
+    };
+    if let Some(identity) = project_output_locator(receipt_path) {
+        let located = store
+            .try_select_payloads_for_execution(&[identity])
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        if let Some(candidate) = located
+            .and_then(|mut candidates| candidates.pop())
+            .filter(|candidate| matches(&candidate.manifest))
+        {
+            return Ok(Some(candidate));
+        }
+    }
+    let mut candidates = store
+        .select_payloads_matching_for_execution(matches, |_, _| true)
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    Ok((candidates.len() == 1).then(|| candidates.pop()).flatten())
+}
+
 /// Select every unit/profile before restoring any caller output; incomplete sets are ordinary cache misses.
 pub(super) fn try_reuse_rust_bake(
     root: &Path,
@@ -195,21 +231,8 @@ pub(super) fn try_reuse_rust_bake(
     for (unit, _) in units {
         for profile in crate::build::plan_authority::explicit_bake_profiles() {
             let lookup = lookup_receipt(root, key, unit, profile)?;
-            let candidates = store
-                .select_payloads_matching_for_execution(
-                    |header| {
-                        header.kind == OvenArtifactKind::ProjectOutput
-                            && header.receipt_identity == lookup.identity
-                            && header.build_unit_identity == lookup.build_unit_identity
-                            && header.intent == lookup.intent
-                    },
-                    |_, _| true,
-                )
-                .map_err(|error| CliError::failure(error.to_string()))?;
-            if candidates.len() != 1 {
-                return Ok(None);
-            }
-            let Some(candidate) = candidates.into_iter().next() else {
+            let (_, receipt_path) = output_paths(root, unit, profile)?;
+            let Some(candidate) = select_rust_bake_output(store, &receipt_path, &lookup)? else {
                 return Ok(None);
             };
             let payload: RustBakeOutput =
@@ -239,6 +262,7 @@ pub(super) fn try_reuse_rust_bake(
         if !fs::read(&receipt_path).is_ok_and(|bytes| bytes == expected_receipt) {
             write_receipt(&payload.receipt, &receipt_path).map_err(|error| CliError::failure(error.to_string()))?;
         }
+        remember_project_output(&receipt_path, &candidate.manifest.identity);
         profiles.push(OvenProjectBakeProfileReport {
             project_target: format!("rust:{unit}"),
             profile: profile.into(),
@@ -293,7 +317,7 @@ pub(super) fn publish_rust_bake(
             plan: profile.plan_identity.clone(),
             receipt,
         };
-        store
+        let published = store
             .publish(&OvenArtifactPublishRequest {
                 receipt: lookup_receipt(&report.project, key, unit, &profile.profile)?,
                 domain: format!("incan-release-{INCAN_VERSION}"),
@@ -306,6 +330,7 @@ pub(super) fn publish_rust_bake(
                 materialized_directories: Vec::new(),
             })
             .map_err(|error| CliError::failure(error.to_string()))?;
+        remember_project_output(&profile.receipt, &published.identity);
     }
     Ok(())
 }
@@ -370,6 +395,39 @@ mod tests {
                 format!("native {}", profile.profile)
             );
         }
+
+        // Exact locators from publication and restored copies must avoid unrelated Store owners.
+        let unrelated = store.root().join("entries").join(format!("sha256-{}", "0".repeat(64)));
+        fs::create_dir(&unrelated)?;
+        fs::write(unrelated.join("artifact.json"), b"not a manifest")?;
+        for project in [&report.project, &copied] {
+            assert!(try_reuse_rust_bake(project, &units, &store, &key)?.is_some());
+        }
+        fs::remove_dir_all(&unrelated)?;
+
+        // Missing or malformed hints may cost a search, but cannot prevent portable reuse.
+        for hint in [
+            b"\"../../foreign\"".to_vec(),
+            serde_json::to_vec(&format!("sha256:{}", "f".repeat(64)))?,
+        ] {
+            for profile in &reused.profiles {
+                let (_, receipt) = output_paths(&copied, "caller", &profile.profile)?;
+                fs::write(receipt.with_extension("output.json"), &hint)?;
+            }
+            assert!(try_reuse_rust_bake(&copied, &units, &store, &key)?.is_some());
+        }
+
+        // An exact locator does not authorize edited output bytes, even with a restored modification time.
+        let (edited_output, _) = output_paths(&copied, "caller", "debug")?;
+        let modified = fs::metadata(&edited_output)?.modified()?;
+        let expected = fs::read(&edited_output)?;
+        fs::write(&edited_output, vec![b'X'; expected.len()])?;
+        fs::File::options()
+            .write(true)
+            .open(&edited_output)?
+            .set_times(fs::FileTimes::new().set_modified(modified))?;
+        assert!(try_reuse_rust_bake(&copied, &units, &store, &key)?.is_some());
+        assert_eq!(fs::read(&edited_output)?, expected);
         let changed = RustBakeReuseKey {
             digest: digest_bytes(b"changed dependency receipt"),
             ..key

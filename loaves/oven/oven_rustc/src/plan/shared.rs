@@ -66,6 +66,7 @@ impl OvenSharedNativeOwners {
     ///
     /// The native-Loaf admission boundary must first verify complete producer recipe, source, intent, native member,
     /// and physical extern authority. This capability does not bless arbitrary Engine entries supplied by callers.
+    /// Index construction retains that admission; plan selection revalidates the original owners before use.
     pub(crate) fn from_record_bound(
         owners: &[Arc<OvenStoreExecutionPayload>],
         read_only: bool,
@@ -82,7 +83,9 @@ impl OvenSharedNativeOwners {
         let mut indexed = BTreeMap::new();
         let mut domains = BTreeMap::new();
         for owner in owners {
-            verify_retained_owner(owner, read_only, record_bound)?;
+            if !record_bound {
+                verify_retained_owner(owner, read_only, false)?;
+            }
             let store = owner
                 .artifact_root
                 .parent()

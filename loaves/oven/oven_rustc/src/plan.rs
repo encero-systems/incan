@@ -92,6 +92,35 @@ pub enum OvenDirectRustcPlanSelection {
 }
 
 impl OvenDirectRustcPlanSelection {
+    /// Enumerate one retained stored plan's original physical inputs without selecting another Store entry.
+    ///
+    /// Its owning process must keep this selection and all shared leases alive. The existing selector already matches
+    /// stored plans by build-unit identity and intent rather than consumer source identity. Other selection families
+    /// return false until their complete retained-input contract is represented; they keep ordinary selection.
+    pub fn visit_retained_inputs(&self, visit: &mut impl FnMut(&Path)) -> Result<bool, OvenRustcError> {
+        let Self::Stored(selected) = self else {
+            return Ok(false);
+        };
+        let entry = selected
+            .artifact_root
+            .parent()
+            .ok_or_else(|| OvenRustcError::InvalidInput {
+                field: "retained plan",
+                message: "stored plan has no entry root".to_string(),
+            })?;
+        for name in ["artifact.json", "loaf.json", "payload", "native-receipt.json"] {
+            visit(&entry.join(name));
+        }
+        visit(&selected.artifact_root);
+        for relative in crate::rustc::expected_artifacts(&selected.artifacts)?.keys() {
+            visit(&selected.physical_path(relative));
+        }
+        for owner in &selected._shared_owners {
+            owner.visit_admitted_native_inputs(visit);
+        }
+        Ok(true)
+    }
+
     /// Return the receipt-bound identity included in a normal-command build report.
     pub fn report_identity(&self) -> String {
         match self {

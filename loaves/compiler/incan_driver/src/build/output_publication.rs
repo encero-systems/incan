@@ -21,6 +21,7 @@ pub(super) struct OutputPublication {
 impl OutputPublication {
     /// Snapshot only the selected projection's files and replaceable metadata before publication starts.
     pub(super) fn begin(project: &Path, artifacts: Vec<PathBuf>, metadata: Vec<PathBuf>) -> CliResult<Self> {
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::begin_output_publication", artifacts = artifacts.len(), metadata_files = metadata.len()).entered();
         let root = fs::canonicalize(project).map_err(io_error)?;
         let mut paths = BTreeMap::new();
         for (path, copy) in artifacts
@@ -100,6 +101,9 @@ impl OutputPublication {
 
     /// Apply the same recovery boundary to errors and late reuse misses without interpreting error messages.
     fn finish_result<T>(self, result: CliResult<T>, rollback: bool) -> CliResult<T> {
+        let _invocation =
+            tracing::trace_span!(target: "incan::invocation", "incan_driver::finish_output_publication", rollback)
+                .entered();
         if rollback && let Err(rollback) = self.restore() {
             let cause = match &result {
                 Err(error) => error.to_string(),

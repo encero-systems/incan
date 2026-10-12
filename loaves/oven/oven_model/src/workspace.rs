@@ -341,7 +341,7 @@ impl WorkspaceGraph {
         let Some(workspace) = manifest.workspace().cloned() else {
             return Err(WorkspaceError::NotWorkspace { manifest_path });
         };
-        Self::from_root_manifest(root, manifest, &workspace)
+        Self::from_root_manifest(root, manifest, &workspace, &mut |_| {})
     }
 
     /// Discover the nearest ancestor workspace whose graph contains the nearest discovered project.
@@ -349,9 +349,20 @@ impl WorkspaceGraph {
     /// An ancestor `[workspace]` that does not list the current project has no authority over it and is ignored. This
     /// preserves RFC 015 nearest-project discovery for projects that happen to live below unrelated workspace roots.
     pub fn discover(start_dir: &Path) -> Result<Option<Self>, WorkspaceError> {
-        let Some(project) = ProjectManifest::discover(start_dir)? else {
+        Self::discover_observed(start_dir, &mut |_| {})
+    }
+
+    /// Discover the existing workspace graph while reporting inputs to its owner before filesystem decisions.
+    ///
+    /// Reports ancestor candidates, parsed manifests, literal topology paths and enumerated directories. The model
+    /// remains the sole RFC 077 resolver; the observer may retain this result only while those observations remain
+    /// current, including paths that were absent and ancestors without workspace authority.
+    pub fn discover_observed(start_dir: &Path, observe: &mut dyn FnMut(&Path)) -> Result<Option<Self>, WorkspaceError> {
+        observe(start_dir);
+        let Some(project) = ProjectManifest::discover_observed(start_dir, observe)? else {
             return Ok(None);
         };
+        observe(project.project_root());
         let project_root = canonical_directory(project.project_root())?;
         let starts_at_virtual_workspace_root = project.project.is_none()
             && project.workspace().is_some()
@@ -360,12 +371,14 @@ impl WorkspaceGraph {
 
         loop {
             let manifest_path = candidate_root.join(LOAF_MANIFEST_FILENAME);
+            observe(&manifest_path);
             if manifest_path.is_file() {
-                let manifest = ProjectManifest::load(&manifest_path)?;
+                let manifest = ProjectManifest::load_observed(&manifest_path, observe)?;
                 if let Some(workspace) = manifest.workspace().cloned() {
+                    observe_workspace_declarations(&candidate_root, &workspace, observe);
                     let has_authority = starts_at_virtual_workspace_root && candidate_root == project_root
                         || workspace_might_contain_project(&candidate_root, &manifest, &workspace, &project_root);
-                    match Self::from_root_manifest(candidate_root.clone(), manifest, &workspace) {
+                    match Self::from_root_manifest(candidate_root.clone(), manifest, &workspace, observe) {
                         Ok(graph) if starts_at_virtual_workspace_root && candidate_root == project_root => {
                             return Ok(Some(graph));
                         }
@@ -832,12 +845,14 @@ impl WorkspaceGraph {
         root: PathBuf,
         manifest: ProjectManifest,
         workspace: &WorkspaceSection,
+        observe: &mut dyn FnMut(&Path),
     ) -> Result<Self, WorkspaceError> {
         let manifest_path = root.join(LOAF_MANIFEST_FILENAME);
         // Validate workspace-owned dependency identity at graph construction time so no command can observe a valid
         // topology while silently carrying malformed shared configuration.
-        let _shared_dependencies = manifest.workspace_shared_dependencies()?;
-        let discovered = discover_project_manifests(&root)?;
+        let _shared_dependencies = manifest.workspace_shared_dependencies_observed(observe)?;
+        observe_workspace_declarations(&root, workspace, observe);
+        let discovered = discover_project_manifests(&root, observe)?;
         let mut warnings = Vec::new();
         let exclusions = compile_exclusions(&root, &workspace.exclude)?;
         let member_paths = expand_member_paths(&root, workspace, &discovered, &mut warnings)?;
@@ -854,7 +869,7 @@ impl WorkspaceGraph {
         }
 
         for member_root in member_paths {
-            let (member, member_manifest) = load_non_root_member(&root, &member_root)?;
+            let (member, member_manifest) = load_non_root_member(&root, &member_root, observe)?;
             member_manifests.insert(member.root().to_path_buf(), member_manifest);
             members.push(member);
         }
@@ -877,6 +892,23 @@ impl WorkspaceGraph {
             exclusions: workspace.exclude.clone(),
             warnings,
         })
+    }
+}
+
+/// Report literal paths used by membership, exclusions and default selection, including absent declarations.
+fn observe_workspace_declarations(root: &Path, workspace: &WorkspaceSection, observe: &mut dyn FnMut(&Path)) {
+    for declaration in workspace
+        .members
+        .iter()
+        .chain(&workspace.exclude)
+        .chain(&workspace.default_members)
+    {
+        if !has_glob_magic(declaration) {
+            let path = root.join(declaration);
+            observe(&path);
+            observe(&path.join(LOAF_MANIFEST_FILENAME));
+            observe(&path.join(crate::manifest::LEGACY_MANIFEST_FILENAME));
+        }
     }
 }
 
@@ -1086,9 +1118,13 @@ fn root_member(root: &Path, name: Option<&str>) -> Result<WorkspaceMember, Works
 }
 
 /// Parse and validate one explicitly listed non-root workspace member.
-fn load_non_root_member(root: &Path, member_root: &Path) -> Result<(WorkspaceMember, ProjectManifest), WorkspaceError> {
+fn load_non_root_member(
+    root: &Path,
+    member_root: &Path,
+    observe: &mut dyn FnMut(&Path),
+) -> Result<(WorkspaceMember, ProjectManifest), WorkspaceError> {
     let manifest_path = member_root.join(LOAF_MANIFEST_FILENAME);
-    let manifest = ProjectManifest::load(&manifest_path)?;
+    let manifest = ProjectManifest::load_observed(&manifest_path, observe)?;
     if manifest.workspace().is_some() {
         return Err(invalid_workspace(
             root,
@@ -1126,11 +1162,15 @@ fn required_project_name(root: &Path, name: Option<&str>, owner: &str) -> Result
 }
 
 /// Discover every project manifest below `root` without following symlinked directories.
-fn discover_project_manifests(root: &Path) -> Result<Vec<DiscoveredProject>, WorkspaceError> {
+fn discover_project_manifests(
+    root: &Path,
+    observe: &mut dyn FnMut(&Path),
+) -> Result<Vec<DiscoveredProject>, WorkspaceError> {
     let mut directories = vec![root.to_path_buf()];
     let mut projects = Vec::new();
 
     while let Some(directory) = directories.pop() {
+        observe(&directory);
         let entries = fs::read_dir(&directory).map_err(|source| WorkspaceError::ReadDirectory {
             path: directory.clone(),
             source,

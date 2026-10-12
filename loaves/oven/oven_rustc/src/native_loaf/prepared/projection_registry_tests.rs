@@ -46,6 +46,13 @@ fn cold_registry_consumer_preserves_edges_codegen_and_runtime() -> TestResult {
                 assert!(work.blob_bytes > 0);
             }
             assert_eq!(prepared.closure().graph().units().len(), 2);
+            let prepared = prepared
+                .reconcile(&request)?
+                .ok_or("unchanged registry closure invalidated")?;
+            assert!(prepared.report().retained_reuse);
+            assert_eq!(prepared.report().index_git_processes, 0);
+            assert_eq!(prepared.report().index_blob_reads, 0);
+            assert_eq!(prepared.report().preparation_calls, 0);
             assert_eq!(run_consumer(root, request.rustc, prepared.closure())?, "7");
             let parent = prepared
                 .closure()

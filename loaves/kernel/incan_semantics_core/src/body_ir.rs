@@ -1629,7 +1629,8 @@ pub struct ResultVariant {
 }
 
 impl ResultVariant {
-    /// Require exactly one declaration identity for every named payload-type leaf before execution.
+    /// Require exactly one model, enum or newtype declaration identity for every named payload-type leaf before
+    /// execution.
     pub fn has_complete_canonical_types(&self) -> bool {
         /// Collect named leaves using the same structural child positions retained in the type facts.
         fn paths(ty: &IncanType, path: &mut Vec<usize>, out: &mut std::collections::BTreeSet<Vec<usize>>) {
@@ -1656,7 +1657,9 @@ impl ResultVariant {
                     identity.scope_discriminant.is_none()
                         && matches!(
                             identity.kind,
-                            crate::SemanticSourceTargetKind::Model | crate::SemanticSourceTargetKind::Enum
+                            crate::SemanticSourceTargetKind::Model
+                                | crate::SemanticSourceTargetKind::Enum
+                                | crate::SemanticSourceTargetKind::Newtype
                         )
                         && matches!(
                             identity.origin,
@@ -3820,6 +3823,50 @@ mod tests {
         assert!(!variant.has_complete_canonical_types());
         variant.canonical_types.clear();
         assert!(!variant.has_complete_canonical_types());
+    }
+
+    /// Checked newtypes are nominal Result payloads; aliases, value bindings and unproven origins are not.
+    #[test]
+    fn result_newtype_identity_requires_its_declaration_authority() {
+        let canonical = crate::CanonicalSymbolId::module_declaration(
+            vec!["types".into()],
+            "Kind",
+            crate::SemanticSourceTargetKind::Newtype,
+            crate::HirSourceSpan::new(0, 20),
+        );
+        let mut variant = super::ResultVariant {
+            kind: super::ResultVariantKind::Err,
+            payload: super::Operand::Constant(super::Constant::Unit),
+            ok_type: crate::IncanType::Primitive(crate::IncanPrimitiveType::Int),
+            error_type: crate::IncanType::Named("Kind".into()),
+            canonical_types: std::collections::BTreeMap::from([(vec![1], canonical.clone())]),
+        };
+        assert!(variant.has_complete_canonical_types());
+        for kind in [
+            crate::SemanticSourceTargetKind::TypeAlias,
+            crate::SemanticSourceTargetKind::Local,
+            crate::SemanticSourceTargetKind::Function,
+        ] {
+            let mut invalid = canonical.clone();
+            invalid.kind = kind;
+            variant.canonical_types.insert(vec![1], invalid);
+            assert!(!variant.has_complete_canonical_types());
+        }
+        let mut invalid = canonical.clone();
+        invalid.origin = crate::SymbolOrigin::Builtin;
+        variant.canonical_types.insert(vec![1], invalid);
+        assert!(!variant.has_complete_canonical_types());
+        let mut invalid = canonical.clone();
+        invalid.scope_discriminant = Some(crate::ScopeDiscriminant(0));
+        variant.canonical_types.insert(vec![1], invalid);
+        assert!(!variant.has_complete_canonical_types());
+        let mut published = canonical;
+        published.origin = crate::SymbolOrigin::Package {
+            library: "types".into(),
+            module_path: vec!["types".into()],
+        };
+        variant.canonical_types.insert(vec![1], published);
+        assert!(variant.has_complete_canonical_types());
     }
 
     use super::*;

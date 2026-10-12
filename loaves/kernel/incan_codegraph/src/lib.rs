@@ -287,6 +287,13 @@ pub enum CodegraphProviderProvenance {
         /// Inventory file that granted reserved namespace authority, when installed.
         inventory_path: Option<String>,
     },
+    /// Ordinary standard loaf bound to its original compiler-owned source publication.
+    StandardPublication {
+        /// Exact package whose pinned policy owns the namespaces.
+        package_name: String,
+        /// Original authored declaration of the publisher.
+        manifest_path: String,
+    },
     /// Compiler-owned symbolic provider without a compiled artifact.
     Compiler,
 }

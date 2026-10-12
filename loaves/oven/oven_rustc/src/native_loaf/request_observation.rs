@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use serde::Serialize;
 
@@ -123,6 +123,8 @@ struct Observation {
     request: ProducerRequest,
     graph: NativeLoafGraph,
     digest: String,
+    /// Successful replay of immutable records against the original pinned facts; mutable bytes remain checked.
+    metadata_recipe: OnceLock<()>,
 }
 
 impl ProducerRequest {
@@ -301,7 +303,12 @@ impl NativeLoafRequestObservation {
             &serde_json::to_vec(&("incan.oven.native-producer-request/1", &request, records)).map_err(failed)?,
         );
         let observation = Self {
-            inner: Arc::new(Observation { request, graph, digest }),
+            inner: Arc::new(Observation {
+                request,
+                graph,
+                digest,
+                metadata_recipe: OnceLock::new(),
+            }),
         };
         // Physical preparation captures source consistency and original owners without granting semantic replay.
         // Unsupported semantic shapes must refuse at observation handoff, not disable their native producer.
@@ -314,6 +321,17 @@ impl NativeLoafRequestObservation {
     /// Borrow complete actual producer records and original leases; consumers must verify at each metadata handoff.
     pub fn graph(&self) -> &NativeLoafGraph {
         &self.inner.graph
+    }
+
+    /// Borrow the actual resolved producer document for preparation-input observation, when one was supplied.
+    /// A direct producer request has no document. This coordinate is not execution authority; metadata consumers
+    /// must still verify the complete original request and its retained owners at their handoff.
+    pub fn resolved_graph_path(&self) -> Option<&Path> {
+        self.inner
+            .request
+            .document
+            .as_ref()
+            .map(|document| document.path.as_path())
     }
 
     /// Revalidate the complete supplied request and every original owner before returning its deterministic digest.
@@ -343,16 +361,34 @@ impl NativeLoafRequestObservation {
         Ok(&self.inner.digest)
     }
 
-    /// Verify current explicit inputs, complete original records and current native facts without Store re-admission.
+    /// Check every mutable request input and original payload at each metadata handoff, without Store re-admission.
+    ///
+    /// A successful semantic recipe replay belongs to this exact original graph and pinned index generation. Clones
+    /// share that proof; a new producer starts unverified. Sources, compiler, archives, selected linker inputs and
+    /// physical owner bytes remain checked each time. Errors are never retained as successful proofs.
+    #[track_caller]
     pub fn verify(&self) -> Result<()> {
+        let caller = std::panic::Location::caller();
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_rustc::verify_native_producer_request", units = self.inner.graph.units.len(), caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
         let request = &self.inner.request;
         request.verify()?;
-        verify_records(request, &self.inner.graph)
+        if self.inner.metadata_recipe.get().is_some() {
+            verify_original_records(&self.inner.graph)?;
+            verify_link_closure(request, &self.inner.graph)
+        } else {
+            verify_records(request, &self.inner.graph)?;
+            // Concurrent initial handoffs may both verify; either successful proof covers the same immutable graph.
+            let _ = self.inner.metadata_recipe.set(());
+            Ok(())
+        }
     }
 }
 
-/// Reuse the producer's current fact/environment/tool projectors over every originally produced unit.
+/// Replay the original pinned fact/environment/tool projectors once over every originally produced unit.
 fn verify_records(request: &ProducerRequest, graph: &NativeLoafGraph) -> Result<()> {
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_rustc::verify_native_metadata_recipe", units = graph.units.len()).entered();
+    #[cfg(test)]
+    tests::RECIPE_VERIFICATIONS.with(|count| count.set(count.get() + 1));
     let seed = current_inputs::read_resolution_bytes(request.lock.bytes()).map_err(super::NativeLoafError::Failed)?;
     let mut index = if seed.units.is_empty() {
         None
@@ -366,8 +402,8 @@ fn verify_records(request: &ProducerRequest, graph: &NativeLoafGraph) -> Result<
         Some(index) => current_inputs::selected_about(&seed.units, index).map_err(super::NativeLoafError::Failed)?,
         None => BTreeMap::new(),
     };
-    let mut link = None;
     let manifests = verify_original_records(graph)?;
+    verify_link_closure(request, graph)?;
     for (identity, unit) in &graph.units {
         let manifest = manifests
             .get(identity)
@@ -391,17 +427,6 @@ fn verify_records(request: &ProducerRequest, graph: &NativeLoafGraph) -> Result<
                 "complete native producer record differs from its compiler/profile authority",
             ));
         }
-        if inputs.contains_key("link-closure") {
-            if link.is_none() {
-                link = Some(
-                    crate::rustc::linking::pinned_link_closure_identity(&request.rustc, &request.target)
-                        .map_err(failed)?,
-                );
-            }
-            if link.as_ref().and_then(Option::as_ref) != inputs.get("link-closure") {
-                return Err(refused("complete native producer linker closure changed"));
-            }
-        }
         let origin = super::source_origin(&unit.record.recipe)?;
         let metadata = about
             .get(&unit.record.source.archive_digest)
@@ -420,14 +445,38 @@ fn verify_records(request: &ProducerRequest, graph: &NativeLoafGraph) -> Result<
     Ok(())
 }
 
+/// Recheck actual selected linker/toolchain inputs even when the immutable semantic recipe has already passed.
+fn verify_link_closure(request: &ProducerRequest, graph: &NativeLoafGraph) -> Result<()> {
+    let mut link = None;
+    for unit in graph.units.values() {
+        let inputs = &unit.record.recipe.sources.build_unit_inputs;
+        if inputs.contains_key("link-closure") {
+            if link.is_none() {
+                link = Some(
+                    crate::rustc::linking::pinned_link_closure_identity(&request.rustc, &request.target)
+                        .map_err(failed)?,
+                );
+            }
+            if link.as_ref().and_then(Option::as_ref) != inputs.get("link-closure") {
+                return Err(refused("complete native producer linker closure changed"));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Verify retained original owners and their actual declarations, with no selector or semantic-shape restriction.
 fn verify_original_records(graph: &NativeLoafGraph) -> Result<BTreeMap<String, toml::Value>> {
     graph
         .units
         .iter()
         .map(|(identity, unit)| {
-            super::verify_record(&unit.record, &unit.record_owner, &unit.native_owner)?;
-            unit.native_owner.verify_admitted_payload().map_err(failed)?;
+            super::verify_record(
+                &unit.record,
+                &unit.record_owner,
+                &unit.native_owner,
+                super::NativeInventory::Complete,
+            )?;
             verify_child_bindings(&unit.record, &graph.units)?;
             Ok((identity.clone(), source_manifest(unit)?))
         })

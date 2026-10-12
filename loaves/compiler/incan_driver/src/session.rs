@@ -690,6 +690,10 @@ impl CompilationSession {
         sdk_profile_override: Option<&str>,
         native_sdk: Option<(&SdkInventory, &BTreeSet<String>, &BTreeSet<String>)>,
     ) -> CliResult<Self> {
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::discover_session", input = %entry_path.display()).entered();
+        let mut phase =
+            tracing::trace_span!(target: "incan::invocation", "incan_driver::session_stage", stage = "manifest")
+                .entered();
         let inferred_project_root = resolve_project_root(entry_path);
         let manifest = discover_effective_project_manifest(&inferred_project_root)?;
         let manifest = match (manifest, native_sdk) {
@@ -717,6 +721,9 @@ impl CompilationSession {
             .map(|manifest| manifest.project_root().to_path_buf())
             .unwrap_or(inferred_project_root);
         let source_root = resolve_source_root(&project_root, manifest.as_ref());
+        drop(phase);
+        phase = tracing::trace_span!(target: "incan::invocation", "incan_driver::session_stage", stage = "inventory")
+            .entered();
         let sdk_inventory = if let Some((inventory, _, _)) = native_sdk {
             Some(Arc::new(inventory.clone()))
         } else {
@@ -734,6 +741,9 @@ impl CompilationSession {
                 SdkInventorySource::DiscoverOnly => discover_or_reuse_published_sdk_inventory()?,
             }
         };
+        drop(phase);
+        phase = tracing::trace_span!(target: "incan::invocation", "incan_driver::session_stage", stage = "features")
+            .entered();
         let package_feature_plan = manifest
             .as_ref()
             .map(|manifest| {
@@ -757,6 +767,8 @@ impl CompilationSession {
             .map_err(|error| CliError::failure(error.to_string()))?
             .map(|graph| graph.declared_features().map(str::to_string).collect())
             .unwrap_or_default();
+        drop(phase);
+        phase = tracing::trace_span!(target: "incan::invocation", "incan_driver::session_stage", stage = "library_dependencies").entered();
         if let Some(manifest) = manifest.as_ref()
             && let Some(preparation) = dependency_mode.library_dependency_preparation()
         {
@@ -782,6 +794,10 @@ impl CompilationSession {
             }
             _ => LibraryManifestIndex::default(),
         };
+        drop(phase);
+        phase =
+            tracing::trace_span!(target: "incan::invocation", "incan_driver::session_stage", stage = "model_bundles")
+                .entered();
         let contract_model_bundles = manifest
             .as_ref()
             .map(|manifest| read_project_model_bundles(&project_root, &manifest.contract_model_bundle_paths()))
@@ -795,6 +811,8 @@ impl CompilationSession {
         // drift before execution prepared the artifacts. Publication is content-addressed: the check path publishes
         // or reuses it, the Oven and collection paths reuse it only, and parser-only mode still avoids preparing
         // ordinary dependencies.
+        drop(phase);
+        phase = tracing::trace_span!(target: "incan::invocation", "incan_driver::session_stage", stage = "component_selection").entered();
         validate_component_inventory_selection(manifest.as_ref(), sdk_profile_override, sdk_inventory.as_deref())?;
         let sdk_selection =
             SdkComponentSelection::from_manifest_with_profile_override(manifest.as_ref(), sdk_profile_override);
@@ -810,6 +828,10 @@ impl CompilationSession {
                 )
             })
             .transpose()?;
+        drop(phase);
+        phase =
+            tracing::trace_span!(target: "incan::invocation", "incan_driver::session_stage", stage = "standard_vocab")
+                .entered();
         add_selected_standard_vocab_providers(
             &mut library_manifest_index,
             sdk_inventory.as_deref(),
@@ -821,6 +843,8 @@ impl CompilationSession {
             Some((_, roots, _)) => roots.clone(),
             None => sdk_provider_bootstrap_namespace_roots(&project_root)?,
         };
+        drop(phase);
+        phase = tracing::trace_span!(target: "incan::invocation", "incan_driver::session_stage", stage = "base_provider_plan").entered();
         let provider_plan = Arc::new(
             ProviderPlan::from_resolved_inputs(
                 library_manifest_index.clone(),
@@ -837,6 +861,7 @@ impl CompilationSession {
             Arc::clone(&provider_plan),
         )])));
 
+        drop(phase);
         Ok(Self {
             manifest,
             source_root,
@@ -940,6 +965,9 @@ impl CompilationSession {
         &self,
         used_module_paths: BTreeSet<Vec<String>>,
     ) -> CliResult<Arc<ProviderPlan>> {
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::project_provider_plan", module_paths = used_module_paths.len()).entered();
+        let authority_trace =
+            tracing::trace_span!(target: "incan::invocation", "incan_driver::verify_provider_authority").entered();
         self.provider_plan
             .verify_standard_source_publication()
             .map_err(CliError::failure)?;
@@ -957,6 +985,7 @@ impl CompilationSession {
                 .collect();
             dependencies.validate_module_usage(&dependency_modules)?;
         }
+        drop(authority_trace);
         if let Some(plan) = self
             .provider_plans_by_modules
             .lock()
@@ -964,8 +993,11 @@ impl CompilationSession {
             .get(&used_module_paths)
             .cloned()
         {
+            tracing::trace!(target: "incan::invocation", decision = "reuse_provider_projection");
             return Ok(plan);
         }
+        let _projection =
+            tracing::trace_span!(target: "incan::invocation", "incan_driver::construct_provider_projection").entered();
         let plan = if self.has_admitted_library_dependencies() {
             Arc::new(self.provider_plan.project_module_usage(used_module_paths.clone()))
         } else {
@@ -1572,18 +1604,32 @@ mod tests {
         }
     }
 
-    /// Seed the inspected `std::io::Read` a consumer's Rust inspection holds, with the methods the standard library's
-    /// `Read.by_ref(guard).take(size).read_to_end(out)` reads call, into a fresh inspection workspace.
+    /// Seed the inspected `std::io::Read` methods into a sysroot-only Loaf inspection workspace.
+    /// Unseeded lookups use the existing native inspection path; the fixture must never discover dependencies through
+    /// Cargo.
     #[cfg(feature = "rust_inspect")]
     fn inspection_workspace_with_std_io_read() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         use incan_lang::interop::{
             RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustTraitAssoc, RustTraitInfo, RustVisibility,
         };
         let workspace = tempfile::tempdir()?;
+        std::fs::create_dir(workspace.path().join("src"))?;
+        std::fs::write(workspace.path().join("src/lib.rs"), "")?;
         std::fs::write(
-            workspace.path().join("Cargo.toml"),
-            "[package]\nname = \"io_repro_inspection\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            workspace.path().join("loaf.toml"),
+            "[project]\nname = \"io_repro_inspection\"\nversion = \"0.1.0\"\n[rust]\nname = \"io_repro_inspection\"\ntype = \"lib\"\nedition = \"2024\"\n",
         )?;
+        crate::lock::registry_sources::acquire_explicit_project_inspection_sources(
+            workspace.path(),
+            workspace.path(),
+            &[],
+        )?;
+        for marker in [
+            rust_inspect::OVEN_DIRECT_INSPECTION_MARKER,
+            rust_inspect::OVEN_LOAF_ONLY_INSPECTION_MARKER,
+        ] {
+            std::fs::write(workspace.path().join(marker), "1\n")?;
+        }
         let method = |name: &str, receiver: &str, params: &[(&str, &str)], return_type: &str| {
             let receiver = RustParam {
                 name: Some("self".to_string()),

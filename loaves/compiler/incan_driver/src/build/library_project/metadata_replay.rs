@@ -74,13 +74,14 @@ impl MetadataPreparation {
 
     /// Observe checked metadata using only original ordinary producer requests and compiler support sources.
     /// The caller must establish plain-library checked-demand coverage before supplying this authority.
+    /// A successful observation verifies the complete native request while computing its semantic identity; unsupported
+    /// observations return no preparation capability.
     pub(crate) fn observe_with_ordinary_native_authority(
         project: &ProjectManifest,
         session: &CompilationSession,
         out_dir: &Path,
         native: Arc<OrdinaryNativeMetadataAuthority>,
     ) -> CliResult<Option<Self>> {
-        native.verify()?;
         Self::observe_with_authority(
             project,
             session,
@@ -100,6 +101,7 @@ impl MetadataPreparation {
         authority: Option<&mut OvenProjectBakeAuthorityContext>,
         explicit_native: Option<NativeMetadataAuthority>,
     ) -> CliResult<Option<Self>> {
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::observe_library_metadata", project = %project.project_root().display()).entered();
         if !metadata_output_is_observable(project.project_root(), out_dir) {
             tracing::debug!("ordinary checked metadata reuse unavailable for output within authored source");
             return Ok(None);
@@ -136,74 +138,97 @@ impl MetadataPreparation {
             .unwrap_or_else(|| "0.1.0".into());
         let mut dependencies = BTreeMap::new();
         let mut dependency_owners = Vec::new();
-        for (alias, manifest, artifact) in session.library_manifest_index.loaded_entries() {
-            if artifact.kind != incan_frontend::library_manifest_index::LibraryArtifactKind::Materialized {
-                return Ok(None);
+        if let Some(admitted) = session.admitted_library_dependencies() {
+            admitted.validate_provider_projection(&session.provider_plan)?;
+            for alias in admitted.direct_aliases().keys() {
+                let selected = admitted.checked_dependency(alias)?;
+                let reference = selected.reference();
+                dependencies.insert(
+                    alias.clone(),
+                    LibraryMetadataDependency {
+                        name: selected.manifest().name.clone(),
+                        version: selected.manifest().version.clone(),
+                        receipt_identity: reference.receipt.identity.clone(),
+                        owner_identity: reference.owner_identity.clone(),
+                        checked_digest: digest_bytes(
+                            &serde_json::to_vec(&selected.checked_files())
+                                .map_err(|error| invalid(error.to_string()))?,
+                        ),
+                    },
+                );
+                dependency_owners.push(Arc::clone(selected));
             }
-            let bytes = match std::fs::read(packaged_library_loaf_manifest_path(&artifact.crate_root)) {
-                Ok(bytes) => bytes,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-                Err(error) => return Err(invalid(error.to_string())),
-            };
-            let package: OvenPackagedLibraryLoafManifest =
-                serde_json::from_slice(&bytes).map_err(|error| invalid(error.to_string()))?;
-            if package.schema_version == 6 && package.checked_metadata.is_none() {
-                return Ok(None);
+        } else {
+            for (alias, manifest, artifact) in session.library_manifest_index.loaded_entries() {
+                if artifact.kind != incan_frontend::library_manifest_index::LibraryArtifactKind::Materialized {
+                    return Ok(None);
+                }
+                let bytes = match std::fs::read(packaged_library_loaf_manifest_path(&artifact.crate_root)) {
+                    Ok(bytes) => bytes,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                    Err(error) => return Err(invalid(error.to_string())),
+                };
+                let package: OvenPackagedLibraryLoafManifest =
+                    serde_json::from_slice(&bytes).map_err(|error| invalid(error.to_string()))?;
+                if package.schema_version == 6 && package.checked_metadata.is_none() {
+                    return Ok(None);
+                }
+                if package.schema_version != crate::build::OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION {
+                    return Err(invalid("unsupported advertised ordinary checked metadata authority"));
+                }
+                let Some(reference) = package.checked_metadata else {
+                    return Ok(None);
+                };
+                let dependency_store = OvenStore::with_release(
+                    packaged_library_loaf_store_root(&artifact.crate_root),
+                    *store.limits(),
+                    &incan_oven_facet::compiler_identity(),
+                );
+                let selected = select_library_metadata_reference(&dependency_store, &reference)?;
+                let current_files =
+                    packaged_library_metadata_files(&artifact.manifest_path, manifest, &artifact.crate_root)?;
+                if selected
+                    .manifest()
+                    .to_json_string()
+                    .map_err(|error| invalid(error.to_string()))?
+                    != manifest.to_json_string().map_err(|error| invalid(error.to_string()))?
+                    || selected.checked_files() != current_files
+                {
+                    return Err(invalid(
+                        "current dependency metadata disagrees with its immutable checked owner",
+                    ));
+                }
+                let Some(dependency_root) =
+                    incan_frontend::library_manifest_index::dependency_project_root(&artifact.crate_root)
+                else {
+                    return Ok(None);
+                };
+                let Some(features) = feature_plan.package(&dependency_root) else {
+                    return Ok(None);
+                };
+                if selected.recipe().producer_digest != producer_digest
+                    || selected.recipe().target != target
+                    || selected.recipe().toolchain != toolchain
+                    || selected.recipe().source_digest != current_source_digest(&dependency_root, feature_plan)?
+                    || selected.recipe().features
+                        != features.features.active_features.iter().cloned().collect::<Vec<_>>()
+                {
+                    return Ok(None);
+                }
+                dependencies.insert(
+                    alias.to_string(),
+                    LibraryMetadataDependency {
+                        name: manifest.name.clone(),
+                        version: manifest.version.clone(),
+                        receipt_identity: reference.receipt.identity,
+                        owner_identity: reference.owner_identity,
+                        checked_digest: digest_bytes(
+                            &serde_json::to_vec(&current_files).map_err(|error| invalid(error.to_string()))?,
+                        ),
+                    },
+                );
+                dependency_owners.push(selected);
             }
-            if package.schema_version != crate::build::OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION {
-                return Err(invalid("unsupported advertised ordinary checked metadata authority"));
-            }
-            let Some(reference) = package.checked_metadata else {
-                return Ok(None);
-            };
-            let dependency_store = OvenStore::with_release(
-                packaged_library_loaf_store_root(&artifact.crate_root),
-                *store.limits(),
-                &incan_oven_facet::compiler_identity(),
-            );
-            let selected = select_library_metadata_reference(&dependency_store, &reference)?;
-            let current_files =
-                packaged_library_metadata_files(&artifact.manifest_path, manifest, &artifact.crate_root)?;
-            if selected
-                .manifest()
-                .to_json_string()
-                .map_err(|error| invalid(error.to_string()))?
-                != manifest.to_json_string().map_err(|error| invalid(error.to_string()))?
-                || selected.checked_files() != current_files
-            {
-                return Err(invalid(
-                    "current dependency metadata disagrees with its immutable checked owner",
-                ));
-            }
-            let Some(dependency_root) =
-                incan_frontend::library_manifest_index::dependency_project_root(&artifact.crate_root)
-            else {
-                return Ok(None);
-            };
-            let Some(features) = feature_plan.package(&dependency_root) else {
-                return Ok(None);
-            };
-            if selected.recipe().producer_digest != producer_digest
-                || selected.recipe().target != target
-                || selected.recipe().toolchain != toolchain
-                || selected.recipe().source_digest != current_source_digest(&dependency_root, feature_plan)?
-                || selected.recipe().features != features.features.active_features.iter().cloned().collect::<Vec<_>>()
-            {
-                return Ok(None);
-            }
-            dependencies.insert(
-                alias.to_string(),
-                LibraryMetadataDependency {
-                    name: manifest.name.clone(),
-                    version: manifest.version.clone(),
-                    receipt_identity: reference.receipt.identity,
-                    owner_identity: reference.owner_identity,
-                    checked_digest: digest_bytes(
-                        &serde_json::to_vec(&current_files).map_err(|error| invalid(error.to_string()))?,
-                    ),
-                },
-            );
-            dependency_owners.push(selected);
         }
         let delivery_coordinates = current_delivery_coordinates(out_dir, session)?;
         let native_authority = if let Some(native) = explicit_native {
@@ -283,6 +308,7 @@ impl MetadataPreparation {
 
     /// Admit one unchanged owner through the ordinary Store, retaining this command's dependency authority.
     pub fn select(&self) -> CliResult<Option<Arc<SelectedLibraryMetadata>>> {
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::select_library_metadata", metadata = %self.receipt.identity).entered();
         self.verify_native_authority()?;
         let Some(selected) = select_library_metadata(&self.store, &self.recipe, &self.receipt)? else {
             return Ok(None);
@@ -301,6 +327,7 @@ impl MetadataPreparation {
         out_dir: &Path,
         native_sdk: Option<&NativeSdkPublicationContext<'_>>,
     ) -> CliResult<()> {
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::revalidate_library_metadata", metadata = %self.receipt.identity).entered();
         let features = session
             .package_feature_plan
             .as_ref()
@@ -810,9 +837,11 @@ pub(super) fn prepare_replayed_library(request: ReplayRequest<'_>) -> CliResult<
         ordinary_native,
     } = request;
     let started = Instant::now();
-    preparation.revalidate(project, session, &out_dir, native_sdk)?;
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::replay_library_metadata", metadata = %selected.reference().owner_identity).entered();
+    #[cfg(test)]
+    let requests_before = ordinary_native::metadata_request_verifications();
     match (preparation.ordinary_authority(), &ordinary_native) {
-        (Some(original), Some(native)) if Arc::ptr_eq(original, native.metadata()) => native.verify()?,
+        (Some(original), Some(native)) if Arc::ptr_eq(original, native.metadata()) => (),
         (None, None) => (),
         _ => {
             return Err(invalid(
@@ -820,12 +849,29 @@ pub(super) fn prepare_replayed_library(request: ReplayRequest<'_>) -> CliResult<
             ));
         }
     }
+    // The semantic-input check below verifies every original profile; repeating native.verify here does the same work
+    // twice.
+    preparation.revalidate(project, session, &out_dir, native_sdk)?;
+    #[cfg(test)]
+    if let Some(native) = &ordinary_native {
+        assert_eq!(
+            ordinary_native::metadata_request_verifications() - requests_before,
+            native.metadata().observations().len(),
+            "checked replay must validate each original native profile once",
+        );
+    }
     let contract = selected
         .checked_requirements()
         .ok_or_else(|| invalid("metadata owner lacks checked planning inputs"))?;
     contract.validate()?;
     if ordinary_native.is_some() {
-        contract.require_ordinary_source_inspection_native()?;
+        contract
+            .require_ordinary_source_inspection_native(
+                session
+                    .admitted_library_dependencies()
+                    .map(|owners| (owners.as_ref(), session.provider_plan.as_ref())),
+            )
+            .map_err(|error| invalid(format!("ordinary metadata replay demands: {}", error.message)))?;
         if include_interop_execution {
             return Err(invalid("ordinary support-only replay cannot request interop execution"));
         }
@@ -867,13 +913,17 @@ pub(super) fn prepare_replayed_library(request: ReplayRequest<'_>) -> CliResult<
     let (mut resolved, imports) = contract.current_dependencies(project, &requirements)?;
     crate::build::library_outputs::remove_generated_library_self_dependencies(&mut resolved, project.project_root());
     let semantic_paths = if let Some(native) = ordinary_native.as_ref() {
-        native.provider_semantic_dependencies(&provider_plan, &requirements)?
+        native.provider_semantic_dependencies(
+            &provider_plan,
+            &requirements,
+            session.admitted_library_dependencies().map(Arc::as_ref),
+        )?
     } else {
         semantic_sdk_path_dependencies(&requirements)
     };
     let provider_semantics = session.provider_semantic_identities(&provider_plan, &semantic_paths)?;
     let mut build_inputs = if ordinary_native.is_some() {
-        BTreeMap::new()
+        crate::build_unit::ordinary_library_build_unit_inputs()
     } else {
         crate::build_unit::oven_build_unit_inputs_with_provider_identities_and_native_sdk(
             &provider_plan,
@@ -958,6 +1008,7 @@ pub(super) fn prepare_replayed_library(request: ReplayRequest<'_>) -> CliResult<
                         &requirements,
                         &resolved,
                         &provider_semantics,
+                        session.admitted_library_dependencies().map(Arc::as_ref),
                     )
                 })
                 .transpose()?,

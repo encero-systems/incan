@@ -26,6 +26,8 @@ type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub(super) struct InventoryChecks {
     calls: Arc<std::sync::atomic::AtomicUsize>,
     declarations: Arc<std::sync::atomic::AtomicUsize>,
+    selectors: Arc<std::sync::atomic::AtomicUsize>,
+    bindings: Arc<std::sync::atomic::AtomicUsize>,
     sequence: Arc<std::sync::atomic::AtomicU64>,
 }
 
@@ -55,6 +57,12 @@ impl tracing::Subscriber for InventoryChecks {
         }
         if attributes.metadata().name() == "oven_rustc::read_current_local_declaration" {
             self.declarations.fetch_add(1, Ordering::Relaxed);
+        }
+        if attributes.metadata().name() == "oven_store::select_exact_payloads" {
+            self.selectors.fetch_add(1, Ordering::Relaxed);
+        }
+        if attributes.metadata().name() == "oven_rustc::validate_native_loaf_bindings" {
+            self.bindings.fetch_add(1, Ordering::Relaxed);
         }
         tracing::span::Id::from_u64(self.sequence.fetch_add(1, Ordering::Relaxed) + 1)
     }
@@ -88,6 +96,7 @@ fn dev7_native_loaf_admission_checks_each_inventory_once() -> TestResult {
     let checks = InventoryChecks::default();
     let selected = tracing::subscriber::with_default(checks.clone(), || NativeLoafClosure::admit(&native, &roots))?;
     assert_eq!(selected.graph.units.len(), 2);
+    assert_eq!(checks.bindings.load(Ordering::Relaxed), 2);
     assert_eq!(
         checks.calls.load(Ordering::Relaxed),
         4,
@@ -96,6 +105,11 @@ fn dev7_native_loaf_admission_checks_each_inventory_once() -> TestResult {
 
     let checks = InventoryChecks::default();
     tracing::subscriber::with_default(checks.clone(), || selected.graph.select(&roots))?;
+    assert_eq!(
+        checks.bindings.load(Ordering::Relaxed),
+        0,
+        "private immutable bindings must not be reconstructed on a retained handoff"
+    );
     assert_eq!(
         checks.calls.load(Ordering::Relaxed),
         4,
@@ -623,7 +637,15 @@ fn dev7_native_loaf_graph_verification_is_linear_and_fresh() -> TestResult {
     );
 
     let mut admission = NativeLoafVerificationWork::default();
-    let admitted = NativeLoafClosure::admit_with_work(&native, &roots, &mut admission)?;
+    let checks = InventoryChecks::default();
+    let admitted = tracing::subscriber::with_default(checks.clone(), || {
+        NativeLoafClosure::admit_with_work(&native, &roots, &mut admission)
+    })?;
+    assert_eq!(
+        checks.selectors.load(std::sync::atomic::Ordering::Relaxed),
+        4,
+        "three record frontiers and one native-owner batch must share the existing Store selector"
+    );
     assert_eq!(
         admission,
         NativeLoafVerificationWork {
@@ -897,10 +919,16 @@ fn dev7_native_loaf_refuses_substituted_and_injected_physical_edges() -> TestRes
     refuses(verify_children(&substituted, &graph.units), "owner was substituted")?;
     let mut injected = unit.record.clone();
     injected.dependencies[0].alias = "injected".to_string();
-    refuses(verify_native(&injected, &unit.native_owner), "extern recipe")?;
+    refuses(
+        verify_native(&injected, &unit.native_owner, super::NativeInventory::Execution),
+        "extern recipe",
+    )?;
     let mut missing = unit.record.clone();
     missing.dependencies.clear();
-    refuses(verify_native(&missing, &unit.native_owner), "extern recipe")?;
+    refuses(
+        verify_native(&missing, &unit.native_owner, super::NativeInventory::Execution),
+        "extern recipe",
+    )?;
     let mut absent = BTreeMap::new();
     absent.insert(parent.clone(), Arc::clone(unit));
     refuses(
@@ -915,7 +943,15 @@ fn dev7_native_loaf_refuses_substituted_and_injected_physical_edges() -> TestRes
     )?;
     let mut recipe = unit.record.clone();
     recipe.recipe.intent.target = "substituted-target".to_string();
-    assert!(verify_record(&recipe, &unit.record_owner, &unit.native_owner).is_err());
+    assert!(
+        verify_record(
+            &recipe,
+            &unit.record_owner,
+            &unit.native_owner,
+            super::NativeInventory::Execution
+        )
+        .is_err()
+    );
     Ok(())
 }
 
@@ -1084,7 +1120,7 @@ fn consumer_plan(store: &OvenStore, selected: &NativeLoafClosure, identity: &str
     Ok(receipt)
 }
 
-/// Only record-bound native domains cross ordinary handoff; legacy owner indexes remain conservative.
+/// Only record-bound native domains cross ordinary handoff; each plan selection still refuses changed original bytes.
 #[test]
 fn dev7_native_loaf_record_bound_domain_uses_existing_shared_handoff() -> TestResult {
     use crate::plan::selection::select_receipt_direct_rustc_execution_plan_with_native_owners;
@@ -1102,6 +1138,16 @@ fn dev7_native_loaf_record_bound_domain_uses_existing_shared_handoff() -> TestRe
     let plan = select_receipt_direct_rustc_execution_plan_with_native_owners(&consumer, &receipt, Some(&admitted))?
         .ok_or("ordinary shared plan missing")?;
     assert_eq!(plan.physical_path("units/fixture/libfixture.rlib"), unit.output()?);
+    let output = unit.output()?;
+    let original = std::fs::read(&output)?;
+    replace_owned_fixture(&output, b"changed after shared-owner admission")?;
+    assert!(
+        select_receipt_direct_rustc_execution_plan_with_native_owners(&consumer, &receipt, Some(&admitted)).is_err()
+    );
+    replace_owned_fixture(&output, &original)?;
+    assert!(
+        select_receipt_direct_rustc_execution_plan_with_native_owners(&consumer, &receipt, Some(&admitted))?.is_some()
+    );
     Ok(())
 }
 

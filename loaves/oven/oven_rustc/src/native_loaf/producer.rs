@@ -203,7 +203,12 @@ struct SourceProjection {
 /// Verify original complete inventories, then reconstruct source/fact inputs without a live producer shortcut.
 fn source_projection(unit: &SelectedNativeLoaf, work: &mut NativeLoafInspectionWork) -> Result<SourceProjection> {
     work.source_projection_attempts += 1;
-    verify_record(&unit.record, &unit.record_owner, &unit.native_owner)?;
+    verify_record(
+        &unit.record,
+        &unit.record_owner,
+        &unit.native_owner,
+        super::NativeInventory::Execution,
+    )?;
     unit.native_owner.verify_admitted_payload().map_err(failed)?;
     let manifest = super::selection::source_manifest_with_reader(unit, &mut |path| {
         work.manifest_read_attempts += 1;

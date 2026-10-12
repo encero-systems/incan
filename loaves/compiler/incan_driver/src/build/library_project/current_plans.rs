@@ -146,14 +146,19 @@ pub(super) fn prepare_current_library_profiles(
             receipt_request = receipt_request.with_build_unit_input(name.clone(), value.clone());
         }
         let provider_candidates = packaged_provider_candidates(checked_provider_profiles, profile);
-        let selected_provider_inputs =
-            select_packaged_provider_plans(store, &provider_candidates).map_err(oven_plan_error)?;
-        let provider_compilations = checked_provider_compilation_requirements(
-            &selected_provider_inputs,
-            checked_provider_profiles,
-            profile,
-            build_inputs,
-        )?;
+        // Legacy provider macro preparation belongs to its compatibility baker. Ordinary compilation already
+        // retains checked provider outputs and selects native support from the original producer observation.
+        let selected_provider_inputs = if ordinary_runtime.is_none() {
+            Some(select_packaged_provider_plans(store, &provider_candidates).map_err(oven_plan_error)?)
+        } else {
+            None
+        };
+        let provider_compilations = match &selected_provider_inputs {
+            Some(selected) => {
+                checked_provider_compilation_requirements(selected, checked_provider_profiles, profile, build_inputs)?
+            }
+            None => Vec::new(),
+        };
         if !provider_compilations.is_empty() {
             receipt_request = receipt_request.with_build_unit_input(
                 "provider-compilation-requirements",
@@ -178,16 +183,17 @@ pub(super) fn prepare_current_library_profiles(
         let oven_select_direct_rustc_plan_start = Instant::now();
         // An imported package Loaf is sufficient only for consume-only commands. An explicit library bake must
         // instead publish the library's own direct registry roots with its complete generated source closure.
-        let packaged_provider_selection =
-            if ordinary_runtime.is_none() && oven_plan_mode == OvenProjectPlanMode::ConsumeOnly {
-                packaged_provider_selection_links_required_stdlib(
-                    compose_selected_packaged_provider_plan(selected_provider_inputs, &provider_candidates, &receipt)
-                        .map_err(oven_plan_error)?,
-                    provider_plan,
-                )?
-            } else {
-                None
-            };
+        let packaged_provider_selection = if let Some(selected_provider_inputs) = selected_provider_inputs
+            && oven_plan_mode == OvenProjectPlanMode::ConsumeOnly
+        {
+            packaged_provider_selection_links_required_stdlib(
+                compose_selected_packaged_provider_plan(selected_provider_inputs, &provider_candidates, &receipt)
+                    .map_err(oven_plan_error)?,
+                provider_plan,
+            )?
+        } else {
+            None
+        };
         let plan_preparation = if let Some(runtime) = &ordinary_runtime {
             let (bound, plan_selection) = runtime.native().select_plan(store, &receipt, inline_dependencies, project_root)?;
             receipt = bound;
@@ -266,7 +272,13 @@ pub(super) fn prepare_current_library_profiles(
             oven_validate_direct_rustc_plan_start,
         );
         let oven_prepare_caller_owned_libraries_start = Instant::now();
-        let mut caller_owned_libraries = oven_caller_owned_libraries(provider_plan, profile)?;
+        let mut caller_owned_libraries = oven_caller_owned_libraries(
+            provider_plan,
+            profile,
+            &target,
+            &toolchain,
+            ordinary_runtime.as_ref().map(|_| checked_provider_profiles),
+        )?;
         caller_owned_libraries.extend(
             materialize_declared_rust_libraries_with_selected_path_authority(
                 &generator.output_dir().join("oven").join("inline-rust"),
