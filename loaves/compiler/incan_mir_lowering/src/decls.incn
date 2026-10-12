@@ -239,7 +239,7 @@ def library_fields(
     return fields
 
 
-def library_item(declaration: &NominalDeclaration) -> str:
+pub def library_item(declaration: &NominalDeclaration) -> str:
     """Name the compiled item that owns a stdlib layout, or nothing for any other layout."""
     return library_path(declaration.canonical.origin, str(declaration.canonical.declaration_name))
 

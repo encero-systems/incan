@@ -295,10 +295,12 @@ pub fn validate(plan: &Plan) -> Result<(), PlanError> {
         .iter()
         .find(|function| function.name == "main")
         .ok_or_else(|| PlanError::UnknownCallee("main".into()))?;
-    if !main.parameters.is_empty() || scalar(&main.return_type) != Scalar::Unit {
+    if !main.parameters.is_empty()
+        || (scalar(&main.return_type) != Scalar::Unit && !entry_result(plan, &main.return_type))
+    {
         return Err(invalid(
             main,
-            "native binary main must take no parameters and return unit",
+            "native binary main must take no parameters and return unit or a unit Result",
         ));
     }
     for function in &plan.functions {
@@ -306,6 +308,33 @@ pub fn validate(plan: &Plan) -> Result<(), PlanError> {
         validate_function(plan, function)?;
     }
     Ok(())
+}
+
+/// Whether a binary main's result is a standard `Result` with a unit success and a text or SDK-owned error.
+///
+/// Rust's entry point reports such a result itself, printing an error through its `Debug` and failing the exit code,
+/// which is what legacy's generated main relies on; both admitted error kinds implement `Debug`.
+fn entry_result(plan: &Plan, ty: &PlanType) -> bool {
+    let PlanType::Enum(index, _) = ty else {
+        return false;
+    };
+    let Some(declaration) = enum_declaration(plan, *index) else {
+        return false;
+    };
+    let [success, failure] = declaration.variants.as_slice() else {
+        return false;
+    };
+    let unit_success = success.fields.is_empty() || success.fields.as_slice() == [PlanType::Unit];
+    declaration.carrier == "Result"
+        && unit_success
+        && match failure.fields.as_slice() {
+            [PlanType::String] => true,
+            [PlanType::Model(index, _)] => model(plan, *index).is_some_and(|model| !model.library_item.is_empty()),
+            [PlanType::Enum(index, _)] => {
+                enum_declaration(plan, *index).is_some_and(|value| !value.library_item.is_empty())
+            }
+            _ => false,
+        }
 }
 
 /// Only ordinary source identifiers are admitted; paths are built as AST nodes, never parsed as source.
