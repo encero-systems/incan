@@ -40,6 +40,49 @@ fn reported_refusals(scratch: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Generic publication reaches the next owned boundary, without replacing it by a guessed implementation.
+#[test]
+fn published_generic_declarations_reach_owned_next_stages() -> Result<(), Box<dyn std::error::Error>> {
+    let graph = driver_fixture()?;
+    let root = graph.scratch("published-generic-next-stages")?;
+    let closure = corpus::runtime_closure(&graph.formatting)?;
+    for (area, name, expected) in [
+        (
+            "cli_dependencies",
+            "compiled_generic_bounds",
+            "unsupported Body IR package executable representation: package `incan_stdlib_core` is not a resolved dependency of this compilation",
+        ),
+        (
+            "codegen_dependencies",
+            "implied_generic_supertrait_adoption",
+            "unsupported Body IR type Catalog[int]",
+        ),
+        (
+            "lowering_dependencies",
+            "provider_nominal_types_and_unions_issue892",
+            "unsupported Body IR ambiguous project nominal carrier Widget",
+        ),
+    ] {
+        let fixture = fixtures::discover(&support::fixtures_dir().join("behavior").join(area))?
+            .into_iter()
+            .find(|fixture| fixture.name == name)
+            .ok_or_else(|| format!("missing behavior fixture {area}/{name}"))?;
+        let scratch = root.join(name);
+        fs::create_dir_all(&scratch)?;
+        let (class, detail) = measure(
+            &fixture,
+            &scratch,
+            &graph.driver_binary("debug"),
+            &graph.sysroot,
+            &closure,
+            Duration::from_secs(180),
+        )?;
+        assert_eq!(class, "refused", "{area}/{name}: {detail}");
+        assert_eq!(detail, expected, "{area}/{name}");
+    }
+    Ok(())
+}
+
 /// Run a child with file-backed streams so pipe capacity cannot defeat the deadline.
 fn bounded(
     command: &mut Command,
