@@ -199,3 +199,41 @@ fn frozen_byte_const_reads_keep_their_checked_carrier() -> Result<(), Box<dyn st
     );
     Ok(())
 }
+
+/// Implicit reflection result types retain the core runtime owner even without a FieldInfo import.
+#[test]
+fn reflection_metadata_retains_native_layout() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Record:\n    value: int\n\ndef main() -> None:\n    for info in Record(value=1).__fields__():\n        println(info.name)\n";
+    let module = build(source, &["m", "native_reflection"])?;
+    let declaration = module
+        .nominal_declarations
+        .iter()
+        .find(|value| value.name == "FieldInfo")
+        .ok_or("missing native reflection layout")?;
+    let encoded = serde_json::to_value(declaration)?;
+    assert_eq!(encoded["native_item"], "incan_std_core::reflection::FieldInfo");
+    assert_eq!(
+        declaration.fields,
+        [
+            "name",
+            "alias",
+            "description",
+            "wire_name",
+            "type_name",
+            "has_default",
+            "extra"
+        ]
+    );
+    Ok(())
+}
+
+/// A source declaration named FieldInfo cannot acquire the runtime reflection representation.
+#[test]
+fn user_metadata_name_keeps_its_source_layout() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build("model FieldInfo:\n    label: str\n", &["m", "user_metadata"])?;
+    let declaration = module.nominal_declarations.first().ok_or("missing user layout")?;
+    let encoded = serde_json::to_value(declaration)?;
+    assert!(encoded["native_item"].is_null() || encoded["native_item"] == "");
+    assert_eq!(declaration.fields, ["label"]);
+    Ok(())
+}

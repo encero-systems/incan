@@ -12689,3 +12689,16 @@ fn model_method_partial_body_ir_refusal_is_retained() -> Result<(), Box<dyn std:
     assert!(!binary.exists());
     Ok(())
 }
+
+/// The stdlib metadata annotation names legacy's core runtime type, independently of reflection collection operations.
+#[test]
+fn reflection_metadata_carrier_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("native-reflection-carrier")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "from std.reflection import FieldInfo\n\ndef accept(value: FieldInfo) -> None:\n    pass\n\ndef main() -> None:\n    println(\"metadata\")\n",
+    )
+}
