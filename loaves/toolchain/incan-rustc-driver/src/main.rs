@@ -25,6 +25,7 @@ mod closures;
 mod declarations;
 mod error;
 mod frontend;
+mod frozen_values;
 mod identity;
 mod plan;
 mod spans;

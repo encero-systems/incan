@@ -275,6 +275,11 @@ fn build_body_ir_module_v0_with_provider_operations(
     let published_constants = context
         .iter()
         .flat_map(|module| module.constant_declarations.iter())
+        .chain(
+            constant_declarations
+                .iter()
+                .filter(|declaration| matches!(declaration.value, bir::Constant::FrozenAggregate(..))),
+        )
         .map(|declaration| (declaration.canonical.clone(), declaration.value.clone()))
         .collect::<HashMap<_, _>>();
     let function_default_sources = collect_function_default_sources(program);

@@ -1,0 +1,24 @@
+"""Read-only observations and owned snapshots of the legacy static frozen carriers."""
+
+from rust::incan_std_core::frozen import FrozenList as RuntimeFrozenList
+from rust::std::clone import Clone as RuntimeClone
+from rust::std::fmt import Display
+from std.rust import Static
+
+
+pub def frozen_list_length[T with Static](value: RuntimeFrozenList[T]) -> int:
+    """Measure immutable static storage without allocating an owned collection."""
+    return int(value.len())
+
+
+pub def frozen_list_items[T with (RuntimeClone, Static)](value: RuntimeFrozenList[T]) -> list[T]:
+    """Materialize ordered owned elements through their real Clone implementations, matching legacy iteration."""
+    return value.as_slice().to_vec()
+
+
+pub def frozen_list_text_items[T with (Display, Static)](value: RuntimeFrozenList[T]) -> list[str]:
+    """Materialize static string elements as owned strings without formatting the enclosing collection."""
+    mut result: list[str] = []
+    for item in value.iter():
+        result.append(str(item))
+    return result

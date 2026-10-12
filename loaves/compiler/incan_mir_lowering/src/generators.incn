@@ -178,6 +178,7 @@ def swap_rvalue(value: RvalueKind, handle: int) -> RvalueKind:
         RvalueKind.UnitFunction(name) => return RvalueKind.UnitFunction(name)
         RvalueKind.FrozenText(value) => return RvalueKind.FrozenText(swap_operand(value, handle))
         RvalueKind.FrozenBytes(values) => return RvalueKind.FrozenBytes(values)
+        RvalueKind.FrozenCollection(ty, values) => return RvalueKind.FrozenCollection(ty, values)
         RvalueKind.FunctionItem(callee) => return RvalueKind.FunctionItem(swap_callee(callee, handle))
         RvalueKind.ReifyFunction(value) => return RvalueKind.ReifyFunction(swap_operand(value, handle))
         RvalueKind.ClosureObject(place) => return RvalueKind.ClosureObject(swap_place(place, handle))

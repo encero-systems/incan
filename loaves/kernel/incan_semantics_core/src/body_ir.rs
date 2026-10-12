@@ -119,7 +119,7 @@ pub struct BodyIrModule {
 pub struct ConstantDeclaration {
     /// Exact checker-selected declaration; aliases never mint another value identity.
     pub canonical: CanonicalSymbolId,
-    /// The checked scalar or text value retained by constant evaluation.
+    /// The checked scalar, text, or effect-free frozen aggregate retained by the declaring frontend.
     pub value: Constant,
 }
 
@@ -1232,6 +1232,9 @@ pub struct PlaceOperand {
 /// A literal constant operand value.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Constant {
+    /// Static collection or tuple data with its checked carrier and source-ordered elements. A frozen dictionary
+    /// stores alternating keys and values; consumers must validate its arity before constructing storage.
+    FrozenAggregate(IncanType, Vec<Constant>),
     Int(i64),
     Float(String),
     /// A compiler-typed numeric constant whose canonical kind and full-width payload survived lowering.
@@ -1325,6 +1328,7 @@ impl Constant {
     /// text, so a snapshot can never read a `bytes` constant as the `str` constant it is not.
     fn render_snapshot(&self) -> String {
         match self {
+            Self::FrozenAggregate(ty, values) => format!("const<{ty}>({values:?})"),
             Self::Int(v) => format!("const({v})"),
             Self::Float(v) => format!("const({v})"),
             Self::TypedNumeric(value) => format!("const<{}>({value:?})", value.type_name()),

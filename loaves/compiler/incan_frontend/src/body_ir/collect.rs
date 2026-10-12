@@ -44,7 +44,7 @@ pub(super) fn collect_local_receiver_methods(
     methods
 }
 
-/// Retain checker-evaluated constants once; unsupported aggregate and symbolic constants remain absent.
+/// Retain checker-evaluated constants and checked static literal aggregates once; computed aggregates stay absent.
 pub(super) fn collect_constants(program: &ast::Program, type_info: &TypeCheckInfo) -> Vec<bir::ConstantDeclaration> {
     program
         .declarations
@@ -58,16 +58,56 @@ pub(super) fn collect_constants(program: &ast::Program, type_info: &TypeCheckInf
                 .declaration_identities
                 .get(&(declaration.span.start, declaration.span.end))?
                 .clone();
-            let value = match type_info.const_value(&item.name)? {
-                crate::typechecker::ConstValue::Int(value) => bir::Constant::Int(*value),
-                crate::typechecker::ConstValue::Float(value) => bir::Constant::Float(value.to_string()),
-                crate::typechecker::ConstValue::Bool(value) => bir::Constant::Bool(*value),
-                crate::typechecker::ConstValue::FrozenStr(value) => bir::Constant::Str(value.clone()),
-                _ => return None,
+            let value = match type_info.const_value(&item.name) {
+                Some(crate::typechecker::ConstValue::Int(value)) => bir::Constant::Int(*value),
+                Some(crate::typechecker::ConstValue::Float(value)) => bir::Constant::Float(value.to_string()),
+                Some(crate::typechecker::ConstValue::Bool(value)) => bir::Constant::Bool(*value),
+                Some(crate::typechecker::ConstValue::FrozenStr(value)) => bir::Constant::Str(value.clone()),
+                _ => frozen_literal_constant(
+                    &item.value.node,
+                    &semantic_type_from_resolved(type_info.expr_type(item.value.span)?),
+                )?,
             };
             Some(bir::ConstantDeclaration { canonical, value })
         })
         .collect()
+}
+
+/// Preserve only effect-free checked literal trees. Storage types come from checking; no call or spread is evaluated
+/// again by Body IR or inferred from a literal's spelling.
+fn frozen_literal_constant(value: &ast::Expr, ty: &IncanType) -> Option<bir::Constant> {
+    if let ast::Expr::Literal(literal) = value {
+        return Some(primitives::lower_checked_literal(literal, ty));
+    }
+    let IncanType::Generic { base, args } = ty else {
+        return None;
+    };
+    let elements = match (collections::from_str(base)?, value, args.as_slice()) {
+        (CollectionTypeId::FrozenList, ast::Expr::List(entries), [element]) => entries
+            .iter()
+            .map(|entry| match entry {
+                ast::ListEntry::Element(value) => frozen_literal_constant(&value.node, element),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()?,
+        (CollectionTypeId::FrozenSet, ast::Expr::Set(entries), [element]) => entries
+            .iter()
+            .map(|value| frozen_literal_constant(&value.node, element))
+            .collect::<Option<Vec<_>>>()?,
+        (CollectionTypeId::FrozenDict, ast::Expr::Dict(entries), [key, element]) => {
+            let mut values = Vec::new();
+            for entry in entries {
+                let ast::DictEntry::Pair(k, v) = entry else {
+                    return None;
+                };
+                values.push(frozen_literal_constant(&k.node, key)?);
+                values.push(frozen_literal_constant(&v.node, element)?);
+            }
+            values
+        }
+        _ => return None,
+    };
+    Some(bir::Constant::FrozenAggregate(ty.clone(), elements))
 }
 
 /// Retain alias-expanded nongeneric type declarations and their checker-proven nominal references.

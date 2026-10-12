@@ -59,7 +59,7 @@ from pub::incan_mir_plan import assign as plan_assign, place as plan_place
 from bytes_plan import bytes_literal
 from text_ownership import drop_borrowed_text_temporaries
 from decimal_plan import decimal_literal, decimal_comparison, is_decimal_literal
-from frozen_plan import frozen_literal, literal_text, frozen_bytes_literal
+from frozen_plan import frozen_literal, literal_text, frozen_bytes_literal, frozen_collection_literal
 from loop_exits import exits_to
 from trait_links import (
     is_well_formed_module_implementation,
@@ -318,6 +318,7 @@ from lists import (
     is_exclusive_borrow,
 )
 from assertions import lower_assertion
+from layout_types import collection_leaf
 from async_ import future_type, future_declarations, construct_future, await_future, async_entry, evaluator_name
 from defaults import (
     default_arguments,
@@ -499,6 +500,8 @@ pub def scalar_operand(mut builder: Builder, value: &RustOperand, span: SourceSp
         RustOperand.Place(read) => return place_read(builder, read.place, read.fact, span)
         RustOperand.Constant(constant) =>
             match constant:
+                RustConstant.FrozenAggregate(_ty, _elements) =>
+                    return frozen_collection_literal(builder, constant, span)
                 RustConstant.Str(text) => return Ok(read_place(owned_literal(builder, str(text), span), true, span))
                 RustConstant.FrozenStr(_text) => return frozen_literal(builder, constant, span)
                 RustConstant.TypedNumeric(value) =>
@@ -5629,6 +5632,10 @@ def frame_locals(
         if index in pairs:
             ty = pair_generator_type(ty)
         if index in iterators:
+            match ty:
+                PlanType.FrozenCollection(_name, _elements) =>
+                    ty = frozen_list_snapshot_type(ty)?
+                _ => pass
             match zip_shape(ty):
                 Some((left, right)) =>
                     ty = PlanType.ZipIteratorMutRef(left, right)
@@ -5837,6 +5844,16 @@ pub def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpa
 
 def element_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Option[Operand], str]:
     """Materialize a list or dictionary element as a copy that leaves its container whole; `None` for other places."""
+    match source.local_id():
+        Some(local) =>
+            root = plan_place(int(local.index()) + 1 + builder.local_offset, span)
+            match place_type(builder.locals, root):
+                PlanType.FrozenCollection(_name, _elements) =>
+                    if len(source.projection) != 0:
+                        snapshot = frozen_list_snapshot(builder, read_place(root, false, span), span)?
+                        return Ok(Some(projected_element_read(builder, source, snapshot, 0, span)?))
+                _ => pass
+        None => pass
     match model_list_read(builder, source, span)?:
         Some(item) => return Ok(Some(item))
         None => pass
@@ -6634,6 +6651,23 @@ def lower_list_builtin(
         element = borrowed_list_argument(builder, arguments, 0, false, span)?
         return list_length(builder, element, destination, span)
     ty = argument_type(builder, arguments, 0, span)?
+    match ty:
+        PlanType.FrozenCollection(name, elements) =>
+            if name != "FrozenList" or len(elements) != 1:
+                return Err("unsupported Body IR frozen collection length")
+            value = argument_value(builder, arguments, 0, span)?
+            output = call_destination(builder, destination, PlanType.Int, span)?
+            return instantiated_external_call(
+                builder,
+                "incan_native_runtime::frozen_list_length",
+                [elements[0]],
+                [ty],
+                PlanType.Int,
+                [value],
+                output,
+                span,
+            )
+        _ => pass
     if ty == PlanType.FrozenBytes:
         match arguments[0].as_one():
             None => return Err("unsupported Body IR spread FrozenBytes length")
@@ -6873,6 +6907,41 @@ def initialize_text_iterator(
         _ => return Err("unsupported Body IR text iterator initialization")
 
 
+def frozen_list_snapshot_type(ty: PlanType) -> Result[PlanType, str]:
+    """Keep the owned read type distinct from frozen storage: static text becomes String at the read boundary."""
+    match ty:
+        PlanType.FrozenCollection(name, elements) =>
+            if name != "FrozenList" or len(elements) != 1:
+                return Err("unsupported Body IR frozen collection snapshot")
+            if elements[0] == PlanType.StrRef:
+                return Ok(PlanType.List(ListLeaf.Str, 1))
+            return Ok(PlanType.List(collection_leaf(elements[0])?, 1))
+        _ => return Err("unsupported Body IR nonfrozen snapshot")
+
+
+def frozen_list_snapshot(mut builder: Builder, value: Operand, span: SourceSpan) -> Result[Place, str]:
+    """Materialize an ordered owned snapshot through the runtime, leaving immutable static storage unchanged."""
+    ty = operand_type(builder, value)?
+    snapshot = frozen_list_snapshot_type(ty)?
+    match ty:
+        PlanType.FrozenCollection(_name, elements) =>
+            mut path = "incan_native_runtime::frozen_list_items"
+            if elements[0] == PlanType.StrRef:
+                path = "incan_native_runtime::frozen_list_text_items"
+            output = temporary(builder, snapshot, span)
+            instantiated_external_call(builder, path, [elements[0]], [ty], snapshot, [value], output, span)?
+            builder.owned.append(output.local)
+            return Ok(output)
+        _ => return Err("unsupported Body IR nonfrozen snapshot")
+
+
+def initialize_frozen_iterator(mut builder: Builder, iterator: Place, span: SourceSpan) -> None:
+    """Start a fresh cursor for a constant's immutable snapshot without inventing a mutable source place."""
+    cursor = temporary(builder, PlanType.Int, span)
+    builder.emit(plan_assign(cursor, RvalueKind.Use(literal(Constant.Int(0), span)), span))
+    builder.iterators.append((iterator.local, cursor.local))
+
+
 def initialize_list_iterator(mut builder: Builder, iterator: Place, source: &RustOperand, span: SourceSpan) -> None:
     """Retain cursor storage for Body IR's borrowed builtin iterable materialization, shared or exclusive."""
     match source:
@@ -7019,6 +7088,18 @@ def iterator_assignment(
     match value:
         RustRvalue.Use(value) =>
             match value:
+                RustOperand.Constant(constant) =>
+                    match constant:
+                        RustConstant.FrozenAggregate(_ty, _elements) =>
+                            frozen = frozen_collection_literal(builder, constant, span)?
+                            snapshot = frozen_list_snapshot(builder, frozen, span)?
+                            reference = list_borrow(builder, snapshot, false, span)?
+                            builder.emit(plan_assign(destination, RvalueKind.Use(reference), span))
+                            initialize_frozen_iterator(builder, destination, span)
+                            return Ok(None)
+                        _ => pass
+                _ => pass
+            match value:
                 RustOperand.Place(read) =>
                     mut exclusive = false
                     match read.fact:
@@ -7026,7 +7107,13 @@ def iterator_assignment(
                         OwnershipFact.MutBorrow =>
                             exclusive = true
                         _ => return Err("unsupported Body IR list iterator initialization ownership")
-                    root = iteration_root(builder, read.place, exclusive, span)?
+                    mut root = iteration_root(builder, read.place, exclusive, span)?
+                    match place_type(builder.locals, root):
+                        PlanType.FrozenCollection(_name, _elements) =>
+                            if exclusive:
+                                return Err("unsupported Body IR mutable frozen iteration")
+                            root = frozen_list_snapshot(builder, read_place(root, false, span), span)?
+                        _ => pass
                     if exclusive and not is_list(place_type(builder.locals, root)):
                         return Err("unsupported Body IR in-place iteration over a set or dictionary")
                     reference = list_borrow(builder, root, exclusive, span)?

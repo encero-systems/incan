@@ -121,6 +121,8 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::Decimal => decimal_type(tcx)?,
         PlanType::FrozenStr => frozen_type(tcx)?,
         PlanType::FrozenBytes => frozen_bytes_type(tcx)?,
+        PlanType::FrozenCollection(name, elements) => frozen_collection_type(tcx, name, elements)?,
+        PlanType::StaticBytes => Ty::new_imm_ref(tcx, tcx.lifetimes.re_static, Ty::new_slice(tcx, tcx.types.u8)),
         PlanType::StringRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, string_type(tcx)?),
         PlanType::StringMutRef => Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, string_type(tcx)?),
         PlanType::StrRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, tcx.types.str_),
@@ -143,6 +145,54 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
             Ty::new_slice(tcx, native_type(tcx, &PlanType::StrRef)?),
         ),
     })
+}
+
+/// Resolve the dependency-owned immutable wrapper and preserve its exact static storage arguments.
+pub fn frozen_collection_type<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    name: &str,
+    elements: &[PlanType],
+) -> Result<Ty<'tcx>, PlanError> {
+    let expected = match name {
+        "FrozenList" | "FrozenSet" => 1,
+        "FrozenDict" => 2,
+        _ => {
+            return Err(PlanError::UnknownCallee(format!(
+                "unsupported frozen collection {name}"
+            )));
+        }
+    };
+    if elements.len() != expected {
+        return Err(PlanError::UnknownCallee(format!(
+            "unsupported frozen collection {name} arity"
+        )));
+    }
+    let mut definition = tcx
+        .crates(())
+        .iter()
+        .find(|krate| tcx.crate_name(**krate).as_str() == "incan_std_core")
+        .map(|krate| krate.as_def_id())
+        .ok_or_else(|| PlanError::UnknownCallee("incan_std_core".into()))?;
+    for segment in ["frozen", name] {
+        definition = tcx
+            .module_children(definition)
+            .iter()
+            .find(|child| child.ident.name.as_str() == segment && child.vis.is_public())
+            .and_then(|child| child.res.opt_def_id())
+            .ok_or_else(|| PlanError::UnknownCallee(format!("incan_std_core::frozen::{name}")))?;
+    }
+    let arguments = elements
+        .iter()
+        .map(|element| {
+            let ty = if matches!(element, PlanType::StrRef) {
+                Ty::new_imm_ref(tcx, tcx.lifetimes.re_static, tcx.types.str_)
+            } else {
+                native_type(tcx, element)?
+            };
+            Ok(ty.into())
+        })
+        .collect::<Result<Vec<_>, PlanError>>()?;
+    Ok(Ty::new_adt(tcx, tcx.adt_def(definition), tcx.mk_args(&arguments)))
 }
 
 /// Resolve the legacy runtime's actual generator ADT from dependency metadata and retain its element type.

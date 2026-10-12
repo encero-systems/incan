@@ -46,6 +46,9 @@ fn generator_signature_ty(kind: &PlanType, span: Span) -> Option<Box<ast::Ty>> {
 
 /// Construct an admitted native AST type without generating or parsing Rust source.
 pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
+    if let PlanType::FrozenCollection(name, elements) = kind {
+        return frozen_collection_ty(name, elements, span);
+    }
     if let Some(ty) = zip_signature_ty(kind, span) {
         return ty;
     }
@@ -237,6 +240,60 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
         kind,
         span,
         tokens: None,
+    })
+}
+
+/// Declare the actual frozen wrapper with explicit static slice/text lifetimes, including nested collections.
+fn frozen_collection_ty(name: &str, elements: &[PlanType], span: Span) -> Box<ast::Ty> {
+    let mut path = ast::Path::from_ident(ident("incan_std_core", span));
+    path.segments.push(ast::PathSegment::from_ident(ident("frozen", span)));
+    let mut segment = ast::PathSegment::from_ident(ident(name, span));
+    let arguments = elements
+        .iter()
+        .map(|element| {
+            let input = match element {
+                PlanType::StrRef | PlanType::StaticBytes => {
+                    let inner = if matches!(element, PlanType::StrRef) {
+                        ast::TyKind::Path(None, ast::Path::from_ident(ident("str", span)))
+                    } else {
+                        ast::TyKind::Slice(ty(&PlanType::U8, span))
+                    };
+                    Box::new(ast::Ty {
+                        id: ast::DUMMY_NODE_ID,
+                        span,
+                        tokens: None,
+                        kind: ast::TyKind::Ref(
+                            Some(ast::Lifetime {
+                                id: ast::DUMMY_NODE_ID,
+                                ident: ident("'static", span),
+                            }),
+                            ast::MutTy {
+                                ty: Box::new(ast::Ty {
+                                    id: ast::DUMMY_NODE_ID,
+                                    span,
+                                    tokens: None,
+                                    kind: inner,
+                                }),
+                                mutbl: ast::Mutability::Not,
+                            },
+                        ),
+                    })
+                }
+                _ => ty(element, span),
+            };
+            ast::AngleBracketedArg::Arg(ast::GenericArg::Type(input))
+        })
+        .collect();
+    segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
+        span,
+        args: arguments,
+    })));
+    path.segments.push(segment);
+    Box::new(ast::Ty {
+        id: ast::DUMMY_NODE_ID,
+        span,
+        tokens: None,
+        kind: ast::TyKind::Path(None, path),
     })
 }
 

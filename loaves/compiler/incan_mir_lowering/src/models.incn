@@ -48,6 +48,16 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
         RustType.Tuple(elements) => return tuple_type(elements)
         RustType.Decimal(precision=_precision, scale=_scale) => return Ok(PlanType.Decimal)
         RustType.Generic(base=base, args=arguments) =>
+            if base in ["FrozenList", "FrozenSet", "FrozenDict"]:
+                mut storage: list[PlanType] = []
+                for argument in arguments:
+                    element = model_type(declarations, argument)?
+                    if element in [PlanType.String, PlanType.FrozenStr]:
+                        element = PlanType.StrRef
+                    elif element == PlanType.FrozenBytes:
+                        element = PlanType.StaticBytes
+                    storage.append(element)
+                return Ok(PlanType.FrozenCollection(str(base), storage))
             for index in range(len(declarations)):
                 declaration = declarations[index]
                 if declaration.type_parameter_count != 0 and declaration.canonical.declaration_name == str(base) and declaration.name == nominal_symbol(

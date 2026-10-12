@@ -138,6 +138,9 @@ pub enum PlanType:
     Decimal
     FrozenStr
     FrozenBytes
+    # Dependency-owned frozen collection and its exact static element types; dictionaries carry key then value.
+    FrozenCollection(str, list[PlanType])
+    StaticBytes
     StrRef
     StringArray(int)
     StrArray(int)
@@ -360,6 +363,7 @@ pub enum RvalueKind:
     UnitFunction(str)
     FrozenText(Operand)
     FrozenBytes(list[int])
+    FrozenCollection(PlanType, list[FrozenValue])
     Binary(BinaryOp, Operand, Operand)
     Unary(UnaryOp, Operand)
     NumericCast(Operand, PlanType, PlanType)
@@ -380,6 +384,15 @@ pub enum RvalueKind:
     ReifyFunction(Operand)
     # Borrow an owned closure's callable object as the shared view a call or closure-holding parameter takes.
     ClosureObject(Place)
+
+
+@derive(Clone, PartialEq)
+pub enum FrozenValue:
+    """Effect-free static data: scalars, raw bytes, and nested frozen collections in source order."""
+
+    Scalar(Constant)
+    Bytes(list[int])
+    Collection(PlanType, list[FrozenValue])
 
 
 @derive(Clone, PartialEq)

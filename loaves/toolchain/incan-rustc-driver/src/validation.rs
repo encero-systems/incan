@@ -81,6 +81,8 @@ enum Scalar {
     Decimal,
     FrozenStr,
     FrozenBytes,
+    FrozenCollection(String, Vec<Scalar>),
+    StaticBytes,
     StrRef,
     StringArray(i64),
     StrArray(i64),
@@ -230,6 +232,10 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::Decimal => Scalar::Decimal,
         PlanType::FrozenStr => Scalar::FrozenStr,
         PlanType::FrozenBytes => Scalar::FrozenBytes,
+        PlanType::FrozenCollection(name, elements) => {
+            Scalar::FrozenCollection(name.clone(), elements.iter().map(scalar).collect())
+        }
+        PlanType::StaticBytes => Scalar::StaticBytes,
         PlanType::StringRef => Scalar::StringRef,
         PlanType::StringMutRef => Scalar::StringMutRef,
         PlanType::StrRef => Scalar::StrRef,
@@ -738,6 +744,7 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             }
             Ok(Scalar::FrozenBytes)
         }
+        RvalueKind::FrozenCollection(ty, _values) => Ok(scalar(ty)),
         RvalueKind::NumericCast(value, source, target) => {
             let source = scalar(source);
             let target = scalar(target);
