@@ -9549,3 +9549,43 @@ def main() -> None:
 "#,
     )
 }
+
+/// Defaults that read module-owned statics retain their declaring module across calls from a different module.
+#[test]
+fn static_collection_defaults_across_modules_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("static-collection-defaults")?;
+    let project = root.join("builtin-parity");
+    fs::create_dir_all(&project)?;
+    for (name, source) in [
+        (
+            "helpers",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/default_static_reads_across_modules/helpers.incn"
+            ),
+        ),
+        (
+            "caller",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/default_static_reads_across_modules/caller.incn"
+            ),
+        ),
+        (
+            "config",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/default_static_reads_across_modules/config.incn"
+            ),
+        ),
+    ] {
+        fs::write(project.join(format!("{name}.incn")), source)?;
+    }
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &root,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/default_static_reads_across_modules/main.incn"
+        ),
+    )
+}
