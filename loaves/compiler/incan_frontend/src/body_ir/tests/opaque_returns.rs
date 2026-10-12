@@ -26,3 +26,36 @@ fn local_trait_return_retains_its_concrete_producer() -> Result<(), Box<dyn std:
     );
     Ok(())
 }
+
+/// The checked Self-returning iteration contract keeps the same opaque carrier without inventing method dispatch.
+#[test]
+fn local_fallible_iterator_retains_self_carrier() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        include_str!(
+            "../../../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/fallible_iteration_protocol.incn"
+        ),
+        &["m", "opaque_stream"],
+    )?;
+    let body = body_named(&module, "drain_trait")?;
+    assert!(
+        !body
+            .locals
+            .iter()
+            .any(|local| matches!(&local.ty, IncanType::Generic { base, .. } if base == "FallibleStream")),
+        "{}",
+        body.render_snapshot()
+    );
+    Ok(())
+}
+
+/// A trait parameter has no concrete producer proof, even when the current module declares only one adopter.
+#[test]
+fn unknown_trait_parameter_remains_opaque() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Read[T]:\n    def value(self) -> T: ...\n\nmodel Reading with Read[int]:\n    number: int\n    def value(self) -> int:\n        return self.number\n\ndef identity(value: Read[int]) -> Read[int]:\n    return value\n",
+        &["m", "unknown_opaque"],
+    )?;
+    let body = body_named(&module, "identity")?;
+    assert!(matches!(&body.return_type, IncanType::Generic { base, .. } if base == "Read"));
+    Ok(())
+}
