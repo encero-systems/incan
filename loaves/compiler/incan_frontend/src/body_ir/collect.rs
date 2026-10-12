@@ -620,8 +620,10 @@ fn retain_inherited_layout(
     Some(retained)
 }
 
-/// Retain a raw newtype's checked carrier as one canonical tuple slot, with declaration-owned placeholders that only
-/// checked concrete uses may specialize. Validation hooks and constraints remain outside raw construction.
+/// Retain a newtype's checked carrier as one canonical tuple slot, with declaration-owned placeholders that only
+/// checked concrete uses may specialize. Integer primitive constraints retain a raw carrier layout while construction
+/// sites retain their validation; the layout alone does not authorize unchecked construction. Validation hooks,
+/// noninteger constraints, and constrained serde deserialization remain outside this profile.
 fn collect_plain_newtype(
     span: ast::Span,
     newtype: &ast::NewtypeDecl,
@@ -632,7 +634,7 @@ fn collect_plain_newtype(
         return None;
     }
     let facts = type_info.declarations.newtype_construction.get(&newtype.name)?;
-    if facts.checked_constructor.is_some() || !facts.constraints.is_empty() {
+    if facts.checked_constructor.is_some() {
         return None;
     }
     let canonical = type_info
@@ -644,6 +646,9 @@ fn collect_plain_newtype(
         parameter_types::checked_semantic_type(&facts.underlying, type_info),
         &facts.type_params,
     );
+    if !facts.constraints.is_empty() && underlying != IncanType::Primitive(IncanPrimitiveType::Int) {
+        return None;
+    }
     let mut derives = facts.automatic_derives.clone();
     if matches!(
         underlying,

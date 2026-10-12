@@ -18,6 +18,7 @@ pub from frozen_collections import (
 pub from frozen_collections import frozen_dict_keys, frozen_dict_text_keys
 pub from raises_assertions import assert_raises_deferred
 pub from rust::incan_std_core::frozen import FrozenStr as FrozenCarrier, FrozenBytes as FrozenBytesCarrier
+pub from newtype_constraints import validate_newtype_constraint
 pub from carriers import format_carrier, clone_carrier_payload
 pub from async_ import run_async_entry
 pub from generators import (

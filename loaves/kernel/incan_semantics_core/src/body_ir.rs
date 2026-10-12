@@ -3469,6 +3469,8 @@ pub enum HelperOp {
     DictNotContainsKey,
     /// Validate normalized builtin range bounds and step using the runtime constructor's error contract.
     RangeValidate,
+    /// Fail-fast validation of a constrained newtype's saved input: checked predicates, target label, constraint label.
+    NewtypeConstraintValidate,
 }
 
 impl HelperOp {
@@ -3501,6 +3503,7 @@ impl HelperOp {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::RangeValidate => "range_validate",
+            Self::NewtypeConstraintValidate => "newtype_constraint_validate",
             Self::StrConcat => "str_concat",
             Self::StrEq => "str_eq",
             Self::StrNe => "str_ne",

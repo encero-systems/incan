@@ -394,6 +394,7 @@ pub(super) fn lower_method_body(
     };
     let mut builder = BodyBuilder::new(lowering_facts, owner_return_type.clone());
     builder.type_parameters = type_parameters;
+    builder.retain_newtype_implementation(owner_name);
     let root_scope = builder.new_scope(None, hir_span(decl_span));
 
     let mut params = Vec::with_capacity(method.params.len() + 1);

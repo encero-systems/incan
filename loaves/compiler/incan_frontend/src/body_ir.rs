@@ -752,20 +752,31 @@ pub fn is_direct_replacement_model_derive(decorator: &ast::Decorator) -> bool {
 
 /// Admit raw tuple wrappers with checked native derives, owner and method parameters, and trait adoptions.
 ///
-/// A trait adopted with type arguments is instantiated from the checker-recorded arguments. Checked construction hooks
-/// and constraints remain refused by the declaration collector. Same-type method aliases, and short rebindings naming
-/// one of the newtype's own methods, keep the checked target identity, as aliases on models do, unless combined with a
-/// generic trait adoption or owner parameters; lint suppressions change nothing at run time. Associated type targets
-/// are resolved by checking into the retained method frames and trait implementation identities. Interop edges and
-/// method partials require additional representation facts and remain outside this profile.
-/// Bare and module-qualified JSON protocol derives use the checker's canonical serde selections, as on models.
+/// A trait adopted with type arguments is instantiated from the checker-recorded arguments. Integer primitive
+/// constraints retain their checked predicates at construction sites; validation hooks and noninteger constraints
+/// remain refused by the declaration collector. Constrained serde deserialization remains outside this profile until
+/// its decoder retains validation. Same-type method aliases, and short rebindings naming one of the newtype's own
+/// methods, keep the checked target identity, as aliases on models do, unless combined with a generic trait adoption
+/// or owner parameters; lint suppressions change nothing at run time. Associated type targets are resolved by checking
+/// into the retained method frames and trait implementation identities. Interop edges and method partials require
+/// additional representation facts and remain outside this profile. Bare and module-qualified JSON protocol derives
+/// use the checker's canonical serde selections, as on models.
 pub fn is_direct_replacement_checked_newtype(newtype: &ast::NewtypeDecl, type_info: &TypeCheckInfo) -> bool {
+    let selections = newtype_derives::checked_newtype_derives(newtype, type_info);
+    let Some(facts) = type_info.declarations.newtype_construction.get(&newtype.name) else {
+        return false;
+    };
+    if !facts.constraints.is_empty()
+        && selections
+            .iter()
+            .flatten()
+            .chain(facts.automatic_derives.iter())
+            .any(|selection| selection == "serde::Deserialize")
+    {
+        return false;
+    }
     !newtype.is_rusttype
-        && has_checked_native_derives(
-            &newtype.decorators,
-            newtype_derives::checked_newtype_derives(newtype, type_info).as_ref(),
-            false,
-        )
+        && has_checked_native_derives(&newtype.decorators, selections.as_ref(), false)
         && newtype.rebindings.iter().all(|rebinding| {
             matches!(&rebinding.node.target.node, ast::Expr::Ident(target)
                 if newtype.methods.iter().any(|method| method.node.name == *target))
@@ -960,6 +971,8 @@ struct BodyBuilder<'type_info, 'source> {
     owner_return_type: IncanType,
     /// Explicit owner and callable binders whose checked types remain placeholders at this boundary.
     type_parameters: Vec<String>,
+    /// Checked newtype owner of the current method, authorizing legacy's raw construction within its implementation.
+    newtype_implementation: Option<CanonicalSymbolId>,
     locals: Vec<bir::LocalDecl>,
     scopes: Vec<bir::ScopeInfo>,
     /// Current source-name -> local binding.
@@ -1050,6 +1063,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             provider_operations: lowering_facts.provider_operations,
             owner_return_type,
             type_parameters: Vec::new(),
+            newtype_implementation: None,
             locals: Vec::new(),
             scopes: Vec::new(),
             bindings: HashMap::new(),
@@ -1698,7 +1712,20 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
-        let temp = self.new_temp(IncanType::Unknown, scope, span);
+        self.unsupported_typed_operand(description, IncanType::Unknown, scope, span, out)
+    }
+
+    /// Preserve a known expression carrier on a refusal placeholder, so frame admission cannot mask the named marker.
+    /// The marker must abort execution before this uninitialized operand is consumed; its ownership remains unknown.
+    fn unsupported_typed_operand(
+        &mut self,
+        description: String,
+        ty: IncanType,
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let temp = self.new_temp(ty, scope, span);
         self.push_unsupported_stmt(description, span, out);
         bir::Operand::place(bir::Place::from_local(temp), bir::OwnershipFact::Unknown, true)
     }
@@ -1795,6 +1822,8 @@ const fn lower_unary_op(op: ast::UnaryOp) -> bir::UnOp {
 mod match_;
 
 mod newtype_derives;
+
+mod newtype_constraints;
 
 mod closures;
 

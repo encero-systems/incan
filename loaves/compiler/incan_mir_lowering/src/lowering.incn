@@ -3754,6 +3754,22 @@ def lower_runtime_helper(
             operands = fixed_arguments(builder, arguments, span)?
             external_call(builder, path, int_triple, PlanType.Unit, operands, output, span)
             return Ok(None)
+        RustHelper.NewtypeConstraintValidate =>
+            if len(arguments) != 3:
+                return Err("invalid Body IR NewtypeConstraintValidate arity")
+            output = call_destination(builder, destination, PlanType.Unit, span)?
+            operands = fixed_arguments(builder, arguments, span)?
+            path = "incan_native_runtime::validate_newtype_constraint"
+            external_call(
+                builder,
+                path,
+                [PlanType.Bool, PlanType.String, PlanType.String],
+                PlanType.Unit,
+                operands,
+                output,
+                span,
+            )
+            return Ok(None)
         _ => return Err(f"unsupported Body IR Helper {helper.as_str()}")
 
 

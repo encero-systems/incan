@@ -77,6 +77,22 @@ fn named_static_receiver_type(name: &str, identity: &CanonicalSymbolId) -> Optio
     .then(|| IncanType::Named(name.to_owned()))
 }
 
+/// Keep written nominal arguments in source order; spreads have no checked field-slot binding and remain refused.
+fn nominal_argument_expressions<'args>(
+    name: &str,
+    args: &'args [ast::CallArg],
+) -> Result<Vec<&'args ast::Spanned<ast::Expr>>, String> {
+    args.iter()
+        .map(|argument| match argument {
+            ast::CallArg::Positional(value) | ast::CallArg::Named(_, value) => Ok(value),
+            ast::CallArg::PositionalUnpack(_) => {
+                Err(format!("construction of `{name}` with a positional argument spread"))
+            }
+            ast::CallArg::KeywordUnpack(_) => Err(format!("construction of `{name}` with a keyword argument spread")),
+        })
+        .collect()
+}
+
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// The type a `Type.member(..)` call is made on, when its receiver is a type rather than a value.
     ///
@@ -510,11 +526,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Lower a value the checker coerces into a newtype where it is used (RFC 017).
     ///
-    /// A coercion of one step that names no validation hook and no primitive constraints only wraps the value, so
-    /// it is the construction of that plain newtype, as legacy wraps it directly: the value is lowered once, then
-    /// built into the retained plain newtype's sole tuple slot. Any other coercion (a validation hook, generated
-    /// constraints, a chain of steps, or a newtype this module does not retain) refuses by name, because Body IR has
-    /// no form for its checks and the unconverted value must not reach a consumer.
+    /// A single raw wrapper or integer-constrained wrapper evaluates its input once, retains any checked predicates,
+    /// then constructs its canonical tuple slot. Validation hooks, aggregate-field failure collection, chains and
+    /// unretained owners stay refused rather than supplying an unchecked value to their consumer.
     pub(super) fn lower_newtype_coercion(
         &mut self,
         expr: &ast::Spanned<ast::Expr>,
@@ -524,7 +538,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ) -> bir::Operand {
         let span = hir_span(expr.span);
         let declaration = match coercion.steps.as_slice() {
-            [step] if step.ctor.is_none() && step.constraints.is_empty() => self
+            [step] if step.ctor.is_none() => self
                 .local_nominal_declarations
                 .get(&step.newtype_name)
                 .filter(|declaration| {
@@ -536,10 +550,30 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let Some(declaration) = declaration else {
             return self.unsupported_operand("validated-newtype coercion".to_string(), scope, span, out);
         };
+        let constraints = &coercion.steps[0].constraints;
+        if !constraints.is_empty()
+            && matches!(
+                coercion.mode,
+                crate::typechecker::ValidatedNewtypeCoercionMode::AggregateField { .. }
+            )
+        {
+            return self.unsupported_typed_operand(
+                "constrained-newtype aggregate-field validation".to_owned(),
+                self.checked_type(&coercion.target_type),
+                scope,
+                span,
+                out,
+            );
+        }
         let key = (expr.span.start, expr.span.end);
         self.coercions_in_progress.insert(key);
         let value = self.lower_expr_to_operand(expr, scope, out);
         self.coercions_in_progress.remove(&key);
+        let value = if constraints.is_empty() {
+            value
+        } else {
+            self.constrained_newtype_input(&declaration.name, value, constraints, scope, span, out)
+        };
         let ty = self.checked_type(&coercion.target_type);
         self.push_assign_temp(
             bir::Rvalue::Aggregate(
@@ -586,31 +620,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             );
         };
 
-        // The typechecker records one slot per *written* argument, so a spread -- which supplies an unknown number
-        // of fields -- can never appear in a recorded binding. Refuse it by name: no stage records how a spread maps
-        // onto declared fields, and #1159's spread representation deliberately stopped short of construction layouts.
-        let mut written_exprs = Vec::with_capacity(args.len());
-        for arg in args {
-            match arg {
-                ast::CallArg::Positional(expr) | ast::CallArg::Named(_, expr) => written_exprs.push(expr),
-                ast::CallArg::PositionalUnpack(_) => {
-                    return self.unsupported_operand(
-                        format!("construction of `{name}` with a positional argument spread"),
-                        scope,
-                        hir_span_value,
-                        out,
-                    );
-                }
-                ast::CallArg::KeywordUnpack(_) => {
-                    return self.unsupported_operand(
-                        format!("construction of `{name}` with a keyword argument spread"),
-                        scope,
-                        hir_span_value,
-                        out,
-                    );
-                }
-            }
-        }
+        let written_exprs = match nominal_argument_expressions(name, args) {
+            Ok(values) => values,
+            Err(description) => return self.unsupported_operand(description, scope, hir_span_value, out),
+        };
         if written_exprs.len() != field_binding.argument_slots.len() {
             return self.unsupported_operand(
                 format!("construction of `{name}` with an unresolved field layout"),
@@ -678,6 +691,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 )
             })
             .unwrap_or((None, None));
+        let operands = self.constrain_nominal_arguments(name, canonical.as_ref(), operands, scope, hir_span_value, out);
         self.push_assign_temp(
             bir::Rvalue::Aggregate(
                 bir::AggregateKind::Constructor(Box::new(bir::ConstructorTarget {
