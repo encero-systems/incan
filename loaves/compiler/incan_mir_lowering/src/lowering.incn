@@ -293,6 +293,7 @@ from lists import (
     parameter_storage_type,
     exclusive_reference,
     is_mutable_list_reference,
+    is_exclusive_borrow,
 )
 from assertions import lower_assertion
 from async_ import future_type, future_declarations, construct_future, await_future, async_entry, evaluator_name
@@ -1602,13 +1603,18 @@ def lift_closure(
     mut lifted = lifted_frame(builder, name, arguments, signature[-1], span)
     for index in range(len(captures)):
         destination = int(capture_locals[index].index()) + 1 + count
-        bind_closure_input(lifted, destination, index + 1, arguments[index], false, span)?
+        captured = lifted.locals[destination].ty
+        bind_closure_input(lifted, destination, index + 1, arguments[index], captured, span)?
     mut position = len(captures)
     for parameter in parameters:
         destination = int(parameter.local.index()) + 1 + count
         match parameter.default:
             CallableParamDefault.Required =>
-                bind_closure_input(lifted, destination, position + 1, arguments[position], true, span)?
+                declared = lifted.locals[destination].ty
+                # A closure checked against a callable type whose input is `mut` takes that input as the borrow too.
+                mutable = parameter.mutable or parameter_storage_type(declared, true) == arguments[position]
+                storage = parameter_storage_type(declared, mutable)
+                bind_closure_input(lifted, destination, position + 1, arguments[position], storage, span)?
                 position += 1
             _ =>
                 # The supplied flag comes first, then the value it describes.
@@ -1962,19 +1968,20 @@ def bind_closure_input(
     destination: int,
     argument: int,
     ty: PlanType,
-    parameter: bool,
+    storage: PlanType,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Move one closure argument into the capture or parameter local the body reads; a list parameter is a view."""
-    mut local_type = lifted.locals[destination].ty
-    if parameter:
-        local_type = list_parameter_type(local_type, false)
-    if local_type != ty:
+    """
+    Move one closure argument into the capture or parameter local the body reads, which stores it as `storage`: a
+    capture by value, a parameter as a function frame stores it (a list as a view, a `mut` value as its borrow).
+    """
+    if storage != ty:
         return Err("invalid Body IR closure argument type")
-    lifted.locals[destination].ty = local_type
-    # Text and an owned model, enum or carrier input move into the local the body reads, which then owns them.
+    lifted.locals[destination].ty = storage
+    # Text and an owned model, enum or carrier input move into the local the body reads, which then owns them; an
+    # exclusive borrow moves in too, and every other input is a copy or a shared view.
     owned = ty == PlanType.String or is_nominal_type(ty)
-    value = read_place(plan_place(argument, span), owned, span)
+    value = read_place(plan_place(argument, span), owned or is_exclusive_borrow(ty), span)
     lifted.emit(plan_assign(plan_place(destination, span), RvalueKind.Use(value), span))
     if owned:
         lifted.owned.append(destination)

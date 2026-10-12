@@ -135,3 +135,14 @@ pub def is_mutable_list_reference(ty: PlanType) -> bool:
         PlanType.DictMutRef(_key, _value) => return true
         PlanType.ListMutRef(_leaf, _depth) => return true
         _ => return false
+
+
+pub def is_exclusive_borrow(ty: PlanType) -> bool:
+    """Report whether a value is the exclusive borrow a `mut` parameter receives, which moves rather than copies."""
+    if is_mutable_list_reference(ty):
+        return true
+    match ty:
+        PlanType.StringMutRef => return true
+        PlanType.ModelMutRef(_owner, _name) => return true
+        PlanType.EnumMutRef(_owner, _name) => return true
+        _ => return false

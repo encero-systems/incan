@@ -351,7 +351,10 @@ fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> 
             return Err(invalid(function, "parameter name is invalid or duplicated"));
         }
         if !(source_signature_type(&scalar(&parameter.ty))
-            || matches!(scalar(&parameter.ty), Scalar::ModelRef(_) | Scalar::ModelMutRef(_) | Scalar::EnumRef(_)))
+            || matches!(
+                scalar(&parameter.ty),
+                Scalar::ModelRef(_) | Scalar::ModelMutRef(_) | Scalar::EnumRef(_)
+            ))
             || scalar(&parameter.ty) != scalar(&function.locals[index + 1].ty)
         {
             return Err(invalid(function, "parameter local differs from its declaration"));
@@ -964,10 +967,17 @@ fn shared_reference(ty: &Scalar) -> bool {
 }
 
 /// Source signatures expose scalars, owned text and the exclusive text reference a `mut str` parameter receives,
-/// models, callables, and tuples of admitted types; formatting views stay internal.
+/// models, callables, and tuples of admitted types; formatting views stay internal. A function pointer's inputs also
+/// admit the exclusive model reference a `mut` model parameter receives, as a declared parameter does.
 fn source_signature_type(ty: &Scalar) -> bool {
     if let Scalar::FunctionPointer(signature) = ty {
-        return !signature.is_empty() && signature.iter().all(source_signature_type);
+        let Some((result, inputs)) = signature.split_last() else {
+            return false;
+        };
+        return source_signature_type(result)
+            && inputs
+                .iter()
+                .all(|input| source_signature_type(input) || matches!(input, Scalar::ModelMutRef(_)));
     }
     if let Scalar::Closure(signature) | Scalar::ClosureRef(signature) = ty {
         return callable_object_signature(signature);
@@ -1037,15 +1047,28 @@ fn external_signature_type(ty: &Scalar) -> bool {
         )
 }
 
-/// Callable objects accept scalars of any numeric carrier, text and shared collection views as inputs; their result
-/// remains a scalar or owned text, or an owned generator, which a generator expression's capturing step returns.
+/// Callable objects accept scalars of any numeric carrier, text, shared collection views and the exclusive borrows a
+/// `mut` parameter receives as inputs; their result remains a scalar or owned text, or an owned generator, which a
+/// generator expression's capturing step returns.
 fn callable_object_signature(signature: &[Scalar]) -> bool {
     let Some((result, inputs)) = signature.split_last() else {
         return false;
     };
     (callable_object_value(result) || matches!(result, Scalar::Generator(_, _)))
         && inputs.iter().all(|ty| {
-            callable_object_value(ty) || matches!(ty, Scalar::ListRef(_, _) | Scalar::SetRef(_) | Scalar::DictRef(_, _))
+            callable_object_value(ty)
+                || matches!(
+                    ty,
+                    Scalar::ListRef(_, _)
+                        | Scalar::SetRef(_)
+                        | Scalar::DictRef(_, _)
+                        | Scalar::ListMutRef(_, _)
+                        | Scalar::SetMutRef(_)
+                        | Scalar::DictMutRef(_, _)
+                        | Scalar::StringMutRef
+                        | Scalar::ModelMutRef(_)
+                        | Scalar::EnumMutRef(_)
+                )
         })
 }
 
@@ -1656,7 +1679,7 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
         }
     }
     if let PlanType::FunctionPointer(signature) = ty {
-        if signature.is_empty() || !signature.iter().all(|ty| source_signature_type(&scalar(ty))) {
+        if !source_signature_type(&scalar(ty)) {
             return Err(PlanError::Invalid {
                 function: "function pointer".into(),
                 reason: "callable signature requires admitted inputs and a final return type".into(),

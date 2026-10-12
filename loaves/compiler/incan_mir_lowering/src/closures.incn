@@ -32,7 +32,7 @@ from types import primitive_type
 from classes import function_name
 from collections import is_collection
 from layout_types import native_source_type
-from lists import is_list, is_owned_list, list_parameter_type
+from lists import is_list, is_owned_list, parameter_storage_type, is_exclusive_borrow
 from numerics import numeric_carrier
 from generators import generator_type, is_generator_type
 from frame import Builder
@@ -42,9 +42,9 @@ pub def function_pointer_type(parameters: &list[IncanCallableParam], result: &Ru
     """Keep the checked parameter order and append the return type to the native signature vector."""
     mut signature: list[PlanType] = []
     for parameter in parameters:
-        if parameter.kind != IncanCallableParamKind.Normal or parameter.is_mut:
-            return Err("unsupported Body IR function pointer with rest or mutable parameters")
-        signature.append(signature_input(callable_component(parameter.ty)?))
+        if parameter.kind != IncanCallableParamKind.Normal:
+            return Err("unsupported Body IR function pointer with rest parameters")
+        signature.append(signature_input(callable_component(parameter.ty)?, parameter.is_mut))
     signature.append(callable_result(result)?)
     return Ok(PlanType.FunctionPointer(signature))
 
@@ -59,11 +59,14 @@ def callable_result(ty: &RustType) -> Result[PlanType, str]:
     return callable_component(ty)
 
 
-pub def signature_input(ty: PlanType) -> PlanType:
-    """A callable's list or collection input is the caller-owned reference its declaration's frame receives."""
-    # Every function frame takes a list or collection parameter by shared reference, so a function item, a lifted
-    # closure and an annotated callable type all agree on this one input representation.
-    return list_parameter_type(ty, false)
+pub def signature_input(ty: PlanType, mutable: bool) -> PlanType:
+    """
+    A callable's input as its declaration's frame receives it: a list or collection by the caller-owned reference, and
+    for a `mut` parameter the exclusive borrow of the caller's value.
+    """
+    # Every function frame stores its parameters this way, so a function item, a lifted closure and an annotated
+    # callable type all agree on this one input representation.
+    return parameter_storage_type(ty, mutable)
 
 
 def callable_component(ty: &RustType) -> Result[PlanType, str]:
@@ -146,7 +149,10 @@ pub def return_representation(body: &RustBody, ty: PlanType) -> Result[PlanType,
 
 
 pub def closure_arguments(signature: list[PlanType]) -> Result[list[PlanType], str]:
-    """Pack scalar/text inputs and shared collection views with their exact checked call representations."""
+    """
+    Pack scalar/text inputs, shared collection views and the exclusive borrows `mut` parameters take with their exact
+    checked call representations.
+    """
     if len(signature) == 0:
         return Err("invalid Body IR callable signature without return type")
     mut elements: list[PlanType] = []
@@ -157,7 +163,13 @@ pub def closure_arguments(signature: list[PlanType]) -> Result[list[PlanType], s
                 PlanType.ListRef(_leaf, _depth) => pass
                 PlanType.SetRef(_leaf) => pass
                 PlanType.DictRef(_key, _value) => pass
-                _ => return Err("unsupported Body IR closure input outside scalars, owned text, and shared collections")
+                PlanType.ListMutRef(_leaf, _depth) => pass
+                PlanType.SetMutRef(_leaf) => pass
+                PlanType.DictMutRef(_key, _value) => pass
+                PlanType.StringMutRef => pass
+                PlanType.ModelMutRef(_index, _name) => pass
+                PlanType.EnumMutRef(_index, _name) => pass
+                _ => return Err("unsupported Body IR closure input outside scalars, text, collection views and borrows")
         elements.append(input)
     if not closure_value_type(signature[-1]):
         return Err("unsupported Body IR closure result outside scalars and owned text")
@@ -241,7 +253,8 @@ pub def pointer_forwarder(name: str, signature: list[PlanType], span: SourceSpan
         parameters.append(Parameter(name=f"__incan_argument_{index}", ty=ty, span=span))
         place = plan_place(index + 2, span)
         mut kind = OperandKind.Copy(place)
-        if ty == PlanType.String:
+        # Owned text and the exclusive borrow a `mut` input receives move on; every other input is copied.
+        if ty == PlanType.String or is_exclusive_borrow(ty):
             kind = OperandKind.Move(place)
         operands.append(Operand(kind=kind, span=span))
     pointer_value = Operand(kind=OperandKind.Copy(plan_place(1, span)), span=span)
@@ -383,9 +396,10 @@ def function_item_identity(
                         return Err("invalid Body IR function-item parameter count")
                     mut signature: list[PlanType] = []
                     for index in range(len(parameters)):
-                        if parameters[index].ty != body.params[index].ty or body.params[index].mutable:
+                        if parameters[index].ty != body.params[index].ty:
                             return Err("unsupported Body IR function-item parameter contract")
-                        signature.append(signature_input(item_component(builder, body.params[index].ty)?))
+                        component = item_component(builder, body.params[index].ty)?
+                        signature.append(signature_input(component, body.params[index].mutable))
                     signature.append(item_result(builder, body.return_type)?)
                     # The item names the same plan symbol a direct call to this declaration uses.
                     name = function_name(module, body)
