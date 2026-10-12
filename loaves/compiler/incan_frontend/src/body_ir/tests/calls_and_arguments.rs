@@ -23,7 +23,7 @@ fn rest_spread_reused_local_retains_a_named_refusal() -> Result<(), Box<dyn std:
 /// Rest annotations retain their collection storage, and each call supplies one resolved operand per slot.
 #[test]
 fn rest_parameter_storage_and_bindings_are_retained() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def collect(prefix: str, *items: int, **labels: str) -> int:\n  return len(items)\n\ndef main() -> None:\n  xs = [2, 3]\n  kw = {\"name\": \"spread\"}\n  collect(\"x\", 1, *xs, name=\"inline\", **kw)\n  collect(\"empty\")\n  f = collect\n  println(f(\"bound\", *xs, **kw))\n";
+    let source = "def collect(prefix: str, *items: int, **labels: str) -> int:\n  return len(items)\n\ndef main() -> None:\n  xs = [2, 3]\n  kw = {\"name\": \"spread\"}\n  xs_bound = [2, 3]\n  kw_bound = {\"name\": \"spread\"}\n  collect(\"x\", 1, *xs, name=\"inline\", **kw)\n  collect(\"empty\")\n  f = collect\n  println(f(\"bound\", *xs_bound, **kw_bound))\n";
     let module = build(source, &["m", "rest_storage"])?;
     let declaration = body_named(&module, "collect")?;
     assert_eq!(declaration.params[1].ty.to_string(), "List[int]");
