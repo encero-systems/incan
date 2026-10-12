@@ -4,6 +4,31 @@
 
 use super::*;
 
+/// TOML bundle aliases expand the checked module's derive metadata, while Descriptor is a checked opt-in without a
+/// Rust derive macro; neither spelling may leak into the direct runtime's native derive list.
+#[test]
+fn retains_model_toml_and_descriptor_native_derives() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "from std import toml as manifest\n\n@derive(manifest)\nmodel Project:\n  name: str\n\n@derive(Descriptor)\nmodel Version:\n  major: int\n",
+        &["m", "model_derive_metadata"],
+    )?;
+    let project = module
+        .nominal_declarations
+        .iter()
+        .find(|owner| owner.name == "Project")
+        .ok_or("TOML model missing")?;
+    assert!(project.derives.iter().any(|derive| derive == "serde::Serialize"));
+    assert!(project.derives.iter().any(|derive| derive == "serde::Deserialize"));
+    assert!(!project.derives.iter().any(|derive| derive == "manifest"));
+    let version = module
+        .nominal_declarations
+        .iter()
+        .find(|owner| owner.name == "Version")
+        .ok_or("descriptor model missing")?;
+    assert!(!version.derives.iter().any(|derive| derive == "Descriptor"));
+    Ok(())
+}
+
 /// A model combining owner arguments, an instantiated trait and an alias retains its layout, method frame and trait
 /// implementation once, with canonical targets rather than an alias wrapper body.
 #[test]
