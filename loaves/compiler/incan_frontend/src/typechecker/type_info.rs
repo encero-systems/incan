@@ -679,6 +679,13 @@ pub struct TraitArtifacts {
     /// Body IR retains these declaration identities for concrete specialization. They remain separate from ordinary
     /// resolved call identities because legacy default expansion selects each adopter's implementation later.
     pub self_method_identities: HashMap<(usize, usize), CanonicalSymbolId>,
+    /// Declared result types of the trait slots called on an open `Self` receiver in the standard library's own trait
+    /// defaults, keyed by the whole call span.
+    ///
+    /// The standard library's source leaves such a call's checked type open, because legacy expands those defaults by
+    /// its own rules. Body IR, which publishes the defaults' executable representation, takes the slot's declared
+    /// result from here instead; no legacy route reads it.
+    pub self_method_result_types: HashMap<(usize, usize), ResolvedType>,
     /// Checked type arguments of each source `with Trait[...]` adoption clause, keyed by the clause's span.
     ///
     /// Body IR instantiates an adopted trait's default methods for a concrete adopter from these arguments, so no

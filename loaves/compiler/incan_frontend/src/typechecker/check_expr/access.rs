@@ -6537,11 +6537,11 @@ impl TypeChecker {
             return ret;
         }
         // In a trait's own method, a method that the trait or a supertrait of it declares, called on a `Self` value,
-        // has that declaration's signature (#1561). Any other method called on `Self` is left open, as is every one in
-        // the standard library's own source, whose trait defaults its own lowering rules expand.
+        // has that declaration's signature (#1561). Any other method called on `Self` is left open. In the standard
+        // library's own source the call's checked type stays open too, because legacy expands those trait defaults by
+        // its own rules; the slot and its declared result are retained for Body IR only.
         if matches!(base_ty, ResolvedType::SelfType) {
-            if !self.checks_standard_library_source()
-                && let Some(trait_name) = self.current_trait_name.clone()
+            if let Some(trait_name) = self.current_trait_name.clone()
                 && let Some(method_info) = self.trait_method_info_resolved(&trait_name, method, span)
             {
                 // A default's open receiver selects the trait slot, not a concrete implementation. Retain that
@@ -6551,6 +6551,13 @@ impl TypeChecker {
                         .traits
                         .self_method_identities
                         .insert((span.start, span.end), identity.clone());
+                }
+                if self.checks_standard_library_source() {
+                    self.type_info
+                        .traits
+                        .self_method_result_types
+                        .insert((span.start, span.end), method_info.return_type.clone());
+                    return ResolvedType::Unknown;
                 }
                 return self.check_generic_method_call(
                     method,

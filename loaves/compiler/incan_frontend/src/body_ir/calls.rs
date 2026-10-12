@@ -1328,6 +1328,22 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         ))
     }
 
+    /// The checked result type of the method call at `span`.
+    ///
+    /// In the standard library's own trait defaults, a call on an open `Self` receiver keeps its checked type open for
+    /// legacy; its slot's declared result, which the checker retains for Body IR only, is the call's type instead.
+    fn method_call_result_type(&self, span: ast::Span) -> IncanType {
+        let checked = self.resolve_ty(span);
+        if !matches!(checked, IncanType::Unknown) {
+            return checked;
+        }
+        self.type_info
+            .traits
+            .self_method_result_types
+            .get(&(span.start, span.end))
+            .map_or(checked, |declared| self.checked_type(declared))
+    }
+
     /// Lower a method call `recv.name(args)` to a [`bir::Callee::Method`] call, with the receiver prepended to
     /// `args[0]` as a shared or exclusive borrow operand (see the inline comment on the receiver-borrow decision
     /// below).
@@ -1421,7 +1437,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let mut call_args = Vec::with_capacity(arg_operands.len() + 1);
         call_args.push(bir::ArgumentElement::One(receiver_operand));
         call_args.append(&mut arg_operands);
-        let ty = self.resolve_ty(span);
+        let ty = self.method_call_result_type(span);
         if let Some(helper) = helper {
             self.record_runtime_requirement(AbiV0RuntimeRequirement::RuntimeHelper(helper.as_str().to_string()));
             self.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
