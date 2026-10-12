@@ -97,6 +97,16 @@ pub fn generic(base: String, args: Vec<IncanType>) -> IncanType {
     IncanType::Generic { base, args }
 }
 
+/// Construct a function type for Incan callers whose legacy emitter cannot construct Rust struct-style variants.
+/// This interop boundary is removable when dev.8 retires legacy emission; it preserves the supplied checked parameters
+/// and result type.
+pub fn function_type(params: Vec<IncanCallableParam>, return_type: IncanType) -> IncanType {
+    IncanType::Function {
+        params,
+        return_type: Box::new(return_type),
+    }
+}
+
 impl IncanType {
     /// Return unstable ABI v0 metadata scaffolding for this type.
     ///

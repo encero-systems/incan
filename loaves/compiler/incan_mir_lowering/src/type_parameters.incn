@@ -1,6 +1,12 @@
 """Closed native callable instances selected exclusively by checked call-site arguments."""
 
-from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind, generic
+from rust::incan_semantics_core import (
+    IncanCallableParam as RustCallableParam,
+    IncanType as RustType,
+    SemanticSourceTargetKind,
+    function_type,
+    generic,
+)
 from rust::incan_semantics_core::body_ir import Body
 from symbols import type_component
 
@@ -36,6 +42,16 @@ pub def substitute(ty: &RustType, names: list[str], arguments: list[RustType]) -
                 closed: RustType = substitute(element, names, arguments)?
                 concrete.append(closed.clone())
             return Ok(RustType.Tuple(concrete))
+        RustType.Function(params=parameters, return_type=result) =>
+            # A callable parameter such as `transform: (T) -> U` closes with its instance like any other parameter.
+            mut closed_parameters: list[RustCallableParam] = []
+            for parameter in parameters:
+                mut closed_parameter = parameter.clone()
+                closed_parameter.ty = substitute(parameter.ty, names, arguments)?
+                closed_parameters.append(closed_parameter)
+            closed_result: RustType = substitute(result, names, arguments)?
+            # Work around legacy struct-variant construction; removed in dev.8.
+            return Ok(function_type(closed_parameters, closed_result))
         _ => return Ok(ty.clone())
 
 
