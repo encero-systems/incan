@@ -8175,6 +8175,30 @@ def main() -> None:
     )
 }
 
+/// A stdlib class whose crate also has a same-named constructor function, such as `EnvironError`, is the crate's own
+/// struct: here it is the error side of a stdlib call and of a `Result` main.
+#[test]
+fn stdlib_class_beside_its_constructor_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "stdlib_class_beside_its_constructor",
+        r#"from std.environ import EnvironError, args
+
+
+def subcommand(arguments: list[str]) -> str:
+    if len(arguments) < 2:
+        return "help"
+    return arguments[1]
+
+
+def main() -> Result[None, EnvironError]:
+    arguments = args()?
+    println(subcommand(arguments))
+    return Ok(None)
+"#,
+        b"help\n",
+    )
+}
+
 /// A `main` returning `Result[None, E]` is the binary's entry point as legacy's is: its output before an `Err` is kept,
 /// and the error is reported on stderr with a failing exit code.
 #[test]
