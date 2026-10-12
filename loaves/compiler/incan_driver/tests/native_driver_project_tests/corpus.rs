@@ -226,6 +226,10 @@ pub(super) fn check_string_methods(
 }
 
 /// Compare a focused builtin program with legacy without normalizing its output.
+///
+/// The reference compiler uses the explicit fixture home so a published dependency baked there is available under
+/// the same receipt-selected package identity. An ambient home can lack that Loaf even after native compilation
+/// succeeds.
 pub(super) fn check_builtin_source(
     driver: &Path,
     root: &Path,
@@ -246,6 +250,7 @@ pub(super) fn check_builtin_source(
     success(
         &support::repo_command()
             .current_dir(&project)
+            .env("INCAN_HOME", support::oven_fixture_home()?)
             .arg("build")
             .arg(&source)
             .arg(&legacy_output)

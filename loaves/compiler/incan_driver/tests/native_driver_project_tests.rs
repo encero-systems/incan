@@ -6207,7 +6207,7 @@ fn published_generic_declarations_output_matches_legacy() -> Result<(), Box<dyn 
     fs::create_dir_all(provider.join("src"))?;
     fs::write(
         project.join("loaf.toml"),
-        "[project]\nname = \"generic_consumer\"\nversion = \"0.1.0\"\n[dependencies]\ngeneric_items = { path = \"deps/generic_items\" }\n",
+        "[project]\nname = \"probe\"\nversion = \"0.1.0\"\n[dependencies]\ngeneric_items = { path = \"deps/generic_items\" }\n",
     )?;
     fs::write(
         provider.join("loaf.toml"),
