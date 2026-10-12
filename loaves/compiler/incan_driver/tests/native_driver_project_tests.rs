@@ -10717,19 +10717,37 @@ fn bytes_io_trait_method_refusal_is_retained() -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
-/// A closure's captured canonical zip retains legacy snapshot and cursor behavior.
+/// A consuming iterator capture needs the FnOnce contract that a reusable snapshot environment cannot provide.
 #[test]
-fn canonical_zip_capture_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+fn consuming_zip_capture_refusal_is_retained() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
-    corpus::check_builtin_source(
-        &fixture.driver_binary("debug"),
-        &fixture.scratch("canonical-zip-capture")?,
-        &fixture.sysroot,
-        &fixture.formatting,
+    let root = fixture.scratch("consuming-zip-capture")?;
+    let source = root.join("capture.incn");
+    fs::write(
+        &source,
         include_str!(
             "../../incan_test_support/fixtures/behavior/execution_collections/executes_a_closure_that_captures_canonical_zip.incn"
         ),
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let binary = root.join("native");
+    let refused = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &source,
+        &binary,
+        &fixture.sysroot,
+        &closure,
     )
+    .output()?;
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr)
+            .contains("unsupported Body IR iterator closure capture without FnOnce contract"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(!binary.exists());
+    Ok(())
 }
 
 /// Iterator text callbacks keep their contextual parameter types and legacy output.
