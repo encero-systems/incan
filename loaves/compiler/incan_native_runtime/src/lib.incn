@@ -6,6 +6,15 @@ pub from rust::incan_std_core::num import Decimal128 as DecimalCarrier
 pub from frozen_text import format_frozen
 pub from frozen_text import length_frozen_bytes
 pub from frozen_collections import frozen_list_length, frozen_list_items, frozen_list_text_items
+pub from frozen_collections import frozen_list_byte_items, frozen_set_length, frozen_set_items, frozen_set_text_items
+pub from frozen_collections import (
+    frozen_dict_length,
+    frozen_dict_text_get,
+    frozen_dict_get,
+    frozen_dict_text_contains,
+    frozen_dict_contains,
+)
+pub from frozen_collections import frozen_dict_keys, frozen_dict_text_keys, own_static_bytes
 pub from raises_assertions import assert_raises_deferred
 pub from rust::incan_std_core::frozen import FrozenStr as FrozenCarrier, FrozenBytes as FrozenBytesCarrier
 pub from carriers import format_carrier, clone_carrier_payload

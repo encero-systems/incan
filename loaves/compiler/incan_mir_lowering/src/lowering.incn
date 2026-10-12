@@ -4665,6 +4665,9 @@ def display_plan_value(
     A list, set or dictionary displays through its structure, as legacy's Debug spells it.
     """
     ty = operand_type(builder, operand)?
+    match ty:
+        PlanType.FrozenCollection(_name, _elements) => return debug_plan_operand(builder, operand, span)
+        _ => pass
     # Generic code displays a type-parameter value through its type argument's own Display, which spells an
     # integral float without the fractional part the concrete float spelling keeps.
     if type_parameter and (ty == PlanType.Float or ty == PlanType.F32 or ty == PlanType.F64):
@@ -5857,8 +5860,7 @@ def element_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> 
             match place_type(builder.locals, root):
                 PlanType.FrozenCollection(_name, _elements) =>
                     if len(source.projection) != 0:
-                        snapshot = frozen_list_snapshot(builder, read_place(root, false, span), span)?
-                        return Ok(Some(projected_element_read(builder, source, snapshot, 0, span)?))
+                        return Ok(Some(projected_element_read(builder, source, root, 0, span)?))
                 _ => pass
         None => pass
     match model_list_read(builder, source, span)?:
@@ -5918,9 +5920,17 @@ def read_indexed_element(
     slot: int,
     span: SourceSpan,
 ) -> Result[Place, str]:
-    """Read a checked tuple field, or clone a list element or dictionary value, from the place earlier steps reached."""
+    """Read a checked tuple field, frozen item, or cloned collection element from the place earlier steps reached."""
     if is_tuple_type(place_type(builder.locals, place)):
         return read_element_field(builder, place, source.projection[slot], span)
+    match place_type(builder.locals, place):
+        PlanType.FrozenCollection(name, _elements) =>
+            if name == "FrozenDict":
+                return frozen_dictionary_element(builder, place, source, slot, span)
+            snapshot = frozen_list_snapshot(builder, read_place(place, false, span), span)?
+            argument = list_index_operand(builder, source, slot, span)?
+            return read_list_element(builder, snapshot, argument, span)
+        _ => pass
     if is_collection(place_type(builder.locals, place)):
         return read_dictionary_element(builder, place, source, slot, span)
     argument = list_index_operand(builder, source, slot, span)?
@@ -6325,6 +6335,13 @@ def lower_builtin_method(
     if member == "Option.clone":
         return lower_derived_clone(builder, arguments, destination, span)
     receiver_type = argument_type(builder, arguments, 0, span)?
+    match receiver_type:
+        PlanType.FrozenCollection(name, _elements) =>
+            if member == f"{name.lower()}.len":
+                return lower_list_builtin(builder, arguments, destination, span)
+            if name == "FrozenDict" and member == "frozendict.contains_key":
+                return frozen_dictionary_contains(builder, arguments, destination, false, span)
+        _ => pass
     if receiver_type == PlanType.FrozenBytes and member == "frozenbytes.len":
         return lower_list_builtin(builder, arguments, destination, span)
     match text_method(member, receiver_type):
@@ -6660,20 +6677,14 @@ def lower_list_builtin(
     ty = argument_type(builder, arguments, 0, span)?
     match ty:
         PlanType.FrozenCollection(name, elements) =>
-            if name != "FrozenList" or len(elements) != 1:
-                return Err("unsupported Body IR frozen collection length")
             value = argument_value(builder, arguments, 0, span)?
             output = call_destination(builder, destination, PlanType.Int, span)?
-            return instantiated_external_call(
-                builder,
-                "incan_native_runtime::frozen_list_length",
-                [elements[0]],
-                [ty],
-                PlanType.Int,
-                [value],
-                output,
-                span,
-            )
+            mut path = "incan_native_runtime::frozen_list_length"
+            if name == "FrozenSet":
+                path = "incan_native_runtime::frozen_set_length"
+            elif name == "FrozenDict":
+                path = "incan_native_runtime::frozen_dict_length"
+            return instantiated_external_call(builder, path, elements, [ty], PlanType.Int, [value], output, span)
         _ => pass
     if ty == PlanType.FrozenBytes:
         match arguments[0].as_one():
@@ -6756,7 +6767,7 @@ def lower_list_helper(
     """Keep Body IR's haystack-first membership argument order and explicit negation."""
     if len(arguments) != 2:
         return Err("unsupported Body IR list membership arity")
-    receiver = argument_place(builder, arguments, 0, span)?
+    receiver = membership_receiver(builder, arguments, span)?
     leaf, depth = require_list_shape(place_type(builder.locals, receiver), "unsupported Body IR membership on non-list")?
     argument = argument_value(builder, arguments, 1, span)?
     reference = list_borrow(builder, receiver, false, span)?
@@ -6914,14 +6925,162 @@ def initialize_text_iterator(
         _ => return Err("unsupported Body IR text iterator initialization")
 
 
+def membership_receiver(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Read immutable frozen membership through an owned primitive snapshot; ordinary collections retain their root."""
+    match argument_type(builder, arguments, 0, span)?:
+        PlanType.FrozenCollection(_name, _elements) =>
+            value = argument_value(builder, arguments, 0, span)?
+            return frozen_list_snapshot(builder, value, span)
+        _ => return argument_place(builder, arguments, 0, span)
+
+
+def frozen_dictionary_element(
+    mut builder: Builder,
+    receiver: Place,
+    source: &RustPlace,
+    slot: int,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Read one baked dictionary value using its retained storage arguments, then apply legacy's owned read conversion."""
+    ty = place_type(builder.locals, receiver)
+    match ty:
+        PlanType.FrozenCollection(name, elements) =>
+            if name != "FrozenDict" or len(elements) != 2:
+                return Err("unsupported Body IR frozen dictionary shape")
+            match source.projection[slot]:
+                PlaceElem.Index(value) =>
+                    key = frozen_dictionary_key(builder, elements[0], value, span)?
+                    return frozen_dictionary_value(builder, receiver, elements, key, span)
+                _ => return Err("unsupported Body IR frozen dictionary nonindex projection")
+        _ => return Err("unsupported Body IR nonfrozen dictionary read")
+
+
+def frozen_dictionary_value(
+    mut builder: Builder,
+    receiver: Place,
+    elements: list[PlanType],
+    probe: tuple[Operand, PlanType, bool],
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Convert only the selected stored value to its source read representation; other entries stay untouched."""
+    ty = place_type(builder.locals, receiver)
+    key, key_type, text = probe
+    mut path = "incan_native_runtime::frozen_dict_get"
+    if text:
+        path = "incan_native_runtime::frozen_dict_text_get"
+    raw = temporary(builder, elements[1], span)
+    instantiated_external_call(
+        builder,
+        path,
+        elements,
+        [ty, key_type],
+        elements[1],
+        [read_place(receiver, false, span), key],
+        raw,
+        span,
+    )?
+    if elements[1] == PlanType.StaticText:
+        return runtime_text(builder, "incan_native_runtime::display_value", read_place(raw, false, span), span)
+    if elements[1] == PlanType.StaticBytes:
+        output = temporary(builder, PlanType.List(ListLeaf.U8, 1), span)
+        instantiated_external_call(
+            builder,
+            "incan_native_runtime::own_static_bytes",
+            [PlanType.StaticBytes],
+            [PlanType.StaticBytes],
+            PlanType.List(ListLeaf.U8, 1),
+            [read_place(raw, false, span)],
+            output,
+            span,
+        )?
+        builder.owned.append(output.local)
+        return Ok(output)
+    match elements[1]:
+        PlanType.FrozenCollection(_kind, _arguments) => return Ok(raw)
+        PlanType.Int => return Ok(raw)
+        PlanType.Bool => return Ok(raw)
+        PlanType.FrozenStr => return Ok(raw)
+        _ => return Err("unsupported Body IR frozen dictionary value read")
+
+
+def frozen_dictionary_key(
+    mut builder: Builder,
+    storage: PlanType,
+    value: &RustOperand,
+    span: SourceSpan,
+) -> Result[tuple[Operand, PlanType, bool], str]:
+    """Use text probes for static text/FrozenStr keys and exact scalar probes for the admitted numeric keys."""
+    if storage in [PlanType.StaticText, PlanType.FrozenStr]:
+        key = borrow_text_operand(builder, value, span)?
+        return Ok((key, PlanType.StringRef, true))
+    if storage not in [PlanType.Int, PlanType.Bool]:
+        return Err("unsupported Body IR frozen dictionary key storage")
+    key = value_operand(builder, value, span)?
+    if operand_type(builder, key)? != storage:
+        return Err("unsupported Body IR frozen dictionary key type")
+    return Ok((key, storage, false))
+
+
+def frozen_dictionary_contains(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    negated: bool,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Preserve linear frozen-key membership without reading or cloning values."""
+    if len(arguments) != 2:
+        return Err("unsupported Body IR frozen dictionary membership arity")
+    ty = argument_type(builder, arguments, 0, span)?
+    match ty:
+        PlanType.FrozenCollection(name, elements) =>
+            if name != "FrozenDict" or len(elements) != 2:
+                return Err("unsupported Body IR frozen dictionary membership shape")
+            match arguments[1].as_one():
+                Some(value) =>
+                    key, key_type, text = frozen_dictionary_key(builder, elements[0], value, span)?
+                    mut path = "incan_native_runtime::frozen_dict_contains"
+                    if text:
+                        path = "incan_native_runtime::frozen_dict_text_contains"
+                    receiver = argument_value(builder, arguments, 0, span)?
+                    output = call_destination(builder, destination, PlanType.Bool, span)?
+                    instantiated_external_call(
+                        builder,
+                        path,
+                        elements,
+                        [ty, key_type],
+                        PlanType.Bool,
+                        [receiver, key],
+                        output,
+                        span,
+                    )?
+                    if negated:
+                        builder.emit(
+                            plan_assign(output, RvalueKind.Unary(UnaryOp.Not, read_place(output, false, span)), span),
+                        )
+                    return Ok(None)
+                None => return Err("unsupported Body IR spread frozen dictionary membership")
+        _ => return Err("unsupported Body IR nonfrozen dictionary membership")
+
+
 def frozen_list_snapshot_type(ty: PlanType) -> Result[PlanType, str]:
     """Keep the owned read type distinct from frozen storage: static text becomes String at the read boundary."""
     match ty:
         PlanType.FrozenCollection(name, elements) =>
-            if name != "FrozenList" or len(elements) != 1:
+            if name not in ["FrozenList", "FrozenSet", "FrozenDict"] or len(elements) == 0:
                 return Err("unsupported Body IR frozen collection snapshot")
             if elements[0] == PlanType.StaticText:
                 return Ok(PlanType.List(ListLeaf.Str, 1))
+            if elements[0] == PlanType.StaticBytes:
+                if name != "FrozenList":
+                    return Err("unsupported Body IR frozen byte set or dictionary snapshot")
+                return Ok(PlanType.List(ListLeaf.U8, 2))
+            if elements[0] not in [PlanType.Int, PlanType.Float, PlanType.Bool, PlanType.FrozenStr]:
+                return Err("unsupported Body IR frozen collection snapshot with nonprimitive elements")
             return Ok(PlanType.List(collection_leaf(elements[0])?, 1))
         _ => return Err("unsupported Body IR nonfrozen snapshot")
 
@@ -6931,12 +7090,22 @@ def frozen_list_snapshot(mut builder: Builder, value: Operand, span: SourceSpan)
     ty = operand_type(builder, value)?
     snapshot = frozen_list_snapshot_type(ty)?
     match ty:
-        PlanType.FrozenCollection(_name, elements) =>
+        PlanType.FrozenCollection(name, elements) =>
             mut path = "incan_native_runtime::frozen_list_items"
+            if name == "FrozenSet":
+                path = "incan_native_runtime::frozen_set_items"
+            elif name == "FrozenDict":
+                path = "incan_native_runtime::frozen_dict_keys"
             if elements[0] == PlanType.StaticText:
                 path = "incan_native_runtime::frozen_list_text_items"
+                if name == "FrozenSet":
+                    path = "incan_native_runtime::frozen_set_text_items"
+                elif name == "FrozenDict":
+                    path = "incan_native_runtime::frozen_dict_text_keys"
+            elif elements[0] == PlanType.StaticBytes:
+                path = "incan_native_runtime::frozen_list_byte_items"
             output = temporary(builder, snapshot, span)
-            instantiated_external_call(builder, path, [elements[0]], [ty], snapshot, [value], output, span)?
+            instantiated_external_call(builder, path, elements, [ty], snapshot, [value], output, span)?
             builder.owned.append(output.local)
             return Ok(output)
         _ => return Err("unsupported Body IR nonfrozen snapshot")
@@ -7310,6 +7479,12 @@ def collection_contains(
     """Preserve canonical haystack-first membership and explicit negation."""
     if len(arguments) != 2:
         return Err("unsupported Body IR collection membership arity")
+    match argument_type(builder, arguments, 0, span)?:
+        PlanType.FrozenCollection(name, _elements) =>
+            if name == "FrozenDict":
+                return frozen_dictionary_contains(builder, arguments, destination, negated, span)
+            return lower_list_helper(builder, negated, arguments, destination, span)
+        _ => pass
     receiver = argument_place(builder, arguments, 0, span)?
     ty = place_type(builder.locals, receiver)
     types = collection_arguments(ty)

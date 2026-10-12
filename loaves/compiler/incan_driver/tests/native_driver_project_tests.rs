@@ -9845,7 +9845,7 @@ def main() -> None:
     )
 }
 
-/// A closed SDK collection keeps its type arguments through construction, mutation, length, and returned values.
+/// Frozen collections retain structural display, exact static key storage, and owned nested element reads.
 #[test]
 fn stdlib_frozen_collection_reads_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
