@@ -50,15 +50,28 @@ fn imported_user_json_keeps_declared_field_identity() -> Result<(), Box<dyn std:
 #[test]
 fn imported_model_alias_return_uses_declared_carrier() -> Result<(), Box<dyn std::error::Error>> {
     let provider_source = "pub model Account:\n  pub type_ [alias=\"type\"]: str\n";
+    let factory_source = "from db.schema import Account\nfrom db.schema import Account as A\n\npub def make_aliased() -> A:\n  return A(type=\"x\")\n";
     let provider = build(provider_source, &["db", "schema"])?;
-    let module = build_with_published_imports(
-        "from db.schema import Account\nfrom db.schema import Account as A\n\ndef make() -> A:\n  return A(type=\"x\")\n",
+    let factory = build_with_published_imports(
+        factory_source,
         &["store", "json_store"],
         &[("db_schema", &["db", "schema"], provider_source)],
-        &[provider],
+        &[provider.clone()],
     )?;
-    let body = body_named(&module, "make")?;
-    assert_eq!(body.return_type, IncanType::Named("Account".to_owned()));
+    assert_eq!(
+        body_named(&factory, "make_aliased")?.return_type,
+        IncanType::Named("Account".to_owned())
+    );
+    let module = build_with_published_imports(
+        "from store.json_store import make_aliased\nfrom db.schema import Account\n\ndef run() -> str:\n  return make_aliased().type\n",
+        &["consumer"],
+        &[
+            ("db_schema", &["db", "schema"], provider_source),
+            ("store_json_store", &["store", "json_store"], factory_source),
+        ],
+        &[provider, factory],
+    )?;
+    let body = body_named(&module, "run")?;
     assert_eq!(body.locals[0].ty, IncanType::Named("Account".to_owned()));
     Ok(())
 }
