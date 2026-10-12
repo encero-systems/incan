@@ -1867,6 +1867,7 @@ fn validate_frozen_values(
             (PlanType::Int, FrozenValue::Scalar(Constant::Int(_)))
             | (PlanType::Bool, FrozenValue::Scalar(Constant::Bool(_)))
             | (PlanType::StrRef, FrozenValue::Scalar(Constant::Text(_))) => {}
+            (PlanType::FrozenStr, FrozenValue::Scalar(Constant::Text(_))) => {}
             (PlanType::StaticBytes, FrozenValue::Bytes(bytes))
                 if bytes.iter().all(|byte| u8::try_from(*byte).is_ok()) => {}
             (PlanType::FrozenCollection(..), FrozenValue::Collection(child, data))

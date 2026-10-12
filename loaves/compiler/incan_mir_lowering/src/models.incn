@@ -52,7 +52,7 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                 mut storage: list[PlanType] = []
                 for argument in arguments:
                     element = model_type(declarations, argument)?
-                    if element in [PlanType.String, PlanType.FrozenStr]:
+                    if element == PlanType.String:
                         element = PlanType.StrRef
                     elif element == PlanType.FrozenBytes:
                         element = PlanType.StaticBytes

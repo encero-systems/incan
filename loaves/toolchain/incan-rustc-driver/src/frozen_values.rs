@@ -126,6 +126,28 @@ fn write<'tcx>(
         (ty::Bool, FrozenValue::Scalar(Constant::Bool(value))) => {
             put(tcx, allocation, offset, layout.size, Scalar::from_bool(*value))
         }
+        (ty::Adt(definition, args), FrozenValue::Scalar(Constant::Text(value)))
+            if native_type(tcx, &PlanType::FrozenStr)? == ty =>
+        {
+            if !definition.is_struct() || definition.non_enum_variant().fields.len() != 1 {
+                return Err(invalid("frozen text wrapper layout"));
+            }
+            let field = definition.non_enum_variant().fields[FieldIdx::from_usize(0)]
+                .ty(tcx, *args)
+                .skip_normalization();
+            if !matches!(field.kind(), ty::Ref(region, inner, rustc_hir::Mutability::Not) if region.is_static() && inner.is_str())
+            {
+                return Err(invalid("frozen text field is not static text"));
+            }
+            let id = tcx.allocate_bytes_dedup(value.as_bytes(), mir::interpret::CTFE_ALLOC_SALT);
+            fat_pointer(
+                tcx,
+                allocation,
+                offset + layout.fields.offset(0),
+                id,
+                u64::try_from(value.len()).map_err(|_| invalid("frozen text length"))?,
+            )
+        }
         (ty::Ref(region, inner, rustc_hir::Mutability::Not), FrozenValue::Scalar(Constant::Text(value)))
             if region.is_static() && inner.is_str() =>
         {
