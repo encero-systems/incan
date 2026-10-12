@@ -6168,6 +6168,57 @@ def main() -> None:
     )
 }
 
+/// Prove local partials byte-identical to legacy: a preset captured from a local and then overridden by name, a
+/// declaration default evaluated inside the partial each time a call leaves it out, text presets and defaults that
+/// stay owned by the partial across calls and a move into another binding, and float and bool defaults left out
+/// together.
+#[test]
+fn local_partial_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("local-partial")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def route(method: int, path: int, content_type: int = 3) -> int:
+    return method * 100 + path * 10 + content_type
+
+def suffix() -> str:
+    println("default evaluated")
+    return "text"
+
+def join(method: str, path: str, tail: str = suffix()) -> str:
+    return method + path + tail
+
+def scaled(factor: float, value: float = 2.5, enabled: bool = true) -> float:
+    if enabled:
+        return factor * value
+    return 0.0
+
+def main() -> None:
+    mut method = 1
+    get = partial route(method=method)
+    method = 9
+    println(get(4))
+    println(get(method=7, path=2, content_type=5))
+    println(get(path=6, content_type=0))
+    println(method)
+    prefix = "GET"
+    join_get = partial join(method=prefix)
+    println(join_get("/health"))
+    println(join_get(path="/x", method="POST"))
+    println(join_get("/ready", tail="!"))
+    println(prefix)
+    held = join_get
+    println(held(path="/moved"))
+    half = partial scaled(factor=0.5)
+    println(half())
+    println(half(value=4.0, enabled=false))
+    println(half(enabled=true))
+"#,
+    )
+}
+
 /// List display preserves legacy Debug spelling, escaping, nesting, and repeated owner reads.
 #[test]
 fn list_display_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
