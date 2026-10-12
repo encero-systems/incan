@@ -1,3 +1,4 @@
+use super::trace_test_stage;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -83,8 +84,13 @@ pub(super) fn prepare_oven_test_command_context(
             .map(|manifest| manifest.project_root().to_path_buf())
             .unwrap_or_else(|| infer_test_project_root_without_manifest(representative_test)),
     );
+    let stage = trace_test_stage("open_test_store");
     let store = incan_driver::oven_store::open_default_oven_store()?;
+    drop(stage);
+    let stage = trace_test_stage("admit_test_native_inputs");
     let native_sdk_context = incan_driver::build::NativeSdkCommandContext::discover()?;
+    drop(stage);
+    let _authority = trace_test_stage("test_project_authority");
     let has_conventional_target =
         project_root.join("src/lib.incn").is_file() || project_root.join("src/main.incn").is_file();
     let project_source_authorities = if session.manifest.is_some() && has_conventional_target {
@@ -2220,6 +2226,8 @@ fn run_file_tests_batch_oven(
         return Vec::new();
     }
 
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_cli::test_batch", tests = tests.len(), input = %tests[0].file_path.display()).entered();
+    let stage = trace_test_stage("read_test_sources");
     let start = Instant::now();
     let frontend_start = Instant::now();
     let first = &tests[0];
@@ -2273,6 +2281,8 @@ fn run_file_tests_batch_oven(
     }
     let source = source_parts.join("\n");
 
+    drop(stage);
+    let stage = trace_test_stage("prepare_test_modules");
     let session = match command_session_for_execution_unit(command_context, &first.file_path) {
         Ok(session) => session,
         Err(message) => return failure(message),
@@ -2331,6 +2341,8 @@ fn run_file_tests_batch_oven(
         };
         (runner_ast, fixtures, source_modules, Vec::new())
     };
+    drop(stage);
+    let stage = trace_test_stage("test_dependency_requirements");
     let module_for_imports = ParsedModule {
         name: "test".to_string(),
         path_segments: vec!["test".to_string()],
@@ -2410,6 +2422,8 @@ fn run_file_tests_batch_oven(
     let batch_file_paths = tests.iter().map(|test| test.file_path.clone()).collect::<Vec<_>>();
     let dir_suffix = file_batch_dir_suffix(&batch_file_paths, &project_root);
     let runner_crate_name = runner_crate_name_for_batch_suffix(&dir_suffix);
+    drop(stage);
+    let stage = trace_test_stage("test_native_inputs");
     let rustc = match resolve_active_rustc() {
         Ok(rustc) => rustc,
         Err(error) => return failure(error.to_string()),
@@ -2506,6 +2520,8 @@ fn run_file_tests_batch_oven(
             Err(error) => return failure(error.message),
         }
     };
+    drop(stage);
+    let stage = trace_test_stage("test_analysis");
     let analysis = match session.analyze_modules(
         &dependency_modules,
         #[cfg(feature = "rust_inspect")]
@@ -2531,6 +2547,8 @@ fn run_file_tests_batch_oven(
     }
     let frontend_elapsed = frontend_start.elapsed();
 
+    drop(stage);
+    let stage = trace_test_stage("test_codegen");
     let generation_start = Instant::now();
     let mut codegen = IrCodegen::new();
     #[cfg(feature = "rust_inspect")]
@@ -2680,6 +2698,8 @@ fn run_file_tests_batch_oven(
     }
     let generation_elapsed = generation_start.elapsed();
 
+    drop(stage);
+    let stage = trace_test_stage("test_receipt");
     let receipt_start = Instant::now();
     let mut receipt_request = OvenGeneratedProjectRequest::new(
         &project_root,
@@ -2705,6 +2725,8 @@ fn run_file_tests_batch_oven(
     }
     let receipt_elapsed = receipt_start.elapsed();
 
+    drop(stage);
+    let stage = trace_test_stage("test_plan_selection");
     let selection_start = Instant::now();
     let shared_plan_selection = match command_context.project_source_authorities.as_ref() {
         Some(authority) => match authority.test_dependency_plan(&test_dependency_surface) {
@@ -2740,6 +2762,9 @@ fn run_file_tests_batch_oven(
         None => return failure("Oven test dependency plan selection lost its exact authority".to_string()),
     };
     let selection_elapsed = selection_start.elapsed();
+
+    drop(stage);
+    let stage = trace_test_stage("test_runtime_libraries");
 
     // Classify caller declarations against the source projection, while retaining full-plan path authority for an
     // exact compiler-owned dependency. The complete plan may include private compiler helpers whose names overlap
@@ -2837,6 +2862,8 @@ fn run_file_tests_batch_oven(
     {
         return failure("Oven Alpha resolved duplicate caller-owned Rust library crate names".to_string());
     }
+    drop(stage);
+    let stage = trace_test_stage("test_native_output");
     let bake_start = Instant::now();
     let mut artifact_plan = match plan_selection.source_artifact_plan("generated-root") {
         Ok(plan) => plan,
@@ -2890,6 +2917,8 @@ fn run_file_tests_batch_oven(
                 .unwrap_or(harness_name)
         })
         .collect::<Vec<_>>();
+    drop(stage);
+    let stage = trace_test_stage("test_execution");
     let execute_start = Instant::now();
     let report = match run_native_test_batch(&OvenNativeTestRequest {
         executable: bake.output,
@@ -2917,6 +2946,8 @@ fn run_file_tests_batch_oven(
     if options.no_capture && !report.output.trim().is_empty() {
         print!("{}", report.output);
     }
+    drop(stage);
+    let _results = trace_test_stage("test_outcomes");
     map_batch_results(
         tests,
         &report.output,

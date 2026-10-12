@@ -32,6 +32,21 @@ Native reuse binds the driver's bytes, project and resolution inputs, ordered ex
 
 Supported bounded subprocess launches pass `INCAN_TRACE_PARENT` so an instrumented child CLI can link its root to the launch invocation. External tools, native test executables and applications do not automatically gain internal instrumentation. Launches outside this helper, children that clear the environment, provider implementation internals, and compiler functions without explicit spans are coverage gaps. The lane is a trace of named boundaries, not an exhaustive function-call profiler. Add a span at the relevant existing boundary when a capture identifies a gap that prevents diagnosis.
 
+## Attribute test preparation separately from execution
+
+Prepare the tests once, then capture an unchanged repeat:
+
+```sh
+incan test tests
+INCAN_TRACE_DIR=/tmp/incan-test-invocations incan test tests
+```
+
+The `incan_cli::test` span covers the command. Its `incan_cli::test_stage` children identify discovery, session construction, candidate selection, lock policy, collection, test selection, dependency admission, scheduling and reporting. Each scheduled `incan_cli::test_batch` has stages for reading sources, preparing modules, dependency requirements, native inputs, analysis, code generation, receipt construction, plan selection, runtime libraries, native output preparation, test execution and outcome mapping. Parallel workers retain the scheduling span as their parent.
+
+Compare `session`, `test_dependency_requirements`, `admit_test_native_inputs` and `test_plan_selection` with `test_execution`. A reused native executable does not imply that frontend or dependency preparation was skipped. `--list` ends after selection and must have no test batch, code generation or execution spans. A keyword-filtered run records the selected batch size; reconcile it with the command's actual test results. Preserve failure captures too: spans close on normal error returns.
+
+Use tracing-disabled commands for performance measurements. These stages attribute the existing test implementation; they do not enable test-result caching or change which tests execute.
+
 ## Check native SDK traversal
 
 On an unchanged command, inspect file-observation paths beneath the native compiler installation. Cached native archives are selected by the pinned source and fact receipt and their stored bytes are checked under lease. Reusing them needs no installed native compiler and must not read its SDK tree. Check that native preparation and compilation counts are zero as well as checking file paths; a short elapsed time alone does not establish reuse.
