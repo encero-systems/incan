@@ -2,6 +2,34 @@
 
 use super::*;
 
+/// A checked derive adoption retains the source trait slot and its default implementation for the concrete model.
+#[test]
+fn derived_trait_default_retains_its_implementation() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        r#"trait Named:
+    def tag(self) -> str:
+        return "named"
+
+@derive(Named)
+model Item:
+    value: int
+
+def main() -> None:
+    println(Item(value=1).tag())
+"#,
+        &["m", "derived_trait"],
+    )?;
+    let implementation = module
+        .trait_implementations
+        .iter()
+        .find(|implementation| implementation.owner.declaration_name == "Item")
+        .ok_or("missing checked derive adoption")?;
+    assert_eq!(implementation.method.declaration_name, "tag");
+    assert_eq!(implementation.method, implementation.implementation);
+    assert!(module.is_well_formed_trait_implementation(implementation));
+    Ok(())
+}
+
 /// A direct call to a planned shared replacement keeps the caller's non-Copy owner for its scope-exit drop.
 #[test]
 fn shared_method_replacement_call_keeps_the_owner() -> Result<(), Box<dyn std::error::Error>> {

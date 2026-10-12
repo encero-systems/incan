@@ -10837,6 +10837,65 @@ fn decorated_method_binding_output_matches_legacy() -> Result<(), Box<dyn std::e
     )
 }
 
+/// A source module's derive bundle retains its default method under plain and aliased import bindings.
+#[test]
+fn module_derive_default_calls_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_case(
+        "module-derive-default-calls",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/module_derive_default_method_direct_call/main.incn"
+        ),
+        &[(
+            "codec.incn",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/module_derive_default_method_direct_call/codec.incn"
+            ),
+        )],
+    )
+}
+
+/// A derived source trait default is available through a function's checked trait bound.
+#[test]
+fn module_derive_bound_calls_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_case(
+        "module-derive-bound-calls",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/module_derive_through_import_binding/main.incn"
+        ),
+        &[(
+            "codec.incn",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/module_derive_through_import_binding/codec.incn"
+            ),
+        )],
+    )
+}
+
+/// User derive bundles retain native serde effects and pure source trait implementations beside the standard bundle.
+#[test]
+fn user_module_derivables_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_case(
+        "user-module-derivables",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/user_module_derivables/main.incn"
+        ),
+        &[
+            (
+                "yaml.incn",
+                include_str!(
+                    "../../incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/user_module_derivables/yaml.incn"
+                ),
+            ),
+            (
+                "schema.incn",
+                include_str!(
+                    "../../incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/user_module_derivables/schema.incn"
+                ),
+            ),
+        ],
+    )
+}
+
 /// A retained original mutable method writes through its receiver after initialization.
 #[test]
 fn decorated_mutable_method_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
