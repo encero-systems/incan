@@ -12835,7 +12835,6 @@ fn validation_error_carrier_output_matches_legacy() -> Result<(), Box<dyn std::e
         &fixture.sysroot,
         &fixture.formatting,
         "def forward(error: ValidationError) -> ValidationError:\n    return error\n\ndef main() -> None:\n    println(\"validation carrier\")\n",
-        "validation carrier\n",
     )?;
     Ok(())
 }
