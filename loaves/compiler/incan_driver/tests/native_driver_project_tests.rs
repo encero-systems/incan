@@ -9950,7 +9950,8 @@ def main() -> None:
     )
 }
 
-/// A closed SDK collection keeps its type arguments through construction, mutation, length, and returned values.
+/// A closed SDK collection keeps its type arguments through both-end mutation; graph calls retain their next-stage
+/// refusal.
 #[test]
 fn stdlib_generic_collection_methods_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
@@ -9964,13 +9965,19 @@ fn stdlib_generic_collection_methods_output_matches_legacy() -> Result<(), Box<d
 def probe(requested: list[str]) -> Deque[str]:
     mut pending = Deque[str].from_iter(requested)
     pending.append("default")
+    pending.appendleft("first")
     return pending
 
 def main() -> None:
     pending = probe(["a", "b"])
     println(len(pending))
-    println(pending.to_list()[2])
+    println(pending.to_list()[3])
 "#,
+    )?;
+    check_project_refusal(
+        "stdlib_graph_call_follow_on",
+        include_str!("../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_graph.incn"),
+        "unsupported Body IR imported or unresolved canonical call target",
     )
 }
 
