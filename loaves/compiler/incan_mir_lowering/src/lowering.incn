@@ -304,7 +304,13 @@ from lists import (
 )
 from assertions import lower_assertion
 from async_ import future_type, future_declarations, construct_future, await_future, async_entry, evaluator_name
-from defaults import default_arguments, default_type, method_default_arguments, model_default_arguments
+from defaults import (
+    default_arguments,
+    default_type,
+    library_default_arguments,
+    method_default_arguments,
+    model_default_arguments,
+)
 from type_parameters import Instance, instantiate, substitute
 from computed_statics import (
     enters_module_initialization,
@@ -2560,7 +2566,7 @@ def lower_library_method(
         delegation.return_type,
         builder.intrinsics,
     )?
-    ordinary = ordered_slot_operands(builder, target.binding, arguments, ordinary_types, span, 1, true)?
+    ordinary = library_call_operands(builder, delegation, target.binding, arguments, ordinary_types, span, 1, false)?
     mut operands = [read_place(reference, true, span)]
     operands.extend(ordinary)
     mut output = temporary(builder, result, span)
@@ -3069,7 +3075,7 @@ def lower_delegated_call(
         type_arguments.append(
             native_source_type(builder.nominals, builder.enums, builder.unions, argument, builder.intrinsics)?,
         )
-    operands = ordered_slot_operands(builder, target.binding, arguments, parameters, span, 0, true, true)?
+    operands = library_call_operands(builder, delegation, target.binding, arguments, parameters, span, 0, true)?
     mut output = temporary(builder, result, span)
     match destination:
         Some(place) =>
@@ -3082,6 +3088,35 @@ def lower_delegated_call(
                 external_call(builder, path, parameters, result, operands, output, span)
                 return Ok(None)
             return instantiated_external_call(builder, path, type_arguments, parameters, result, operands, output, span)
+
+
+def library_call_operands(
+    mut builder: Builder,
+    delegation: &RustStdlibDelegation,
+    binding: &RustArgumentBinding,
+    arguments: &list[RustArgumentElement],
+    types: list[PlanType],
+    span: SourceSpan,
+    offset: int,
+    positional: bool,
+) -> Result[list[Operand], str]:
+    """
+    Bind a stdlib crate call's arguments, each passed owned as the crate item takes it.
+
+    A call that omits an argument passes the constant its record holds for that parameter, as legacy expands the
+    stdlib default at the call site. An offset of one skips a method receiver, the record's first parameter.
+    """
+    if has_defaulted_slots(binding):
+        return library_default_arguments(
+            builder,
+            delegation.parameter_defaults,
+            binding,
+            arguments[offset:],
+            types,
+            span,
+            offset,
+        )
+    return ordered_slot_operands(builder, binding, arguments, types, span, offset, true, positional)
 
 
 def instantiated_external_call(

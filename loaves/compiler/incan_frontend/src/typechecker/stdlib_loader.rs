@@ -266,6 +266,22 @@ impl StdlibAstCache {
         Some(program)
     }
 
+    /// Load a stdlib module's source keeping only its imports and its `const` declarations, so checking the result
+    /// evaluates each const as the declaring module does without checking the rest of the module.
+    pub fn constants_program(&mut self, module_path: &[String]) -> Option<ast::Program> {
+        let source = self.source_inputs.read_module(module_path)?;
+        let tokens = crate::lexer::lex(&source).ok()?;
+        self.source_inputs.record_parse();
+        let mut program = crate::parser::parse(&tokens).ok()?;
+        program.declarations.retain(|declaration| {
+            matches!(
+                declaration.node,
+                ast::Declaration::Import(_) | ast::Declaration::Const(_)
+            )
+        });
+        Some(program)
+    }
+
     /// Construct a legacy source cache; the checker binds genuine publication authority before using that context.
     pub fn new() -> Self {
         Self::default()

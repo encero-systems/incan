@@ -177,6 +177,14 @@ pub struct StdlibDelegation {
     /// instantiates them with its checked type arguments, in the same order; a nongeneric callee has none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub type_parameters: Vec<String>,
+    /// What each parameter takes when a call omits it, in `parameters` order, a method's receiver first.
+    ///
+    /// A parameter without a default is [`CallableParamDefault::Required`]. A default is a
+    /// [`CallableParamDefault::Source`] computation without statements whose result is the constant the call passes,
+    /// or [`CallableParamDefault::Unsupported`] when it is not such a constant. A record listing none admits no
+    /// omitted argument.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parameter_defaults: Vec<CallableParamDefault>,
 }
 
 impl StdlibDelegation {

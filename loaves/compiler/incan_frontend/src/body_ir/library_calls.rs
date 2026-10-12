@@ -12,7 +12,7 @@ use incan_semantics_core::{
     encode_incan_symbol_identity,
 };
 
-use super::{IncanType, TypeCheckInfo, bir, semantic_type_from_resolved};
+use super::{IncanType, TypeCheckInfo, bir, library_defaults, semantic_type_from_resolved};
 use crate::ast;
 use crate::symbols::{CallableParam, ResolvedType, SymbolKind, TypeInfo};
 use crate::typechecker::stdlib_loader::StdlibAstCache;
@@ -41,7 +41,8 @@ pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::StdlibDelegation> {
         .collect()
 }
 
-/// Build one record after confirming the stdlib source declares exactly this identity.
+/// Build one record after confirming the stdlib source declares exactly this identity, with what each of its parameters
+/// takes when a call omits it.
 fn library_call(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Option<bir::StdlibDelegation> {
     let SymbolOrigin::Package { library, module_path } = &identity.origin else {
         return None;
@@ -52,28 +53,32 @@ fn library_call(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Opt
     let mut item = std::iter::once(library.clone())
         .chain(module_path.iter().cloned())
         .collect::<Vec<_>>();
-    let (parameters, return_type, type_parameters) = match identity.kind {
+    let name = &identity.declaration_name;
+    let (parameters, return_type, type_parameters, parameter_defaults) = match identity.kind {
         SemanticSourceTargetKind::Method => {
             let (owner, receiver, params, result) = method_signature(identity, &path, cache)?;
             item.push(owner.clone());
-            item.push(identity.declaration_name.clone());
+            item.push(name.clone());
+            let ordinary = owned_parameters(&params)?;
+            let defaults = library_defaults::method_defaults(&path, &owner, name, receiver.is_some(), &ordinary, cache);
             let mut parameters = receiver.into_iter().collect::<Vec<_>>();
-            parameters.extend(owned_parameters(&params)?);
+            parameters.extend(ordinary);
             (
                 parameters,
                 self_as(&semantic_type_from_resolved(&result), &owner),
                 Vec::new(),
+                defaults,
             )
         }
         _ => {
-            // One overload of a same-name set is selected by its own declaration span; any other function has the
-            // module's single declaration under its name.
-            let function = match cache.callable_source_identity(identity) {
-                Some(_) => match cache.lookup_function_symbol(&path, &identity.declaration_name)? {
-                    SymbolKind::Function(function) => function,
+            // One overload of a same-name set is selected by its own declaration span and records no defaults; any
+            // other function has the module's single declaration under its name.
+            let (function, single) = match cache.callable_source_identity(identity) {
+                Some(_) => match cache.lookup_function_symbol(&path, name)? {
+                    SymbolKind::Function(function) => (function, true),
                     _ => return None,
                 },
-                None => cache.overload_function_info(identity)?,
+                None => (cache.overload_function_info(identity)?, false),
             };
             if function.is_async {
                 return None;
@@ -82,10 +87,17 @@ fn library_call(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Opt
             // an overload's names its own declaration span, so each overload is its own crate item. A generic one
             // keeps its type parameters, which each call instantiates with its checked type arguments.
             item.push(encode_incan_symbol_identity(identity));
+            let parameters = owned_parameters(&function.params)?;
+            let defaults = if single {
+                library_defaults::function_defaults(&path, name, &parameters, cache)
+            } else {
+                Vec::new()
+            };
             (
-                owned_parameters(&function.params)?,
+                parameters,
                 semantic_type_from_resolved(&function.return_type),
                 function.type_params.clone(),
+                defaults,
             )
         }
     };
@@ -102,6 +114,7 @@ fn library_call(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Opt
         parameters,
         return_type,
         type_parameters,
+        parameter_defaults,
     })
 }
 

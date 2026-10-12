@@ -1672,6 +1672,7 @@ mod literals;
 
 mod calls;
 mod library_calls;
+mod library_defaults;
 mod library_nominals;
 mod stdlib_delegations;
 

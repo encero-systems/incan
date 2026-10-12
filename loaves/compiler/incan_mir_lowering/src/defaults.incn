@@ -101,6 +101,44 @@ pub def default_arguments(
     """
     if parameter_offset < 0 or len(body.params) != len(types) + parameter_offset:
         return Err("invalid Body IR default parameter frame length")
+    mut operands = written_operands(builder, binding, elements, types, span, owned)?
+    for index in omitted_slots(binding, len(types))?:
+        operands[index] = evaluate_default(module, builder, body, index + parameter_offset, types[index], span, owned)?
+    return Ok(operands)
+
+
+pub def library_default_arguments(
+    mut builder: Builder,
+    defaults: list[CallableParamDefault],
+    binding: &ArgumentBinding,
+    elements: &list[ArgumentElement],
+    types: list[PlanType],
+    span: SourceSpan,
+    parameter_offset: int,
+) -> Result[list[Operand], str]:
+    """
+    Fill a stdlib crate call's slots, passing the constant its record holds for each omitted one.
+
+    `defaults` follows the record's parameters, so a method's receiver comes first and a `parameter_offset` of one skips
+    it, as for a source method. The crate item takes every argument owned.
+    """
+    if parameter_offset < 0 or len(defaults) != len(types) + parameter_offset:
+        return Err("unsupported Body IR stdlib call omitting an argument its record has no default for")
+    mut operands = written_operands(builder, binding, elements, types, span, true)?
+    for index in omitted_slots(binding, len(types))?:
+        operands[index] = library_default(builder, defaults[index + parameter_offset], types[index], span)?
+    return Ok(operands)
+
+
+def written_operands(
+    mut builder: Builder,
+    binding: &ArgumentBinding,
+    elements: &list[ArgumentElement],
+    types: list[PlanType],
+    span: SourceSpan,
+    owned: bool,
+) -> Result[list[Operand], str]:
+    """Place each written argument in the slot its binding names, leaving every omitted slot a unit placeholder."""
     match binding:
         ArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults) =>
             if len(bindings) != len(elements) or len(bindings) + len(defaults) != len(types):
@@ -118,16 +156,44 @@ pub def default_arguments(
                     Some(value) =>
                         operands[slot] = call_argument_operand(builder, value, types[slot], span, owned)?
                     None => return Err("unsupported Body IR spread ArgumentElement")
-            for slot in defaults:
-                index = int(slot.clone())
-                if index < 0 or index >= len(types) or index in occupied:
-                    return Err("invalid Body IR default slot map")
-                occupied.append(index)
-                operands[index] = evaluate_default(
-                    module, builder, body, index + parameter_offset, types[index], span, owned,
-                )?
             return Ok(operands)
         _ => return Err("unsupported Body IR unresolved ArgumentBinding")
+
+
+def omitted_slots(binding: &ArgumentBinding, count: int) -> Result[list[int], str]:
+    """The slots a resolved call leaves to their defaults, each in range and none also written."""
+    match binding:
+        ArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults) =>
+            mut occupied: list[int] = []
+            for bound in bindings:
+                occupied.append(int(bound.slot))
+            mut omitted: list[int] = []
+            for slot in defaults:
+                index = int(slot.clone())
+                if index < 0 or index >= count or index in occupied:
+                    return Err("invalid Body IR default slot map")
+                occupied.append(index)
+                omitted.append(index)
+            return Ok(omitted)
+        _ => return Err("unsupported Body IR unresolved ArgumentBinding")
+
+
+def library_default(
+    mut builder: Builder,
+    default: &CallableParamDefault,
+    ty: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Pass a stdlib default, which a crate-call record holds only as a closed constant with no statements to run."""
+    _ = default_type(ty)?
+    match default:
+        CallableParamDefault.Source(computation) =>
+            if len(computation.stmts) != 0:
+                return Err("unsupported Body IR stdlib default with statements")
+            return call_argument_operand(builder, computation.result, ty, span, true)
+        CallableParamDefault.Unsupported(span=_span, description=description) =>
+            return Err(f"unsupported Body IR default: {description}")
+        _ => return Err("unsupported Body IR unavailable defaulted parameter")
 
 
 pub def evaluate_default(
