@@ -1571,7 +1571,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         expr: &'expr ast::Spanned<ast::Expr>,
     ) -> Option<[&'expr ast::Spanned<ast::Expr>; 2]> {
         if let ast::Expr::Paren(inner) = &expr.node {
-            return self.zipped_list_sources(inner);
+            return self.zipped_loop_sources(inner);
         }
         let ast::Expr::Call(callee, type_args, args) = &expr.node else {
             return None;
