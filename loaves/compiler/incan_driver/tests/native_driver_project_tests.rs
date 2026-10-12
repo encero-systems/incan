@@ -9103,6 +9103,30 @@ def main() -> Result[None, EnvironError]:
     )
 }
 
+/// The chunk stream a stdlib trait default returns keeps its SDK type without importing that type.
+#[test]
+fn stdlib_reader_chunk_types_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("stdlib-reader-chunk-types")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"from std.io import BytesIO, IoError
+
+def chunks() -> Result[None, IoError]:
+    for chunk in BytesIO(b"abcde").chunks(2)?:
+        println(len(chunk))
+    return Ok(None)
+
+def main() -> None:
+    match chunks():
+        Ok(_) => pass
+        Err(err) => println(err.message())
+"#,
+    )
+}
+
 /// A closed SDK collection keeps its type arguments through construction, mutation, length, and returned values.
 #[test]
 fn stdlib_generic_collection_methods_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

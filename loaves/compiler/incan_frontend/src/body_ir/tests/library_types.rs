@@ -65,3 +65,25 @@ fn stdlib_collection_length_retains_selected_method() -> Result<(), Box<dyn std:
     )), "length must retain its checked method: {}", main.render_snapshot());
     Ok(())
 }
+
+/// A stdlib trait default's return type retains its declaring module without a consumer import of that type.
+#[test]
+fn stdlib_trait_signature_retains_its_nominal_return_type() -> Result<(), Box<dyn std::error::Error>> {
+    let mut cache = StdlibAstCache::new();
+    let path = vec!["std".to_owned(), "io".to_owned()];
+    let reader = cache
+        .lookup_trait(&path, "BinaryReader")
+        .ok_or("missing reader trait")?;
+    let method = reader.methods.get("chunks").ok_or("missing chunk method")?;
+    let identity = method.identity.clone().ok_or("missing chunk identity")?;
+    let mut info = TypeCheckInfo::default();
+    info.references.resolved_identities.insert((1, 2), identity);
+    let declarations = library_nominal_declarations(&info);
+    assert!(
+        declarations
+            .iter()
+            .any(|declaration| declaration.name == "ReaderChunks"),
+        "the default's signature must retain ReaderChunks: {declarations:?}"
+    );
+    Ok(())
+}
