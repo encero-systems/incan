@@ -1176,7 +1176,9 @@ pub def lower_assignment(
         RustRvalue.Match(scrutinee=scrutinee, arms=arms) =>
             return lower_enum_match(module, builder, target, scrutinee, arms, span)
         _ => pass
-    return lower_local_assignment(module, builder, target, value, span)
+    lower_local_assignment(module, builder, target, value, span)?
+    inherit_borrowed_item(builder, target, value)
+    return Ok(None)
 
 
 def lower_local_assignment(
@@ -5213,6 +5215,43 @@ def operand_list_place(mut builder: Builder, value: &RustOperand, span: SourceSp
         _ => return Err("unsupported Body IR constant list place")
 
 
+def borrow_iteration_item(mut builder: Builder, local: int) -> None:
+    """Refuse later changes to an iteration item that is only a snapshot of storage the source program changes."""
+    if local not in builder.borrowed_items:
+        builder.borrowed_items.append(local)
+
+
+def pair_holds_list(ty: PlanType) -> bool:
+    """Report whether a polled pair carries a list, directly or in a nested tuple."""
+    match ty:
+        PlanType.Tuple(elements) =>
+            for element in elements:
+                if pair_holds_list(tuple_element_type(element)):
+                    return true
+            return false
+        _ => return is_list(ty)
+
+
+def inherit_borrowed_item(mut builder: Builder, target: Place, value: &RustRvalue) -> None:
+    """A list bound out of a snapshot iteration item is part of that snapshot, so it stays unchangeable too."""
+    if target.projection != Projection.Whole or not is_list(place_type(builder.locals, target)):
+        return
+    match value:
+        RustRvalue.Use(operand) =>
+            match operand:
+                RustOperand.Place(read) =>
+                    if len(read.place.projection) == 0:
+                        return
+                    match read.place.local_id():
+                        Some(local) =>
+                            root = int(local.index()) + 1 + builder.local_offset
+                            if root in builder.borrowed_items:
+                                borrow_iteration_item(builder, target.local)
+                        None => pass
+                _ => pass
+        _ => pass
+
+
 def initialize_list_iterator(mut builder: Builder, iterator: Place, source: &RustOperand, span: SourceSpan) -> None:
     """Retain cursor storage for Body IR's borrowed builtin iterable materialization."""
     match source:
@@ -5239,7 +5278,11 @@ def list_next(
     match zip_shape(place_type(builder.locals, receiver)):
         Some(_shape) =>
             target = list_root_place(builder, destination, span)?
-            return zip_next(builder, receiver, target, span)
+            zip_next(builder, receiver, target, span)?
+            # Legacy changes a zipped operand's list items in place; a pair here holds only snapshots of them.
+            if pair_holds_list(place_type(builder.locals, target)):
+                borrow_iteration_item(builder, target.local)
+            return Ok(None)
         None => pass
     match generator_shape(place_type(builder.locals, receiver)):
         Some(_shape) =>
@@ -5277,8 +5320,7 @@ def list_next(
     target = list_root_place(builder, destination, span)?
     drop_owned(builder, target.local, span)
     if element == PlanType.String or is_list(element) or is_nominal_type(element):
-        if target.local not in builder.borrowed_items:
-            builder.borrowed_items.append(target.local)
+        borrow_iteration_item(builder, target.local)
     iterable_call(builder, ty, "nth", [PlanType.Int], element, [item_reference, position], target, span)?
     # The cursor cannot overflow: a successful poll is bounded by the native collection length.
     pair = temporary(builder, PlanType.CheckedInt, span)

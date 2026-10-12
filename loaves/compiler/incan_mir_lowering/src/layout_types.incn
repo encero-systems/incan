@@ -44,6 +44,10 @@ pub def native_source_type(
                 key = primitive_leaf(arguments[0], true)?
                 value = native_source_type(nominals, enums, unions, arguments[1], intrinsics)?
                 return Ok(PlanType.Dict(key, collection_leaf(value)?))
+            if base == "Iterator" and len(arguments) == 1:
+                match zip_pair_type(nominals, enums, unions, arguments[0], intrinsics):
+                    Some(pair) => return Ok(pair)
+                    None => pass
             match collection_type(str(base)):
                 Some(CollectionTypeId.Tuple) => return layout_tuple_type(nominals, enums, unions, arguments, intrinsics)
                 _ => pass
@@ -68,6 +72,38 @@ def layout_tuple_type(
         resolved = native_source_type(nominals, enums, unions, element, intrinsics)?
         types.append(tuple_element(resolved, element)?)
     return Ok(PlanType.Tuple(types))
+
+
+def zip_pair_type(
+    nominals: list[NominalDeclaration],
+    enums: list[RustEnumDeclaration],
+    unions: list[RustType],
+    element: &RustType,
+    intrinsics: list[EnumDeclaration],
+) -> Option[PlanType]:
+    """Admit a checked pair iterator, such as `zip`'s, through its element tuple's retained layout."""
+    match element:
+        RustType.Tuple(elements) => return pair_layout(nominals, enums, unions, elements, intrinsics)
+        RustType.Generic(base=base, args=arguments) =>
+            match collection_type(str(base)):
+                Some(CollectionTypeId.Tuple) => return pair_layout(nominals, enums, unions, arguments, intrinsics)
+                _ => return None
+        _ => return None
+
+
+def pair_layout(
+    nominals: list[NominalDeclaration],
+    enums: list[RustEnumDeclaration],
+    unions: list[RustType],
+    elements: &list[RustType],
+    intrinsics: list[EnumDeclaration],
+) -> Option[PlanType]:
+    """Lay out both pair components in the retained context; any other arity or element keeps its refusal."""
+    if len(elements) != 2:
+        return None
+    match layout_tuple_type(nominals, enums, unions, elements, intrinsics):
+        Ok(PlanType.Tuple(pair)) => return Some(PlanType.ZipIterator(pair[0], pair[1]))
+        _ => return None
 
 
 pub def collection_leaf(ty: PlanType) -> Result[ListLeaf, str]:
