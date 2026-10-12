@@ -718,9 +718,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
     }
 
-    /// Lower `x = y = z = value` into `z = value; y = <read z>; x = <read y>` (rightmost target first) when the value
-    /// is shared by every target. A value the checker recorded as written per target is instead evaluated once per
-    /// target, at that target's type (see [`Self::lower_chained_per_target`]).
+    /// Evaluate a shared chained value once, then assign its original type to every target in written order.
+    /// Destination injection must not flow back into another target: `xs = maybe = make_list()` gives both targets
+    /// the list, even though `maybe` wraps it in `Some`. A value the checker recorded as written per target is instead
+    /// evaluated once per target at that target's type (see [`Self::lower_chained_per_target`]).
     pub(super) fn lower_chained_assignment(
         &mut self,
         chained_assignment: &ast::ChainedAssignmentStmt,
@@ -744,57 +745,27 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.lower_chained_per_target(chained_assignment, remaining, scope, span, out);
             return;
         }
-        let Some((last_name, last_span)) = chained_assignment
-            .targets
-            .last()
-            .zip(chained_assignment.target_spans.last())
-        else {
+        if chained_assignment.targets.is_empty() {
             self.push_unsupported_stmt("empty chained assignment".to_string(), span, out);
             return;
-        };
-        let last_span = *last_span;
+        }
         let value_ty = self.resolve_ty(chained_assignment.value.span);
         let value_operand = self.lower_expr_to_operand(&chained_assignment.value, scope, out);
-        let mut prev_place = match self.bind_multi_target_name(
-            last_name,
-            value_ty.clone(),
-            chained_assignment.binding,
-            scope,
-            last_span,
-            remaining,
-        ) {
-            Ok(place) => place,
-            Err(reason) => {
-                self.push_unsupported_stmt(reason, span, out);
-                return;
-            }
-        };
+        let value_local = self.new_temp(value_ty.clone(), scope, span);
+        let value_place = bir::Place::from_local(value_local);
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {
-                place: prev_place.clone(),
+                place: value_place.clone(),
                 rvalue: bir::Rvalue::Use(value_operand),
             },
             span,
         });
-
-        // Walk the remaining targets right-to-left, each one reading the local immediately to its right.
-        for (name, target_span) in chained_assignment.targets[..chained_assignment.targets.len() - 1]
-            .iter()
-            .zip(&chained_assignment.target_spans[..chained_assignment.target_spans.len() - 1])
-            .rev()
-        {
-            // `remaining_reads[prev_local]` was seeded only from statements *after* this whole chained-assignment
-            // statement (see `Self::declare_new_local`'s `remaining` parameter) -- it does not know about the
-            // synthetic read performed right here, within the very statement that (re)bound `prev_local`. Bump it
-            // by one first so the shared `Self::ownership_fact_for_place` decrement below still lands on the
-            // correct move/clone decision instead of under-counting by one.
-            if let Some(prev_local) = prev_place.local_id()
-                && let Some(remaining_count) = self.remaining_reads.get_mut(&prev_local)
-            {
-                *remaining_count += 1;
-            }
-            let (fact, last_use) = self.ownership_fact_for_place(&prev_place, &value_ty);
-            let operand = bir::Operand::place(prev_place, fact, last_use);
+        // The synthetic value is read once per destination; the last read moves its owner and earlier reads clone it.
+        self.remaining_reads
+            .insert(value_local, chained_assignment.targets.len());
+        for (name, target_span) in chained_assignment.targets.iter().zip(&chained_assignment.target_spans) {
+            let (fact, last_use) = self.ownership_fact_for_place(&value_place, &value_ty);
+            let operand = bir::Operand::place(value_place.clone(), fact, last_use);
             let place = match self.bind_multi_target_name(
                 name,
                 value_ty.clone(),
@@ -811,12 +782,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             };
             out.push(bir::Statement {
                 kind: bir::StatementKind::Assign {
-                    place: place.clone(),
+                    place,
                     rvalue: bir::Rvalue::Use(operand),
                 },
                 span,
             });
-            prev_place = place;
         }
     }
 

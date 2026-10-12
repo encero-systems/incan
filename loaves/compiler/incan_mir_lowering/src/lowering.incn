@@ -227,6 +227,7 @@ from options import (
     propagate_result,
     carrier_layout,
     assign_carrier,
+    variant_condition,
     replace_owned_destination,
     none_operand,
     format_carrier,
@@ -5991,7 +5992,9 @@ def list_assignment(
                     Some(value) =>
                         argument = element_operand(builder, value, element, span)?
                         if operand_type(builder, argument)? != element:
-                            return Err("unsupported Body IR list element coercion")
+                            return Err(
+                                f"unsupported Body IR list element coercion from {operand_type(builder, argument)?:?} to {element:?}",
+                            )
                         append_list_value(builder, output, argument, leaf, depth, span)?
                     None => splice_list_spread(builder, output, item, leaf, depth, span)?
         RustRvalue.Use(value) =>
@@ -8481,6 +8484,9 @@ def boundary_plan_operand(
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """Inject a previously evaluated member without reading its source or executing its effects a second time."""
+    match converted_carrier_operand(builder, value, target, span)?:
+        Some(converted) => return Ok(converted)
+        None => pass
     match target:
         PlanType.FunctionPointer(_signature) =>
             ty, operation = function_assignment(target, operand_type(builder, value)?, value, true)?
@@ -8543,6 +8549,67 @@ def boundary_plan_operand(
 # =====================================================================================================================
 # Persistent scalar storage
 # =====================================================================================================================
+
+
+def converted_carrier_operand(
+    mut builder: Builder,
+    value: Operand,
+    target: PlanType,
+    span: SourceSpan,
+) -> Result[Option[Operand], str]:
+    """Convert checked Option/Result payload carriers without changing the active variant or duplicating its owners."""
+    source_type = operand_type(builder, value)?
+    if source_type == target:
+        return Ok(None)
+    mut source_owner = -1
+    mut target_owner = -1
+    match source_type:
+        PlanType.Enum(owner, _name) =>
+            source_owner = owner
+        _ => return Ok(None)
+    match target:
+        PlanType.Enum(owner, _name) =>
+            target_owner = owner
+        _ => return Ok(None)
+    if source_owner < len(builder.enums) or target_owner < len(builder.enums):
+        return Ok(None)
+    before = builder.intrinsics[source_owner - len(builder.enums)]
+    after = builder.intrinsics[target_owner - len(builder.enums)]
+    if before.carrier not in ["Option", "Result"] or before.carrier != after.carrier:
+        return Ok(None)
+    mut source = plan_place(-1, span)
+    match value.kind:
+        OperandKind.Move(place) =>
+            source = place
+        _ => return Err("unsupported Body IR carrier conversion without an owned value")
+    output = temporary(builder, target, span)
+    selected = builder.new_block(span)
+    other = builder.new_block(span)
+    joined = builder.new_block(span)
+    condition = variant_condition(builder, source, 0, span)
+    builder.finish(TerminatorKind.SwitchBool(condition, other, selected), span)
+    forget_owned(builder, source.local)
+    owners = builder.owned
+    for slot in range(2):
+        builder.current = selected
+        if slot == 1:
+            builder.current = other
+        builder.owned = owners
+        if len(before.variants[slot].fields) != len(after.variants[slot].fields):
+            return Err("unsupported Body IR carrier conversion variant layout")
+        mut fields: list[Operand] = []
+        for index in range(len(before.variants[slot].fields)):
+            payload_type = before.variants[slot].fields[index]
+            payload = Place(local=source.local, projection=Projection.VariantField(slot, index, payload_type), span=span)
+            fields.append(
+                boundary_plan_operand(builder, read_place(payload, true, span), after.variants[slot].fields[index], span)?,
+            )
+        assign_carrier(builder, output, target_owner, slot, fields, span)
+        builder.finish(TerminatorKind.Goto(joined), span)
+    builder.current = joined
+    builder.owned = owners
+    builder.owned.append(output.local)
+    return Ok(Some(read_place(output, true, span)))
 
 
 def option_payload_operand(
