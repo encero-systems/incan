@@ -4339,6 +4339,129 @@ def main() -> None:
     )
 }
 
+/// Prove the iterator surface byte-identical to legacy: a list's `iter()` leaves the list readable, and the `map`,
+/// `filter`, `take`, `skip`, `take_while`, `skip_while`, `chain`, `flat_map` and `batch` adapters and the `count`,
+/// `sum`, `fold`, `reduce`, `any`, `all`, `find` and `for_each` consumers called on the `Iterator` values it and a
+/// generator's adapters return draw their items lazily; an `Iterator[int]` parameter takes either, a loop draws one,
+/// and an indexed batch has a length.
+#[test]
+fn iterator_surface_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("iterator-surface")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def numbers(limit: int) -> Generator[int]:
+    for value in range(limit):
+        yield value
+
+def double(n: int) -> int:
+    return n * 2
+
+def is_even(n: int) -> bool:
+    return n % 2 == 0
+
+def small(n: int) -> bool:
+    return n < 3
+
+def twice(n: int) -> list[int]:
+    return [n, n]
+
+def add(acc: int, n: int) -> int:
+    return acc + n
+
+def show(n: int) -> None:
+    println(n)
+
+def note(n: int) -> int:
+    println(f"note {n}")
+    return n
+
+def total(items: Iterator[int]) -> int:
+    mut sum = 0
+    for item in items:
+        sum += item
+    return sum
+
+def render(items: list[int]) -> str:
+    return " ".join([str(item) for item in items])
+
+def main() -> None:
+    xs: list[int] = [1, 2, 3, 4, 5]
+    println(render(xs.iter().map(double).collect()))
+    println(render(xs.iter().filter(is_even).collect()))
+    println(render(xs.iter().skip(2).take(2).collect()))
+    println(render(xs.iter().take_while(small).collect()))
+    println(render(xs.iter().skip_while(small).collect()))
+    println(render(xs.iter().chain([9, 8].iter()).collect()))
+    println(render(xs.iter().take(2).flat_map(twice).collect()))
+    batches: list[list[int]] = xs.iter().batch(2).collect()
+    println(f"{len(batches)} {len(batches[2])}")
+    println(xs.iter().count())
+    println(xs.iter().sum())
+    println(xs.iter().fold(10, add))
+    println(xs.iter().reduce(0, add))
+    println(xs.iter().any(is_even))
+    println(xs.iter().all(is_even))
+    match xs.iter().find(is_even):
+        Some(found) => println(found)
+        None => println("none")
+    xs.iter().take(2).for_each(show)
+    println(total(xs.iter()))
+    println(total(numbers(4).skip(1)))
+    println(render(numbers(6).skip(1).take_while(small).collect()))
+    println(render(numbers(3).chain(numbers(2)).collect()))
+    println(xs[0])
+    println(render(xs.iter().map(note).take(2).collect()))
+    for value in xs.iter().skip(3):
+        println(value)
+"#,
+    )
+}
+
+/// Prove pair iterators byte-identical to legacy: `enumerate` and `zip` called on iterators and generators, and builtin
+/// `zip` over two `Iterator` parameters, pair their items lazily for loops, list and dictionary comprehensions and
+/// `collect`, stopping at the shorter source.
+#[test]
+fn iterator_pair_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("iterator-pairs")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def dot(left: Iterator[float], right: Iterator[float]) -> float:
+    mut score = 0.0
+    for pair in zip(left, right):
+        score += pair[0] * pair[1]
+    return score
+
+def numbers(limit: int) -> Generator[int]:
+    for value in range(limit):
+        yield value
+
+def main() -> None:
+    words = ["a", "b", "c"]
+    mut seen: list[str] = []
+    for index, word in words.iter().take(2).enumerate():
+        seen.append(f"{index}:{word}")
+    println(" ".join(seen))
+    mut zipped: list[str] = []
+    for left, right in [1, 2, 3].iter().zip(numbers(2)):
+        zipped.append(f"{left}-{right}")
+    println(" ".join(zipped))
+    pairs: list[tuple[int, int]] = numbers(3).enumerate().collect()
+    println(len(pairs))
+    println(" ".join([f"{i}{w}" for i, w in words.iter().enumerate()]))
+    indexed = {i: w for i, w in words.iter().enumerate()}
+    println(indexed[1])
+    println(dot([1.0, 2.0].iter(), [3.0, 4.0].iter()))
+    println(len(words.iter().zip(numbers(5)).collect()))
+"#,
+    )
+}
+
 /// Prove unit and payload construction, enum passing/returning, and variant-bound match output against legacy.
 #[test]
 fn source_enum_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
