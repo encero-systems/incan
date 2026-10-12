@@ -1602,18 +1602,31 @@ def in_place_iteration_binding(
         RustRvalue.Use(RustOperand.Place(read)) =>
             if read.fact != OwnershipFact.MutBorrow:
                 return Ok(false)
-            match read.place.local_id():
-                Some(local) =>
-                    root = int(local.index()) + 1 + builder.local_offset
-                    if root not in builder.in_place_items:
-                        return Ok(false)
-                None => return Ok(false)
-            source = scalar_place(builder, read.place, span)?
+            mut source = plan_place(-1, span)
+            if is_element_place(builder, read.place)?:
+                source = mutable_element_place(builder, read.place, span)?
+            else:
+                source = scalar_place(builder, read.place, span)?
             if is_list(place_type(builder.locals, source)):
                 reference = list_borrow(builder, source, true, span)?
                 builder.locals[destination.local].ty = operand_type(builder, reference)?
                 builder.emit(plan_assign(destination, RvalueKind.Use(reference), span))
             else:
+                # An indexed element accessor returns a reference; pattern binding reborrows its retained value.
+                match place_type(builder.locals, source):
+                    PlanType.ModelMutRef(owner, name) =>
+                        source = Place(
+                            local=source.local,
+                            projection=Projection.Deref(PlanType.Model(owner, name)),
+                            span=span,
+                        )
+                    PlanType.TupleMutRef(elements) =>
+                        source = Place(
+                            local=source.local,
+                            projection=Projection.Deref(PlanType.Tuple(elements)),
+                            span=span,
+                        )
+                    _ => pass
                 bind_payload_in_place(builder, destination.local, source, span)?
             if destination.local not in builder.in_place_items:
                 builder.in_place_items.append(destination.local)
@@ -7192,10 +7205,16 @@ def list_next(
         plan_assign(condition, RvalueKind.Binary(BinaryOp.Less, position, read_place(length, false, span)), span),
     )
     next_block = builder.new_block(span)
-    builder.finish(TerminatorKind.SwitchBool(read_place(condition, false, span), builder.loops[-1][1], next_block), span)
+    exhausted = builder.new_block(span)
+    owners = builder.owned
+    builder.finish(TerminatorKind.SwitchBool(read_place(condition, false, span), exhausted, next_block), span)
+    builder.current = exhausted
+    drop_loop_owners(builder, span)?
+    builder.finish(TerminatorKind.Goto(builder.loops[-1][1]), span)
     builder.current = next_block
+    builder.owned = owners
     target = list_root_place(builder, destination, span)?
-    if is_mutable_list_reference(place_type(builder.locals, receiver)):
+    if is_list(place_type(builder.locals, receiver)) and is_mutable_list_reference(place_type(builder.locals, receiver)):
         in_place_item(builder, receiver, target, element, position, span)?
     else:
         item_reference = list_borrow(builder, receiver, false, span)?
@@ -7302,8 +7321,10 @@ def iterator_assignment(
                                 return Err("unsupported Body IR mutable frozen iteration")
                             root = frozen_list_snapshot(builder, read_place(root, false, span), span)?
                         _ => pass
-                    if exclusive and not is_list(place_type(builder.locals, root)):
-                        return Err("unsupported Body IR in-place iteration over a set or dictionary")
+                    root_type = place_type(builder.locals, root)
+                    dictionary = len(collection_arguments(root_type)) == 2
+                    if exclusive and not is_list(root_type) and not dictionary:
+                        return Err("unsupported Body IR in-place iteration over a set")
                     reference = list_borrow(builder, root, exclusive, span)?
                     if exclusive:
                         builder.locals[destination.local].ty = operand_type(builder, reference)?

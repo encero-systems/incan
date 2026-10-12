@@ -32,6 +32,17 @@ struct BuiltinRangeBounds {
     step: bir::Operand,
 }
 
+/// The independently retained storage or scalar state of one canonical direct zip operand.
+enum ZipLoopSource {
+    /// An original list and the initializer whose checked borrow mode its component's mutation settles.
+    List { iterator: bir::LocalId, initializer: usize },
+    /// Once-evaluated builtin bounds and the next scalar item, without materializing a range as a list.
+    Range {
+        bounds: Box<BuiltinRangeBounds>,
+        index: bir::LocalId,
+    },
+}
+
 /// Read a counting loop's index local, or the local a header's end bound was snapshotted into.
 ///
 /// Both are compiler-owned scalar temporaries the loop re-reads several times per iteration, so their reads are always
@@ -1269,6 +1280,24 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return;
         }
 
+        if protocol.is_none()
+            && self.pair_pattern_is_normalizable(pattern_local)
+            && let Some(sources) = self.zipped_loop_sources(effective_iter_expr)
+        {
+            if let Err(reason) =
+                self.lower_zipped_iteration(sources, pattern_local, outer_scope, loop_scope, span, out, body_fn)
+            {
+                self.push_unsupported_stmt(reason, span, out);
+            }
+            return;
+        }
+        if protocol.is_none()
+            && let Some(source) = self.dictionary_values_source(effective_iter_expr)
+        {
+            self.lower_dictionary_values_iteration(source, pattern_local, outer_scope, loop_scope, span, out, body_fn);
+            return;
+        }
+
         let iterable_place = self.lower_expr_to_place(effective_iter_expr, outer_scope, out);
         let iterator_ty = match &protocol {
             Some(p) => semantic_type_from_resolved(&p.iterator_type),
@@ -1512,8 +1541,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let mut place = bir::Place::from_local(replacement);
             place.projection.extend(read.place.projection.iter().skip(1).cloned());
             read.place = place;
-            if replacement == element
-                && read.place.projection.is_empty()
+            if read.place.projection.is_empty()
                 && destination.local_id().is_some_and(|local| {
                     !self.locals[local.index()]
                         .ty
@@ -1526,6 +1554,325 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 read.last_use = true;
             }
         }
+    }
+
+    /// Require a destructured checked pair before replacing its component reads with independent source items.
+    fn pair_pattern_is_normalizable(&self, item: bir::LocalId) -> bool {
+        let local = &self.locals[item.index()];
+        local.origin == bir::LocalOrigin::Temporary
+            && tuple_element_types(&local.ty, 2)
+                .iter()
+                .all(|ty| !matches!(ty, IncanType::Unknown))
+    }
+
+    /// Select canonical direct zip over lists or builtin ranges; a same-spelled source call keeps its ordinary path.
+    fn zipped_loop_sources<'expr>(
+        &self,
+        expr: &'expr ast::Spanned<ast::Expr>,
+    ) -> Option<[&'expr ast::Spanned<ast::Expr>; 2]> {
+        if let ast::Expr::Paren(inner) = &expr.node {
+            return self.zipped_list_sources(inner);
+        }
+        let ast::Expr::Call(callee, type_args, args) = &expr.node else {
+            return None;
+        };
+        if self.type_info.resolved_builtin_call(expr.span) != Some(bir::BuiltinFnId::Zip) || !type_args.is_empty() {
+            return None;
+        }
+        let ast::Expr::Ident(name) = &callee.node else {
+            return None;
+        };
+        if self
+            .declared_slots_for_direct_call(name, callee.span, expr.span)
+            .ok()?
+            .builtin
+            != Some(bir::BuiltinFnId::Zip)
+        {
+            return None;
+        }
+        let [ast::CallArg::Positional(left), ast::CallArg::Positional(right)] = args.as_slice() else {
+            return None;
+        };
+        // Frozen legacy's two-range zip requires list storage it does not have; keep its existing named refusal.
+        if self.checked_range_source(left) && self.checked_range_source(right) {
+            return None;
+        }
+        for source in [left, right] {
+            if self.checked_range_source(source) {
+                continue;
+            }
+            collection_member_types(&self.resolve_ty(source.span), CollectionTypeId::List)?;
+        }
+        Some([left, right])
+    }
+
+    /// Recognize a checked builtin range through parentheses before choosing scalar zip state instead of list storage.
+    fn checked_range_source(&self, source: &ast::Spanned<ast::Expr>) -> bool {
+        if let ast::Expr::Paren(inner) = &source.node {
+            return self.checked_range_source(inner);
+        }
+        self.type_info.resolved_builtin_call(source.span) == Some(bir::BuiltinFnId::Range)
+    }
+
+    /// Evaluate a zip operand in source order, retaining builtin range validation before the first poll.
+    fn initialize_zip_source(
+        &mut self,
+        source: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> Result<ZipLoopSource, String> {
+        if self.checked_range_source(source) {
+            let Some(RangeLoopSource::Builtin(bounds)) = self.builtin_range_loop_source(source, scope, out)? else {
+                return Err("unsupported checked zip range source".into());
+            };
+            let index = self.snapshot_local(
+                bounds.start.clone(),
+                IncanType::Primitive(IncanPrimitiveType::Int),
+                scope,
+                span,
+                out,
+            );
+            return Ok(ZipLoopSource::Range { bounds, index });
+        }
+        let (iterator, initializer) = self.initialize_iteration_source(source, scope, span, out);
+        Ok(ZipLoopSource::List { iterator, initializer })
+    }
+
+    /// Produce one zip component, stopping before the source body; scalar advancement belongs to body exit edges.
+    fn poll_zip_source(
+        &mut self,
+        source: &ZipLoopSource,
+        item: bir::LocalId,
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) {
+        match source {
+            ZipLoopSource::List { iterator, .. } => out.push(self.iteration_poll(*iterator, item, span)),
+            ZipLoopSource::Range { bounds, index } => {
+                let cond = self.builtin_range_stop_condition(&bounds.end, &bounds.step, *index, scope, span, out);
+                let exit_scope = self.new_scope(Some(scope), span);
+                out.push(bir::Statement {
+                    kind: bir::StatementKind::If {
+                        cond,
+                        then_block: bir::Block {
+                            scope: exit_scope,
+                            stmts: vec![bir::Statement {
+                                kind: bir::StatementKind::Break { value: None },
+                                span,
+                            }],
+                        },
+                        else_block: None,
+                    },
+                    span,
+                });
+                out.push(bir::Statement {
+                    kind: bir::StatementKind::Assign {
+                        place: bir::Place::from_local(item),
+                        rvalue: bir::Rvalue::Use(index_read(*index)),
+                    },
+                    span,
+                });
+            }
+        }
+    }
+
+    /// Retain scalar zip advances for fallthrough and continue, after body effects as in an ordinary range loop.
+    fn zip_range_advances(
+        &mut self,
+        sources: [&ZipLoopSource; 2],
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+    ) -> Vec<bir::Statement> {
+        let mut out = Vec::new();
+        for source in sources {
+            let ZipLoopSource::Range { bounds, index } = source else {
+                continue;
+            };
+            let next = self.push_assign_temp(
+                bir::Rvalue::BinaryOp(bir::BinOp::Add, index_read(*index), bounds.step.clone()),
+                IncanType::Primitive(IncanPrimitiveType::Int),
+                scope,
+                span,
+                &mut out,
+            );
+            out.push(bir::Statement {
+                kind: bir::StatementKind::Assign {
+                    place: bir::Place::from_local(*index),
+                    rvalue: bir::Rvalue::Use(next),
+                },
+                span,
+            });
+        }
+        out
+    }
+
+    /// Evaluate one original iterable once and retain the initializer whose checked borrow mode the body settles.
+    fn initialize_iteration_source(
+        &mut self,
+        source: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> (bir::LocalId, usize) {
+        let ty = self.resolve_ty(source.span);
+        let place = self.lower_expr_to_place(source, scope, out);
+        let iterator = self.new_temp(ty, scope, span);
+        let initializer = out.len();
+        out.push(bir::Statement {
+            kind: bir::StatementKind::Assign {
+                place: bir::Place::from_local(iterator),
+                rvalue: bir::Rvalue::Use(bir::Operand::place(place, bir::OwnershipFact::Borrow, false)),
+            },
+            span,
+        });
+        (iterator, initializer)
+    }
+
+    /// Poll a retained builtin source, with exhaustion leaving the normalized loop before any body effect.
+    fn iteration_poll(&self, iterator: bir::LocalId, item: bir::LocalId, span: HirSourceSpan) -> bir::Statement {
+        bir::Statement {
+            kind: bir::StatementKind::IterNext {
+                destination: bir::Place::from_local(item),
+                iterator: bir::Operand::place(bir::Place::from_local(iterator), bir::OwnershipFact::MutBorrow, false),
+                protocol: bir::IterProtocol::Builtin,
+            },
+            span,
+        }
+    }
+
+    /// Poll each direct zip operand independently and borrow only the source whose non-Copy component changes.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_zipped_iteration(
+        &mut self,
+        sources: [&ast::Spanned<ast::Expr>; 2],
+        pattern: bir::LocalId,
+        outer_scope: bir::ScopeId,
+        loop_scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+        body_fn: impl FnOnce(&mut Self, bir::ScopeId, &mut Vec<bir::Statement>),
+    ) -> Result<(), String> {
+        // ---- Original source storage and independent polls ----
+        let left = self.initialize_zip_source(sources[0], outer_scope, span, out)?;
+        let right = self.initialize_zip_source(sources[1], outer_scope, span, out)?;
+        let types = tuple_element_types(&self.locals[pattern.index()].ty, 2);
+        let pattern_span = self.locals[pattern.index()].span;
+        let first = self.new_temp(types[0].clone(), loop_scope, pattern_span);
+        let second = self.new_temp(types[1].clone(), loop_scope, pattern_span);
+        let mut stmts = Vec::new();
+        self.poll_zip_source(&left, first, loop_scope, span, &mut stmts);
+        self.poll_zip_source(&right, second, loop_scope, span, &mut stmts);
+        self.loop_break_targets.push(None);
+        let advances = self.zip_range_advances([&left, &right], loop_scope, span);
+        self.loop_continue_actions.push(advances);
+
+        // ---- Checked component bindings and operand ownership ----
+        body_fn(self, loop_scope, &mut stmts);
+        self.remap_enumerated_bindings(&mut stmts, pattern, first, second);
+        for (item, source) in [(first, left), (second, right)] {
+            self.retain_in_place_iteration_bindings(&mut stmts, item);
+            if let ZipLoopSource::List { initializer, .. } = source
+                && self.body_changes_item_in_place(&stmts, item)
+            {
+                borrow_iterable_exclusively(&mut out[initializer]);
+            }
+        }
+        if let Some(advances) = self.loop_continue_actions.last() {
+            stmts.extend(advances.iter().cloned());
+        }
+        self.loop_break_targets.pop();
+        self.loop_continue_actions.pop();
+        out.push(bir::Statement {
+            kind: bir::StatementKind::Loop {
+                body: bir::Block {
+                    scope: loop_scope,
+                    stmts,
+                },
+            },
+            span,
+        });
+        Ok(())
+    }
+
+    /// Recognize only the checked compiler-owned dictionary value view; a user method named values keeps its call.
+    fn dictionary_values_source<'expr>(
+        &self,
+        expr: &'expr ast::Spanned<ast::Expr>,
+    ) -> Option<&'expr ast::Spanned<ast::Expr>> {
+        if let ast::Expr::Paren(inner) = &expr.node {
+            return self.dictionary_values_source(inner);
+        }
+        let ast::Expr::MethodCall(source, _, type_args, args) = &expr.node else {
+            return None;
+        };
+        if !type_args.is_empty() || !args.is_empty() {
+            return None;
+        }
+        let identity = self.type_info.resolved_identity(expr.span)?;
+        if identity.origin != incan_semantics_core::SymbolOrigin::Builtin || identity.declaration_name != "Dict.values"
+        {
+            return None;
+        }
+        collection_member_types(&self.resolve_ty(source.span), CollectionTypeId::Dict)?;
+        Some(source)
+    }
+
+    /// Poll original dictionary keys and retain the corresponding value place, rather than iterating copied values.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_dictionary_values_iteration(
+        &mut self,
+        source: &ast::Spanned<ast::Expr>,
+        item: bir::LocalId,
+        outer_scope: bir::ScopeId,
+        loop_scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+        body_fn: impl FnOnce(&mut Self, bir::ScopeId, &mut Vec<bir::Statement>),
+    ) {
+        // ---- Original map storage and its polled key ----
+        let source_ty = self.resolve_ty(source.span);
+        let key_ty = collection_member_types(&source_ty, CollectionTypeId::Dict)
+            .map(|types| types[0].clone())
+            .unwrap_or(IncanType::Unknown);
+        let (iterator, initializer) = self.initialize_iteration_source(source, outer_scope, span, out);
+        let key = self.new_temp(key_ty.clone(), loop_scope, span);
+        let mut value = bir::Place::from_local(iterator);
+        value
+            .projection
+            .push(bir::PlaceElem::Index(Box::new(self.temp_operand(key, &key_ty))));
+        let mut stmts = vec![
+            self.iteration_poll(iterator, key, span),
+            bir::Statement {
+                kind: bir::StatementKind::Assign {
+                    place: bir::Place::from_local(item),
+                    rvalue: bir::Rvalue::Use(bir::Operand::place(value, bir::OwnershipFact::Borrow, false)),
+                },
+                span,
+            },
+        ];
+        self.loop_break_targets.push(None);
+        self.loop_continue_actions.push(Vec::new());
+
+        // ---- Checked value bindings and mutable value storage ----
+        body_fn(self, loop_scope, &mut stmts);
+        self.retain_in_place_iteration_bindings(&mut stmts, item);
+        if self.body_changes_item_in_place(&stmts, item) {
+            borrow_iterable_exclusively(&mut out[initializer]);
+            borrow_iterable_exclusively(&mut stmts[1]);
+        }
+        self.loop_break_targets.pop();
+        self.loop_continue_actions.pop();
+        out.push(bir::Statement {
+            kind: bir::StatementKind::Loop {
+                body: bir::Block {
+                    scope: loop_scope,
+                    stmts,
+                },
+            },
+            span,
+        });
     }
 
     /// Retain exclusive reads for changed non-Copy pattern bindings only. Ordinary aliases declared in the body
