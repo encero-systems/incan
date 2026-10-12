@@ -10780,9 +10780,49 @@ def main() -> None:
 fn chained_collection_targets_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     check_collection_family_source(
         "chained-collection-targets",
+        r#"static names: list[str] = []
+def Vec() -> list[int]:
+    println("once Vec")
+    return [1, 2]
+def set() -> set[int]:
+    println("once set")
+    return {1}
+def main() -> None:
+    mut xs: list[int] = []
+    mut maybe: Option[list[int]] = None
+    xs = maybe = Vec()
+    println(f"{len(xs)} {len(maybe.unwrap())}")
+    mut tags: set[int] = {2}
+    mut wrapped: Option[set[int]] = None
+    tags = wrapped = set()
+    println(f"{len(tags)} {len(wrapped.unwrap())}")
+    mut index: dict[str, int] = {}
+    mut wrapped_index: Option[dict[str, int]] = None
+    index = wrapped_index = {"x": 3}
+    println(f"{index["x"]} {wrapped_index.unwrap()["x"]}")
+    names = local = ["a"]
+    println(f"{len(names)} {len(local)}")
+    mut ints: list[int] = [1]
+    mut text: list[str] = ["s"]
+    ints = text = []
+    println(f"{len(ints)} {len(text)}")
+    mut n = 0
+    for _ in range(3):
+        n = last = n + 1
+    println(n)
+"#,
+    )
+}
+
+/// Keep the original chained fixture refused at its separate dictionary-returning closure boundary.
+#[test]
+fn chained_dictionary_closure_refusal_is_retained() -> Result<(), Box<dyn std::error::Error>> {
+    check_collection_family_refusal(
+        "chained-dictionary-closure",
         include_str!(
             "../../incan_test_support/fixtures/behavior/cli_values_and_calls/chained_assignment_reassigns_names_inside_a_loop.incn"
         ),
+        "unsupported Body IR closure result outside scalars, owned text and lists",
     )
 }
 
