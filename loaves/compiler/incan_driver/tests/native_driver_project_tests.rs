@@ -12690,15 +12690,78 @@ fn model_method_partial_body_ir_refusal_is_retained() -> Result<(), Box<dyn std:
     Ok(())
 }
 
-/// The stdlib metadata annotation names legacy's core runtime type, independently of reflection collection operations.
+/// Original reflection metadata keeps its recorded legacy output while direct admission reaches the frozen collection
+/// boundary.
 #[test]
 fn reflection_metadata_carrier_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
-    corpus::check_builtin_source(
-        &fixture.driver_binary("debug"),
-        &fixture.scratch("native-reflection-carrier")?,
-        &fixture.sysroot,
-        &fixture.formatting,
-        "from std.reflection import FieldInfo\n\ndef accept(value: FieldInfo) -> None:\n    pass\n\ndef main() -> None:\n    println(\"metadata\")\n",
-    )
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let message = "unsupported Body IR type FrozenList[Named[FieldInfo]]";
+    for (case, source, companion) in [
+        (
+            "reflection-private-fields",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/reflection_omits_private_fields.incn"
+            ),
+            None,
+        ),
+        (
+            "reflection-host-keywords",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/host_keyword_identifiers.incn"
+            ),
+            None,
+        ),
+        (
+            "reflection-qualified-types",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/qualified_type_annotations/main.incn"
+            ),
+            Some(include_str!(
+                "../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/qualified_type_annotations/errors.incn"
+            )),
+        ),
+    ] {
+        let root = fixture.scratch(case)?;
+        let path = root.join("main.incn");
+        fs::write(&path, source)?;
+        if let Some(companion) = companion {
+            fs::write(root.join("errors.incn"), companion)?;
+        }
+        let binary = root.join("native");
+        let refused = corpus::source_command(
+            &fixture.driver_binary("debug"),
+            &path,
+            &binary,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?;
+        assert!(!refused.status.success());
+        assert!(
+            String::from_utf8_lossy(&refused.stderr).contains(message),
+            "{}",
+            String::from_utf8_lossy(&refused.stderr)
+        );
+        assert!(!binary.exists());
+        if case == "reflection-private-fields" {
+            let legacy = root.join("legacy");
+            success(
+                &support::repo_command()
+                    .current_dir(&root)
+                    .env("INCAN_HOME", support::oven_fixture_home()?)
+                    .arg("build")
+                    .arg(&path)
+                    .arg(&legacy)
+                    .output()?,
+                "legacy original reflection compilation",
+            );
+            let expected = Command::new(legacy.join("oven/release/main"))
+                .current_dir(&root)
+                .output()?;
+            success(&expected, "legacy original reflection execution");
+            assert_eq!(expected.stdout, b"label\n1\npublic\n");
+        }
+    }
+    Ok(())
 }
