@@ -3,6 +3,8 @@
 from std.derives.collection import Iterator, ListIterator, ZipIterator
 from std.derives.copying import Clone
 from rust::std::clone import Clone as RuntimeClone
+from std.rust import Static
+from generators import list_generator
 
 
 @derive(Clone)
@@ -29,6 +31,20 @@ pub def poll_zip[T with Clone, U with Clone](mut values: ZipLists[T, U], mut out
             output.append(item)
             return true
         None => return false
+
+
+pub def zip_lists_generator[T with (Clone, Static), U with (Clone, Static)](values: ZipLists[T, U]) -> Generator[tuple[T, U]]:
+    """
+    Yield a zip snapshot's pairs as a generator expression's first source, in legacy's left-then-right polling order.
+
+    Both inputs are owned list snapshots, so drawing the pairs before the first poll cannot be observed.
+    """
+    mut source = values
+    mut pairs: list[tuple[T, U]] = []
+    mut more = poll_zip(source, pairs)
+    while more:
+        more = poll_zip(source, pairs)
+    return list_generator(pairs)
 
 
 pub def enumerate_list[T with Clone](values: &list[T]) -> list[tuple[int, T]]:

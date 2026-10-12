@@ -18,7 +18,9 @@ pub fn resolve(tcx: TyCtxt<'_>, callee: &Callee) -> Result<DefId, PlanError> {
         CalleeKind::ClosureBody(..) => Err(PlanError::UnknownCallee(
             "closure constructors keep rustc's own body".into(),
         )),
-        CalleeKind::Instantiated(path, _) | CalleeKind::InstantiatedPair(path, _, _) => external(tcx, path),
+        CalleeKind::Instantiated(path, _)
+        | CalleeKind::InstantiatedPair(path, _, _)
+        | CalleeKind::InstantiatedTriple(path, _, _, _) => external(tcx, path),
         CalleeKind::SpawnGenerator(_, leaf, depth) => generator_method(tcx, "Generator", "spawn", leaf, *depth),
         CalleeKind::YieldGenerator(leaf, depth) => generator_method(tcx, "GeneratorYield", "yield_value", leaf, *depth),
         CalleeKind::CollectGenerator(leaf, depth) => generator_method(tcx, "Generator", "collect", leaf, *depth),

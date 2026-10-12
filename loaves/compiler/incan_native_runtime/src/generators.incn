@@ -89,6 +89,18 @@ pub def str_callable_step_generator[T with (Clone, Static), F with (Callable1[st
     return (value for item in source for value in step(item))
 
 
+pub def item_callable_step_generator[S with (Clone, Static), T with (Clone, Static), F with (Callable1[S, Generator[T]], Static)](
+    source: Generator[S],
+    step: F,
+) -> Generator[T]:
+    """
+    Expand each source item, such as an `enumerate` or `zip` pair, through a callable step that takes it by value.
+
+    A function pointer step is a callable too, so a capture-free step goes through this chain as well.
+    """
+    return (value for item in source for value in step(item))
+
+
 pub def take_generator[T with (Clone, Static)](values: Generator[T], count: int) -> Generator[T]:
     """Stop after at most `count` items, drawing each only when polled; a negative count yields nothing."""
     return values.take(count)

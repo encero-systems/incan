@@ -7,6 +7,7 @@ from rust::incan_semantics_core::body_ir import (
     StatementKind as RustStatementKind,
 )
 from pub::incan_mir_plan import Callee, CalleeKind, ExternalFunction, Operand, Place, PlanType, RvalueKind, SourceSpan
+from pub::incan_mir_plan import ListLeaf, tuple_element_type
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, temporary, read_place, value_type, terminate_call
 from generators import generator_shape, generator_element, generator_runtime_call
@@ -78,8 +79,26 @@ def polled_item(kind: &RustStatementKind, iterator: int) -> Result[int, str]:
 
 
 pub def source_generator(mut builder: Builder, value: Operand, span: SourceSpan) -> Result[Operand, str]:
-    """Hand the eagerly evaluated first source to the chain as an owned generator; a list yields its snapshot."""
+    """
+    Hand the eagerly evaluated first source to the chain as an owned generator.
+
+    A list yields its snapshot, and builtin `zip` over lists yields its snapshot's pairs.
+    """
     ty = value_type(builder, value)?
+    match ty:
+        PlanType.ZipIterator(left, right) =>
+            result = PlanType.Generator(ListLeaf.Tuple([left, right]), 0)
+            output = temporary(builder, result, span)
+            path = "incan_native_runtime::zip_lists_generator"
+            first = tuple_element_type(left)
+            second = tuple_element_type(right)
+            builder.externals.append(
+                ExternalFunction(path=path, type_arguments=[first, second], parameters=[ty], return_type=result, span=span),
+            )
+            terminate_call(builder, CalleeKind.InstantiatedPair(path, first, second), [value], output, span)
+            builder.owned.append(output.local)
+            return Ok(read_place(output, true, span))
+        _ => pass
     match generator_shape(ty):
         Some((leaf, depth)) =>
             if ty != PlanType.Generator(leaf, depth):
@@ -115,13 +134,18 @@ pub def source_item(builder: Builder, source: Operand) -> Result[PlanType, str]:
 
 
 def item_family(item: PlanType) -> Result[str, str]:
-    """Name the runtime chain family for a first-source item the step takes by value."""
+    """
+    Name the runtime chain family for a first-source item the step takes by value.
+
+    A tuple item, such as an `enumerate` or `zip` pair, goes through the chain generic over its item.
+    """
     match item:
         PlanType.Int => return Ok("int")
         PlanType.Float => return Ok("float")
         PlanType.Bool => return Ok("bool")
         PlanType.String => return Ok("str")
-        _ => return Err("unsupported Body IR generator expression item outside int, float, bool and str")
+        PlanType.Tuple(_elements) => return Ok("item")
+        _ => return Err("unsupported Body IR generator expression item outside int, float, bool, str and tuples")
 
 
 pub def step_capture_type(ty: PlanType) -> bool:
@@ -153,7 +177,9 @@ pub def construct_chain(
     Expand the source through the step; nothing is polled until a consumer asks.
 
     A scalar item's capture-free step is the function pointer legacy's own chain calls. A text item's step, or one
-    holding captures in its boxed environment, goes through the chain that takes any callable of the item.
+    holding captures in its boxed environment, goes through the chain that takes any callable of the item. A tuple
+    item's capture-free step goes through the callable chain generic over the item as its function pointer; a capturing
+    one stays refused.
     """
     item = source_item(builder, source)?
     family = item_family(item)?
@@ -163,6 +189,23 @@ pub def construct_chain(
     match generator_shape(result):
         Some((leaf, depth)) =>
             element = generator_element(leaf, depth)
+            if family == "item":
+                # A boxed environment's call boundary carries no tuple input, so a capturing step stays refused.
+                if callable != PlanType.FunctionPointer([item, result]):
+                    return Err("unsupported Body IR capturing generator expression step over tuple items")
+                path = "incan_native_runtime::item_callable_step_generator"
+                builder.externals.append(
+                    ExternalFunction(
+                        path=path,
+                        type_arguments=[item, element, callable],
+                        parameters=[source_type, callable],
+                        return_type=result,
+                        span=span,
+                    ),
+                )
+                callee = CalleeKind.InstantiatedTriple(path, item, element, callable)
+                terminate_call(builder, callee, [source, step], output, span)
+                return Ok(None)
             if callable == PlanType.FunctionPointer([item, result]) and family != "str":
                 name = f"{family}_step_generator"
                 generator_runtime_call(

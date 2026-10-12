@@ -1636,8 +1636,12 @@ def lift_closure(
     if not lifted.closed[lifted.current]:
         value = return_operand(lifted, result, span)?
         finish_return(lifted, value, span)?
-    if len(lifted.synthesized) != 0:
-        return Err("unsupported Body IR closure nested in a closure")
+    # A generator expression's step lifted inside the closure, with its environment constructor, belongs to the
+    # enclosing plan too; any other function synthesized there keeps the nested-closure refusal.
+    for function in lifted.synthesized:
+        if not function.name.startswith("__incan_generator_step_"):
+            return Err("unsupported Body IR closure nested in a closure")
+        synthesize(builder, function)
     adopt_lifted(builder, lifted)
     return Ok(
         Function(
@@ -1665,9 +1669,11 @@ def lifted_frame(builder: Builder, name: str, arguments: list[PlanType], result:
         locals.append(Local(ty=argument, span=span))
     for index in range(1 + builder.local_offset, len(builder.locals)):
         locals.append(builder.locals[index])
+    # Only the enclosing frame's own Body IR slots move into the lifted frame; a deferred default's caller locals sit
+    # below its offset and stay behind.
     mut pointer_locals: list[int] = []
     for local in builder.function_pointer_locals:
-        if local != 0:
+        if local > builder.local_offset:
             pointer_locals.append(local - builder.local_offset + count)
     mut lifted = Builder(
         locals=locals,
@@ -1729,8 +1735,6 @@ def lower_generator_expression(
     """
     if target.projection != Projection.Whole:
         return Err("unsupported Body IR projected generator expression")
-    if builder.local_offset != 0:
-        return Err("unsupported Body IR generator expression inside a lifted or deferred frame")
     if len(captures) != len(body.capture_locals):
         return Err("invalid Body IR generator expression capture layout")
     item_local = first_clause_item(body)?
@@ -1960,7 +1964,10 @@ def bind_step_arguments(
         destination = bindings[index] + 1 + count
         if lifted.locals[destination].ty != arguments[index]:
             return Err("unsupported Body IR generator expression item binding")
-        owned = arguments[index] == PlanType.String or is_owned_list(arguments[index])
+        # A tuple item holding text, such as an `enumerate` pair over strings, is owned like text.
+        owned = arguments[index] == PlanType.String or is_owned_list(arguments[index]) or tuple_has_owners(
+            arguments[index],
+        )
         lifted.emit(
             plan_assign(
                 plan_place(destination, span),

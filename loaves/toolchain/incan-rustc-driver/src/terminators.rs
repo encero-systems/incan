@@ -135,6 +135,10 @@ fn call_operand<'tcx>(
         arguments
             .extend(callees::arguments(tcx, callees::resolve(tcx, callee)?, &[key.clone(), value.clone()])?.iter());
     }
+    if let crate::plan::CalleeKind::InstantiatedTriple(_, first, second, third) = &callee.kind {
+        let types = [first.clone(), second.clone(), third.clone()];
+        arguments.extend(callees::arguments(tcx, callees::resolve(tcx, callee)?, &types)?.iter());
+    }
     Ok(mir::Operand::function_handle(
         tcx,
         callees::resolve(tcx, callee)?,

@@ -408,6 +408,8 @@ pub enum CalleeKind:
     CloneModel(int, str)
     Instantiated(str, PlanType)
     InstantiatedPair(str, PlanType, PlanType)
+    # Three type arguments in the external's own parameter order, such as an item, an element and a callable.
+    InstantiatedTriple(str, PlanType, PlanType, PlanType)
     # The explicit producer takes its yield handle before the source-ordered owned captures. A zero-capture spawn
     # uses a function item; a captured spawn is a constructor whose call arguments initialize one native FnOnce environment.
     SpawnGenerator(str, ListLeaf, int)
