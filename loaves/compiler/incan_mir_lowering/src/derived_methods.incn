@@ -10,16 +10,22 @@ from rust::incan_semantics_core::body_ir import (
     Place as RustPlace,
     Rvalue as RustRvalue,
 )
-from pub::incan_mir_plan import CalleeKind, Place, PlanType, RvalueKind, SourceSpan
+from pub::incan_mir_plan import CalleeKind, Operand, OperandKind, Place, PlanType, RvalueKind, SourceSpan
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, place_type, read_place, temporary
-from lowering import scalar_place, lower_callable_result, lower_assignment
+from lowering import scalar_place, lower_callable_result, lower_assignment, binary_operator
+from numerics import numeric_carrier
 from trait_links import contains
 
 
 pub def is_derived_clone(target: &MethodTarget) -> bool:
     """Recognize `clone` of the standard library's Clone in source and compiled SDK identities, never a same-name method."""
     return is_std_derive_method(target, "copying", "clone")
+
+
+pub def is_derived_display(target: &MethodTarget) -> bool:
+    """Recognize `__str__` of the standard library's Display, never a same-name method."""
+    return is_std_derive_method(target, "string", "__str__")
 
 
 pub def is_std_callable_call(target: &MethodTarget) -> bool:
@@ -139,13 +145,16 @@ pub def lower_comparison_dunder(
     """
     Lower an explicit standard comparison dunder as the operator it names, through that operator's own lowering.
 
-    A derived Eq or Ord implements each dunder as its operator, so `a.__ge__(b)` is `a >= b`. A receiver whose type
-    declares any comparison dunder itself keeps refusing: its operators need not be the derived ones.
+    A derived Eq or Ord implements each dunder as its operator, so `a.__ge__(b)` is `a >= b`; a number or a bool
+    compares by value. A receiver whose type declares any comparison dunder itself keeps refusing: its operators need not
+    be the derived ones.
     """
     if len(arguments) != 2:
         return Err("invalid Body IR comparison dunder arguments")
     left = single_operand(arguments[0])?
     right = single_operand(arguments[1])?
+    if compare_scalars(builder, operator, left, right, destination, span)?:
+        return Ok(None)
     if declares_own_comparison(module, builder, left, span)?:
         return Err("unsupported Body IR comparison dunder on a type with its own comparison methods")
     match destination:
@@ -153,6 +162,42 @@ pub def lower_comparison_dunder(
             comparison: RustRvalue = RustRvalue.BinaryOp(operator, left, right)
             return lower_assignment(module, builder, place, comparison, span)
         None => return Err("unsupported Body IR discarded comparison dunder")
+
+
+def compare_scalars(
+    mut builder: Builder,
+    operator: BinOp,
+    left: &RustOperand,
+    right: &RustOperand,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """
+    Compare two places of one numeric or boolean carrier by value, as a closed type-parameter instance reaches them.
+
+    The receiver is borrowed for the method call the checker selected, but a number or a bool is copied freely, so the
+    comparison reads both values; any other carrier is left to the operator's own lowering.
+    """
+    match left:
+        RustOperand.Place(left_read) =>
+            match right:
+                RustOperand.Place(right_read) =>
+                    first = scalar_place(builder, left_read.place, span)?
+                    second = scalar_place(builder, right_read.place, span)?
+                    ty = place_type(builder.locals, first)
+                    if ty != place_type(builder.locals, second) or not (numeric_carrier(ty) or ty == PlanType.Bool):
+                        return Ok(false)
+                    match destination:
+                        Some(place) =>
+                            output = scalar_place(builder, place, span)?
+                            left_value = Operand(kind=OperandKind.Copy(first), span=span)
+                            right_value = Operand(kind=OperandKind.Copy(second), span=span)
+                            comparison = RvalueKind.Binary(binary_operator(operator)?, left_value, right_value)
+                            builder.emit(plan_assign(output, comparison, span))
+                            return Ok(true)
+                        None => return Err("unsupported Body IR discarded comparison dunder")
+                _ => return Ok(false)
+        _ => return Ok(false)
 
 
 def single_operand(argument: &RustArgumentElement) -> Result[RustOperand, str]:

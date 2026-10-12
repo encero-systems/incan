@@ -829,10 +829,10 @@ pub(super) fn collect_local_trait_implementations(
 /// Retain the slots of one adopter's imported traits that have no type parameters, under checked provider identities.
 ///
 /// Each slot keeps the body that fills it: the adopter's own method, or the imported trait's default, whose body lives
-/// in the module that declares the trait. Slots of standard-library traits and of the compiled SDK's traits are
-/// protocol contracts without project source bodies and get no record, nor do imported supertraits or imported traits
-/// with type parameters, so a call that needs one of those keeps refusing. The records are sorted by slot identity,
-/// so the module's Body IR does not depend on hash order.
+/// in the module that declares the trait. A slot of a standard-library or compiled SDK protocol is recorded only when
+/// the adopter's own method fills it, because the protocol's default bodies are not among the project's modules.
+/// Imported supertraits and imported traits with type parameters get no record, so a call that needs one of those
+/// keeps refusing. The records are sorted by slot identity, so the module's Body IR does not depend on hash order.
 fn imported_trait_implementations(
     program: &ast::Program,
     type_info: &TypeCheckInfo,
@@ -850,14 +850,15 @@ fn imported_trait_implementations(
             continue;
         }
         for ((trait_name, slot_name), method) in &type_info.traits.method_identities {
-            if trait_name != name
-                || !is_executable_source_trait_slot(method)
-                || type_info.traits.sdk_method_identities.contains(method)
-                || implementations.iter().any(|existing| &existing.method == method)
-            {
+            if trait_name != name || implementations.iter().any(|existing| &existing.method == method) {
                 continue;
             }
-            if let Some(implementation) = imported_slot_implementation(type_info, method, slot_name, methods) {
+            let protocol = type_info.traits.sdk_method_identities.contains(method) || is_stdlib_trait_slot(method);
+            if !protocol && !is_executable_source_trait_slot(method) {
+                continue;
+            }
+            if let Some(implementation) = imported_slot_implementation(type_info, method, slot_name, methods, !protocol)
+            {
                 implementations.push(bir::TraitImplementation {
                     owner: owner.clone(),
                     method: method.clone(),
@@ -871,12 +872,14 @@ fn imported_trait_implementations(
     implementations
 }
 
-/// Select the body that fills one imported slot: the adopter's only method of that name, else the slot's default.
+/// Select the body that fills one imported slot: the adopter's only method of that name, else the slot's default when
+/// `defaults` admits it.
 fn imported_slot_implementation(
     type_info: &TypeCheckInfo,
     method: &CanonicalSymbolId,
     slot_name: &str,
     methods: &[ast::Spanned<ast::MethodDecl>],
+    defaults: bool,
 ) -> Option<CanonicalSymbolId> {
     let candidates = methods
         .iter()
@@ -888,9 +891,14 @@ fn imported_slot_implementation(
             .method_bindings_by_span
             .get(&(candidate.span.start, candidate.span.end))
             .and_then(|binding| binding.identity.clone()),
-        [] if type_info.traits.default_method_identities.contains(method) => Some(method.clone()),
+        [] if defaults && type_info.traits.default_method_identities.contains(method) => Some(method.clone()),
         _ => None,
     }
+}
+
+/// Whether a trait slot belongs to a protocol the standard library's source declares.
+fn is_stdlib_trait_slot(identity: &CanonicalSymbolId) -> bool {
+    matches!(&identity.origin, incan_semantics_core::SymbolOrigin::Module(path) if incan_lang::lang::stdlib::is_any_stdlib_path(path))
 }
 
 /// Whether a trait slot can be filled by a body of the project or of a package dependency.

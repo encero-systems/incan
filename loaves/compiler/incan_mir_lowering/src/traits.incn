@@ -145,6 +145,31 @@ def concrete_self_type(owner: str) -> RustType:
     return RustType.Named(owner)
 
 
+pub def receiver_fills_slot(
+    module: &BodyIrModule,
+    target: &MethodTarget,
+    locals: list[Local],
+    argument: &ArgumentElement,
+    span: SourceSpan,
+    unions: list[RustType],
+    intrinsics: list[EnumDeclaration],
+) -> bool:
+    """
+    Whether a retained implementation record fills the selected slot for the receiver's concrete nominal.
+
+    Such a slot dispatches to that body, ahead of any behavior a standard derive gives the slot, because the adopter's
+    own method is what legacy calls. A receiver that is not a retained nominal has no record.
+    """
+    match receiver_owner(module, locals, argument, span, unions, intrinsics):
+        Ok(owner) =>
+            owner_identity = module.nominal_declarations[owner].canonical
+            for implementation in module.trait_implementations:
+                if implementation.owner == owner_identity and Some(implementation.method) == target.canonical:
+                    return true
+            return false
+        Err(_error) => return false
+
+
 pub def method_index(
     module: &BodyIrModule,
     target: &MethodTarget,

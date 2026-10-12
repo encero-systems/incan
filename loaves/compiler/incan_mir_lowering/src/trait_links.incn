@@ -1,6 +1,6 @@
 """Project-level validation of trait implementation records whose trait another module declares."""
 
-from rust::incan_semantics_core import CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace
+from rust::incan_semantics_core import CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin
 from rust::incan_semantics_core::body_ir import BodyIrModule, TraitImplementation
 
 
@@ -15,7 +15,8 @@ pub def is_well_formed_project_implementation(
     A record whose trait and filling body belong to this module is the module's own to validate. A record of an
     imported trait without type parameters names a slot another module declares: it holds only when this module retains
     the adopter's layout, the declaring module retains the trait around the slot, the adopter's own method or the slot's
-    own default fills it, and some module retains that body under its direct-call identity. Matching spellings never
+    own default fills it, and some module retains that body under its direct-call identity. A slot of a standard-library
+    or SDK protocol has no declaring project module; only the adopter's own method may fill it. Matching spellings never
     establish any of these.
     """
     if module.is_well_formed_trait_implementation(implementation):
@@ -24,9 +25,19 @@ pub def is_well_formed_project_implementation(
         return false
     if not retains_owner(module, implementation.owner):
         return false
-    if not declares_slot(modules, implementation.method):
+    if not declares_slot(modules, implementation.method) and not protocol_slot_filled_by_owner(implementation):
         return false
     return retains_body(modules, implementation.implementation)
+
+
+def protocol_slot_filled_by_owner(implementation: &TraitImplementation) -> bool:
+    """Whether a standard-library or SDK protocol slot is filled by the adopter's own method rather than a default."""
+    if implementation.implementation == implementation.method:
+        return false
+    match implementation.method.origin:
+        SymbolOrigin.Module(path) => return len(path) > 0 and path[0] == "std"
+        SymbolOrigin.Package(library=library, module_path=_path) => return str(library).startswith("incan_stdlib_")
+        _ => return false
 
 
 def fills_its_slot(implementation: &TraitImplementation) -> bool:

@@ -64,6 +64,7 @@ from trait_links import is_well_formed_project_implementation
 from derived_methods import (
     comparison_dunder,
     is_derived_clone,
+    is_derived_display,
     is_std_callable_call,
     lower_comparison_dunder,
     lower_derived_clone,
@@ -144,7 +145,7 @@ from generator_expressions import first_clause_item, source_generator, source_it
 from generator_adapters import is_generator_adapter, generator_adapter
 from project import project_context
 from nominal_instances import specialize_nominals
-from traits import method_index, owner_method_index, specialize_traits, validate_static_receiver
+from traits import method_index, owner_method_index, receiver_fills_slot, specialize_traits, validate_static_receiver
 from decls import lower_model_declarations, static_slot, static_accessors
 from model_lists import model_list_read, structural_prefix, prefix_place
 from element_places import is_element_place, element_place_type
@@ -532,7 +533,7 @@ def operand_type(mut builder: Builder, operand: Operand) -> Result[PlanType, str
     return value_type(builder, operand)
 
 
-def binary_operator(operator: &BinOp) -> Result[BinaryOp, str]:
+pub def binary_operator(operator: &BinOp) -> Result[BinaryOp, str]:
     """Translate only native scalar operations; operators with runtime semantics are separate calls."""
     match operator:
         BinOp.Add => return Ok(BinaryOp.Add)
@@ -1888,12 +1889,7 @@ def lower_method_call(
         receiver = argument_type(builder, arguments, 0, span)?
         refuse_overridden_json_default(module, builder, receiver)?
         return lower_model_json_builtin(builder, arguments, destination, span)
-    if is_derived_clone(target):
-        return lower_derived_clone(builder, arguments, destination, span)
-    match comparison_dunder(target):
-        Some(operator) => return lower_comparison_dunder(module, builder, operator, arguments, destination, span)
-        None => pass
-    if lower_callable_bound_call(builder, target, arguments, destination, span)?:
+    if lower_standard_slot(module, builder, target, arguments, destination, span)?:
         return Ok(None)
     # A list or dictionary element receiver is reborrowed in its container; no native place names it.
     match element_method_owner(builder, arguments[0])?:
@@ -2055,6 +2051,36 @@ def library_receiver(
                         _ => return Err("unsupported Body IR stdlib method receiver outside a stdlib layout")
                 _ => return Err("unsupported Body IR stdlib method nonplace receiver")
         None => return Err("unsupported Body IR stdlib method spread receiver")
+
+
+def lower_standard_slot(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """
+    Lower a standard-library slot through the behavior a derive or a held callable gives the receiver.
+
+    A slot the receiver's own method fills is left to ordinary dispatch, because that method is what legacy calls.
+    """
+    locals = builder.locals[builder.local_offset:]
+    if receiver_fills_slot(module, target, locals, arguments[0], span, builder.unions, builder.intrinsics):
+        return Ok(false)
+    if is_derived_clone(target):
+        lower_derived_clone(builder, arguments, destination, span)?
+        return Ok(true)
+    match comparison_dunder(target):
+        Some(operator) =>
+            lower_comparison_dunder(module, builder, operator, arguments, destination, span)?
+            return Ok(true)
+        None => pass
+    if is_derived_display(target):
+        lower_display_str(builder, arguments, destination, span)?
+        return Ok(true)
+    return lower_callable_bound_call(builder, target, arguments, destination, span)
 
 
 def lower_callable_bound_call(
@@ -3666,6 +3692,16 @@ def lower_str_builtin(
             None => return Err("unsupported Body IR spread str argument")
     else:
         return Err("unsupported Body IR str arity")
+    return assign_text_result(builder, text, destination, span)
+
+
+def assign_text_result(
+    mut builder: Builder,
+    text: Place,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Move an owned text temporary into the call's destination, replacing what it held, or drop a discarded one."""
     match destination:
         Some(place) =>
             output = scalar_place(builder, place, span)?
@@ -3675,6 +3711,39 @@ def lower_str_builtin(
             builder.owned.append(output.local)
         None => drop_owned(builder, text.local, span)
     return Ok(None)
+
+
+def lower_display_str(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Render the receiver's Display form, as a derived or builtin Display's `__str__` does.
+
+    A number or a bool is copied, though the method call borrows it; any other receiver, a model with a checked derived
+    Display included, displays as `str()` displays it.
+    """
+    if len(arguments) != 1:
+        return Err("invalid Body IR Display __str__ arguments")
+    match arguments[0].as_one():
+        Some(value) =>
+            text = display_receiver(builder, value, span)?
+            return assign_text_result(builder, text, destination, span)
+        None => return Err("unsupported Body IR Display __str__ spread receiver")
+
+
+def display_receiver(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+    """Select the display rendering for one borrowed receiver."""
+    match value:
+        RustOperand.Place(read) =>
+            place = scalar_place(builder, read.place, span)?
+            ty = place_type(builder.locals, place)
+            if numeric_carrier(ty) or ty == PlanType.Bool:
+                return display_plan_operand(builder, Operand(kind=OperandKind.Copy(place), span=span), span)
+        _ => pass
+    return display_operand(builder, value, span)
 
 
 pub def lower_program(
