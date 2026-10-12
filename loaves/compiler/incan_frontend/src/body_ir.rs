@@ -1364,9 +1364,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         id
     }
 
-    /// Allocate a compiler-introduced temporary. Temporaries are always consumed exactly once, immediately after
-    /// creation (by construction of the flattening lowering below), so they are excluded from last-use tracking and
-    /// scope-exit drop insertion — see [`Self::temp_operand`] and [`Self::insert_scope_drops`].
+    /// Allocate a compiler-introduced temporary. Flattened expression temporaries are consumed once and omitted from
+    /// last-use tracking and scope-exit drop insertion. A normalized construct that reuses a value must explicitly seed
+    /// its read count and consume its final owner, as chained assignment does; loop state carries explicit poll and
+    /// cursor reads instead. See [`Self::temp_operand`] and [`Self::insert_scope_drops`].
     fn new_temp(&mut self, ty: IncanType, scope: bir::ScopeId, span: HirSourceSpan) -> bir::LocalId {
         let id = bir::LocalId(self.next_local);
         self.next_local += 1;

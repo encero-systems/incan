@@ -1261,6 +1261,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             _ => iter_expr,
         };
 
+        if protocol.is_none()
+            && self.enumerated_pattern_is_normalizable(pattern_local)
+            && let Some(source) = self.enumerated_loop_source(effective_iter_expr)
+        {
+            self.lower_enumerated_iteration(source, pattern_local, outer_scope, loop_scope, span, out, body_fn);
+            return;
+        }
+
         let iterable_place = self.lower_expr_to_place(effective_iter_expr, outer_scope, out);
         let iterator_ty = match &protocol {
             Some(p) => semantic_type_from_resolved(&p.iterator_type),
@@ -1316,6 +1324,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         });
 
         body_fn(self, loop_scope, &mut body_stmts);
+        self.retain_in_place_iteration_bindings(&mut body_stmts, pattern_local);
         self.loop_break_targets.pop();
         self.loop_continue_actions.pop();
         // A builtin loop whose body changes its item in place iterates the list exclusively, as legacy's `iter_mut`.
@@ -1332,6 +1341,231 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             },
             span,
         });
+    }
+
+    /// Select only a canonically checked direct enumeration of a list; a stored enumeration remains its own value.
+    fn enumerated_loop_source<'expr>(
+        &self,
+        expr: &'expr ast::Spanned<ast::Expr>,
+    ) -> Option<&'expr ast::Spanned<ast::Expr>> {
+        if let ast::Expr::Paren(inner) = &expr.node {
+            return self.enumerated_loop_source(inner);
+        }
+        let ast::Expr::Call(callee, type_args, args) = &expr.node else {
+            return None;
+        };
+        if self.type_info.resolved_builtin_call(expr.span) != Some(bir::BuiltinFnId::Enumerate) || !type_args.is_empty()
+        {
+            return None;
+        }
+        let ast::Expr::Ident(name) = &callee.node else {
+            return None;
+        };
+        if self
+            .declared_slots_for_direct_call(name, callee.span, expr.span)
+            .ok()?
+            .builtin
+            != Some(bir::BuiltinFnId::Enumerate)
+        {
+            return None;
+        }
+        let [ast::CallArg::Positional(source)] = args.as_slice() else {
+            return None;
+        };
+        collection_member_types(&self.resolve_ty(source.span), CollectionTypeId::List)?;
+        Some(source)
+    }
+
+    /// Normalize destructured enumeration only; a whole pair needs its own mixed-reference layout contract.
+    fn enumerated_pattern_is_normalizable(&self, item: bir::LocalId) -> bool {
+        let Some(local) = self.locals.get(item.index()) else {
+            return false;
+        };
+        let elements = tuple_element_types(&local.ty, 2);
+        local.origin == bir::LocalOrigin::Temporary
+            && elements[0] == IncanType::Primitive(IncanPrimitiveType::Int)
+            && !matches!(elements[1], IncanType::Unknown)
+    }
+
+    /// Poll a direct enumeration's original list and retain its index as explicit scalar state. Pattern components
+    /// bind the produced element itself when changed, rather than a materialized tuple's snapshot of it.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_enumerated_iteration(
+        &mut self,
+        source: &ast::Spanned<ast::Expr>,
+        pattern_local: bir::LocalId,
+        outer_scope: bir::ScopeId,
+        loop_scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+        body_fn: impl FnOnce(&mut Self, bir::ScopeId, &mut Vec<bir::Statement>),
+    ) {
+        // ---- Source storage and enumeration state ----
+        let source_ty = self.resolve_ty(source.span);
+        let source_place = self.lower_expr_to_place(source, outer_scope, out);
+        let iterator = self.new_temp(source_ty, outer_scope, span);
+        let index_ty = IncanType::Primitive(IncanPrimitiveType::Int);
+        let index = self.new_temp(index_ty.clone(), outer_scope, span);
+        out.push(bir::Statement {
+            kind: bir::StatementKind::Assign {
+                place: bir::Place::from_local(index),
+                rvalue: bir::Rvalue::Use(bir::Operand::Constant(bir::Constant::Int(0))),
+            },
+            span,
+        });
+        let initializer = out.len();
+        out.push(bir::Statement {
+            kind: bir::StatementKind::Assign {
+                place: bir::Place::from_local(iterator),
+                rvalue: bir::Rvalue::Use(bir::Operand::place(source_place, bir::OwnershipFact::Borrow, false)),
+            },
+            span,
+        });
+        let pattern_span = self.locals[pattern_local.index()].span;
+        let element_ty = tuple_element_types(&self.locals[pattern_local.index()].ty, 2)[1].clone();
+        let element = self.new_temp(element_ty, loop_scope, pattern_span);
+        let current_index = self.new_temp(index_ty, loop_scope, pattern_span);
+
+        // ---- One produced element and its pre-advance index ----
+        let mut stmts = vec![
+            bir::Statement {
+                kind: bir::StatementKind::IterNext {
+                    destination: bir::Place::from_local(element),
+                    iterator: bir::Operand::place(
+                        bir::Place::from_local(iterator),
+                        bir::OwnershipFact::MutBorrow,
+                        false,
+                    ),
+                    protocol: bir::IterProtocol::Builtin,
+                },
+                span,
+            },
+            bir::Statement {
+                kind: bir::StatementKind::Assign {
+                    place: bir::Place::from_local(current_index),
+                    rvalue: bir::Rvalue::Use(index_read(index)),
+                },
+                span,
+            },
+            bir::Statement {
+                kind: bir::StatementKind::Assign {
+                    place: bir::Place::from_local(index),
+                    rvalue: bir::Rvalue::BinaryOp(
+                        bir::BinOp::Add,
+                        index_read(index),
+                        bir::Operand::Constant(bir::Constant::Int(1)),
+                    ),
+                },
+                span,
+            },
+        ];
+        self.loop_break_targets.push(None);
+        self.loop_continue_actions.push(Vec::new());
+
+        // ---- Checked pattern bindings and source ownership ----
+        body_fn(self, loop_scope, &mut stmts);
+        self.remap_enumerated_bindings(&mut stmts, pattern_local, current_index, element);
+        self.retain_in_place_iteration_bindings(&mut stmts, element);
+        if self.body_changes_item_in_place(&stmts, element) {
+            borrow_iterable_exclusively(&mut out[initializer]);
+        }
+        self.loop_break_targets.pop();
+        self.loop_continue_actions.pop();
+        out.push(bir::Statement {
+            kind: bir::StatementKind::Loop {
+                body: bir::Block {
+                    scope: loop_scope,
+                    stmts,
+                },
+            },
+            span,
+        });
+    }
+
+    /// Replace the destructured tuple's checked component reads with the normalized index and element places.
+    fn remap_enumerated_bindings(
+        &self,
+        stmts: &mut [bir::Statement],
+        pattern: bir::LocalId,
+        index: bir::LocalId,
+        element: bir::LocalId,
+    ) {
+        for statement in stmts {
+            let bir::StatementKind::Assign {
+                place: destination,
+                rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
+            } = &mut statement.kind
+            else {
+                continue;
+            };
+            if read.place.local_id() != Some(pattern) {
+                continue;
+            }
+            let Some(bir::PlaceElem::Field { name, .. }) = read.place.projection.first() else {
+                continue;
+            };
+            let replacement = match name.as_str() {
+                "0" => index,
+                "1" => element,
+                _ => continue,
+            };
+            let mut place = bir::Place::from_local(replacement);
+            place.projection.extend(read.place.projection.iter().skip(1).cloned());
+            read.place = place;
+            if replacement == element
+                && read.place.projection.is_empty()
+                && destination.local_id().is_some_and(|local| {
+                    !self.locals[local.index()]
+                        .ty
+                        .abi_v0_facts()
+                        .ownership
+                        .is_trivially_copy()
+                })
+            {
+                read.fact = bir::OwnershipFact::Move;
+                read.last_use = true;
+            }
+        }
+    }
+
+    /// Retain exclusive reads for changed non-Copy pattern bindings only. Ordinary aliases declared in the body
+    /// keep their existing value-copy semantics; the pattern's own source spans identify its generated bindings.
+    fn retain_in_place_iteration_bindings(&self, stmts: &mut [bir::Statement], item: bir::LocalId) {
+        let pattern_span = self.locals[item.index()].span;
+        let changed: Vec<_> = stmts
+            .iter()
+            .filter_map(|statement| {
+                let bir::StatementKind::Assign {
+                    place,
+                    rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
+                } = &statement.kind
+                else {
+                    return None;
+                };
+                let local = place.local_id()?;
+                (read.place.local_id() == Some(item)
+                    && statement.span.start >= pattern_span.start
+                    && statement.span.end <= pattern_span.end
+                    && !self.locals[local.index()]
+                        .ty
+                        .abi_v0_facts()
+                        .ownership
+                        .is_trivially_copy()
+                    && self.body_changes_item_in_place(stmts, local))
+                .then_some(local)
+            })
+            .collect();
+        for statement in stmts {
+            if let bir::StatementKind::Assign {
+                place,
+                rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
+            } = &mut statement.kind
+                && place.local_id().is_some_and(|local| changed.contains(&local))
+            {
+                read.fact = bir::OwnershipFact::MutBorrow;
+                read.last_use = false;
+            }
+        }
     }
 
     /// Return whether a loop body changes its item in place: through a method that changes it, a pattern matched in
