@@ -6,7 +6,33 @@ use super::*;
 #[test]
 fn checked_nested_carriers_preserve_projection_and_layout_admission() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
-    let caller = fixture.scratch("dev7-carrier-admission")?;
+    let binary = baked_carrier_caller(fixture, "dev7-carrier-admission")?;
+    let output = driver_command(&binary).output()?;
+    success(&output, "nested carrier admission controls");
+    assert_eq!(
+        output.stdout,
+        b"nested carrier admission: 6 positive, 23 Body IR negative, and 8 native plan negative controls passed\n"
+    );
+    Ok(())
+}
+
+/// Require instantiated stdlib Result returns to retain their final owner's normal and subsequent-call unwind drops.
+#[test]
+fn instantiated_stdlib_results_retain_owned_cleanup() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let binary = baked_carrier_caller(fixture, "instantiated-stdlib-owned-results")?;
+    let output = driver_command(&binary).arg("owned-result").output()?;
+    success(&output, "instantiated stdlib result ownership");
+    assert_eq!(
+        output.stdout,
+        b"instantiated result ownership: normal and unwind drops passed\n"
+    );
+    Ok(())
+}
+
+/// Bake the shared caller once for one test's isolated scratch directory and return its executable path.
+fn baked_carrier_caller(fixture: &DriverFixture, scratch: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let caller = fixture.scratch(scratch)?;
     let repo = support::repo_root();
     fs::create_dir_all(caller.join("src"))?;
     copy_tree(&fixture.driver.join("src"), &caller.join("src/native"))?;
@@ -32,6 +58,14 @@ fn checked_nested_carriers_preserve_projection_and_layout_admission() -> Result<
         caller.join("src/main.rs"),
         include_str!("dev7_carrier_admission_caller.rs").replace("// DRIVER_MODULES", &modules),
     )?;
+    fs::write(
+        caller.join("src/instantiated_owned_results_caller.rs"),
+        include_str!("instantiated_owned_results_caller.rs"),
+    )?;
+    fs::copy(
+        repo.join("loaves/stdlib/core/src/result.incn"),
+        caller.join("src/result.incn"),
+    )?;
     let lowering = fixture_dependency_path(&caller, &fixture.root.join("lowering"))?;
     let frontend = fixture_dependency_path(&caller, &repo.join("loaves/compiler/incan_frontend"))?;
     let semantics = fixture_dependency_path(&caller, &repo.join("loaves/kernel/incan_semantics_core"))?;
@@ -54,16 +88,10 @@ name = "dev7_carrier_admission"
 path = "src/main.rs"
 unstable_features = ["rustc_private"]
 toolchain_components = ["rustc-dev"]
-sysroot_dependencies = ["rustc_driver", "rustc_interface"]
+sysroot_dependencies = ["rustc_driver"]
 "#
         ),
     )?;
     bake(&caller, &fixture.home)?;
-    let output = driver_command(&caller.join("target/rust/debug/dev7_carrier_admission")).output()?;
-    success(&output, "nested carrier admission controls");
-    assert_eq!(
-        output.stdout,
-        b"nested carrier admission: 6 positive, 23 Body IR negative, and 8 native plan negative controls passed\n"
-    );
-    Ok(())
+    Ok(caller.join("target/rust/debug/dev7_carrier_admission"))
 }
