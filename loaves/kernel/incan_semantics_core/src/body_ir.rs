@@ -1653,7 +1653,10 @@ impl ResultVariant {
                     identity.scope_discriminant.is_none()
                         && matches!(
                             identity.kind,
-                            crate::SemanticSourceTargetKind::Model | crate::SemanticSourceTargetKind::Enum
+                            crate::SemanticSourceTargetKind::Model
+                                | crate::SemanticSourceTargetKind::Class
+                                | crate::SemanticSourceTargetKind::Enum
+                                | crate::SemanticSourceTargetKind::Newtype
                         )
                         && matches!(
                             identity.origin,
