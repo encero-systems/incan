@@ -7,7 +7,8 @@ use std::time::{Duration, Instant};
 use incan_provider::FeatureSelection;
 use oven_model::manifest::ProjectManifest;
 use oven_rustc::native_test::{
-    OvenNativeTestRequest, inventory_native_tests_for_collection, run_native_tests_exact_for_request,
+    OvenNativeTestCollection, OvenNativeTestRequest, inventory_native_tests_for_collection,
+    run_native_tests_exact_for_request,
 };
 use oven_rustc::plan::OvenDirectRustcPlanSelection;
 use oven_rustc::rustc::{
@@ -27,6 +28,7 @@ pub(super) struct PreparedRustRoot {
     /// Actual libtest inventory mapped to the common selection model.
     pub(super) tests: Vec<TestInfo>,
     executable: PathBuf,
+    collection: OvenNativeTestCollection,
     environment: BTreeMap<String, String>,
     working_directory: PathBuf,
     _selection: Arc<OvenDirectRustcPlanSelection>,
@@ -236,16 +238,18 @@ fn prepare_inner(
         },
         &context.store,
     )?;
-    let (inventory, ignored) = inventory_native_tests_for_collection(
+    let collection = inventory_native_tests_for_collection(
         &executable,
         &environment,
         &context.project_root,
         Some(Duration::from_secs(30)),
     )?;
-    let ignored = ignored.names.into_iter().collect::<BTreeSet<_>>();
-    let tests = inventory
+    let ignored = collection.ignored().names.iter().collect::<BTreeSet<_>>();
+    let tests = collection
+        .inventory()
         .names
-        .into_iter()
+        .iter()
+        .cloned()
         .map(|name| {
             let markers = if ignored.contains(&name) {
                 vec![TestMarker::Skip("Rust #[ignore]".into())]
@@ -267,6 +271,7 @@ fn prepare_inner(
     Ok(PreparedRustRoot {
         tests,
         executable,
+        collection,
         environment,
         working_directory: context.project_root.clone(),
         _selection: selection,
@@ -296,6 +301,7 @@ pub(super) fn execute(
                     },
                     &root.working_directory,
                     no_capture,
+                    Some(&root.collection),
                 ) {
                     Ok(report) if report.success => {
                         if no_capture {

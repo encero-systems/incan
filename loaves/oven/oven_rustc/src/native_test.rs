@@ -16,6 +16,8 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 mod case_slice;
+#[cfg(all(test, unix))]
+mod collection_tests;
 mod evidence;
 pub use case_slice::{OvenNativeTestCaseSlice, OvenNativeTestCaseSliceReport, assign_case_slices, select_case_slice};
 use evidence::{CaseResult, NativeTestEvidence, NativeTestLog};
@@ -29,6 +31,38 @@ use oven_store::progress::{DEFAULT_HEARTBEAT_INTERVAL, Heartbeat, ProgressSink};
 pub struct OvenNativeTestInventory {
     /// Complete deterministic set of test names reported by the binary.
     pub names: Vec<String>,
+}
+
+/// Request-owned native inventory, bound to its original executable and invocation context.
+/// Only supervised collection constructs this value; case execution still checks names, output evidence and deadlines.
+pub struct OvenNativeTestCollection {
+    inventory: OvenNativeTestInventory,
+    ignored: OvenNativeTestInventory,
+    executable: PathBuf,
+    environment: BTreeMap<String, String>,
+    working_directory: PathBuf,
+    inputs: oven_model::observed_inputs::InputObservations,
+}
+
+impl OvenNativeTestCollection {
+    /// Borrow the actual complete inventory without granting callers permission to forge collected names.
+    pub fn inventory(&self) -> &OvenNativeTestInventory {
+        &self.inventory
+    }
+
+    /// Borrow the separately collected ignored-case inventory for normal scheduler selection.
+    pub fn ignored(&self) -> &OvenNativeTestInventory {
+        &self.ignored
+    }
+
+    /// Reuse only for the same invocation context and replacement-sensitive executable observation.
+    fn matches(&self, executable: &Path, environment: &BTreeMap<String, String>, directory: Option<&Path>) -> bool {
+        self.executable == executable
+            && &self.environment == environment
+            && directory == Some(self.working_directory.as_path())
+            && self.inputs.supports_retention()
+            && self.inputs.current()
+    }
 }
 
 /// Exact native test execution request.
@@ -229,11 +263,25 @@ pub fn inventory_native_tests_for_collection(
     environment: &BTreeMap<String, String>,
     working_directory: &Path,
     timeout: Option<Duration>,
-) -> Result<(OvenNativeTestInventory, OvenNativeTestInventory), OvenNativeTestError> {
+) -> Result<OvenNativeTestCollection, OvenNativeTestError> {
+    let mut inputs = oven_model::observed_inputs::InputObservations::default();
+    inputs.observe(executable);
     let all = inventory_native_tests_selected(executable, environment, Some(working_directory), true, timeout, false)?;
     let ignored =
         inventory_native_tests_selected(executable, environment, Some(working_directory), true, timeout, true)?;
-    Ok((all, ignored))
+    if inputs.supports_retention() && !inputs.current() {
+        return Err(OvenNativeTestError::InventoryFailed {
+            output: "native executable changed during test collection".to_string(),
+        });
+    }
+    Ok(OvenNativeTestCollection {
+        inventory: all,
+        ignored,
+        executable: executable.to_path_buf(),
+        environment: environment.clone(),
+        working_directory: working_directory.to_path_buf(),
+        inputs,
+    })
 }
 
 /// Apply libtest's inventory selection while preserving the existing environment, deadline and process supervision.
@@ -245,6 +293,8 @@ fn inventory_native_tests_selected(
     timeout: Option<Duration>,
     ignored_only: bool,
 ) -> Result<OvenNativeTestInventory, OvenNativeTestError> {
+    let _trace =
+        tracing::trace_span!(target: "incan::invocation", "oven_rustc::native_test_inventory", ignored_only).entered();
     let executable = verified_executable(executable)?;
     let mut command = Command::new(&executable);
     command.args(["--list", "--format", "terse"]);
@@ -400,15 +450,19 @@ pub fn run_native_tests_exact_in_directory_with_timeout(
         root_label,
         false,
         true,
+        None,
     )
 }
 
 /// Execute a runner-owned exact selection without writing to the owner's global stderr.
 /// The caller owns progress/reporting; `no_capture` controls test stdout in the returned transcript.
+/// A matching request-owned collection avoids relisting the same harness before each case; changed or unsupported
+/// inputs use fresh inventory.
 pub fn run_native_tests_exact_for_request(
     request: &OvenNativeTestRequest,
     working_directory: &Path,
     no_capture: bool,
+    collection: Option<&OvenNativeTestCollection>,
 ) -> Result<OvenNativeTestBatchReport, OvenNativeTestError> {
     run_native_tests_exact_selected(
         &request.executable,
@@ -419,6 +473,7 @@ pub fn run_native_tests_exact_for_request(
         None,
         no_capture,
         false,
+        collection,
     )
 }
 
@@ -433,7 +488,9 @@ fn run_native_tests_exact_selected(
     root_label: Option<&str>,
     no_capture: bool,
     report_progress: bool,
+    collection: Option<&OvenNativeTestCollection>,
 ) -> Result<OvenNativeTestBatchReport, OvenNativeTestError> {
+    let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::native_test_exact").entered();
     let selection_started = Instant::now();
     let requested = normalized_exact_names(exact_names)?;
     let inventory_started = Instant::now();
@@ -445,13 +502,21 @@ fn run_native_tests_exact_selected(
             ),
         }
     })?;
-    let inventory = inventory_native_tests_with_environment_and_timeout(
-        executable,
-        environment,
-        working_directory,
-        false,
-        inventory_timeout,
-    )?;
+    let inventory = if let Some(collection) =
+        collection.filter(|collection| collection.matches(executable, environment, working_directory))
+    {
+        tracing::trace!(target: "incan::invocation", decision = "reuse_native_test_inventory");
+        collection.inventory.clone()
+    } else {
+        tracing::trace!(target: "incan::invocation", decision = "collect_native_test_inventory");
+        inventory_native_tests_with_environment_and_timeout(
+            executable,
+            environment,
+            working_directory,
+            false,
+            inventory_timeout,
+        )?
+    };
     let inventory_elapsed_ms = duration_millis(inventory_started.elapsed());
     let available = inventory.names.iter().collect::<BTreeSet<_>>();
     for exact_name in &requested {
