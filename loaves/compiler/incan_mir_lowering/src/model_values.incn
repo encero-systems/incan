@@ -162,7 +162,7 @@ pub def display_model_operand(
     value: &RustOperand,
     span: SourceSpan,
 ) -> Result[Option[Place], str]:
-    """Use the checked derived Display form, which legacy defines as the model's Debug text."""
+    """Call the checked string method or Error message fallback; derive-only Display keeps legacy's Debug text."""
     match nominal_place(builder, value, span)?:
         None => return Ok(None)
         Some(place) =>

@@ -429,7 +429,7 @@ pub struct FieldlessEnumDeclaration {
     pub variants: Vec<FieldlessEnumVariantDeclaration>,
 }
 
-/// Canonical layout of a normal source enum without methods, aliases, or generic substitution.
+/// Canonical checked payload layout of a normal source enum; generic templates retain their ordered binders.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnumDeclaration {
     /// Exact source-local declaration identity derived from the enum's span.

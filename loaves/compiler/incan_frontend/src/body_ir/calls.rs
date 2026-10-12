@@ -1225,6 +1225,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
 
         let is_async = declaration.is_async;
+        if let Some(identity) = &declaration.canonical {
+            self.settle_declared_enum_arguments(identity, args);
+        }
         let (mut operands, binding) =
             match self.bind_declared_args(&format!("function `{name}`"), declaration.slots, args, scope, out) {
                 Ok(bound) => bound,

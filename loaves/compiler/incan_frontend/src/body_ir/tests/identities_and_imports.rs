@@ -6,9 +6,9 @@
 
 use super::*;
 
-/// The imported alias fixture's method and stored-field reads must keep known expression carriers.
+/// The imported alias carrier and stored field are known; method selection still lacks a checked target.
 #[test]
-fn imported_model_alias_fixture_has_known_temporaries() -> Result<(), Box<dyn std::error::Error>> {
+fn imported_model_alias_keeps_carrier_before_method_resolution() -> Result<(), Box<dyn std::error::Error>> {
     let provider_source =
         "pub model Account:\n  pub type_ [alias=\"type\"]: str\n  def get_type(self) -> str:\n    return self.type\n";
     let factory_source = "from db.schema import Account\nfrom db.schema import Account as A\n\npub def make_aliased() -> A:\n  return A(type=\"y\")\n";
@@ -48,7 +48,21 @@ fn imported_model_alias_fixture_has_known_temporaries() -> Result<(), Box<dyn st
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert!(unknown.is_empty(), "{unknown:#?}\n{methods:#?}");
+    assert_eq!(unknown.len(), 1, "{unknown:#?}");
+    assert_eq!(unknown[0].1, Some("make_aliased().get_type()"));
+    assert_eq!(methods.len(), 1);
+    assert_eq!(methods[0].name, "get_type");
+    assert!(methods[0].canonical.is_none());
+    assert!(
+        body.locals
+            .iter()
+            .all(|local| local.ty != IncanType::Named("A".to_owned()))
+    );
+    assert!(
+        body.locals
+            .iter()
+            .any(|local| local.ty == IncanType::Named("Account".to_owned()))
+    );
     Ok(())
 }
 

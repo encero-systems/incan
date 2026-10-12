@@ -8786,12 +8786,29 @@ fn imported_comparison_defaults_output_matches_legacy() -> Result<(), Box<dyn st
 
 /// Compile a single-module program in the minimal project layout and require the native route to refuse it by name.
 fn check_project_refusal(name: &str, text: &str, reason: &str) -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_refusal(name, text, &[], reason)
+}
+
+/// Pin a next-stage refusal after the project's retained nominal or enum layout has been admitted.
+fn check_project_modules_refusal(
+    name: &str,
+    text: &str,
+    modules: &[(&str, &str)],
+    reason: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     let root = fixture.scratch(name)?;
     let main = support::cli_project::write_minimal_project(&root, name, "")?;
     fs::write(&main, text)?;
+    let source = main.parent().ok_or("project main has no source directory")?;
+    for (name, contents) in modules {
+        let path = source.join(name);
+        fs::create_dir_all(path.parent().ok_or("module has no parent")?)?;
+        fs::write(path, contents)?;
+    }
     let native = root.join("native");
-    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let mut closure = corpus::runtime_closure(&fixture.formatting)?;
+    closure.extend_with(&sdk_closure(fixture)?)?;
     let mut command = corpus::source_command(
         &fixture.driver_binary("debug"),
         &main,
@@ -8843,6 +8860,27 @@ fn imported_model_alias_output_matches_legacy() -> Result<(), Box<dyn std::error
             ),
         ],
         b"x\n",
+    )?;
+    check_project_modules_refusal(
+        "imported_alias_method_next_stage",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/field_alias_across_modules/main.incn"
+        ),
+        &[
+            (
+                "db/schema.incn",
+                include_str!(
+                    "../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/field_alias_across_modules/db/schema.incn"
+                ),
+            ),
+            (
+                "store/json_store.incn",
+                include_str!(
+                    "../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/field_alias_across_modules/store/json_store.incn"
+                ),
+            ),
+        ],
+        "unsupported Body IR type Unknown",
     )
 }
 
@@ -8885,6 +8923,13 @@ def main() -> None:
     println(show(second))
     println(show(empty))
 "#,
+    )?;
+    check_project_case(
+        "generic_enum_record_patterns",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/record_patterns_over_generic_models_and_classes.incn"
+        ),
+        b"-1\n5\n8\na\nb\nzero\n7\nempty\n",
     )
 }
 
@@ -8927,6 +8972,9 @@ model Loud with Error:
 def show[T with Display](value: T) -> str:
     return f"{value}"
 
+def describe[E with Error](value: E) -> str:
+    return f"failure: {value}"
+
 def main() -> None:
     failure = Failure(detail="bad")
     println(f"{failure}")
@@ -8934,7 +8982,15 @@ def main() -> None:
     println(failure)
     println(show(failure))
     println(show(Loud()))
+    println(describe(failure))
 "#,
+    )?;
+    check_project_refusal(
+        "error_display_next_stage",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/error_adopter_displays_its_message.incn"
+        ),
+        "unsupported Body IR nonlocal or trait-object Method",
     )
 }
 

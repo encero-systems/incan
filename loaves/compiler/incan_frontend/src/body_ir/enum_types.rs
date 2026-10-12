@@ -3,6 +3,41 @@
 use super::{BodyBuilder, CanonicalSymbolId, IncanType, SemanticSourceTargetKind, ast};
 
 impl BodyBuilder<'_, '_> {
+    /// Pin enum arguments from an exact nongeneric declaration when checking omitted a call-site snapshot.
+    pub(super) fn settle_declared_enum_arguments(&mut self, identity: &CanonicalSymbolId, arguments: &[ast::CallArg]) {
+        let Some(binding) = self
+            .type_info
+            .declarations
+            .function_bindings_by_span
+            .values()
+            .chain(self.type_info.declarations.function_bindings.values())
+            .find(|binding| binding.identity.as_ref() == Some(identity))
+        else {
+            return;
+        };
+        let types: Vec<_> = binding
+            .params
+            .iter()
+            .map(|parameter| self.checked_type(&parameter.ty))
+            .collect();
+        if types.iter().any(|ty| !closed_signature_type(ty)) {
+            return;
+        }
+        let slots: Vec<_> = binding
+            .params
+            .iter()
+            .map(super::args::DeclaredSlot::from_checked_param)
+            .collect();
+        let Ok(planned) = super::args::plan_declared_args("enum argument", &slots, arguments) else {
+            return;
+        };
+        for (slot, argument) in planned {
+            if let Some(destination) = types.get(slot) {
+                self.settle_enum_result_value(argument, destination);
+            }
+        }
+    }
+
     /// Instantiate the selected variant's checked fields in the destination's ordered declaration arguments.
     pub(super) fn enum_payload_types(
         &self,
@@ -68,6 +103,19 @@ impl BodyBuilder<'_, '_> {
             }
         }
         true
+    }
+}
+
+/// Reject every unresolved declaration placeholder before using a signature without call-site substitution.
+fn closed_signature_type(ty: &IncanType) -> bool {
+    match ty {
+        IncanType::TypeVar(_) | IncanType::SelfType | IncanType::Unknown | IncanType::Infer => false,
+        IncanType::Generic { args, .. } | IncanType::Tuple(args) => args.iter().all(closed_signature_type),
+        IncanType::Ref(inner) | IncanType::RefMut(inner) | IncanType::TypeToken(inner) => closed_signature_type(inner),
+        IncanType::Function { params, return_type } => {
+            params.iter().all(|parameter| closed_signature_type(&parameter.ty)) && closed_signature_type(return_type)
+        }
+        _ => true,
     }
 }
 
