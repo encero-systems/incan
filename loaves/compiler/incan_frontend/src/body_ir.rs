@@ -407,7 +407,7 @@ fn build_body_ir_module_v0_with_provider_operations(
         decorated_bindings::collect(program, &lowering_facts, &mut bodies, &mut static_declarations);
     apply_top_level_input_contract_refusal(program, &mut bodies);
     static_declarations.sort_by_key(|declaration| declaration.canonical.declaration_span.start);
-    bir::BodyIrModule {
+    let mut module = bir::BodyIrModule {
         decorated_bindings,
         constant_declarations,
         type_alias_declarations: collect::collect_type_aliases(program, type_info),
@@ -426,7 +426,9 @@ fn build_body_ir_module_v0_with_provider_operations(
         fieldless_enum_declarations,
         value_enum_declarations,
         bodies,
-    }
+    };
+    opaque_returns::retain(&mut module);
+    module
 }
 
 /// Make a broken caller's raw top-level vocabulary declaration fail every executable body rather than disappearing.
@@ -1815,6 +1817,7 @@ mod static_aliases;
 
 mod bodies;
 mod enum_types;
+mod opaque_returns;
 mod parameter_types;
 mod partials;
 
