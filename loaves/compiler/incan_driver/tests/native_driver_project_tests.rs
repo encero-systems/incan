@@ -6506,6 +6506,69 @@ def main() -> None:
     )
 }
 
+/// Prove `mut` parameters reached through callable values byte-identical to legacy: a function, a closure and a
+/// function-pointer local passed as a callable type whose input is `mut`, an inferred and an annotated callable local,
+/// a `mut` parameter handed on to another `mut` parameter, and `mut` list and text inputs; every change reaches the
+/// caller's value.
+#[test]
+fn mutable_callable_input_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("mutable-callable-input")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"class Counter:
+    pub value: int
+
+def grow(mut counter: Counter, by: int) -> int:
+    counter.value += by
+    return counter.value
+
+def grow_twice(mut counter: Counter) -> int:
+    grow(counter, 1)
+    return grow(counter, 1)
+
+def apply(step: (mut Counter, int) -> int, mut counter: Counter) -> int:
+    println(step(counter, 2))
+    return step(counter, 3)
+
+def push(mut items: list[int], value: int) -> int:
+    items.append(value)
+    return len(items)
+
+def extend(step: (mut list[int], int) -> int, mut items: list[int]) -> int:
+    return step(items, 9)
+
+def shout(mut text: str) -> int:
+    println(text + "!")
+    return len(text)
+
+def main() -> None:
+    mut counter = Counter(value=1)
+    println(apply(grow, counter))
+    println(counter.value)
+    println(apply((c, by) => c.value + by, counter))
+    println(counter.value)
+    g = grow
+    println(g(counter, 10))
+    handler: (mut Counter, int) -> int = grow
+    println(handler(counter, 100))
+    println(apply(handler, counter))
+    println(grow_twice(counter))
+    println(counter.value)
+    mut items = [1, 2]
+    println(extend(push, items))
+    println(extend((xs, value) => len(xs) + value, items))
+    println(items)
+    mut word = "hey"
+    loud: (mut str) -> int = shout
+    println(loud(word))
+    println(word)
+"#,
+    )
+}
+
 /// List display preserves legacy Debug spelling, escaping, nesting, and repeated owner reads.
 #[test]
 fn list_display_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
