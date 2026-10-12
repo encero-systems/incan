@@ -9881,6 +9881,32 @@ def main() -> None:
     )
 }
 
+/// Ordinary frozen byte elements read as owned buffers; explicit FrozenBytes elements retain their static wrapper.
+#[test]
+fn stdlib_frozen_byte_observations_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("stdlib-frozen-byte-observations")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"const BLOBS: FrozenList[bytes] = [b"ab", b"cde"]
+const BY_NAME: FrozenDict[str, bytes] = {"x": b"xyz"}
+const CHUNKS: FrozenList[FrozenBytes] = [b"ab", b"c"]
+
+def main() -> None:
+    println(len(BLOBS[0]))
+    one: bytes = BY_NAME["x"]
+    println(len(one))
+    for blob in BLOBS:
+        println(len(blob))
+    for chunk in CHUNKS:
+        println(len(chunk))
+    println(len(CHUNKS[0]))
+"#,
+    )
+}
+
 /// A closed SDK collection keeps its type arguments through construction, mutation, length, and returned values.
 #[test]
 fn stdlib_generic_collection_methods_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
