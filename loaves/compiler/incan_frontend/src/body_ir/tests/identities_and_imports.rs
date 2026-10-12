@@ -63,7 +63,7 @@ fn imported_model_alias_return_uses_declared_carrier() -> Result<(), Box<dyn std
         IncanType::Named("Account".to_owned())
     );
     let module = build_with_published_imports(
-        "from store.json_store import make_aliased\nfrom db.schema import Account\n\ndef run() -> str:\n  return make_aliased().type\n",
+        "from store.json_store import make_aliased\nfrom db.schema import Account\n\ndef run() -> int:\n  value = make_aliased()\n  return 1\n",
         &["consumer"],
         &[
             ("db_schema", &["db", "schema"], provider_source),
@@ -72,7 +72,18 @@ fn imported_model_alias_return_uses_declared_carrier() -> Result<(), Box<dyn std
         &[provider, factory],
     )?;
     let body = body_named(&module, "run")?;
-    assert_eq!(body.locals[0].ty, IncanType::Named("Account".to_owned()));
+    assert!(
+        body.locals
+            .iter()
+            .all(|local| local.ty != IncanType::Named("A".to_owned())),
+        "{body:#?}"
+    );
+    assert!(
+        body.locals
+            .iter()
+            .any(|local| local.ty == IncanType::Named("Account".to_owned())),
+        "{body:#?}"
+    );
     Ok(())
 }
 

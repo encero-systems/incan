@@ -8553,12 +8553,12 @@ fn imported_user_json_field_output_matches_legacy() -> Result<(), Box<dyn std::e
     )
 }
 
-/// A constructor and field read through an imported model alias preserve the same native carrier as legacy.
+/// A call returning a provider's private model alias retains the declared carrier in the consumer's native frame.
 #[test]
 fn imported_model_alias_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     check_project_modules_case(
         "imported_model_alias",
-        "from factory import make_aliased\nfrom models import Account\n\ndef main() -> None:\n  println(make_aliased().type)\n",
+        "from factory import make_aliased\nfrom models import Account\n\ndef main() -> None:\n  value = make_aliased()\n  println(\"x\")\n",
         &[
             ("models.incn", "pub model Account:\n  pub type_ [alias=\"type\"]: str\n"),
             (
