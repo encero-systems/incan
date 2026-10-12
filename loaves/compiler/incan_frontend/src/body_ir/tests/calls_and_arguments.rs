@@ -1466,18 +1466,16 @@ fn a_statically_shaped_spread_binds_as_an_ordinary_fixed_arity_call() -> Result<
     Ok(())
 }
 
-/// Preserve written argument order while shared list parameter reads retain caller storage.
+/// A runtime-length spread stays inside its packed list, whose single operand fills the declared rest slot.
 #[test]
-fn a_spread_with_no_proven_shape_stays_on_the_runtime_arity_path() -> Result<(), Box<dyn std::error::Error>> {
-    // The contrast case for the test above: a list *variable* has no statically visible arity, so it must keep
-    // its spread element rather than being expanded into slots that cannot be counted.
+fn a_runtime_length_spread_fills_one_resolved_rest_slot() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def log(*items: int) -> None:\n  return\n\ndef m(xs: list[int]) -> None:\n  log(*xs)\n  return\n";
     let module = build(source, &["m", "unshaped"])?;
     let rendered = body_named(&module, "m")?.render_snapshot();
 
     assert!(
-        rendered.contains("call fn:log unbound(*clone(_0))"),
-        "an unproven spread must stay a spread element on the unresolved-arity path: {rendered}"
+        rendered.contains("clone(_0)") && rendered.contains("list[*move(") && !rendered.contains("unbound"),
+        "runtime length belongs to the packed list, not unresolved call arity: {rendered}"
     );
     Ok(())
 }
@@ -1495,8 +1493,8 @@ fn a_standalone_keyword_spread_call_lowers() -> Result<(), Box<dyn std::error::E
         "a keyword spread call must lower: {snapshot}"
     );
     assert!(
-        snapshot.contains("call fn:log unbound(**clone(_0))"),
-        "a keyword spread must render with its own marker and ownership fact: {snapshot}"
+        snapshot.contains("clone(_0)") && snapshot.contains("dict[**move(") && !snapshot.contains("unbound"),
+        "the keyword spread must remain in its dictionary aggregate and fill one resolved slot: {snapshot}"
     );
     Ok(())
 }
@@ -1570,9 +1568,9 @@ fn a_dict_spread_after_a_literal_key_keeps_that_order() -> Result<(), Box<dyn st
     Ok(())
 }
 
-/// Preserve written argument order while shared list parameter reads retain caller storage.
+/// A positional spread retains its source ownership read and supplies one packed operand to its declared slot.
 #[test]
-fn a_positional_call_spread_lowers_without_a_declared_slot_claim() -> Result<(), Box<dyn std::error::Error>> {
+fn a_positional_call_spread_packs_a_resolved_rest_slot() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def log(*items: int) -> None:\n  return\n\ndef m(xs: list[int]) -> None:\n  log(*xs)\n  return\n";
     let module = build(source, &["m", "call_spread"])?;
     let snapshot = module.render_snapshot();
@@ -1581,11 +1579,11 @@ fn a_positional_call_spread_lowers_without_a_declared_slot_claim() -> Result<(),
         !snapshot.contains("unsupported("),
         "a call spread must lower: {snapshot}"
     );
-    // A spread makes the arity a runtime fact, so the call must record no declared-slot binding rather than
-    // asserting an identity slot map nobody checked.
+    let targets = named_targets(&module, "m");
+    let target = targets.first().ok_or("missing rest call")?;
     assert!(
-        snapshot.contains("call fn:log unbound(*clone(_0))"),
-        "a spread call must be unbound and carry the spliced source's ownership fact: {snapshot}"
+        matches!(&target.binding, bir::ArgumentBinding::Resolved { arguments, defaulted_slots } if arguments.len() == 1 && defaulted_slots.is_empty()),
+        "the packed list must fill exactly its declared rest slot: {snapshot}"
     );
     Ok(())
 }
@@ -1593,8 +1591,6 @@ fn a_positional_call_spread_lowers_without_a_declared_slot_claim() -> Result<(),
 /// Preserve written argument order while shared list and dictionary reads retain caller storage.
 #[test]
 fn a_mixed_call_keeps_every_written_argument_form() -> Result<(), Box<dyn std::error::Error>> {
-    // The issue's combined form. A named argument here has no declared slot to bind to, because the spread
-    // makes the arity a runtime fact -- but discarding its name would lose source information.
     let source = "def log(a: int, b: int, *items: int, **fields: int) -> None:\n  return\n\ndef m(xs: list[int], kw: dict[str, int]) -> None:\n  log(1, *xs, b=2, **kw)\n  return\n";
     let module = build(source, &["m", "call_mixed"])?;
     let snapshot = module.render_snapshot();
@@ -1604,8 +1600,13 @@ fn a_mixed_call_keeps_every_written_argument_form() -> Result<(), Box<dyn std::e
         "the combined call form must lower: {snapshot}"
     );
     assert!(
-        snapshot.contains("call fn:log unbound(const(1), *clone(_0), b=const(2), **clone(_1))"),
-        "positional, spread, named, and keyword-spread arguments must each keep their written form and order: {snapshot}"
+        snapshot.contains("list[*move(") && snapshot.contains("dict[**move(") && !snapshot.contains("unbound"),
+        "sequence and mapping spreads must stay in their respective packed collections: {snapshot}"
+    );
+    let targets = named_targets(&module, "m");
+    let target = targets.first().ok_or("missing mixed rest call")?;
+    assert!(
+        matches!(&target.binding, bir::ArgumentBinding::Resolved { arguments, defaulted_slots } if arguments.len() == 4 && defaulted_slots.is_empty())
     );
     Ok(())
 }
@@ -1621,9 +1622,27 @@ fn a_method_call_spread_lowers_after_the_borrowed_receiver() -> Result<(), Box<d
         !snapshot.contains("unsupported("),
         "a method call spread must lower: {snapshot}"
     );
+    let body = body_named(&module, "m")?;
+    let arguments = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                args,
+                ..
+            } if target.name == "take" => Some(args),
+            _ => None,
+        })
+        .ok_or("missing rest method call")?;
+    assert_eq!(arguments.len(), 2);
     assert!(
-        snapshot.contains("call method:take unbound(borrow(_0), *clone(_1))"),
-        "the receiver stays args[0] and is never spliced: {snapshot}"
+        matches!(&arguments[0], bir::ArgumentElement::One(bir::Operand::Place(read)) if read.fact == bir::OwnershipFact::Borrow && read.place.local_id() == body.param_locals.first().copied())
+    );
+    assert!(
+        snapshot.contains("list[*move(") && !snapshot.contains("unbound"),
+        "{snapshot}"
     );
     Ok(())
 }
