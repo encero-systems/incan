@@ -116,6 +116,12 @@ pub from static_lists import (
     read_static_text_list,
     write_static_text_list,
 )
+pub from static_collections import (
+    read_static_text_int_dict,
+    write_static_text_int_dict,
+    read_static_int_set,
+    write_static_int_set,
+)
 from panic_hook import initialize_panic_hook as initialize_entrypoint
 pub from strings import (
     starts_text,

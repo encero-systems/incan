@@ -58,7 +58,7 @@ pub(super) fn collect_type_aliases(
         .collect()
 }
 
-/// Retain primitive and list literal statics, whose initialization has no user-visible evaluation effects.
+/// Retain primitive and primitive-collection literal statics, whose initialization has no user-visible effects.
 pub(super) fn collect_scalar_statics(program: &ast::Program, type_info: &TypeCheckInfo) -> Vec<bir::StaticDeclaration> {
     program
         .declarations
@@ -68,7 +68,7 @@ pub(super) fn collect_scalar_statics(program: &ast::Program, type_info: &TypeChe
                 return None;
             };
             let ty = semantic_type_from_resolved(type_info.expr_type(storage.value.span)?);
-            let initial = static_literal_initializer(&storage.value.node, &ty)?;
+            let initial = static_initializer(&storage.value, &ty, type_info)?;
             let canonical = type_info
                 .declarations
                 .declaration_identities
@@ -79,54 +79,114 @@ pub(super) fn collect_scalar_statics(program: &ast::Program, type_info: &TypeChe
         .collect()
 }
 
-/// Preserve literal values only in their exact checked primitive or list element carrier.
+/// Recognize the empty `Set()` constructor only from the checker's canonical constructor fact; every other
+/// initializer must be a literal.
+fn static_initializer(
+    value: &ast::Spanned<ast::Expr>,
+    ty: &IncanType,
+    type_info: &TypeCheckInfo,
+) -> Option<bir::StaticInitializer> {
+    let empty_call = match &value.node {
+        ast::Expr::Call(_, type_args, args) => type_args.is_empty() && args.is_empty(),
+        ast::Expr::Constructor(_, args) => args.is_empty(),
+        _ => false,
+    };
+    if empty_call && type_info.resolved_collection_constructor(value.span) == Some(CollectionTypeId::Set) {
+        let [element] = static_collection_arguments(ty, CollectionTypeId::Set)? else {
+            return None;
+        };
+        return hashed_static_carrier(element).then(|| bir::StaticInitializer::Set(Vec::new()));
+    }
+    static_literal_initializer(&value.node, ty)
+}
+
+/// Preserve literal values only in their exact checked primitive carrier or primitive collection element carriers.
 fn static_literal_initializer(value: &ast::Expr, ty: &IncanType) -> Option<bir::StaticInitializer> {
-    match (value, ty) {
-        (
-            ast::Expr::Literal(literal),
-            IncanType::Primitive(
-                IncanPrimitiveType::Int
-                | IncanPrimitiveType::Float
-                | IncanPrimitiveType::Bool
-                | IncanPrimitiveType::Str,
-            ),
-        ) => Some(bir::StaticInitializer::Literal(primitives::lower_checked_literal(
-            literal, ty,
-        ))),
-        (ast::Expr::List(entries), IncanType::Generic { base, args })
-            if collections::from_str(base) == Some(CollectionTypeId::List) =>
-        {
-            let [element] = args.as_slice() else {
+    match value {
+        ast::Expr::Literal(literal) if primitive_static_carrier(ty) => Some(bir::StaticInitializer::Literal(
+            primitives::lower_checked_literal(literal, ty),
+        )),
+        ast::Expr::List(entries) => {
+            let [element] = static_collection_arguments(ty, CollectionTypeId::List)? else {
                 return None;
             };
-            if !matches!(
-                element,
-                IncanType::Primitive(
-                    IncanPrimitiveType::Int
-                        | IncanPrimitiveType::Float
-                        | IncanPrimitiveType::Bool
-                        | IncanPrimitiveType::Str
-                )
-            ) {
+            if !primitive_static_carrier(element) {
                 return None;
             }
             let values = entries
                 .iter()
-                .map(|entry| {
-                    let ast::ListEntry::Element(item) = entry else {
-                        return None;
-                    };
-                    let bir::StaticInitializer::Literal(value) = static_literal_initializer(&item.node, element)?
-                    else {
-                        return None;
-                    };
-                    Some(value)
+                .map(|entry| match entry {
+                    ast::ListEntry::Element(item) => static_literal_constant(&item.node, element),
+                    _ => None,
                 })
                 .collect::<Option<Vec<_>>>()?;
             Some(bir::StaticInitializer::List(values))
         }
+        ast::Expr::Dict(entries) => {
+            let [key, value] = static_collection_arguments(ty, CollectionTypeId::Dict)? else {
+                return None;
+            };
+            if !hashed_static_carrier(key) || !primitive_static_carrier(value) {
+                return None;
+            }
+            let pairs = entries
+                .iter()
+                .map(|entry| match entry {
+                    ast::DictEntry::Pair(entry_key, entry_value) => Some((
+                        static_literal_constant(&entry_key.node, key)?,
+                        static_literal_constant(&entry_value.node, value)?,
+                    )),
+                    ast::DictEntry::Spread(_) => None,
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some(bir::StaticInitializer::Dict(pairs))
+        }
+        ast::Expr::Set(members) => {
+            let [element] = static_collection_arguments(ty, CollectionTypeId::Set)? else {
+                return None;
+            };
+            if !hashed_static_carrier(element) {
+                return None;
+            }
+            let values = members
+                .iter()
+                .map(|member| static_literal_constant(&member.node, element))
+                .collect::<Option<Vec<_>>>()?;
+            Some(bir::StaticInitializer::Set(values))
+        }
         _ => None,
     }
+}
+
+/// Lower one primitive literal element; a nested collection or computed element has no effect-free initializer.
+fn static_literal_constant(value: &ast::Expr, ty: &IncanType) -> Option<bir::Constant> {
+    match static_literal_initializer(value, ty)? {
+        bir::StaticInitializer::Literal(constant) => Some(constant),
+        _ => None,
+    }
+}
+
+/// The type arguments of a checked builtin collection carrier of the expected kind.
+fn static_collection_arguments(ty: &IncanType, expected: CollectionTypeId) -> Option<&[IncanType]> {
+    match ty {
+        IncanType::Generic { base, args } if collections::from_str(base) == Some(expected) => Some(args.as_slice()),
+        _ => None,
+    }
+}
+
+/// A primitive carrier a static literal may hold.
+fn primitive_static_carrier(ty: &IncanType) -> bool {
+    matches!(
+        ty,
+        IncanType::Primitive(
+            IncanPrimitiveType::Int | IncanPrimitiveType::Float | IncanPrimitiveType::Bool | IncanPrimitiveType::Str
+        )
+    )
+}
+
+/// A primitive hash key or set member: floating point lacks Eq and Hash.
+fn hashed_static_carrier(ty: &IncanType) -> bool {
+    primitive_static_carrier(ty) && !matches!(ty, IncanType::Primitive(IncanPrimitiveType::Float))
 }
 
 /// Retain canonical normal-enum layouts from checked annotation and derive facts, never syntax-based type guesses.

@@ -22,12 +22,26 @@ pub def static_slot(declarations: list[StaticDeclaration], value: &GlobalPlace) 
 
 
 pub def static_accessors(ty: PlanType) -> Result[tuple[str, str], str]:
-    """Name persistent primitive and flat-list cells after checked carrier admission."""
+    """
+    Name persistent primitive, flat-list and hashed-collection cells after checked carrier admission.
+
+    The runtime keeps a typed cell per carrier, so a hashed carrier without one stays refused by name.
+    """
     match ty:
         PlanType.List(leaf, depth) =>
             if depth != 1:
                 return Err("unsupported Body IR nested static list carrier")
             return static_list_accessors(leaf)
+        PlanType.Dict(key, value) =>
+            if key == ListLeaf.Str and value == ListLeaf.Int:
+                return Ok(
+                    ("incan_native_runtime::read_static_text_int_dict", "incan_native_runtime::write_static_text_int_dict"),
+                )
+            return Err("unsupported Body IR static dictionary carrier")
+        PlanType.Set(leaf) =>
+            if leaf == ListLeaf.Int:
+                return Ok(("incan_native_runtime::read_static_int_set", "incan_native_runtime::write_static_int_set"))
+            return Err("unsupported Body IR static set carrier")
         PlanType.String =>
             return Ok(("incan_native_runtime::read_static_text", "incan_native_runtime::write_static_text"))
         PlanType.Int => return Ok(("incan_native_runtime::read_static_int", "incan_native_runtime::write_static_int"))

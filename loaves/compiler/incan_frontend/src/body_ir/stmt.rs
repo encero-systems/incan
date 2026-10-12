@@ -330,7 +330,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// `value` by the parser -- see [`Self::lower_field_assignment`]'s docs for the same note on
     /// `IndexAssignmentStmt::compound_op`). The object place is lowered before the index operand, preserving the
     /// established assignment evaluation order in the Rust-emission backend: object, index, then assigned value.
-    /// A write checking resolved to a user-defined `__setitem__` is that method's call, in the same order.
+    /// A write checking resolved to a user-defined `__setitem__` is that method's call, in the same order. Static
+    /// storage is the exception: legacy computes the assigned value before it locks the storage to write the entry, so
+    /// the value is lowered before the index there, and the index is the last read of what it names.
     pub(super) fn lower_index_assignment(
         &mut self,
         index_assignment: &ast::IndexAssignmentStmt,
@@ -350,6 +352,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return;
         }
         let mut place = self.lower_expr_to_place(&index_assignment.object, scope, out);
+        let early_value = place
+            .global()
+            .is_some()
+            .then(|| self.lower_expr_to_operand(&index_assignment.value, scope, out));
         let index_operand = self.lower_expr_to_operand(&index_assignment.index, scope, out);
         place.projection.push(bir::PlaceElem::Index(Box::new(index_operand)));
         if !place.permits_write() {
@@ -360,7 +366,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.push_unsupported_stmt(format!("assignment target `{target}` is not writable"), span, out);
             return;
         }
-        let value = self.lower_expr_to_operand(&index_assignment.value, scope, out);
+        let value = match early_value {
+            Some(value) => value,
+            None => self.lower_expr_to_operand(&index_assignment.value, scope, out),
+        };
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {
                 place,

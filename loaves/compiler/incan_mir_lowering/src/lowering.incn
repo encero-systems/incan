@@ -5580,7 +5580,7 @@ def lower_list_method(
             match arguments[index + 1].as_one():
                 Some(value) => operands.append(boundary_operand(builder, value, parameters[index], span)?)
                 None => return Err("unsupported Body IR list method spread argument")
-    cell = static_list_receiver(builder, arguments, mutable, span)?
+    cell = static_collection_receiver(builder, arguments, mutable, span)?
     mut reference = read_place(plan_place(0, span), false, span)
     match cell:
         Some((_global, receiver)) =>
@@ -5603,7 +5603,7 @@ def lower_list_method(
     return Ok(None)
 
 
-def static_list_receiver(
+def static_collection_receiver(
     mut builder: Builder,
     arguments: &list[RustArgumentElement],
     mutable: bool,
@@ -5613,11 +5613,11 @@ def static_list_receiver(
     if len(arguments) == 0:
         return Err("invalid Body IR static method arity")
     match arguments[0].as_one():
-        Some(RustOperand.Place(read)) => return static_list_place_receiver(builder, read, mutable, span)
+        Some(RustOperand.Place(read)) => return static_place_receiver(builder, read, mutable, span)
         _ => return Ok(None)
 
 
-def static_list_place_receiver(
+def static_place_receiver(
     mut builder: Builder,
     read: &RustPlaceOperand,
     mutable: bool,
@@ -5627,13 +5627,13 @@ def static_list_place_receiver(
     match read.place.global():
         Some(global) =>
             if len(read.place.projection) != 0:
-                return Err("unsupported Body IR projected static list method")
+                return Err("unsupported Body IR projected static collection method")
             if mutable and read.fact != OwnershipFact.MutBorrow:
-                return Err("unsupported Body IR static list method without mutable borrow fact")
+                return Err("unsupported Body IR static collection method without mutable borrow fact")
             operand = read_static(builder, read.place, global, read.fact, span)?
             match operand.kind:
                 OperandKind.Move(place) => return Ok(Some((global.clone(), place)))
-                _ => return Err("unsupported Body IR non-list static method receiver")
+                _ => return Err("unsupported Body IR noncollection static method receiver")
         None => return Ok(None)
 
 
@@ -6198,6 +6198,16 @@ def dictionary_index_read(mut builder: Builder, source: &RustPlace, span: Source
     if len(source.projection) == 0:
         return Err("unsupported Body IR dictionary read without key")
     receiver = list_base_place(builder, source, span)?
+    return dictionary_value_read(builder, source, receiver, span)
+
+
+def dictionary_value_read(
+    mut builder: Builder,
+    source: &RustPlace,
+    receiver: Place,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Look up the place's first key in an already selected dictionary, such as a static's snapshot, then read on."""
     output = read_dictionary_element(builder, receiver, source, 0, span)?
     return projected_element_read(builder, source, output, 1, span)
 
@@ -6276,19 +6286,10 @@ def collection_method(
     """Admit canonical set and dictionary methods with the legacy signatures."""
     if member == "Set.contains" or member == "Dict.contains_key":
         return collection_contains(builder, false, arguments, destination, span)
+    if member == "Set.add" or member == "Dict.insert":
+        return collection_insert_method(builder, member, arguments, span)
     receiver = argument_place(builder, arguments, 0, span)?
     ty = place_type(builder.locals, receiver)
-    types = collection_arguments(ty)
-    if member == "Set.add" or member == "Dict.insert":
-        if len(arguments) != len(types) + 1:
-            return Err(f"unsupported Body IR collection method arity {member}")
-        # Use the shared argument check before creating the short mutable runtime borrow.
-        require_mutable_receiver(arguments)?
-        mut operands: list[Operand] = []
-        for slot in range(len(types)):
-            argument = argument_value(builder, arguments, slot + 1, span)?
-            operands.append(element_plan_operand(builder, argument, types[slot], span)?)
-        return insert_collection(builder, receiver, operands, span)
     if member == "Dict.get" and len(arguments) == 2:
         return optional_dictionary_get(builder, receiver, arguments, destination, span)
     operation, parameters, result = dictionary_method_signature(ty, member, len(arguments))?
@@ -6302,6 +6303,36 @@ def collection_method(
     mut all_operands = [reference]
     all_operands.extend(operands)
     return collection_call(builder, ty, operation, all_parameters, result, all_operands, output, span)
+
+
+def collection_insert_method(
+    mut builder: Builder,
+    member: str,
+    arguments: &list[RustArgumentElement],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Insert the evaluated arguments into a set or dictionary receiver.
+
+    A static receiver's snapshot is read only after the arguments and committed after the insertion, as a static list
+    method's is.
+    """
+    types = collection_arguments(argument_type(builder, arguments, 0, span)?)
+    if len(arguments) != len(types) + 1:
+        return Err(f"unsupported Body IR collection method arity {member}")
+    # Use the shared argument check before creating the short mutable runtime borrow.
+    require_mutable_receiver(arguments)?
+    mut operands: list[Operand] = []
+    for slot in range(len(types)):
+        argument = argument_value(builder, arguments, slot + 1, span)?
+        operands.append(element_plan_operand(builder, argument, types[slot], span)?)
+    match static_collection_receiver(builder, arguments, true, span)?:
+        Some((global, receiver)) =>
+            insert_collection(builder, receiver, operands, span)?
+            return persist_static_value(builder, global, receiver, span)
+        None => pass
+    receiver = argument_place(builder, arguments, 0, span)?
+    return insert_collection(builder, receiver, operands, span)
 
 
 def optional_dictionary_get(
@@ -6934,15 +6965,15 @@ def read_static(
     fact: &OwnershipFact,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Read persistent primitive storage without consuming it, cloning owned list and string values."""
+    """Read persistent storage without consuming it, cloning owned string and collection values."""
     ty = model_type(builder.nominals, global.ty)?
-    if len(value.projection) != 0 and not is_owned_list(ty):
+    if len(value.projection) != 0 and not is_owned_collection(ty):
         return Err("unsupported Body IR static projection")
     slot = static_slot(builder.statics, global)?
-    if is_owned_list(ty):
+    if is_owned_collection(ty):
         if fact != OwnershipFact.Clone and fact != OwnershipFact.Borrow and fact != OwnershipFact.MutBorrow:
             if len(value.projection) == 0 or fact != OwnershipFact.Copy:
-                return Err("unsupported Body IR static list ownership")
+                return Err("unsupported Body IR static collection ownership")
     elif ty == PlanType.String:
         if fact != OwnershipFact.Clone and fact != OwnershipFact.Borrow:
             return Err("unsupported Body IR static string ownership")
@@ -6950,20 +6981,17 @@ def read_static(
         return Err("unsupported Body IR static ownership")
     read_cell, _write_cell = static_accessors(ty)?
     initial = static_initial_operand(builder, builder.statics[slot].initial, ty, span)?
-    mut target = temporary(builder, ty, span)
+    target = temporary(builder, ty, span)
     external_call(builder, read_cell, [PlanType.Int, ty], ty, [literal(Constant.Int(slot), span), initial], target, span)
-    if is_owned_list(ty):
-        builder.owned.append(target.local)
-        for index in range(len(value.projection)):
-            argument = list_index_operand(builder, value, index, span)?
-            target = read_list_element(builder, target, argument, span)?
-    return Ok(
-        read_place(
-            target,
-            place_type(builder.locals, target) == PlanType.String or is_owned_list(place_type(builder.locals, target)),
-            span,
-        ),
-    )
+    if not is_owned_collection(ty):
+        return Ok(read_place(target, ty == PlanType.String, span))
+    builder.owned.append(target.local)
+    # An element read selects from the snapshot, which stays owned until its scope ends.
+    if len(value.projection) == 0:
+        return Ok(read_place(target, true, span))
+    if is_collection(ty):
+        return dictionary_value_read(builder, value, target, span)
+    return projected_element_read(builder, value, target, 0, span)
 
 
 def static_initial_operand(
@@ -6983,6 +7011,43 @@ def static_initial_operand(
             target = temporary(builder, ty, span)
             list_assignment(builder, target, RustRvalue.Aggregate(RustAggregateKind.List, elements), span)?
             return Ok(read_place(target, true, span))
+        RustStaticInitializer.Dict(entries) =>
+            mut keys: list[RustConstant] = []
+            mut values: list[RustConstant] = []
+            for key, value in entries:
+                keys.append(key.clone())
+                values.append(value.clone())
+            return static_hashed_initial(builder, ty, keys, values, span)
+        RustStaticInitializer.Set(members) =>
+            mut keys: list[RustConstant] = []
+            for member in members:
+                keys.append(member.clone())
+            return static_hashed_initial(builder, ty, keys, [], span)
+
+
+def static_hashed_initial(
+    mut builder: Builder,
+    ty: PlanType,
+    keys: list[RustConstant],
+    values: list[RustConstant],
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Build a dictionary from checked literal keys and their values, or a set from its members, in source order."""
+    target = temporary(builder, ty, span)
+    output = begin_collection(builder, target, span)?
+    types = collection_arguments(ty)
+    if len(types) == 2 and len(values) != len(keys):
+        return Err("invalid Body IR static dictionary entries")
+    if len(types) == 1 and len(values) != 0:
+        return Err("invalid Body IR static set members")
+    for index in range(len(keys)):
+        key = element_operand(builder, RustOperand.Constant(keys[index].clone()), types[0], span)?
+        mut operands: list[Operand] = [key]
+        if len(types) == 2:
+            operands.append(element_operand(builder, RustOperand.Constant(values[index].clone()), types[1], span)?)
+        insert_collection(builder, output, operands, span)?
+    finish_collection(builder, target, output, span)
+    return Ok(read_place(target, true, span))
 
 
 def static_literal_element(value: &RustConstant) -> RustArgumentElement:
@@ -7010,15 +7075,51 @@ def write_static(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Evaluate a write before committing it to a checker-authorized persistent cell."""
-    if len(destination.projection) != 0:
-        return Err("unsupported Body IR static projection")
     match global.write_policy:
         RustGlobalWritePolicy.Rebindable => pass
         _ => return Err("unsupported Body IR static write policy")
     ty = model_type(builder.nominals, global.ty)?
+    if len(destination.projection) != 0:
+        if not is_collection(ty):
+            return Err("unsupported Body IR static projection")
+        return write_static_entry(builder, destination, global, value, span)
     target = temporary(builder, ty, span)
     lower_local_assignment(module, builder, target, value, span)?
     return persist_static_value(builder, global, target, span)
+
+
+def write_static_entry(
+    mut builder: Builder,
+    destination: &RustPlace,
+    global: &RustGlobalPlace,
+    value: &RustRvalue,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Write one static dictionary entry: evaluate the value and then the key, insert them into the current snapshot,
+    and commit that snapshot.
+
+    The snapshot is read only after both are evaluated, so a value that itself changes the static is not overwritten
+    by a stale copy.
+    """
+    if len(destination.projection) != 1:
+        return Err("unsupported Body IR nested static dictionary mutation")
+    types = collection_arguments(model_type(builder.nominals, global.ty)?)
+    if len(types) != 2:
+        return Err("unsupported Body IR static set indexing assignment")
+    mut argument = literal(Constant.Unit, span)
+    match value:
+        RustRvalue.Use(operand) =>
+            argument = element_operand(builder, operand, types[1], span)?
+        _ => return Err("unsupported Body IR static dictionary indexed rvalue")
+    mut key = literal(Constant.Unit, span)
+    match destination.projection[0]:
+        PlaceElem.Index(index) =>
+            key = element_operand(builder, index, types[0], span)?
+        _ => return Err("unsupported Body IR static dictionary mutation projection")
+    receiver = list_base_place(builder, destination, span)?
+    insert_collection(builder, receiver, [key, argument], span)?
+    return persist_static_value(builder, global, receiver, span)
 
 
 def persist_static_value(
@@ -7027,7 +7128,7 @@ def persist_static_value(
     target: Place,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Commit an evaluated primitive or list replacement to its exact canonical storage slot."""
+    """Commit an evaluated primitive or collection replacement to its exact canonical storage slot."""
     slot = static_slot(builder.statics, global)?
     ty = model_type(builder.nominals, global.ty)?
     if place_type(builder.locals, target) != ty:
@@ -7039,7 +7140,7 @@ def persist_static_value(
         write_cell,
         [PlanType.Int, ty],
         PlanType.Unit,
-        [literal(Constant.Int(slot), span), read_place(target, ty == PlanType.String or is_owned_list(ty), span)],
+        [literal(Constant.Int(slot), span), read_place(target, ty == PlanType.String or is_owned_collection(ty), span)],
         output,
         span,
     )
