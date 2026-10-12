@@ -7668,6 +7668,7 @@ def read_static(
 ) -> Result[Operand, str]:
     """Read persistent storage without consuming it, cloning owned string and collection values."""
     slot = static_slot(builder.statics, global)?
+    initialize_module_statics(builder, static_owner(builder.statics[slot]), span)
     if is_computed_static(builder.statics[slot]):
         return read_computed_static(builder, value, global, slot, fact, span)
     ty = model_type(builder.nominals, global.ty)?
@@ -7763,25 +7764,38 @@ def computed_static_root(mut builder: Builder, value: &RustPlace, span: SourceSp
             snapshot = load_computed_static(builder, slot, ty, span)
             if len(value.projection) == 0:
                 return Ok(Some(snapshot))
+            if is_owned_collection(ty):
+                selected = projected_element_read(builder, value, snapshot, 0, span)?
+                match selected.kind:
+                    OperandKind.Copy(place) => return Ok(Some(place))
+                    OperandKind.Move(place) => return Ok(Some(place))
+                    _ => return Err("unsupported Body IR computed static element without a place")
             return Ok(Some(snapshot_projection(builder, value, snapshot, span)?))
         None => return Ok(None)
 
 
 def computed_static_type(builder: Builder, value: &RustPlace, global: &RustGlobalPlace) -> Result[PlanType, str]:
     """The checked carrier a computed static place selects, without reading the static."""
-    ty = native_source_type(builder.nominals, builder.enums, builder.unions, global.ty, builder.intrinsics)?
-    if len(value.projection) == 0:
-        return Ok(ty)
-    fields = field_path(
-        builder.nominals,
-        ty,
-        value.projection,
-        len(value.projection),
-        builder.enums,
-        builder.unions,
-        builder.intrinsics,
-    )?
-    return Ok(fields[-1].ty)
+    mut ty = native_source_type(builder.nominals, builder.enums, builder.unions, global.ty, builder.intrinsics)?
+    for projection in value.projection:
+        match projection:
+            PlaceElem.Index(_index) =>
+                if is_collection(ty):
+                    types = collection_arguments(ty)
+                    if len(types) != 2:
+                        return Err("unsupported Body IR computed static set indexing")
+                    ty = types[1]
+                    continue
+                if is_list(ty):
+                    leaf, depth = require_list_shape(ty, "unsupported Body IR computed static list indexing")?
+                    ty = list_element(leaf, depth)
+                    continue
+            PlaceElem.Slice(start=_start, end=_end, step=_step) =>
+                if is_list(ty):
+                    continue
+            _ => pass
+        ty = field_projection(builder.nominals, ty, projection, builder.enums, builder.unions, builder.intrinsics)?.ty
+    return Ok(ty)
 
 
 def snapshot_projection(builder: Builder, value: &RustPlace, snapshot: Place, span: SourceSpan) -> Result[Place, str]:
@@ -7924,7 +7938,9 @@ def write_static_entry(
     """
     if len(destination.projection) != 1:
         return Err("unsupported Body IR nested static dictionary mutation")
-    types = collection_arguments(model_type(builder.nominals, global.ty)?)
+    types = collection_arguments(
+        native_source_type(builder.nominals, builder.enums, builder.unions, global.ty, builder.intrinsics)?,
+    )
     if len(types) != 2:
         return Err("unsupported Body IR static set indexing assignment")
     mut argument = literal(Constant.Unit, span)
@@ -7952,6 +7968,7 @@ def persist_static_value(
     slot = static_slot(builder.statics, global)?
     if is_computed_static(builder.statics[slot]):
         return store_computed_static(builder, global, slot, target, span)
+    initialize_module_statics(builder, static_owner(builder.statics[slot]), span)
     ty = model_type(builder.nominals, global.ty)?
     if place_type(builder.locals, target) != ty:
         return Err("invalid Body IR static replacement carrier")
@@ -7982,7 +7999,7 @@ def store_computed_static(
     """
     ty = native_source_type(builder.nominals, builder.enums, builder.unions, global.ty, builder.intrinsics)?
     if place_type(builder.locals, target) != ty:
-        return Err("invalid Body IR static replacement carrier")
+        return Err("unsupported Body IR computed static replacement carrier")
     initialize_module_statics(builder, static_owner(builder.statics[slot]), span)
     output = temporary(builder, PlanType.Unit, span)
     terminate_call(builder, CalleeKind.StaticStore(slot), [read_place(target, snapshot_owns(ty), span)], output, span)
