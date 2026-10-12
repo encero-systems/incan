@@ -7853,14 +7853,17 @@ model Packet:
     choice: Choice
     maybe: Option[Left]
 
+def copied[T with Clone](value: T) -> T:
+    return value.clone()
+
 def main() -> None:
     packet = Packet(choice=Left(value=1), maybe=Some(Left(value=2)))
     choice = packet.choice.clone()
     maybe = packet.maybe.clone()
     text = "text"
-    println(text.clone())
+    println(copied(text))
     number = 7
-    println(number.clone())
+    println(copied(number))
     println(maybe.unwrap().value)
     match choice:
         Left(left) => println(left.value)
