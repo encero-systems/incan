@@ -10851,6 +10851,7 @@ fn module_derive_default_calls_output_matches_legacy() -> Result<(), Box<dyn std
                 "../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/module_derive_default_method_direct_call/codec.incn"
             ),
         )],
+        b"1\nencoded\n2\nencoded\n3\nencoded\n",
     )
 }
 
@@ -10868,6 +10869,7 @@ fn module_derive_bound_calls_output_matches_legacy() -> Result<(), Box<dyn std::
                 "../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/module_derive_through_import_binding/codec.incn"
             ),
         )],
+        b"1\nencoded\n2\nencoded\n",
     )
 }
 
@@ -10893,6 +10895,7 @@ fn user_module_derivables_output_matches_legacy() -> Result<(), Box<dyn std::err
                 ),
             ),
         ],
+        b"yaml\n{\"value\":1}\nschema\n",
     )
 }
 
