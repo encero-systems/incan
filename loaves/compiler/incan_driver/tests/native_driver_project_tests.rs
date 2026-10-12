@@ -10930,14 +10930,22 @@ fn check_source_modules_case(
         .output()?,
         "native imported declaration compilation",
     );
-    let emission = support::repo_command()
+    let generated = root.join("legacy-project");
+    let reference_build = support::repo_command()
         .current_dir(&root)
-        .arg("--emit-rust")
+        .arg("build")
         .arg(&source)
+        .arg(&generated)
         .output()?;
-    success(&emission, "legacy imported declaration emission");
-    let reference = root.join("reference.rs");
-    fs::write(&reference, emission.stdout)?;
+    assert!(
+        reference_build.status.success()
+            || String::from_utf8_lossy(&reference_build.stderr).contains("cannot find `serde` in the crate root"),
+        "{}",
+        String::from_utf8_lossy(&reference_build.stderr)
+    );
+    // The build command materializes the complete module tree and SDK facade before its missing-extern failure.
+    // Compile those exact files; the debug --emit-rust action emits only one unit with unresolved module markers.
+    let reference = generated.join("src/main.rs");
     let legacy = root.join("legacy");
     success(
         &closure
