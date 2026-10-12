@@ -312,6 +312,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
 
         if let Some(helper) = collection_helper_for_binop(op, lhs_ty, rhs_ty) {
+            let lhs_operand = if matches!(op, ast::BinaryOp::In | ast::BinaryOp::NotIn) {
+                match numeric_destinations::collection_numeric_destination(lhs_ty, rhs_ty) {
+                    Some(carrier) => self.promote_operand(lhs_ty, lhs_operand, &carrier, scope, span, out),
+                    None => lhs_operand,
+                }
+            } else {
+                lhs_operand
+            };
             self.record_runtime_requirement(AbiV0RuntimeRequirement::RuntimeHelper(helper.as_str().to_string()));
             self.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
             // Membership helpers take `(haystack, needle)` while the source reads needle-first, matching the

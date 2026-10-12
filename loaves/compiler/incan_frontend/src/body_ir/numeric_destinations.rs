@@ -1,15 +1,17 @@
-//! Retain checked numeric union member conversions before the plan's exact-member injection boundary.
+//! Retain checked numeric destination carriers before native assignments, calls and collection probes.
 
+use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_lang::numeric_values::numeric_type_losslessly_widens_to;
 
 use super::operators::numeric_carrier_id;
+use super::primitives::collection_member_types;
 use super::{BodyBuilder, IncanType, ast, bir, hir_span};
 
-/// Choose legacy's first eligible member of a closed primitive union, after looking through Option payload layers.
+/// Choose a checked numeric destination or legacy's first eligible closed primitive union member through Option layers.
 ///
 /// An exact numeric carrier needs no conversion. Open generic or nominal member profiles leave the operand unchanged;
 /// no member is chosen before declaration instantiation or canonical type resolution.
-fn numeric_union_member(source: &IncanType, destination: &IncanType) -> Option<IncanType> {
+fn numeric_destination(source: &IncanType, destination: &IncanType) -> Option<IncanType> {
     let source_id = numeric_carrier_id(source)?;
     let mut destination = destination;
     while let IncanType::Generic { base, args } = destination {
@@ -17,6 +19,10 @@ fn numeric_union_member(source: &IncanType, destination: &IncanType) -> Option<I
             break;
         }
         destination = &args[0];
+    }
+    if let Some(target_id) = numeric_carrier_id(destination) {
+        return (source_id != target_id && numeric_type_losslessly_widens_to(source_id, target_id))
+            .then(|| destination.clone());
     }
     let IncanType::Generic { base, args } = destination else {
         return None;
@@ -34,8 +40,19 @@ fn numeric_union_member(source: &IncanType, destination: &IncanType) -> Option<I
         .cloned()
 }
 
+/// Retain the numeric element/key type a checked builtin membership probe compares against.
+///
+/// Lists and sets compare their element type, dictionaries their key type. Non-numeric, unresolved and unsupported
+/// collection shapes select nothing, and the shared lossless-widening registry prevents a narrowing conversion.
+pub(super) fn collection_numeric_destination(source: &IncanType, collection: &IncanType) -> Option<IncanType> {
+    [CollectionTypeId::List, CollectionTypeId::Set, CollectionTypeId::Dict]
+        .into_iter()
+        .find_map(|kind| collection_member_types(collection, kind).and_then(|members| members.first()))
+        .and_then(|member| numeric_destination(source, member))
+}
+
 impl BodyBuilder<'_, '_> {
-    /// Evaluate a boundary value once and retain a numeric union conversion selected by its checked destination.
+    /// Evaluate a boundary value once and retain a numeric conversion selected by its checked destination.
     ///
     /// Explicit destination types belong to bindings and callable slots; otherwise the recorded value destination
     /// covers field writes and constructor fields. Expressions without either fact retain their existing operand.
@@ -52,17 +69,18 @@ impl BodyBuilder<'_, '_> {
             .value_destination_type(expr.span)
             .map(|ty| self.checked_type(ty));
         match destination.or(recorded.as_ref()) {
-            Some(destination) => self.retain_numeric_union_member(expr, operand, destination, scope, out),
+            Some(destination) => self.retain_numeric_destination(expr, operand, destination, scope, out),
             None => operand,
         }
     }
 
-    /// Give an accepted numeric value its selected primitive union-member storage before assignment or call binding.
+    /// Give an accepted numeric value its checked destination or selected primitive union-member storage before
+    /// binding.
     ///
     /// The destination comes from a checked binding, checked callable slot or recorded value destination. Reading an
     /// already materialized temporary's retained type prevents the same value from being adapted twice. The plan then
-    /// receives an exact member and only injects it; no legacy fact, inferred variable type or numeric policy changes.
-    pub(super) fn retain_numeric_union_member(
+    /// receives an exact numeric carrier/member; no legacy fact, inferred variable type or numeric policy changes.
+    pub(super) fn retain_numeric_destination(
         &mut self,
         expr: &ast::Spanned<ast::Expr>,
         operand: bir::Operand,
@@ -78,7 +96,7 @@ impl BodyBuilder<'_, '_> {
                 .map_or_else(|| self.resolve_ty(expr.span), |local| local.ty.clone()),
             _ => self.resolve_ty(expr.span),
         };
-        let Some(member) = numeric_union_member(&source, destination) else {
+        let Some(member) = numeric_destination(&source, destination) else {
             return operand;
         };
         self.push_assign_temp(bir::Rvalue::Use(operand), member, scope, hir_span(expr.span), out)

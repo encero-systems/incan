@@ -177,7 +177,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ///
     /// `mut_slots` marks, by declaration slot, which parameters are declared `mut`; an operand for such a slot goes
     /// through [`Self::borrow_for_mut_parameter`]. A slot past its end, or an empty slice for a surface with no
-    /// declared parameters, is treated as not `mut`. `slot_types` retains numeric union member conversions at checked
+    /// declared parameters, is treated as not `mut`. `slot_types` retains numeric carrier/member conversions at checked
     /// by-value parameter boundaries; absent slot types use the recorded value destination, as constructor fields do.
     pub(super) fn lower_planned_args(
         &mut self,
