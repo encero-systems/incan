@@ -9819,6 +9819,32 @@ def main() -> None:
     )
 }
 
+/// Frozen lists retain static storage, owned string reads, ordered iteration, and repeated observations.
+#[test]
+fn stdlib_frozen_lists_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("stdlib-frozen-lists")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"const EMPTY: FrozenList[int] = []
+const NUMBERS: FrozenList[int] = [3, 1, 2]
+const NAMES: FrozenList[str] = ["alpha", "beta"]
+
+def main() -> None:
+    println(len(EMPTY))
+    println(len(NUMBERS))
+    println(NAMES[-1])
+    for number in NUMBERS:
+        println(number)
+    for name in NAMES:
+        println(name)
+    println(len(NUMBERS))
+"#,
+    )
+}
+
 /// A closed SDK collection keeps its type arguments through construction, mutation, length, and returned values.
 #[test]
 fn stdlib_generic_collection_methods_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
