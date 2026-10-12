@@ -59,7 +59,13 @@ from pub::incan_mir_plan import assign as plan_assign, place as plan_place
 from bytes_plan import bytes_literal
 from text_ownership import drop_borrowed_text_temporaries
 from decimal_plan import decimal_literal, decimal_comparison, is_decimal_literal
-from frozen_plan import frozen_literal, literal_text, frozen_bytes_literal, frozen_collection_literal
+from frozen_plan import (
+    frozen_literal,
+    literal_text,
+    frozen_bytes_literal,
+    frozen_collection_literal,
+    frozen_observation_type,
+)
 from loop_exits import exits_to
 from trait_links import (
     is_well_formed_module_implementation,
@@ -570,7 +576,7 @@ def target_read(mut builder: Builder, target: Place, fact: &OwnershipFact, span:
                 return Err("unsupported Body IR move out of a borrowed value")
             return Ok(Operand(kind=OperandKind.Move(target), span=span))
         OwnershipFact.Clone =>
-            if place_type(builder.locals, target) in [PlanType.FrozenStr, PlanType.FrozenBytes]:
+            if frozen_observation_type(place_type(builder.locals, target)):
                 return Ok(read_place(target, false, span))
             # A checked clone of an open parameter becomes Rust's copy-valued Clone on concrete scalar instances.
             ty = place_type(builder.locals, target)
@@ -586,7 +592,7 @@ def target_read(mut builder: Builder, target: Place, fact: &OwnershipFact, span:
                 return Ok(read_place(cloned, true, span))
             return clone_nominal_operand(builder, target, span)
         OwnershipFact.Borrow =>
-            if place_type(builder.locals, target) in [PlanType.FrozenStr, PlanType.FrozenBytes]:
+            if frozen_observation_type(place_type(builder.locals, target)):
                 return Ok(read_place(target, false, span))
             if is_tuple_type(place_type(builder.locals, target)):
                 return clone_tuple_operand(builder, target, span)

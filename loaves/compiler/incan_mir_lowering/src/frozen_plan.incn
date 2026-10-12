@@ -7,6 +7,15 @@ from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, temporary, read_place, text_literal
 
 
+pub def frozen_observation_type(ty: PlanType) -> bool:
+    """Recognize immutable static carriers whose read-only wrapper observations own no allocation."""
+    match ty:
+        PlanType.FrozenStr => return true
+        PlanType.FrozenBytes => return true
+        PlanType.FrozenCollection(_name, _elements) => return true
+        _ => return false
+
+
 pub def frozen_collection_literal(mut builder: Builder, value: &RustConstant, span: SourceSpan) -> Result[Operand, str]:
     """Admit only a retained checked static aggregate; each nested value keeps its own storage type."""
     match value:
