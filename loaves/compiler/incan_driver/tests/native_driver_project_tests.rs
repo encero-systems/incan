@@ -3564,6 +3564,102 @@ def main() -> None:
     )
 }
 
+/// Prove carrier patterns and injections byte-identical to legacy: payload patterns that test a literal, a nested
+/// `Option` or `None`; alternations over carriers and fieldless enums, with and without shared bindings, also over a
+/// tuple; a value written into a nested `Option` or a narrower integer written into an `Option`, wrapped in each layer;
+/// `Option` defaults on model fields and parameters; and `unwrap_or` on a model field and on a list element.
+#[test]
+fn carrier_pattern_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("carrier-pattern")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"enum Status:
+    Pending
+    Retrying
+    Done
+
+model Counter:
+    count: Option[int] = None
+    name: Option[str] = None
+
+def describe(result: Result[Option[int], str]) -> str:
+    match result:
+        Ok(Some(0)) => return "zero"
+        Ok(Some(value)) => return f"{value}"
+        Ok(None) => return "empty"
+        Err(message) => return f"failed:{message}"
+
+def switch(flag: Option[bool]) -> str:
+    match flag:
+        Some(true) => return "on"
+        Some(false) => return "off"
+        None => return "unset"
+
+def nested(value: Option[Option[int]]) -> str:
+    match value:
+        Some(Some(inner)) => return f"inner {inner}"
+        Some(None) => return "inner none"
+        None => return "none"
+
+def greet(name: Option[str]) -> str:
+    match name:
+        Some("alice") | Some("bob") => return "friend"
+        Some(other) => return f"stranger {other}"
+        None => return "nobody"
+
+def label(status: Status) -> str:
+    match status:
+        Status.Pending | Status.Retrying => return "waiting"
+        Status.Done => return "done"
+
+def first(result: Result[int, int]) -> int:
+    if let Ok(value) | Err(value) = result:
+        return value
+    return 0
+
+def either_side(pair: tuple[str, str]) -> str:
+    match pair:
+        (x, "a") | ("b", x) => return x
+        _ => return "none"
+
+def unwrap_twice(value: Option[Option[int]]) -> int:
+    return value.unwrap().unwrap_or(0)
+
+def label_or(name: Option[str] = None) -> str:
+    return name.unwrap_or("anonymous")
+
+def main() -> None:
+    println(describe(Ok(Some(0))))
+    println(describe(Ok(Some(4))))
+    println(describe(Ok(None)))
+    println(describe(Err("disk")))
+    println(f"{switch(Some(true))} {switch(Some(false))} {switch(None)}")
+    println(f"{nested(Some(Some(3)))} {nested(Some(None))} {nested(None)}")
+    println(f"{greet(Some("bob"))} {greet(Some("eve"))} {greet(None)}")
+    println(f"{label(Status.Retrying)} {label(Status.Done)}")
+    println(f"{first(Ok(1))} {first(Err(2))}")
+    println(f"{either_side(("q", "a"))} {either_side(("b", "r"))} {either_side(("c", "d"))}")
+    a: Option[Option[int]] = 5
+    println(a.unwrap().unwrap())
+    mut b: Option[Option[list[int]]] = None
+    b = []
+    println(len(b.unwrap().unwrap()))
+    println(unwrap_twice(6))
+    small: i8 = -5
+    maybe: Option[int] = small
+    println(maybe.unwrap_or(0))
+    counter = Counter(count=1)
+    println(f"{counter.count.unwrap_or(0)} {counter.name.unwrap_or("none")}")
+    slots: list[Option[int]] = [Some(7)]
+    println(slots[0].unwrap_or(0))
+    println(f"{label_or()} {label_or(Some("kim"))}")
+"#,
+    )
+}
+
 /// Prove closure captures beyond `int`, `float` and `bool` byte-identical to legacy: an `f32` and an `i32` capture
 /// keep their carrier, and a captured `str` stays owned by the closure across repeated calls while the captured
 /// local is still read after the closure is built.
