@@ -11079,37 +11079,99 @@ fn dictionary_value_mutation_output_matches_legacy() -> Result<(), Box<dyn std::
     )
 }
 
-/// Mutating model loop-item calls embedded in expressions preserve the retained element.
+/// The remaining model enumerate source-view gap stays refused after model tuple layouts are admitted.
 #[test]
-fn model_loop_item_expression_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    check_collection_family_source(
+fn model_derived_iteration_refusal_is_retained() -> Result<(), Box<dyn std::error::Error>> {
+    check_collection_family_refusal(
         "model-loop-item-expression",
         include_str!(
             "../../incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/mut_self_call_on_a_loop_item_inside_an_expression.incn"
         ),
+        "unsupported Body IR enumerate nested element layout",
     )
 }
 
-/// A comprehension's changed list, dictionary and model items retain legacy storage behavior.
+/// Derived comprehension mutation remains refused until its source storage is retained rather than copied.
 #[test]
-fn comprehension_element_mutation_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    check_collection_family_source(
+fn comprehension_derived_iteration_refusal_is_retained() -> Result<(), Box<dyn std::error::Error>> {
+    check_collection_family_refusal(
         "comprehension-element-mutation",
         include_str!(
             "../../incan_test_support/fixtures/behavior/ownership_values_and_fields/comprehensions_changing_their_items.incn"
         ),
+        "unsupported Body IR enumerate nested element layout",
     )
 }
 
-/// Callable tuple/list elements and generic value aliases preserve both source and alias bindings.
+/// The traits-owned callable binder fact remains explicit on a base that does not contain its normalization fix.
 #[test]
-fn generic_callable_alias_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    check_collection_family_source(
+fn generic_callable_binder_refusal_is_retained() -> Result<(), Box<dyn std::error::Error>> {
+    check_collection_family_refusal(
         "generic-callable-alias",
         include_str!(
             "../../incan_test_support/fixtures/behavior/codegen_models_and_collections/generic_value_aliases_keep_both_bindings.incn"
         ),
+        "unsupported Body IR nominal type T in preserve_callable_alias",
     )
+}
+
+/// Concrete callable tuple/list aliases keep their source and alias pointers readable and callable.
+#[test]
+fn callable_tuple_list_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_collection_family_source(
+        "callable-tuple-list",
+        r#"def double(value: int) -> int:
+    return value * 2
+
+def preserve(mapper: (int) -> int) -> tuple[(int) -> int, (int) -> int]:
+    alias = mapper
+    return (mapper, alias)
+
+def mappers(mapper: (int) -> int) -> list[(int) -> int]:
+    original = [mapper]
+    alias = original
+    println(len(original))
+    return alias
+
+def main() -> None:
+    pair = preserve(double)
+    first = pair[0]
+    second = pair[1]
+    println(first(2))
+    println(second(3))
+    values = mappers(double)
+    copied = values
+    println(len(values))
+    last = copied[0]
+    println(last(4))
+"#,
+    )
+}
+
+/// Retain the exact next-stage refusal on an original source without claiming that fixture completed.
+fn check_collection_family_refusal(case: &str, source: &str, message: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch(case)?;
+    let path = root.join("refusal.incn");
+    fs::write(&path, source)?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let binary = root.join("native");
+    let refused = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &path,
+        &binary,
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains(message),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(!binary.exists());
+    Ok(())
 }
 
 /// Compare an original collection-family source with legacy in its own case directory.
