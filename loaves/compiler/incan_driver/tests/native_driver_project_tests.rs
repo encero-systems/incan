@@ -8995,6 +8995,7 @@ fn enum_json_serialization_output_matches_legacy() -> Result<(), Box<dyn std::er
         &fixture.sysroot,
         &fixture.formatting,
         r#"from std.serde import json
+from rust::serde import Serialize as RustSerialize
 
 @derive(Clone, json.Serialize)
 enum Color:
