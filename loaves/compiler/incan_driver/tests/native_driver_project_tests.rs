@@ -10015,6 +10015,60 @@ def main() -> None:
     )
 }
 
+/// Self-typed arguments read the owner's declared storage slots, including inside explicit comparison methods.
+#[test]
+fn self_field_identity_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("self-field-identity")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"model Cell:
+    value: int
+
+    def total(self, other: Self) -> int:
+        return self.value + other.value
+
+    def __eq__(self, other: Self) -> bool:
+        return self.value == other.value
+
+def main() -> None:
+    left = Cell(value=2)
+    right = Cell(value=3)
+    println(left.total(right))
+    println(left.__eq__(right))
+"#,
+    )
+}
+
+/// A method partial closes its owner independently at each checked instantiation and honors an explicit preset
+/// override.
+#[test]
+fn generic_model_method_partial_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("generic-model-method-partial")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"model Wrapper[T]:
+    value: T
+
+    def tag(self, prefix: str) -> str:
+        return prefix
+
+    alias = tag
+    tagged = partial alias(prefix="wrapped")
+
+def main() -> None:
+    println(Wrapper(value=1).tagged())
+    println(Wrapper(value="text").tagged())
+    println(Wrapper(value=2).tagged(prefix="other"))
+"#,
+    )
+}
+
 /// TOML-derived models retain native layout and serde derives; serialization still refuses until the native marker
 /// adoption is represented, pinning that next-stage boundary instead of silently omitting it. The layout output is
 /// pinned to the existing TOML fixture's recorded legacy first line; this runner cannot link legacy's serde derives.

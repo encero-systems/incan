@@ -4,6 +4,59 @@
 
 use super::*;
 
+/// Field reads through self and a Self-typed parameter retain the exact declared storage identity.
+#[test]
+fn self_field_reads_keep_declared_storage_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "model Cell:\n  value: int\n  def add(self, other: Self) -> int:\n    return self.value + other.value\n",
+        &["m", "self_field_identity"],
+    )?;
+    let owner = module.nominal_declarations.first().ok_or("model missing")?;
+    let identity = owner.field_identities.first().ok_or("field identity missing")?;
+    let body = body_named(&module, "add")?;
+    let mut projections = 0;
+    for statement in &body.block.stmts {
+        if let bir::StatementKind::Assign {
+            rvalue: bir::Rvalue::BinaryOp(_, left, right),
+            ..
+        } = &statement.kind
+        {
+            for operand in [left, right] {
+                if let bir::Operand::Place(read) = operand {
+                    for projection in &read.place.projection {
+                        if let bir::PlaceElem::Field { canonical, .. } = projection {
+                            assert_eq!(canonical.as_ref(), Some(identity), "{module:#?}");
+                            projections += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(projections, 2, "{module:#?}");
+    Ok(())
+}
+
+/// A generic owner's method partial carries the same receiver and parameter types as its target frame.
+#[test]
+fn generic_method_partials_retain_owner_frames() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "model Wrapper[T]:\n  value: T\n  def tag(self, prefix: str) -> str:\n    return prefix\n  tagged = partial tag(prefix=\"wrapped\")\n",
+        &["m", "generic_partial_frames"],
+    )?;
+    let owner = module.nominal_declarations.first().ok_or("generic owner missing")?;
+    let [preset] = owner.method_partial_defaults.as_slice() else {
+        return Err(format!("partial frame missing: {module:#?}").into());
+    };
+    let target = body_named(&module, "tag")?;
+    assert_eq!(preset.frame.params[0].ty, target.params[0].ty);
+    assert!(matches!(
+        preset.frame.params[1].default,
+        bir::CallableParamDefault::Source(_)
+    ));
+    Ok(())
+}
+
 /// TOML bundle aliases expand the checked module's derive metadata, while Descriptor is a checked opt-in without a
 /// Rust derive macro; neither spelling may leak into the direct runtime's native derive list.
 #[test]
