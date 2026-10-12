@@ -80,6 +80,9 @@ pub model Builder:
     pub name: str
     pub synthesized: list[Function]
     pub step_element: Option[PlanType] = None
+    # A default computation lowered on behalf of a construction or call reports that site's span for its statements,
+    # since its own spans belong to the declaring module's source.
+    pub anchor: Option[SourceSpan] = None
 
     def new_block(mut self, span: SourceSpan) -> int:
         """Allocate a block before connecting edges, preserving index stability."""

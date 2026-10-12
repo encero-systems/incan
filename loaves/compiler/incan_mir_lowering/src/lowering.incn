@@ -928,7 +928,11 @@ def lower_block(module: &BodyIrModule, mut builder: Builder, block: &RustBlock) 
 
 pub def lower_statement(module: &BodyIrModule, mut builder: Builder, statement: &RustStatement) -> Result[None, str]:
     """Preserve statement order and refuse constructs outside the supported slice."""
-    span = location(statement.span, builder.source, builder.file)
+    mut span = location(statement.span, builder.source, builder.file)
+    match builder.anchor:
+        Some(site) =>
+            span = site
+        None => pass
     match statement.kind:
         RustStatementKind.Assign(place=destination, rvalue=value) =>
             return lower_assignment(module, builder, destination, value, span)

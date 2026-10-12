@@ -115,8 +115,12 @@ pub def evaluate_default(
                     ),
                 )
             builder.local_offset = offset
+            # The computation runs for this construction or call, so its statements report that site.
+            anchor = builder.anchor
+            builder.anchor = Some(span)
             for statement in computation.stmts:
                 lower_statement(module, builder, statement)?
+            builder.anchor = anchor
             result = call_argument_operand(builder, computation.result, ty, span, false)?
             mut result_owner = -1
             match result.kind:
@@ -149,7 +153,7 @@ def borrowed_default_owner(mut builder: Builder, value: &RustOperand, span: Sour
 
 
 pub def default_type(ty: PlanType) -> Result[None, str]:
-    """Admit scalar, string and borrowed list or hashed-collection default representations."""
+    """Admit scalar, string, enum-carried and borrowed list or hashed-collection default representations."""
     if is_list(ty) or is_collection(ty):
         return Ok(None)
     match ty:
@@ -157,4 +161,6 @@ pub def default_type(ty: PlanType) -> Result[None, str]:
         PlanType.Float => return Ok(None)
         PlanType.Bool => return Ok(None)
         PlanType.String => return Ok(None)
+        # Option, Result and source enum values move out of the default's frame like any owned result.
+        PlanType.Enum(_owner, _name) => return Ok(None)
         _ => return Err("unsupported Body IR defaulted parameter type")

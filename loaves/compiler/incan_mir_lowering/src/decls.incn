@@ -53,34 +53,40 @@ pub def lower_model_declarations(module: &BodyIrModule, file: str, intrinsics: l
     unions = collect_unions(module)
     mut models: list[ModelDeclaration] = []
     for declaration in module.nominal_declarations:
-        if declaration.has_field_defaults and "Default" in declaration.derives:
+        item = library_item(declaration)
+        # A stdlib layout's derives are its crate's; only a declared layout must not derive Default over defaults.
+        if item == "" and declaration.has_field_defaults and "Default" in declaration.derives:
             return Err(f"unsupported Body IR derived Default over field defaults on {declaration.name}")
         mut fields: list[Parameter] = []
-        for slot in range(len(declaration.fields)):
-            fields.append(
-                Parameter(
-                    name=str(declaration.fields[slot]),
-                    ty=native_source_type(
-                        module.nominal_declarations,
-                        module.enum_declarations,
-                        unions,
-                        declaration.field_types[slot],
-                        intrinsics,
-                    )?,
-                    span=SourceSpan(file=file, line=1, column=1),
-                ),
-            )
-        item = library_item(declaration)
+        mut field_public = declaration.field_public
         mut derives = declaration.derives
         if item != "":
+            fields = library_fields(module, declaration, file, intrinsics)
+            if len(fields) != len(declaration.fields):
+                field_public = []
             # The SDK crate already derives and implements everything its layout carries.
             derives = []
+        else:
+            for slot in range(len(declaration.fields)):
+                fields.append(
+                    Parameter(
+                        name=str(declaration.fields[slot]),
+                        ty=native_source_type(
+                            module.nominal_declarations,
+                            module.enum_declarations,
+                            unions,
+                            declaration.field_types[slot],
+                            intrinsics,
+                        )?,
+                        span=SourceSpan(file=file, line=1, column=1),
+                    ),
+                )
         models.append(
             ModelDeclaration(
                 name=str(declaration.name),
                 public=declaration.public or item != "",
                 fields=fields,
-                field_public=declaration.field_public,
+                field_public=field_public,
                 derives=derives,
                 source_name=str(declaration.canonical.declaration_name),
                 span=SourceSpan(file=file, line=1, column=1),
@@ -88,6 +94,37 @@ pub def lower_model_declarations(module: &BodyIrModule, file: str, intrinsics: l
             ),
         )
     return Ok(models)
+
+
+def library_fields(
+    module: &BodyIrModule,
+    declaration: &NominalDeclaration,
+    file: str,
+    intrinsics: list[EnumDeclaration],
+) -> list[Parameter]:
+    """
+    A stdlib layout's fields when the plan can carry every one of them, otherwise none.
+
+    A layout without fields is opaque: its values move and drop as the SDK crate's own type. Reading a field whose type
+    the plan cannot carry refuses while lowering; the driver's plan validation rejects any projection into an opaque
+    layout.
+    """
+    unions = collect_unions(module)
+    mut fields: list[Parameter] = []
+    for slot in range(len(declaration.fields)):
+        match native_source_type(
+            module.nominal_declarations,
+            module.enum_declarations,
+            unions,
+            declaration.field_types[slot],
+            intrinsics,
+        ):
+            Ok(ty) =>
+                fields.append(
+                    Parameter(name=str(declaration.fields[slot]), ty=ty, span=SourceSpan(file=file, line=1, column=1)),
+                )
+            Err(_reason) => return []
+    return fields
 
 
 def library_item(declaration: &NominalDeclaration) -> str:

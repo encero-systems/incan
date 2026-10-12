@@ -119,6 +119,10 @@ fn checked_modules(path: &Path) -> Result<CheckedProgram, String> {
             .flat_map(|module| &module.stdlib_delegations)
             .any(|forwarder| forwarder.canonical == call.canonical)
     });
+    let library_layouts = library_layouts
+        .into_iter()
+        .map(|layout| published_layout(&session.provider_plan, layout))
+        .collect();
     let libraries = library_modules(library_layouts, library_calls);
     let entry = entry + libraries.len();
     files.splice(0..0, libraries.iter().map(|module| module.module_id.path().to_owned()));
@@ -152,6 +156,29 @@ fn library_modules(
         }
     }
     owners.into_values().collect()
+}
+
+/// Prefer the SDK package's published record for a stdlib layout with field defaults, which carries the checked default
+/// computations a construction runs for omitted fields. A layout the package does not publish keeps its source record,
+/// whose missing defaults refuse an omitted field rather than guess at it.
+fn published_layout(
+    plan: &incan_frontend::provider::ProviderPlan,
+    layout: incan_semantics_core::body_ir::NominalDeclaration,
+) -> incan_semantics_core::body_ir::NominalDeclaration {
+    if !layout.has_field_defaults {
+        return layout;
+    }
+    let required = std::iter::once(layout.canonical.clone()).collect();
+    incan_frontend::executable_resolution::resolve_sdk_requirements(plan, &required)
+        .ok()
+        .and_then(|resolved| {
+            resolved
+                .modules
+                .into_iter()
+                .flat_map(|module| module.nominal_declarations)
+                .find(|published| published.canonical == layout.canonical)
+        })
+        .unwrap_or(layout)
 }
 
 /// The declaration-only module owning one stdlib identity, or nothing when that identity already travels.

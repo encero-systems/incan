@@ -127,7 +127,27 @@ pub fn resolve_executable_requirements(
     if required.is_empty() {
         return Ok(ResolvedExecutableModules::default());
     }
-    let catalog = package_catalog(plan)?;
+    resolve_from_catalog(&package_catalog(plan)?, required)
+}
+
+/// Resolve published records of active SDK packages, which the native route links as crates but still needs as checked
+/// declarations, such as a stdlib model's field defaults. The same version, coverage and digest checks apply; nothing
+/// is executed and no source is consulted.
+pub fn resolve_sdk_requirements(
+    plan: &ProviderPlan,
+    required: &BTreeSet<CanonicalSymbolId>,
+) -> Result<ResolvedExecutableModules, ExecutableResolutionError> {
+    if required.is_empty() {
+        return Ok(ResolvedExecutableModules::default());
+    }
+    resolve_from_catalog(&sdk_catalog(plan), required)
+}
+
+/// Load every required declaration and its published closure from one package catalog.
+fn resolve_from_catalog(
+    catalog: &BTreeMap<String, PackageArtifact>,
+    required: &BTreeSet<CanonicalSymbolId>,
+) -> Result<ResolvedExecutableModules, ExecutableResolutionError> {
     let mut opened = BTreeMap::new();
     let mut pending = required.clone();
     let mut visited = BTreeSet::new();
@@ -225,6 +245,21 @@ pub fn resolve_executable_requirements(
     }
     resolved.modules = modules.into_values().collect();
     Ok(resolved)
+}
+
+/// Active SDK packages that publish a materialized artifact, by package name.
+fn sdk_catalog(plan: &ProviderPlan) -> BTreeMap<String, PackageArtifact> {
+    plan.active_sdk_records()
+        .filter_map(|provider| {
+            Some((
+                provider.identity.name.clone(),
+                PackageArtifact {
+                    manifest: (**provider.manifest.as_ref()?).clone(),
+                    metadata: provider.artifact.clone()?,
+                },
+            ))
+        })
+        .collect()
 }
 
 /// Select from the shared provider plan's admitted artifacts; dependency edges are not traversed a second time.

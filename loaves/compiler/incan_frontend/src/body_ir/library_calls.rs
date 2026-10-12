@@ -92,6 +92,62 @@ fn library_call(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Opt
     })
 }
 
+/// The stdlib models and classes a called stdlib function or method names in its signature, declared in its own
+/// module, under the callee's package origin.
+///
+/// A name in a stdlib signature is resolved where the stdlib source wrote it, never in the consumer's scope, so a
+/// type that reaches the consumer only through a call, such as a method's `Result` error, keeps its identity.
+pub(super) fn signature_type_identities(
+    callee: &CanonicalSymbolId,
+    cache: &mut StdlibAstCache,
+) -> Vec<CanonicalSymbolId> {
+    let SymbolOrigin::Package { module_path, .. } = &callee.origin else {
+        return Vec::new();
+    };
+    let Some(call) = library_call(callee, cache) else {
+        return Vec::new();
+    };
+    let path = std::iter::once(stdlib::STDLIB_ROOT.to_owned())
+        .chain(module_path.iter().cloned())
+        .collect::<Vec<_>>();
+    let mut names = BTreeSet::new();
+    for ty in call.parameters.iter().chain(std::iter::once(&call.return_type)) {
+        named_leaves(ty, &mut names);
+    }
+    names
+        .into_iter()
+        .filter_map(|name| {
+            let mut identity = cache.lookup_identity(&path, &name)?;
+            if identity.origin != SymbolOrigin::Module(path.clone())
+                || !matches!(
+                    identity.kind,
+                    SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class
+                )
+            {
+                return None;
+            }
+            identity.origin = callee.origin.clone();
+            Some(identity)
+        })
+        .collect()
+}
+
+/// Collect the nominal names a type mentions, through generic arguments, tuples and references.
+fn named_leaves(ty: &IncanType, names: &mut BTreeSet<String>) {
+    match ty {
+        IncanType::Named(name) => {
+            names.insert(name.clone());
+        }
+        IncanType::Generic { args, .. } | IncanType::Tuple(args) => {
+            for arg in args {
+                named_leaves(arg, names);
+            }
+        }
+        IncanType::Ref(inner) | IncanType::RefMut(inner) => named_leaves(inner, names),
+        _ => {}
+    }
+}
+
 /// Find the nongeneric model or class declaring this method and return its owner name, receiver parameter, ordinary
 /// parameters and result. A static method has no receiver parameter.
 ///
