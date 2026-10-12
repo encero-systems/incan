@@ -1041,6 +1041,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Retain the checker's concrete executable constructor/call type when an open caller context masks it; otherwise
     /// use the contextual expression type. Missing facts remain [`IncanType::Unknown`], never inferred from operands.
+    /// Standard-library Self calls use their additive declared-result fact before the legacy expression type, so
+    /// enclosing operators can validate the same type that the call itself retains.
     /// While one evaluation of a chained value written per target is lowered, that target's types for the value's
     /// nodes come first (see [`Self::type_overrides`]), then the settled type of a `Result` constructor whose open
     /// side its destination fixes (see [`Self::settled_types`]).
@@ -1059,6 +1061,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.type_info
                     .calls
                     .inferred_call_result_types
+                    .get(&(span.start, span.end))
+            })
+            .or_else(|| {
+                self.type_info
+                    .traits
+                    .self_method_result_types
                     .get(&(span.start, span.end))
             })
             .or_else(|| self.type_info.expr_type(span))
