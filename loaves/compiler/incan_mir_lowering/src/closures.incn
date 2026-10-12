@@ -32,8 +32,9 @@ from types import primitive_type
 from classes import function_name
 from collections import is_collection
 from layout_types import native_source_type
-from lists import is_list, list_parameter_type
+from lists import is_list, is_owned_list, list_parameter_type
 from numerics import numeric_carrier
+from generators import generator_type, is_generator_type
 
 
 pub def function_pointer_type(parameters: &list[IncanCallableParam], result: &RustType) -> Result[PlanType, str]:
@@ -43,8 +44,18 @@ pub def function_pointer_type(parameters: &list[IncanCallableParam], result: &Ru
         if parameter.kind != IncanCallableParamKind.Normal or parameter.is_mut:
             return Err("unsupported Body IR function pointer with rest or mutable parameters")
         signature.append(signature_input(callable_component(parameter.ty)?))
-    signature.append(callable_component(result)?)
+    signature.append(callable_result(result)?)
     return Ok(PlanType.FunctionPointer(signature))
+
+
+def callable_result(ty: &RustType) -> Result[PlanType, str]:
+    """Admit a callable's result: any admitted component, or a lazy generator, such as a `flat_map` expansion."""
+    match generator_type(ty):
+        Some(Ok(result)) =>
+            if is_generator_type(result):
+                return Ok(result)
+        _ => pass
+    return callable_component(ty)
 
 
 pub def signature_input(ty: PlanType) -> PlanType:
@@ -186,9 +197,9 @@ pub def closure_constructor(
     for index in range(len(captures)):
         locals.append(Local(ty=captures[index], span=span))
         parameters.append(Parameter(name=f"__incan_capture_{index}", ty=captures[index], span=span))
-        # Owned text moves into the environment; Copy scalars are copied.
+        # Owned text and lists move into the environment; Copy scalars are copied.
         mut capture = OperandKind.Copy(plan_place(index + 1, span))
-        if captures[index] == PlanType.String:
+        if captures[index] == PlanType.String or is_owned_list(captures[index]):
             capture = OperandKind.Move(plan_place(index + 1, span))
         operands.append(Operand(kind=capture, span=span))
     call = TerminatorKind.Call(
@@ -341,7 +352,7 @@ def function_item_identity(
                         if parameters[index].ty != body.params[index].ty or body.params[index].mutable:
                             return Err("unsupported Body IR function-item parameter contract")
                         signature.append(signature_input(callable_component(body.params[index].ty)?))
-                    signature.append(callable_component(body.return_type)?)
+                    signature.append(callable_result(body.return_type)?)
                     # The item names the same plan symbol a direct call to this declaration uses.
                     name = function_name(module, body)
                     return Ok((name, PlanType.FunctionItem(name, signature)))

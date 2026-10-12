@@ -182,17 +182,25 @@ def flat_map_adapter(
     output: Place,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Expand each integer item into a list with a function value and draw that list's items lazily."""
+    """
+    Expand each integer item with a function value and draw the expansion's items lazily.
+
+    An expansion is a list, or a generator whose own items are drawn only as the result is polled.
+    """
     if source_type != PlanType.Generator(ListLeaf.Int, 0):
         return Err("unsupported Body IR generator flat_map element outside int")
     result = builder.locals[output.local].ty
     leaf, depth = require_generator(result)?
     mapped = generator_element(leaf, depth)
-    signature = [PlanType.Int, PlanType.List(leaf, depth + 1)]
+    mut signature = [PlanType.Int, PlanType.List(leaf, depth + 1)]
+    mut name = "flat_map_int_generator"
+    if expands_to_generators(builder, expand, result)?:
+        signature = [PlanType.Int, result]
+        name = "flat_map_int_generators"
     pointer = adapter_callable(builder, expand, signature, span)?
     generator_runtime_call(
         builder,
-        "flat_map_int_generator",
+        name,
         mapped,
         [source_type, PlanType.FunctionPointer(signature)],
         result,
@@ -201,6 +209,14 @@ def flat_map_adapter(
         span,
     )
     return Ok(None)
+
+
+def expands_to_generators(builder: Builder, expand: Operand, result: PlanType) -> Result[bool, str]:
+    """Report whether a `flat_map` function value returns the result's own generator type rather than a list."""
+    match value_type(builder, expand)?:
+        PlanType.FunctionPointer(signature) => return Ok(len(signature) == 2 and signature[1] == result)
+        PlanType.FunctionItem(_name, signature) => return Ok(len(signature) == 2 and signature[1] == result)
+        _ => return Ok(false)
 
 
 def enumerate_adapter(

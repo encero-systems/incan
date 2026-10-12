@@ -4,13 +4,15 @@ from rust::incan_semantics_core::body_ir import (
     GeneratorBody as RustGeneratorBody,
     Operand as RustOperand,
     Rvalue as RustRvalue,
+    Block as RustBlock,
     StatementKind as RustStatementKind,
 )
-from pub::incan_mir_plan import Callee, CalleeKind, Operand, Place, PlanType, RvalueKind, SourceSpan
+from pub::incan_mir_plan import Callee, CalleeKind, ExternalFunction, Operand, Place, PlanType, RvalueKind, SourceSpan
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, temporary, read_place, value_type
+from frame import Builder, temporary, read_place, value_type, terminate_call
 from generators import generator_shape, generator_element, generator_runtime_call
-from lists import list_shape, list_element, is_builtin_iteration
+from lists import list_shape, list_element, is_builtin_iteration, is_owned_list
+from closures import closure_capture_type
 
 
 pub def first_clause_item(body: &RustGeneratorBody) -> Result[int, str]:
@@ -113,45 +115,100 @@ pub def source_item(builder: Builder, source: Operand) -> Result[PlanType, str]:
         None => return Err("invalid native generator expression source")
 
 
-def step_helper(item: PlanType) -> Result[str, str]:
-    """Select the runtime chain whose step takes this first-source item by value, as legacy's callable ABI does."""
+pub def later_clause(block: &RustBlock) -> bool:
+    """Report whether a step body opens another `for` clause, which yields many elements for one item."""
+    for statement in block.stmts:
+        if opens_clause(statement.kind):
+            return true
+    return false
+
+
+def opens_clause(kind: &RustStatementKind) -> bool:
+    """Find a loop directly in the step or under one of its filters."""
+    match kind:
+        RustStatementKind.Loop(body=_body) => return true
+        RustStatementKind.If(cond=_condition, then_block=then_body, else_block=else_body) =>
+            if later_clause(then_body):
+                return true
+            match else_body:
+                Some(nested) => return later_clause(nested)
+                None => return false
+        _ => return false
+
+
+def item_family(item: PlanType) -> Result[str, str]:
+    """Name the runtime chain family for a first-source item the step takes by value."""
     match item:
-        PlanType.Int => return Ok("int_step_generator")
-        PlanType.Float => return Ok("float_step_generator")
-        PlanType.Bool => return Ok("bool_step_generator")
-        _ => return Err("unsupported Body IR generator expression item outside int, float and bool")
+        PlanType.Int => return Ok("int")
+        PlanType.Float => return Ok("float")
+        PlanType.Bool => return Ok("bool")
+        PlanType.String => return Ok("str")
+        _ => return Err("unsupported Body IR generator expression item outside int, float, bool and str")
+
+
+pub def step_capture_type(ty: PlanType) -> bool:
+    """
+    Admit a capture the step's environment can hand to every call: a Copy scalar, owned text, or an owned list.
+
+    Text and lists are cloned out of the environment for each call, because the step runs once per item.
+    """
+    return closure_capture_type(ty) or is_owned_list(ty)
+
+
+pub def step_pointer(mut builder: Builder, step: str, signature: list[PlanType], span: SourceSpan) -> Operand:
+    """Reify the lifted step as the function pointer a capture-free chain calls."""
+    function = temporary(builder, PlanType.FunctionItem(step, signature), span)
+    builder.emit(plan_assign(function, RvalueKind.FunctionItem(Callee(kind=CalleeKind.Planned(step), span=span)), span))
+    pointer = temporary(builder, PlanType.FunctionPointer(signature), span)
+    builder.emit(plan_assign(pointer, RvalueKind.ReifyFunction(read_place(function, false, span)), span))
+    return read_place(pointer, false, span)
 
 
 pub def construct_chain(
     mut builder: Builder,
     source: Operand,
-    step: str,
+    step: Operand,
     output: Place,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Reify the lifted step and expand the source through it; nothing is polled until a consumer asks."""
+    """
+    Expand the source through the step; nothing is polled until a consumer asks.
+
+    A scalar item's capture-free step is the function pointer legacy's own chain calls. A text item's step, or one
+    holding captures in its boxed environment, goes through the chain that takes any callable of the item.
+    """
     item = source_item(builder, source)?
+    family = item_family(item)?
     result = builder.locals[output.local].ty
+    callable = value_type(builder, step)?
+    source_type = value_type(builder, source)?
     match generator_shape(result):
         Some((leaf, depth)) =>
-            helper = step_helper(item)?
-            signature = [item, result]
-            function = temporary(builder, PlanType.FunctionItem(step, signature), span)
-            builder.emit(
-                plan_assign(function, RvalueKind.FunctionItem(Callee(kind=CalleeKind.Planned(step), span=span)), span),
+            element = generator_element(leaf, depth)
+            if callable == PlanType.FunctionPointer([item, result]) and family != "str":
+                name = f"{family}_step_generator"
+                generator_runtime_call(
+                    builder,
+                    name,
+                    element,
+                    [source_type, callable],
+                    result,
+                    [source, step],
+                    output,
+                    span,
+                )
+                return Ok(None)
+            path = f"incan_native_runtime::{family}_callable_step_generator"
+            builder.externals.append(
+                ExternalFunction(
+                    path=path,
+                    type_arguments=[element, callable],
+                    parameters=[source_type, callable],
+                    return_type=result,
+                    span=span,
+                ),
             )
-            pointer = temporary(builder, PlanType.FunctionPointer(signature), span)
-            builder.emit(plan_assign(pointer, RvalueKind.ReifyFunction(read_place(function, false, span)), span))
-            generator_runtime_call(
-                builder,
-                helper,
-                generator_element(leaf, depth),
-                [value_type(builder, source)?, PlanType.FunctionPointer(signature)],
-                result,
-                [source, read_place(pointer, false, span)],
-                output,
-                span,
-            )
+            terminate_call(builder, CalleeKind.InstantiatedPair(path, element, callable), [source, step], output, span)
             return Ok(None)
         None => return Err("unsupported Body IR generator expression type")
 

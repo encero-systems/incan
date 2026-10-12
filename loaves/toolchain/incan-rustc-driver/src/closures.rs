@@ -16,6 +16,12 @@ use rustc_middle::{mir, ty};
 use rustc_span::{Ident, Span, Spanned, Symbol};
 use thin_vec::{ThinVec, thin_vec};
 
+/// Report whether a capture of this type moves into the environment and is cloned out for each call: owned text and
+/// owned lists. Every other admitted capture is a Copy scalar.
+pub fn owned_capture(ty: &PlanType) -> bool {
+    matches!(ty, PlanType::String | PlanType::List(_, _))
+}
+
 /// Identify a closure constructor by its one `ClosureBody` call, returning the lifted function and its capture count.
 pub fn constructor(function: &Function) -> Option<(&str, i64)> {
     function.blocks.iter().find_map(|block| match &block.terminator.kind {
@@ -150,8 +156,8 @@ pub fn declaration_body(function: &Function, span: Span) -> Option<Box<ast::Bloc
 ///
 /// rustc retains the closure's `Fn` ABI and by-value capture layout. The call passes each capture, then each input in
 /// order; the lifted function's result is the closure's result. A Copy capture is copied from the shared environment.
-/// Owned text is cloned out of it first, because an `Fn` closure can run again and the lifted function takes its
-/// captures by value.
+/// Owned text and lists are cloned out of it first, because an `Fn` closure can run again and the lifted function takes
+/// its captures by value.
 pub fn callback<'tcx>(
     tcx: TyCtxt<'tcx>,
     def: LocalDefId,
@@ -192,7 +198,7 @@ pub fn callback<'tcx>(
         let owned = constructor_function
             .parameters
             .get(index)
-            .is_some_and(|parameter| parameter.ty == PlanType::String);
+            .is_some_and(|parameter| owned_capture(&parameter.ty));
         let node = if owned {
             let (block, clone) = clone_capture(tcx, &mut body, field, ty, blocks.len() + 1, span)?;
             blocks.push(block);

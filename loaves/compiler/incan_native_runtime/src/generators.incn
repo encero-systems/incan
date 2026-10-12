@@ -3,6 +3,7 @@
 from std.derives.collection import Iterator
 from std.derives.copying import Clone
 from std.rust import Static
+from std.traits.callable import Callable1
 
 
 pub def poll_generator[T with Clone](mut values: Generator[T], mut output: list[T]) -> bool:
@@ -56,6 +57,38 @@ pub def bool_step_generator[T with (Clone, Static)](
     return (value for item in source for value in step(item))
 
 
+pub def int_callable_step_generator[T with (Clone, Static), F with (Callable1[int, Generator[T]], Static)](
+    source: Generator[int],
+    step: F,
+) -> Generator[T]:
+    """Expand each integer source item through a callable step, such as one holding a generator expression's captures."""
+    return (value for item in source for value in step(item))
+
+
+pub def float_callable_step_generator[T with (Clone, Static), F with (Callable1[float, Generator[T]], Static)](
+    source: Generator[float],
+    step: F,
+) -> Generator[T]:
+    """Expand each float source item through a callable step, such as one holding a generator expression's captures."""
+    return (value for item in source for value in step(item))
+
+
+pub def bool_callable_step_generator[T with (Clone, Static), F with (Callable1[bool, Generator[T]], Static)](
+    source: Generator[bool],
+    step: F,
+) -> Generator[T]:
+    """Expand each boolean source item through a callable step, such as one holding a generator expression's captures."""
+    return (value for item in source for value in step(item))
+
+
+pub def str_callable_step_generator[T with (Clone, Static), F with (Callable1[str, Generator[T]], Static)](
+    source: Generator[str],
+    step: F,
+) -> Generator[T]:
+    """Expand each text source item through a callable step that takes the item by value."""
+    return (value for item in source for value in step(item))
+
+
 pub def take_generator[T with (Clone, Static)](values: Generator[T], count: int) -> Generator[T]:
     """Stop after at most `count` items, drawing each only when polled; a negative count yields nothing."""
     return values.take(count)
@@ -91,6 +124,14 @@ pub def flat_map_int_generator[U with (Clone, Static)](
     expand: (int) -> list[U],
 ) -> Generator[U]:
     """Expand each integer item into a list when it is polled and yield that list's items."""
+    return (item for value in values for item in expand(value))
+
+
+pub def flat_map_int_generators[U with (Clone, Static)](
+    values: Generator[int],
+    expand: (int) -> Generator[U],
+) -> Generator[U]:
+    """Expand each integer item into a generator when it is polled and draw that generator's items one at a time."""
     return (item for value in values for item in expand(value))
 
 

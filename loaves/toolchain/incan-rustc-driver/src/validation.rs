@@ -1032,12 +1032,12 @@ fn external_signature_type(ty: &Scalar) -> bool {
 }
 
 /// Callable objects accept scalars of any numeric carrier, text and shared collection views as inputs; their result
-/// remains a scalar or owned text.
+/// remains a scalar or owned text, or an owned generator, which a generator expression's capturing step returns.
 fn callable_object_signature(signature: &[Scalar]) -> bool {
     let Some((result, inputs)) = signature.split_last() else {
         return false;
     };
-    callable_object_value(result)
+    (callable_object_value(result) || matches!(result, Scalar::Generator(_, _)))
         && inputs.iter().all(|ty| {
             callable_object_value(ty) || matches!(ty, Scalar::ListRef(_, _) | Scalar::SetRef(_) | Scalar::DictRef(_, _))
         })
@@ -1096,7 +1096,8 @@ fn validate_closure_constructor(function: &Function) -> Result<(), PlanError> {
     let TerminatorKind::Call(_, arguments, destination, 1, Unwind::Continue) = &first.terminator.kind else {
         return Err(refused());
     };
-    // Each capture is forwarded from its own parameter: owned text moves into the environment, Copy scalars are copied.
+    // Each capture is forwarded from its own parameter: owned text and lists move into the environment, Copy scalars
+    // are copied.
     let forwarded = arguments.iter().enumerate().all(|(index, argument)| {
         let (moved, place) = match &argument.kind {
             OperandKind::Copy(place) => (false, place),
@@ -1106,7 +1107,7 @@ fn validate_closure_constructor(function: &Function) -> Result<(), PlanError> {
         let owned = function
             .parameters
             .get(index)
-            .is_some_and(|parameter| parameter.ty == PlanType::String);
+            .is_some_and(|parameter| crate::closures::owned_capture(&parameter.ty));
         moved == owned
             && matches!(place.projection, Projection::Whole)
             && usize::try_from(place.local).ok() == Some(index + 1)

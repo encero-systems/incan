@@ -144,7 +144,16 @@ from generators import (
     is_generator_reference,
     generator_runtime_call,
 )
-from generator_expressions import first_clause_item, source_generator, source_item, construct_chain, step_result
+from generator_expressions import (
+    first_clause_item,
+    source_generator,
+    source_item,
+    construct_chain,
+    step_result,
+    step_capture_type,
+    step_pointer,
+    later_clause,
+)
 from generator_adapters import is_generator_adapter, generator_adapter, iterator_method, zip_generators
 from pair_generators import pair_generator_locals, pair_generator_type
 from generator_consumers import is_generator_consumer, consumer_result, generator_consumer
@@ -1623,22 +1632,67 @@ def lower_generator_expression(
         return Err("unsupported Body IR projected generator expression")
     if builder.local_offset != 0:
         return Err("unsupported Body IR generator expression inside a lifted or deferred frame")
-    if len(captures) != 0 or len(body.capture_locals) != 0:
-        return Err("unsupported Body IR generator expression capture")
+    if len(captures) != len(body.capture_locals):
+        return Err("invalid Body IR generator expression capture layout")
     item_local = first_clause_item(body)?
     evaluated = value_operand(builder, source, span)?
     first = source_generator(builder, evaluated, span)?
+    # The step's environment holds each capture by value, read once now, as legacy's `move` closure takes it.
+    mut operands: list[Operand] = []
+    mut capture_types: list[PlanType] = []
+    for capture in captures:
+        operand = value_operand(builder, capture, span)?
+        ty = operand_type(builder, operand)?
+        if not step_capture_type(ty):
+            return Err("unsupported Body IR generator expression capture outside scalars, owned text and lists")
+        operands.append(operand)
+        capture_types.append(ty)
+    mut bindings: list[int] = []
+    for local in body.capture_locals:
+        bindings.append(int(local.index()))
     item = source_item(builder, first)?
     name = f"__incan_generator_step_{builder.name}_{len(builder.synthesized)}"
     match body.stmts[1].kind:
         RustStatementKind.Loop(body=block) =>
-            step = lift_generator_step(module, builder, name, item, target, item_local, block, span)?
+            step = lift_generator_step(
+                module,
+                builder,
+                name,
+                item,
+                capture_types,
+                bindings,
+                target,
+                item_local,
+                block,
+                span,
+            )?
             synthesize(builder, step)
         _ => return Err("unsupported Body IR generator expression body shape")
     drop_owned(builder, target.local, span)
-    construct_chain(builder, first, name, target, span)?
+    callable = step_callable(builder, name, item, place_type(builder.locals, target), capture_types, operands, span)
+    construct_chain(builder, first, callable, target, span)?
     builder.owned.append(target.local)
     return Ok(None)
+
+
+def step_callable(
+    mut builder: Builder,
+    name: str,
+    item: PlanType,
+    result: PlanType,
+    captures: list[PlanType],
+    operands: list[Operand],
+    span: SourceSpan,
+) -> Operand:
+    """Pass a capture-free step as its function pointer, and a capturing one as a boxed environment over its captures."""
+    signature = [item, result]
+    if len(captures) == 0:
+        return step_pointer(builder, name, signature, span)
+    synthesize(builder, closure_constructor(f"{name}_new", name, captures, signature, span))
+    environment = temporary(builder, PlanType.Closure(signature), span)
+    terminate_call(builder, CalleeKind.Planned(f"{name}_new"), operands, environment, span)
+    builder.owned.append(environment.local)
+    return read_place(environment, true, span)
 
 
 def lift_generator_step(
@@ -1646,6 +1700,8 @@ def lift_generator_step(
     mut builder: Builder,
     name: str,
     item: PlanType,
+    captures: list[PlanType],
+    capture_locals: list[int],
     target: Place,
     item_local: int,
     block: &RustBlock,
@@ -1654,18 +1710,29 @@ def lift_generator_step(
     """
     Build one generator-expression step: from a first-source item to the generator of that item's accepted element.
 
-    The step binds the item to the local the deferred body polls into, then lowers every statement after that poll; a
-    yield returns its element and falling through returns an empty generator.
+    The step takes the expression's captures, then the item, as a capturing closure's lifted function does. It binds
+    each to the local the deferred body reads, then lowers every statement after the item's poll; a yield returns its
+    element and falling through returns an empty generator.
     """
+    # A later `for` clause yields many elements for one item, where a step returns at most one.
+    if later_clause(block):
+        return Err("unsupported Body IR generator expression with a later for clause")
     result = place_type(builder.locals, target)
     match generator_shape(result):
         Some((leaf, depth)) =>
-            mut lifted = lifted_frame(builder, name, [item], result, span)
+            mut arguments: list[PlanType] = []
+            mut bindings: list[int] = []
+            for index in range(len(captures)):
+                arguments.append(captures[index])
+                bindings.append(capture_locals[index])
+            arguments.append(item)
+            bindings.append(item_local)
+            mut lifted = lifted_frame(builder, name, arguments, result, span)
             lifted.step_element = Some(generator_element(leaf, depth))
-            binding = plan_place(item_local + 2, span)
-            if place_type(lifted.locals, binding) != item:
-                return Err("unsupported Body IR generator expression item binding")
-            lifted.emit(plan_assign(binding, RvalueKind.Use(read_place(plan_place(1, span), false, span)), span))
+            bind_step_arguments(lifted, arguments, bindings, span)?
+            mut parameters: list[Parameter] = []
+            for index in range(len(arguments)):
+                parameters.append(Parameter(name=f"__incan_argument_{index}", ty=arguments[index], span=span))
             for index in range(1, len(block.stmts)):
                 lower_statement(module, lifted, block.stmts[index])?
                 if lifted.closed[lifted.current]:
@@ -1679,7 +1746,7 @@ def lift_generator_step(
             return Ok(
                 Function(
                     name=name,
-                    parameters=[Parameter(name="__incan_item", ty=item, span=span)],
+                    parameters=parameters,
                     return_type=result,
                     locals=lifted.locals,
                     blocks=lifted.blocks,
@@ -1687,6 +1754,31 @@ def lift_generator_step(
                 ),
             )
         None => return Err("unsupported Body IR generator expression type")
+
+
+def bind_step_arguments(
+    mut lifted: Builder,
+    arguments: list[PlanType],
+    bindings: list[int],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Move each step argument into the Body IR local the deferred body reads; an owned one is the step's to drop."""
+    count = len(arguments)
+    for index in range(count):
+        destination = bindings[index] + 1 + count
+        if lifted.locals[destination].ty != arguments[index]:
+            return Err("unsupported Body IR generator expression item binding")
+        owned = arguments[index] == PlanType.String or is_owned_list(arguments[index])
+        lifted.emit(
+            plan_assign(
+                plan_place(destination, span),
+                RvalueKind.Use(read_place(plan_place(index + 1, span), owned, span)),
+                span,
+            ),
+        )
+        if owned:
+            lifted.owned.append(destination)
+    return Ok(None)
 
 
 def negation_as_subtraction(operation: RvalueKind, span: SourceSpan) -> RvalueKind:
