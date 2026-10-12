@@ -5,6 +5,36 @@
 
 use super::*;
 
+/// Checked writes settle empty collection bindings through a declared type parameter without legacy inference changes.
+#[test]
+fn empty_collection_writes_retain_parameter_context() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        r#"def distinct[T](items: list[T]) -> int:
+    mut seen = set()
+    for item in items:
+        seen.add(item)
+    return len(seen)
+
+def keyed[T](items: list[T]) -> int:
+    mut table = {}
+    for item in items:
+        table.insert(item, 1)
+    return len(table)
+"#,
+        &["m", "empty_collection_context"],
+    )?;
+    for (function, name, expected) in [("distinct", "seen", "Set[T]"), ("keyed", "table", "Dict[T, int]")] {
+        let body = body_named(&module, function)?;
+        let local = body
+            .locals
+            .iter()
+            .find(|local| local.name == name)
+            .ok_or("missing collection binding")?;
+        assert_eq!(local.ty.to_string(), expected, "{}", module.render_snapshot());
+    }
+    Ok(())
+}
+
 /// An accepted exact-width literal pattern retains the scrutinee's numeric carrier rather than a default int.
 #[test]
 fn numeric_literal_pattern_retains_checked_carrier() -> Result<(), Box<dyn std::error::Error>> {

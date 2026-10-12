@@ -18,6 +18,36 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// Generic empty collection construction retains checked write context and the frozen legacy result.
+#[test]
+fn generic_empty_collection_context_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("generic-empty-collection-context")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def distinct[T](items: list[T]) -> int:
+    mut seen = set()
+    for item in items:
+        seen.add(item)
+    return len(seen)
+
+def keyed[T](items: list[T]) -> int:
+    mut table = {}
+    for item in items:
+        table.insert(item, 1)
+    return len(table)
+
+def main() -> None:
+    println(distinct([1, 2, 1]))
+    println(distinct(["x", "y", "x"]))
+    println(keyed(["a", "b", "a"]))
+    println(keyed([1, 2, 3]))
+"#,
+    )
+}
+
 /// Exact-width numeric patterns and arm values retain their checked match carriers and legacy result.
 #[test]
 fn sized_numeric_match_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
