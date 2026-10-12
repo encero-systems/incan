@@ -247,3 +247,36 @@ pub fn arguments<'tcx>(
         .collect::<Result<Vec<_>, _>>()?;
     Ok(tcx.mk_args(&arguments))
 }
+
+/// Refuse an instantiation whose type arguments do not satisfy the callee's where-clauses, before any MIR exists.
+///
+/// The borrow checker proves a callee's bounds again and reports a failure as an internal compiler error rather than
+/// a diagnostic, so an unsatisfied bound must stop here. The checker already proved the call's bounds for its source
+/// types, so a failure means the direct route emits no native impl for one of them (a newtype's `TryFrom[str]`, for
+/// one): an unsupported route gap rather than an invalid plan.
+pub fn verify_bounds<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def: DefId,
+    args: rustc_middle::ty::GenericArgsRef<'tcx>,
+) -> Result<(), PlanError> {
+    use rustc_infer::infer::TyCtxtInferExt;
+    use rustc_trait_selection::traits::query::evaluate_obligation::InferCtxtExt;
+    let (infcx, param_env) = tcx
+        .infer_ctxt()
+        .build_with_typing_env(rustc_middle::ty::TypingEnv::fully_monomorphized());
+    for (clause, _) in tcx.predicates_of(def).instantiate(tcx, args) {
+        let obligation = rustc_infer::traits::Obligation::new(
+            tcx,
+            rustc_middle::traits::ObligationCause::dummy(),
+            param_env,
+            clause.skip_normalization(),
+        );
+        if !infcx.predicate_must_hold_modulo_regions(&obligation) {
+            return Err(PlanError::Unsupported {
+                function: tcx.def_path_str(def),
+                reason: "a type argument has no native impl for the callee's bounds".into(),
+            });
+        }
+    }
+    Ok(())
+}

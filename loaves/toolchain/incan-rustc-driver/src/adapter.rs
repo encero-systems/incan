@@ -254,17 +254,15 @@ impl rustc_driver::Callbacks for Callbacks {
                 Ok(def) => def,
                 Err(error) => refuse(tcx, error),
             };
-            let signature = tcx.instantiate_bound_regions_with_erased(
-                tcx.fn_sig(def)
-                    .instantiate(
-                        tcx,
-                        match callees::arguments(tcx, def, &external.type_arguments) {
-                            Ok(args) => args,
-                            Err(error) => refuse(tcx, error),
-                        },
-                    )
-                    .skip_normalization(),
-            );
+            let args = match callees::arguments(tcx, def, &external.type_arguments) {
+                Ok(args) => args,
+                Err(error) => refuse(tcx, error),
+            };
+            if let Err(error) = callees::verify_bounds(tcx, def, args) {
+                refuse(tcx, error);
+            }
+            let signature =
+                tcx.instantiate_bound_regions_with_erased(tcx.fn_sig(def).instantiate(tcx, args).skip_normalization());
             let parameters: Vec<_> = external
                 .parameters
                 .iter()
