@@ -385,22 +385,57 @@ def function_item_identity(
         None => return Err("unsupported Body IR unproven function item")
         Some(identity) =>
             match module.body_for_canonical_target(identity):
-                None => return Err("unsupported Body IR imported function item")
+                None =>
+                    index = imported_item_body(module, target)?
+                    return item_signature(module, builder, parameters, module.bodies[index])
                 Some(body) =>
                     if target.direct_call_id != Some(body.direct_call_id) or str(target.name) != str(body.name):
                         return Err("invalid Body IR function-item identity")
-                    # Async and generator declarations lower to evaluator or producer frames, not to a callable item.
-                    if body.is_async or body.is_generator():
-                        return Err("unsupported Body IR async or generator function item")
-                    if len(parameters) != len(body.params):
-                        return Err("invalid Body IR function-item parameter count")
-                    mut signature: list[PlanType] = []
-                    for index in range(len(parameters)):
-                        if parameters[index].ty != body.params[index].ty:
-                            return Err("unsupported Body IR function-item parameter contract")
-                        component = item_component(builder, body.params[index].ty)?
-                        signature.append(signature_input(component, body.params[index].mutable))
-                    signature.append(item_result(builder, body.return_type)?)
-                    # The item names the same plan symbol a direct call to this declaration uses.
-                    name = function_name(module, body)
-                    return Ok((name, PlanType.FunctionItem(name, signature)))
+                    return item_signature(module, builder, parameters, body)
+
+
+def imported_item_body(module: &RustModule, target: &RustNamedTarget) -> Result[int, str]:
+    """
+    Find the one retained body, in another module of the project graph, that an imported function item names.
+
+    Its exact canonical identity selects the body, as for a direct call to it. A published package fragment carries no
+    source-local call id; a call id that is present must agree with the body.
+    """
+    mut found = -1
+    for index in range(len(module.bodies)):
+        if module.bodies[index].canonical == target.canonical:
+            if found >= 0:
+                return Err("unsupported Body IR ambiguous imported function item")
+            found = index
+    if found < 0:
+        return Err("unsupported Body IR imported function item without a retained body")
+    match target.direct_call_id:
+        Some(call_id) =>
+            if call_id != module.bodies[found].direct_call_id:
+                return Err("invalid Body IR function-item identity")
+        None => pass
+    return Ok(found)
+
+
+def item_signature(
+    module: &RustModule,
+    builder: Builder,
+    parameters: &list[RustParameter],
+    body: &RustBody,
+) -> Result[tuple[str, PlanType], str]:
+    """The plan item and signature of a checked function declaration used as a value."""
+    # Async and generator declarations lower to evaluator or producer frames, not to a callable item.
+    if body.is_async or body.is_generator():
+        return Err("unsupported Body IR async or generator function item")
+    if len(parameters) != len(body.params):
+        return Err("invalid Body IR function-item parameter count")
+    mut signature: list[PlanType] = []
+    for index in range(len(parameters)):
+        if parameters[index].ty != body.params[index].ty:
+            return Err("unsupported Body IR function-item parameter contract")
+        component = item_component(builder, body.params[index].ty)?
+        signature.append(signature_input(component, body.params[index].mutable))
+    signature.append(item_result(builder, body.return_type)?)
+    # The item names the same plan symbol a direct call to this declaration uses.
+    name = function_name(module, body)
+    return Ok((name, PlanType.FunctionItem(name, signature)))
