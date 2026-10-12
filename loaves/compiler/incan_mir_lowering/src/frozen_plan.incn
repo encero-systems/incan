@@ -22,3 +22,16 @@ pub def literal_text(value: &RustConstant) -> Option[str]:
         RustConstant.Str(text) => return Some(str(text))
         RustConstant.FrozenStr(text) => return Some(str(text))
         _ => return None
+
+
+pub def frozen_bytes_literal(mut builder: Builder, value: &RustConstant, span: SourceSpan) -> Result[Operand, str]:
+    """Retain exact static byte data for the SDK's copyable frozen wrapper, without allocating an owned byte vector."""
+    match value:
+        RustConstant.Bytes(bytes) =>
+            mut values: list[int] = []
+            for byte in bytes:
+                values.append(int(byte))
+            output = temporary(builder, PlanType.FrozenBytes, span)
+            builder.emit(plan_assign(output, RvalueKind.FrozenBytes(values), span))
+            return Ok(read_place(output, false, span))
+        _ => return Err("unsupported Body IR nonstatic FrozenBytes literal")

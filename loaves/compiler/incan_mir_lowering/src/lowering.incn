@@ -59,7 +59,7 @@ from pub::incan_mir_plan import assign as plan_assign, place as plan_place
 from bytes_plan import bytes_literal
 from text_ownership import drop_borrowed_text_temporaries
 from decimal_plan import decimal_literal, decimal_comparison, is_decimal_literal
-from frozen_plan import frozen_literal, literal_text
+from frozen_plan import frozen_literal, literal_text, frozen_bytes_literal
 from loop_exits import exits_to
 from trait_links import (
     is_well_formed_module_implementation,
@@ -1424,6 +1424,19 @@ def lower_local_assignment(
                 builder.emit(plan_assign(target, RvalueKind.Use(converted), span))
                 return Ok(None)
             _ => return Err("unsupported Body IR nonliteral FrozenStr assignment")
+    if place_type(builder.locals, target) == PlanType.FrozenBytes:
+        match value:
+            RustRvalue.Use(RustOperand.Constant(constant)) =>
+                converted = frozen_bytes_literal(builder, constant, span)?
+                builder.emit(plan_assign(target, RvalueKind.Use(converted), span))
+                return Ok(None)
+            RustRvalue.Use(operand) =>
+                converted = scalar_operand(builder, operand, span)?
+                if operand_type(builder, converted)? != PlanType.FrozenBytes:
+                    return Err("unsupported Body IR dynamic FrozenBytes assignment")
+                builder.emit(plan_assign(target, RvalueKind.Use(converted), span))
+                return Ok(None)
+            _ => return Err("unsupported Body IR nonliteral FrozenBytes assignment")
     match value:
         RustRvalue.ResultVariant(variant) => return lower_result_construction(builder, target, variant, span)
         RustRvalue.Aggregate(RustAggregateKind.OptionSome, elements) =>
@@ -6314,6 +6327,26 @@ def lower_list_builtin(
         element = borrowed_list_argument(builder, arguments, 0, false, span)?
         return list_length(builder, element, destination, span)
     ty = argument_type(builder, arguments, 0, span)?
+    if ty == PlanType.FrozenBytes:
+        match arguments[0].as_one():
+            None => return Err("unsupported Body IR spread FrozenBytes length")
+            Some(value) =>
+                operand = scalar_operand(builder, value, span)?
+                mut output = temporary(builder, PlanType.Int, span)
+                match destination:
+                    Some(place) =>
+                        output = scalar_place(builder, place, span)?
+                    None => pass
+                external_call(
+                    builder,
+                    "incan_native_runtime::length_frozen_bytes",
+                    [PlanType.FrozenBytes],
+                    PlanType.Int,
+                    [operand],
+                    output,
+                    span,
+                )
+                return Ok(None)
     if ty in [PlanType.String, PlanType.StringRef, PlanType.FrozenStr]:
         return lower_text_helper(builder, "length_text", PlanType.Int, arguments, destination, span)
     receiver = shared_receiver_place(builder, arguments, 0, span)?

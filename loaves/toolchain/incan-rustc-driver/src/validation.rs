@@ -79,6 +79,7 @@ enum Scalar {
     StringMutRef,
     Decimal,
     FrozenStr,
+    FrozenBytes,
     StrRef,
     StringArray(i64),
     StrArray(i64),
@@ -221,6 +222,7 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::String => Scalar::String,
         PlanType::Decimal => Scalar::Decimal,
         PlanType::FrozenStr => Scalar::FrozenStr,
+        PlanType::FrozenBytes => Scalar::FrozenBytes,
         PlanType::StringRef => Scalar::StringRef,
         PlanType::StringMutRef => Scalar::StringMutRef,
         PlanType::StrRef => Scalar::StrRef,
@@ -718,6 +720,15 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             )?;
             Ok(Scalar::FrozenStr)
         }
+        RvalueKind::FrozenBytes(values) => {
+            if values.iter().any(|value| u8::try_from(*value).is_err()) {
+                return Err(invalid(
+                    function,
+                    "FrozenBytes construction requires unsigned literal bytes",
+                ));
+            }
+            Ok(Scalar::FrozenBytes)
+        }
         RvalueKind::NumericCast(value, source, target) => {
             let source = scalar(source);
             let target = scalar(target);
@@ -1044,6 +1055,7 @@ fn source_signature_type(ty: &Scalar) -> bool {
                 | Scalar::EnumMutRef(_)
                 | Scalar::Decimal
                 | Scalar::FrozenStr
+                | Scalar::FrozenBytes
                 | Scalar::Model(_)
                 | Scalar::Enum(_)
                 | Scalar::List(_, _)

@@ -95,6 +95,7 @@ pub enum PlanType:
     ModelRef and ModelMutRef retain shared and mutable nominal receiver references; ModelMutRef and EnumMutRef are also the exclusive borrow a `mut` model or enum parameter, an in-place pattern binding or an in-place loop item holds.
     Decimal retains the legacy Decimal128 carrier; precision is checked upstream and the value keeps its written scale.
     FrozenStr retains the copyable frozen wrapper over static text; it owns no allocation and is distinct from String.
+    FrozenBytes retains the copyable wrapper over a static byte slice, distinct from an owned byte list.
     Set and Dict retain the legacy HashSet and HashMap leaf arguments; their reference variants preserve caller-owned storage. Float and model keys are refused; flat tuple keys exclude floating-point fields.
     Generator retains the legacy lazy runtime wrapper, with depth zero for primitive elements.
     GeneratorMutRef advances caller-owned state. GeneratorYield and GeneratorYieldRef are producer-only runtime
@@ -133,6 +134,7 @@ pub enum PlanType:
     StringMutRef
     Decimal
     FrozenStr
+    FrozenBytes
     StrRef
     StringArray(int)
     StrArray(int)
@@ -342,6 +344,7 @@ pub enum RvalueKind:
     Tuple preserves the ordered operand layout of its destination type.
     Range preserves the four scalar operands in Body IR's declared range field order and requires a RangeValue destination.
     FrozenText wraps a static Text literal in the dependency-owned FrozenStr carrier; a dynamic text operand is refused.
+    FrozenBytes wraps exact unsigned literal bytes in the dependency-owned static byte carrier.
     Array moves or copies its listed operands into a fixed array. Borrow creates
     a shared reference to a checked place; MutBorrow creates a mutable list or nominal receiver reference. UnsizeSlice converts an array reference
     to the corresponding shared slice without changing ownership of its owner.
@@ -351,6 +354,7 @@ pub enum RvalueKind:
     # Reify a validated zero-argument unit function for the canonical async entry bridge.
     UnitFunction(str)
     FrozenText(Operand)
+    FrozenBytes(list[int])
     Binary(BinaryOp, Operand, Operand)
     Unary(UnaryOp, Operand)
     NumericCast(Operand, PlanType, PlanType)

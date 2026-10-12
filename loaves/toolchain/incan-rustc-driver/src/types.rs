@@ -115,6 +115,7 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::String => string_type(tcx)?,
         PlanType::Decimal => decimal_type(tcx)?,
         PlanType::FrozenStr => frozen_type(tcx)?,
+        PlanType::FrozenBytes => frozen_bytes_type(tcx)?,
         PlanType::StringRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, string_type(tcx)?),
         PlanType::StringMutRef => Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, string_type(tcx)?),
         PlanType::StrRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, tcx.types.str_),
@@ -286,6 +287,21 @@ fn frozen_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
         .ok_or_else(|| PlanError::Invalid {
             function: "FrozenStr".into(),
             reason: "the frozen observation wrapper has no carrier argument".into(),
+        })
+}
+
+/// Recover the dependency-owned static byte wrapper from the canonical length observation function's input.
+fn frozen_bytes_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
+    let definition = crate::callees::external(tcx, "incan_native_runtime::length_frozen_bytes")?;
+    tcx.fn_sig(definition)
+        .instantiate_identity()
+        .skip_binder()
+        .inputs()
+        .first()
+        .copied()
+        .ok_or_else(|| PlanError::Invalid {
+            function: "FrozenBytes".into(),
+            reason: "the frozen byte observation wrapper has no carrier argument".into(),
         })
 }
 

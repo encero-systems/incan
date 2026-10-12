@@ -130,7 +130,8 @@ pub fn library_item(tcx: TyCtxt<'_>, path: &str, kind: DefKind) -> Result<DefId,
 ///
 /// A segment inside a module selects by kind as well as name, as [`library_item`] does: a class with field defaults
 /// compiles a constructor function under its own name beside its struct, so `Class::method` must step through the
-/// struct while a call of `Class` itself selects the function.
+/// struct while a call of `Class` itself selects the function. A trait path selects its declared associated function;
+/// concrete Self arguments and bounds remain subject to native signature validation.
 pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
     let mut segments = path.split("::").peekable();
     let root = segments.next().ok_or_else(|| PlanError::UnknownCallee(path.into()))?;
@@ -153,6 +154,10 @@ pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
             DefKind::Struct | DefKind::Enum => {
                 inherent_function(tcx, current, segment).ok_or_else(|| PlanError::UnknownCallee(path.into()))?
             }
+            DefKind::Trait => trait_function(tcx, current, segment).ok_or_else(|| PlanError::Unsupported {
+                function: path.into(),
+                reason: "the SDK trait publishes no method with this name".into(),
+            })?,
             _ => return Err(PlanError::UnknownCallee(path.into())),
         };
     }
@@ -168,11 +173,24 @@ fn callee_path_step(kind: DefKind, last: bool) -> bool {
     if last {
         kind == DefKind::Fn
     } else {
-        matches!(kind, DefKind::Mod | DefKind::Struct | DefKind::Enum)
+        matches!(kind, DefKind::Mod | DefKind::Struct | DefKind::Enum | DefKind::Trait)
     }
 }
 
-/// Select one public inherent associated function of a nongeneric type by name, as a stdlib crate declares a method.
+/// Select one associated function declared by the exact trait. The trait's public path supplies visibility; the
+/// caller separately validates its concrete Self argument and every native bound before constructing MIR.
+fn trait_function(tcx: TyCtxt<'_>, owner: DefId, name: &str) -> Option<DefId> {
+    let mut found = tcx
+        .associated_item_def_ids(owner)
+        .iter()
+        .copied()
+        .filter(|item| tcx.def_kind(*item) == DefKind::AssocFn && tcx.item_name(*item).as_str() == name);
+    let selected = found.next()?;
+    found.next().is_none().then_some(selected)
+}
+
+/// Select one public inherent associated function from the exact nominal owner. The caller instantiates the owner's
+/// type parameters separately before validating the signature.
 fn inherent_function(tcx: TyCtxt<'_>, owner: DefId, name: &str) -> Option<DefId> {
     let mut found = tcx.inherent_impls(owner).iter().flat_map(|implementation| {
         tcx.associated_item_def_ids(*implementation)
