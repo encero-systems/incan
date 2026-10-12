@@ -2099,3 +2099,30 @@ fn a_matched_generic_call_result_closed_by_a_constructor_argument_binds_closed_p
     assert!(rendered.contains("message : str [binding]"), "{rendered}");
     Ok(())
 }
+
+/// A supplied non-literal argument may follow omitted fields whose defaults are built only from literals, because
+/// evaluating those defaults after it is not observable.
+#[test]
+fn literal_field_defaults_beside_a_supplied_call_argument_build_the_model() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def effect() -> int:\n    return 1\n\nmodel P:\n    x: int = -1\n    tags: list[str] = []\n    y: int\n\ndef make() -> P:\n    return P(y=effect())\n",
+        &["m", "literal_default_order"],
+    )?;
+    let rendered = body_named(&module, "make")?.render_snapshot();
+    assert!(!rendered.contains("unsupported("), "{rendered}");
+    assert!(rendered.contains("constructor(P)"), "{rendered}");
+    Ok(())
+}
+
+/// A value the checker coerces into a plain newtype, which has no validation hook or constraints, is built into that
+/// newtype's tuple slot, as its explicit construction is.
+#[test]
+fn a_plain_newtype_coercion_builds_the_newtype() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "type Days = newtype int\n\ndef take(days: Days) -> int:\n    return days.0\n\ndef main() -> None:\n    println(take(-7))\n";
+    let module = build(source, &["m", "plain_newtype_coercion"])?;
+    let main = body_named(&module, "main")?;
+    let rendered = main.render_snapshot();
+    assert!(!rendered.contains("unsupported("), "{rendered}");
+    assert!(rendered.contains("constructor(Days)"), "{rendered}");
+    Ok(())
+}

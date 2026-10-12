@@ -3093,6 +3093,56 @@ def main() -> None:
     )
 }
 
+/// A value coerced into a plain newtype where it is used, as an argument of a static factory sharing its spelling
+/// with a field, and a construction whose supplied call arguments follow fields defaulted from literals, build their
+/// values as legacy does.
+#[test]
+fn plain_newtype_coercions_and_literal_defaults_beside_calls_output_matches_legacy()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("plain-newtype-coercions")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"type Days = newtype int
+
+
+model TimeDelta:
+    pub days: Days
+
+    @staticmethod
+    def days(value: Days) -> TimeDelta:
+        return TimeDelta(days=value)
+
+
+def total(days: Days, extra: int) -> int:
+    return days.0 + extra
+
+
+def label(text: str) -> str:
+    println(f"label {text}")
+    return text.upper()
+
+
+model Account:
+    balance: int = 0
+    ratio: float = 1.5
+    name: str
+    status: str = "active"
+    note: str
+
+
+def main() -> None:
+    delta = TimeDelta.days(-7)
+    println(delta.days.0)
+    println(total(5, 2))
+    account = Account(name=label("ada"), note=label("vip"))
+    println(f"{account.balance} {account.ratio} {account.name} {account.status} {account.note}")
+"#,
+    )
+}
+
 /// Prove canonical scalar casts and default values byte-identical to legacy.
 #[test]
 fn numeric_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
