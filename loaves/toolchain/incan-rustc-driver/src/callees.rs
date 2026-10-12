@@ -124,8 +124,12 @@ pub fn library_item(tcx: TyCtxt<'_>, path: &str, kind: DefKind) -> Result<DefId,
 }
 
 /// Walk only public module children, rejecting nonfunction callees before constructing MIR.
+///
+/// A segment inside a module selects by kind as well as name, as [`library_item`] does: a class with field defaults
+/// compiles a constructor function under its own name beside its struct, so `Class::method` must step through the
+/// struct while a call of `Class` itself selects the function.
 pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
-    let mut segments = path.split("::");
+    let mut segments = path.split("::").peekable();
     let root = segments.next().ok_or_else(|| PlanError::UnknownCallee(path.into()))?;
     let krate = tcx
         .crates(())
@@ -133,13 +137,15 @@ pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
         .find(|krate| tcx.crate_name(**krate).as_str() == root)
         .ok_or_else(|| PlanError::UnknownCallee(path.into()))?;
     let mut current = krate.as_def_id();
-    for segment in segments {
+    while let Some(segment) = segments.next() {
+        let last = segments.peek().is_none();
         current = match tcx.def_kind(current) {
             DefKind::Mod => tcx
                 .module_children(current)
                 .iter()
-                .find(|child| child.ident.name.as_str() == segment && child.vis.is_public())
-                .and_then(|child| child.res.opt_def_id())
+                .filter(|child| child.ident.name.as_str() == segment && child.vis.is_public())
+                .filter_map(|child| child.res.opt_def_id())
+                .find(|child| callee_path_step(tcx.def_kind(*child), last))
                 .ok_or_else(|| PlanError::UnknownCallee(path.into()))?,
             DefKind::Struct | DefKind::Enum => {
                 inherent_function(tcx, current, segment).ok_or_else(|| PlanError::UnknownCallee(path.into()))?
@@ -151,6 +157,16 @@ pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
         return Err(PlanError::UnknownCallee(path.into()));
     }
     Ok(current)
+}
+
+/// Whether a module child of this kind can be one step of a callee path: a module or a method's owner type on the way,
+/// a function at the end.
+fn callee_path_step(kind: DefKind, last: bool) -> bool {
+    if last {
+        kind == DefKind::Fn
+    } else {
+        matches!(kind, DefKind::Mod | DefKind::Struct | DefKind::Enum)
+    }
 }
 
 /// Select one public inherent associated function of a nongeneric type by name, as a stdlib crate declares a method.
