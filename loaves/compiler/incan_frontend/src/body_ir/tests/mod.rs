@@ -21,6 +21,7 @@ mod identities_and_imports;
 mod input_contract_and_refusals;
 mod method_partials;
 mod methods_and_defaults;
+mod newtypes;
 mod nominal_parameters;
 mod operators_literals_and_assignment;
 mod patterns_and_assertions;

@@ -8830,6 +8830,67 @@ fn stdlib_const_default_reaches_collection_equality_refusal() -> Result<(), Box<
     Ok(())
 }
 
+/// Same-named methods targeting distinct traits on a raw newtype run their selected implementation with output
+/// byte-identical to legacy.
+#[test]
+fn newtype_trait_targets_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("newtype-trait-targets")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/newtype_trait_targets.incn"
+        ),
+    )
+}
+
+/// Retaining a generic newtype layout does not authorize an unresolved native parameter carrier; both pending
+/// generic fixtures keep their named refusals and produce no binary.
+#[test]
+fn generic_newtypes_retain_parameter_carrier_refusals() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    for (name, source, expected) in [
+        (
+            "generic-newtype",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/newtype_generic.incn"
+            ),
+            "unsupported Body IR type Box[TypeVar]",
+        ),
+        (
+            "generic-newtype-methods",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/generic_methods.incn"
+            ),
+            "unsupported Body IR type Wrapper[int]",
+        ),
+    ] {
+        let root = fixture.scratch(name)?;
+        let input = root.join("generic.incn");
+        fs::write(&input, source)?;
+        let binary = root.join("native");
+        let refused = corpus::source_command(
+            &fixture.driver_binary("debug"),
+            &input,
+            &binary,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?;
+        assert!(!refused.status.success());
+        assert!(
+            String::from_utf8_lossy(&refused.stderr).contains(expected),
+            "{}",
+            String::from_utf8_lossy(&refused.stderr)
+        );
+        assert!(!binary.exists());
+    }
+    Ok(())
+}
+
 /// A call to an overloaded stdlib function runs the overload the checker selected by arity, as that overload's own SDK
 /// crate item instantiated with the call's type argument, beside a call to a function with one declaration.
 #[test]

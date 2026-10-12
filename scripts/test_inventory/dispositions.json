@@ -6047,6 +6047,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/newtypes.rs": {
+      "disposition": "keep",
+      "notes": "Canonical newtype layouts, owner parameters, trait targets and explicit raw-construction boundary; direct Body IR facts without legacy emission.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/nominal_parameters.rs": {
       "disposition": "keep",
       "notes": "Checked model owner binders, method frames and deferred field defaults retained for direct-route specialization; frontend facts without legacy emission.",

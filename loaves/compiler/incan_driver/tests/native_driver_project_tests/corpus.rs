@@ -227,6 +227,8 @@ pub(super) fn check_string_methods(
 
 /// Compare a focused builtin program with legacy without normalizing its output.
 ///
+/// The entry is named `main`, matching the canonical module legacy records for source-local trait dispatch.
+///
 /// The reference compiler uses the explicit fixture home so a published dependency baked there is available under
 /// the same receipt-selected package identity. An ambient home can lack that Loaf even after native compilation
 /// succeeds.
@@ -239,7 +241,7 @@ pub(super) fn check_builtin_source(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let project = root.join("builtin-parity");
     fs::create_dir_all(&project)?;
-    let source = project.join("probe.incn");
+    let source = project.join("main.incn");
     fs::write(&source, program)?;
     let native = project.join("native");
     success(
@@ -257,7 +259,7 @@ pub(super) fn check_builtin_source(
             .output()?,
         "legacy builtin compilation",
     );
-    let expected = Command::new(legacy_output.join("oven/release/probe")).output()?;
+    let expected = Command::new(legacy_output.join("oven/release/main")).output()?;
     let actual = Command::new(native).output()?;
     success(&expected, "legacy builtin execution");
     success(&actual, "native builtin execution");
