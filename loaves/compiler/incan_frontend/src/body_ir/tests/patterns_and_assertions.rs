@@ -972,8 +972,11 @@ def present(value: Option[int]) -> bool:
 "#;
     let module = build(source, &["source_enum_none"])?;
     let snapshot = module.render_snapshot();
-    assert!(snapshot.contains("Maybe::None canonical=member/variant:"), "{snapshot}");
-    assert!(!snapshot.contains("Maybe::None canonical=builtin"), "{snapshot}");
+    assert!(
+        snapshot.contains("None canonical=member/variant:source_enum_none::None@"),
+        "{snapshot}"
+    );
+    assert!(!snapshot.contains("None canonical=builtin"), "{snapshot}");
     assert!(snapshot.contains("canonical=builtin:builtin::Some"), "{snapshot}");
     assert!(!snapshot.contains("unsupported("), "{snapshot}");
     Ok(())
