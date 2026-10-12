@@ -6114,6 +6114,92 @@ fn direct_route_package_derived_value_enum_matches_legacy() -> Result<(), Box<dy
     )
 }
 
+/// Prove functions declared in another module used as callable values byte-identical to legacy: imported functions
+/// passed back into their module's own higher-order function and into a local one, held in a local, and a `mut`
+/// function passed as a callable whose input is `mut`, so its change reaches the caller.
+#[test]
+fn imported_function_values_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("imported-function-values")?;
+    let source = root.join("src/main.incn");
+    fs::create_dir_all(root.join("src"))?;
+    fs::write(
+        root.join("src/tools.incn"),
+        r#"pub class Counter:
+    pub value: int
+
+pub def plus_one(value: int) -> int:
+    return value + 1
+
+pub def double(value: int) -> int:
+    return value * 2
+
+pub def map_owned(items: list[int], f: (int) -> int) -> list[int]:
+    mut out: list[int] = []
+    for item in items:
+        out.append(f(item))
+    return out
+
+pub def grow(mut counter: Counter, by: int) -> int:
+    counter.value += by
+    return counter.value
+
+pub def apply(step: (mut Counter, int) -> int, mut counter: Counter) -> int:
+    return step(counter, 2)
+"#,
+    )?;
+    fs::write(
+        &source,
+        r#"from tools import Counter, plus_one, double, map_owned, grow, apply
+
+def twice(f: (int) -> int, value: int) -> int:
+    return f(f(value))
+
+def main() -> None:
+    println(map_owned([1, 2, 3], plus_one))
+    g = plus_one
+    println(g(4))
+    println(twice(plus_one, 5))
+    println(twice(double, 3))
+    mut counter = Counter(value=1)
+    println(apply(grow, counter))
+    println(counter.value)
+"#,
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let native = root.join("native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("debug"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .output()?,
+        "native imported function value compilation",
+    );
+    let legacy_root = root.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy_root)
+            .output()?,
+        "legacy imported function value compilation",
+    );
+    let expected = Command::new(legacy_root.join("oven/release/main")).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy imported function value execution");
+    success(&actual, "native imported function value execution");
+    assert_eq!(actual.stdout, b"[2, 3, 4]\n5\n7\n12\n3\n3\n");
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(actual.stderr, expected.stderr);
+    assert_eq!(actual.status.code(), expected.status.code());
+    Ok(())
+}
+
 /// Compare a published package consumer's complete native output and exit status against the legacy route.
 fn assert_package_routes_match(
     fixture: &DriverFixture,
