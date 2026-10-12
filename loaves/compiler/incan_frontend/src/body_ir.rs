@@ -478,10 +478,10 @@ pub fn is_direct_replacement_plain_model(model: &ast::ModelDecl) -> bool {
         && has_direct_replacement_model_shape(model)
 }
 
-/// Admit JSON derives only after checking resolves all selections to canonical supported serde paths, and
-/// `@rust.derive(...)` only when checking classified every derive it names as a Rust builtin retained among the
-/// model's derives. Serde field renames remain refused until their checked metadata crosses the Body IR and plan
-/// boundary.
+/// Admit JSON derives only after checking resolves all selections to canonical supported serde paths, Copy only after
+/// checking accepted it for every field, and `@rust.derive(...)` only when checking classified every derive it names
+/// as a Rust builtin retained among the model's derives. Serde field renames remain refused until their checked
+/// metadata crosses the Body IR and plan boundary.
 pub fn is_direct_replacement_checked_model(model: &ast::ModelDecl, type_info: &TypeCheckInfo) -> bool {
     if is_direct_replacement_plain_model(model) {
         return true;
@@ -521,6 +521,7 @@ fn has_checked_native_derives(
             name.as_str(),
             "Debug"
                 | "Clone"
+                | "Copy"
                 | "Eq"
                 | "PartialEq"
                 | "Hash"

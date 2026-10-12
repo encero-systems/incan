@@ -56,9 +56,11 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                 ):
                     return Ok(PlanType.Model(index, str(declaration.name)))
             if base == "Set" and len(arguments) == 1:
-                return Ok(PlanType.Set(set_element(declarations, arguments[0])?))
+                return Ok(PlanType.Set(hashed_element(declarations, arguments[0])?))
             if base == "Dict" and len(arguments) == 2:
-                return Ok(PlanType.Dict(primitive_leaf(arguments[0], true)?, primitive_leaf(arguments[1], false)?))
+                return Ok(
+                    PlanType.Dict(hashed_element(declarations, arguments[0])?, primitive_leaf(arguments[1], false)?),
+                )
             if base != "List" or len(arguments) != 1:
                 return generic_tuple_type(ty)
             element = model_type(declarations, arguments[0])?
@@ -77,12 +79,12 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
         _ => return Err(f"unsupported Body IR type {type_name(ty)}")
 
 
-def set_element(declarations: list[NominalDeclaration], ty: &RustType) -> Result[ListLeaf, str]:
+pub def hashed_element(declarations: list[NominalDeclaration], ty: &RustType) -> Result[ListLeaf, str]:
     """
-    Admit a retained model as a set element only when it derives the Eq and Hash the runtime's set operations bound.
+    Admit a retained model as a set element or dictionary key only when it derives the Eq and Hash hashing needs.
 
-    Other elements keep the primitive hashed leaves. Dictionary keys do not come here: the runtime's key operations
-    also bound Display, which a model does not implement.
+    Other elements keep the primitive hashed leaves. The runtime's keyed dictionary lookups also bound Display, which
+    a model does not implement; `collection_call` refuses those for a model key.
     """
     match ty:
         RustType.Named(name) =>

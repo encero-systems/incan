@@ -135,6 +135,8 @@ pub def collection_call(
     """Retain hashed runtime signatures with exactly their checked generic instantiation."""
     if len(parameters) != len(operands):
         return Err("unsupported Body IR collection runtime arity")
+    if displays_model_key(ty, operation):
+        return Err("unsupported Body IR keyed lookup in a dictionary with model keys")
     for index in range(len(operands)):
         if value_type(builder, operands[index])? != parameters[index]:
             return Err("unsupported Body IR collection runtime argument coercion")
@@ -150,6 +152,22 @@ pub def collection_call(
     if result == PlanType.String or is_owned_collection(result):
         builder.owned.append(destination.local)
     return Ok(None)
+
+
+def displays_model_key(ty: PlanType, operation: str) -> bool:
+    """
+    Whether a runtime dictionary operation renders its key with Display, which a model key does not implement.
+
+    Legacy's keyed lookups share that bound, so such a lookup on a model-keyed dictionary does not build there either.
+    """
+    match collection_owned(ty):
+        PlanType.Dict(key, _value) =>
+            match key:
+                ListLeaf.Model(_owner, _name) =>
+                    return operation in ["get", "borrow_mut", "optional", "values", "default", "extend"]
+                _ => pass
+        _ => pass
+    return false
 
 
 pub def borrow_collection(mut builder: Builder, place: Place, mutable: bool, span: SourceSpan) -> Result[Operand, str]:

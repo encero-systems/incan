@@ -4,10 +4,9 @@ from rust::incan_semantics_core import IncanType as RustType, IncanCallableParam
 from rust::incan_semantics_core::body_ir import NominalDeclaration, EnumDeclaration as RustEnumDeclaration
 from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
 from pub::incan_mir_plan import PlanType, ListLeaf, EnumDeclaration, TupleElement
-from models import model_type
+from models import model_type, hashed_element
 from tuples import tuple_element
 from enums import enum_type
-from collections import primitive_leaf
 from closures import signature_input
 
 
@@ -41,7 +40,7 @@ pub def native_source_type(
                     PlanType.List(leaf, depth) => return Ok(PlanType.List(leaf, depth + 1))
                     _ => return Ok(PlanType.List(collection_leaf(element)?, 1))
             if base == "Dict" and len(arguments) == 2:
-                key = primitive_leaf(arguments[0], true)?
+                key = hashed_element(nominals, arguments[0])?
                 value = native_source_type(nominals, enums, unions, arguments[1], intrinsics)?
                 return Ok(PlanType.Dict(key, collection_leaf(value)?))
             if base == "Iterator" and len(arguments) == 1:

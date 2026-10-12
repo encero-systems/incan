@@ -1123,8 +1123,8 @@ fn validate_closure_constructor(function: &Function) -> Result<(), PlanError> {
 
 /// Reject unsupported hashed leaves and invalid dimensions before constructing native types, including unused locals.
 ///
-/// A model is a set element only when its declaration derives Eq and Hash, which the runtime's set operations bound;
-/// the runtime's dictionary key operations also bound Display, so model dictionary keys stay refused.
+/// A model is a set element or dictionary key only when its declaration derives Eq and Hash, which hashing bounds;
+/// lowering refuses the keyed dictionary lookups whose runtime also bounds Display before a plan names them.
 fn validate_array_length(plan: &Plan, function: &Function, ty: Scalar) -> Result<(), PlanError> {
     match ty {
         Scalar::Generator(_, depth)
@@ -1160,6 +1160,9 @@ fn validate_array_length(plan: &Plan, function: &Function, ty: Scalar) -> Result
         Scalar::Set(Leaf::Model(index))
         | Scalar::SetRef(Leaf::Model(index))
         | Scalar::SetMutRef(Leaf::Model(index))
+        | Scalar::Dict(Leaf::Model(index), _)
+        | Scalar::DictRef(Leaf::Model(index), _)
+        | Scalar::DictMutRef(Leaf::Model(index), _)
             if hashable_model(plan, index) =>
         {
             Ok(())
@@ -1668,7 +1671,8 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
 }
 
 /// Validate the shape-specific derive vocabulary without accepting duplicate selections or reflection on tuples. Serde
-/// derives fit either shape: a tuple wrapper serializes as its wrapped value.
+/// derives fit either shape (a tuple wrapper serializes as its wrapped value), and so does Copy, which rustc admits
+/// only when every field is Copy.
 fn valid_nominal_derives(derives: &[String], tuple: bool) -> bool {
     let required: &[&str] = if tuple {
         &["Debug", "Clone"]
@@ -1680,8 +1684,7 @@ fn valid_nominal_derives(derives: &[String], tuple: bool) -> bool {
         .all(|required| derives.iter().any(|derive| derive == required))
         && derives.iter().all(|derive| match derive.as_str() {
             "Debug" | "Clone" | "Eq" | "PartialEq" | "Hash" | "Ord" | "PartialOrd" | "Default" | "Display" => true,
-            "serde::Serialize" | "serde::Deserialize" => true,
-            "Copy" => tuple,
+            "serde::Serialize" | "serde::Deserialize" | "Copy" => true,
             "FieldInfo" | "IncanClass" => !tuple,
             _ => false,
         })
