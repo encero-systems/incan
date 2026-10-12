@@ -91,6 +91,9 @@ struct StdlibFunctionEntry {
     name: String,
     info: FunctionInfo,
     declaration: Option<ast::FunctionDecl>,
+    /// Source span of the `def` declaration, which a same-name overload's canonical identity carries; `None` for a
+    /// runtime function imported from Rust.
+    declaration_span: Option<ast::Span>,
     /// Canonical paths of the consts the declaration's parameter defaults name, keyed by their declaring spelling.
     default_const_paths: HashMap<String, Vec<String>>,
 }
@@ -154,21 +157,68 @@ impl StdlibAstCache {
     /// Pinned publication uses its retained source policy; legacy sessions retain their existing catalog check.
     /// Names, kinds, scopes and provenance spans must still match after rebasing the source's `std` root.
     pub(crate) fn callable_source_identity(&mut self, identity: &CanonicalSymbolId) -> Option<CanonicalSymbolId> {
-        use incan_semantics_core::SymbolOrigin;
-        let path = match &identity.origin {
-            SymbolOrigin::Module(path) => path.clone(),
-            SymbolOrigin::Package { module_path, .. } => std::iter::once(stdlib::STDLIB_ROOT.to_string())
-                .chain(module_path.iter().cloned())
-                .collect(),
-            _ => return None,
-        };
-        if !stdlib::is_any_stdlib_path(&path) {
+        let path = stdlib_source_path(identity)?;
+        let source = self.lookup_identity(&path, &identity.declaration_name)?;
+        self.published_source_identity(&path, source, identity)
+    }
+
+    /// Return the checked signature of the one stdlib overload an exact identity selects.
+    ///
+    /// A same-name overload set has no per-name identity in this cache, because a spelling does not select one
+    /// declaration, so [`Self::callable_source_identity`] refuses its members. Each member's identity names its own
+    /// `def` span instead: this selects the overload declared at exactly that span, then confirms the full identity
+    /// the way [`Self::callable_source_identity`] confirms any other. A single declaration, a span no overload has and
+    /// a foreign owner all answer `None`.
+    pub(crate) fn overload_function_info(&mut self, identity: &CanonicalSymbolId) -> Option<FunctionInfo> {
+        if identity.kind != SemanticSourceTargetKind::Function {
             return None;
         }
-        let source = self.lookup_identity(&path, &identity.declaration_name)?;
+        let path = stdlib_source_path(identity)?;
+        self.ensure_loaded(&path);
+        let overloads = self
+            .cache
+            .get(&path.join("."))?
+            .functions
+            .iter()
+            .filter(|entry| entry.name == identity.declaration_name)
+            .collect::<Vec<_>>();
+        if overloads.len() < 2 {
+            return None;
+        }
+        let span = identity.declaration_span;
+        let info = overloads
+            .into_iter()
+            .find(|entry| {
+                entry
+                    .declaration_span
+                    .is_some_and(|declared| declared.start == span.start && declared.end == span.end)
+            })?
+            .info
+            .clone();
+        let source = CanonicalSymbolId::module_declaration(
+            path.clone(),
+            identity.declaration_name.clone(),
+            SemanticSourceTargetKind::Function,
+            span,
+        );
+        self.published_source_identity(&path, source, identity)?;
+        Some(info)
+    }
+
+    /// Confirm that `identity` is the published form of one stdlib source identity, returning the source identity.
+    ///
+    /// A package identity must name the library that owns the module, and every other field must match after the
+    /// source's `std` root is rebased onto that package.
+    fn published_source_identity(
+        &self,
+        path: &[String],
+        source: CanonicalSymbolId,
+        identity: &CanonicalSymbolId,
+    ) -> Option<CanonicalSymbolId> {
+        use incan_semantics_core::SymbolOrigin;
         let mut published = source.clone();
         if let SymbolOrigin::Package { library, module_path } = &identity.origin {
-            match self.source_inputs.owns_package_identity(&path, library) {
+            match self.source_inputs.owns_package_identity(path, library) {
                 Some(false) => return None,
                 Some(true) => {}
                 None => {
@@ -899,6 +949,21 @@ fn stdlib_module_uses_prelude_stub(module_path: &[String]) -> bool {
         .is_some_and(|path| path.ends_with("/prelude.incn") || path == "stdlib/prelude.incn")
 }
 
+/// The stdlib source module that declares a module or package identity, rooted at `std`.
+///
+/// `None` for any other origin, and for a module path outside the stdlib.
+fn stdlib_source_path(identity: &CanonicalSymbolId) -> Option<Vec<String>> {
+    use incan_semantics_core::SymbolOrigin;
+    let path = match &identity.origin {
+        SymbolOrigin::Module(path) => path.clone(),
+        SymbolOrigin::Package { module_path, .. } => std::iter::once(stdlib::STDLIB_ROOT.to_string())
+            .chain(module_path.iter().cloned())
+            .collect(),
+        _ => return None,
+    };
+    stdlib::is_any_stdlib_path(&path).then_some(path)
+}
+
 /// Return whether a stdlib module is only an import facade.
 ///
 /// Some public modules, such as `std.datetime.civil`, are real `.incn` files rather than `prelude.incn` registry
@@ -940,6 +1005,7 @@ fn extract_function_entries(program: &ast::Program) -> Vec<StdlibFunctionEntry> 
                 name: func.name.clone(),
                 info,
                 declaration: Some(func.clone()),
+                declaration_span: Some(decl.span),
                 default_const_paths: HashMap::new(),
             });
             continue;
@@ -958,6 +1024,7 @@ fn extract_function_entries(program: &ast::Program) -> Vec<StdlibFunctionEntry> 
                         name: local_name.to_string(),
                         info,
                         declaration: None,
+                        declaration_span: None,
                         default_const_paths: HashMap::new(),
                     });
                 }
@@ -2754,6 +2821,53 @@ pub enum State:
             cache.cache.contains_key("std.encoding.base85"),
             "sibling lookups must reuse the same recursively populated cache"
         );
+        Ok(())
+    }
+
+    /// Each member of a same-name stdlib overload set is selected by its own declaration span; a span no overload
+    /// declares, and a function with a single declaration, are refused.
+    #[test]
+    fn overload_function_info_selects_the_overload_declared_at_the_identity_span()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = vec!["std".to_string(), "environ".to_string()];
+        let mut cache = StdlibAstCache::new();
+        cache.ensure_loaded(&path);
+        let spans = cache
+            .cache
+            .get("std.environ")
+            .ok_or("std.environ should load")?
+            .functions
+            .iter()
+            .filter(|entry| entry.name == "get_as")
+            .filter_map(|entry| entry.declaration_span)
+            .collect::<Vec<_>>();
+        assert_eq!(spans.len(), 2, "std.environ declares two get_as overloads");
+        let identity = |start: usize, end: usize| {
+            CanonicalSymbolId::module_declaration(
+                path.clone(),
+                "get_as",
+                SemanticSourceTargetKind::Function,
+                HirSourceSpan::new(start, end),
+            )
+        };
+        let arities = spans
+            .iter()
+            .map(|span| {
+                cache
+                    .overload_function_info(&identity(span.start, span.end))
+                    .map(|info| info.params.len())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(arities, [Some(1), Some(2)]);
+        assert!(
+            cache
+                .overload_function_info(&identity(spans[0].start, spans[0].end + 1))
+                .is_none()
+        );
+        let single = cache
+            .lookup_identity(&path, "get_optional")
+            .ok_or("get_optional has one declaration")?;
+        assert!(cache.overload_function_info(&single).is_none());
         Ok(())
     }
 

@@ -18,8 +18,8 @@ use crate::symbols::{CallableParam, ResolvedType, SymbolKind, TypeInfo};
 use crate::typechecker::stdlib_loader::StdlibAstCache;
 use incan_lang::lang::stdlib;
 
-/// Collect a crate-call record for every stdlib function, generic ones included, and every nongeneric model, class or
-/// newtype method one module resolves.
+/// Collect a crate-call record for every stdlib function, generic and overloaded ones included, and every nongeneric
+/// model, class or newtype method one module resolves.
 pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::StdlibDelegation> {
     let identities = type_info
         .references
@@ -66,16 +66,21 @@ fn library_call(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Opt
             )
         }
         _ => {
-            cache.callable_source_identity(identity)?;
-            let SymbolKind::Function(function) = cache.lookup_function_symbol(&path, &identity.declaration_name)?
-            else {
-                return None;
+            // One overload of a same-name set is selected by its own declaration span; any other function has the
+            // module's single declaration under its name.
+            let function = match cache.callable_source_identity(identity) {
+                Some(_) => match cache.lookup_function_symbol(&path, &identity.declaration_name)? {
+                    SymbolKind::Function(function) => function,
+                    _ => return None,
+                },
+                None => cache.overload_function_info(identity)?,
             };
-            if function.is_async || function.emitted_name.is_some() {
+            if function.is_async {
                 return None;
             }
-            // A free function compiles under its full canonical identity, which the consumer's checked identity is.
-            // A generic one keeps its type parameters, which each call instantiates with its checked type arguments.
+            // A free function compiles under its full canonical identity, which the consumer's checked identity is:
+            // an overload's names its own declaration span, so each overload is its own crate item. A generic one
+            // keeps its type parameters, which each call instantiates with its checked type arguments.
             item.push(encode_incan_symbol_identity(identity));
             (
                 owned_parameters(&function.params)?,
