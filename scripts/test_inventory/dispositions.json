@@ -6072,6 +6072,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/native_carriers.rs": {
+      "disposition": "keep",
+      "notes": "Checked native stdlib ABI ownership and source-shadow controls retained in Body IR without legacy changes.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/newtypes.rs": {
       "disposition": "keep",
       "notes": "Canonical newtype layouts, owner parameters, trait targets and explicit raw-construction boundary; direct Body IR facts without legacy emission.",
