@@ -10696,6 +10696,21 @@ fn collection_projection_reads_output_matches_legacy() -> Result<(), Box<dyn std
 
 /// Dictionary entry writes through a generic model's field change that retained field rather than a copied map.
 #[test]
+fn settled_match_projection_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("settled-match-projection")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/match_arms_and_loop_values_share_one_type.incn"
+        ),
+    )
+}
+
+/// Dictionary entry writes through a generic model's field change that retained field rather than a copied map.
+#[test]
 fn generic_dictionary_field_mutation_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     corpus::check_builtin_source(
