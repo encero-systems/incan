@@ -153,8 +153,8 @@ from generator_expressions import (
     step_result,
     step_capture_type,
     step_pointer,
-    later_clause,
 )
+from generator_clauses import later_clauses, clause_iterator, clause_item, whole_local
 from generator_adapters import is_generator_adapter, generator_adapter, iterator_method, zip_generators
 from pair_generators import pair_generator_locals, pair_generator_type
 from generator_consumers import is_generator_consumer, consumer_result, generator_consumer
@@ -974,10 +974,17 @@ pub def lower_statement(module: &BodyIrModule, mut builder: Builder, statement: 
         None => pass
     match statement.kind:
         RustStatementKind.Assign(place=destination, rvalue=value) =>
+            # A later clause's iterator is never materialized: the clause's own chain draws from the source.
+            if later_clause_index(builder, whole_local(destination)) >= 0:
+                return Ok(None)
             return lower_assignment(module, builder, destination, value, span)
         RustStatementKind.If(cond=condition, then_block=then_body, else_block=else_body) =>
             return lower_if(module, builder, condition, then_body, else_body, span)
-        RustStatementKind.Loop(body=body) => return lower_loop(module, builder, body, span)
+        RustStatementKind.Loop(body=body) =>
+            clause = later_clause_index(builder, clause_iterator(body))
+            if clause >= 0:
+                return lower_later_clause(module, builder, clause, body, span)
+            return lower_loop(module, builder, body, span)
         RustStatementKind.Return(value=value) => return lower_return(builder, value, span)
         RustStatementKind.Break(value=value) =>
             match value:
@@ -1568,18 +1575,19 @@ def lifted_frame(builder: Builder, name: str, arguments: list[PlanType], result:
     Start a lifted function's frame: its result slot, its arguments, then the enclosing frame's locals.
 
     The enclosing locals keep their Body IR slots behind the arguments, so the lifted statements lower with the ordinary
-    local offset.
+    local offset. An enclosing frame that is itself lifted, such as a generator-expression step whose later clause lifts
+    another, contributes its Body IR slots without its own arguments.
     """
     count = len(arguments)
     mut locals = [Local(ty=result, span=span)]
     for argument in arguments:
         locals.append(Local(ty=argument, span=span))
-    for index in range(1, len(builder.locals)):
+    for index in range(1 + builder.local_offset, len(builder.locals)):
         locals.append(builder.locals[index])
     mut pointer_locals: list[int] = []
     for local in builder.function_pointer_locals:
         if local != 0:
-            pointer_locals.append(local + count)
+            pointer_locals.append(local - builder.local_offset + count)
     mut lifted = Builder(
         locals=locals,
         parameter_count=count,
@@ -1670,7 +1678,7 @@ def lower_generator_expression(
                 item,
                 capture_types,
                 bindings,
-                target,
+                place_type(builder.locals, target),
                 item_local,
                 block,
                 span,
@@ -1711,22 +1719,18 @@ def lift_generator_step(
     item: PlanType,
     captures: list[PlanType],
     capture_locals: list[int],
-    target: Place,
+    result: PlanType,
     item_local: int,
     block: &RustBlock,
     span: SourceSpan,
 ) -> Result[Function, str]:
     """
-    Build one generator-expression step: from a first-source item to the generator of that item's accepted element.
+    Build one generator-expression step: from a first-source item to the generator of that item's accepted elements.
 
     The step takes the expression's captures, then the item, as a capturing closure's lifted function does. It binds
     each to the local the deferred body reads, then lowers every statement after the item's poll; a yield returns its
-    element and falling through returns an empty generator.
+    element, a later `for` clause returns the nested chain it builds, and falling through returns an empty generator.
     """
-    # A later `for` clause yields many elements for one item, where a step returns at most one.
-    if later_clause(block):
-        return Err("unsupported Body IR generator expression with a later for clause")
-    result = place_type(builder.locals, target)
     match generator_shape(result):
         Some((leaf, depth)) =>
             mut arguments: list[PlanType] = []
@@ -1738,6 +1742,8 @@ def lift_generator_step(
             bindings.append(item_local)
             mut lifted = lifted_frame(builder, name, arguments, result, span)
             lifted.step_element = Some(generator_element(leaf, depth))
+            lifted.step_bindings = bindings
+            lifted.step_clauses = later_clauses(block)
             bind_step_arguments(lifted, arguments, bindings, span)?
             mut parameters: list[Parameter] = []
             for index in range(len(arguments)):
@@ -1749,8 +1755,9 @@ def lift_generator_step(
             if not lifted.closed[lifted.current]:
                 filtered = step_result(lifted, None, span)?
                 finish_return(lifted, filtered, span)?
-            if len(lifted.synthesized) != 0:
-                return Err("unsupported Body IR closure nested in a generator expression")
+            # A later clause's step and environment constructor belong to the enclosing plan too.
+            for function in lifted.synthesized:
+                synthesize(builder, function)
             adopt_lifted(builder, lifted)
             return Ok(
                 Function(
@@ -1763,6 +1770,100 @@ def lift_generator_step(
                 ),
             )
         None => return Err("unsupported Body IR generator expression type")
+
+
+def later_clause_index(builder: Builder, iterator: int) -> int:
+    """Find the step's later clause that polls this iterator local, or -1 outside a step or for any other local."""
+    if iterator < 0:
+        return -1
+    for index in range(len(builder.step_clauses)):
+        if builder.step_clauses[index][0] == iterator:
+            return index
+    return -1
+
+
+def lower_later_clause(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    clause: int,
+    body: &RustBlock,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Return a later `for` clause's own chain as the step's result, as legacy's nested `flat_map` does.
+
+    The clause's source is drawn lazily from a snapshot of a list, or from a generator the step built. Its step is
+    lifted like the first one; its environment holds the outer step's bound locals, cloned for each item it expands.
+    """
+    iterator, source, assigned = builder.step_clauses[clause]
+    item_local = clause_item(body)
+    if item_local < 0:
+        return Err("unsupported Body IR generator expression later for clause poll")
+    first = clause_source(builder, source + 1 + builder.local_offset, span)?
+    item = source_item(builder, first)?
+    mut environment: list[int] = []
+    mut types: list[PlanType] = []
+    mut operands: list[Operand] = []
+    for local in builder.step_bindings + assigned:
+        if local != iterator and local != source and local not in environment:
+            operand = environment_operand(builder, local + 1 + builder.local_offset, span)?
+            environment.append(local)
+            types.append(operand_type(builder, operand)?)
+            operands.append(operand)
+    result = builder.locals[0].ty
+    name = f"__incan_generator_step_{builder.name}_{len(builder.synthesized)}"
+    step = lift_generator_step(module, builder, name, item, types, environment, result, item_local, body, span)?
+    synthesize(builder, step)
+    callable = step_callable(builder, name, item, result, types, operands, span)
+    # The chain moves straight into the return slot, so it never joins the step's owners.
+    output = temporary(builder, result, span)
+    construct_chain(builder, first, callable, output, span)?
+    return finish_return(builder, read_place(output, true, span), span)
+
+
+def clause_source(mut builder: Builder, slot: int, span: SourceSpan) -> Result[Operand, str]:
+    """Snapshot a list source, as legacy's clause clones it per item, or move a generator the step built."""
+    place = plan_place(slot, span)
+    ty = builder.locals[slot].ty
+    match generator_shape(ty):
+        Some((leaf, depth)) =>
+            if ty != PlanType.Generator(leaf, depth):
+                return Err("unsupported Body IR generator expression later for clause over a borrowed generator")
+            return Ok(read_place(place, true, span))
+        None => pass
+    if not is_owned_list(ty):
+        return Err("unsupported Body IR generator expression later for clause source outside lists and generators")
+    snapshot = environment_operand(builder, slot, span)?
+    return source_generator(builder, snapshot, span)
+
+
+def environment_operand(mut builder: Builder, slot: int, span: SourceSpan) -> Result[Operand, str]:
+    """Copy a scalar, or clone owned text or an owned list, so the outer step keeps its own value."""
+    place = plan_place(slot, span)
+    ty = builder.locals[slot].ty
+    if not step_capture_type(ty):
+        return Err("unsupported Body IR generator expression clause environment outside scalars, owned text and lists")
+    if ty == PlanType.String:
+        text = clone_text(builder, place, span)?
+        builder.owned.append(text.local)
+        return Ok(read_place(text, true, span))
+    match list_shape(ty):
+        Some((leaf, depth)) =>
+            reference = list_borrow(builder, place, false, span)?
+            copy = temporary(builder, ty, span)
+            list_call(
+                builder,
+                "clone_list",
+                list_element(leaf, depth),
+                [PlanType.ListRef(leaf, depth)],
+                ty,
+                [reference],
+                copy,
+                span,
+            )
+            builder.owned.append(copy.local)
+            return Ok(read_place(copy, true, span))
+        None => return Ok(read_place(place, false, span))
 
 
 def bind_step_arguments(

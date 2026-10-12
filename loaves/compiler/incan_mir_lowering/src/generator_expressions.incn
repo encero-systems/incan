@@ -4,7 +4,6 @@ from rust::incan_semantics_core::body_ir import (
     GeneratorBody as RustGeneratorBody,
     Operand as RustOperand,
     Rvalue as RustRvalue,
-    Block as RustBlock,
     StatementKind as RustStatementKind,
 )
 from pub::incan_mir_plan import Callee, CalleeKind, ExternalFunction, Operand, Place, PlanType, RvalueKind, SourceSpan
@@ -113,27 +112,6 @@ pub def source_item(builder: Builder, source: Operand) -> Result[PlanType, str]:
     match generator_shape(value_type(builder, source)?):
         Some((leaf, depth)) => return Ok(generator_element(leaf, depth))
         None => return Err("invalid native generator expression source")
-
-
-pub def later_clause(block: &RustBlock) -> bool:
-    """Report whether a step body opens another `for` clause, which yields many elements for one item."""
-    for statement in block.stmts:
-        if opens_clause(statement.kind):
-            return true
-    return false
-
-
-def opens_clause(kind: &RustStatementKind) -> bool:
-    """Find a loop directly in the step or under one of its filters."""
-    match kind:
-        RustStatementKind.Loop(body=_body) => return true
-        RustStatementKind.If(cond=_condition, then_block=then_body, else_block=else_body) =>
-            if later_clause(then_body):
-                return true
-            match else_body:
-                Some(nested) => return later_clause(nested)
-                None => return false
-        _ => return false
 
 
 def item_family(item: PlanType) -> Result[str, str]:
