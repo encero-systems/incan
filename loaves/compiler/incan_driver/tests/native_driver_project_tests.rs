@@ -2745,6 +2745,63 @@ def main() -> None:
     )
 }
 
+/// `Ok(...)` and `Err(...)` values passed to generic functions and methods, alone, by name or in a list literal,
+/// returned by closures and built by a list comprehension take the `Result` side the checker settles for them, as legacy
+/// builds them (#1561).
+#[test]
+fn settled_result_constructor_sides_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("settled-result-constructor-sides")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"model Picker:
+    n: int
+
+    def pick[T](self, r: Result[T, int], d: T) -> T:
+        return r.unwrap_or(d)
+
+
+def pick[T](r: Result[T, int], d: T) -> T:
+    return r.unwrap_or(d)
+
+
+def pick_list[T](rs: list[Result[T, int]], d: T) -> T:
+    for r in rs:
+        return r.unwrap_or(d)
+    return d
+
+
+def run() -> Result[str, int]:
+    f = () => Ok(1)
+    println(f().unwrap_or(0))
+    g = () => Err(5)
+    match g():
+        Ok(_) => println("ok")
+        Err(e) => println(e)
+    println(pick(Err(2), 6))
+    return Ok("done")
+
+
+def main() -> None:
+    println(pick(Err(2), 5))
+    println(pick(Ok(7), 5))
+    println(pick(d=8, r=Err(2)))
+    println(pick_list([Err(3)], 9))
+    println(Picker(n=1).pick(Err(2), 10))
+    e = () => Err("no")
+    match e():
+        Ok(_) => println("ok")
+        Err(m) => println(m)
+    ys = [Ok(x * 2) for x in [1, 2]]
+    for y in ys:
+        println(y.unwrap_or(0))
+    println(run().unwrap_or("none"))
+"#,
+    )
+}
+
 /// Prove canonical scalar casts and default values byte-identical to legacy.
 #[test]
 fn numeric_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

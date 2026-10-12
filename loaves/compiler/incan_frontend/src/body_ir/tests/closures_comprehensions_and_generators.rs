@@ -1025,3 +1025,36 @@ fn a_partial_keeps_its_residual_mut_parameter_issue2022() -> Result<(), Box<dyn 
     );
     Ok(())
 }
+
+/// An `Ok(...)` or `Err(...)` a closure returns or a list comprehension builds is built with the result type the
+/// checker settled for the closure or the comprehension's element: the enclosing function's `Result` side, or `None`
+/// outside one (#1561).
+#[test]
+fn result_constructors_take_their_closure_or_comprehension_settled_type() -> Result<(), Box<dyn std::error::Error>> {
+    let source = concat!(
+        "def run() -> Result[str, int]:\n  f = () => Ok(1)\n  println(f().unwrap_or(0))\n  return Ok(\"done\")\n\n",
+        "def main() -> None:\n  e = () => Err(\"no\")\n  match e():\n    Ok(_) => println(\"ok\")\n    Err(m) => println(m)\n",
+        "  ys = [Ok(x * 2) for x in [1, 2]]\n  println(len(ys))\n",
+    );
+    let module = build(source, &["m", "settled_closure_constructors"])?;
+    let run = body_named(&module, "run")?;
+    assert_eq!(
+        local_types_at(run, source, "Ok(1)"),
+        ["Result[int, int]"],
+        "{}",
+        run.render_snapshot()
+    );
+    let main = body_named(&module, "main")?;
+    let rendered = main.render_snapshot();
+    assert_eq!(
+        local_types_at(main, source, "Err(\"no\")"),
+        ["Result[Unit, str]"],
+        "{rendered}"
+    );
+    assert_eq!(
+        local_types_at(main, source, "Ok(x * 2)"),
+        ["Result[int, Unit]"],
+        "{rendered}"
+    );
+    Ok(())
+}

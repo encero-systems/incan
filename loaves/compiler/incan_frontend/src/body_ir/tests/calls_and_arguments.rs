@@ -1956,3 +1956,40 @@ fn class_parameters_and_method_instantiations_are_retained() -> Result<(), Box<d
     assert!(!module.is_well_formed_nominal_declaration(&malformed));
     Ok(())
 }
+
+/// An `Ok(...)` or `Err(...)` argument of a generic call, alone or in a list literal, is built with the parameter type
+/// the call settles for the side it leaves open: the type another argument fixes, or `None` where nothing does (#1561).
+#[test]
+fn result_constructor_arguments_take_the_parameter_type_the_call_settles() -> Result<(), Box<dyn std::error::Error>> {
+    let source = concat!(
+        "def pick[T](r: Result[T, int], d: T) -> T:\n  return r.unwrap_or(d)\n\n",
+        "def pick_list[T](rs: list[Result[T, int]], d: T) -> T:\n  return rs[0].unwrap_or(d)\n\n",
+        "def first[T](r: Result[T, int]) -> Option[T]:\n  match r:\n    Ok(v) => return Some(v)\n    Err(_) => return None\n\n",
+        "def main() -> None:\n  println(pick(Err(2), 5))\n  println(pick_list([Err(3)], 9))\n",
+        "  match first(Err(4)):\n    Some(_) => println(\"some\")\n    None => println(\"none\")\n",
+    );
+    let module = build(source, &["m", "settled_constructor_arguments"])?;
+    let main = body_named(&module, "main")?;
+    let rendered = main.render_snapshot();
+    assert_eq!(
+        local_types_at(main, source, "Err(2)"),
+        ["Result[int, int]"],
+        "{rendered}"
+    );
+    assert_eq!(
+        local_types_at(main, source, "Err(3)"),
+        ["Result[int, int]"],
+        "{rendered}"
+    );
+    assert_eq!(
+        local_types_at(main, source, "[Err(3)]"),
+        ["List[Result[int, int]]"],
+        "{rendered}"
+    );
+    assert_eq!(
+        local_types_at(main, source, "Err(4)"),
+        ["Result[Unit, int]"],
+        "{rendered}"
+    );
+    Ok(())
+}

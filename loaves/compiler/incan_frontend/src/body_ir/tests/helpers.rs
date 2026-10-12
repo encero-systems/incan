@@ -82,6 +82,16 @@ pub(super) fn local_for_binding(snapshot: &str, name: &str) -> Option<String> {
     })
 }
 
+/// Render the type of each local `body` declares for the source text `text`, in declaration order, so a test can assert
+/// on the type a value is built with without pinning a local number.
+pub(super) fn local_types_at(body: &bir::Body, source: &str, text: &str) -> Vec<String> {
+    body.locals
+        .iter()
+        .filter(|local| source.get(local.span.start..local.span.end) == Some(text))
+        .map(|local| local.ty.to_string())
+        .collect()
+}
+
 /// Return the named body from a lowered module.
 pub(super) fn body_named<'a>(
     module: &'a bir::BodyIrModule,
