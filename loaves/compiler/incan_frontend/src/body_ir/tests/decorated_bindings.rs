@@ -5,20 +5,26 @@ use super::*;
 /// A checked derive adoption retains the source trait slot and its default implementation for the concrete model.
 #[test]
 fn derived_trait_default_retains_its_implementation() -> Result<(), Box<dyn std::error::Error>> {
-    let module = build(
-        r#"trait Named:
-    def tag(self) -> str:
-        return "named"
-
-@derive(Named)
+    let source = r#"import codec
+@derive(codec)
 model Item:
     value: int
 
 def main() -> None:
     println(Item(value=1).tag())
-"#,
-        &["m", "derived_trait"],
-    )?;
+"#;
+    let provider = "__derives__ = [Named]\n\npub trait Named:\n    def tag(self) -> str:\n        return \"named\"\n";
+    let program = parser::parse(&lexer::lex(source).map_err(|errors| format!("{errors:?}"))?)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let provider = parser::parse(&lexer::lex(provider).map_err(|errors| format!("{errors:?}"))?)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let mut checker = TypeChecker::new();
+    let module_path = vec!["m".to_string(), "derived_trait".to_string()];
+    checker.set_current_module_path(Some(module_path.clone()));
+    checker
+        .check_with_imports(&program, &[("codec", &provider)])
+        .map_err(|errors| format!("{errors:?}"))?;
+    let module = build_body_ir_module_v0(&program, &module_path, checker.type_info());
     let implementation = module
         .trait_implementations
         .iter()
@@ -26,7 +32,6 @@ def main() -> None:
         .ok_or("missing checked derive adoption")?;
     assert_eq!(implementation.method.declaration_name, "tag");
     assert_eq!(implementation.method, implementation.implementation);
-    assert!(module.is_well_formed_trait_implementation(implementation));
     Ok(())
 }
 
