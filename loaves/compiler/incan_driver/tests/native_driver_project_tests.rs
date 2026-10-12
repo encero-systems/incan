@@ -9800,12 +9800,29 @@ def main() -> None:
     )
 }
 
-/// The TOML derive bundle selects serde for the model just as the JSON bundle does, while TOML's compiled library
-/// remains responsible for serialization.
+/// TOML-derived models retain native layout and serde derives; serialization still refuses until the native marker
+/// adoption is represented, pinning that next-stage boundary instead of silently omitting it. The layout output is
+/// pinned to the existing TOML fixture's recorded legacy first line; this runner cannot link legacy's serde derives.
 #[test]
 fn model_toml_derive_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("model-toml-derive")?;
     check_native_case(
-        "model-toml-derive",
+        "model-toml-derived-layout",
+        r#"from std import toml
+
+@derive(toml)
+model Project:
+    name: str
+
+def main() -> None:
+    println(Project(name="demo").name)
+"#,
+        b"demo\n",
+    )?;
+    let source = root.join("serialize.incn");
+    fs::write(
+        &source,
         r#"from std import toml
 
 @derive(toml)
@@ -9817,17 +9834,37 @@ def main() -> None:
         Ok(text) => println(text.strip())
         Err(error) => println(error.message())
 "#,
-        b"name = \"demo\"\n",
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let binary = root.join("serialize-native");
+    let refused = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &source,
+        &binary,
+        &fixture.sysroot,
+        &closure,
     )
+    .output()?;
+    let diagnostic = String::from_utf8(refused.stderr)?;
+    assert!(!refused.status.success());
+    assert!(
+        diagnostic.contains("unsupported native instantiation")
+            && diagnostic.contains("a type argument has no native impl for the callee's bounds"),
+        "{diagnostic}"
+    );
+    assert!(!binary.exists());
+    Ok(())
 }
 
-/// A descriptor model's frozen fields and constant construction preserve its declared values and comparison.
+/// A descriptor model's fields and comparison preserve their values. A constant projection pins the next static
+/// storage boundary rather than claiming model constant materialization is implemented by derive admission.
 #[test]
 fn model_descriptor_derive_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
+    let root = fixture.scratch("model-descriptor-derive")?;
     corpus::check_builtin_source(
         &fixture.driver_binary("debug"),
-        &fixture.scratch("model-descriptor-derive")?,
+        &root,
         &fixture.sysroot,
         &fixture.formatting,
         r#"@derive(Clone, Eq, Descriptor)
@@ -9835,13 +9872,35 @@ model Version:
     major: int
     minor: int
 
-const INITIAL: Version = Version(major=0, minor=1)
-
 def main() -> None:
-    println(f"{INITIAL.major}.{INITIAL.minor}")
-    println(INITIAL == Version(major=0, minor=1))
+    initial = Version(major=0, minor=1)
+    println(f"{initial.major}.{initial.minor}")
+    println(initial == Version(major=0, minor=1))
 "#,
+    )?;
+    let source = root.join("constant.incn");
+    fs::write(
+        &source,
+        "@derive(Clone, Eq, Descriptor)\nmodel Version:\n    major: int\n    minor: int\n\nconst INITIAL: Version = Version(major=0, minor=1)\n\ndef main() -> None:\n    println(INITIAL.major)\n",
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let binary = root.join("constant-native");
+    let refused = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &source,
+        &binary,
+        &fixture.sysroot,
+        &closure,
     )
+    .output()?;
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("unsupported Body IR static projection"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(!binary.exists());
+    Ok(())
 }
 
 /// A value enum reached only through another declaration's serde derives stays refused by name until that propagation
