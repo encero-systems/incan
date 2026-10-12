@@ -67,7 +67,7 @@ impl BodyBuilder<'_, '_> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> Vec<(bir::Operand, IncanType)> {
-        let mut tuple_places = HashMap::new();
+        let mut tuple_places: HashMap<(usize, usize), bir::Place> = HashMap::new();
         let mut values = Vec::with_capacity(shaped.len());
         for entry in shaped {
             let expr = match &entry.argument {
