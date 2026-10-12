@@ -92,7 +92,7 @@ pub def partial_call_operands(
                 named.append(slot)
                 match elements[index].as_one():
                     Some(value) =>
-                        values[slot] = Some(call_argument_operand(builder, value, signature[positions[slot]], span)?)
+                        values[slot] = Some(call_argument_operand(builder, value, signature[positions[slot]], span, false)?)
                     None => return Err("unsupported Body IR named or spread ArgumentElement")
             return assemble_inputs(builder, values, signature, flags, positions, span)
         _ => return Err("unsupported Body IR unresolved ArgumentBinding")
@@ -212,5 +212,5 @@ def default_value(
         CallableParamDefault.Source(computation) =>
             for statement in computation.stmts:
                 lower_statement(module, lifted, statement)?
-            return call_argument_operand(lifted, computation.result, ty, span)
+            return call_argument_operand(lifted, computation.result, ty, span, false)
         _ => return Err("unsupported Body IR partial parameter default")
