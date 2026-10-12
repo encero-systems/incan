@@ -1100,6 +1100,7 @@ from std.encoding.bech32 import Decoded
 from std.compression import CompressionError
 from std.interop import BindingDeclaration
 from std.logging import Logger
+from std.testing import assert_true
 
 
 pub def data_item(value: UuidError) -> UuidError:
@@ -1124,6 +1125,10 @@ pub def interop_item(value: BindingDeclaration) -> BindingDeclaration:
 
 pub def observability_item(value: Logger) -> Logger:
     return value
+
+
+pub def testing_item(value: bool) -> None:
+    assert_true(value)
 ";
 
 /// The process-wide SDK closure library; tests running in parallel wait for its single bake instead of baking the
@@ -7275,6 +7280,32 @@ def main() -> None:
     println(f"{config.name()} {config.suffix()} {config.parent().0}")
 "#,
         b"little\nbig\nconfig/app.toml\napp.toml .toml config\n",
+    )
+}
+
+/// A generic stdlib function runs as its SDK crate item instantiated with each call's checked type arguments, so one
+/// function serves an integer, a text and a model instantiation in the same program, and returns its parameter type.
+#[test]
+fn stdlib_generic_functions_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "stdlib_generic_functions",
+        r#"from std.testing import assert_eq, assert_is_some
+
+
+@derive(Eq, Debug)
+model Pair:
+    x: int
+
+
+def main() -> None:
+    assert_eq(1 + 1, 2, "sum")
+    assert_eq("a", "a", "text")
+    assert_eq(Pair(x=1), Pair(x=1), "pair")
+    value = assert_is_some(Some(5), "present")
+    println(value)
+    println("ok")
+"#,
+        b"5\nok\n",
     )
 }
 
