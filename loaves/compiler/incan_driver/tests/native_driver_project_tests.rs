@@ -8107,6 +8107,31 @@ def main() -> None:
     )
 }
 
+/// `list.repeat` builds a list of clones of its value through legacy's runtime helper: scalars, text read from a
+/// binding that stays usable, nested lists, models, a zero count and arguments written by name.
+#[test]
+fn list_repeat_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "list_repeat_helper",
+        r#"@derive(Clone)
+model Point:
+    x: int
+
+
+def main() -> None:
+    ints: List[int] = list.repeat(-1, 4)
+    seed = "seed"
+    words: list[str] = list.repeat(seed, 2)
+    empty: List[int] = list.repeat(0, 0)
+    nested: list[list[int]] = list.repeat([1], 2)
+    named: list[int] = list.repeat(count=3, value=7)
+    points = list.repeat(Point(x=4), 2)
+    println(f"{ints[0]} {len(ints)} {words[1]} {seed} {len(empty)} {nested[1][0]} {named[2]} {points[1].x}")
+"#,
+        None,
+    )
+}
+
 /// The adopted math unit is an explicit receipt-selected dependency on both native routes.
 #[test]
 fn direct_route_native_sdk_math_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
