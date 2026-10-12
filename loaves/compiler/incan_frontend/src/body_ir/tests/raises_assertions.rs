@@ -1,6 +1,6 @@
 //! Deferred zero-argument assertion calls retain their checked callable and error identities.
 
-use super::*;
+use super::{IncanType, bir, body_named, build};
 
 /// Neither assertion spelling executes the function before the assertion's runtime unwind boundary.
 #[test]
