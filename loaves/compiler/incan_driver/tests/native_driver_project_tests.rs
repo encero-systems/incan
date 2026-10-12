@@ -6874,3 +6874,35 @@ def main() -> None:
 "#,
     )
 }
+
+/// A model deriving serde's Deserialize parses through `Type.from_json` with legacy's serde decoding, and
+/// `json_stringify` writes a list through legacy's serde boundary, pinned to the output legacy records for them.
+#[test]
+fn derived_json_parse_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_native_case(
+        "derived_json_parse",
+        r#"from std.serde import json
+
+
+@derive(json)
+model Config:
+    port: int
+    name: str
+
+
+def main() -> None:
+    match Config.from_json("{\"port\":7,\"name\":\"api\"}"):
+        case Ok(config):
+            println(config.port)
+            println(config.name)
+            println(config.to_json())
+        case Err(message):
+            println(message)
+    println(json_stringify([1, 2]))
+    values = [3, 4, 5]
+    println(json_stringify(values))
+    println(len(values))
+"#,
+        b"7\napi\n{\"port\":7,\"name\":\"api\"}\n[1,2]\n[3,4,5]\n3\n",
+    )
+}
