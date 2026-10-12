@@ -10876,7 +10876,7 @@ fn module_derive_bound_calls_output_matches_legacy() -> Result<(), Box<dyn std::
 /// User derive bundles retain native serde effects and pure source trait implementations beside the standard bundle.
 #[test]
 fn user_module_derivables_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    check_project_modules_case(
+    check_source_modules_case(
         "user-module-derivables",
         include_str!(
             "../../incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/user_module_derivables/main.incn"
@@ -10897,6 +10897,55 @@ fn user_module_derivables_output_matches_legacy() -> Result<(), Box<dyn std::err
         ],
         b"yaml\n{\"value\":1}\nschema\n",
     )
+}
+
+/// Compare imported declaration modules through standalone builds, whose inferred Rust dependencies include derives.
+fn check_source_modules_case(
+    name: &str,
+    text: &str,
+    modules: &[(&str, &str)],
+    expected_stdout: &[u8],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch(name)?;
+    fs::create_dir_all(&root)?;
+    let source = root.join(format!("{name}.incn"));
+    fs::write(&source, text)?;
+    for (file, module) in modules {
+        fs::write(root.join(file), module)?;
+    }
+    let native = root.join("native");
+    let mut closure = corpus::runtime_closure(&fixture.formatting)?;
+    closure.extend_with(&sdk_closure(fixture)?)?;
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("debug"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .current_dir(&root)
+        .output()?,
+        "native imported declaration compilation",
+    );
+    let legacy = root.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&legacy)
+            .output()?,
+        "legacy imported declaration compilation",
+    );
+    let expected = Command::new(legacy.join("oven/release").join(name)).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "legacy imported declaration execution");
+    success(&actual, "native imported declaration execution");
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(actual.stdout, expected_stdout);
+    Ok(())
 }
 
 /// A retained original mutable method writes through its receiver after initialization.
