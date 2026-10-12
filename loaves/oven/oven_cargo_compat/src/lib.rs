@@ -1718,12 +1718,15 @@ fn select_existing_project_extension_identity(
     receipt: &OvenReceipt,
     base: &OvenLegacyCargoBaseLoaf<'_>,
 ) -> Result<Option<String>, OvenLegacyCargoError> {
-    let candidates = store.select_payloads_matching_for_execution(|manifest| {
-        manifest.kind == OvenArtifactKind::ProjectPayload
-            && manifest.receipt_identity == receipt.identity
-            && manifest.build_unit_identity == receipt.build_unit_identity
-            && manifest.intent == receipt.intent
-    })?;
+    let candidates = store.select_payloads_matching_for_execution(
+        |manifest| {
+            manifest.kind == OvenArtifactKind::ProjectPayload
+                && manifest.receipt_identity == receipt.identity
+                && manifest.build_unit_identity == receipt.build_unit_identity
+                && manifest.intent == receipt.intent
+        },
+        |_, _| true,
+    )?;
     let mut identities = Vec::new();
     for candidate in candidates {
         let identity = candidate.manifest.identity;
@@ -2374,11 +2377,14 @@ fn select_compiler_test_suite_identity(
     store: &OvenStore,
     receipt: &OvenReceipt,
 ) -> Result<Option<String>, OvenLegacyCargoError> {
-    let candidates = store.select_payloads_matching_for_execution(|manifest| {
-        manifest.kind == OvenArtifactKind::CompilerTestSuite
-            && manifest.build_unit_identity == receipt.build_unit_identity
-            && manifest.intent == receipt.intent
-    })?;
+    let candidates = store.select_payloads_matching_for_execution(
+        |manifest| {
+            manifest.kind == OvenArtifactKind::CompilerTestSuite
+                && manifest.build_unit_identity == receipt.build_unit_identity
+                && manifest.intent == receipt.intent
+        },
+        |_, _| true,
+    )?;
     let mut identities = Vec::new();
     for candidate in candidates {
         let identity = candidate.manifest.identity;

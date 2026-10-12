@@ -9,6 +9,7 @@
 
 pub mod composition;
 pub mod selection;
+pub mod shared;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -309,6 +310,23 @@ pub struct OvenStoredDirectRustcExecutionPlan {
     pub artifact_root: PathBuf,
     pub artifact_plan: OvenRustcArtifactPlan,
     _lease: OvenStoreLease,
+    /// Independent receipt-addressed native units retained for the entire consumer execution.
+    _shared_owners: Vec<std::sync::Arc<oven_store::store::OvenStoreExecutionPayload>>,
+    /// Logical coordinates bound to the original leased native owners or plan-owned facade files.
+    pub(crate) shared_paths: std::collections::BTreeMap<String, PathBuf>,
+}
+
+impl OvenStoredDirectRustcExecutionPlan {
+    /// Resolve a manifest-validated coordinate through its retained native owner or ordinary plan-owned root.
+    ///
+    /// Callers supply only coordinates from this selection's validated artifact or search-path declarations; this
+    /// lookup relocates existing authority and never discovers or admits another artifact.
+    pub(crate) fn physical_path(&self, relative: &str) -> PathBuf {
+        self.shared_paths
+            .get(relative)
+            .cloned()
+            .unwrap_or_else(|| self.artifact_root.join(relative))
+    }
 }
 
 /// Receipt-bound store entry that contributes only project-specific files to one exact compiler Loaf.
@@ -450,15 +468,15 @@ impl OvenPackagedProviderExecutionPlan {
                     )
                 }),
             ),
-            Self::Direct(packages) => retain_packaged_provider_fragment_dependency_search_paths(
-                plan,
-                packages.fragments.iter().map(|fragment| {
-                    (
-                        fragment.plan.artifact_root.as_path(),
-                        fragment.dependency_search_paths.as_slice(),
-                    )
-                }),
-            ),
+            Self::Direct(packages) => {
+                for fragment in &packages.fragments {
+                    for relative in &fragment.dependency_search_paths {
+                        plan.retain_caller_dependency_search_path(fragment.plan.physical_path(relative));
+                    }
+                }
+                plan.dependency_search_paths.sort();
+                plan.dependency_search_paths.dedup();
+            }
         }
     }
 

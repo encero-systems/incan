@@ -372,7 +372,41 @@ impl TypeChecker {
             }
         }
 
+        // Peer elements may settle an empty nested literal after it was checked. Retain that proof at each
+        // literal's own span so Body IR sees the same concrete storage type as its enclosing list.
+        for entry in elems {
+            if let ListEntry::Element(value) = entry {
+                self.retain_empty_list_member_type(value, &elem_ty);
+                self.retain_literal_carrier_types(value, &elem_ty);
+            }
+        }
         list_ty(elem_ty)
+    }
+
+    /// Retain peer-proven list element types only for source list literals with compatible checked types.
+    /// Unknown call results and non-list expressions remain untouched; concrete leaves never change.
+    fn retain_empty_list_member_type(&mut self, value: &Spanned<Expr>, expected: &ResolvedType) {
+        let Expr::List(entries) = &value.node else {
+            return;
+        };
+        let Some(mut checked) = self.type_info.expr_type(value.span).cloned() else {
+            return;
+        };
+        if !self.types_compatible(&checked, expected) {
+            return;
+        }
+        Self::refine_empty_list_member(&mut checked, expected, &value.node);
+        if self.type_info.expr_type(value.span) != Some(&checked) {
+            self.record_expr_type(value.span, checked.clone());
+        }
+        let Some(element) = Self::list_element_type(&checked).cloned() else {
+            return;
+        };
+        for entry in entries {
+            if let ListEntry::Element(child) = entry {
+                self.retain_empty_list_member_type(child, &element);
+            }
+        }
     }
 
     /// Type-check a tuple literal.
@@ -487,6 +521,12 @@ impl TypeChecker {
             self.refuse_unhashable_collection_member(HashedCollectionRole::DictKey, &key_ty, span);
         }
 
+        for entry in entries {
+            if let DictEntry::Pair(key, value) = entry {
+                self.retain_literal_carrier_types(key, &key_ty);
+                self.retain_literal_carrier_types(value, &val_ty);
+            }
+        }
         dict_ty(key_ty, val_ty)
     }
 

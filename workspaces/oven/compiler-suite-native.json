@@ -1,0 +1,162 @@
+{
+  "index_commit": "ee71d3e50de10d4fd7d8f817e0b1df04885bddb0",
+  "registry_lock": "compiler-suite-native-lock.json",
+  "facets": [
+    {
+      "domain": "target",
+      "features": [
+        "cli",
+        "rust_inspect",
+        "std_async",
+        "std_decorators",
+        "std_testing"
+      ],
+      "project": "../../loaves/compiler/incan_driver"
+    },
+    {
+      "domain": "target",
+      "features": [
+        "rust_inspect",
+        "std_async",
+        "std_decorators",
+        "std_testing"
+      ],
+      "project": "../../loaves/compiler/incan_emit"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/compiler/incan_format"
+    },
+    {
+      "domain": "target",
+      "features": [
+        "rust_inspect",
+        "std_async",
+        "std_decorators",
+        "std_testing"
+      ],
+      "project": "../../loaves/compiler/incan_frontend"
+    },
+    {
+      "domain": "target",
+      "features": [
+        "rust_inspect",
+        "std_async",
+        "std_decorators",
+        "std_testing"
+      ],
+      "project": "../../loaves/compiler/incan_ir"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/compiler/incan_oven_facet"
+    },
+    {
+      "domain": "target",
+      "features": [
+        "rust_inspect",
+        "std_async",
+        "std_decorators",
+        "std_testing"
+      ],
+      "project": "../../loaves/compiler/incan_provider"
+    },
+    {
+      "domain": "target",
+      "features": [
+        "default",
+        "std_async",
+        "std_decorators",
+        "std_testing"
+      ],
+      "project": "../../loaves/compiler/incan_semantics_stdlib"
+    },
+    {
+      "domain": "target",
+      "features": [
+        "inspector"
+      ],
+      "project": "../../loaves/compiler/rust_inspect"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/kernel/incan_codegraph"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/kernel/incan_lang"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/kernel/incan_semantics_core"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/kernel/incan_syntax"
+    },
+    {
+      "domain": "target",
+      "features": [
+        "default",
+        "serde"
+      ],
+      "project": "../../loaves/kernel/incan_vocab"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/oven/oven_cargo_compat"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/oven/oven_interop"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/oven/oven_model"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/oven/oven_rustc"
+    },
+    {
+      "domain": "target",
+      "features": [],
+      "project": "../../loaves/oven/oven_store"
+    },
+    {
+      "project": "../../loaves/compiler/incan_test_support",
+      "domain": "target",
+      "features": []
+    },
+    {
+      "project": "../../loaves/toolchain/oven-cli",
+      "domain": "target",
+      "features": [
+        "rust_inspect",
+        "std_async",
+        "std_decorators",
+        "std_testing"
+      ]
+    },
+    {
+      "project": "../../loaves/toolchain/incan-cli",
+      "domain": "target",
+      "features": [
+        "rust_inspect",
+        "std_async",
+        "std_decorators",
+        "std_testing"
+      ]
+    }
+  ]
+}

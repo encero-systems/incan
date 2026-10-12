@@ -4,7 +4,7 @@ from rust::std::io import Read, Seek, SeekFrom, Write
 from rust::std::path import Path as RustPath
 from rust::std::rc import Rc
 from rust::std::string import String as RustString
-from rust::encoding_rs @ "0.8" import Encoding
+from rust::encoding_rs import Encoding
 from std.fs.path import Path, _as_path, _fs_error, _io_error
 from std.io import BinaryReader, IoError
 

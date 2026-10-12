@@ -498,6 +498,25 @@ impl WorkspaceGraph {
         };
 
         for (name, request) in manifest.workspace_library_dependencies() {
+            if let Some(spec) = shared.rust_dependencies.get(name) {
+                dependencies.rust_dependencies.insert(
+                    name.clone(),
+                    EffectiveRustDependency {
+                        spec: spec.clone(),
+                        origin: WorkspaceDependencyOrigin::Workspace,
+                        workspace_features: spec.features.clone(),
+                        member_features: Vec::new(),
+                    },
+                );
+                continue;
+            }
+            if shared.loaf_dependencies.contains_key(name) {
+                return Err(invalid_workspace(
+                    &self.root,
+                    format!("workspace dependency `{name}` requires a selected target before inheritance"),
+                ));
+            }
+
             let spec = shared.library_dependencies.get(name).ok_or_else(|| {
                 invalid_workspace(
                     &self.root,
@@ -1987,7 +2006,6 @@ domain = { path = "libraries/domain" }
 [workspace.rust-dependencies]
 serde = { version = "1", features = ["alloc"], default-features = false }
 
-[workspace.rust-dev-dependencies]
 proptest = "1"
 "#,
         )?;
@@ -2003,7 +2021,6 @@ domain = { workspace = true }
 [rust-dependencies]
 serde = { workspace = true, features = ["derive"], optional = true }
 
-[rust-dev-dependencies]
 proptest = { workspace = true, features = ["std"] }
 "#,
         )?;
@@ -2033,7 +2050,7 @@ proptest = { workspace = true, features = ["std"] }
         assert!(serde.spec().optional);
 
         let proptest = dependencies
-            .rust_dev_dependencies()
+            .rust_dependencies()
             .get("proptest")
             .ok_or("missing effective proptest dependency")?;
         assert_eq!(proptest.member_features(), ["std"]);

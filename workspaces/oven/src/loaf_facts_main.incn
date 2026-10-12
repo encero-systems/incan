@@ -1,0 +1,127 @@
+"""Pure Incan audit of every binding in the supplied pin, independent of Rust inspection authority."""
+
+from std.fs import Path
+from std.json import JsonValue, parse
+from std.environ import args
+from loaf_facts import closure_violations, applicable_optional_aliases, FactDependency
+from loaf_pin import pinned_revision
+
+
+def field(value: JsonValue, name: str) -> Result[JsonValue, str]:
+    """Refuse omitted fields rather than making absent evidence look like an empty set."""
+    if let Some(item) = value.get(name):
+        return Ok(item)
+    return Err(f"missing {name}")
+
+
+def text(value: JsonValue) -> Result[str, str]:
+    """Require string facts rather than coercing arbitrary values."""
+    if let Some(item) = value.as_str():
+        return Ok(item)
+    return Err("expected string")
+
+
+def array(value: JsonValue) -> Result[list[JsonValue], str]:
+    """Require a JSON array at the evidence boundary."""
+    if let Some(items) = value.as_array():
+        return Ok(items)
+    return Err("expected array")
+
+
+def strings(value: JsonValue) -> Result[list[str], str]:
+    """Retain recorded order for verbatim violation reporting."""
+    mut result: list[str] = []
+    for item in array(value)?:
+        result.append(text(item)?)
+    return Ok(result)
+
+
+pub def main() -> Result[None, str]:
+    """Audit the named pin files; print every violation and exact coverage counts."""
+    arguments = args().map_err((e) => e.message())?
+    if len(arguments) != 5:
+        return Err("usage: audit PIN_DIRECTORY NAMES_FILE CFG_TRIPLE CFG_FILE")
+    revision = Path(f"{arguments[1]}/revision").read_text("utf-8", "strict").map_err((e) => e.message())?
+    if revision.strip() != pinned_revision():
+        return Err("index revision does not match resolver pin")
+    cfg = read_cfg(arguments[4])?
+    names = Path(arguments[2]).read_text("utf-8", "strict").map_err((e) => e.message())?
+    mut versions = 0
+    mut fact_count = 0
+    mut violations = 0
+    for name in names.split("\n"):
+        if name == "":
+            continue
+        source = Path(f"{arguments[1]}/index/{name}").read_text("utf-8", "strict").map_err((e) => e.message())?
+        for line in source.split("\n"):
+            if line == "":
+                continue
+            value = parse(line).map_err((e) => e.message())?
+            loaf = text(field(value, "name")?)?
+            version = text(field(value, "vers")?)?
+            table = field(value, "features")?
+            mut features: Dict[str, list[str]] = {}
+            for key in table.keys():
+                features[key] = strings(field(table, key)?)?
+            declarations = dependencies(value)?
+            aliases = applicable_optional_aliases(declarations, arguments[3], cfg.flags, cfg.values)?
+            mut facts: list[list[str]] = []
+            for fact in array(field(value, "facts")?)?:
+                if text(field(fact, "target")?)? != arguments[3]:
+                    return Err(f"cfg snapshot does not cover recorded binding for {loaf} {version}")
+                facts.append(strings(field(fact, "features")?)?)
+            versions += 1
+            fact_count += len(facts)
+            for violation in closure_violations(loaf, version, features, facts, aliases):
+                println(violation)
+                violations += 1
+    println(f"versions={versions}; facts={fact_count}; violations={violations}")
+    if violations != 0:
+        return Err("recorded feature closure violations")
+    return Ok(None)
+
+
+model BindingCfg:
+    """A retained complete cfg snapshot belongs to exactly one declared target triple."""
+
+    flags: list[str]
+    values: Dict[str, list[str]]
+
+
+def read_cfg(path: str) -> Result[BindingCfg, str]:
+    """Parse retained rustc cfg output without querying an ambient compiler or guessing target facts."""
+    source = Path(path).read_text("utf-8", "strict").map_err((e) => e.message())?
+    mut flags: list[str] = []
+    mut values: Dict[str, list[str]] = {}
+    for line in source.split("\n"):
+        if line == "":
+            continue
+        parts = line.split("=")
+        if len(parts) == 1:
+            flags.append(line)
+        elif len(parts) == 2 and parts[1].startswith("\"") and parts[1].endswith("\""):
+            name = parts[0]
+            if name not in values:
+                values[name] = []
+            mut entries = values[name]
+            entries.append(parts[1][1:-1])
+            values[name] = entries
+        else:
+            return Err(f"invalid cfg snapshot line: {line}")
+    return Ok(BindingCfg(flags=flags, values=values))
+
+
+def dependencies(value: JsonValue) -> Result[list[FactDependency], str]:
+    """Project only the declaration fields needed by the feature-name audit."""
+    mut result: list[FactDependency] = []
+    for entry in array(field(value, "deps")?)?:
+        mut target: Option[str] = None
+        if let Some(item) = entry.get("target"):
+            target = Some(text(item)?)
+        optional = field(entry, "optional")?
+        match optional.as_bool():
+            None => return Err("expected optional boolean")
+            Some(enabled) => result.append(
+                FactDependency(alias=text(field(entry, "name")?)?, optional=enabled, target=target),
+            )
+    return Ok(result)

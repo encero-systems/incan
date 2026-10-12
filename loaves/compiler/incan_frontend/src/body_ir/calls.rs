@@ -5,6 +5,7 @@ use super::primitives::*;
 use super::*;
 use incan_lang::lang::builtins::BuiltinFnId;
 use incan_lang::lang::surface::{dict_methods, list_methods, set_methods};
+use incan_semantics_core::SymbolOrigin;
 
 /// Read receiver exclusivity from the canonical builtin collection registry, never from a source method's spelling.
 fn collection_method_changes_receiver(identity: &CanonicalSymbolId) -> bool {
@@ -122,6 +123,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let mut operand = self.lower_expr_to_operand(expr, scope, out);
             if mut_slots.get(*slot).copied().unwrap_or(false) {
                 operand = self.borrow_for_mut_parameter(operand);
+            } else {
+                operand = self.owned_parameter_operand(expr, operand);
             }
             if let Some(entry) = lowered.get_mut(*slot) {
                 *entry = Some((operand, written_position));
@@ -174,7 +177,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // than treating the alias spelling as an imported function with no executable body.
         let selected = self.type_info.resolved_identity(callee_span);
         let declaration_name = selected
-            .filter(|identity| identity.kind == SemanticSourceTargetKind::Function)
+            .filter(|identity| {
+                matches!(
+                    identity.kind,
+                    SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Partial
+                )
+            })
             .filter(|identity| {
                 incan_semantics_core::canonical_module_identity(identity).as_deref() == Some(self.module_identity)
             })
@@ -190,6 +198,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 ));
             }
             return Ok(DirectCallDeclaration {
+                is_async: declarations
+                    .function_bindings
+                    .get(name)
+                    .is_some_and(|binding| binding.is_async),
                 slots: declarations
                     .function_bindings
                     .get(name)
@@ -228,6 +240,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 ));
             };
             return Ok(DirectCallDeclaration {
+                is_async: binding.is_async,
                 slots: Some(binding.params.iter().map(DeclaredSlot::from_checked_param).collect()),
                 direct_call_id: Some(CompilerNodeId::declaration_span(
                     self.module_identity,
@@ -263,6 +276,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             ));
         }
         Ok(DirectCallDeclaration {
+            is_async: binding.is_async,
             slots: Some(binding.params.iter().map(DeclaredSlot::from_checked_param).collect()),
             direct_call_id: Some(CompilerNodeId::declaration_span(
                 self.module_identity,
@@ -325,9 +339,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         Ok((fixed_elements(operands), binding))
     }
 
-    /// Resolve a call site's explicit type arguments to semantic types, or describe why they cannot be represented.
+    /// Retain the checker's ordered explicit or inferred call-site type arguments, refusing unresolved explicit
+    /// arguments.
     ///
-    /// Explicit type arguments are part of a call's resolved identity, so Body IR takes the typechecker's
+    /// Type arguments are part of a call's resolved identity, so Body IR takes the typechecker's
     /// monomorphized selection rather than re-lowering the written AST type nodes -- which is also the only way a
     /// `_` placeholder resolves to a real type instead of an unknown. A call that wrote type arguments the
     /// typechecker did not resolve is refused by name rather than represented with a guess.
@@ -336,18 +351,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         span: ast::Span,
         type_args: &[ast::Spanned<ast::Type>],
     ) -> Result<Vec<IncanType>, String> {
-        if type_args.is_empty() {
-            return Ok(Vec::new());
-        }
         let Some(resolved) = self
             .type_info
             .calls
             .call_site_monomorph_type_args
             .get(&(span.start, span.end))
         else {
+            if type_args.is_empty() {
+                return Ok(Vec::new());
+            }
             return Err("call with unresolved explicit type arguments".to_string());
         };
-        Ok(resolved.iter().map(semantic_type_from_resolved).collect())
+        Ok(resolved.iter().map(|ty| self.checked_type(ty)).collect())
     }
 
     /// Lower a `model`/`class` or plain-newtype construction into a [`bir::AggregateKind::Constructor`] aggregate.
@@ -417,6 +432,23 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .copied()
             .zip(written_exprs)
             .collect();
+        // Legacy stages reordered arguments, but otherwise evaluates fields in declaration order. The current
+        // aggregate boundary evaluates supplied operands before deferred defaults, so it cannot interleave an
+        // observable supplied expression after an omitted field. Preserve that gap as a named refusal.
+        let reordered = field_binding.argument_slots.windows(2).any(|pair| pair[0] > pair[1]);
+        if !reordered
+            && planned.iter().any(|(slot, expression)| {
+                (0..*slot).any(|prior| !field_binding.argument_slots.contains(&prior))
+                    && !matches!(expression.node, ast::Expr::Literal(_))
+            })
+        {
+            return self.unsupported_operand(
+                format!("model field-default evaluation interleaved with supplied arguments on `{name}`"),
+                scope,
+                hir_span_value,
+                out,
+            );
+        }
         let (operands, binding) = match self.lower_planned_args(&planned, field_binding.field_count, &[], scope, out) {
             Ok(bound) => bound,
             Err(description) => {
@@ -841,6 +873,27 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             );
         }
 
+        if name == "Some"
+            && !self.bindings.contains_key(&name)
+            && !self.local_function_declarations.contains_key(&name)
+            && self
+                .type_info
+                .resolved_identity(callee.span)
+                .is_some_and(|identity| identity.origin == SymbolOrigin::Builtin && identity.declaration_name == "Some")
+            && type_args.is_empty()
+            && matches!(self.resolve_ty(span), IncanType::Generic { ref base, ref args } if base == "Option" && args.len() == 1)
+            && let [ast::CallArg::Positional(payload)] = args
+        {
+            let payload = self.lower_expr_to_operand(payload, scope, out);
+            return self.push_assign_temp(
+                bir::Rvalue::Aggregate(bir::AggregateKind::OptionSome, fixed_elements(vec![payload])),
+                self.resolve_ty(span),
+                scope,
+                hir_span_value,
+                out,
+            );
+        }
+
         let resolved_type_args = match self.call_site_type_arguments(span, type_args) {
             Ok(resolved_type_args) => resolved_type_args,
             Err(description) => {
@@ -872,6 +925,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return self.push_call_temp(
                 bir::Callee::Method(bir::MethodTarget {
                     name: method,
+                    intrinsic_carrier: None,
                     canonical: self.type_info.resolved_identity(span).cloned(),
                     type_args: resolved_type_args,
                     binding,
@@ -958,6 +1012,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return self.lower_provider_operation(&name, &operation, record, declaration, args, span, scope, out);
         }
 
+        let is_async = declaration.is_async;
         let (operands, binding) =
             match self.bind_declared_args(&format!("function `{name}`"), declaration.slots, args, scope, out) {
                 Ok(bound) => bound,
@@ -966,7 +1021,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 }
             };
 
-        let ty = self.resolve_ty(span);
+        // The checked expression type is the eventual output for immediately awaited source calls. Body IR
+        // represents construction and awaiting separately, so their intervening local must own the future.
+        let ty = if is_async {
+            IncanType::Generic {
+                base: "Awaitable".to_string(),
+                args: vec![self.resolve_ty(span)],
+            }
+        } else {
+            self.resolve_ty(span)
+        };
         self.push_call_temp(
             bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
                 receiver_type: None,
@@ -1248,6 +1312,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.push_call_temp(
             bir::Callee::Method(bir::MethodTarget {
                 name: name.to_string(),
+                intrinsic_carrier: match self.resolve_ty(recv.span) {
+                    IncanType::Generic { base, .. }
+                        if (base == "Option" && matches!(name, "is_some" | "is_none" | "unwrap" | "unwrap_or"))
+                            || (base == "Result" && matches!(name, "is_ok" | "is_err" | "unwrap" | "unwrap_or")) =>
+                    {
+                        Some(base)
+                    }
+                    _ => None,
+                },
                 canonical: self
                     .type_info
                     .resolved_identity(span)

@@ -1,13 +1,13 @@
 //! Bounded, lease-aware storage for immutable Oven Alpha artifacts.
 //!
 //! This store is intentionally separate from generated Cargo targets. It owns versioned Oven artifacts only, reports
-//! logical artifact bytes and measured physical file allocation separately, and refuses publication when its active
-//! leases leave no safe way to satisfy capacity policy.
+//! logical artifact bytes and measured physical file allocation separately. Bounded requests sweep idle entries
+//! toward retention targets; retained totals never justify evicting active readers or refusing valid records.
 
 use oven_model::compiler_identity::{CompilerIdentity, RELEASE_DOMAIN_PREFIX};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{self, File, OpenOptions, TryLockError};
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -52,14 +52,14 @@ const LEGACY_CARGO_PUBLISHER_LOCK_FILE: &str = ".publisher.lock";
 const LEGACY_CARGO_STAGING_PREFIX: &str = ".legacy-cargo-";
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-/// Policy enforced before an Oven artifact becomes visible in the store.
+/// Request bounds and idle-retention targets applied before an Oven artifact becomes visible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OvenStoreLimits {
-    /// Maximum measured physical file allocation retained by all published artifacts.
+    /// Physical retention target across published artifacts; active entries may exceed it.
     pub max_physical_bytes: u64,
-    /// Maximum measured physical file allocation retained by one compatibility domain.
+    /// Physical request bound and idle-retention target for one compatibility domain.
     pub max_domain_physical_bytes: u64,
-    /// Maximum logical artifact bytes retained by one compatibility domain.
+    /// Logical request bound and idle-retention target for one compatibility domain.
     pub max_domain_logical_bytes: u64,
 }
 
@@ -257,6 +257,8 @@ pub struct OvenStoreExecutionPayload {
     /// consumer needs to be able to report. `None` is an entry published before the witness existed, which is
     /// legacy evidence rather than an empty recipe.
     original_native_receipt: Option<AdmittedNativeReceipt>,
+    /// Replacement-sensitive file observations, bounded by this admitted owner's manifest and lease lifetime.
+    materialized_observations: Mutex<BTreeMap<PathBuf, MaterializedFileDigest>>,
     _lease: OvenStoreLease,
 }
 
@@ -275,10 +277,11 @@ impl OvenStoreExecutionPayload {
     ///
     /// A lease protects the selected entry from store pruning; it does not authenticate mutable public fields. This
     /// checks those fields against the original selected coordinate and content identity before a new physical
-    /// consumer borrows them, and it is deliberately cheap: it stats the artifact root rather than hashing what is
-    /// under it. A consumer that never reads the closure must use [`Self::verify_admitted_payload`], which adds that
-    /// walk. One that is about to read every file anyway — a store-to-store import building a destination manifest —
-    /// proves the closure with that read instead, by handing this manifest to the publication as its expectation.
+    /// consumer borrows them. It authenticates the current primary payload file against both the manifest and the
+    /// retained bytes, then stats the artifact root rather than hashing the closure underneath it. A consumer that
+    /// never reads the closure must use [`Self::verify_admitted_payload`], which adds that walk. One that is about
+    /// to read every file anyway — a store-to-store import building a destination manifest — proves the closure
+    /// with that read instead, by handing this manifest to the publication as its expectation.
     pub fn verify_admitted_record(&self) -> Result<(), OvenStoreError> {
         let manifest = verify_published_entry_manifest(&self.admitted_entry_root)?;
         if manifest.identity != self.admitted_identity
@@ -290,9 +293,8 @@ impl OvenStoreExecutionPayload {
                 message: "execution payload no longer matches its original admitted record and root".to_string(),
             });
         }
-        if u64::try_from(self.payload.len()).ok() != Some(manifest.payload.logical_bytes)
-            || digest_bytes(&self.payload) != manifest.payload.digest
-        {
+        let current_payload = verified_payload_bytes(&self.admitted_entry_root, &manifest)?;
+        if current_payload != self.payload {
             return Err(OvenStoreError::Integrity {
                 identity: self.admitted_identity.clone(),
                 message: "execution payload bytes disagree with the original admitted descriptor".to_string(),
@@ -320,10 +322,89 @@ impl OvenStoreExecutionPayload {
     /// Revalidate the original admitted record, payload and complete materialized closure under the held lease.
     ///
     /// [`Self::verify_admitted_record`] proves everything but the closure; this adds the full artifact walk for a
-    /// consumer that will not read those files itself.
+    /// consumer that will not read those files itself. File digests may reuse this owner's previous observation,
+    /// with fresh replacement-sensitive path metadata before and after reuse. Changed generations use held-file checks.
     pub fn verify_admitted_payload(&self) -> Result<(), OvenStoreError> {
+        self.verify_admitted_inventory(None)
+    }
+
+    /// Verify the complete consumed inventory while leaving one explicitly unconsumed top-level directory alone.
+    ///
+    /// Native consumers use this to exclude archived source snapshots. All original record, payload, receipt and
+    /// root checks remain mandatory, and every member outside the exclusion must match the exact manifest. The
+    /// exclusion must be a single normal path component. A later source consumer must use full verification.
+    pub fn verify_admitted_payload_except_directory(&self, directory: &str) -> Result<(), OvenStoreError> {
+        let mut components = Path::new(directory).components();
+        if !matches!(components.next(), Some(Component::Normal(name)) if name == directory)
+            || components.next().is_some()
+        {
+            return Err(OvenStoreError::InvalidInput {
+                field: "unconsumed artifact directory",
+                message: "requires one normal top-level directory name".into(),
+            });
+        }
+        self.verify_admitted_inventory(Some(directory))
+    }
+
+    /// Reconcile full or explicitly scoped inventories through the same owner observations and integrity checks.
+    fn verify_admitted_inventory(&self, excluded_directory: Option<&str>) -> Result<(), OvenStoreError> {
         self.verify_admitted_record()?;
-        verify_materialized_files(&self.admitted_entry_root, &self.manifest).map(|_| ())
+        let mut observations = self
+            .materialized_observations
+            .lock()
+            .map_err(|_| OvenStoreError::Integrity {
+                identity: self.admitted_identity.clone(),
+                message: "materialized file observation lock poisoned".to_string(),
+            })?;
+        verify_materialized_files_with_observations(
+            &self.admitted_entry_root,
+            &self.manifest,
+            Some(&mut observations),
+            excluded_directory,
+        )
+        .map(|_| ())
+    }
+
+    /// Verify a sealed native unit once, then reuse its identity-bound closure proof under the retained lease.
+    ///
+    /// Every call still authenticates the original receipt, descriptor, payload and root. The proof relies on the
+    /// same immutable-store contract as direct-plan materialization; explicit inspection and imports keep using
+    /// full verification so they can audit out-of-band changes to a published store.
+    pub fn verify_proven_native_payload(&self) -> Result<(), OvenStoreError> {
+        self.verify_admitted_record()?;
+        if !self.manifest.domain.starts_with("sdk-source-unit-") {
+            return self.verify_admitted_payload();
+        }
+        let store_root = self
+            .admitted_entry_root
+            .parent()
+            .and_then(Path::parent)
+            .ok_or_else(|| OvenStoreError::Integrity {
+                identity: self.admitted_identity.clone(),
+                message: "native entry has no store root".to_string(),
+            })?;
+        let proof_path = crate::closure_proof::OvenClosureProof::path(store_root, &self.admitted_identity);
+        let artifact_count =
+            u64::try_from(self.manifest.materialized_files.len()).map_err(|_| OvenStoreError::Integrity {
+                identity: self.admitted_identity.clone(),
+                message: "native member count is outside supported bounds".to_string(),
+            })?;
+        if crate::closure_proof::OvenClosureProof::read_matching(&proof_path, &self.admitted_identity, artifact_count)
+            .is_some()
+        {
+            return Ok(());
+        }
+        self.verify_admitted_payload()?;
+        crate::closure_proof::OvenClosureProof {
+            schema_version: crate::closure_proof::OVEN_CLOSURE_PROOF_SCHEMA_VERSION,
+            closure_identity: self.admitted_identity.clone(),
+            artifact_count,
+        }
+        .write(&proof_path)
+        .map_err(|source| OvenStoreError::Io {
+            path: proof_path,
+            source,
+        })
     }
 
     /// Borrow the admitted content descriptors this payload's closure was proven against.
@@ -436,7 +517,7 @@ pub enum OvenStoreError {
     /// An entry's manifest and payload fail integrity verification.
     #[error("Oven store integrity failure for `{identity}`: {message}")]
     Integrity { identity: String, message: String },
-    /// Capacity policy cannot admit an artifact without deleting an active entry or exceeding an allowance.
+    /// An artifact request or private publisher staging exceeds its explicit size allowance.
     #[error("Oven store capacity blocked for domain `{domain}`: {message}")]
     CapacityBlocked { domain: String, message: String },
     /// The named legacy publisher holds private staging capacity, so an unrelated publication cannot safely grow
@@ -476,29 +557,70 @@ impl PublishedOvenStore {
         }
     }
 
+    /// Select exact immutable owners without enumerating unrelated published entries.
+    ///
+    /// All identities are validated before filesystem access. One existing shared manager lock protects the entire
+    /// batch until every payload has its original active lease. Selection verifies the same manifest, requested
+    /// identity, payload and native receipt as writable admission, but creates no layout or bookkeeping. Missing
+    /// owners and competing bare/Loaf coordinates refuse; materialized files still require caller verification.
+    pub fn select_payloads_for_execution(
+        &self,
+        identities: &[String],
+    ) -> Result<Vec<OvenStoreExecutionPayload>, OvenStoreError> {
+        validate_execution_identities(identities)?;
+        let _manager = self.manager_lock()?;
+        let mut selected = Vec::with_capacity(identities.len());
+        for identity in identities {
+            let path = exact_published_entry_root(&self.root.join(ENTRIES_DIRECTORY), identity)?;
+            let manifest = verify_published_entry_manifest(&path)?;
+            verify_requested_entry_identity(identity, &manifest)?;
+            let payload = verified_payload_bytes(&path, &manifest)?;
+            let lease = acquire_execution_lease(&path, false)?;
+            let original_native_receipt = admit_native_receipt(&path, &manifest)?;
+            selected.push(OvenStoreExecutionPayload {
+                admitted_entry_root: path.clone(),
+                admitted_identity: identity.clone(),
+                original_native_receipt,
+                materialized_observations: Mutex::new(BTreeMap::new()),
+                manifest,
+                artifact_root: path.join(MATERIALIZED_DIRECTORY),
+                payload,
+                _lease: lease,
+            });
+        }
+        Ok(selected)
+    }
+
+    /// Hold an existing read-only manager lock without repairing a missing publication.
+    fn manager_lock(&self) -> Result<File, OvenStoreError> {
+        let path = self.root.join(MANAGER_LOCK_FILE);
+        let file = File::open(&path).map_err(|source| OvenStoreError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        file.lock_shared()
+            .map_err(|source| OvenStoreError::Io { path, source })?;
+        Ok(file)
+    }
+
     /// Read verified manifests and payloads without changing package files.
     ///
     /// The shared manager lock prevents a concurrent publisher from pruning candidates before their active leases
     /// are acquired. Missing locks are errors: a consumer cannot repair a published artifact in place. Before
-    /// importing source files, verify their closure with [`OvenStoreExecutionPayload::verify_materialized_files`].
-    pub fn select_payloads_matching_for_execution<F>(
+    /// The payload predicate runs after integrity verification and before lease acquisition. Before importing source
+    /// files, verify their closure with [`OvenStoreExecutionPayload::verify_materialized_files`].
+    pub fn select_payloads_matching_for_execution<F, P>(
         &self,
         matches: F,
+        payload_matches: P,
     ) -> Result<Vec<OvenStoreExecutionPayload>, OvenStoreError>
     where
         F: Fn(&OvenArtifactManifest) -> bool,
+        P: Fn(&OvenArtifactManifest, &[u8]) -> bool,
     {
-        let manager_path = self.root.join(MANAGER_LOCK_FILE);
-        let manager = File::open(&manager_path).map_err(|source| OvenStoreError::Io {
-            path: manager_path.clone(),
-            source,
-        })?;
-        manager.lock_shared().map_err(|source| OvenStoreError::Io {
-            path: manager_path,
-            source,
-        })?;
+        let _manager = self.manager_lock()?;
         Ok(
-            select_matching_execution_payloads(&self.root.join(ENTRIES_DIRECTORY), matches)?
+            select_matching_execution_payloads(&self.root.join(ENTRIES_DIRECTORY), matches, payload_matches)?
                 .into_iter()
                 .map(|(_, payload)| payload)
                 .collect(),
@@ -1192,22 +1314,30 @@ impl OvenStore {
         &self,
         identities: &[String],
     ) -> Result<Vec<OvenStoreExecutionPayload>, OvenStoreError> {
-        if identities.is_empty() {
-            return Err(OvenStoreError::InvalidInput {
-                field: "execution identities",
-                message: "must contain at least one immutable entry identity".to_string(),
-            });
-        }
-        let unique = identities.iter().collect::<BTreeSet<_>>();
-        if unique.len() != identities.len() {
-            return Err(OvenStoreError::InvalidInput {
-                field: "execution identities",
-                message: "must not repeat one immutable entry identity".to_string(),
-            });
-        }
-        for identity in identities {
-            validate_entry_identity(identity)?;
-        }
+        self.select_execution_payloads(identities, false)
+    }
+
+    /// Select an exact original-owner batch without publication or a catalog scan, returning `None` for an absent
+    /// entry directory. Damaged admission records refuse; callers still verify materialized files.
+    /// The manager lock protects the complete presence check and lease acquisition as one admission.
+    pub fn try_select_payloads_for_execution(
+        &self,
+        identities: &[String],
+    ) -> Result<Option<Vec<OvenStoreExecutionPayload>>, OvenStoreError> {
+        let owners = self.select_execution_payloads(identities, true)?;
+        Ok((!owners.is_empty()).then_some(owners))
+    }
+
+    /// Admit a complete exact batch under one manager lock, optionally reporting absent entry directories as a miss.
+    #[track_caller]
+    fn select_execution_payloads(
+        &self,
+        identities: &[String],
+        allow_missing: bool,
+    ) -> Result<Vec<OvenStoreExecutionPayload>, OvenStoreError> {
+        let caller = std::panic::Location::caller();
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_store::select_exact_payloads", input = ?identities, caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
+        validate_execution_identities(identities)?;
         self.ensure_layout()?;
         let manager = open_lock(&self.root.join(MANAGER_LOCK_FILE))?;
         manager.lock().map_err(|source| OvenStoreError::Io {
@@ -1218,7 +1348,14 @@ impl OvenStore {
 
         let mut selected = Vec::with_capacity(identities.len());
         for identity in identities {
-            let path = canonical_published_entry_root(&self.entry_root(identity))?;
+            let path = if allow_missing {
+                match try_exact_published_entry_root(&self.entries_root(), identity)? {
+                    Some(path) => path,
+                    None => return Ok(Vec::new()),
+                }
+            } else {
+                canonical_published_entry_root(&self.entry_root(identity))?
+            };
             let manifest = verify_published_entry_manifest(&path)?;
             verify_requested_entry_identity(identity, &manifest)?;
             let payload = verified_payload_bytes(&path, &manifest)?;
@@ -1229,6 +1366,7 @@ impl OvenStore {
                 admitted_entry_root: path.clone(),
                 admitted_identity: identity.clone(),
                 original_native_receipt,
+                materialized_observations: Mutex::new(BTreeMap::new()),
                 manifest,
                 artifact_root: path.join(MATERIALIZED_DIRECTORY),
                 payload,
@@ -1238,18 +1376,20 @@ impl OvenStore {
         Ok(selected)
     }
 
-    /// Select every execution payload whose verified manifest satisfies `matches`, retaining each active lease.
+    /// Select only candidates whose verified manifest and payload satisfy the caller's authority predicates.
     ///
-    /// Matching, payload verification, and lease acquisition all occur under one manager lock. This is the safe
-    /// selection primitive for receipt-based cache lookup: a separately returned manifest header has no lease and
-    /// may legitimately be reclaimed by a concurrent bounded-policy publication before a later identity lookup.
-    /// Non-matching entries are never opened or leased.
-    pub fn select_payloads_matching_for_execution<F>(
+    /// Payload filtering runs under the manager lock after manifest and payload integrity verification, before lease
+    /// acquisition and LRU refresh. A rejected historical output therefore does not become recently used merely because
+    /// a lookup considered it. Accepted entries retain the same receipt admission and execution leases as ordinary
+    /// manifest-only selection; materialized files still require the consumer's normal verification.
+    pub fn select_payloads_matching_for_execution<F, P>(
         &self,
         matches: F,
+        payload_matches: P,
     ) -> Result<Vec<OvenStoreExecutionPayload>, OvenStoreError>
     where
         F: Fn(&OvenArtifactManifest) -> bool,
+        P: Fn(&OvenArtifactManifest, &[u8]) -> bool,
     {
         self.ensure_layout()?;
         let manager = open_lock(&self.root.join(MANAGER_LOCK_FILE))?;
@@ -1258,7 +1398,7 @@ impl OvenStore {
             source,
         })?;
         self.reclaim_stale_staging()?;
-        select_matching_execution_payloads(&self.entries_root(), matches)?
+        select_matching_execution_payloads(&self.entries_root(), matches, payload_matches)?
             .into_iter()
             .map(|(path, payload)| {
                 touch_entry(&path)?;
@@ -1392,19 +1532,12 @@ impl OvenStore {
         self.prune_with_superseded_release_reclamation(false)
     }
 
-    /// Reserve the remaining aggregate and compatibility-domain allowance for the explicit compatibility baker.
+    /// Reserve a bounded private staging request while sweeping idle entries toward retention targets.
     ///
-    /// A live lease must never be pruned. The old all-or-nothing reservation treated even a tiny live Loaf as a
-    /// reason to reject the next serialized bake, which made debug/release preparation impossible in one process.
-    /// Instead, inactive entries are reclaimed as before, active entries stay intact, and Cargo's staging monitor is
-    /// capped at the exact remaining aggregate/domain capacity. The publisher lock excludes another staging writer
-    /// while that cap is in force, so this remains a hard physical bound rather than post-hoc accounting.
-    ///
-    /// `staging_floor_bytes` is the transient capacity the caller expects the bake to need. When what remains after
-    /// retention is smaller than that, inactive entries are reclaimed oldest-first until the floor fits, so a home
-    /// holding one large project's closure does not make the next project's bake fail on staging it could have had
-    /// (#1230). Entries under a live lease are never candidates; a reservation is refused only when they alone leave
-    /// no staging at all. A floor of zero keeps every entry that fits retention policy.
+    /// Active leases remain protected and retained totals never reduce the staging allowance. The publisher lock
+    /// excludes concurrent staging writers; the monitor bounds this request, not the size of the retained store.
+    /// `staging_floor_bytes` is a sweep hint: inactive entries are reclaimed oldest-first when that anticipated
+    /// request would exceed retention targets. A zero floor keeps reusable entries that already fit those targets.
     pub fn reserve_legacy_cargo_publisher_capacity(
         &self,
         domain: &str,
@@ -1432,8 +1565,7 @@ impl OvenStore {
         // A reservation is not itself evidence that an existing immutable entry is obsolete. Keep every entry that
         // already fits policy so a debug/release sibling or a second project can reuse it; the measured hand-off
         // below is where the actual pending closure is admitted and any necessary inactive reclamation occurs.
-        // The staging monitor still receives only the remaining aggregate/domain allowance, so this preserves the
-        // hard transient bound without turning each explicit bake into a cache flush.
+        // The staging monitor receives its independent request allowance; retained readers do not reduce it.
         let mut report = self.prune_to_limits(None, 0, 0, true)?;
         if self.remaining_publisher_capacity(domain)? < staging_floor_bytes {
             // The retained closure of some other project is worth less than this bake finishing: reclaim what is
@@ -1441,12 +1573,15 @@ impl OvenStore {
             let reclaimed = self.prune_to_limits(Some(domain), 0, staging_floor_bytes, true)?;
             report = merge_prune_reports(report, reclaimed);
         }
-        let transient_limit_bytes = self.remaining_publisher_capacity(domain)?;
+        let transient_limit_bytes = self
+            .limits
+            .max_physical_bytes
+            .min(self.limits.max_domain_physical_bytes);
         if transient_limit_bytes == 0 {
             return Err(OvenStoreError::CapacityBlocked {
                 domain: domain.to_string(),
                 message: format!(
-                    "active retained physical bytes leave no compatibility-baker staging capacity; skipped active entries {:?}. Run `incan oven store inspect`, then `incan oven store prune --max-physical-bytes <bytes>` to reclaim inactive artifacts before retrying; active leases remain protected",
+                    "compatibility-baker request has zero staging allowance; skipped active entries {:?}",
                     report.skipped_active_entries,
                 ),
             });
@@ -1471,14 +1606,11 @@ impl OvenStore {
         Ok(aggregate_remaining.min(domain_remaining))
     }
 
-    /// Refuse the named publisher's final hand-off when its live private staging plus every new immutable file would
-    /// exceed the aggregate physical policy.
+    /// Refuse a publisher's final hand-off only when its private staging and pending batch exceed the request bound.
     ///
-    /// Materialized files beneath `legacy-cargo-staging` are hard-linked into the atomic entry staging, so they are
-    /// counted once here. Sources outside that private tree are copied by [`write_staged_entry`] and are reserved
-    /// once per digest/executable pair, exactly as the batch writer shares them. The publisher reservation can retain
-    /// leased entries while capping staging at the remaining capacity, so this hand-off includes those entries again
-    /// and remains safe if another explicit transition owner reuses the primitive.
+    /// Files beneath `legacy-cargo-staging` are hard-linked into atomic entry staging and counted once. Sources
+    /// outside that private tree are copied by [`write_staged_entry`] and reserved once per digest/executable pair.
+    /// Retained entries are outside this request, even when active readers hold them above retention targets.
     pub fn ensure_legacy_cargo_batch_physical_capacity(
         &self,
         staging: &Path,
@@ -1517,12 +1649,6 @@ impl OvenStore {
             });
         }
         let mut observed_physical = unique_publisher_staging_physical_bytes(&staging)?;
-        observed_physical = observed_physical.saturating_add(
-            self.collect_entries_for_admission()?
-                .iter()
-                .map(|entry| entry.physical_bytes)
-                .sum::<u64>(),
-        );
         let mut copied_materializations = BTreeSet::new();
         for request in requests {
             let manifest = self.manifest_for_publication(request)?;
@@ -1591,58 +1717,28 @@ impl OvenStore {
         })
     }
 
-    /// Ensure published entries leave enough capacity for the pending immutable artifact.
+    /// Sweep idle entries toward retention targets without rejecting a bounded request because readers are active.
+    ///
+    /// Request-size checks happen before staging. Retained totals are sweep targets, not publication ceilings: an
+    /// immutable unit under lease must survive, and its presence cannot prevent another valid record being published.
     fn prune_for_admission(
         &self,
         domain: &str,
         pending_logical_bytes: u64,
         pending_physical_bytes: u64,
     ) -> Result<(), OvenStoreError> {
-        let report = self.prune_to_limits(Some(domain), pending_logical_bytes, pending_physical_bytes, true)?;
-        let entries = self.collect_entries_for_admission()?;
-        if policy_satisfied(
-            &entries,
-            self.limits,
-            Some(domain),
-            pending_logical_bytes,
-            pending_physical_bytes,
-        ) {
-            return Ok(());
-        }
-        Err(OvenStoreError::CapacityBlocked {
-            domain: domain.to_string(),
-            message: format!(
-                "policy cannot admit logical={pending_logical_bytes} physical={pending_physical_bytes}; skipped active entries {:?}",
-                report.skipped_active_entries
-            ),
-        })
+        self.prune_to_limits(Some(domain), pending_logical_bytes, pending_physical_bytes, true)?;
+        Ok(())
     }
 
-    /// Ensure a related mixed-domain batch can be admitted without treating its foundations as separate unrelated
-    /// publications. Aggregate physical policy applies to the complete set, while every named domain retains its
-    /// own logical and physical allowance.
+    /// Sweep idle members before a bounded related batch, preserving active foundations even above retention targets.
     fn prune_for_related_admission(
         &self,
         pending_by_domain: &BTreeMap<String, (u64, u64)>,
         pending_physical_bytes: u64,
     ) -> Result<(), OvenStoreError> {
-        let report = self.prune_related_to_limits(pending_by_domain, pending_physical_bytes, true)?;
-        let entries = self.collect_entries_for_admission()?;
-        if related_policy_satisfied(&entries, self.limits, pending_by_domain, pending_physical_bytes) {
-            return Ok(());
-        }
-        let domain = related_policy_offending_domains(&entries, self.limits, pending_by_domain, pending_physical_bytes)
-            .into_iter()
-            .next()
-            .or_else(|| pending_by_domain.keys().next().cloned())
-            .unwrap_or_else(|| "related-batch".to_string());
-        Err(OvenStoreError::CapacityBlocked {
-            domain,
-            message: format!(
-                "policy cannot admit related batch physical={pending_physical_bytes}; skipped active entries {:?}",
-                report.skipped_active_entries
-            ),
-        })
+        self.prune_related_to_limits(pending_by_domain, pending_physical_bytes, true)?;
+        Ok(())
     }
 
     /// Apply LRU pruning for a complete related batch while preserving every active lease.
@@ -1888,8 +1984,18 @@ impl OvenStore {
     }
 
     /// Remove only complete-or-partial staging children after the manager lock proves no publisher owns them.
+    /// Synchronize actual removals; an empty staging directory needs no durability work during selection.
     fn reclaim_stale_staging(&self) -> Result<(), OvenStoreError> {
+        self.reclaim_stale_staging_with_sync(sync_directory)
+    }
+
+    /// Apply the same locked reclamation boundary with an observable directory synchronization operation.
+    fn reclaim_stale_staging_with_sync(
+        &self,
+        synchronize: impl FnOnce(PathBuf) -> Result<(), OvenStoreError>,
+    ) -> Result<(), OvenStoreError> {
         let staging = self.staging_root_base();
+        let mut removed = false;
         for candidate in fs::read_dir(&staging).map_err(|source| OvenStoreError::Io {
             path: staging.clone(),
             source,
@@ -1910,8 +2016,9 @@ impl OvenStore {
                 });
             }
             fs::remove_dir_all(&path).map_err(|source| OvenStoreError::Io { path, source })?;
+            removed = true;
         }
-        sync_directory(staging)
+        if removed { synchronize(staging) } else { Ok(()) }
     }
 
     /// Reject a normal publication while the exclusive legacy publisher owns private staging, reclaiming only
@@ -2081,6 +2188,64 @@ impl OvenStore {
     }
 }
 
+/// Validate a complete exact batch before either Store access mode observes filesystem state.
+fn validate_execution_identities(identities: &[String]) -> Result<(), OvenStoreError> {
+    if identities.is_empty() {
+        return Err(OvenStoreError::InvalidInput {
+            field: "execution identities",
+            message: "must contain at least one immutable entry identity".to_string(),
+        });
+    }
+    let unique = identities.iter().collect::<BTreeSet<_>>();
+    if unique.len() != identities.len() {
+        return Err(OvenStoreError::InvalidInput {
+            field: "execution identities",
+            message: "must not repeat one immutable entry identity".to_string(),
+        });
+    }
+    for identity in identities {
+        validate_entry_identity(identity)?;
+    }
+    Ok(())
+}
+
+/// Resolve exactly one of the two supported entry spellings without scanning any other identity.
+fn exact_published_entry_root(entries: &Path, identity: &str) -> Result<PathBuf, OvenStoreError> {
+    match try_exact_published_entry_root(entries, identity)? {
+        Some(path) => Ok(path),
+        None => canonical_published_entry_root(&entries.join(entry_directory_name(identity))),
+    }
+}
+
+/// Return a verified exact coordinate when present; linked or competing coordinates never become cache misses.
+fn try_exact_published_entry_root(entries: &Path, identity: &str) -> Result<Option<PathBuf>, OvenStoreError> {
+    let name = entry_directory_name(identity);
+    let bare = entries.join(&name);
+    let loaf = entries.join(format!("{name}{LOAF_ENTRY_SUFFIX}"));
+    let mut selected = None;
+    for path in [&bare, &loaf] {
+        match fs::symlink_metadata(path) {
+            Ok(_) => {
+                if selected.is_some() {
+                    return Err(OvenStoreError::Integrity {
+                        identity: identity.to_string(),
+                        message: "exact published owner has competing entry coordinates".to_string(),
+                    });
+                }
+                selected = Some(path);
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(OvenStoreError::Io {
+                    path: path.clone(),
+                    source,
+                });
+            }
+        }
+    }
+    selected.map(|path| canonical_published_entry_root(path)).transpose()
+}
+
 /// Reject any exact-selection identity that is not one canonical content digest before filesystem resolution.
 fn validate_entry_identity(identity: &str) -> Result<(), OvenStoreError> {
     let valid = identity.strip_prefix("sha256:").is_some_and(|digest| {
@@ -2176,7 +2341,10 @@ fn verify_published_entry_coordinate(root: &Path, manifest: &OvenArtifactManifes
 /// being a regular file rather than a symlink, the schema version, and the coordinate check that binds the
 /// directory name to the identity the manifest records. What is left out is only the proof that the content
 /// hashes to that identity, which `verify_published_entry_manifest` adds.
+#[track_caller]
 fn read_published_entry_manifest(root: &Path) -> Result<ReadEntryManifest, OvenStoreError> {
+    let caller = std::panic::Location::caller();
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_store::read_manifest", input = %root.display(), caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
     verify_store_entry_root(root)?;
     let manifest_path = manifest_path_for_entry(root);
     let metadata = fs::symlink_metadata(&manifest_path).map_err(|source| OvenStoreError::Io {
@@ -2289,13 +2457,18 @@ fn acquire_execution_lease(root: &Path, writable: bool) -> Result<OvenStoreLease
 ///
 /// Both published readers and mutable caches share manifest, payload, and active-lease validation. The caller owns
 /// any additional materialized-closure verification or writable-cache bookkeeping.
-fn select_matching_execution_payloads<F>(
+#[track_caller]
+fn select_matching_execution_payloads<F, P>(
     root: &Path,
     matches: F,
+    payload_matches: P,
 ) -> Result<Vec<(PathBuf, OvenStoreExecutionPayload)>, OvenStoreError>
 where
     F: Fn(&OvenArtifactManifest) -> bool,
+    P: Fn(&OvenArtifactManifest, &[u8]) -> bool,
 {
+    let caller = std::panic::Location::caller();
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_store::select_matching_payloads", input = %root.display(), caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
     let mut selected = Vec::new();
     for candidate in fs::read_dir(root).map_err(|source| OvenStoreError::Io {
         path: root.to_path_buf(),
@@ -2325,12 +2498,18 @@ where
         // coordinate binding the directory name to the recorded identity — still run for every entry enumerated.
         let read = read_published_entry_manifest(&path)?;
         if !matches(&read.manifest) {
+            tracing::trace!(target: "incan::invocation", decision = "reject_manifest", input = %read.manifest.identity);
             continue;
         }
         prove_entry_manifest(&read)?;
         let manifest = read.manifest;
         let payload = verified_payload_bytes(&path, &manifest)?;
+        if !payload_matches(&manifest, &payload) {
+            tracing::trace!(target: "incan::invocation", decision = "reject_payload", input = %manifest.identity);
+            continue;
+        }
         let lease = acquire_execution_lease(&path, false)?;
+        tracing::trace!(target: "incan::invocation", decision = "select", input = %manifest.identity);
         let original_native_receipt = admit_native_receipt(&path, &manifest)?;
         selected.push((
             path.clone(),
@@ -2338,6 +2517,7 @@ where
                 admitted_entry_root: path.clone(),
                 admitted_identity: manifest.identity.clone(),
                 original_native_receipt,
+                materialized_observations: Mutex::new(BTreeMap::new()),
                 manifest,
                 artifact_root: path.join(MATERIALIZED_DIRECTORY),
                 payload,
@@ -2696,7 +2876,7 @@ struct AdmittedNativeReceipt {
 fn retains_native_receipt(kind: OvenArtifactKind) -> bool {
     matches!(
         kind,
-        OvenArtifactKind::DirectRustcPlan | OvenArtifactKind::ProjectOutput
+        OvenArtifactKind::DirectRustcPlan | OvenArtifactKind::ProjectOutput | OvenArtifactKind::RustInspectionToolchain
     )
 }
 
@@ -3217,7 +3397,10 @@ fn verify_manifest_identity(manifest: &OvenArtifactManifest) -> Result<(), OvenS
 ///
 /// The memo key is the stamp the manifest was read under, not a fresh stat: the proof must be recorded for the
 /// bytes that were hashed, and a file rewritten between the read and this call must miss, not ride along.
+#[track_caller]
 fn prove_entry_manifest(read: &ReadEntryManifest) -> Result<(), OvenStoreError> {
+    let caller = std::panic::Location::caller();
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_store::prove_manifest", input = %read.manifest.identity, caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
     if let Some(stamp) = read.stamp.as_ref()
         && let Ok(proven) = proven_manifest_memo().lock()
         && proven.contains(stamp)
@@ -3241,7 +3424,10 @@ fn verify_entry_manifest(root: &Path) -> Result<OvenArtifactManifest, OvenStoreE
 }
 
 /// Read and authenticate one primary payload only from a regular file within its verified entry root.
+#[track_caller]
 fn verified_payload_bytes(root: &Path, manifest: &OvenArtifactManifest) -> Result<Vec<u8>, OvenStoreError> {
+    let caller = std::panic::Location::caller();
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_store::verified_payload_bytes", input = %manifest.identity, caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
     let payload_path = root.join(PAYLOAD_FILE);
     let metadata = fs::symlink_metadata(&payload_path).map_err(|source| OvenStoreError::Io {
         path: payload_path.clone(),
@@ -3286,7 +3472,19 @@ fn verify_materialized_root(root: &Path, manifest: &OvenArtifactManifest) -> Res
 
 /// Verify the exact recursive file closure materialized beneath one immutable entry.
 fn verify_materialized_files(root: &Path, manifest: &OvenArtifactManifest) -> Result<u64, OvenStoreError> {
-    let expected = manifest
+    verify_materialized_files_with_observations(root, manifest, None, None)
+}
+
+/// Walk the current consumed inventory, optionally retaining byte observations under its admitted owner.
+/// Every consumed file rechecks replacement-sensitive metadata; an explicit exclusion prunes only one root child.
+fn verify_materialized_files_with_observations(
+    root: &Path,
+    manifest: &OvenArtifactManifest,
+    mut observations: Option<&mut BTreeMap<PathBuf, MaterializedFileDigest>>,
+    excluded_directory: Option<&str>,
+) -> Result<u64, OvenStoreError> {
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_store::verify_materialized_inventory", input = %manifest.identity, excluded_directory = excluded_directory.unwrap_or("")).entered();
+    let mut expected = manifest
         .materialized_files
         .iter()
         .map(|file| (file.relative_path.clone(), file))
@@ -3297,6 +3495,12 @@ fn verify_materialized_files(root: &Path, manifest: &OvenArtifactManifest) -> Re
             message: "materialized artifact manifest declares a path more than once".to_string(),
         });
     }
+    let consumed = |path: &str| {
+        !excluded_directory.is_some_and(|excluded| {
+            path == excluded || path.strip_prefix(excluded).is_some_and(|rest| rest.starts_with('/'))
+        })
+    };
+    expected.retain(|path, _| consumed(path));
     let materialized_root = root.join(MATERIALIZED_DIRECTORY);
     let mut actual = BTreeMap::new();
     let mut actual_directories = BTreeSet::new();
@@ -3305,6 +3509,7 @@ fn verify_materialized_files(root: &Path, manifest: &OvenArtifactManifest) -> Re
         &materialized_root,
         &mut actual,
         &mut actual_directories,
+        excluded_directory,
     )?;
     if actual.len() != expected.len() || actual.keys().ne(expected.keys()) {
         return Err(OvenStoreError::Integrity {
@@ -3313,11 +3518,17 @@ fn verify_materialized_files(root: &Path, manifest: &OvenArtifactManifest) -> Re
         });
     }
     for (relative_path, expected_file) in expected {
-        let path = actual.get(&relative_path).ok_or_else(|| OvenStoreError::Integrity {
+        let (path, metadata) = actual.get(&relative_path).ok_or_else(|| OvenStoreError::Integrity {
             identity: manifest.identity.clone(),
             message: format!("materialized artifact `{relative_path}` is missing"),
         })?;
-        let (logical_bytes, digest) = digest_materialized_file(path)?;
+        let (logical_bytes, digest) = match observations.as_deref_mut() {
+            Some(observations) => {
+                let observed = digest_retained_materialized_file(path, observations, Some(metadata))?;
+                (observed.length, observed.digest)
+            }
+            None => digest_materialized_file(path)?,
+        };
         if logical_bytes != expected_file.logical_bytes || digest != expected_file.digest {
             return Err(OvenStoreError::Integrity {
                 identity: manifest.identity.clone(),
@@ -3328,6 +3539,7 @@ fn verify_materialized_files(root: &Path, manifest: &OvenArtifactManifest) -> Re
     let expected_directories = manifest
         .materialized_directories
         .iter()
+        .filter(|directory| consumed(&directory.relative_path))
         .map(|directory| directory.relative_path.clone())
         .collect::<BTreeSet<_>>();
     if actual_directories != expected_directories {
@@ -3339,47 +3551,390 @@ fn verify_materialized_files(root: &Path, manifest: &OvenArtifactManifest) -> Re
     Ok(manifest
         .materialized_files
         .iter()
+        .filter(|file| consumed(&file.relative_path))
         .fold(0_u64, |total, file| total.saturating_add(file.logical_bytes)))
 }
 
-/// Hash one immutable materialized file in bounded memory while preserving exact byte-count verification.
+/// Metadata for one regular-file generation, including replacement and preserved-mtime edits.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct MaterializedFileStamp {
+    length: u64,
+    modified: u128,
+    identity: Vec<u64>,
+}
+
+/// A local acceleration record populated only from observed artifact bytes.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MaterializedFileDigest {
+    stamp: MaterializedFileStamp,
+    digest: String,
+}
+
+/// Bind metadata to the held regular-file handle; unsupported platforms always hash bytes.
+fn materialized_file_stamp(file: &File) -> io::Result<MaterializedFileStamp> {
+    materialized_metadata_stamp(&file.metadata()?)
+}
+
+/// Use identical generation checks for held handles and non-following path observations.
+fn materialized_metadata_stamp(metadata: &fs::Metadata) -> io::Result<MaterializedFileStamp> {
+    if !metadata.is_file() {
+        return Err(io::Error::other("materialized artifact must be a regular file"));
+    }
+    let modified = metadata
+        .modified()?
+        .duration_since(UNIX_EPOCH)
+        .map_err(io::Error::other)?
+        .as_nanos();
+    #[cfg(unix)]
+    let identity = {
+        use std::os::unix::fs::MetadataExt;
+        vec![
+            metadata.dev(),
+            metadata.ino(),
+            metadata.ctime().cast_unsigned(),
+            metadata.ctime_nsec().cast_unsigned(),
+        ]
+    };
+    #[cfg(not(unix))]
+    let identity = Vec::new();
+    Ok(MaterializedFileStamp {
+        length: metadata.len(),
+        modified,
+        identity,
+    })
+}
+
+/// Keep acceleration outside the published store inventory; staging and caller paths remain uncached.
+fn materialized_digest_cache_path(path: &Path) -> Option<PathBuf> {
+    let canonical = fs::canonicalize(path).ok()?;
+    let entries = canonical
+        .ancestors()
+        .find(|ancestor| ancestor.file_name().is_some_and(|name| name == ENTRIES_DIRECTORY))?;
+    let store = entries.parent()?;
+    Some(store.parent()?.join("oven-file-digests-v1").join(format!(
+        "{:x}.json",
+        Sha256::digest(canonical.as_os_str().as_encoded_bytes())
+    )))
+}
+
+/// Publish a complete optional hash record atomically without receipt-level durability.
+///
+/// A lost or malformed cache record only causes another content read. Syncing each record and its directory would
+/// turn a cold inventory into thousands of durability barriers without strengthening artifact or receipt authority.
+fn publish_materialized_file_digest(path: &Path, record: &MaterializedFileDigest) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::other("digest cache has no parent"))?;
+    fs::create_dir_all(parent)?;
+    let sequence = STAGING_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let staged = parent.join(format!(".digest-{}-{sequence}.tmp", std::process::id()));
+    let result = (|| {
+        let mut bytes = serde_json::to_vec(record)?;
+        bytes.push(b'\n');
+        fs::write(&staged, bytes)?;
+        fs::rename(&staged, path)
+    })();
+    if result.is_err() {
+        let _removed = fs::remove_file(&staged);
+    }
+    result
+}
+
+/// Digest a regular file with persistent, metadata-bound acceleration across commands.
+///
+/// The returned length and SHA-256 identity depend only on observed bytes. Cache coordinates and metadata never enter
+/// artifact identity. Unix device, inode and change time invalidate replacements and preserved-mtime edits; platforms
+/// without those observations always hash bytes. Missing, malformed or unwritable cache records only forfeit
+/// acceleration. Callers must still enforce their own receipt, path and owner admission rules.
+pub fn digest_regular_file(path: &Path) -> Result<(u64, String), OvenStoreError> {
+    let cache = std::env::var_os("INCAN_HOME")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .filter(|path| !path.is_empty())
+                .map(|path| PathBuf::from(path).join(".incan"))
+        })
+        .map(|root| root.join("cache/observed-file-digests-v1"));
+    let canonical = fs::canonicalize(path).map_err(|source| OvenStoreError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let record = cache.map(|root| {
+        root.join(format!(
+            "{:x}.json",
+            Sha256::digest(canonical.as_os_str().as_encoded_bytes())
+        ))
+    });
+    let observed = digest_observed_file(path, record.as_deref())?;
+    Ok((observed.length, observed.digest))
+}
+
+/// Content identity and physical work from one file observation; retained warm lookups need no file opens.
+struct ObservedFileDigest {
+    length: u64,
+    digest: String,
+    input_bytes_read: u64,
+    file_opens: u64,
+    stamp: MaterializedFileStamp,
+}
+
+/// Hash one materialized file using its existing cache namespace outside the published inventory.
 fn digest_materialized_file(path: &Path) -> Result<(u64, String), OvenStoreError> {
+    let cache_path = materialized_digest_cache_path(path);
+    let observed = digest_observed_file(path, cache_path.as_deref())?;
+    Ok((observed.length, observed.digest))
+}
+
+/// Reconcile an owner's observed generation using inventory metadata when available and a fresh final path check.
+fn digest_retained_materialized_file(
+    path: &Path,
+    observations: &mut BTreeMap<PathBuf, MaterializedFileDigest>,
+    inventory_metadata: Option<&fs::Metadata>,
+) -> Result<ObservedFileDigest, OvenStoreError> {
+    digest_retained_materialized_file_with_metadata(path, observations, inventory_metadata, |path| {
+        fs::symlink_metadata(path)
+    })
+}
+
+/// Reuse bytes only between matching non-following path observations; changed generations use held-file verification.
+///
+/// The existing owner map remains the only retained cache. Unsupported identities, changed stamps and unstable path
+/// observations fall through to the existing hashing/retry path. The inventory's non-following observation can supply
+/// the initial stamp, but never replaces the final fresh check. The callback exposes that boundary for race controls.
+fn digest_retained_materialized_file_with_metadata(
+    path: &Path,
+    observations: &mut BTreeMap<PathBuf, MaterializedFileDigest>,
+    inventory_metadata: Option<&fs::Metadata>,
+    mut metadata: impl FnMut(&Path) -> io::Result<fs::Metadata>,
+) -> Result<ObservedFileDigest, OvenStoreError> {
+    if let Some(retained) = observations.get(path) {
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_store::reconcile_retained_file", input = %path.display()).entered();
+        let before = match inventory_metadata {
+            Some(metadata) => materialized_metadata_stamp(metadata),
+            None => metadata(path).and_then(|metadata| materialized_metadata_stamp(&metadata)),
+        }
+        .map_err(|source| OvenStoreError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        if file_digest_matches(retained, &before) {
+            let after = metadata(path)
+                .and_then(|metadata| materialized_metadata_stamp(&metadata))
+                .map_err(|source| OvenStoreError::Io {
+                    path: path.to_path_buf(),
+                    source,
+                })?;
+            if before == after {
+                return Ok(report_observed_file_digest(
+                    path,
+                    before.length,
+                    retained.digest.clone(),
+                    0,
+                    0,
+                    before,
+                ));
+            }
+        }
+    }
+    let observed = digest_observed_file_with_retained(
+        path,
+        observations.get(path),
+        || materialized_digest_cache_path(path),
+        materialized_file_stamp,
+    )?;
+    if !observed.stamp.identity.is_empty() {
+        observations.insert(
+            path.to_path_buf(),
+            MaterializedFileDigest {
+                stamp: observed.stamp.clone(),
+                digest: observed.digest.clone(),
+            },
+        );
+    }
+    Ok(observed)
+}
+
+/// Hash the exact held file, or reuse a digest bound to its replacement-sensitive metadata.
+fn digest_observed_file(path: &Path, cache_path: Option<&Path>) -> Result<ObservedFileDigest, OvenStoreError> {
+    digest_observed_file_with_stamp(path, cache_path, materialized_file_stamp)
+}
+
+/// Retry unstable observations without weakening metadata admission or trusting a receipt's expected digest.
+///
+/// Three attempts tolerate a transient hard-link publication but bound work on continually changing files. Each
+/// attempt observes the same held handle before and after hashing; the stamp callback is the production metadata
+/// syscall boundary and lets race controls change the real file at an exact observation point.
+fn digest_observed_file_with_stamp(
+    path: &Path,
+    cache_path: Option<&Path>,
+    stamp: impl FnMut(&File) -> io::Result<MaterializedFileStamp>,
+) -> Result<ObservedFileDigest, OvenStoreError> {
+    digest_observed_file_with_retained(path, None, || cache_path.map(Path::to_path_buf), stamp)
+}
+
+/// Observe the same held file on both sides of reuse or hashing; retained records never bypass freshness or retries.
+/// Cache-coordinate selection and cache-file I/O occur only when the owner's previous observed generation misses.
+fn digest_observed_file_with_retained(
+    path: &Path,
+    retained: Option<&MaterializedFileDigest>,
+    mut cache: impl FnMut() -> Option<PathBuf>,
+    mut stamp: impl FnMut(&File) -> io::Result<MaterializedFileStamp>,
+) -> Result<ObservedFileDigest, OvenStoreError> {
+    let _invocation =
+        tracing::trace_span!(target: "incan::invocation", "oven_store::observe_file_digest", input = %path.display())
+            .entered();
     let mut file = File::open(path).map_err(|source| OvenStoreError::Io {
         path: path.to_path_buf(),
         source,
     })?;
-    let mut hasher = Sha256::new();
-    let mut logical_bytes = 0_u64;
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let read = file.read(&mut buffer).map_err(|source| OvenStoreError::Io {
+    let mut input_bytes_read = 0_u64;
+    let mut cache_path = None;
+    for attempt in 0..3 {
+        if attempt != 0 {
+            file.rewind().map_err(|source| OvenStoreError::Io {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        }
+        let before = stamp(&file).map_err(|source| OvenStoreError::Io {
             path: path.to_path_buf(),
             source,
         })?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-        let read = u64::try_from(read).map_err(|_| OvenStoreError::Integrity {
-            identity: path.display().to_string(),
-            message: "materialized artifact read count does not fit the supported accounting range".to_string(),
-        })?;
-        logical_bytes = logical_bytes
-            .checked_add(read)
-            .ok_or_else(|| OvenStoreError::Integrity {
-                identity: path.display().to_string(),
-                message: "materialized artifact byte count exceeds the supported accounting range".to_string(),
+        let retained = retained.filter(|record| file_digest_matches(record, &before));
+        let persisted = if retained.is_some() {
+            None
+        } else {
+            cache_path
+                .get_or_insert_with(&mut cache)
+                .as_deref()
+                .and_then(|path| fs::read(path).ok())
+                .and_then(|bytes| serde_json::from_slice::<MaterializedFileDigest>(&bytes).ok())
+                .filter(|record| file_digest_matches(record, &before))
+        };
+        if let Some(record) = retained.or(persisted.as_ref()) {
+            let after = stamp(&file).map_err(|source| OvenStoreError::Io {
+                path: path.to_path_buf(),
+                source,
             })?;
+            if before == after {
+                return Ok(report_observed_file_digest(
+                    path,
+                    before.length,
+                    record.digest.clone(),
+                    input_bytes_read,
+                    1,
+                    before,
+                ));
+            }
+            continue;
+        }
+        let mut hasher = Sha256::new();
+        let mut logical_bytes = 0_u64;
+        let mut buffer = [0_u8; 64 * 1024];
+        loop {
+            let read = file.read(&mut buffer).map_err(|source| OvenStoreError::Io {
+                path: path.to_path_buf(),
+                source,
+            })?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+            let read = u64::try_from(read).map_err(|_| OvenStoreError::Integrity {
+                identity: path.display().to_string(),
+                message: "materialized artifact read count does not fit the supported accounting range".to_string(),
+            })?;
+            logical_bytes = logical_bytes
+                .checked_add(read)
+                .ok_or_else(|| OvenStoreError::Integrity {
+                    identity: path.display().to_string(),
+                    message: "materialized artifact byte count exceeds the supported accounting range".to_string(),
+                })?;
+            input_bytes_read = input_bytes_read
+                .checked_add(read)
+                .ok_or_else(|| OvenStoreError::Integrity {
+                    identity: path.display().to_string(),
+                    message: "physical digest reads exceed the supported accounting range".to_string(),
+                })?;
+        }
+        let after = stamp(&file).map_err(|source| OvenStoreError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        if before != after || logical_bytes != before.length {
+            continue;
+        }
+        let digest = format!("sha256:{}", hex::encode(hasher.finalize()));
+        if let Some(path) = cache_path.get_or_insert_with(&mut cache).as_deref() {
+            let _published = publish_materialized_file_digest(
+                path,
+                &MaterializedFileDigest {
+                    stamp: before.clone(),
+                    digest: digest.clone(),
+                },
+            );
+        }
+        return Ok(report_observed_file_digest(
+            path,
+            logical_bytes,
+            digest,
+            input_bytes_read,
+            1,
+            before,
+        ));
     }
-    Ok((logical_bytes, format!("sha256:{}", hex::encode(hasher.finalize()))))
+    Err(OvenStoreError::Integrity {
+        identity: path.display().to_string(),
+        message: "materialized artifact changed during each digest observation".into(),
+    })
 }
 
-/// Collect regular materialized files while rejecting links and non-file entry types.
+/// Match only a valid byte digest under a stable replacement-sensitive stamp; unsupported platforms rehash.
+fn file_digest_matches(record: &MaterializedFileDigest, current: &MaterializedFileStamp) -> bool {
+    !current.identity.is_empty()
+        && record.stamp == *current
+        && record
+            .digest
+            .strip_prefix("sha256:")
+            .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+}
+
+/// Report artifact opens and authoritative byte reads separately from metadata observations and cache-record IO.
+fn report_observed_file_digest(
+    path: &Path,
+    length: u64,
+    digest: String,
+    input_bytes_read: u64,
+    file_opens: u64,
+    stamp: MaterializedFileStamp,
+) -> ObservedFileDigest {
+    tracing::trace!(target: "incan::invocation", input = %path.display(), input_bytes_read, file_opens, logical_bytes = length, decision = if file_opens == 0 { "retained_metadata_reuse" } else if input_bytes_read == 0 { "stamp_reuse_or_empty_file" } else { "read_file" });
+    let observed = ObservedFileDigest {
+        length,
+        digest,
+        input_bytes_read,
+        file_opens,
+        stamp,
+    };
+    if std::env::var_os("INCAN_OVEN_TRACE_FILE_DIGESTS").is_some() {
+        eprintln!(
+            "Oven file digest: {}",
+            serde_json::json!({"path":path, "scheme":"raw-sha256-v1", "input_bytes_read":observed.input_bytes_read, "file_opens":observed.file_opens})
+        );
+    }
+    observed
+}
+
+/// Collect consumed regular files without following links; an exclusion skips only the matching root child.
 fn collect_materialized_files(
     root: &Path,
     directory: &Path,
-    files: &mut BTreeMap<String, PathBuf>,
+    files: &mut BTreeMap<String, (PathBuf, fs::Metadata)>,
     empty_directories: &mut BTreeSet<String>,
+    excluded_directory: Option<&str>,
 ) -> Result<(), OvenStoreError> {
     let children = fs::read_dir(directory)
         .map_err(|source| OvenStoreError::Io {
@@ -3403,6 +3958,9 @@ fn collect_materialized_files(
         empty_directories.insert(relative);
     }
     for child in children {
+        if directory == root && excluded_directory.is_some_and(|excluded| child.file_name() == excluded) {
+            continue;
+        }
         let path = child.path();
         let metadata = fs::symlink_metadata(&path).map_err(|source| OvenStoreError::Io {
             path: path.clone(),
@@ -3415,7 +3973,7 @@ fn collect_materialized_files(
             });
         }
         if metadata.is_dir() {
-            collect_materialized_files(root, &path, files, empty_directories)?;
+            collect_materialized_files(root, &path, files, empty_directories, excluded_directory)?;
             continue;
         }
         if !metadata.is_file() {
@@ -3432,7 +3990,7 @@ fn collect_materialized_files(
             })?
             .to_string_lossy()
             .replace('\\', "/");
-        if files.insert(relative_path.clone(), path).is_some() {
+        if files.insert(relative_path.clone(), (path, metadata)).is_some() {
             return Err(OvenStoreError::Integrity {
                 identity: relative_path,
                 message: "materialized artifact path occurred more than once".to_string(),
@@ -4321,6 +4879,643 @@ pub(crate) mod tests {
     use std::fs::{self, OpenOptions};
     use std::path::{Path, PathBuf};
 
+    /// Inventory metadata saves the first query but never conceals replacement before the final fresh observation.
+    #[cfg(unix)]
+    #[test]
+    fn inventory_metadata_reconciliation_rechecks_replacements() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("native");
+        let replacement = root.path().join("replacement");
+        let mut observations = BTreeMap::new();
+        fs::write(&source, b"native bytes")?;
+        let first = super::digest_retained_materialized_file(&source, &mut observations, None)?;
+        let inventory = fs::symlink_metadata(&source)?;
+        let mut queries = 0;
+        let warm = super::digest_retained_materialized_file_with_metadata(
+            &source,
+            &mut observations,
+            Some(&inventory),
+            |path| {
+                queries += 1;
+                fs::symlink_metadata(path)
+            },
+        )?;
+        assert_eq!(queries, 1);
+        assert_eq!(warm.file_opens, 0);
+        assert_eq!(warm.input_bytes_read, 0);
+        assert_eq!(warm.digest, first.digest);
+
+        fs::write(&replacement, b"edited bytes")?;
+        fs::File::options()
+            .write(true)
+            .open(&replacement)?
+            .set_times(fs::FileTimes::new().set_modified(inventory.modified()?))?;
+        queries = 0;
+        let changed = super::digest_retained_materialized_file_with_metadata(
+            &source,
+            &mut observations,
+            Some(&inventory),
+            |path| {
+                queries += 1;
+                fs::rename(&replacement, path)?;
+                fs::symlink_metadata(path)
+            },
+        )?;
+        assert_eq!(queries, 1);
+        assert_eq!(changed.digest, crate::digest_bytes(b"edited bytes"));
+        assert_eq!(changed.file_opens, 1);
+        assert_eq!(changed.input_bytes_read, 12);
+
+        let inventory = fs::symlink_metadata(&source)?;
+        let substituted = super::digest_retained_materialized_file_with_metadata(
+            &source,
+            &mut observations,
+            Some(&inventory),
+            |path| {
+                fs::rename(path, &replacement)?;
+                std::os::unix::fs::symlink(&replacement, path)?;
+                fs::symlink_metadata(path)
+            },
+        );
+        assert!(substituted.is_err());
+        Ok(())
+    }
+
+    /// Warm owner reconciliation avoids artifact opens; edits and replacements still observe new bytes.
+    #[cfg(unix)]
+    #[test]
+    fn retained_metadata_reconciliation_opens_only_changed_files() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("native");
+        let mut observations = BTreeMap::new();
+        fs::write(&source, b"native bytes")?;
+        let first = super::digest_retained_materialized_file(&source, &mut observations, None)?;
+        assert_eq!(first.file_opens, 1);
+        assert_eq!(first.input_bytes_read, 12);
+        let warm = super::digest_retained_materialized_file(&source, &mut observations, None)?;
+        assert_eq!(warm.digest, first.digest);
+        assert_eq!(warm.file_opens, 0);
+        assert_eq!(warm.input_bytes_read, 0);
+
+        let modified = fs::metadata(&source)?.modified()?;
+        fs::write(&source, b"edited bytes")?;
+        fs::File::options()
+            .write(true)
+            .open(&source)?
+            .set_times(fs::FileTimes::new().set_modified(modified))?;
+        let edited = super::digest_retained_materialized_file(&source, &mut observations, None)?;
+        assert_eq!(edited.digest, crate::digest_bytes(b"edited bytes"));
+        assert_eq!(edited.file_opens, 1);
+        assert_eq!(edited.input_bytes_read, 12);
+
+        let replacement = root.path().join("replacement");
+        fs::write(&replacement, b"other bytes!")?;
+        fs::File::options()
+            .write(true)
+            .open(&replacement)?
+            .set_times(fs::FileTimes::new().set_modified(modified))?;
+        fs::rename(&replacement, &source)?;
+        let replaced = super::digest_retained_materialized_file(&source, &mut observations, None)?;
+        assert_eq!(replaced.digest, crate::digest_bytes(b"other bytes!"));
+        assert_eq!(replaced.file_opens, 1);
+        assert_eq!(replaced.input_bytes_read, 12);
+        let warm = super::digest_retained_materialized_file(&source, &mut observations, None)?;
+        assert_eq!(warm.file_opens, 0);
+        Ok(())
+    }
+
+    /// A real edit between the two path observations must fall back to hashing the changed generation.
+    #[cfg(unix)]
+    #[test]
+    fn retained_metadata_reconciliation_rechecks_races() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("native");
+        let mut observations = BTreeMap::new();
+        fs::write(&source, b"native bytes")?;
+        super::digest_retained_materialized_file(&source, &mut observations, None)?;
+        let modified = fs::metadata(&source)?.modified()?;
+        let mut calls = 0;
+        let changed =
+            super::digest_retained_materialized_file_with_metadata(&source, &mut observations, None, |path| {
+                calls += 1;
+                if calls == 2 {
+                    fs::write(path, b"edited bytes")?;
+                    fs::File::options()
+                        .write(true)
+                        .open(path)?
+                        .set_times(fs::FileTimes::new().set_modified(modified))?;
+                }
+                fs::symlink_metadata(path)
+            })?;
+        assert_eq!(calls, 2);
+        assert_eq!(changed.digest, crate::digest_bytes(b"edited bytes"));
+        assert_eq!(changed.file_opens, 1);
+        assert_eq!(changed.input_bytes_read, 12);
+        let warm = super::digest_retained_materialized_file(&source, &mut observations, None)?;
+        assert_eq!(warm.file_opens, 0);
+        Ok(())
+    }
+
+    /// A cached generation never admits a missing path, directory or symlink to the old bytes.
+    #[cfg(unix)]
+    #[test]
+    fn retained_metadata_reconciliation_refuses_path_substitution() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("native");
+        let held = root.path().join("held");
+        let mut observations = BTreeMap::new();
+        fs::write(&source, b"native bytes")?;
+        super::digest_retained_materialized_file(&source, &mut observations, None)?;
+        fs::rename(&source, &held)?;
+        assert!(super::digest_retained_materialized_file(&source, &mut observations, None).is_err());
+        fs::create_dir(&source)?;
+        assert!(super::digest_retained_materialized_file(&source, &mut observations, None).is_err());
+        fs::remove_dir(&source)?;
+        std::os::unix::fs::symlink(&held, &source)?;
+        assert!(super::digest_retained_materialized_file(&source, &mut observations, None).is_err());
+        Ok(())
+    }
+
+    /// A retained byte observation eliminates persistent-cache work, while a race still retries against new bytes.
+    #[cfg(unix)]
+    #[test]
+    fn retained_file_digest_avoids_cache_io_and_rechecks_races() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("native");
+        let cache = root.path().join("digest.json");
+        fs::write(&source, b"native bytes")?;
+        let first = super::digest_observed_file(&source, Some(&cache))?;
+        let retained = super::MaterializedFileDigest {
+            stamp: first.stamp,
+            digest: first.digest.clone(),
+        };
+        fs::remove_file(&cache)?;
+        let mut cache_requests = 0;
+        let mut observations = 0;
+        let warm = super::digest_observed_file_with_retained(
+            &source,
+            Some(&retained),
+            || {
+                cache_requests += 1;
+                Some(cache.clone())
+            },
+            |file| {
+                observations += 1;
+                super::materialized_file_stamp(file)
+            },
+        )?;
+        assert_eq!(warm.digest, first.digest);
+        assert_eq!(warm.input_bytes_read, 0);
+        assert_eq!(observations, 2);
+        assert_eq!(cache_requests, 0);
+        assert!(!cache.exists());
+
+        let modified = fs::metadata(&source)?.modified()?;
+        observations = 0;
+        let changed = super::digest_observed_file_with_retained(
+            &source,
+            Some(&retained),
+            || {
+                cache_requests += 1;
+                Some(cache.clone())
+            },
+            |file| {
+                observations += 1;
+                if observations == 2 {
+                    fs::write(&source, b"edited bytes")?;
+                    fs::File::options()
+                        .write(true)
+                        .open(&source)?
+                        .set_times(fs::FileTimes::new().set_modified(modified))?;
+                }
+                super::materialized_file_stamp(file)
+            },
+        )?;
+        assert_eq!(changed.digest, crate::digest_bytes(b"edited bytes"));
+        assert_eq!(changed.input_bytes_read, 12);
+        assert_eq!(observations, 4);
+        assert_eq!(cache_requests, 1);
+        Ok(())
+    }
+
+    /// Original owners retain bounded observations, but unchanged inventory, bytes and coordinates still govern reuse.
+    #[cfg(unix)]
+    #[test]
+    fn retained_payload_observations_preserve_complete_inventory() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let source = project.path().join("native");
+        fs::write(&source, b"native bytes")?;
+        let store = OvenStore::new(temp.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let mut publication = request(project.path(), "observed-owner", b"payload")?;
+        publication.materialized_files = vec![OvenArtifactMaterializedFile {
+            relative_path: "nested/native".to_string(),
+            source_path: source,
+        }];
+        let manifest = store.publish(&publication)?;
+        let selected = store.select_payloads_for_execution(std::slice::from_ref(&manifest.identity))?;
+        let owner = &selected[0];
+        assert_eq!(
+            owner
+                .materialized_observations
+                .lock()
+                .map_err(|_| "observation lock poisoned")?
+                .len(),
+            0
+        );
+        owner.verify_admitted_payload()?;
+        assert_eq!(
+            owner
+                .materialized_observations
+                .lock()
+                .map_err(|_| "observation lock poisoned")?
+                .len(),
+            1
+        );
+        let native = owner.artifact_root.join("nested/native");
+        let cache = super::materialized_digest_cache_path(&native).ok_or("native cache path absent")?;
+        fs::remove_file(&cache)?;
+        owner.verify_admitted_payload()?;
+        assert!(
+            !cache.exists(),
+            "retained owner reopened or recreated persistent digest state"
+        );
+
+        let held = temp.path().join("held-native");
+        fs::rename(&native, &held)?;
+        assert!(owner.verify_admitted_payload().is_err());
+        fs::write(&native, b"edited bytes")?;
+        assert!(owner.verify_admitted_payload().is_err());
+        fs::remove_file(&native)?;
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&held, &native)?;
+            assert!(owner.verify_admitted_payload().is_err());
+            fs::remove_file(&native)?;
+        }
+        fs::rename(&held, &native)?;
+        owner.verify_admitted_payload()?;
+        fs::write(owner.artifact_root.join("injected"), b"unlisted")?;
+        assert!(owner.verify_admitted_payload().is_err());
+        fs::remove_file(owner.artifact_root.join("injected"))?;
+        owner.verify_admitted_payload()?;
+        let fresh = store.select_payloads_for_execution(std::slice::from_ref(&manifest.identity))?;
+        assert_eq!(
+            fresh[0]
+                .materialized_observations
+                .lock()
+                .map_err(|_| "observation lock poisoned")?
+                .len(),
+            0
+        );
+        Ok(())
+    }
+
+    /// Exclude only the root subtree while retaining original authority and consumed inventory checks.
+    #[test]
+    fn scoped_inventory_excludes_only_unconsumed_root_directory() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let source = project.path().join("native");
+        fs::write(&source, b"native bytes")?;
+        let store = OvenStore::new(temp.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let mut publication = request(project.path(), "scoped-owner", b"payload")?;
+        publication.materialized_files = ["native", "nested/source/native", "source/lib.rs"]
+            .into_iter()
+            .map(|path| OvenArtifactMaterializedFile {
+                relative_path: path.into(),
+                source_path: source.clone(),
+            })
+            .collect();
+        let manifest = store.publish(&publication)?;
+        let mut selected = store.select_payloads_for_execution(std::slice::from_ref(&manifest.identity))?;
+        let owner = selected.get_mut(0).ok_or("selected fixture missing")?;
+        owner.verify_admitted_payload()?;
+        // Publication may share identical bytes through hard links. Replace only this fixture's selected path.
+        let replace = |path: &Path, bytes: &[u8]| -> std::io::Result<()> {
+            let replacement = project.path().join("replacement");
+            fs::write(&replacement, bytes)?;
+            fs::set_permissions(&replacement, fs::metadata(path)?.permissions())?;
+            fs::rename(replacement, path)
+        };
+        replace(&owner.artifact_root.join("source/lib.rs"), b"changed archived source")?;
+        owner.verify_admitted_payload_except_directory("source")?;
+        assert!(owner.verify_admitted_payload().is_err());
+        for unsafe_directory in ["", ".", "..", "source/", "source/.", "source/nested", "/source"] {
+            assert!(
+                owner
+                    .verify_admitted_payload_except_directory(unsafe_directory)
+                    .is_err()
+            );
+        }
+        let nested = owner.artifact_root.join("nested/source/native");
+        replace(&nested, b"changed native bytes")?;
+        assert!(owner.verify_admitted_payload_except_directory("source").is_err());
+        replace(&nested, b"native bytes")?;
+        let injected = owner.artifact_root.join("injected");
+        fs::write(&injected, b"unlisted native bytes")?;
+        assert!(owner.verify_admitted_payload_except_directory("source").is_err());
+        fs::remove_file(injected)?;
+        owner.verify_admitted_payload_except_directory("source")?;
+        owner.payload.push(0);
+        assert!(owner.verify_admitted_payload_except_directory("source").is_err());
+        Ok(())
+    }
+
+    /// Platforms without a replacement-sensitive identity cannot reuse an observed digest, even under a held owner.
+    #[test]
+    fn retained_file_digest_without_stable_identity_rehashes() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("native");
+        fs::write(&source, b"native bytes")?;
+        let unsupported_stamp = |file: &fs::File| {
+            let mut stamp = super::materialized_file_stamp(file)?;
+            stamp.identity.clear();
+            Ok(stamp)
+        };
+        let first = super::digest_observed_file_with_retained(&source, None, || None, unsupported_stamp)?;
+        let retained = super::MaterializedFileDigest {
+            stamp: first.stamp,
+            digest: first.digest.clone(),
+        };
+        let repeated = super::digest_observed_file_with_retained(&source, Some(&retained), || None, unsupported_stamp)?;
+        assert_eq!(repeated.digest, first.digest);
+        assert_eq!(repeated.input_bytes_read, 12);
+        Ok(())
+    }
+
+    /// Cold reads, warm reuse, edits, replacement, malformed records and cache failures preserve byte authority.
+    #[cfg(unix)]
+    #[test]
+    fn observed_file_digest_counts_reads_and_invalidates() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("compiler");
+        let cache = root.path().join("cache/digest.json");
+        fs::write(&source, b"native bytes")?;
+        let first = super::digest_observed_file(&source, Some(&cache))?;
+        assert_eq!(first.digest, crate::digest_bytes(b"native bytes"));
+        assert_eq!(first.input_bytes_read, 12);
+        let warm = super::digest_observed_file(&source, Some(&cache))?;
+        assert_eq!(warm.digest, first.digest);
+        assert_eq!(warm.input_bytes_read, 0);
+
+        let modified = fs::metadata(&source)?.modified()?;
+        fs::write(&source, b"edited bytes")?;
+        fs::File::options()
+            .write(true)
+            .open(&source)?
+            .set_times(fs::FileTimes::new().set_modified(modified))?;
+        let changed = super::digest_observed_file(&source, Some(&cache))?;
+        assert_eq!(changed.digest, crate::digest_bytes(b"edited bytes"));
+        assert_eq!(changed.input_bytes_read, 12);
+        assert_eq!(super::digest_observed_file(&source, Some(&cache))?.input_bytes_read, 0);
+
+        let replacement = root.path().join("replacement");
+        fs::write(&replacement, b"native bytes")?;
+        fs::File::options()
+            .write(true)
+            .open(&replacement)?
+            .set_times(fs::FileTimes::new().set_modified(modified))?;
+        fs::rename(&replacement, &source)?;
+        let restored = super::digest_observed_file(&source, Some(&cache))?;
+        assert_eq!(restored.digest, first.digest);
+        assert_eq!(restored.input_bytes_read, 12);
+
+        fs::write(&cache, b"malformed")?;
+        let malformed = super::digest_observed_file(&source, Some(&cache))?;
+        assert_eq!(malformed.digest, first.digest);
+        assert_eq!(malformed.input_bytes_read, 12);
+        let mut record: super::MaterializedFileDigest = serde_json::from_slice(&fs::read(&cache)?)?;
+        record.digest = "invalid SHA-256".to_string();
+        fs::write(&cache, serde_json::to_vec(&record)?)?;
+        assert_eq!(super::digest_observed_file(&source, Some(&cache))?.input_bytes_read, 12);
+
+        let unavailable = root.path().join("unavailable");
+        fs::write(&unavailable, b"not a directory")?;
+        let fallback = super::digest_observed_file(&source, Some(&unavailable.join("digest.json")))?;
+        assert_eq!(fallback.digest, first.digest);
+        assert_eq!(fallback.input_bytes_read, 12);
+        assert_eq!(super::digest_observed_file(&source, None)?.input_bytes_read, 12);
+        assert!(super::digest_observed_file(root.path(), Some(&cache)).is_err());
+        assert!(super::digest_observed_file(&root.path().join("missing"), Some(&cache)).is_err());
+        Ok(())
+    }
+
+    /// Concurrent optional cache publishers expose complete records and preserve the held file's byte identity.
+    #[cfg(unix)]
+    #[test]
+    fn observed_file_digest_cache_concurrent_publication() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("compiler");
+        let cache = root.path().join("cache/digest.json");
+        fs::write(&source, b"concurrent native bytes")?;
+        let expected = crate::digest_bytes(b"concurrent native bytes");
+        std::thread::scope(|scope| -> Result<(), Box<dyn std::error::Error>> {
+            let mut workers = Vec::new();
+            for _ in 0..4 {
+                let source = &source;
+                let cache = &cache;
+                let expected = &expected;
+                workers.push(scope.spawn(move || -> Result<(), super::OvenStoreError> {
+                    for _ in 0..16 {
+                        let observed = super::digest_observed_file(source, Some(cache))?;
+                        assert_eq!(observed.digest, *expected);
+                    }
+                    Ok(())
+                }));
+            }
+            for worker in workers {
+                worker.join().map_err(|_| "digest cache worker panicked")??;
+            }
+            Ok(())
+        })?;
+        let record: super::MaterializedFileDigest = serde_json::from_slice(&fs::read(&cache)?)?;
+        assert_eq!(record.digest, expected);
+        let repeat = super::digest_observed_file(&source, Some(&cache))?;
+        assert_eq!(repeat.input_bytes_read, 0);
+        assert_eq!(fs::read_dir(cache.parent().ok_or("cache has no parent")?)?.count(), 1);
+        Ok(())
+    }
+
+    /// Hard-link publication invalidates an observation without invalidating immutable bytes; a stable retry is
+    /// admitted.
+    #[cfg(unix)]
+    #[test]
+    fn observed_file_digest_retries_hard_link_metadata_changes() -> Result<(), Box<dyn std::error::Error>> {
+        for cached in [false, true] {
+            let root = tempfile::tempdir()?;
+            let source = root.path().join("compiler");
+            let alias = root.path().join("alias");
+            let cache = root.path().join("cache/digest.json");
+            fs::write(&source, b"native bytes")?;
+            if cached {
+                let _ = super::digest_observed_file(&source, Some(&cache))?;
+            }
+            let mut observations = 0;
+            let observed = super::digest_observed_file_with_stamp(&source, Some(&cache), |file| {
+                observations += 1;
+                if observations == 2 {
+                    fs::hard_link(&source, &alias)?;
+                }
+                super::materialized_file_stamp(file)
+            })?;
+            assert_eq!(observed.digest, crate::digest_bytes(b"native bytes"));
+            assert_eq!(observed.length, 12);
+            assert_eq!(observed.input_bytes_read, if cached { 12 } else { 24 });
+            assert_eq!(observations, 4);
+            assert_eq!(super::digest_observed_file(&source, Some(&cache))?.input_bytes_read, 0);
+        }
+        Ok(())
+    }
+
+    /// An actual preserved-mtime edit must yield its freshly observed bytes, never the earlier cached identity.
+    #[cfg(unix)]
+    #[test]
+    fn observed_file_digest_retry_rehashes_changed_bytes() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("compiler");
+        let cache = root.path().join("cache/digest.json");
+        fs::write(&source, b"native bytes")?;
+        let modified = fs::metadata(&source)?.modified()?;
+        let mut observations = 0;
+        let observed = super::digest_observed_file_with_stamp(&source, Some(&cache), |file| {
+            observations += 1;
+            if observations == 2 {
+                fs::write(&source, b"edited bytes")?;
+                fs::File::options()
+                    .write(true)
+                    .open(&source)?
+                    .set_times(fs::FileTimes::new().set_modified(modified))?;
+            }
+            super::materialized_file_stamp(file)
+        })?;
+        assert_eq!(observed.digest, crate::digest_bytes(b"edited bytes"));
+        assert_ne!(observed.digest, crate::digest_bytes(b"native bytes"));
+        assert_eq!(observed.length, 12);
+        assert_eq!(observed.input_bytes_read, 24);
+        assert_eq!(observations, 4);
+        assert_eq!(super::digest_observed_file(&source, Some(&cache))?.input_bytes_read, 0);
+        Ok(())
+    }
+
+    /// Continually changing metadata must remain an integrity failure after a bounded number of observations.
+    #[cfg(unix)]
+    #[test]
+    fn observed_file_digest_retry_refuses_unstable_files() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("compiler");
+        let alias = root.path().join("alias");
+        fs::write(&source, b"native bytes")?;
+        let mut observations = 0;
+        let result = super::digest_observed_file_with_stamp(&source, None, |file| {
+            observations += 1;
+            if observations % 2 == 0 {
+                if alias.exists() {
+                    fs::remove_file(&alias)?;
+                } else {
+                    fs::hard_link(&source, &alias)?;
+                }
+            }
+            super::materialized_file_stamp(file)
+        });
+        assert!(matches!(result, Err(OvenStoreError::Integrity { .. })));
+        assert!(observations <= 6, "unstable observations must not retry indefinitely");
+        Ok(())
+    }
+
+    /// A separate process reuses the persisted observation without reading authoritative file bytes.
+    #[cfg(unix)]
+    #[test]
+    fn observed_file_digest_reuses_across_processes() -> Result<(), Box<dyn std::error::Error>> {
+        const SOURCE: &str = "INCAN_OBSERVED_DIGEST_TEST_SOURCE";
+        const CACHE: &str = "INCAN_OBSERVED_DIGEST_TEST_CACHE";
+        if let Some(source) = std::env::var_os(SOURCE) {
+            let cache = std::env::var_os(CACHE).ok_or("child cache was not provided")?;
+            let observed = super::digest_observed_file(Path::new(&source), Some(Path::new(&cache)))?;
+            assert_eq!(observed.digest, crate::digest_bytes(b"native bytes"));
+            assert_eq!(observed.input_bytes_read, 0);
+            return Ok(());
+        }
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("compiler");
+        let cache = root.path().join("digest.json");
+        fs::write(&source, b"native bytes")?;
+        assert_eq!(super::digest_observed_file(&source, Some(&cache))?.input_bytes_read, 12);
+        let child = std::process::Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "store::tests::observed_file_digest_reuses_across_processes",
+                "--nocapture",
+            ])
+            .env(SOURCE, &source)
+            .env(CACHE, &cache)
+            .output()?;
+        assert!(
+            child.status.success(),
+            "child failed: {} {}",
+            String::from_utf8_lossy(&child.stdout),
+            String::from_utf8_lossy(&child.stderr)
+        );
+        assert!(String::from_utf8_lossy(&child.stdout).contains("1 passed"));
+        Ok(())
+    }
+
+    /// Stat-bound hashes invalidate same-length preserved-mtime edits and malformed records.
+    #[test]
+    fn materialized_file_freshness_rejects_preserved_mtime_edits() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("store/entries/fixture.loaf/artifacts/native");
+        fs::create_dir_all(source.parent().ok_or("artifact has no parent")?)?;
+        fs::write(&source, b"native bytes")?;
+        let first = super::digest_materialized_file(&source)?;
+        assert_eq!(first, super::digest_materialized_file(&source)?);
+        let modified = fs::metadata(&source)?.modified()?;
+        fs::write(&source, b"edited bytes")?;
+        fs::File::options()
+            .write(true)
+            .open(&source)?
+            .set_times(fs::FileTimes::new().set_modified(modified))?;
+        let changed = super::digest_materialized_file(&source)?;
+        assert_ne!(first, changed);
+        let cache = super::materialized_digest_cache_path(&source).ok_or("artifact has no cache path")?;
+        fs::write(&cache, b"malformed")?;
+        assert_eq!(changed, super::digest_materialized_file(&source)?);
+        let replacement = root.path().join("replacement");
+        fs::write(&replacement, b"native bytes")?;
+        fs::File::options()
+            .write(true)
+            .open(&replacement)?
+            .set_times(fs::FileTimes::new().set_modified(modified))?;
+        fs::rename(&replacement, &source)?;
+        assert_eq!(first, super::digest_materialized_file(&source)?);
+        Ok(())
+    }
+
+    /// Measure native artifact hash validation independently of whole graph setup.
+    #[test]
+    fn materialized_file_freshness_reports_cold_and_warm_times() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let artifact = root.path().join("store/entries/fixture.loaf/artifacts/native");
+        fs::create_dir_all(artifact.parent().ok_or("artifact has no parent")?)?;
+        fs::copy(std::env::current_exe()?, &artifact)?;
+        let started = std::time::Instant::now();
+        let digest = super::digest_materialized_file(&artifact)?;
+        let cold = started.elapsed();
+        let started = std::time::Instant::now();
+        for _ in 0..4 {
+            assert_eq!(digest, super::digest_materialized_file(&artifact)?);
+        }
+        eprintln!(
+            "materialized freshness: {} bytes, cold {:.3} ms, four warm probes {:.3} ms",
+            digest.0,
+            cold.as_secs_f64() * 1000.0,
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+        Ok(())
+    }
+
     /// Relative directory entries and exact file bytes in a published store.
     type PublishedInventory = BTreeMap<PathBuf, Option<Vec<u8>>>;
 
@@ -4373,8 +5568,8 @@ pub(crate) mod tests {
             let before = published_inventory(temp.path())?;
             let published = super::PublishedOvenStore::new(temp.path());
             for _ in 0..2 {
-                let selected =
-                    published.select_payloads_matching_for_execution(|item| item.identity == manifest.identity)?;
+                let selected = published
+                    .select_payloads_matching_for_execution(|item| item.identity == manifest.identity, |_, _| true)?;
                 assert_eq!(selected.len(), 1);
                 assert_eq!(selected[0].payload, b"native plan");
                 selected[0].verify_materialized_files()?;
@@ -4450,8 +5645,8 @@ pub(crate) mod tests {
         ));
 
         let published = super::PublishedOvenStore::new(temp.path());
-        let matched =
-            published.select_payloads_matching_for_execution(|manifest| manifest.identity == first.identity)?;
+        let matched = published
+            .select_payloads_matching_for_execution(|manifest| manifest.identity == first.identity, |_, _| true)?;
         assert_eq!(matched.len(), 1);
         matched[0].verify_materialized_files()?;
         Ok(())
@@ -4494,7 +5689,7 @@ pub(crate) mod tests {
 
         let published = super::PublishedOvenStore::new(temp.path());
         assert!(matches!(
-            published.select_payloads_matching_for_execution(|_| true),
+            published.select_payloads_matching_for_execution(|_| true, |_, _| true),
             Err(OvenStoreError::Integrity { .. })
         ));
         Ok(())
@@ -4525,7 +5720,7 @@ pub(crate) mod tests {
         ));
         let published = super::PublishedOvenStore::new(temp.path());
         assert!(matches!(
-            published.select_payloads_matching_for_execution(|_| true),
+            published.select_payloads_matching_for_execution(|_| true, |_, _| true),
             Err(OvenStoreError::Integrity { .. })
         ));
         Ok(())
@@ -4558,7 +5753,7 @@ pub(crate) mod tests {
             ));
             let published = super::PublishedOvenStore::new(temp.path());
             assert!(matches!(
-                published.select_payloads_matching_for_execution(|_| true),
+                published.select_payloads_matching_for_execution(|_| true, |_, _| true),
                 Err(OvenStoreError::Integrity { .. })
             ));
         }
@@ -4585,7 +5780,8 @@ pub(crate) mod tests {
         let selected = store.select_payloads_for_execution(std::slice::from_ref(&manifest.identity))?;
         assert_eq!(selected.len(), 1);
         let published = super::PublishedOvenStore::new(&store_alias);
-        let matched = published.select_payloads_matching_for_execution(|item| item.identity == manifest.identity)?;
+        let matched =
+            published.select_payloads_matching_for_execution(|item| item.identity == manifest.identity, |_, _| true)?;
         assert_eq!(matched.len(), 1);
         let canonical_store = fs::canonicalize(&actual_store)?;
         assert!(selected[0].artifact_root.starts_with(&canonical_store));
@@ -4807,7 +6003,8 @@ pub(crate) mod tests {
                 fs::canonicalize(entry_root)?.join(super::ACTIVE_LOCK_FILE)
             };
             let before = published_inventory(temp.path())?;
-            let result = super::PublishedOvenStore::new(temp.path()).select_payloads_matching_for_execution(|_| true);
+            let result = super::PublishedOvenStore::new(temp.path())
+                .select_payloads_matching_for_execution(|_| true, |_, _| true);
             assert!(matches!(result, Err(OvenStoreError::Io { path, .. }) if path == expected_error_path));
             assert_eq!(published_inventory(temp.path())?, before);
             assert!(!lock.exists());
@@ -4842,7 +6039,7 @@ pub(crate) mod tests {
             fs::write(changed, b"changed content")?;
             let before = published_inventory(temp.path())?;
             let result = super::PublishedOvenStore::new(temp.path())
-                .select_payloads_matching_for_execution(|_| true)
+                .select_payloads_matching_for_execution(|_| true, |_, _| true)
                 .and_then(|selected| {
                     for payload in selected {
                         payload.verify_materialized_files()?;
@@ -4879,12 +6076,13 @@ pub(crate) mod tests {
 
         // A selection that does not want the tampered entry still succeeds, and returns only what it asked for.
         let untouched = super::PublishedOvenStore::new(temp.path())
-            .select_payloads_matching_for_execution(|manifest| manifest.identity == wanted.identity)?;
+            .select_payloads_matching_for_execution(|manifest| manifest.identity == wanted.identity, |_, _| true)?;
         assert_eq!(untouched.len(), 1);
         assert_eq!(untouched[0].admitted_identity, wanted.identity);
 
         // A selection that does want it is refused.
-        let refused = super::PublishedOvenStore::new(temp.path()).select_payloads_matching_for_execution(|_| true);
+        let refused =
+            super::PublishedOvenStore::new(temp.path()).select_payloads_matching_for_execution(|_| true, |_, _| true);
         assert!(
             matches!(refused, Err(OvenStoreError::Integrity { .. })),
             "a tampered manifest must be refused once the selection takes it"
@@ -5283,6 +6481,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// Active readers survive publication above the retention target, then idle records can be swept.
     #[test]
     fn active_lease_blocks_unsafe_pruning_then_inactive_entry_is_reclaimed() -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -5297,11 +6496,18 @@ pub(crate) mod tests {
         );
         let (_entry, lease) = bounded.select(&first.identity)?;
 
-        let blocked = bounded.publish(&request(project.path(), "engine-two", b"second payload")?);
-        assert!(matches!(blocked, Err(OvenStoreError::CapacityBlocked { .. })));
-        assert_eq!(bounded.inspect()?.entries.len(), 1);
+        bounded.publish(&request(project.path(), "engine-two", b"second payload")?)?;
+        assert!(
+            bounded
+                .inspect()?
+                .entries
+                .iter()
+                .any(|entry| entry.manifest.identity == first.identity)
+        );
+        assert_eq!(bounded.inspect()?.entries.len(), 2);
 
         drop(lease);
+        bounded.prune()?;
         let second = bounded.publish(&request(project.path(), "engine-two", b"second payload")?)?;
         let inspection = bounded.inspect()?;
         assert_eq!(inspection.entries.len(), 1);
@@ -5309,6 +6515,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// Atomic matching selection protects its owner without blocking another bounded publication.
     #[test]
     fn matching_execution_selection_holds_the_lease_before_policy_can_prune() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -5323,14 +6530,21 @@ pub(crate) mod tests {
             OvenStoreLimits::new(first_physical.saturating_add(1), 1_000_000, 1_000_000),
         );
 
-        let selected =
-            bounded.select_payloads_matching_for_execution(|manifest| manifest.identity == first.identity)?;
+        let selected = bounded
+            .select_payloads_matching_for_execution(|manifest| manifest.identity == first.identity, |_, _| true)?;
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].manifest.identity, first.identity);
 
-        let blocked = bounded.publish(&request(project.path(), "engine-two", b"second payload")?);
-        assert!(matches!(blocked, Err(OvenStoreError::CapacityBlocked { .. })));
+        bounded.publish(&request(project.path(), "engine-two", b"second payload")?)?;
+        assert!(
+            bounded
+                .inspect()?
+                .entries
+                .iter()
+                .any(|entry| entry.manifest.identity == first.identity)
+        );
         drop(selected);
+        bounded.prune()?;
 
         let second = bounded.publish(&request(project.path(), "engine-two", b"second payload")?)?;
         assert_eq!(bounded.inspect()?.entries[0].manifest.identity, second.identity);
@@ -5412,7 +6626,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
-    /// A reservation with no floor keeps every entry, leased or not, and caps staging at what remains.
+    /// Retained readers and idle reusable entries do not reduce the bounded staging request allowance.
     #[test]
     fn legacy_publisher_reservation_preserves_active_leases_and_caps_staging() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -5427,25 +6641,24 @@ pub(crate) mod tests {
         assert_eq!(store.inspect()?.entries.len(), 1);
         assert!(active_reservation.prune_report.removed_entries.is_empty());
         assert!(
-            active_reservation.transient_limit_bytes < store.limits().max_physical_bytes,
-            "a held lease must remain while reducing the baker's staging allowance"
+            active_reservation.transient_limit_bytes == store.limits().max_physical_bytes,
+            "a held lease must remain without reducing the request allowance"
         );
 
         drop(lease);
         let inactive_reservation = store.reserve_legacy_cargo_publisher_capacity("engine", 0)?;
         assert!(inactive_reservation.prune_report.removed_entries.is_empty());
         assert!(
-            inactive_reservation.transient_limit_bytes < store.limits().max_physical_bytes,
-            "an inactive reusable entry must reduce the staging allowance instead of being discarded speculatively"
+            inactive_reservation.transient_limit_bytes == store.limits().max_physical_bytes,
+            "an inactive reusable entry must preserve the staging request allowance"
         );
         assert_eq!(store.inspect()?.entries.len(), 1);
         Ok(())
     }
 
-    /// When live leases alone leave no staging, the refusal names the inspect-then-prune recovery path.
+    /// A retained closure filling the retention target cannot block a bounded staging request.
     #[test]
-    fn legacy_publisher_capacity_failure_names_the_safe_prune_recovery_path() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn legacy_publisher_reservation_is_not_blocked_by_retained_capacity() -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
         let project = tempfile::tempdir()?;
         write_project(project.path())?;
@@ -5458,17 +6671,10 @@ pub(crate) mod tests {
         );
         let (_entry, lease) = bounded.select(&first.identity)?;
 
-        let error = bounded
-            .reserve_legacy_cargo_publisher_capacity("engine", 0)
-            .err()
-            .ok_or("a fully retained active entry must block publisher staging")?;
+        let reservation = bounded.reserve_legacy_cargo_publisher_capacity("engine", 0)?;
+        assert_eq!(reservation.transient_limit_bytes, physical_bytes);
+        assert_eq!(bounded.inspect()?.entries.len(), 1);
 
-        assert!(error.to_string().contains("incan oven store inspect"));
-        assert!(
-            error
-                .to_string()
-                .contains("incan oven store prune --max-physical-bytes")
-        );
         drop(lease);
         Ok(())
     }
@@ -5618,6 +6824,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// Batch readers remain intact while another bounded shard is admitted above the retention target.
     #[test]
     fn batch_execution_leases_protect_every_selected_shard_from_policy_pruning()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -5642,9 +6849,11 @@ pub(crate) mod tests {
         let inspection = bounded.inspect()?;
         assert_eq!(inspection.active_lease_physical_bytes, inspection.physical_bytes);
 
-        let blocked = bounded.publish(&request(project.path(), "suite-shard-three", b"third shard")?);
-        assert!(matches!(blocked, Err(OvenStoreError::CapacityBlocked { .. })));
-        assert_eq!(bounded.inspect()?.entries.len(), 2);
+        bounded.publish(&request(project.path(), "suite-shard-three", b"third shard")?)?;
+        assert_eq!(bounded.inspect()?.entries.len(), 3);
+        for payload in &selected {
+            payload.verify_admitted_payload()?;
+        }
 
         drop(selected);
         let third = bounded.publish(&request(project.path(), "suite-shard-three", b"third shard")?)?;
@@ -5829,6 +7038,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// A bounded related batch publishes without removing either actively leased foundation.
     #[test]
     fn related_batch_keeps_all_active_leases_safe_under_aggregate_pressure() -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -5848,15 +7058,19 @@ pub(crate) mod tests {
             request(project.path(), "foundation-d", b"incoming foundation d")?,
         ];
 
-        let result = bounded.publish_batch(&requests);
-        assert!(matches!(result, Err(OvenStoreError::CapacityBlocked { .. })));
+        let published = bounded.publish_batch(&requests)?;
+        assert_eq!(published.len(), 2);
         let inspection = bounded.inspect()?;
-        assert_eq!(inspection.entries.len(), 2);
-        assert_eq!(inspection.active_lease_physical_bytes, inspection.physical_bytes);
+        assert_eq!(inspection.entries.len(), 4);
+        assert!(inspection.active_lease_physical_bytes < inspection.physical_bytes);
+        for payload in &leases {
+            payload.verify_admitted_payload()?;
+        }
         drop(leases);
         Ok(())
     }
 
+    /// Shared members occupy one physical copy, and live leases do not block a distinct bounded member.
     #[cfg(unix)]
     #[test]
     fn batch_publication_shares_identical_materialized_closure_files_once_physically()
@@ -5943,18 +7157,18 @@ pub(crate) mod tests {
                 2_000_000,
             ),
         );
-        let mut blocked_request = request(project.path(), "compiler-suite", b"new suite shard")?;
-        blocked_request.materialized_files = vec![OvenArtifactMaterializedFile {
+        let mut incoming_request = request(project.path(), "compiler-suite", b"new suite shard")?;
+        incoming_request.materialized_files = vec![OvenArtifactMaterializedFile {
             source_path: unique_source,
             relative_path: "closure/libunique.rlib".to_string(),
         }];
-        assert!(matches!(
-            lease_bounded.publish(&blocked_request),
-            Err(OvenStoreError::CapacityBlocked { .. })
-        ));
+        lease_bounded.publish(&incoming_request)?;
         let protected = lease_bounded.inspect()?;
-        assert_eq!(protected.entries.len(), 2);
-        assert_eq!(protected.active_lease_physical_bytes, protected.physical_bytes);
+        assert_eq!(protected.entries.len(), 3);
+        assert!(protected.active_lease_physical_bytes < protected.physical_bytes);
+        for payload in &selected {
+            payload.verify_admitted_payload()?;
+        }
         drop(selected);
         Ok(())
     }
@@ -6041,6 +7255,63 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// Empty admission performs no durability work; actual reclamation synchronizes once and invalid entries refuse.
+    #[test]
+    fn staging_reclamation_synchronizes_only_actual_removals() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let store = OvenStore::new(temp.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        store.ensure_layout()?;
+        let manager = super::open_lock(&store.root.join(super::MANAGER_LOCK_FILE))?;
+        manager.lock()?;
+        let synchronizations = std::cell::Cell::new(0);
+        let synchronize = |path| {
+            synchronizations.set(synchronizations.get() + 1);
+            super::sync_directory(path)
+        };
+
+        for _ in 0..100 {
+            store.reclaim_stale_staging_with_sync(synchronize)?;
+        }
+        assert_eq!(synchronizations.get(), 0);
+
+        let staging = store.staging_root_base();
+        for name in ["interrupted-one", "interrupted-two"] {
+            let stale = staging.join(name).join("nested");
+            fs::create_dir_all(&stale)?;
+            fs::write(stale.join("payload"), b"unpublished bytes")?;
+        }
+        store.reclaim_stale_staging_with_sync(synchronize)?;
+        assert_eq!(fs::read_dir(&staging)?.count(), 0);
+        assert_eq!(synchronizations.get(), 1);
+        store.reclaim_stale_staging_with_sync(synchronize)?;
+        assert_eq!(synchronizations.get(), 1);
+
+        let unexpected = staging.join("unexpected-file");
+        fs::write(&unexpected, b"not a compiler-owned directory")?;
+        assert!(matches!(
+            store.reclaim_stale_staging_with_sync(synchronize),
+            Err(OvenStoreError::Integrity { .. })
+        ));
+        assert!(unexpected.is_file());
+        assert_eq!(synchronizations.get(), 1);
+        fs::remove_file(unexpected)?;
+
+        #[cfg(unix)]
+        {
+            let outside = tempfile::tempdir()?;
+            let marker = outside.path().join("preserved");
+            fs::write(&marker, b"outside staging")?;
+            std::os::unix::fs::symlink(outside.path(), staging.join("linked-directory"))?;
+            assert!(matches!(
+                store.reclaim_stale_staging_with_sync(synchronize),
+                Err(OvenStoreError::Integrity { .. })
+            ));
+            assert_eq!(fs::read(marker)?, b"outside staging");
+            assert_eq!(synchronizations.get(), 1);
+        }
+        Ok(())
+    }
+
     /// Generic equivalent-unit reuse preserves the first publisher's complete source receipt.
     #[test]
     fn native_receipt_witness_survives_source_changed_equivalent_publication() -> Result<(), Box<dyn std::error::Error>>
@@ -6067,9 +7338,10 @@ pub(crate) mod tests {
         let reused = store.publish(&current)?;
         assert_eq!(reused, published);
         assert_eq!(fs::read_dir(root.path().join(super::ENTRIES_DIRECTORY))?.count(), 1);
-        let selected = store.select_payloads_matching_for_execution(|header| {
-            header.build_unit_identity == current.receipt.build_unit_identity
-        })?;
+        let selected = store.select_payloads_matching_for_execution(
+            |header| header.build_unit_identity == current.receipt.build_unit_identity,
+            |_, _| true,
+        )?;
         let owner = selected.first().ok_or("original native owner missing")?;
         assert_eq!(owner.original_native_receipt(), Some(&original.receipt));
         assert_ne!(owner.original_native_receipt(), Some(&current.receipt));
@@ -6186,6 +7458,53 @@ pub(crate) mod tests {
         );
         replace_native_witness_fixture(&path, &original_bytes)?;
         store.select_payloads_for_execution(&[published.identity])?;
+        Ok(())
+    }
+
+    /// Optional exact reuse distinguishes absent owners from damaged contents and ambiguous Store coordinates.
+    #[test]
+    fn optional_exact_selection_preserves_original_receipt_and_refuses_damage() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = tempfile::tempdir()?;
+        let project = tempfile::tempdir()?;
+        write_project(project.path())?;
+        let store = OvenStore::new(root.path(), OvenStoreLimits::new(1_000_000, 1_000_000, 1_000_000));
+        let absent = crate::digest_bytes(b"absent owner");
+        assert!(
+            store
+                .try_select_payloads_for_execution(std::slice::from_ref(&absent))?
+                .is_none()
+        );
+        let mut original = request(project.path(), "sources", b"native")?;
+        original.kind = OvenArtifactKind::RustInspectionToolchain;
+        let manifest = store.publish(&original)?;
+        let identities = [manifest.identity.clone()];
+        let owners = store
+            .try_select_payloads_for_execution(&identities)?
+            .ok_or("exact source owner missing")?;
+        assert_eq!(owners.len(), 1);
+        assert_eq!(owners[0].original_native_receipt(), Some(&original.receipt));
+        owners[0].verify_admitted_payload()?;
+        assert!(
+            store
+                .try_select_payloads_for_execution(&[manifest.identity.clone(), absent])?
+                .is_none()
+        );
+        let entry = store.entry_root(&manifest.identity);
+        let saved = root.path().join("saved-manifest.json");
+        fs::rename(entry.join(super::ARTIFACT_MANIFEST_FILE), &saved)?;
+        assert!(store.try_select_payloads_for_execution(&identities).is_err());
+        fs::rename(&saved, entry.join(super::ARTIFACT_MANIFEST_FILE))?;
+        fs::write(entry.join(super::PAYLOAD_FILE), b"damaged")?;
+        assert!(store.try_select_payloads_for_execution(&identities).is_err());
+        fs::write(entry.join(super::PAYLOAD_FILE), b"native")?;
+        let competing = entry.with_extension("loaf");
+        fs::create_dir(&competing)?;
+        assert!(store.try_select_payloads_for_execution(&identities).is_err());
+        fs::remove_dir(&competing)?;
+        store
+            .try_select_payloads_for_execution(&identities)?
+            .ok_or("restored owner missing")?;
         Ok(())
     }
 
@@ -6388,3 +7707,7 @@ pub(crate) mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "store/published_identity_tests.rs"]
+mod published_identity_tests;

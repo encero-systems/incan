@@ -10,6 +10,7 @@
 
 pub mod cli;
 pub mod commands;
+pub mod invocation_trace;
 
 pub use cli::{
     LockArgs, OvenCommand, OvenGateCommand, OvenHarvestProfileArgument, OvenInteropAdapterArgument, OvenInteropCommand,
@@ -22,6 +23,8 @@ pub use incan_driver::error::{CliError, CliResult, ExitCode};
 /// Run one `oven` command family member.
 pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
     match command {
+        OvenCommand::ConvertCargo { workspace, project } => commands::oven::convert_cargo::run(&workspace, &project),
+        OvenCommand::CompileClosure(arguments) => commands::oven::compile_closure::run(arguments),
         OvenCommand::SdkHandoff { command } => commands::oven_sdk_handoff(command),
         OvenCommand::RetainSuiteOutput { clock, arguments } => commands::oven_retain_suite_output(clock, &arguments),
         OvenCommand::ReconcilePartitions { reports, summary } => {
@@ -253,6 +256,33 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
             store: store.into(),
             format,
         }),
+        OvenCommand::CompilerNativeTests {
+            compiler_root,
+            target,
+            declaration,
+            native_graph,
+            native_index,
+            native_blobs,
+            source_inputs,
+            exact_names,
+            output,
+            store,
+            explicit_bake_workspace,
+            rustc,
+        } => commands::oven::native_compiler_tests::run(
+            compiler_root,
+            target,
+            declaration,
+            native_graph,
+            native_index,
+            native_blobs,
+            source_inputs,
+            exact_names,
+            output,
+            store.into(),
+            explicit_bake_workspace,
+            rustc,
+        ),
         OvenCommand::Plan { command } => match command {
             OvenPlanCommand::Publish {
                 receipt,

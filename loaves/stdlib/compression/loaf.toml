@@ -7,3 +7,10 @@ private = true
 [sdk]
 profile = "minimal"
 components = ["stdlib-system"]
+
+[dependencies]
+bzip2 = { loaf = "crates-io/bzip2", version = "0.6", features = [], default-features = true }
+flate2 = { loaf = "crates-io/flate2", version = "1", features = [], default-features = true }
+snap = { loaf = "crates-io/snap", version = "1", features = [], default-features = true }
+xz2 = { loaf = "crates-io/xz2", version = "0.1", features = ["static"], default-features = true }
+zstd = { loaf = "crates-io/zstd", version = "0.13", features = [], default-features = true }

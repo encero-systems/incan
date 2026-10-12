@@ -293,7 +293,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             _ => bir::TryErrorRouting::Unresolved,
         };
         let operand = self.lower_expr_to_operand(inner, scope, out);
-        let ty = self.resolve_ty(outer_span);
+        // The checked Result already fixes the success type, including when the outer expression has no separate type
+        // entry.
+        let ty = match &operand_result_type {
+            IncanType::Generic { base, args } if base == "Result" && args.len() == 2 => args[0].clone(),
+            _ => self.resolve_ty(outer_span),
+        };
         let destination = self.new_temp(ty.clone(), scope, hir_span_value);
         out.push(bir::Statement {
             kind: bir::StatementKind::TryPropagate {

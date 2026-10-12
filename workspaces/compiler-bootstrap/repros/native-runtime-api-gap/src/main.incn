@@ -1,0 +1,7 @@
+"""The current Rust API has no native-catalog runtime identity entrypoint; #1698 tracks its Cargo retirement."""
+
+from rust::oven_rustc::loaf import runtime_build_unit_inputs_from_native_catalog
+
+
+def main() -> None:
+    runtime_build_unit_inputs_from_native_catalog()

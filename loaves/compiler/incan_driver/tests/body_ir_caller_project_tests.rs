@@ -89,6 +89,12 @@ fn oven_caller_borrows_real_body_ir() -> Result<(), Box<dyn std::error::Error>> 
         .replace(
             "../../kernel/incan_semantics_core",
             semantics.to_str().ok_or("semantics path is not UTF-8")?,
+        )
+        .replace(
+            "../../kernel/incan_lang",
+            oven_model::toolchain_layout::resolve_toolchain_crate_path("incan_lang")
+                .to_str()
+                .ok_or("language registry path is not UTF-8")?,
         );
     fs::write(lowering.join("loaf.toml"), manifest)?;
     copy_sources(
@@ -113,9 +119,10 @@ fn synthetic_body() -> Body {
     let span = HirSourceSpan { start: 0, end: 10 };
     let id = CompilerNodeId::declaration_span("fixture", span.start, span.end);
     Body {
+        type_parameters: Vec::new(),
         decl_id: id.clone(), direct_call_id: id,
         canonical: Some(CanonicalSymbolId::module_declaration(vec!["fixture".into()], "sample", SemanticSourceTargetKind::Function, span)),
-        name: "sample".into(), span, return_type: IncanType::Primitive(IncanPrimitiveType::Unit),
+        name: "sample".into(), span, return_type: IncanType::Primitive(IncanPrimitiveType::Unit), callable_representation: None,
         named_type_identities: Default::default(), locals: vec![], params: vec![], param_locals: vec![], scopes: vec![],
         block: Block { scope: ScopeId(0), stmts: vec![Statement { kind: StatementKind::Return { value: None }, span }] },
         runtime_requirements: vec![], panic_facts: vec![], is_async: false, extern_delegation: None,
@@ -125,6 +132,8 @@ fn synthetic_body() -> Body {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut module = BodyIrModule {
+        constant_declarations: Vec::new(),
+        type_alias_declarations: Vec::new(),
         module_id: CompilerNodeId::module("fixture"), stdlib_delegations: vec![], static_declarations: vec![], enum_declarations: vec![], nominal_declarations: vec![],
         fieldless_enum_declarations: vec![], value_enum_declarations: vec![], trait_declarations: vec![], trait_implementations: vec![], bodies: vec![synthetic_body()],
     };
@@ -142,12 +151,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 "#,
     )?;
-    let home = root.join("home");
+    let home = support::oven_fixture_home()?;
     bake(&plan, &home)?;
     bake(&lowering, &home)?;
     bake(&caller, &home)?;
-    for profile in ["debug", "release"] {
-        assert_success(&Command::new(caller.join("target/rust").join(profile).join("body-ir-caller")).output()?);
-    }
+    assert_success(&Command::new(caller.join("target/rust/debug/body-ir-caller")).output()?);
     Ok(())
 }

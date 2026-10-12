@@ -1,0 +1,9 @@
+[project]
+name = "dev7_dependency_enum_reexports"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+messages = { path = "deps/messages" }

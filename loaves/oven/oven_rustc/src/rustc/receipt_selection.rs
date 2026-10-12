@@ -157,11 +157,14 @@ pub fn select_direct_rustc_plan_for_execution(
             message: error.to_string(),
         })?;
     let mut matches = Vec::new();
-    for selected in store.select_payloads_matching_for_execution(|manifest| {
-        manifest.kind == OvenArtifactKind::DirectRustcPlan
-            && manifest.build_unit_identity == receipt.build_unit_identity
-            && manifest.intent == receipt.intent
-    })? {
+    for selected in store.select_payloads_matching_for_execution(
+        |manifest| {
+            manifest.kind == OvenArtifactKind::DirectRustcPlan
+                && manifest.build_unit_identity == receipt.build_unit_identity
+                && manifest.intent == receipt.intent
+        },
+        |_, _| true,
+    )? {
         let Ok(plan) = serde_json::from_slice::<OvenRustcArtifactManifest>(&selected.payload) else {
             continue;
         };
@@ -262,6 +265,7 @@ pub(super) fn decode_project_inspection_authority(
 /// Selection never searches by dependency compatibility. The authority entry is exact, and all of its store-owned
 /// constituents are acquired in one batch before any source is projected. Release-Loaf constituents are resolved
 /// separately by the caller against the active immutable toolchain generation.
+/// Missing Store owners retain their typed I/O error so a cache-owning caller can refresh an evicted authority.
 pub fn load_project_inspection_authority(
     store: &OvenStore,
     authority_ref: &OvenProjectInspectionAuthorityRef,
@@ -295,12 +299,19 @@ fn select_project_inspection_source(
 ) -> Result<(OvenStoreExecutionPayload, OvenProjectInspectionAuthorityPayload), OvenRustcError> {
     let mut selected = store
         .select_payloads_for_execution(std::slice::from_ref(&authority_ref.identity))
-        .map_err(|error| OvenRustcError::PlanSelection {
-            receipt_identity: authority_ref.receipt_identity.clone(),
-            message: format!(
-                "source-current project output cannot select exact project inspection authority `{}`: {error}",
-                authority_ref.identity
-            ),
+        .map_err(|error| {
+            if matches!(&error, oven_store::store::OvenStoreError::Io { source, .. }
+                if source.kind() == std::io::ErrorKind::NotFound)
+            {
+                return OvenRustcError::Store(error);
+            }
+            OvenRustcError::PlanSelection {
+                receipt_identity: authority_ref.receipt_identity.clone(),
+                message: format!(
+                    "source-current project output cannot select exact project inspection authority `{}`: {error}",
+                    authority_ref.identity
+                ),
+            }
         })?;
     let source_owner = selected.pop().ok_or_else(|| OvenRustcError::PlanSelection {
         receipt_identity: authority_ref.receipt_identity.clone(),
@@ -375,7 +386,7 @@ fn select_project_inspection_constituents(
 }
 
 /// Revalidate every selected constituent against its sealed receipt, kind, and release base.
-fn validate_selected_project_inspection_constituents(
+pub(super) fn validate_selected_project_inspection_constituents(
     payload: &OvenProjectInspectionAuthorityPayload,
     stored_constituents: &[OvenStoreExecutionPayload],
 ) -> Result<(), OvenRustcError> {

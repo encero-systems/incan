@@ -1,12 +1,19 @@
 //! Bounded direct-route measurement using the route-independent fixture contract.
 
 use super::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 use support::behavior_fixtures::{self as fixtures, BehaviorFixture, Expectation, FixtureLayout};
 
+/// The driver's environment variable naming its refusal report, and the report's file name in a fixture's scratch.
+const REFUSAL_REPORT: &str = "INCAN_DIRECT_REFUSAL_REPORT";
+const REFUSAL_FILE: &str = "refusals.txt";
+
 /// A fixture's exclusive census class and its independently retained observed result.
+///
+/// `refusals` lists every body's first refusal, as the driver reports them, so a fixture refused for several reasons
+/// shows all of them rather than only `detail`, the first; it is empty when the compilation reported none.
 #[derive(serde::Serialize)]
 struct Record {
     area: String,
@@ -14,9 +21,23 @@ struct Record {
     class: String,
     observed: String,
     detail: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    refusals: Vec<String>,
     pending_reason: Option<String>,
     formerly_multi_module: bool,
     elapsed_ms: u128,
+}
+
+/// Read the refusals the driver reported for one fixture, one per line; none when it wrote no report.
+fn reported_refusals(scratch: &Path) -> Vec<String> {
+    fs::read_to_string(scratch.join(REFUSAL_FILE))
+        .map(|text| {
+            text.lines()
+                .filter(|line| !line.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Run a child with file-backed streams so pipe capacity cannot defeat the deadline.
@@ -95,13 +116,13 @@ fn measure(
         fixtures::materialize(fixture, scratch)?;
         let mut check =
             support::cli_project::configured_incan_command(scratch, &["check", "src/main.incn", "--format", "json"]);
-        let detail = match bounded(&mut check, scratch, deadline)? {
-            Some(output) => fixtures::compare_refusal(diagnostics, &output)
-                .err()
-                .unwrap_or_else(|| "declared diagnostics verified".into()),
-            None => "check timeout".into(),
-        };
-        return Ok(("check-only".into(), detail));
+        return Ok(match bounded(&mut check, scratch, deadline)? {
+            Some(output) => match fixtures::compare_refusal(diagnostics, &output) {
+                Ok(()) => ("check-only".into(), "declared diagnostics verified".into()),
+                Err(detail) => ("diagnostic-mismatch".into(), detail),
+            },
+            None => ("driver-error".into(), "check timeout".into()),
+        });
     }
     let source = if fixture.layout == FixtureLayout::SingleFile {
         fixture.path.clone()
@@ -144,6 +165,7 @@ fn measure(
     let binary = scratch.join("native");
     let mut command = corpus::source_command(driver, &source, &binary, sysroot, closure);
     command.current_dir(scratch);
+    command.env(REFUSAL_REPORT, scratch.join(REFUSAL_FILE));
     let Some(output) = bounded(&mut command, scratch, deadline)? else {
         return Ok(("driver-error".into(), "compile timeout".into()));
     };
@@ -151,7 +173,7 @@ fn measure(
         return Ok(compile_failure(&output));
     }
     let Some(output) = bounded(Command::new(binary).current_dir(scratch), scratch, deadline)? else {
-        return Ok(("wrong".into(), "binary timeout".into()));
+        return Ok(("driver-error".into(), "binary timeout".into()));
     };
     let Expectation::Run {
         stdout,
@@ -185,6 +207,85 @@ fn all_fixtures() -> Result<Vec<(String, BehaviorFixture)>, Box<dyn std::error::
     Ok(all)
 }
 
+/// Restrict the census to the `area/name` lines of the file `INCAN_CENSUS_ONLY` names, for a quick check of the
+/// fixtures one change targets.
+///
+/// Without the variable every fixture runs. A restricted run reports only its selection, so it never stands in for the
+/// complete census that proves `wrong` stays zero across the corpus.
+fn selected_fixtures() -> Result<Vec<(String, BehaviorFixture)>, Box<dyn std::error::Error>> {
+    let all = all_fixtures()?;
+    let Some(list) = std::env::var_os("INCAN_CENSUS_ONLY").filter(|value| !value.is_empty()) else {
+        return Ok(all);
+    };
+    let wanted: std::collections::BTreeSet<String> = fs::read_to_string(list)?
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect();
+    let known = all
+        .iter()
+        .map(|(area, fixture)| format!("{area}/{}", fixture.name))
+        .collect();
+    validate_requested_fixture_names(&known, &wanted)?;
+    Ok(all
+        .into_iter()
+        .filter(|(area, fixture)| wanted.contains(&format!("{area}/{}", fixture.name)))
+        .collect())
+}
+
+/// Refuse empty or misspelled selections before a restricted census can claim success for omitted fixtures.
+fn validate_requested_fixture_names(known: &BTreeSet<String>, wanted: &BTreeSet<String>) -> Result<(), String> {
+    if wanted.is_empty() {
+        return Err("census selection contains no fixtures".into());
+    }
+    let unknown: Vec<_> = wanted.difference(known).cloned().collect();
+    if !unknown.is_empty() {
+        return Err(format!(
+            "census selection names unknown fixtures: {}",
+            unknown.join(", ")
+        ));
+    }
+    Ok(())
+}
+
+/// Require complete measurements and reject execution or diagnostic failures regardless of their display class.
+///
+/// Pending semantic outcomes and named construction refusals remain visible; accepting their measurements does not
+/// establish complete native-route support. Pending status never excuses a driver failure or timeout.
+fn census_acceptance(records: &[Record], expected: &BTreeSet<(String, String)>) -> Result<(), String> {
+    if expected.is_empty() {
+        return Err("census requested no fixtures".into());
+    }
+    let mut measured = BTreeSet::new();
+    let mut failures = Vec::new();
+    for record in records {
+        let key = (record.area.clone(), record.name.clone());
+        if !measured.insert(key) {
+            return Err(format!("duplicate census measurement: {}/{}", record.area, record.name));
+        }
+        let accepted = match record.observed.as_str() {
+            "pass" | "refused" | "check-only" => true,
+            "wrong" => record.pending_reason.is_some(),
+            _ => false,
+        };
+        if !accepted {
+            failures.push(format!("{}/{} ({})", record.area, record.name, record.observed));
+        }
+    }
+    if measured != *expected {
+        return Err(format!(
+            "census measurement coverage differs: missing {:?}, unexpected {:?}",
+            expected.difference(&measured).collect::<Vec<_>>(),
+            measured.difference(expected).collect::<Vec<_>>(),
+        ));
+    }
+    if !failures.is_empty() {
+        return Err(format!("census acceptance failed: {}", failures.join(", ")));
+    }
+    Ok(())
+}
+
 /// Render counts, ranked refusals, and every unexpected outcome as reviewable Markdown.
 fn markdown(records: &[Record]) -> String {
     let mut classes = BTreeMap::new();
@@ -198,7 +299,7 @@ fn markdown(records: &[Record]) -> String {
         }
     }
     let mut text = format!(
-        "# Direct-route fixture census\n\n{} fixtures. Pending fixtures retain their observed result in JSON; refusal ranks include pending observations. Check-only details report verification failures without attributing them to the direct route.\n\n| Class | Count |\n| --- | ---: |\n",
+        "# Direct-route fixture census\n\n{} fixtures. Pending fixtures retain their observed result in JSON; refusal ranks include pending observations. Diagnostic mismatches and timeouts fail acceptance. Named construction refusals remain unresolved route support.\n\n| Class | Count |\n| --- | ---: |\n",
         records.len()
     );
     for class in [
@@ -206,13 +307,14 @@ fn markdown(records: &[Record]) -> String {
         "refused",
         "wrong",
         "driver-error",
+        "diagnostic-mismatch",
         "check-only",
         "multi-module",
         "pending",
     ] {
         text.push_str(&format!("| {class} | {} |\n", classes.get(class).copied().unwrap_or(0)));
     }
-    text.push_str("\n## Areas\n\n| Area | pass | refused | wrong | driver-error | check-only | multi-module | pending |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+    text.push_str("\n## Areas\n\n| Area | pass | refused | wrong | driver-error | diagnostic-mismatch | check-only | multi-module | pending |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
     for (area, counts) in areas {
         text.push_str(&format!("| {area} |"));
         for class in [
@@ -220,6 +322,7 @@ fn markdown(records: &[Record]) -> String {
             "refused",
             "wrong",
             "driver-error",
+            "diagnostic-mismatch",
             "check-only",
             "multi-module",
             "pending",
@@ -244,11 +347,13 @@ fn markdown(records: &[Record]) -> String {
             record.detail.replace('|', "\\|")
         ));
     }
-    text.push_str("\n## Wrong and driver errors\n");
-    for record in records
-        .iter()
-        .filter(|record| matches!(record.observed.as_str(), "wrong" | "driver-error"))
-    {
+    text.push_str("\n## Wrong results, driver errors and diagnostic mismatches\n");
+    for record in records.iter().filter(|record| {
+        matches!(
+            record.observed.as_str(),
+            "wrong" | "driver-error" | "diagnostic-mismatch"
+        )
+    }) {
         text.push_str(&format!(
             "\n### {}/{} ({}, observed {})\n\n```text\n{}\n```\n",
             record.area, record.name, record.class, record.observed, record.detail
@@ -259,17 +364,26 @@ fn markdown(records: &[Record]) -> String {
 
 /// Use the shared baked graph, then distribute independent fixture measurements over at most the host core count.
 pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
+    let all = selected_fixtures()?;
     let graph = driver_fixture()?;
     let root = graph.scratch("census")?;
     let output = std::env::var_os("INCAN_CENSUS_OUT")
         .map(PathBuf::from)
         .unwrap_or_else(|| root.join("report"));
     fs::create_dir_all(&output)?;
-    let closure = corpus::runtime_closure(&graph.formatting, "release")?;
-    let driver = graph.driver_binary("release");
+    let closure = corpus::runtime_closure(&graph.formatting)?;
+    let driver = graph.driver_binary("debug");
     let sysroot = &graph.sysroot;
-    let all = all_fixtures()?;
-    let workers = std::thread::available_parallelism()?.get();
+    let available_workers = std::thread::available_parallelism()?.get();
+    let workers = std::env::var("INCAN_CENSUS_WORKERS")
+        .ok()
+        .map(|value| value.parse::<usize>())
+        .transpose()?
+        .unwrap_or(available_workers)
+        .min(available_workers);
+    if workers == 0 {
+        return Err("INCAN_CENSUS_WORKERS must be positive".into());
+    }
     let timeout = Duration::from_secs(
         std::env::var("INCAN_CENSUS_TIMEOUT_SECONDS")
             .ok()
@@ -297,12 +411,18 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
                     } else {
                         observed.clone()
                     };
+                    let refusals = if observed == "refused" {
+                        reported_refusals(scratch.path())
+                    } else {
+                        Vec::new()
+                    };
                     records.push(Record {
                         area: area.clone(),
                         name: fixture.name.clone(),
                         class,
                         observed,
                         detail,
+                        refusals,
                         pending_reason: fixture.header.pending.clone(),
                         formerly_multi_module: fixture.layout != FixtureLayout::SingleFile
                             && fixture.header.pending.is_none()
@@ -323,7 +443,26 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
     records.sort_by(|a, b| (&a.area, &a.name).cmp(&(&b.area, &b.name)));
     fs::write(output.join("census.json"), serde_json::to_vec_pretty(&records)?)?;
     fs::write(output.join("census.md"), markdown(&records))?;
+    let expected = all
+        .iter()
+        .map(|(area, fixture)| (area.clone(), fixture.name.clone()))
+        .collect();
+    let acceptance = census_acceptance(&records, &expected);
+    fs::write(
+        output.join("acceptance.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema": "incan.direct-route.census-acceptance/1",
+            "requested_fixtures": all.len(),
+            "measured_fixtures": records.len(),
+            "success": acceptance.is_ok(),
+            "error": acceptance.as_ref().err(),
+            "route_support_complete": records.iter().all(|record| {
+                record.pending_reason.is_none() && matches!(record.observed.as_str(), "pass" | "check-only")
+            }),
+        }))?,
+    )?;
     println!("measured {} fixtures: {}", records.len(), output.display());
+    acceptance?;
     Ok(())
 }
 
@@ -368,5 +507,83 @@ fn bounded_capture_enforces_deadline() -> Result<(), Box<dyn std::error::Error>>
         )?
         .is_none()
     );
+    Ok(())
+}
+
+/// Build one observed result for safety-gate controls without launching a compiler or altering global state.
+fn acceptance_record(name: &str, observed: &str, pending: bool) -> Record {
+    Record {
+        area: "area".into(),
+        name: name.into(),
+        class: if pending { "pending".into() } else { observed.into() },
+        observed: observed.into(),
+        detail: "retained diagnostic".into(),
+        refusals: Vec::new(),
+        pending_reason: pending.then(|| "tracked semantic limitation".into()),
+        formerly_multi_module: false,
+        elapsed_ms: 1,
+    }
+}
+
+/// Displaying an outcome as pending cannot hide driver, timeout, diagnostic or unknown-result failures.
+#[test]
+fn census_acceptance_rejects_suppressed_execution_failures() -> Result<(), Box<dyn std::error::Error>> {
+    let expected = BTreeSet::from([("area".into(), "one".into())]);
+    for observed in ["driver-error", "diagnostic-mismatch", "unrecognized"] {
+        for pending in [false, true] {
+            assert!(census_acceptance(&[acceptance_record("one", observed, pending)], &expected).is_err());
+        }
+    }
+    assert!(census_acceptance(&[acceptance_record("one", "wrong", false)], &expected).is_err());
+    census_acceptance(&[acceptance_record("one", "wrong", true)], &expected)?;
+    for observed in ["pass", "refused", "check-only"] {
+        census_acceptance(&[acceptance_record("one", observed, false)], &expected)?;
+    }
+    Ok(())
+}
+
+/// Measurements must contain each requested fixture exactly once, including restricted census selections.
+#[test]
+fn census_acceptance_requires_exact_requested_coverage() -> Result<(), Box<dyn std::error::Error>> {
+    let expected = BTreeSet::from([("area".into(), "one".into()), ("area".into(), "two".into())]);
+    census_acceptance(
+        &[
+            acceptance_record("one", "pass", false),
+            acceptance_record("two", "refused", false),
+        ],
+        &expected,
+    )?;
+    assert!(census_acceptance(&[acceptance_record("one", "pass", false)], &expected).is_err());
+    assert!(
+        census_acceptance(
+            &[
+                acceptance_record("one", "pass", false),
+                acceptance_record("one", "pass", false)
+            ],
+            &expected,
+        )
+        .is_err()
+    );
+    assert!(
+        census_acceptance(
+            &[
+                acceptance_record("one", "pass", false),
+                acceptance_record("unexpected", "pass", false)
+            ],
+            &expected,
+        )
+        .is_err()
+    );
+    assert!(census_acceptance(&[], &BTreeSet::new()).is_err());
+    Ok(())
+}
+
+/// A misspelled or empty selector must refuse rather than report success after silently dropping its requests.
+#[test]
+fn census_selection_rejects_empty_or_unknown_fixture_names() -> Result<(), Box<dyn std::error::Error>> {
+    let known = BTreeSet::from(["area/one".into(), "area/two".into()]);
+    validate_requested_fixture_names(&known, &BTreeSet::from(["area/one".into()]))?;
+    assert!(validate_requested_fixture_names(&known, &BTreeSet::new()).is_err());
+    assert!(validate_requested_fixture_names(&known, &BTreeSet::from(["area/misspelled".into()])).is_err());
     Ok(())
 }

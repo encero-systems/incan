@@ -14,7 +14,6 @@ use incan_lang::lang::stdlib;
 
 use crate::error::{ProviderError, ProviderResult};
 use crate::requirements::{ProjectRequirements, merge_requirement_dependency, merge_sdk_path_dependency};
-use crate::sdk_build::prepare_sdk_provider_inventory;
 use crate::{
     BackendImplementationRequirement, ProviderPlan, ResolvedSdkComponents, SDK_INVENTORY_FILE, SDK_PROVIDER_BUILD_ENV,
     SDK_SOURCE_CATALOG_FILE, SdkArtifactProjection, SdkComponentSelection, SdkDependencyRebinding, SdkInventory,
@@ -77,32 +76,15 @@ pub fn discover_active_sdk_inventory() -> ProviderResult<Option<Arc<SdkInventory
 /// Discover an installed SDK inventory, or reuse the one a source checkout already published, without ever building.
 ///
 /// This is the resolution every command that must not launch the provider builder uses (the Oven `run`, `build`,
-/// `oven bake`, test collection and formatting). It finds what [`prepare_or_discover_sdk_inventory`] would return
+/// `oven bake`, test collection and formatting). It finds what the driver-owned native publisher would return
 /// whenever that needs no build: an installed or explicitly named inventory first, then the source checkout's
-/// published one. Only an unpublished checkout still yields `None`, so a program `incan check` accepted parses the
-/// same way here, with the standard library's vocabulary (#1774).
+/// receipt-sealed source publication. A checkout with only a compatibility publication still yields `None`;
+/// consumers cannot replace sealed native authority with that publisher's Cargo-based identity.
 pub fn discover_or_reuse_published_sdk_inventory() -> ProviderResult<Option<Arc<SdkInventory>>> {
     if let Some(inventory) = discover_active_sdk_inventory()? {
         return Ok(Some(inventory));
     }
     crate::sdk_build::find_published_sdk_provider_inventory()
-}
-
-/// Discover an installed SDK inventory or publish the source checkout's component providers on demand.
-pub fn prepare_or_discover_sdk_inventory() -> ProviderResult<Option<Arc<SdkInventory>>> {
-    if let Some(inventory) = discover_active_sdk_inventory()? {
-        return Ok(Some(inventory));
-    }
-    if env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() {
-        return Ok(None);
-    }
-    let has_source_catalog = oven_model::toolchain_layout::find_stdlib_root()
-        .is_some_and(|root| root.join(SDK_SOURCE_CATALOG_FILE).is_file());
-    if has_source_catalog {
-        prepare_sdk_provider_inventory().map(Some)
-    } else {
-        Ok(None)
-    }
 }
 
 /// Reject explicit component-aware selection when the active toolchain exposes only the legacy monolithic SDK.
@@ -350,7 +332,7 @@ fn extend_requirements_with_source_stdlib_namespaces(
         let Some(namespace) = stdlib::find_namespace(&root) else {
             continue;
         };
-        for dependency in stdlib_namespace_cargo_dependencies(namespace) {
+        for dependency in stdlib_namespace_cargo_dependencies(namespace)? {
             link_backend_cargo_dependency(
                 requirements,
                 &dependency,
@@ -417,34 +399,31 @@ fn link_backend_cargo_dependency(
 /// crates from the registry. An SDK component records it as the implementation facet of each namespace root it
 /// claims, and a consumer that compiles the namespace from source links the same list, so both routes name the same
 /// crates with the same coordinates.
-pub fn stdlib_namespace_cargo_dependencies(namespace: &stdlib::StdlibNamespace) -> Vec<ProviderCargoDependency> {
-    namespace
+pub fn stdlib_namespace_cargo_dependencies(
+    namespace: &stdlib::StdlibNamespace,
+) -> ProviderResult<Vec<ProviderCargoDependency>> {
+    let mut dependencies = namespace
         .facet
         .map(stdlib_facet_cargo_dependency)
         .into_iter()
-        .chain(namespace.extra_crate_deps.iter().map(|dependency| {
-            ProviderCargoDependency {
-                crate_name: dependency.crate_name.to_string(),
-                package: stdlib::extra_crate_package_alias(dependency.crate_name).map(str::to_string),
-                version: match dependency.source {
-                    stdlib::StdlibExtraCrateSource::Version(version) => Some(version.to_string()),
-                    stdlib::StdlibExtraCrateSource::Path(_) => None,
+        .collect::<Vec<_>>();
+    for dependency in namespace.extra_crate_deps {
+        let spec = crate::requirements::dependency_spec_from_stdlib_dep(dependency)?;
+        dependencies.push(ProviderCargoDependency {
+            crate_name: spec.crate_name,
+            package: spec.package,
+            version: spec.version,
+            features: spec.features.into_iter().collect(),
+            default_features: spec.default_features,
+            source: match dependency.source {
+                stdlib::StdlibExtraCrateSource::Declared => ProviderCargoDependencySource::Registry,
+                stdlib::StdlibExtraCrateSource::Path(relative_path) => ProviderCargoDependencySource::Toolchain {
+                    relative_path: relative_path.to_string(),
                 },
-                features: dependency
-                    .features
-                    .iter()
-                    .map(|feature| (*feature).to_string())
-                    .collect(),
-                default_features: true,
-                source: match dependency.source {
-                    stdlib::StdlibExtraCrateSource::Version(_) => ProviderCargoDependencySource::Registry,
-                    stdlib::StdlibExtraCrateSource::Path(relative_path) => ProviderCargoDependencySource::Toolchain {
-                        relative_path: relative_path.to_string(),
-                    },
-                },
-            }
-        }))
-        .collect()
+            },
+        });
+    }
+    Ok(dependencies)
 }
 
 /// The Cargo dependency on one standard-library runtime facet.
@@ -511,15 +490,25 @@ fn provider_cargo_dependency_spec(dependency: &ProviderCargoDependency) -> Depen
     .normalized()
 }
 
-/// Collect canonical provider module use from resolved source modules and authored import edges.
+/// Preserve legacy generated-core linkage alongside actual source module use.
+///
+/// The synthetic root prelude activates the existing SDK core provider; it is not an authored source import.
+/// Admitted ordinary sessions use [`provider_source_used_module_paths`] and select native runtime support separately.
 pub fn provider_used_module_paths(modules: &[ParsedModule]) -> BTreeSet<Vec<String>> {
-    let mut used = BTreeSet::new();
+    let mut used = provider_source_used_module_paths(modules);
     if !modules.is_empty() && env::var_os(SDK_PROVIDER_BUILD_ENV).is_none() {
-        // Every ordinary compilation consumes the implicit language prelude. Recording that compiler requirement
-        // keeps the mandatory core provider linked even when generated support such as iterator adapters is the only
-        // emitted path into `std.derives.*`.
+        // Keep the existing mandatory core provider linked for legacy generated support such as iterator adapters.
         used.insert(vec![stdlib::STDLIB_ROOT.to_string(), "prelude".to_string()]);
     }
+    used
+}
+
+/// Collect canonical module coordinates and authored import edges without synthetic native link requirements.
+///
+/// Explicit root prelude imports remain source usage. Collected standard-library source modules also retain their
+/// canonical coordinates, including modules materialized for an actual compiler-generated support requirement.
+pub fn provider_source_used_module_paths(modules: &[ParsedModule]) -> BTreeSet<Vec<String>> {
+    let mut used = BTreeSet::new();
     for module in modules {
         if module.path_segments.first().map(String::as_str) == Some(stdlib::INCAN_STD_NAMESPACE) {
             let mut canonical = vec![stdlib::STDLIB_ROOT.to_string()];
@@ -649,6 +638,50 @@ mod tests {
         assert!(
             rendered.contains("current command's `--sdk-profile` override"),
             "expected transient profile provenance, got: {rendered}"
+        );
+        Ok(())
+    }
+
+    /// Native core linkage cannot make an import-free scalar program claim the root prelude's checked module.
+    #[test]
+    fn source_module_usage_separates_actual_imports_from_legacy_core_linkage() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let module = parsed_module_for_test("pub def answer() -> int:\n    return 42\n")?;
+        assert!(provider_source_used_module_paths(std::slice::from_ref(&module)).is_empty());
+        let legacy = provider_used_module_paths(&[module]);
+        let prelude = vec!["std".to_string(), "prelude".to_string()];
+        assert_eq!(legacy.contains(&prelude), env::var_os(SDK_PROVIDER_BUILD_ENV).is_none());
+        Ok(())
+    }
+
+    /// Accurate ordinary usage preserves explicit prelude spellings and actual collected standard-source ownership.
+    #[test]
+    fn source_module_usage_keeps_explicit_and_collected_root_prelude() -> Result<(), Box<dyn std::error::Error>> {
+        let prelude = vec!["std".to_string(), "prelude".to_string()];
+        for source in [
+            "import std.prelude\n",
+            "from std.prelude import Clone\n",
+            "from std import prelude\n",
+        ] {
+            let module = parsed_module_for_test(source)?;
+            assert_eq!(
+                provider_source_used_module_paths(&[module]),
+                BTreeSet::from([prelude.clone()])
+            );
+        }
+        let mut collected = parsed_module_for_test("pub def answer() -> int:\n    return 42\n")?;
+        collected.path_segments = vec![stdlib::INCAN_STD_NAMESPACE.to_string(), "prelude".to_string()];
+        assert_eq!(
+            provider_source_used_module_paths(&[collected]),
+            BTreeSet::from([prelude])
+        );
+        let namespace = parsed_module_for_test("import std.async.prelude\nfrom std.traits.prelude import Error\n")?;
+        assert_eq!(
+            provider_source_used_module_paths(&[namespace]),
+            BTreeSet::from([
+                vec!["std".to_string(), "async".to_string()],
+                vec!["std".to_string(), "traits".to_string()],
+            ])
         );
         Ok(())
     }
@@ -1173,7 +1206,7 @@ import std.traits
                 id: format!("rust_{root}"),
                 required_modules: BTreeSet::from([vec![root.to_string()]]),
                 required_features: BTreeSet::new(),
-                backend_requirements: stdlib_namespace_cargo_dependencies(namespace)
+                backend_requirements: stdlib_namespace_cargo_dependencies(namespace)?
                     .into_iter()
                     .map(|dependency| BackendImplementationRequirement::CargoDependency { dependency })
                     .collect(),

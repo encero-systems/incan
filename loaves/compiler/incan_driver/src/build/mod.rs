@@ -9,13 +9,28 @@ pub mod backend_selection;
 pub mod bake;
 pub mod caller_facet;
 pub mod caller_owned;
+mod file_freshness;
 pub mod inline_command;
+mod inspection_snapshot;
+pub mod library_dependencies;
 pub mod library_exports;
+pub mod library_generation;
+pub mod library_metadata;
 pub mod library_outputs;
 pub mod library_project;
 pub mod library_publication;
+mod lock_reuse;
+pub mod native_loaf_plan;
+pub mod native_runtime_inputs;
+pub mod native_sdk;
+pub(crate) mod native_sdk_plan;
+pub mod native_source_output;
+pub use native_sdk_plan::NativeSdkCommandContext;
+pub(crate) mod ordinary_library_native;
+pub(crate) mod ordinary_support;
 pub mod output_materialization;
 pub mod output_paths;
+mod output_publication;
 pub mod output_selection;
 pub mod oven_project;
 pub mod package_loafs;
@@ -27,7 +42,9 @@ pub mod provider_compilation;
 pub mod provider_metadata;
 pub mod publication;
 pub mod reuse;
+mod rust_bake_reuse;
 pub mod rust_extern;
+mod rust_source_freshness;
 pub mod source_authority;
 #[cfg(any(test, feature = "test_support"))]
 pub mod test_support;
@@ -68,16 +85,16 @@ pub const OVEN_PACKAGED_LIBRARY_LOAF_STORE_RELATIVE_PATH: &str = "oven/loafs";
 
 /// Current wire schema for package-owned Oven Loaf handoff metadata.
 ///
-/// Version 6 seals the checked `.incnlib` manifest and every manifest-declared provider sidecar by relative path and
-/// digest, in addition to requiring release-cohort project-extension entries.
-pub const OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION: u32 = 6;
+/// Version 7 adds an immutable ordinary checked-metadata owner and its validated planning replay contract.
+/// Version 6 remains readable for native handoff, but has no checked metadata replay authority.
+pub const OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION: u32 = 7;
 
 /// Current wire schema for completed receipt-bound project-output Loafs.
 ///
-/// Version 13 carries the verified default backend execution receipt alongside every completed output. This lets a
-/// source-current cache hit retain the same compiler-backend provenance as the explicit bake without trusting a stale
-/// report snapshot.
-pub const OVEN_PROJECT_OUTPUT_PAYLOAD_SCHEMA_VERSION: u32 = 13;
+/// Version 14 also admits successful ordinary executable builds with exact preparation identity, without requiring
+/// the whole-project inspection authority owned by an explicit multi-target bake. Version 13 introduced the verified
+/// backend receipt retained by both publication forms.
+pub const OVEN_PROJECT_OUTPUT_PAYLOAD_SCHEMA_VERSION: u32 = 14;
 
 pub const OVEN_PROJECT_OUTPUT_PROJECTION_SCHEMA_VERSION: u32 = 3;
 
@@ -101,6 +118,8 @@ pub const OVEN_PROJECT_OUTPUT_ARTIFACT_PATH: &str = "output/native";
 /// This deliberately contains no Cargo target path or command. Generated Rust and the final binary are caller-owned;
 /// the selected native closure retains its store lease until the direct-Rustc bake and any child execution complete.
 pub struct OvenPreparedProject {
+    /// Command-owned native admission retained through compilation and child execution.
+    pub native_sdk_context: Option<Arc<NativeSdkCommandContext>>,
     pub generator: ProjectGenerator,
     pub project_root: PathBuf,
     pub entrypoint: PathBuf,
@@ -174,6 +193,10 @@ pub struct PreparedLibraryProject {
     pub timings_ms: BTreeMap<String, u64>,
     pub report: BuildReportDraft,
     pub oven: Option<OvenPreparedLibrary>,
+    /// Original immutable checked metadata lease retained through publication and consumer use.
+    pub metadata_owner: Option<Arc<library_metadata::SelectedLibraryMetadata>>,
+    /// Source-current publication authority, consumed only after every checked sidecar is finalized.
+    pub(crate) pending_metadata: Option<library_project::metadata_replay::PendingMetadataPublication>,
     #[cfg(feature = "rust_inspect")]
     pub rust_inspect_manifest_dir: Option<PathBuf>,
 }
@@ -192,6 +215,10 @@ pub struct OvenPreparedLibrary {
 /// `incan build --lib` has historically produced a release artifact; retaining both avoids linking a library against
 /// a different profile's hashed Rust dependencies and never delegates that mismatch to Cargo.
 pub struct OvenPreparedLibraryProfile {
+    /// Shared admission used by all profiles of this library command.
+    pub native_sdk_context: Option<Arc<NativeSdkCommandContext>>,
+    /// Original complete ordinary requests retained through native compilation and output publication.
+    pub(crate) ordinary_native: Option<Arc<ordinary_library_native::OrdinaryLibraryNativeProfiles>>,
     pub receipt: oven_store::OvenReceipt,
     pub plan_selection: OvenDirectRustcPlanSelection,
     pub materialization: OvenToolchainMaterialization,
@@ -337,6 +364,12 @@ pub struct OvenPackagedLibraryLoafManifest {
     /// metadata to describe a different API, vocabulary surface, or desugarer than the explicit provider bake
     /// produced. These records bind that complete public handoff without copying it into each profile.
     pub metadata_files: Vec<OvenPackagedLibraryMetadataFile>,
+    /// Original immutable checked-metadata owner; absent legacy authority is a metadata preparation miss.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_metadata: Option<library_metadata::LibraryMetadataReference>,
+    /// Original immutable association of final package source authority and the exact checked generation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_generation: Option<library_generation::LibraryGenerationReference>,
     pub profiles: BTreeMap<String, OvenPackagedLibraryLoafProfile>,
 }
 
@@ -413,11 +446,25 @@ pub struct MemoizedPackagedProviderAuthority {
 /// invalidation, or representation outside this command invocation.
 #[derive(Default)]
 pub struct OvenProjectBakeAuthorityContext {
+    /// Native owners shared by all targets/profiles in this explicit bake invocation.
+    pub native_sdk_context: Option<Arc<NativeSdkCommandContext>>,
     pub source_digester: ProjectSourceAuthorityDigester,
     pub providers: HashMap<PathBuf, MemoizedPackagedProviderAuthority>,
     pub initial_project_source_authority: Option<String>,
     /// Caller-owned target override accepted only by explicit project bake.
     pub requested_target: Option<String>,
+}
+
+impl OvenProjectBakeAuthorityContext {
+    /// Admit the native SDK once for this bake and revalidate retained authority before another target borrows it.
+    pub fn native_sdk_context(&mut self) -> CliResult<Option<Arc<NativeSdkCommandContext>>> {
+        if let Some(context) = &self.native_sdk_context {
+            context.verify()?;
+        } else {
+            self.native_sdk_context = NativeSdkCommandContext::discover()?;
+        }
+        Ok(self.native_sdk_context.clone())
+    }
 }
 
 /// One manifest-backed Incan entrypoint admitted by `incan oven bake`.
@@ -520,6 +567,10 @@ pub struct OvenProjectOutputPayload {
     /// without putting an absolute worktree path into a portable Loaf.
     pub project_identity: String,
     pub source_authority_digest: String,
+    /// Authority of dependencies and non-Incan inputs, allowing development source edits without replaying stale
+    /// outputs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dependency_authority_digest: Option<String>,
     /// Derived semantic dependency fingerprint recorded by the canonical lock at bake time.
     ///
     /// The canonical lock projection remains part of `source_authority_digest`, but excludes this one derived field.
@@ -527,6 +578,14 @@ pub struct OvenProjectOutputPayload {
     /// strict commands still recompute and reject it before completed-output selection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lock_dependencies_fingerprint: Option<String>,
+    /// Exact compiler executable that produced this output; absent legacy records cannot authorize an upfront bake
+    /// hit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compiler_identity_digest: Option<String>,
+    /// Ordinary-command preparation inputs, including exact compiler bytes and explicit SDK/environment selections.
+    /// Explicit project bakes retain their independently sealed inspection authority instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preparation_identity_digest: Option<String>,
     pub compiler_version: String,
     pub entrypoint_relative_path: String,
     pub build_unit_identity: String,
@@ -537,6 +596,10 @@ pub struct OvenProjectOutputPayload {
     /// Singular project-level Rust inspection authority selected through this source-current output.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inspection_authority: Option<OvenProjectInspectionAuthorityRef>,
+    /// Exact inspection metadata and its receipt retained by this completed loaf. Its files live under the internal
+    /// inspection-authority prefix, allowing ordinary bounded Store eviction to reclaim the standalone metadata owner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inspection_authority_snapshot: Option<OvenProjectInspectionSnapshot>,
     /// Every generated source, package handoff record, and final native artifact retained by this completed project
     /// result. The Loaf is therefore a complete project result, not a binary-only cache entry.
     pub files: Vec<OvenProjectOutputFile>,
@@ -613,7 +676,8 @@ pub struct OvenProjectOutputBakeRequest<'a> {
     pub source_authority_digest: &'a str,
     pub lock_dependencies_fingerprint: Option<String>,
     pub files: Vec<OvenProjectOutputBakeFile>,
-    pub inspection_authority: OvenProjectInspectionAuthorityRef,
+    /// Explicit bakes retain inspection authority; ordinary completed outputs need only their executable authority.
+    pub inspection_authority: Option<OvenProjectInspectionAuthorityRef>,
     pub required_project_loafs: Vec<OvenPackagedLibraryLoafEntry>,
     pub package_loaf_store_relative_path: Option<String>,
     pub backend_receipt: BackendExecutionReceipt,
@@ -634,7 +698,17 @@ pub struct OvenStoredProjectOutput {
 /// Newly published project inspection authority retained until every completed output names it.
 pub struct PublishedProjectInspectionAuthority {
     pub reference: OvenProjectInspectionAuthorityRef,
+    pub snapshot: OvenProjectInspectionSnapshot,
     pub _lease: OvenStoreLease,
+}
+
+/// Original metadata publication retained by a completed output, excluding its independently selected constituents.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OvenProjectInspectionSnapshot {
+    pub manifest: oven_store::store::OvenArtifactManifest,
+    pub receipt: oven_store::OvenReceipt,
+    /// Original JSON bytes preserved as UTF-8 rather than reserialized into a different authority identity.
+    pub payload: String,
 }
 
 /// Completed target data retained until one whole-project inspection authority is finalized.
@@ -810,10 +884,12 @@ pub struct CompiledProviderMetadataInputs<'a> {
 /// Command-local memo for exact project source-authority nodes.
 ///
 /// One explicit project bake can prepare several targets and profiles that all reach the same provider roots. The
-/// memo avoids walking those authored trees again within that command; it is never stored globally or carried into a
-/// later command. Callers that need a final publication check deliberately create a fresh digester instead.
+/// memo avoids walking authored trees again within that command. Rust closure digests additionally have a persistent
+/// stat-guarded cache, checked against observed inputs on every command. Final publication uses a fresh digester.
 #[derive(Default)]
 pub struct ProjectSourceAuthorityDigester {
+    /// Only this root may omit its own Incan sources when hashing development dependency authority.
+    pub development_root: Option<PathBuf>,
     pub project_digests: HashMap<PathBuf, String>,
     pub rust_crate_digests: HashMap<PathBuf, String>,
     pub rust_source_closure_digests: BTreeMap<PathBuf, String>,

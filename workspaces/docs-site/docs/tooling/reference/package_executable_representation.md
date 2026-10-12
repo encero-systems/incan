@@ -19,18 +19,20 @@ The optional `contract_metadata.executable_representation` object has these fiel
 
 | Field | Type | Contract |
 | --- | --- | --- |
-| `representation_version` | unsigned integer | Executable encoding version, independent of the package and manifest versions. The current compiler writes and reads version 8. |
+| `representation_version` | unsigned integer | Executable encoding version, independent of the package and manifest versions. The current compiler writes and reads version 9. |
 | `content_digest` | string | Exactly 64 lowercase hexadecimal digits containing the binary file's SHA-256 digest. It selects `semantic/<content_digest>.incnsem` relative to the manifest directory. |
 
 An omitted object denotes a package with no published executable representation. The package remains valid for native linking. The reader checks the binary's leading version before decoding version-specific data, verifies package and coverage identity against the manifest, and checks the complete file against its selected digest. This content check is not a package signature.
 
 ## Coverage and identity
 
-Coverage is declared for the manifest's public canonical identities. A callable fragment carries its required public declarations and type context. Public fields and enum variants can refer to their declaring type's context. Aliases and facades resolve to the original declaration; they do not create another executable body.
+Coverage is declared for the manifest's public canonical identities. A callable fragment carries its required public declarations and type context. Public fields, enum variants, and abstract trait methods can refer to their declaring type's context. Aliases and facades resolve to the original declaration; they do not create another executable body.
+
+A checked package module binding selects a namespace in the admitted dependency graph and requires no executable fragment. Calls and type references through that binding retain their own canonical executable requirements.
 
 Coverage can be partial. The published content excludes private declarations and private type layouts. A public body that needs either remains uncovered, as does a body containing an unsupported operation or an unresolved reference. An uncovered required public declaration also leaves its callers uncovered. An empty supported function is covered; it is distinct from an absent executable declaration.
 
-Published fragments represent functions and methods, plain-model layout, fieldless enums and scalar value enums. A body is covered exactly when Body IR represents all of it.
+Published fragments represent functions and methods, checker-evaluated scalar and text constants, nongeneric erased type aliases including unions, admitted model and class layouts, concrete trait implementation records, trait identities, normal enum payload layouts, fieldless enums, and scalar value enums. A body is covered when Body IR represents all of it and its types and references satisfy the public executable closure checks. A trait default retains its abstract receiver until concrete implementation specialization. Published function bodies have no original source text; native execution uses source-less diagnostic spans for their package identities.
 
 ## Resolution refusals
 

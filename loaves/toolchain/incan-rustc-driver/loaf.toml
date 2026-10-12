@@ -4,15 +4,16 @@ version = "0.6.0-dev.7"
 private = true
 
 [dependencies]
+oven_rustc = { loaf = "oven_rustc", path = "../../oven/oven_rustc" }
+oven-cli = { loaf = "oven_cli", path = "../oven-cli", default-features = false, features = ["rust_inspect", "std_async", "std_decorators", "std_testing"] }
+tracing = { loaf = "crates-io/tracing", version = "0.1" }
 incan_mir_plan = { loaf = "incan_mir_plan", path = "../../compiler/incan_mir_plan" }
 incan_mir_lowering = { loaf = "incan_mir_lowering", path = "../../compiler/incan_mir_lowering" }
 
-[rust-dependencies]
-incan_driver = { path = "../../compiler/incan_driver", default-features = false, features = ["cli", "rust_inspect", "std_async", "std_testing", "std_decorators"] }
-thiserror = "2"
-sha2 = "0.10.9"
-incan_semantics_core = { path = "../../kernel/incan_semantics_core" }
-incan_frontend = { path = "../../compiler/incan_frontend", default-features = false }
+incan_driver = { loaf = "incan_driver", path = "../../compiler/incan_driver", default-features = false, features = ["cli", "rust_inspect", "std_async", "std_testing", "std_decorators"] }
+thiserror = { loaf = "crates-io/thiserror", version = "2" }
+incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
+incan_frontend = { loaf = "incan_frontend", path = "../../compiler/incan_frontend", default-features = false }
 
 [[rust.bin]]
 name = "incan-rustc-driver"

@@ -1,0 +1,20 @@
+[dependencies]
+incan_frontend = { default-features = false, loaf = "incan_frontend", path = "../incan_frontend" }
+incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
+incan_provider = { default-features = false, loaf = "incan_provider", path = "../incan_provider" }
+oven_cargo_compat = { loaf = "oven_cargo_compat", path = "../../oven/oven_cargo_compat", version = "0.6.0-dev.5" }
+oven_model = { loaf = "oven_model", path = "../../oven/oven_model", version = "0.6.0-dev.5" }
+oven_rustc = { loaf = "oven_rustc", path = "../../oven/oven_rustc", version = "0.6.0-dev.5" }
+oven_store = { loaf = "oven_store", path = "../../oven/oven_store", version = "0.6.0-dev.5" }
+
+[project]
+description = "What Oven learns about Incan: the compiler's identity and its provider facts, as Oven's hooks"
+license = "Apache-2.0"
+name = "incan_oven_facet"
+private = true
+version = "0.6.0-dev.6"
+
+[rust]
+edition = "2024"
+name = "incan_oven_facet"
+type = "lib"

@@ -50,6 +50,10 @@ use incan_lang::lang::types::stringlike::{self as string_types, StringLikeId};
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind};
 
 mod default_const_paths;
+mod source_context;
+#[cfg(test)]
+mod source_context_tests;
+use source_context::StdlibSourceInputs;
 mod type_param_bounds;
 use type_param_bounds::extract_type_param_bounds;
 
@@ -141,12 +145,14 @@ pub struct StdlibFunctionLspMetadata {
 pub struct StdlibAstCache {
     /// Map from module path (dot-joined) to extracted stdlib module data.
     cache: HashMap<String, StdlibModuleData>,
+    /// Original command-owned source selection and retained member owners; legacy caches retain existing discovery.
+    source_inputs: StdlibSourceInputs,
 }
 
 impl StdlibAstCache {
-    /// Recover the source identity only when the full canonical declaration matches the catalog-owned SDK package.
-    /// Package paths are relative to their catalog-granted namespace; names, kinds, scopes and provenance spans must
-    /// still match after rebasing the source's `std` root.
+    /// Recover source identity only when the full canonical declaration matches the selected package ownership.
+    /// Pinned publication uses its retained source policy; legacy sessions retain their existing catalog check.
+    /// Names, kinds, scopes and provenance spans must still match after rebasing the source's `std` root.
     pub(crate) fn callable_source_identity(&mut self, identity: &CanonicalSymbolId) -> Option<CanonicalSymbolId> {
         use incan_semantics_core::SymbolOrigin;
         let path = match &identity.origin {
@@ -162,13 +168,19 @@ impl StdlibAstCache {
         let source = self.lookup_identity(&path, &identity.declaration_name)?;
         let mut published = source.clone();
         if let SymbolOrigin::Package { library, module_path } = &identity.origin {
-            let sources = crate::provider::stdlib_sources::StdlibSources::discover()?;
-            let owner = sources.owner_of(path.get(1)?)?;
-            let manifest: toml::Value =
-                toml::from_str(&std::fs::read_to_string(owner.project_root.join("loaf.toml")).ok()?).ok()?;
-            let name = manifest.get("project")?.get("name")?.as_str()?;
-            if name != library {
-                return None;
+            match self.source_inputs.owns_package_identity(&path, library) {
+                Some(false) => return None,
+                Some(true) => {}
+                None => {
+                    let sources = crate::provider::stdlib_sources::StdlibSources::discover()?;
+                    let owner = sources.owner_of(path.get(1)?)?;
+                    let manifest: toml::Value =
+                        toml::from_str(&std::fs::read_to_string(owner.project_root.join("loaf.toml")).ok()?).ok()?;
+                    let name = manifest.get("project")?.get("name")?.as_str()?;
+                    if name != library {
+                        return None;
+                    }
+                }
             }
             published.origin = SymbolOrigin::Package {
                 library: library.clone(),
@@ -185,10 +197,9 @@ impl StdlibAstCache {
         let incan_semantics_core::SymbolOrigin::Module(path) = &source_identity.origin else {
             return None;
         };
-        let relative = stdlib::stdlib_stub_path(path)?;
-        let file = find_stdlib_file(&relative)?;
-        let source = std::fs::read_to_string(file).ok()?;
+        let source = self.source_inputs.read_module(path)?;
         let tokens = crate::lexer::lex(&source).ok()?;
+        self.source_inputs.record_parse();
         let mut program = crate::parser::parse(&tokens).ok()?;
         program.declarations.retain(|declaration| match &declaration.node {
             ast::Declaration::Import(_) => true,
@@ -202,8 +213,25 @@ impl StdlibAstCache {
         Some(program)
     }
 
+    /// Construct a legacy source cache; the checker binds genuine publication authority before using that context.
     pub fn new() -> Self {
-        Self { cache: HashMap::new() }
+        Self::default()
+    }
+
+    /// Bind the plan's original source capability and revalidate retained files before reusing cached metadata.
+    ///
+    /// Ordinary symbol lookups reuse this checked command snapshot; checker/handoff boundaries verify it again.
+    /// A refusal is retained in this cache and reported by `verify_retained_sources`; binding grants no new authority.
+    pub fn bind_provider_plan(&mut self, plan: &crate::provider::ProviderPlan) {
+        match self.source_inputs.bind(plan) {
+            Ok(false) => {}
+            Ok(true) | Err(_) => self.cache.clear(),
+        }
+    }
+
+    /// Verify original source/member bytes at a checker or later cache-consumer handoff, without reparsing metadata.
+    pub fn verify_retained_sources(&self) -> Result<(), String> {
+        self.source_inputs.verify()
     }
 
     /// Look up a function binding while preserving a same-name overload set.
@@ -511,7 +539,8 @@ impl StdlibAstCache {
             return;
         }
         let mut loading = HashSet::new();
-        if load_stdlib_module_data_inner(module_path, &mut loading, &mut self.cache).is_none() {
+        if load_stdlib_module_data_inner(module_path, &mut loading, &mut self.cache, &mut self.source_inputs).is_none()
+        {
             self.cache.entry(key).or_default();
         }
     }
@@ -527,7 +556,12 @@ impl StdlibAstCache {
 /// Returns `None` if the file cannot be found or parsed.
 #[cfg(test)]
 fn load_stdlib_module_data(module_path: &[String]) -> Option<StdlibModuleData> {
-    load_stdlib_module_data_inner(module_path, &mut HashSet::new(), &mut HashMap::new())
+    load_stdlib_module_data_inner(
+        module_path,
+        &mut HashSet::new(),
+        &mut HashMap::new(),
+        &mut StdlibSourceInputs::default(),
+    )
 }
 
 /// Load one stdlib module while tracking the current re-export chain.
@@ -537,6 +571,7 @@ fn load_stdlib_module_data_inner(
     module_path: &[String],
     loading: &mut HashSet<String>,
     loaded: &mut HashMap<String, StdlibModuleData>,
+    source_inputs: &mut StdlibSourceInputs,
 ) -> Option<StdlibModuleData> {
     let key = module_path.join(".");
     if let Some(data) = loaded.get(&key) {
@@ -546,7 +581,7 @@ fn load_stdlib_module_data_inner(
         return None;
     }
 
-    let data = load_stdlib_module_data_unguarded(module_path, loading, loaded);
+    let data = load_stdlib_module_data_unguarded(module_path, loading, loaded, source_inputs);
     loading.remove(&key);
     if let Some(data) = &data {
         loaded.insert(key, data.clone());
@@ -561,25 +596,20 @@ fn load_stdlib_module_data_unguarded(
     module_path: &[String],
     loading: &mut HashSet<String>,
     loaded: &mut HashMap<String, StdlibModuleData>,
+    source_inputs: &mut StdlibSourceInputs,
 ) -> Option<StdlibModuleData> {
-    let relative = stdlib::stdlib_stub_path(module_path)?;
-    let abs_path = find_stdlib_file(&relative)?;
-
-    let source = std::fs::read_to_string(&abs_path)
-        .map_err(|e| {
-            tracing::debug!(path = %abs_path.display(), error = %e, "failed to read stdlib file");
-        })
-        .ok()?;
+    let source = source_inputs.read_module(module_path)?;
 
     let tokens = crate::lexer::lex(&source)
         .map_err(|e| {
-            tracing::debug!(path = %abs_path.display(), error = ?e, "failed to lex stdlib file");
+            tracing::debug!(module_path = %module_path.join("."), error = ?e, "failed to lex stdlib file");
         })
         .ok()?;
 
+    source_inputs.record_parse();
     let program = crate::parser::parse(&tokens)
         .map_err(|e| {
-            tracing::debug!(path = %abs_path.display(), error = ?e, "failed to parse stdlib file");
+            tracing::debug!(module_path = %module_path.join("."), error = ?e, "failed to parse stdlib file");
         })
         .ok()?;
 
@@ -593,12 +623,13 @@ fn load_stdlib_module_data_unguarded(
                 &program,
                 loading,
                 loaded,
+                source_inputs,
             );
         }
     }
     let mut traits = extract_trait_signatures(&program, module_path);
     let mut trait_declarations = extract_trait_declarations(&program);
-    let imported_type_paths = extract_stdlib_imported_type_paths(&program, loading, loaded);
+    let imported_type_paths = extract_stdlib_imported_type_paths(&program, loading, loaded, source_inputs);
     let mut trait_type_import_paths = trait_declarations
         .iter()
         .map(|(name, _)| (name.clone(), imported_type_paths.clone()))
@@ -616,6 +647,7 @@ fn load_stdlib_module_data_unguarded(
                     &program,
                     loading,
                     loaded,
+                    source_inputs,
                 ),
             )
         })
@@ -649,7 +681,14 @@ fn load_stdlib_module_data_unguarded(
         function_meta: &mut function_meta,
         trait_meta: &mut trait_meta,
     };
-    merge_reexported_metadata(module_path, &program, &mut reexport_targets, loading, loaded);
+    merge_reexported_metadata(
+        module_path,
+        &program,
+        &mut reexport_targets,
+        loading,
+        loaded,
+        source_inputs,
+    );
 
     Some(StdlibModuleData {
         functions,
@@ -696,6 +735,7 @@ fn merge_reexported_metadata(
     targets: &mut ReexportMetadataTargets<'_>,
     loading: &mut HashSet<String>,
     loaded: &mut HashMap<String, StdlibModuleData>,
+    source_inputs: &mut StdlibSourceInputs,
 ) {
     for decl in &program.declarations {
         let ast::Declaration::Import(import) = &decl.node else {
@@ -722,7 +762,7 @@ fn merge_reexported_metadata(
             continue;
         }
 
-        let Some(sub_data) = load_stdlib_module_data_inner(&module.segments, loading, loaded) else {
+        let Some(sub_data) = load_stdlib_module_data_inner(&module.segments, loading, loaded, source_inputs) else {
             continue;
         };
 
@@ -2105,6 +2145,7 @@ fn extract_stdlib_imported_type_paths(
     program: &ast::Program,
     loading: &mut HashSet<String>,
     loaded: &mut HashMap<String, StdlibModuleData>,
+    source_inputs: &mut StdlibSourceInputs,
 ) -> HashMap<String, Vec<String>> {
     let mut paths = HashMap::new();
     for decl in &program.declarations {
@@ -2121,7 +2162,7 @@ fn extract_stdlib_imported_type_paths(
         {
             continue;
         }
-        let Some(imported) = load_stdlib_module_data_inner(&module.segments, loading, loaded) else {
+        let Some(imported) = load_stdlib_module_data_inner(&module.segments, loading, loaded, source_inputs) else {
             continue;
         };
         for item in items {

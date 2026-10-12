@@ -66,6 +66,21 @@ pub fn synchronize_projected_provider_dependencies(
 
 /// Build transport-stable provider facts from the checked physical artifact projection.
 pub fn compiled_provider_metadata(inputs: CompiledProviderMetadataInputs<'_>) -> CliResult<CompiledProviderMetadata> {
+    provider_metadata(inputs, true)
+}
+
+/// Retain the same checked declaration and feature facts without granting compiled dependency or facet authority.
+pub(crate) fn checked_source_provider_metadata(
+    inputs: CompiledProviderMetadataInputs<'_>,
+) -> CliResult<CompiledProviderMetadata> {
+    provider_metadata(inputs, false)
+}
+
+/// Project public semantic facts once, freezing physical implementation edges only for an artifact publisher.
+fn provider_metadata(
+    inputs: CompiledProviderMetadataInputs<'_>,
+    materialized: bool,
+) -> CliResult<CompiledProviderMetadata> {
     let graph =
         PackageFeatureGraph::from_manifest(inputs.manifest).map_err(|error| CliError::failure(error.to_string()))?;
     let root_features = inputs
@@ -141,13 +156,21 @@ pub fn compiled_provider_metadata(inputs: CompiledProviderMetadataInputs<'_>) ->
     fact_requirements.sort();
     fact_requirements.dedup();
 
-    let provider_dependencies = compiled_provider_dependencies(
-        inputs.feature_plan,
-        inputs.library_manifest_index,
-        inputs.provider_plan,
-        inputs.artifact_root,
-    )?;
-    let implementation_facets = provider_implementation_facets(&namespace_claims);
+    let provider_dependencies = if materialized {
+        compiled_provider_dependencies(
+            inputs.feature_plan,
+            inputs.library_manifest_index,
+            inputs.provider_plan,
+            inputs.artifact_root,
+        )?
+    } else {
+        Vec::new()
+    };
+    let implementation_facets = if materialized {
+        provider_implementation_facets(&namespace_claims)?
+    } else {
+        Vec::new()
+    };
     let operation_descriptors = provider_operation_metadata_from_checked_type_info(inputs.checked_type_info_by_path)?;
     let semantic_source_inputs = inputs
         .modules
@@ -299,7 +322,7 @@ fn compiled_provider_dependencies(
 }
 
 /// Compute one normalized portable path between two existing provider artifact roots.
-fn relative_provider_artifact_path(from: &Path, to: &Path) -> CliResult<String> {
+pub(crate) fn relative_provider_artifact_path(from: &Path, to: &Path) -> CliResult<String> {
     let from = fs::canonicalize(from).map_err(|error| {
         CliError::failure(format!(
             "failed to canonicalize provider artifact root {}: {error}",
@@ -416,35 +439,44 @@ pub fn collect_unprojected_provider_modules(
 /// compiler-side stdlib module inventory. This bootstrap adapter can disappear once provider source can author the
 /// equivalent backend mappings directly. The dependencies of each namespace root come from
 /// [`incan_provider::inventory::stdlib_namespace_cargo_dependencies`].
-fn provider_implementation_facets(namespace_claims: &[ProviderModuleClaim]) -> Vec<ProviderImplementationFacet> {
+fn provider_implementation_facets(
+    namespace_claims: &[ProviderModuleClaim],
+) -> CliResult<Vec<ProviderImplementationFacet>> {
     if env::var_os(SDK_PROVIDER_BUILD_ENV).is_none() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
+    native_sdk_implementation_facets(namespace_claims)
+}
+
+/// Project namespace facet dependencies for an explicitly granted native SDK publisher.
+pub(crate) fn native_sdk_implementation_facets(
+    namespace_claims: &[ProviderModuleClaim],
+) -> CliResult<Vec<ProviderImplementationFacet>> {
     let roots = namespace_claims
         .iter()
         .filter_map(|claim| claim.module_path.first().cloned())
         .collect::<BTreeSet<_>>();
-    roots
-        .into_iter()
-        .filter_map(|root| {
-            let namespace = incan_lang::lang::stdlib::find_namespace(&root)?;
-            let required_modules = namespace_claims
-                .iter()
-                .filter(|claim| claim.module_path.first() == Some(&root))
-                .map(|claim| claim.module_path.clone())
-                .collect();
-            // A consumer that compiles this namespace from source links the same list, so both routes agree.
-            let cargo_dependencies = incan_provider::inventory::stdlib_namespace_cargo_dependencies(namespace);
-            let cargo_features = BTreeMap::new();
-            Some(ProviderImplementationFacet {
-                id: format!("rust_{root}"),
-                required_modules,
-                required_features: BTreeSet::new(),
-                cargo_features,
-                cargo_dependencies,
-            })
-        })
-        .collect()
+    let mut facets = Vec::new();
+    for root in roots {
+        let Some(namespace) = incan_lang::lang::stdlib::find_namespace(&root) else {
+            continue;
+        };
+        let required_modules = namespace_claims
+            .iter()
+            .filter(|claim| claim.module_path.first() == Some(&root))
+            .map(|claim| claim.module_path.clone())
+            .collect();
+        let cargo_dependencies = incan_provider::inventory::stdlib_namespace_cargo_dependencies(namespace)
+            .map_err(|error| CliError::failure(error.to_string()))?;
+        facets.push(ProviderImplementationFacet {
+            id: format!("rust_{root}"),
+            required_modules,
+            required_features: BTreeSet::new(),
+            cargo_features: BTreeMap::new(),
+            cargo_dependencies,
+        });
+    }
+    Ok(facets)
 }
 
 /// Return whether an already-linked SDK provider owns this emitted `__incan_std.*` module.

@@ -1,23 +1,19 @@
 //! Identity and lifecycle of the SDK provider store: what makes one compiled-SDK tree distinct from another, the
 //! locks that serialize its preparation, and the digests that key it.
 //!
-//! Checkout identities combine compiler effects with publication configuration; installed layouts instead use
-//! executable and source bytes. Both retain the resolved lock and publication profile so incompatible providers cannot
-//! share a store entry.
+//! Native SDK publication identities combine compiler and source bytes, the SDK seed, native receipts, and the
+//! publication profile. Legacy identity helpers remain for callers outside the automatic native publication path.
 
-use std::collections::{BTreeSet, HashMap};
-use std::io::Read;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{LazyLock, Mutex};
+use std::time::Instant;
 use std::{env, fs};
 
 use sha2::{Digest, Sha256};
 
 use crate::effect_digest::{COMPILER_RUST_EFFECT_ROOTS, COMPILER_STDLIB_ROOT, compiler_effect_digest};
 use crate::error::{ProviderError, ProviderResult};
-static SDK_PROVIDER_COMPILER_DIGESTS: LazyLock<Mutex<HashMap<PathBuf, [u8; 32]>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Internal provider-store override used by isolated compiler and packaging tests.
 pub const INTERNAL_SDK_PROVIDER_STORE_ENV: &str = "INCAN_INTERNAL_SDK_PROVIDER_STORE";
@@ -265,6 +261,144 @@ pub fn sdk_provider_store_identity(
     Ok(hex::encode(hasher.finalize()))
 }
 
+/// Key a sealed SDK publication on its seed, authored sources, compiler bytes, and selected native receipts.
+///
+/// The map keys identify complete native bindings, including domain and features, and values are the receipts of
+/// those retained units. This separate boundary does not consult development Cargo configuration or effect-digest
+/// caches. Callers must retain the native selections throughout publication; an empty map cannot authorize an SDK.
+pub fn sdk_provider_sealed_store_identity(
+    stdlib_root: &Path,
+    executable: &Path,
+    distribution_profile: &str,
+    native_receipts: &std::collections::BTreeMap<String, String>,
+) -> ProviderResult<String> {
+    let graph = std::env::var_os("INCAN_SDK_NATIVE_COMPILER_GRAPH").map(PathBuf::from);
+    sdk_provider_sealed_store_identity_with_graph(
+        stdlib_root,
+        executable,
+        distribution_profile,
+        native_receipts,
+        graph.as_deref(),
+    )
+}
+
+/// Compute publication identity using the explicit graph admitted by the native publisher.
+pub(crate) fn sdk_provider_sealed_store_identity_with_graph(
+    stdlib_root: &Path,
+    executable: &Path,
+    distribution_profile: &str,
+    native_receipts: &std::collections::BTreeMap<String, String>,
+    compiler_graph: Option<&Path>,
+) -> ProviderResult<String> {
+    if native_receipts.is_empty() || !stdlib_root.join("sdk-lock.json").is_file() {
+        return Err(ProviderError::failure(
+            "sealed SDK publication requires its seed and retained native receipts",
+        ));
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(b"incan-sdk-sealed-provider-store-v2\0");
+    hasher.update(incan_lang::version::INCAN_VERSION.as_bytes());
+    hasher.update(incan_lang::version::SDK_PROVIDER_CODEGEN_REVISION.to_le_bytes());
+    hasher.update(distribution_profile.as_bytes());
+    hasher.update([0]);
+    let compiler_start = Instant::now();
+    hasher.update(sdk_provider_compiler_digest(executable)?);
+    let compiler_digest_ms = compiler_start.elapsed().as_secs_f64() * 1000.0;
+    let source_start = Instant::now();
+    hash_sealed_sdk_source_tree(stdlib_root, stdlib_root, &mut hasher)?;
+    let stdlib_source_hash_ms = source_start.elapsed().as_secs_f64() * 1000.0;
+    let graph_start = Instant::now();
+    if let Some(graph) = compiler_graph {
+        hasher.update(b"compiler-native-graph\0");
+        hasher.update(crate::sdk_native::compiler_native_graph_digest(graph)?.as_bytes());
+    }
+    let compiler_graph_hash_ms = graph_start.elapsed().as_secs_f64() * 1000.0;
+    let companion_start = Instant::now();
+    let mut companion_roots = 0;
+    // Discovery must invalidate a stale receipt hint when an external local companion changes, before preparation
+    // has had an opportunity to produce that companion's replacement native receipt.
+    if let Some(source_root) = stdlib_root.parent().and_then(Path::parent) {
+        for relative in ["loaves/kernel/incan_lang", "loaves/kernel/incan_vocab"] {
+            hasher.update(relative.as_bytes());
+            let root = source_root.join(relative);
+            if root.is_dir() {
+                companion_roots += 1;
+                hash_sealed_sdk_source_tree(&root, &root, &mut hasher)?;
+            } else {
+                hasher.update(b"absent\0");
+            }
+        }
+    }
+    let companion_source_hash_ms = companion_start.elapsed().as_secs_f64() * 1000.0;
+    let receipts_start = Instant::now();
+    for (binding, receipt) in native_receipts {
+        if binding.is_empty()
+            || !receipt.starts_with("sha256:")
+            || receipt.len() != 71
+            || !receipt[7..].bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(ProviderError::failure(
+                "sealed SDK native binding has no complete receipt identity",
+            ));
+        }
+        hasher.update(binding.as_bytes());
+        hasher.update([0]);
+        hasher.update(receipt.as_bytes());
+        hasher.update([0xff]);
+    }
+    tracing::debug!(
+        compiler_digest_ms,
+        stdlib_source_hash_ms,
+        compiler_graph_hash_ms,
+        compiler_graph_present = compiler_graph.is_some(),
+        companion_source_hash_ms,
+        companion_roots,
+        native_receipts = native_receipts.len(),
+        receipt_hash_ms = receipts_start.elapsed().as_secs_f64() * 1000.0,
+        "SDK sealed identity inputs hashed"
+    );
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// Hash a portable SDK source tree while leaving Cargo metadata, build scripts, and generated targets inert.
+fn hash_sealed_sdk_source_tree(root: &Path, current: &Path, hasher: &mut Sha256) -> ProviderResult<()> {
+    let mut entries = fs::read_dir(current)
+        .map_err(|error| ProviderError::failure(error.to_string()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| ProviderError::failure(error.to_string()))?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        if matches!(
+            entry.file_name().to_str(),
+            Some("target" | "Cargo.toml" | "Cargo.toml.orig" | "Cargo.lock" | "build.rs")
+        ) {
+            continue;
+        }
+        let path = entry.path();
+        let kind = entry
+            .file_type()
+            .map_err(|error| ProviderError::failure(error.to_string()))?;
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|error| ProviderError::failure(error.to_string()))?;
+        hasher.update(relative.to_string_lossy().as_bytes());
+        hasher.update([0]);
+        if kind.is_dir() {
+            hasher.update(b"directory\0");
+            hash_sealed_sdk_source_tree(root, &path, hasher)?;
+        } else if kind.is_file() {
+            hasher.update(b"file\0");
+            hasher.update(fs::read(&path).map_err(|error| ProviderError::failure(error.to_string()))?);
+        } else {
+            return Err(ProviderError::failure(
+                "sealed SDK source tree contains a link or special file",
+            ));
+        }
+        hasher.update([0xff]);
+    }
+    Ok(())
+}
+
 /// Fold publication policy omitted by the semantic source digest, with deterministic relative paths.
 ///
 /// Component configuration lives under the stdlib tree. Rust effect roots additionally inherit crate/workspace
@@ -482,9 +616,8 @@ fn sdk_provider_effect_input_key(checkout_root: &Path, compiler_stamp: &str) -> 
 
 /// Return the compiler-owned SDK provider identity for one source checkout.
 ///
-/// This is intentionally exposed only to repository automation after it has built the matching CLI. The cache key
-/// must follow the same source closure as provider publication; hashing development executable bytes would make
-/// identical source checkouts miss after unrelated test builds.
+/// Repository automation uses the same native receipt catalog and sealed identity as source publication. A missing
+/// catalog is a preparation requirement; this command never derives an identity from Cargo configuration.
 pub fn sdk_provider_store_identity_for_compiler_root(compiler_root: &Path) -> ProviderResult<String> {
     let stdlib_root = fs::canonicalize(compiler_root.join("loaves/stdlib")).map_err(|error| {
         ProviderError::failure(format!(
@@ -495,17 +628,29 @@ pub fn sdk_provider_store_identity_for_compiler_root(compiler_root: &Path) -> Pr
     let executable = env::current_exe()
         .map_err(|error| ProviderError::failure(format!("failed to resolve current incan executable: {error}")))?;
     let executable = sdk_provider_builder_executable(None, executable)?;
-    let workspace_lock = sdk_provider_workspace_lock(&stdlib_root);
     let distribution_profile = env::var(INTERNAL_SDK_DISTRIBUTION_PROFILE_ENV)
         .ok()
         .filter(|profile| !profile.is_empty())
         .unwrap_or_else(|| "full".to_string());
-    sdk_provider_store_identity(
-        &stdlib_root,
-        &executable,
-        workspace_lock.as_deref(),
-        &distribution_profile,
-    )
+    let store = env::var_os(INTERNAL_SDK_PROVIDER_STORE_ENV)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            default_sdk_provider_store(
+                &stdlib_root,
+                env::var_os("INCAN_HOME"),
+                env::var_os("HOME").or_else(|| env::var_os("USERPROFILE")),
+            )
+        });
+    let path = store.join(".sealed-native-receipts.json");
+    let receipts = fs::read(&path).map_err(|error| {
+        ProviderError::failure(format!(
+            "native SDK receipt catalog {} is unavailable; prepare the SDK first: {error}",
+            path.display(),
+        ))
+    })?;
+    let receipts = serde_json::from_slice(&receipts).map_err(|error| ProviderError::failure(error.to_string()))?;
+    sdk_provider_sealed_store_identity(&stdlib_root, &executable, &distribution_profile, &receipts)
 }
 
 /// Resolve the source checkout that owns a discovered SDK tree, if this is a development layout.
@@ -534,43 +679,23 @@ fn is_sdk_provider_compiler_checkout(candidate: &Path, stdlib_root: &Path) -> bo
     }
 }
 
-/// Hash the running compiler once per process with SHA-256, the hash family every other identity in the toolchain uses,
-/// independent of its path.
+/// Select the compiler's exact content digest with Oven's cross-command metadata-bound acceleration.
+///
+/// Decode the original raw SHA-256 bytes so SDK identities remain byte-equivalent to uncached hashing. Every
+/// observation checks replacement-sensitive metadata rather than trusting a process-local path memo.
 fn sdk_provider_compiler_digest(executable: &Path) -> ProviderResult<[u8; 32]> {
-    if let Some(digest) = SDK_PROVIDER_COMPILER_DIGESTS
-        .lock()
-        .map_err(|_| ProviderError::failure("failed to lock the compiler-content digest cache"))?
-        .get(executable)
-        .copied()
-    {
-        return Ok(digest);
-    }
-
-    let mut executable_file = fs::File::open(executable).map_err(|error| {
+    let (_, observed) = oven_store::store::digest_regular_file(executable).map_err(|error| {
         ProviderError::failure(format!(
-            "failed to read compiler executable {}: {error}",
+            "failed to digest compiler executable {}: {error}",
             executable.display()
         ))
     })?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let read = executable_file.read(&mut buffer).map_err(|error| {
-            ProviderError::failure(format!(
-                "failed to read compiler executable {}: {error}",
-                executable.display()
-            ))
-        })?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    let digest: [u8; 32] = hasher.finalize().into();
-    SDK_PROVIDER_COMPILER_DIGESTS
-        .lock()
-        .map_err(|_| ProviderError::failure("failed to lock the compiler-content digest cache"))?
-        .insert(executable.to_path_buf(), digest);
+    let encoded = observed
+        .strip_prefix("sha256:")
+        .ok_or_else(|| ProviderError::failure("compiler content digest is not SHA-256"))?;
+    let mut digest = [0_u8; 32];
+    hex::decode_to_slice(encoded, &mut digest)
+        .map_err(|error| ProviderError::failure(format!("invalid compiler content digest: {error}")))?;
     Ok(digest)
 }
 
@@ -667,6 +792,70 @@ pub fn staged_sdk_provider_root(store_root: &Path, identity: &str) -> ProviderRe
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Sealed publication ignores Cargo bytes and partitions identities on sources and native receipts.
+    #[test]
+    fn sealed_sdk_identity_uses_sources_and_native_receipts() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let stdlib = root.path().join("loaves/stdlib");
+        fs::create_dir_all(&stdlib)?;
+        fs::write(stdlib.join("sdk-lock.json"), "sealed seed")?;
+        fs::write(stdlib.join("module.incn"), "pub def value() -> int:\n  return 1\n")?;
+        let executable = root.path().join("incan");
+        fs::write(&executable, "compiler bytes")?;
+        let mut receipts =
+            std::collections::BTreeMap::from([("core target []".to_string(), format!("sha256:{}", "1".repeat(64)))]);
+        let first = sdk_provider_sealed_store_identity(&stdlib, &executable, "full", &receipts)?;
+        fs::write(stdlib.join("Cargo.toml"), "invalid TOML")?;
+        fs::write(stdlib.join("Cargo.lock"), "unrelated Cargo closure")?;
+        fs::write(stdlib.join("build.rs"), "compile_error!(\"must not run\");")?;
+        assert_eq!(
+            first,
+            sdk_provider_sealed_store_identity(&stdlib, &executable, "full", &receipts)?
+        );
+        receipts.insert("core target []".to_string(), format!("sha256:{}", "2".repeat(64)));
+        let changed_native = sdk_provider_sealed_store_identity(&stdlib, &executable, "full", &receipts)?;
+        assert_ne!(first, changed_native);
+        fs::write(stdlib.join("module.incn"), "pub def value() -> int:\n  return 2\n")?;
+        assert_ne!(
+            changed_native,
+            sdk_provider_sealed_store_identity(&stdlib, &executable, "full", &receipts)?
+        );
+        assert!(
+            sdk_provider_sealed_store_identity(&stdlib, &executable, "full", &std::collections::BTreeMap::new())
+                .is_err()
+        );
+        let kernel = stdlib
+            .parent()
+            .and_then(Path::parent)
+            .ok_or("fixture has no toolchain root")?
+            .join("loaves/kernel/incan_lang");
+        fs::create_dir_all(kernel.join("src"))?;
+        fs::write(kernel.join("src/lib.rs"), "pub fn value() -> u8 { 1 }")?;
+        let companion_before = sdk_provider_sealed_store_identity(&stdlib, &executable, "full", &receipts)?;
+        fs::write(kernel.join("src/lib.rs"), "pub fn value() -> u8 { 2 }")?;
+        assert_ne!(
+            companion_before,
+            sdk_provider_sealed_store_identity(&stdlib, &executable, "full", &receipts)?,
+            "a stale discovery receipt hint cannot hide changed local kernel sources"
+        );
+        let graph = root.path().join("compiler-graph.json");
+        let registry_lock = root.path().join("registry-lock.json");
+        fs::write(&registry_lock, "first native resolution")?;
+        fs::write(
+            &graph,
+            r#"{"index_commit":"retained-pin","registry_lock":"registry-lock.json","facets":[]}"#,
+        )?;
+        let explicit =
+            sdk_provider_sealed_store_identity_with_graph(&stdlib, &executable, "full", &receipts, Some(&graph))?;
+        fs::write(&registry_lock, "changed native resolution")?;
+        assert_ne!(
+            explicit,
+            sdk_provider_sealed_store_identity_with_graph(&stdlib, &executable, "full", &receipts, Some(&graph))?,
+            "explicit graph freshness must not depend on environment configuration"
+        );
+        Ok(())
+    }
 
     #[test]
     fn sdk_provider_builder_selects_the_real_cli_for_tests_and_utilities() -> Result<(), Box<dyn std::error::Error>> {
@@ -853,6 +1042,30 @@ mod tests {
             "the memo key took {} ms, which is no longer a per-command cost",
             elapsed.as_millis()
         );
+        Ok(())
+    }
+
+    /// Cached compiler observations preserve raw SDK identity and invalidate edits or replacement at the same path.
+    #[test]
+    fn compiler_content_digest_reobserves_same_path() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let compiler = root.path().join("incan");
+        fs::write(&compiler, b"native bytes")?;
+        let first: [u8; 32] = Sha256::digest(b"native bytes").into();
+        assert_eq!(super::sdk_provider_compiler_digest(&compiler)?, first);
+        assert_eq!(super::sdk_provider_compiler_digest(&compiler)?, first);
+        let modified = fs::metadata(&compiler)?.modified()?;
+        fs::write(&compiler, b"edited bytes")?;
+        fs::File::options()
+            .write(true)
+            .open(&compiler)?
+            .set_times(fs::FileTimes::new().set_modified(modified))?;
+        let changed: [u8; 32] = Sha256::digest(b"edited bytes").into();
+        assert_eq!(super::sdk_provider_compiler_digest(&compiler)?, changed);
+        let replacement = root.path().join("replacement");
+        fs::write(&replacement, b"native bytes")?;
+        fs::rename(replacement, &compiler)?;
+        assert_eq!(super::sdk_provider_compiler_digest(&compiler)?, first);
         Ok(())
     }
 

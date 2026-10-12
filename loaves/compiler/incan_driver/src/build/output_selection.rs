@@ -23,11 +23,84 @@ use crate::error::{CliError, CliResult};
 use incan_lang::version::INCAN_VERSION;
 use oven_model::manifest::{LOAF_MANIFEST_FILENAME, ProjectManifest};
 use oven_rustc::rustc::{
-    OvenLoadedProjectInspectionAuthority, load_project_inspection_authority, resolve_active_rustc, rustc_host_target,
-    rustc_identity,
+    OvenLoadedProjectInspectionAuthority, resolve_active_rustc, rustc_host_target, rustc_identity,
 };
 use oven_store::digest_bytes;
 use oven_store::store::{OvenArtifactKind, OvenStore};
+
+/// Resolve an optional local locator through the store's verified payload and active-lease boundary.
+///
+/// The locator is only a search hint. Explicit bake reuse requires its local receipt lineage; ordinary selection
+/// supplies its current source, preparation and intent predicates instead. Both retain Store integrity and leases.
+/// Missing, malformed, reclaimed or mismatched hints fall back to normal selection and never authorize execution alone.
+#[track_caller]
+pub(super) fn located_project_output(
+    store: &OvenStore,
+    receipt_path: &Path,
+    receipt: Option<&oven_store::OvenReceipt>,
+    payload_matches: impl Fn(&oven_store::store::OvenArtifactManifest, &[u8]) -> bool,
+) -> CliResult<Option<OvenStoredProjectOutput>> {
+    let caller = std::panic::Location::caller();
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::located_project_output", input = %receipt_path.display(), caller_file = caller.file(), caller_line = u64::from(caller.line())).entered();
+    let Some(identity) = fs::read(receipt_path.with_extension("output.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<String>(&bytes).ok())
+        .filter(|identity| {
+            identity
+                .strip_prefix("sha256:")
+                .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        })
+    else {
+        return Ok(None);
+    };
+    let Ok((manifest, root, bytes, lease)) = store.select_payload_for_execution(&identity) else {
+        return Ok(None);
+    };
+    if manifest.kind != OvenArtifactKind::ProjectOutput
+        || receipt.is_some_and(|receipt| {
+            manifest.receipt_identity != receipt.identity
+                || manifest.build_unit_identity != receipt.build_unit_identity
+                || manifest.intent != receipt.intent
+        })
+        || !payload_matches(&manifest, &bytes)
+    {
+        return Ok(None);
+    }
+    let Ok(payload) = serde_json::from_slice::<super::OvenProjectOutputPayload>(&bytes) else {
+        return Ok(None);
+    };
+    if payload.schema_version != super::OVEN_PROJECT_OUTPUT_PAYLOAD_SCHEMA_VERSION {
+        return Ok(None);
+    }
+    crate::build::publication::stored_project_output_from_parts(manifest, root, payload, lease).map(Some)
+}
+
+/// Atomically retain a verified output's address as a replaceable local selection hint.
+pub(super) fn remember_project_output(receipt_path: &Path, identity: &str) {
+    let locator = receipt_path.with_extension("output.json");
+    if fs::read(&locator)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<String>(&bytes).ok())
+        .as_deref()
+        == Some(identity)
+    {
+        return;
+    }
+    let Some(parent) = locator.parent() else {
+        return;
+    };
+    if fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    let staged = locator.with_extension(format!("{}.tmp", std::process::id()));
+    let result = serde_json::to_vec(identity)
+        .map_err(std::io::Error::other)
+        .and_then(|bytes| fs::write(&staged, bytes))
+        .and_then(|()| fs::rename(&staged, &locator));
+    if result.is_err() {
+        let _removed = fs::remove_file(staged);
+    }
+}
 
 /// Select a completed executable output before frontend work on an exact project match.
 ///
@@ -113,13 +186,16 @@ pub fn has_stale_baked_project_output(
         Some(_) | None => return Ok(false),
     };
     let candidates = store
-        .select_payloads_matching_for_execution(|manifest| {
-            manifest.kind == OvenArtifactKind::ProjectOutput
-                && manifest.intent.profile == profile
-                && manifest.intent.target == native_target
-                && manifest.receipt_identity == receipt.identity
-                && manifest.build_unit_identity == receipt.build_unit_identity
-        })
+        .select_payloads_matching_for_execution(
+            |manifest| {
+                manifest.kind == OvenArtifactKind::ProjectOutput
+                    && manifest.intent.profile == profile
+                    && manifest.intent.target == native_target
+                    && manifest.receipt_identity == receipt.identity
+                    && manifest.build_unit_identity == receipt.build_unit_identity
+            },
+            |_, _| true,
+        )
         .map_err(|error| CliError::failure(format!("failed to inspect Oven project-output Loafs: {error}")))?;
     for candidate in candidates {
         let Ok(payload) = serde_json::from_slice::<OvenProjectOutputPayload>(&candidate.payload) else {
@@ -149,7 +225,7 @@ pub fn select_baked_project_output_with_source_authority(
     source_authority_digest: &str,
     required_target_toolchain: Option<(&str, &str)>,
 ) -> CliResult<Option<OvenStoredProjectOutput>> {
-    Ok(matching_baked_project_outputs_with_source_authority(
+    Ok(project_outputs_with_source_authority(
         store,
         project_root,
         entrypoint,
@@ -157,6 +233,7 @@ pub fn select_baked_project_output_with_source_authority(
         profile,
         source_authority_digest,
         required_target_toolchain,
+        true,
     )?
     .into_iter()
     .next())
@@ -174,6 +251,33 @@ pub fn matching_baked_project_outputs_with_source_authority(
     source_authority_digest: &str,
     required_target_toolchain: Option<(&str, &str)>,
 ) -> CliResult<Vec<OvenStoredProjectOutput>> {
+    project_outputs_with_source_authority(
+        store,
+        project_root,
+        entrypoint,
+        target,
+        profile,
+        source_authority_digest,
+        required_target_toolchain,
+        false,
+    )
+}
+
+/// Apply the same intent, payload and lineage checks to an exact locator and the fallback collection.
+///
+/// Multi-profile consumers retain the complete ordered candidate set. A single-output consumer may avoid the scan
+/// only when its verified hint has the preferred receipt lineage and current lock fingerprint.
+#[allow(clippy::too_many_arguments)]
+fn project_outputs_with_source_authority(
+    store: &OvenStore,
+    project_root: &Path,
+    entrypoint: &Path,
+    target: OvenBakeProjectTarget,
+    profile: &str,
+    source_authority_digest: &str,
+    required_target_toolchain: Option<(&str, &str)>,
+    first_only: bool,
+) -> CliResult<Vec<OvenStoredProjectOutput>> {
     let Some(entrypoint_relative_path) = project_relative_entrypoint(project_root, entrypoint) else {
         return Ok(Vec::new());
     };
@@ -184,35 +288,57 @@ pub fn matching_baked_project_outputs_with_source_authority(
     let Some(native_target) = native_project_output_target() else {
         return Ok(Vec::new());
     };
+    let preparation_identity = super::source_authority::ordinary_preparation_identity_digest().ok();
+    let manifest_matches = |manifest: &oven_store::store::OvenArtifactManifest| {
+        manifest.kind == OvenArtifactKind::ProjectOutput
+            && manifest.intent.profile == profile
+            && manifest.intent.target == native_target
+            && required_target_toolchain.is_none_or(|(target, toolchain)| {
+                manifest.intent.target == target && manifest.intent.toolchain == toolchain
+            })
+    };
+    let payload_matches = |manifest: &oven_store::store::OvenArtifactManifest, bytes: &[u8]| {
+        let Ok(payload) = serde_json::from_slice::<OvenProjectOutputPayload>(bytes) else {
+            return false;
+        };
+        payload.schema_version == OVEN_PROJECT_OUTPUT_PAYLOAD_SCHEMA_VERSION
+            && payload.project_target == target.as_str()
+            && payload.target_identity == target_identity
+            && payload.source_authority_digest == source_authority_digest
+            && payload
+                .preparation_identity_digest
+                .as_ref()
+                .is_none_or(|identity| Some(identity) == preparation_identity.as_ref())
+            && payload.compiler_version == INCAN_VERSION
+            && payload.entrypoint_relative_path == entrypoint_relative_path
+            && payload.receipt_identity == manifest.receipt_identity
+            && payload.build_unit_identity == manifest.build_unit_identity
+            && !payload.plan_identity.trim().is_empty()
+    };
+    let current_receipt = current_project_output_receipt(project_root, target, entrypoint, profile)?;
+    let current_fingerprint = baked_project_lock_dependencies_fingerprint(project_root)?;
+    let receipt_path = project_bake_receipt_path(project_root, target, entrypoint, profile)?;
+    if first_only {
+        if let Some(located) =
+            located_project_output(store, &receipt_path, current_receipt.as_ref(), |manifest, bytes| {
+                manifest_matches(manifest) && payload_matches(manifest, bytes)
+            })?
+        {
+            if located.payload.lock_dependencies_fingerprint == current_fingerprint {
+                tracing::trace!(target: "incan::invocation", decision = "reuse_project_output_locator", input = %located.identity);
+                return Ok(vec![located]);
+            }
+        }
+    }
     let selected = store
-        .select_payloads_matching_for_execution(|manifest| {
-            manifest.kind == OvenArtifactKind::ProjectOutput
-                && manifest.intent.profile == profile
-                && manifest.intent.target == native_target
-                && required_target_toolchain.is_none_or(|(target, toolchain)| {
-                    manifest.intent.target == target && manifest.intent.toolchain == toolchain
-                })
-        })
+        .select_payloads_matching_for_execution(manifest_matches, payload_matches)
         .map_err(|error| CliError::failure(format!("failed to select Oven project-output Loaf: {error}")))?;
     let mut matches = Vec::new();
     for selected in selected {
         let Ok(payload) = serde_json::from_slice::<OvenProjectOutputPayload>(&selected.payload) else {
-            // An unrelated prior/corrupt output is not this project's authority. Exact-lineage selection used by
-            // normal tests rejects malformed matching receipts separately.
+            // Selection already checked these immutable payload bytes before acquiring the execution lease.
             continue;
         };
-        if payload.schema_version != OVEN_PROJECT_OUTPUT_PAYLOAD_SCHEMA_VERSION
-            || payload.project_target != target.as_str()
-            || payload.target_identity != target_identity
-            || payload.source_authority_digest != source_authority_digest
-            || payload.compiler_version != INCAN_VERSION
-            || payload.entrypoint_relative_path != entrypoint_relative_path
-            || payload.receipt_identity != selected.manifest.receipt_identity
-            || payload.build_unit_identity != selected.manifest.build_unit_identity
-            || payload.plan_identity.trim().is_empty()
-        {
-            continue;
-        }
         let (manifest, artifact_root, _payload, lease) = selected.into_parts();
         matches.push(stored_project_output_from_parts(
             manifest,
@@ -221,8 +347,6 @@ pub fn matching_baked_project_outputs_with_source_authority(
             lease,
         )?);
     }
-    let current_receipt = current_project_output_receipt(project_root, target, entrypoint, profile)?;
-    let current_fingerprint = baked_project_lock_dependencies_fingerprint(project_root)?;
     // Prefer the explicit bake's verified lineage before the derived lock fingerprint: a non-strict stale lock
     // must not make an older SDK output outrank the current bake. Missing local receipts still permit store reuse.
     matches.sort_by_key(|output| {
@@ -237,6 +361,11 @@ pub fn matching_baked_project_outputs_with_source_authority(
             output.identity.clone(),
         )
     });
+    if first_only {
+        if let Some(selected) = matches.first() {
+            remember_project_output(&receipt_path, &selected.identity);
+        }
+    }
     Ok(matches)
 }
 
@@ -267,7 +396,25 @@ pub fn select_current_debug_project_outputs(
     native_target: &str,
     toolchain: &str,
 ) -> CliResult<Option<Vec<(OvenBakeProjectTarget, OvenStoredProjectOutput)>>> {
-    let project_identity = baked_project_owner_identity(project_root)?;
+    select_debug_project_outputs(
+        store,
+        project_root,
+        targets,
+        source_authority_digest,
+        native_target,
+        toolchain,
+        None,
+    )
+}
+
+/// Read verified local bake receipts before inspecting candidate payloads, retaining exact target lineages.
+#[cfg(feature = "rust_inspect")]
+fn debug_project_output_expectations(
+    project_root: &Path,
+    targets: &[(OvenBakeProjectTarget, PathBuf)],
+    native_target: &str,
+    toolchain: &str,
+) -> CliResult<Option<Vec<CurrentDebugProjectOutputExpectation>>> {
     let mut expected = Vec::with_capacity(targets.len());
     for (target, entrypoint) in targets {
         let Some(entrypoint_relative_path) = project_relative_entrypoint(project_root, entrypoint) else {
@@ -296,18 +443,39 @@ pub fn select_current_debug_project_outputs(
             receipt,
         });
     }
+    Ok(Some(expected))
+}
+
+/// Select local bake lineages for exact replay or fresh development compilation against unchanged dependencies.
+#[cfg(feature = "rust_inspect")]
+fn select_debug_project_outputs(
+    store: &OvenStore,
+    project_root: &Path,
+    targets: &[(OvenBakeProjectTarget, PathBuf)],
+    source_authority_digest: &str,
+    native_target: &str,
+    toolchain: &str,
+    dependency_authority_digest: Option<&str>,
+) -> CliResult<Option<Vec<(OvenBakeProjectTarget, OvenStoredProjectOutput)>>> {
+    let project_identity = baked_project_owner_identity(project_root)?;
+    let Some(expected) = debug_project_output_expectations(project_root, targets, native_target, toolchain)? else {
+        return Ok(None);
+    };
     let candidates = store
-        .select_payloads_matching_for_execution(|manifest| {
-            manifest.kind == OvenArtifactKind::ProjectOutput
-                && manifest.intent.profile == "debug"
-                && manifest.intent.target == native_target
-                && manifest.intent.toolchain == toolchain
-                && expected.iter().any(|expected| {
-                    manifest.receipt_identity == expected.receipt.identity
-                        && manifest.build_unit_identity == expected.receipt.build_unit_identity
-                        && manifest.intent == expected.receipt.intent
-                })
-        })
+        .select_payloads_matching_for_execution(
+            |manifest| {
+                manifest.kind == OvenArtifactKind::ProjectOutput
+                    && manifest.intent.profile == "debug"
+                    && manifest.intent.target == native_target
+                    && manifest.intent.toolchain == toolchain
+                    && expected.iter().any(|expected| {
+                        manifest.receipt_identity == expected.receipt.identity
+                            && manifest.build_unit_identity == expected.receipt.build_unit_identity
+                            && manifest.intent == expected.receipt.intent
+                    })
+            },
+            |_, _| true,
+        )
         .map_err(|error| CliError::failure(format!("failed to select Oven project-output Loafs: {error}")))?;
     let mut grouped = (0..expected.len()).map(|_| Vec::new()).collect::<Vec<_>>();
     for candidate in candidates {
@@ -357,7 +525,9 @@ pub fn select_current_debug_project_outputs(
             if payload.project_target != expected.target.as_str()
                 || payload.target_identity != expected.target_identity
                 || payload.project_identity != project_identity
-                || payload.source_authority_digest != source_authority_digest
+                || (payload.source_authority_digest != source_authority_digest
+                    && !dependency_authority_digest
+                        .is_some_and(|digest| payload.dependency_authority_digest.as_deref() == Some(digest)))
                 || payload.compiler_version != INCAN_VERSION
                 || payload.entrypoint_relative_path != expected.entrypoint_relative_path
                 || payload.receipt_identity != expected.receipt.identity
@@ -435,10 +605,11 @@ fn select_coherent_project_outputs(
         .collect()
 }
 
-/// Load immutable Rust-inspection lineage from all source-current baked debug outputs.
+/// Load immutable Rust-inspection lineage from local baked debug outputs for development compilation.
 ///
-/// This is command-scoped authority preparation for `incan test`: the caller opens one bounded store, computes one
-/// source digest, and retains both completed-output and exact entry leases across all scheduled harness batches.
+/// This is command-scoped authority preparation for check, run and test. Own-source edits may reuse dependency
+/// authority recorded by the same local bake; native output replay still requires exact source authority. The caller
+/// retains both completed-output and inspection-entry leases across all scheduled harness batches.
 /// Missing target output is a cache miss; nonempty malformed or absent lineage is an explicit rebake error.
 #[cfg(feature = "rust_inspect")]
 pub fn load_current_project_registry_source_authorities(
@@ -450,13 +621,15 @@ pub fn load_current_project_registry_source_authorities(
     let rustc = resolve_active_rustc().map_err(|error| CliError::failure(error.to_string()))?;
     let target = rustc_host_target(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
     let toolchain = rustc_identity(&rustc).map_err(|error| CliError::failure(error.to_string()))?;
-    let Some(outputs) = select_current_debug_project_outputs(
+    let dependency_authority_digest = super::source_authority::digest_project_development_dependencies(project_root)?;
+    let Some(outputs) = select_debug_project_outputs(
         store,
         project_root,
         &targets,
         &source_authority_digest,
         &target,
         &toolchain,
+        Some(&dependency_authority_digest),
     )?
     else {
         return Ok(None);
@@ -481,17 +654,9 @@ pub fn load_current_project_registry_source_authorities(
             "source-current debug project outputs disagree on their singular Rust inspection authority; rerun `incan oven bake --project .`",
         ));
     }
-    let project_identity = preferred.1.payload.project_identity.clone();
-    let compiler_version = preferred.1.payload.compiler_version.clone();
+    let mut authority = super::inspection_snapshot::load_output_inspection_authority(store, &preferred.1)
+        .map_err(|error| CliError::failure(error.to_string()))?;
     let output_leases = outputs.into_iter().map(|(_, output)| output._lease).collect();
-    let mut authority = load_project_inspection_authority(
-        store,
-        &authority_ref,
-        &project_identity,
-        &source_authority_digest,
-        &compiler_version,
-    )
-    .map_err(|error| CliError::failure(error.to_string()))?;
     authority.retain_lineage_leases(output_leases);
     Ok(Some(authority))
 }
@@ -759,6 +924,261 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
+    /// An exact existing locator selects through verified Store admission without enumerating unrelated owners.
+    #[test]
+    fn ordinary_project_output_locator_avoids_unrelated_manifest_walk() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        fs::create_dir(project.path().join("src"))?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = 'fixture'\n")?;
+        let entrypoint = project.path().join("src/main.incn");
+        fs::write(&entrypoint, "def main() -> None:\n    pass\n")?;
+        let (receipt, mut payload, files) =
+            crate::build::test_support::fixture_project_output_publication(project.path(), "debug", "located")?;
+        payload.inspection_authority = None;
+        payload.preparation_identity_digest =
+            Some(super::super::source_authority::ordinary_preparation_identity_digest()?);
+        let store_root = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            store_root.path(),
+            oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        let output = publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        let receipt_path =
+            project_bake_receipt_path(project.path(), OvenBakeProjectTarget::Executable, &entrypoint, "debug")?;
+        fs::create_dir_all(receipt_path.parent().ok_or("receipt has no parent")?)?;
+        fs::write(
+            receipt_path.with_extension("output.json"),
+            serde_json::to_vec(&output.identity)?,
+        )?;
+
+        // A full Store walk would encounter this damaged, unrelated entry. Exact admission must never read it.
+        let unrelated = store.root().join("entries").join(format!("sha256-{}", "0".repeat(64)));
+        fs::create_dir(&unrelated)?;
+        fs::write(unrelated.join("artifact.json"), b"not a manifest")?;
+        let selected = select_baked_project_output(
+            &store,
+            project.path(),
+            &entrypoint,
+            OvenBakeProjectTarget::Executable,
+            "debug",
+        )?
+        .ok_or("exact ordinary output locator missed")?;
+        assert_eq!(selected.identity, output.identity);
+        fs::remove_dir_all(&unrelated)?;
+        fs::write(receipt_path.with_extension("output.json"), b"\"../../foreign\"")?;
+        assert_eq!(
+            select_baked_project_output(
+                &store,
+                project.path(),
+                &entrypoint,
+                OvenBakeProjectTarget::Executable,
+                "debug",
+            )?
+            .ok_or("malformed hint prevented fallback")?
+            .identity,
+            output.identity
+        );
+        Ok(())
+    }
+
+    /// Considering historical compiler binaries and other source generations must not make them hot cache entries.
+    #[test]
+    fn project_output_lookup_does_not_refresh_rejected_payloads() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        fs::create_dir(project.path().join("src"))?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = 'fixture'\n")?;
+        fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
+        let (receipt, payload, files) =
+            crate::build::test_support::fixture_project_output_publication(project.path(), "debug", "lru")?;
+        let store_root = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            store_root.path(),
+            oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        let current = publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        let mut stale_payload = payload.clone();
+        stale_payload.source_authority_digest = digest_bytes(b"older source generation");
+        let stale = publish_project_output_loaf(&store, &receipt, &stale_payload, &files)?;
+        let compiler = store.publish(&OvenArtifactPublishRequest {
+            receipt,
+            domain: format!("incan-release-{INCAN_VERSION}"),
+            kind: OvenArtifactKind::ProjectOutput,
+            payload: br#"{"schema":"incan.native-compiler-output/1","unit":"historical-compiler"}"#.to_vec(),
+            materialized_files: Vec::new(),
+            materialized_directories: Vec::new(),
+        })?;
+        let (_, compiler_root, _, compiler_lease) = store.select_payload_for_execution(&compiler.identity)?;
+        let access = |root: &Path| -> Result<PathBuf, Box<dyn std::error::Error>> {
+            Ok(root.parent().ok_or("artifact root has no parent")?.join("last-used"))
+        };
+        let current_access = access(&current.artifact_root)?;
+        let stale_access = access(&stale.artifact_root)?;
+        let compiler_access = access(&compiler_root)?;
+        for path in [&current_access, &stale_access, &compiler_access] {
+            fs::write(path, b"7\n")?;
+        }
+        let selected = matching_baked_project_outputs_with_source_authority(
+            &store,
+            project.path(),
+            &project.path().join("src/main.incn"),
+            OvenBakeProjectTarget::Executable,
+            "debug",
+            &payload.source_authority_digest,
+            None,
+        )?;
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].identity, current.identity);
+        assert_ne!(fs::read(&current_access)?, b"7\n");
+        assert_eq!(
+            fs::read(&compiler_access)?,
+            b"7\n",
+            "rejected historical compiler binary became hot"
+        );
+        assert_eq!(
+            fs::read(&stale_access)?,
+            b"7\n",
+            "rejected source generation became hot"
+        );
+        drop(compiler_lease);
+        Ok(())
+    }
+
+    /// Own-source edits reuse only the inspection lineage; changed manifest authority remains refused.
+    #[test]
+    fn development_selection_preserves_dependency_authority() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        fs::create_dir(project.path().join("src"))?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = 'fixture'\n")?;
+        fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
+        let (receipt, payload, files) =
+            crate::build::test_support::fixture_project_output_publication(project.path(), "debug", "development")?;
+        oven_store::write_receipt(
+            &receipt,
+            project_bake_receipt_path(
+                project.path(),
+                OvenBakeProjectTarget::Executable,
+                &project.path().join("src/main.incn"),
+                "debug",
+            )?,
+        )?;
+        let store_root = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            store_root.path(),
+            oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        crate::build::publication::publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        let dependencies = super::super::source_authority::digest_project_development_dependencies(project.path())?;
+        fs::write(
+            project.path().join("src/main.incn"),
+            "def added() -> int:\n    return 42\n\ndef main() -> None:\n    pass\n",
+        )?;
+        let current = digest_baked_project_source_authority(project.path())?;
+        assert_ne!(current, payload.source_authority_digest);
+        assert_eq!(
+            dependencies,
+            super::super::source_authority::digest_project_development_dependencies(project.path())?
+        );
+        let targets = discover_oven_bake_project_targets(project.path())?;
+        assert!(
+            select_debug_project_outputs(
+                &store,
+                project.path(),
+                &targets,
+                &current,
+                &receipt.intent.target,
+                &receipt.intent.toolchain,
+                Some(&dependencies)
+            )?
+            .is_some()
+        );
+        assert!(
+            select_current_debug_project_outputs(
+                &store,
+                project.path(),
+                &targets,
+                &current,
+                &receipt.intent.target,
+                &receipt.intent.toolchain
+            )
+            .is_err()
+        );
+        fs::write(
+            project.path().join("loaf.toml"),
+            "[project]\nname = 'fixture'\nversion = '2.0.0'\n",
+        )?;
+        let changed = super::super::source_authority::digest_project_development_dependencies(project.path())?;
+        assert_ne!(dependencies, changed);
+        assert!(
+            select_debug_project_outputs(
+                &store,
+                project.path(),
+                &targets,
+                &current,
+                &receipt.intent.target,
+                &receipt.intent.toolchain,
+                Some(&changed)
+            )
+            .is_err()
+        );
+        Ok(())
+    }
+
+    /// An ordinary output shares the completed-loaf selector but cannot reuse another preparation configuration.
+    #[test]
+    fn ordinary_project_output_requires_exact_preparation_identity() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        fs::create_dir(project.path().join("src"))?;
+        fs::write(project.path().join("loaf.toml"), "[project]\nname = \"fixture\"\n")?;
+        fs::write(project.path().join("src/main.incn"), "def main() -> None:\n    pass\n")?;
+        let (receipt, mut payload, files) =
+            crate::build::test_support::fixture_project_output_publication(project.path(), "release", "ordinary")?;
+        let store_root = tempfile::tempdir()?;
+        let store = OvenStore::new(
+            store_root.path(),
+            oven_store::store::OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
+        );
+        payload.inspection_authority = None;
+        assert!(publish_project_output_loaf(&store, &receipt, &payload, &files).is_err());
+        payload.preparation_identity_digest = Some("sha256:other-preparation".into());
+        publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        let entrypoint = project.path().join("src/main.incn");
+        assert!(
+            select_baked_project_output(
+                &store,
+                project.path(),
+                &entrypoint,
+                OvenBakeProjectTarget::Executable,
+                "release"
+            )?
+            .is_none()
+        );
+        payload.preparation_identity_digest =
+            Some(super::super::source_authority::ordinary_preparation_identity_digest()?);
+        publish_project_output_loaf(&store, &receipt, &payload, &files)?;
+        assert!(
+            select_baked_project_output(
+                &store,
+                project.path(),
+                &entrypoint,
+                OvenBakeProjectTarget::Executable,
+                "release"
+            )?
+            .is_some()
+        );
+        fs::write(&entrypoint, "def main() -> None:\n    println(1)\n")?;
+        assert!(
+            select_baked_project_output(
+                &store,
+                project.path(),
+                &entrypoint,
+                OvenBakeProjectTarget::Executable,
+                "release"
+            )?
+            .is_none()
+        );
+        Ok(())
+    }
+
     #[test]
     fn project_output_loaf_selects_only_the_exact_authored_project_before_frontend_work()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -799,7 +1219,10 @@ mod tests {
             target_identity: OvenBakeProjectTarget::Executable.as_str().to_string(),
             project_identity: baked_project_owner_identity(project.path())?,
             source_authority_digest: digest_baked_project_source_authority(project.path())?,
+            dependency_authority_digest: None,
             lock_dependencies_fingerprint: baked_project_lock_dependencies_fingerprint(project.path())?,
+            compiler_identity_digest: None,
+            preparation_identity_digest: None,
             compiler_version: INCAN_VERSION.to_string(),
             entrypoint_relative_path: "src/main.incn".to_string(),
             build_unit_identity: receipt.build_unit_identity.clone(),
@@ -810,6 +1233,7 @@ mod tests {
                 receipt_identity: receipt.identity.clone(),
                 build_unit_identity: receipt.build_unit_identity.clone(),
             }),
+            inspection_authority_snapshot: None,
             files: vec![
                 OvenProjectOutputFile {
                     caller_relative_path: "generated/main.rs".to_string(),
@@ -855,11 +1279,11 @@ mod tests {
             source_authority_digest: &payload.source_authority_digest,
             lock_dependencies_fingerprint: payload.lock_dependencies_fingerprint.clone(),
             files: files.clone(),
-            inspection_authority: OvenProjectInspectionAuthorityRef {
+            inspection_authority: Some(OvenProjectInspectionAuthorityRef {
                 identity: String::new(),
                 receipt_identity: receipt.identity.clone(),
                 build_unit_identity: receipt.build_unit_identity.clone(),
-            },
+            }),
             required_project_loafs: Vec::new(),
             package_loaf_store_relative_path: None,
             backend_receipt: payload.backend_receipt.clone(),

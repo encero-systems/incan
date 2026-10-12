@@ -2,10 +2,13 @@
 
 from pub::incan_mir_plan import (
     BasicBlock,
+    EnumDeclaration,
     Callee,
     CalleeKind,
     Constant,
     ExternalFunction,
+    FieldProjection,
+    Function,
     Local,
     Operand,
     OperandKind,
@@ -20,11 +23,13 @@ from pub::incan_mir_plan import (
     Unwind,
 )
 from pub::incan_mir_plan import assign as plan_assign, block as plan_block, place as plan_place
+from type_parameters import Instance
 from rust::incan_semantics_core import IncanType as RustType
 from rust::incan_semantics_core::body_ir import (
     NominalDeclaration as RustNominalDeclaration,
     EnumDeclaration as RustEnumDeclaration,
     StaticDeclaration as RustStaticDeclaration,
+    ValueEnumDeclaration as RustValueEnumDeclaration,
 )
 
 
@@ -34,12 +39,18 @@ pub model Builder:
 
     `owned` lists the locals that currently hold an initialized value needing a drop, in initialization order.
     `closed` marks blocks whose terminator is final, so an `if` whose branches both return leaves its join closed.
+    `parameter_count` separates invocation-long argument storage from locals with explicit storage lifetimes.
     `loops` holds each enclosing loop's (header, after) blocks, and `loop_owners` the owners live when it began.
     `iterators` pairs borrowed iterable slots with cursor storage; `borrowed_items` prevents mutations of cloned iteration items whose source contract remains borrowed.
     `module_identity` is the caller body's canonical owner, so local-call admission remains module-relative in a project plan.
+    `generator_handle` is the provisional yield-handle slot in a producer, or -1 in an ordinary function; completed producer plans move it into their parameter slot.
+    `type_parameters` and `type_arguments` retain the current closed declaration binding; `instances` records checked calls that need their own concrete native function.
+    `function_pointer_locals` lists the return slot, function-typed parameters, and explicitly annotated locals whose callables are stored as reified function pointers; other callable locals keep their inferred function-item type.
+    `name` is the plan symbol of the function being built, which prefixes the functions its closures synthesize; `synthesized` collects those lifted bodies and constructors for the enclosing plan.
     """
 
     pub locals: list[Local]
+    pub parameter_count: int
     pub blocks: list[BasicBlock]
     pub current: int
     pub source: str
@@ -57,7 +68,16 @@ pub model Builder:
     pub unions: list[RustType]
     # Deferred defaults reserve a declaration-local frame within the caller.
     pub local_offset: int
+    pub intrinsics: list[EnumDeclaration]
     pub statics: list[RustStaticDeclaration]
+    pub generator_handle: int
+    pub value_enums: list[RustValueEnumDeclaration]
+    pub instances: list[Instance]
+    pub type_parameters: list[str]
+    pub type_arguments: list[RustType]
+    pub function_pointer_locals: list[int]
+    pub name: str
+    pub synthesized: list[Function]
 
     def new_block(mut self, span: SourceSpan) -> int:
         """Allocate a block before connecting edges, preserving index stability."""
@@ -112,6 +132,7 @@ pub def track_rvalue_moves(mut builder: Builder, value: RvalueKind) -> None:
     """Remove transferred whole owners before building cleanup edges."""
     match value:
         RvalueKind.Use(operand) => forget_moved_arguments(builder, [operand])
+        RvalueKind.Tuple(operands) => forget_moved_arguments(builder, operands)
         RvalueKind.Model(_index, operands) => forget_moved_arguments(builder, operands)
         RvalueKind.Enum(_owner, _variant, operands) => forget_moved_arguments(builder, operands)
         _ => pass
@@ -184,8 +205,8 @@ pub def read_place(place: Place, moved: bool, span: SourceSpan) -> Operand:
 pub def value_type(builder: Builder, operand: Operand) -> Result[PlanType, str]:
     """Read a materialized value's plan type without consulting source syntax or frontend policy."""
     match operand.kind:
-        OperandKind.Copy(place) => return Ok(frame_place_type(builder.locals, place))
-        OperandKind.Move(place) => return Ok(frame_place_type(builder.locals, place))
+        OperandKind.Copy(place) => return Ok(place_type(builder.locals, place))
+        OperandKind.Move(place) => return Ok(place_type(builder.locals, place))
         OperandKind.Literal(constant) =>
             match constant:
                 Constant.Numeric(_text, ty) => return Ok(ty)
@@ -196,17 +217,44 @@ pub def value_type(builder: Builder, operand: Operand) -> Result[PlanType, str]:
                 Constant.Text(_value) => return Ok(PlanType.StrRef)
 
 
-pub def frame_place_type(locals: list[Local], value: Place) -> PlanType:
+pub def place_type(locals: list[Local], value: Place) -> PlanType:
     """Read retained scalar and owner projections, including supported collection reborrows."""
     match value.projection:
         Projection.VariantField(_variant, _slot, ty) => return ty
         Projection.Field(_slot, ty) => return ty
         Projection.DerefField(_slot, ty) => return ty
+        Projection.Fields(fields) => return fields[-1].ty
+        Projection.DerefFields(fields) => return fields[-1].ty
         Projection.NumericValue(ty) => return ty
         Projection.Value => return PlanType.Int
         Projection.Overflow => return PlanType.Bool
         Projection.Deref(ty) => return ty
         Projection.Whole => return locals[value.local].ty
+
+
+pub def appended_field(source: Place, field: FieldProjection, span: SourceSpan) -> Result[Place, str]:
+    """Append one exact payload or field step without discarding the preceding checked projection path."""
+    mut fields: list[FieldProjection] = []
+    mut dereference = false
+    match source.projection:
+        Projection.Whole => pass
+        Projection.Field(slot, ty) => fields.append(FieldProjection(slot=slot, ty=ty))
+        Projection.VariantField(variant, slot, ty) => fields.append(FieldProjection(slot=slot, ty=ty, variant=variant))
+        Projection.Fields(path) =>
+            fields = path
+        Projection.Deref(_ty) =>
+            dereference = true
+        Projection.DerefField(slot, ty) =>
+            dereference = true
+            fields.append(FieldProjection(slot=slot, ty=ty))
+        Projection.DerefFields(path) =>
+            dereference = true
+            fields = path
+        _ => return Err("invalid Body IR carrier projection prefix")
+    fields.append(field)
+    if dereference:
+        return Ok(Place(local=source.local, projection=Projection.DerefFields(fields), span=span))
+    return Ok(Place(local=source.local, projection=Projection.Fields(fields), span=span))
 
 
 pub def external_call(
@@ -224,3 +272,19 @@ pub def external_call(
     # A returned String is a new owner: it is dropped at scope exit or on unwind like any other.
     if result == PlanType.String:
         builder.owned.append(destination.local)
+
+
+pub def literal(constant: Constant, span: SourceSpan) -> Operand:
+    """Wrap a plan constant as an operand."""
+    return Operand(kind=OperandKind.Literal(constant), span=span)
+
+
+pub def text_literal(text: str, span: SourceSpan) -> Operand:
+    """Retain static text without an implicit allocation."""
+    return literal(Constant.Text(text), span)
+
+
+pub def finish_fallthrough(mut builder: Builder, target: int, span: SourceSpan) -> None:
+    """Connect an open block while retaining explicit return and loop exits."""
+    if not builder.closed[builder.current]:
+        builder.finish(TerminatorKind.Goto(target), span)
