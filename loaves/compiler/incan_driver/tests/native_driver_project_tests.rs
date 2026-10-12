@@ -10899,7 +10899,8 @@ fn user_module_derivables_output_matches_legacy() -> Result<(), Box<dyn std::err
     )
 }
 
-/// Compare imported declaration modules through standalone builds, whose inferred Rust dependencies include derives.
+/// Compare imported declarations with unchanged legacy emission through the same sealed runtime and SDK closure.
+/// Legacy's build planner omits the serde extern for this imported bundle; its emitter remains the reference.
 fn check_source_modules_case(
     name: &str,
     text: &str,
@@ -10929,17 +10930,22 @@ fn check_source_modules_case(
         .output()?,
         "native imported declaration compilation",
     );
+    let emission = support::repo_command()
+        .current_dir(&root)
+        .arg("--emit-rust")
+        .arg(&source)
+        .output()?;
+    success(&emission, "legacy imported declaration emission");
+    let reference = root.join("reference.rs");
+    fs::write(&reference, emission.stdout)?;
     let legacy = root.join("legacy");
     success(
-        &support::repo_command()
-            .current_dir(&root)
-            .arg("build")
-            .arg(&source)
-            .arg(&legacy)
+        &closure
+            .reference_command(&reference, &legacy, &fixture.sysroot)?
             .output()?,
         "legacy imported declaration compilation",
     );
-    let expected = Command::new(legacy.join("oven/release").join(name)).output()?;
+    let expected = Command::new(legacy).output()?;
     let actual = Command::new(native).output()?;
     success(&expected, "legacy imported declaration execution");
     success(&actual, "native imported declaration execution");

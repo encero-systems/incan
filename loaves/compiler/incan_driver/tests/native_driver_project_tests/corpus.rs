@@ -287,6 +287,32 @@ pub(super) struct NativeClosure {
 }
 
 impl NativeClosure {
+    /// Compile unedited legacy emission with this same sealed closure, including derives the legacy planner omits.
+    pub(super) fn reference_command(
+        &self,
+        source: &Path,
+        output: &Path,
+        sysroot: &Path,
+    ) -> Result<Command, Box<dyn std::error::Error>> {
+        let mut command = Command::new(super::pinned_driver_rustc()?);
+        command
+            .arg("--edition=2024")
+            .arg("--crate-name")
+            .arg("legacy_reference")
+            .arg("--sysroot")
+            .arg(sysroot)
+            .arg(source)
+            .arg("-o")
+            .arg(output);
+        for (name, artifact) in &self.externs {
+            command.arg("--extern").arg(format!("{name}={}", artifact.display()));
+        }
+        for directory in &self.directories {
+            command.arg("-L").arg(format!("dependency={}", directory.display()));
+        }
+        Ok(command)
+    }
+
     /// Add every crate another baked Loaf's receipt selects that this closure does not already name.
     ///
     /// Both receipts select from the one fixture Store, so a crate both name is the same artifact; the runtime's
