@@ -10356,28 +10356,118 @@ fn newtype_trait_targets_output_matches_legacy() -> Result<(), Box<dyn std::erro
     )
 }
 
-/// Retaining a generic newtype layout does not authorize an unresolved native parameter carrier; both pending
-/// generic fixtures keep their named refusals and produce no binary.
+/// A generic Copy selection remains conditional and cannot admit a concrete owned string field.
+#[test]
+fn generic_newtype_copy_string_payload_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("generic-newtype-copy-string")?;
+    let input = root.join("main.incn");
+    fs::write(
+        &input,
+        r#"@derive(Copy)
+type Wrapper[T] = newtype T:
+    def kind(self) -> str:
+        return "Wrapper"
+
+def main() -> None:
+    wrapped: Wrapper[str] = Wrapper("text")
+    println(wrapped.kind())
+"#,
+    )?;
+    let binary = root.join("native");
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let refused = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &input,
+        &binary,
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    let diagnostic = String::from_utf8_lossy(&refused.stderr);
+    assert!(!refused.status.success(), "{diagnostic}");
+    assert!(
+        diagnostic.contains("unsupported Body IR generic Newtype Copy payload str"),
+        "{diagnostic}"
+    );
+    assert!(!binary.exists());
+    Ok(())
+}
+
+/// The same written Copy selection admits the concrete integer payload that actually implements it.
+#[test]
+fn generic_newtype_copy_int_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("generic-newtype-copy-int")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"@derive(Copy)
+type Wrapper[T] = newtype T:
+    def kind(self) -> str:
+        return "Wrapper"
+
+def main() -> None:
+    wrapped: Wrapper[int] = Wrapper(3)
+    println(wrapped.kind())
+"#,
+    )
+}
+
+/// A closed generator payload does not turn a generic wrapper's conditional derives into concrete implementations.
+#[test]
+fn generic_newtype_generator_payload_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("generic-newtype-generator-payload")?;
+    let input = root.join("main.incn");
+    fs::write(
+        &input,
+        r#"type Wrapper[T] = newtype T:
+    def kind(self) -> str:
+        return "Wrapper"
+
+def numbers() -> Generator[int]:
+    yield 1
+
+def main() -> None:
+    wrapped: Wrapper[Generator[int]] = Wrapper(numbers())
+    println(wrapped.kind())
+"#,
+    )?;
+    let binary = root.join("native");
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let refused = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &input,
+        &binary,
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    let diagnostic = String::from_utf8_lossy(&refused.stderr);
+    assert!(!refused.status.success(), "{diagnostic}");
+    assert!(
+        diagnostic.contains("unsupported Body IR generic Newtype argument outside int or str"),
+        "{diagnostic}"
+    );
+    assert!(!binary.exists());
+    Ok(())
+}
+
+/// An inferred generic newtype without a closed checked owner keeps its named refusal and produces no binary.
 #[test]
 fn generic_newtypes_retain_parameter_carrier_refusals() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     let closure = corpus::runtime_closure(&fixture.formatting)?;
-    for (name, source, expected) in [
-        (
-            "generic-newtype",
-            include_str!(
-                "../../incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/newtype_generic.incn"
-            ),
+    for (name, source, expected) in [(
+        "generic-newtype",
+        include_str!("../../incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/newtype_generic.incn"),
+        [
             "unsupported Body IR type Box[TypeVar]",
-        ),
-        (
-            "generic-newtype-methods",
-            include_str!(
-                "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/generic_methods.incn"
-            ),
-            "unsupported Body IR type Wrapper[int]",
-        ),
-    ] {
+            "unsupported Body IR type Box[Unknown]",
+        ],
+    )] {
         let root = fixture.scratch(name)?;
         let input = root.join("generic.incn");
         fs::write(&input, source)?;
@@ -10392,13 +10482,84 @@ fn generic_newtypes_retain_parameter_carrier_refusals() -> Result<(), Box<dyn st
         .output()?;
         assert!(!refused.status.success());
         assert!(
-            String::from_utf8_lossy(&refused.stderr).contains(expected),
+            expected
+                .iter()
+                .any(|expected| String::from_utf8_lossy(&refused.stderr).contains(*expected)),
             "{}",
             String::from_utf8_lossy(&refused.stderr)
         );
         assert!(!binary.exists());
     }
     Ok(())
+}
+
+/// A non-Copy string payload specializes the owner without confusing its binder with the method's binder.
+#[test]
+fn generic_newtype_string_methods_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("generic-newtype-string-methods")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"type Wrapper[U] = newtype U:
+    def echo[T with Clone](self, value: T) -> T:
+        return value
+
+def main() -> None:
+    wrapped: Wrapper[str] = Wrapper("text")
+    println(wrapped.echo(3))
+    println(wrapped.echo(4))
+"#,
+    )
+}
+
+/// A nested underlying template stays outside the sole-owner-binder profile before any native layout is declared.
+#[test]
+fn generic_newtype_nested_template_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("generic-newtype-nested-template")?;
+    let input = root.join("main.incn");
+    fs::write(
+        &input,
+        r#"type Wrapper[T] = newtype List[T]
+
+def main() -> None:
+    wrapped: Wrapper[int] = Wrapper([1])
+    pass
+"#,
+    )?;
+    let binary = root.join("native");
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let refused = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &input,
+        &binary,
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    let diagnostic = String::from_utf8_lossy(&refused.stderr);
+    assert!(!refused.status.success(), "{diagnostic}");
+    assert!(
+        diagnostic.contains("unsupported Body IR generic Newtype underlying template outside sole owner parameter"),
+        "{diagnostic}"
+    );
+    assert!(!binary.exists());
+    Ok(())
+}
+
+/// A checked concrete newtype receiver specializes its method parameters alongside class, model and trait methods.
+#[test]
+fn generic_newtype_methods_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("generic-newtype-methods")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!("../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/generic_methods.incn"),
+    )
 }
 
 /// A call to an overloaded stdlib function runs the overload the checker selected by arity, as that overload's own SDK
