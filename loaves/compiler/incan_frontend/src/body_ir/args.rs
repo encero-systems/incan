@@ -32,8 +32,12 @@ pub(super) struct DeclaredSlot {
     pub(super) has_default: bool,
     /// Whether this slot holds a partial's construction-time preset, which positional binding skips.
     pub(super) is_partial_preset: bool,
-    /// Whether this slot is a `*args`/`**kwargs` rest parameter, which this planner refuses.
+    /// Whether this slot needs rest packing before ordinary declared-slot binding.
     pub(super) is_rest: bool,
+    /// Checked source parameter kind; only rest packing reads this distinction.
+    pub(super) kind: ast::ParamKind,
+    /// Checked annotation type, before a rest parameter's collection storage is materialized.
+    pub(super) ty: IncanType,
     /// Whether the parameter is declared `mut`, so a non-`Copy` argument is borrowed mutably rather than copied
     /// (#2022).
     pub(super) is_mut: bool,
@@ -46,6 +50,12 @@ impl DeclaredSlot {
             has_default: param.has_default,
             is_partial_preset: param.is_partial_preset,
             is_rest: param.kind != IncanCallableParamKind::Normal,
+            kind: match param.kind {
+                IncanCallableParamKind::Normal => ast::ParamKind::Normal,
+                IncanCallableParamKind::RestPositional => ast::ParamKind::RestPositional,
+                IncanCallableParamKind::RestKeyword => ast::ParamKind::RestKeyword,
+            },
+            ty: param.ty.clone(),
             is_mut: param.is_mut,
         }
     }
@@ -57,6 +67,8 @@ impl DeclaredSlot {
             has_default: param.has_default,
             is_partial_preset: param.is_partial_preset,
             is_rest: param.kind != ast::ParamKind::Normal,
+            kind: param.kind,
+            ty: semantic_type_from_resolved(&param.ty),
             is_mut: param.is_mut,
         }
     }

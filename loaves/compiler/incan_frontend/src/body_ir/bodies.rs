@@ -218,7 +218,7 @@ pub(super) fn lower_function_body(
             .unwrap_or(IncanType::Unknown);
         let local = builder.declare_new_local(
             param.node.name.clone(),
-            ty,
+            super::variadics::parameter_storage_type(ty, param.node.kind),
             root_scope,
             hir_span(param.span),
             &function.body,
@@ -402,6 +402,7 @@ pub(super) fn lower_method_body(
             .map(|p| builder.checked_type(&p.ty))
             .unwrap_or(IncanType::Unknown);
         let ty = close_self_type(ty, receiver_ty);
+        let ty = super::variadics::parameter_storage_type(ty, param.node.kind);
         let local = builder.declare_new_local(
             param.node.name.clone(),
             ty,

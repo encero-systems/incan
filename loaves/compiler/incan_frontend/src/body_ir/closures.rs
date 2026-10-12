@@ -252,7 +252,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if binding
             .params
             .iter()
-            .any(|param| param.name.is_none() || param.kind != ast::ParamKind::Normal)
+            .any(|param| param.name.is_none() || (!partial.args.is_empty() && param.kind != ast::ParamKind::Normal))
         {
             return self.unsupported_operand(
                 "partial callable target with an unnamed or rest parameter".to_string(),
@@ -308,7 +308,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     out,
                 );
             };
-            let ty = semantic_type_from_resolved(&param.ty);
+            let ty = super::variadics::parameter_storage_type(self.checked_type(&param.ty), param.kind);
             let previous = self.bindings.get(param_name).copied();
             let local =
                 self.declare_new_local_with_reads(param_name.clone(), ty.clone(), closure_scope, hir_span_value, 1);
@@ -350,7 +350,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .iter()
             .zip(&binding.params)
             .map(|(&local, param)| {
-                let ty = semantic_type_from_resolved(&param.ty);
+                let ty = super::variadics::parameter_storage_type(self.checked_type(&param.ty), param.kind);
                 let place = bir::Place::from_local(local);
                 let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
                 let operand = bir::Operand::place(place, fact, last_use);

@@ -31,7 +31,7 @@ from pub::incan_mir_plan import block as plan_block, place as plan_place
 from types import primitive_type
 from classes import function_name
 from collections import is_collection
-from layout_types import native_source_type
+from layout_types import native_source_type, callable_parameter_type
 from lists import is_list, is_owned_list, parameter_storage_type, is_exclusive_borrow
 from numerics import numeric_carrier
 from generators import generator_type, is_generator_type
@@ -42,9 +42,12 @@ pub def function_pointer_type(parameters: &list[IncanCallableParam], result: &Ru
     """Keep the checked parameter order and append the return type to the native signature vector."""
     mut signature: list[PlanType] = []
     for parameter in parameters:
-        if parameter.kind != IncanCallableParamKind.Normal:
-            return Err("unsupported Body IR function pointer with rest parameters")
-        signature.append(signature_input(callable_component(parameter.ty)?, parameter.is_mut))
+        mut input = PlanType.Unit
+        if parameter.kind == IncanCallableParamKind.Normal:
+            input = callable_component(parameter.ty)?
+        else:
+            input = callable_parameter_type([], [], [], parameter, [])?
+        signature.append(signature_input(input, parameter.is_mut))
     signature.append(callable_result(result)?)
     return Ok(PlanType.FunctionPointer(signature))
 

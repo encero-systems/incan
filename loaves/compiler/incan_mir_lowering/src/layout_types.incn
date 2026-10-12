@@ -1,6 +1,6 @@
 """Resolve complete checked carrier and collection types against one retained native layout context."""
 
-from rust::incan_semantics_core import IncanType as RustType, IncanCallableParamKind
+from rust::incan_semantics_core import IncanType as RustType, IncanCallableParam, IncanCallableParamKind
 from rust::incan_semantics_core::body_ir import NominalDeclaration, EnumDeclaration as RustEnumDeclaration
 from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
 from pub::incan_mir_plan import PlanType, ListLeaf, EnumDeclaration, TupleElement
@@ -29,9 +29,7 @@ pub def native_source_type(
         RustType.Function(params=parameters, return_type=result) =>
             mut signature: list[PlanType] = []
             for parameter in parameters:
-                if parameter.kind != IncanCallableParamKind.Normal:
-                    return Err("unsupported Body IR function pointer with rest parameters")
-                input = native_source_type(nominals, enums, unions, parameter.ty, intrinsics)?
+                input = callable_parameter_type(nominals, enums, unions, parameter, intrinsics)?
                 signature.append(signature_input(input, parameter.is_mut))
             signature.append(native_source_type(nominals, enums, unions, result, intrinsics)?)
             return Ok(PlanType.FunctionPointer(signature))
@@ -57,6 +55,24 @@ pub def native_source_type(
         RustType.Tuple(elements) => return layout_tuple_type(nominals, enums, unions, elements, intrinsics)
         _ => pass
     return model_type(nominals, ty)
+
+
+pub def callable_parameter_type(
+    nominals: list[NominalDeclaration],
+    enums: list[RustEnumDeclaration],
+    unions: list[RustType],
+    parameter: &IncanCallableParam,
+    intrinsics: list[EnumDeclaration],
+) -> Result[PlanType, str]:
+    """Translate checked callable parameter kinds into the same native collection storage their Body IR frames retain."""
+    element = native_source_type(nominals, enums, unions, parameter.ty, intrinsics)?
+    match parameter.kind:
+        IncanCallableParamKind.Normal => return Ok(element)
+        IncanCallableParamKind.RestPositional =>
+            match element:
+                PlanType.List(leaf, depth) => return Ok(PlanType.List(leaf, depth + 1))
+                _ => return Ok(PlanType.List(collection_leaf(element)?, 1))
+        IncanCallableParamKind.RestKeyword => return Ok(PlanType.Dict(ListLeaf.Str, collection_leaf(element)?))
 
 
 def hashed_leaf(

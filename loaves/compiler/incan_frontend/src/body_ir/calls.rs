@@ -342,13 +342,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Bind a call's arguments against a declared parameter surface, falling back to positional lowering when there
     /// is none to bind against.
     ///
-    /// Shared by the direct-call and method paths so both treat an unresolved or rest-bearing signature the same
-    /// way. A rest (`*args`/`**kwargs`) parameter means a written argument no longer corresponds one-to-one with a
-    /// declared slot, so those calls keep lowering their arguments — refusing them would drop a delivered language
-    /// capability — but record [`bir::ArgumentBinding::UnresolvedPositional`] rather than a slot map this stage did
-    /// not compute. Spread arguments lower there, because a spread genuinely has no slot to bind to. A *named*
-    /// argument with no spread beside it is still refused: its arity is perfectly well known, so binding it into a
-    /// rest parameter is variadic-binding work this issue does not own.
+    /// Direct calls, methods and local callable values share this boundary. A resolved rest-bearing declaration
+    /// packs its written values and spreads into explicit list/dictionary operands, then records ordinary resolved
+    /// slots. A missing declaration makes no slot claim and retains the original spread-capable arguments.
     pub(super) fn bind_declared_args(
         &mut self,
         callee: &str,
@@ -357,11 +353,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> Result<(Vec<bir::ArgumentElement>, bir::ArgumentBinding), String> {
-        let has_rest = declared
-            .as_ref()
-            .is_some_and(|slots| slots.iter().any(|slot| slot.is_rest));
-        let fixed_slots = declared.filter(|_| !has_rest);
-        let Some(slots) = fixed_slots else {
+        let Some(slots) = declared else {
             let elements = self.lower_spread_capable_args(args, scope, out);
             return Ok((elements, bir::ArgumentBinding::UnresolvedPositional));
         };
@@ -375,6 +367,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 None => vec![arg.clone()],
             })
             .collect();
+        if slots.iter().any(|slot| slot.is_rest) {
+            return self.bind_rest_args(callee, &slots, &expanded, scope, out);
+        }
         let planned = plan_declared_args(callee, &slots, &expanded)?;
         let (operands, binding) = self
             .lower_planned_args(
@@ -1140,36 +1135,25 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 );
             };
             let slots: Vec<DeclaredSlot> = params.iter().map(DeclaredSlot::from_semantic_param).collect();
-            let planned = match plan_declared_args(&format!("local callable `{name}`"), &slots, args) {
-                Ok(planned) => planned,
-                Err(description) => {
-                    return self.unsupported_operand(description, scope, hir_span_value, out);
-                }
-            };
 
             // Source evaluation observes the callable value before its arguments. The target read also performs the
             // one ownership/last-use decision for that lexical environment, which `CallableTarget::Local` preserves
             // for a later executor instead of re-deriving it from the local's source spelling.
             let place = bir::Place::from_local(local);
             let (fact, last_use) = self.ownership_fact_for_place(&place, &self.locals[local.index()].ty.clone());
-            let (operands, binding) = match self.lower_planned_args(
-                &planned,
-                slots.len(),
-                &slots.iter().map(|slot| slot.is_mut).collect::<Vec<bool>>(),
-                scope,
-                out,
-            ) {
-                Ok(bound) => bound,
-                Err(description) => {
-                    return self.unsupported_operand(description, scope, hir_span_value, out);
-                }
-            };
+            let (operands, binding) =
+                match self.bind_declared_args(&format!("local callable `{name}`"), Some(slots), args, scope, out) {
+                    Ok(bound) => bound,
+                    Err(description) => {
+                        return self.unsupported_operand(description, scope, hir_span_value, out);
+                    }
+                };
             let callee = bir::Callee::Function(bir::CallableTarget::Local(bir::LocalCallableTarget {
                 operand: bir::PlaceOperand { place, fact, last_use },
                 binding,
             }));
             let ty = self.resolve_ty(span);
-            return self.push_call_temp(callee, fixed_elements(operands), ty, scope, hir_span_value, false, out);
+            return self.push_call_temp(callee, operands, ty, scope, hir_span_value, false, out);
         }
 
         // A name that resolves to a nominal type but has no recorded field binding is a construction the checker
@@ -1404,6 +1388,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             has_default: false,
             is_partial_preset: false,
             is_rest: false,
+            kind: ast::ParamKind::Normal,
+            ty: IncanType::Unknown,
             is_mut: false,
         }));
         let (operands, binding) = match self.bind_declared_args("builtin `list.repeat`", Some(slots), args, scope, out)
