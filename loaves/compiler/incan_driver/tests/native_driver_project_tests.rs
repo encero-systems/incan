@@ -8985,37 +8985,46 @@ def main() -> None:
     )
 }
 
-/// Normal enum serde uses a shared view of the exact derived layout, including a closed Serialize-bound function.
+/// Normal enum serde borrows the derived layout, including through a Serialize-bound function. Output is pinned to
+/// qualified_json_derives's recorded Color value and serde_derive_propagation's recorded Shape payload; this SDK
+/// runner cannot seal legacy's release raw-serde closure, so it must not invent a new reference output.
 #[test]
 fn enum_json_serialization_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    let fixture = driver_fixture()?;
-    corpus::check_builtin_source(
-        &fixture.driver_binary("debug"),
-        &fixture.scratch("enum-json-serialization")?,
-        &fixture.sysroot,
-        &fixture.formatting,
+    check_native_case(
+        "enum_json_serialization",
         r#"from std.serde import json
-from rust::serde import Serialize as RustSerialize
 
 @derive(Clone, json.Serialize)
 enum Color:
     Red
-    Rgb(int, int, int)
+
+@derive(Clone, json.Serialize)
+enum Shape:
+    Square(int, int)
+    Circle(int)
 
 def encode[T with json.Serialize](value: T) -> str:
     return value.to_json()
 
 def main() -> None:
     plain = Color.Red
-    mixed = Color.Rgb(1, 2, 3)
+    mixed = Shape.Square(2, 3)
     println(plain.to_json())
     println(encode(plain))
     println(json_stringify(mixed))
     println(encode(mixed))
     match mixed:
-        Color.Rgb(red, green, blue) => println(red + green + blue)
-        Color.Red => println(0)
+        Shape.Square(width, height) => println(width + height)
+        Shape.Circle(radius) => println(radius)
 "#,
+        b"\"Red\"\n\"Red\"\n{\"Square\":[2,3]}\n{\"Square\":[2,3]}\n5\n",
+    )?;
+    check_project_refusal(
+        "enum_json_newtype_next_stage",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/qualified_json_derives.incn"
+        ),
+        "unsupported source nonplain Newtype on the native route",
     )
 }
 
