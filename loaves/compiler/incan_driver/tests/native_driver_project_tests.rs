@@ -7797,6 +7797,76 @@ pub trait Measured:
     )
 }
 
+/// A generic adopter whose inherited default still carries open trait arguments refuses before native compilation,
+/// rather than surfacing a driver error for an invalid implementation record.
+#[test]
+fn open_generic_trait_default_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("open-trait-default")?;
+    let source = root.join("cell.incn");
+    fs::write(
+        &source,
+        "trait Read[T]:\n    def value(self) -> T: ...\n    def get(self) -> T:\n        return self.value()\n\nmodel Cell[T] with Read[T]:\n    item: T\n    def value(self) -> T:\n        return self.item\n\ndef main() -> None:\n    println(Cell(item=7).get())\n",
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let binary = root.join("native");
+    let refused = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &source,
+        &binary,
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("unsupported Body IR open trait default type arguments"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(!binary.exists());
+    Ok(())
+}
+
+/// Checked Clone calls keep builtin values, union carriers and Option carriers independent of their original fields.
+#[test]
+fn builtin_and_carrier_clone_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("builtin-carrier-clone")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"@derive(Clone)
+model Left:
+    value: int
+
+@derive(Clone)
+model Right:
+    value: str
+
+type Choice = Union[Left, Right]
+
+model Packet:
+    choice: Choice
+    maybe: Option[Left]
+
+def main() -> None:
+    packet = Packet(choice=Left(value=1), maybe=Some(Left(value=2)))
+    choice = packet.choice.clone()
+    maybe = packet.maybe.clone()
+    text = "text"
+    println(text.clone())
+    number = 7
+    println(number.clone())
+    println(maybe.unwrap().value)
+    match choice:
+        Left(value=n) => println(n)
+        Right(value=text) => println(text)
+"#,
+    )
+}
+
 /// An explicit `clone()` the checker selects from the standard library's Clone copies a model, a class, an enum and a
 /// newtype through each one's derived implementation, on a value and on `self`, and the copy is independent.
 #[test]
