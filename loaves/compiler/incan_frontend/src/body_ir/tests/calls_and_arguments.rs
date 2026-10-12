@@ -5,6 +5,21 @@
 
 use super::*;
 
+/// Legacy moves a rest spread of an owned local even when a later read remains; that unbuildable case stays refused.
+#[test]
+fn rest_spread_reused_local_retains_a_named_refusal() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def total(*items: int) -> int:\n  return sum(items)\n\ndef main() -> None:\n  xs = [1, 2]\n  println(total(*xs))\n  println(len(xs))\n",
+        &["m", "rest_spread_reuse"],
+    )?;
+    let snapshot = body_named(&module, "main")?.render_snapshot();
+    assert!(
+        snapshot.contains("unsupported(rest spread of a reused owned local: legacy moves its source)"),
+        "{snapshot}"
+    );
+    Ok(())
+}
+
 /// Rest annotations retain their collection storage, and each call supplies one resolved operand per slot.
 #[test]
 fn rest_parameter_storage_and_bindings_are_retained() -> Result<(), Box<dyn std::error::Error>> {

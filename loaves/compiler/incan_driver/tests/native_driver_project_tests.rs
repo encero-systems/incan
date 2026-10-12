@@ -44,13 +44,17 @@ class Collector:
         return sum(items)
 
 def main() -> None:
-    xs = [2, 3]
-    kw = {"name": "spread"}
-    println(collect("direct", 1, *xs, name="inline", **kw))
+    xs_direct = [2, 3]
+    kw_direct = {"name": "spread"}
+    xs_bound = [2, 3]
+    kw_bound = {"name": "spread"}
+    xs_method = [2, 3]
+    kw_method = {"name": "spread"}
+    println(collect("direct", 1, *xs_direct, name="inline", **kw_direct))
     f = collect
-    println(f("bound", 4, *xs, name="inline", **kw))
+    println(f("bound", 4, *xs_bound, name="inline", **kw_bound))
     collector = Collector()
-    println(collector.collect(5, *xs, name="inline", **kw))
+    println(collector.collect(5, *xs_method, name="inline", **kw_method))
     thing = Thing(name="thing")
     println(takes_rest(thing, 1, 2, 3))
     println(takes_rest(thing))
