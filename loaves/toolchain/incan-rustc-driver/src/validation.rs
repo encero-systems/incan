@@ -1078,7 +1078,8 @@ fn external_signature_type(ty: &Scalar) -> bool {
 }
 
 /// Callable objects accept scalars of any numeric carrier, text, owned models and enums, shared collection views and
-/// the exclusive borrows a `mut` parameter receives as inputs; their result is a scalar, owned text, an owned list, or an owned generator, which a generator expression's capturing step returns.
+/// the exclusive borrows a `mut` parameter receives as inputs; their result is a scalar, owned text, an owned list, or
+/// an owned generator, which a generator expression's capturing step returns.
 fn callable_object_signature(signature: &[Scalar]) -> bool {
     let Some((result, inputs)) = signature.split_last() else {
         return false;
