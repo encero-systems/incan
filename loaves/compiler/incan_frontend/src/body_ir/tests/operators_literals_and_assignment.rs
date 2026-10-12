@@ -1084,16 +1084,30 @@ fn unary_index_and_index_assignment_hooks_call_their_dunder_methods() -> Result<
     Ok(())
 }
 
-/// A hook on a generic owner's instance stays a named refusal until type-parameter display has a Body IR fact.
+/// A hook on a generic owner's instance calls its dunder, whose f-string displays the type-parameter operand as generic
+/// code displays it, through its type argument's own display.
 #[test]
-fn an_operator_hook_on_a_generic_owner_stays_refused() -> Result<(), Box<dyn std::error::Error>> {
+fn an_operator_hook_on_a_generic_owner_calls_its_dunder() -> Result<(), Box<dyn std::error::Error>> {
     let source = "model Column[T with Display]:\n  sql: str\n\n  def __mul__(self, other: T) -> Column[T]:\n    return Column[T](sql=f\"({self.sql} * {other})\")\n\ndef main() -> None:\n  amount = Column[float](sql=\"amount\")\n  println((amount * 2.0).sql)\n";
     let module = build(source, &["m", "generic_operator_owner"])?;
     let rendered = body_named(&module, "main")?.render_snapshot();
-    assert!(
-        rendered.contains("unsupported(operator hook `__mul__` on a generic owner)"),
-        "{rendered}"
-    );
+    assert!(rendered.contains("call method:__mul__("), "{rendered}");
+    assert!(!rendered.contains("unsupported("), "{rendered}");
+    let hook = body_named(&module, "__mul__")?.render_snapshot();
+    assert!(hook.contains(":type_parameter_display"), "{hook}");
+    assert!(hook.contains(".sql):display"), "{hook}");
+    Ok(())
+}
+
+/// A `println` or `print` argument whose checked type is a type parameter prints its type argument's own display,
+/// while a concretely typed argument keeps its ordinary display.
+#[test]
+fn printing_a_type_parameter_value_displays_it_generically() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def announce[T with Display](value: T, label: str) -> None:\n  println(value)\n  print(label)\n";
+    let module = build(source, &["m", "generic_print"])?;
+    let rendered = body_named(&module, "announce")?.render_snapshot();
+    assert!(rendered.contains(":type_parameter_display)"), "{rendered}");
+    assert_eq!(rendered.matches(":type_parameter_display").count(), 1, "{rendered}");
     Ok(())
 }
 

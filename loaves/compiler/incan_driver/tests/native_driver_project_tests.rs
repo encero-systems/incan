@@ -2970,6 +2970,51 @@ def main() -> None:
     )
 }
 
+/// A value whose checked type is a type parameter displays, in an f-string and when printed, through its type
+/// argument's own display in every closed instance, an integral float without its fractional part, including inside an
+/// operator hook of a generic owner whose type parameter no field mentions (#1370), as legacy's generic code does.
+#[test]
+fn type_parameter_display_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("type-parameter-display")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"@derive(Debug)
+model Column[T with Display]:
+    sql: str
+
+    def __mul__(self, other: T) -> Column[T]:
+        return Column[T](sql=f"({self.sql} * {other})")
+
+
+def show[T with Display](value: T) -> str:
+    return f"<{value}>"
+
+
+def announce[T with Display](value: T) -> None:
+    println(value)
+
+
+def main() -> None:
+    amount = Column[float](sql="amount")
+    println((amount * 2.0).sql)
+    println((amount * 2.5).sql)
+    label = Column[str](sql="label")
+    println((label * "x").sql)
+    println(show(2.0))
+    println(show(1.5))
+    println(show(3))
+    println(show("s"))
+    announce(4.0)
+    announce(0.25)
+    announce(7)
+    println(f"{amount:?}")
+"#,
+    )
+}
+
 /// Prove canonical scalar casts and default values byte-identical to legacy.
 #[test]
 fn numeric_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
