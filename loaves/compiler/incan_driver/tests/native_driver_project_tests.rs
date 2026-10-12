@@ -6395,6 +6395,67 @@ def main() -> None:
     )
 }
 
+/// Prove `isinstance` over an `Option` byte-identical to legacy: `Some` of the tested type, text and frozen text alike,
+/// `None`, a payload that can never be the tested type, an `Option` of a union tested for each member and for a type
+/// it never holds from a local and a parameter, and `Option` model fields.
+#[test]
+fn option_isinstance_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("option-isinstance")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"const NAME: FrozenStr = "policy"
+
+model Slot:
+    value: Option[int]
+    label: Option[str]
+
+def maybe(flag: bool) -> Option[str]:
+    if flag:
+        return Some("x")
+    return None
+
+def maybe_frozen(flag: bool) -> Option[FrozenStr]:
+    if flag:
+        return Some(NAME)
+    return None
+
+def maybe_int(flag: bool) -> Option[int]:
+    if flag:
+        return Some(3)
+    return None
+
+def maybe_union(pick: int) -> Option[str | int]:
+    if pick == 0:
+        return Some("text")
+    if pick == 1:
+        return Some(4)
+    return None
+
+def is_text(value: Option[str | int]) -> bool:
+    return isinstance(value, str)
+
+def main() -> None:
+    println(isinstance(maybe(true), str))
+    println(isinstance(maybe(false), str))
+    println(isinstance(maybe_frozen(true), str))
+    println(isinstance(maybe_frozen(false), str))
+    println(isinstance(maybe_int(true), str))
+    println(isinstance(maybe_int(true), int))
+    println(isinstance(maybe_int(false), int))
+    for pick in range(3):
+        held = maybe_union(pick)
+        println(f"{isinstance(held, str)} {isinstance(held, int)} {isinstance(held, float)} {is_text(held)}")
+    slot = Slot(value=Some(5), label=Some("a"))
+    println(f"{isinstance(slot.value, int)} {isinstance(slot.value, str)} {isinstance(slot.label, str)}")
+    empty = Slot(value=None, label=None)
+    println(f"{isinstance(empty.value, int)} {isinstance(empty.label, str)}")
+"#,
+    )
+}
+
 /// List display preserves legacy Debug spelling, escaping, nesting, and repeated owner reads.
 #[test]
 fn list_display_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
@@ -7783,11 +7844,11 @@ def main() -> None:
 
 /// `isinstance` over an Option is true only for a present payload of the target type, through a union payload too.
 #[test]
-fn option_isinstance_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+fn option_isinstance_over_frozen_text_unions_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     corpus::check_builtin_source(
         &fixture.driver_binary("debug"),
-        &fixture.scratch("option-isinstance")?,
+        &fixture.scratch("option-isinstance-frozen-unions")?,
         &fixture.sysroot,
         &fixture.formatting,
         r#"const NAME: FrozenStr = "frozen"
