@@ -26,6 +26,15 @@ pub(super) fn collection_member_types(ty: &IncanType, kind: CollectionTypeId) ->
     };
     (collections::from_str(base) == Some(kind)).then_some(args.as_slice())
 }
+/// Report whether a checked type is an optional union (`int | str | None`): an intrinsic `Option` whose payload is a
+/// union, so a member pattern over it selects `Some` and then the member of that payload.
+pub(super) fn is_optional_union(ty: &IncanType) -> bool {
+    let IncanType::Generic { base, args } = ty else {
+        return false;
+    };
+    collections::from_str(base) == Some(CollectionTypeId::Option)
+        && matches!(args.as_slice(), [IncanType::Generic { base, .. }] if base == "Union")
+}
 /// Return just the checked error channel for an intrinsic `Result` carrier.
 pub(super) fn result_error_type(ty: &IncanType) -> Option<&IncanType> {
     result_type_parts(ty).map(|(_, error_type)| error_type)

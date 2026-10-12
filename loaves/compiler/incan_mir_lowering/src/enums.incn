@@ -123,6 +123,7 @@ def validate_payload_pattern(pattern: &RustPattern) -> Result[None, str]:
         RustPattern.Enum(canonical=_identity, name=_name, variant=_variant, fields=fields) =>
             return validate_payload_patterns(fields)
         RustPattern.Result(variant=_variant, fields=fields) => return validate_payload_patterns(fields)
+        RustPattern.UnionMember(ty=_ty, fields=fields) => return validate_payload_patterns(fields)
         RustPattern.Tuple(items) => return validate_payload_patterns(items)
         RustPattern.Or(alternatives) => return validate_payload_patterns(alternatives)
         _ => return Err("unsupported Body IR nested enum payload pattern")

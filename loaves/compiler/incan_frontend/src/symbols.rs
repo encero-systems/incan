@@ -167,6 +167,13 @@ pub fn canonical_builtin_function_identity(builtin: BuiltinFnId) -> Option<Canon
         .map(|entry| canonical_builtin_identity(entry.canonical))
 }
 
+/// Project the canonical identity of a builtin `Option` or `Result` constructor, the same identity symbol registration
+/// records for it, so checked-IR consumers can name a constructor the checker selected without reading source
+/// spelling.
+pub(crate) fn canonical_builtin_constructor_identity(constructor: constructors::ConstructorId) -> CanonicalSymbolId {
+    canonical_builtin_identity(constructors::as_str(constructor))
+}
+
 /// Build one canonical identity from a compiler-owned builtin registry entry.
 fn canonical_builtin_identity(canonical_name: &str) -> CanonicalSymbolId {
     CanonicalSymbolId {

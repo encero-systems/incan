@@ -336,14 +336,23 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 // from generic enum spelling.
                 let target_ty = self.resolve_ty(name.span);
                 let subject_ty = self.resolve_ty(pattern.span);
-                if matches!(&subject_ty, IncanType::Generic { base, .. } if base == "Union")
+                // A member pattern over an optional union (`int | str | None`) selects `Some` first, then the member
+                // of its union payload.
+                let optional_union = is_optional_union(&subject_ty);
+                if (matches!(&subject_ty, IncanType::Generic { base, .. } if base == "Union") || optional_union)
                     && !matches!(target_ty, IncanType::Unknown)
                     && args.iter().all(|arg| matches!(arg, ast::PatternArg::Positional(_)))
                 {
+                    let mut union_place = place.clone();
+                    if optional_union {
+                        union_place
+                            .projection
+                            .push(bir::PlaceElem::structural_field("0".to_string()));
+                    }
                     let mut fields = Vec::new();
                     for arg in args {
                         if let ast::PatternArg::Positional(payload) = arg {
-                            let mut payload_place = place.clone();
+                            let mut payload_place = union_place.clone();
                             payload_place
                                 .projection
                                 .push(bir::PlaceElem::UnionMember { ty: target_ty.clone() });
@@ -358,7 +367,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                             ));
                         }
                     }
-                    return bir::Pattern::UnionMember { ty: target_ty, fields };
+                    let member = bir::Pattern::UnionMember { ty: target_ty, fields };
+                    if optional_union {
+                        return bir::Pattern::Enum {
+                            canonical: Some(crate::symbols::canonical_builtin_constructor_identity(
+                                constructors::ConstructorId::Some,
+                            )),
+                            name: String::new(),
+                            variant: constructors::as_str(constructors::ConstructorId::Some).to_string(),
+                            fields: vec![member],
+                        };
+                    }
+                    return member;
                 }
                 // Retain the checked pattern target from local or imported declaration context. Source aliases
                 // never participate in declaration or layout equality. The direct profile accepts only canonical

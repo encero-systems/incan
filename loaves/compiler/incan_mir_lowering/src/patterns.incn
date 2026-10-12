@@ -50,6 +50,8 @@ pub def pattern_tests(
             return carrier_tests(builder, source, pattern, selected, rejected, span)
         RustPattern.FieldlessEnumVariant(_target) =>
             return carrier_tests(builder, source, pattern, selected, rejected, span)
+        RustPattern.UnionMember(ty=_ty, fields=_fields) =>
+            return carrier_tests(builder, source, pattern, selected, rejected, span)
         RustPattern.Tuple(items) =>
             ty = place_type(builder.locals, source)
             if not is_tuple_type(ty):
@@ -110,6 +112,7 @@ pub def has_refutable_payload(pattern: &RustPattern) -> bool:
         RustPattern.Enum(canonical=_identity, name=_name, variant=_variant, fields=fields) =>
             return any_refutable(fields)
         RustPattern.Result(variant=_variant, fields=fields) => return any_refutable(fields)
+        RustPattern.UnionMember(ty=_ty, fields=fields) => return any_refutable(fields)
         _ => return false
 
 
@@ -149,6 +152,8 @@ def carrier_tests(
         RustPattern.Enum(canonical=_identity, name=_name, variant=_variant, fields=fields) =>
             return payload_tests(builder, source, owner, slot, fields, selected, rejected, span)
         RustPattern.Result(variant=_variant, fields=fields) =>
+            return payload_tests(builder, source, owner, slot, fields, selected, rejected, span)
+        RustPattern.UnionMember(ty=_ty, fields=fields) =>
             return payload_tests(builder, source, owner, slot, fields, selected, rejected, span)
         _ => builder.finish(TerminatorKind.Goto(selected), span)
     return Ok(None)
