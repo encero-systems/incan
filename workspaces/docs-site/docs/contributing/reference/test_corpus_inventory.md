@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3784 | 250 | 431 |
+| keep | 3785 | 250 | 431 |
 | re-point | 1487 | 91 | 1058 |
 | retire | 1507 | 153 | 0 |
 | unaffected | 1977 | 212 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8755** | **706** | **1494** |
+| **Total** | **8756** | **706** | **1494** |
 
 - Retire-class tests: 1507, of which twinned 1022, dies 295, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -1833,7 +1833,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
 
-### `loaves/compiler/incan_frontend` (2269 tests in 125 files: keep 2256, unaffected 13)
+### `loaves/compiler/incan_frontend` (2270 tests in 125 files: keep 2257, unaffected 13)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -1844,7 +1844,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_frontend/src/body_ir/tests/async_and_race.rs` | 15 | 412 | 412 | keep | - | - | - | #1561 | replacement 1 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/calls_and_arguments.rs` | 82 | 2247 | 2247 | keep | - | - | required | #1561 | checker 1, parser 1 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/closures_comprehensions_and_generators.rs` | 36 | 1121 | 1121 | keep | - | - | - | #1561 | parser 1 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
-| `loaves/compiler/incan_frontend/src/body_ir/tests/control_flow_and_loops.rs` | 30 | 1039 | 1039 | keep | - | - | - | #1561 | replacement 2 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/body_ir/tests/control_flow_and_loops.rs` | 31 | 1060 | 1060 | keep | - | - | - | #1561 | replacement 2 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/for_patterns.rs` | 16 | 482 | 482 | keep | - | - | - | #1561 | replacement 3, checker 6, parser 7 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/identities_and_imports.rs` | 24 | 1321 | 1321 | keep | - | - | - | #1561 | replacement 14, checker 14, parser 14 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/input_contract_and_refusals.rs` | 13 | 530 | 530 | keep | - | - | - | #1561 | replacement 5, checker 5, parser 5 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |

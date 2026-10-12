@@ -152,6 +152,27 @@ fn lowers_loop_expression_break_value_into_a_merged_result_place() -> Result<(),
     Ok(())
 }
 
+/// A loop expression's result belongs to its enclosing scope and survives the loop body's scope-exit drops.
+#[test]
+fn loop_expression_result_outlives_the_loop_scope() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def find(flag: bool) -> Option[str]:\n  return loop:\n    if flag:\n      break None\n    break Some(\"kept\")\n";
+    let module = build(source, &["m", "loop_result_scope"])?;
+    let body = body_named(&module, "find")?;
+    let bir::StatementKind::Loop { body: loop_body } = &body.block.stmts[0].kind else {
+        return Err(format!("expected a normalized loop: {body:?}").into());
+    };
+    let bir::StatementKind::Return {
+        value: Some(bir::Operand::Place(read)),
+    } = &body.block.stmts[1].kind
+    else {
+        return Err(format!("expected the loop result to be returned: {body:?}").into());
+    };
+    let result = read.place.local_id().ok_or("loop result is not a local")?;
+    assert_eq!(body.locals[result.index()].scope, body.block.scope);
+    assert_ne!(body.locals[result.index()].scope, loop_body.scope);
+    Ok(())
+}
+
 #[test]
 fn nested_while_break_inside_a_loop_expression_does_not_target_the_outer_loop() -> Result<(), Box<dyn std::error::Error>>
 {
