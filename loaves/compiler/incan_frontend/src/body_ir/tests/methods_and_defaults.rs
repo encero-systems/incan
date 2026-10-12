@@ -4,11 +4,11 @@
 
 use super::*;
 
-/// Field reads through self and a Self-typed parameter retain the exact declared storage identity.
+/// A newtype's wrapped-value reads through self and a Self-typed parameter retain the same storage identity.
 #[test]
 fn self_field_reads_keep_declared_storage_identity() -> Result<(), Box<dyn std::error::Error>> {
     let module = build(
-        "model Cell:\n  value: int\n  def add(self, other: Self) -> int:\n    return self.value + other.value\n",
+        "type Cell = newtype int:\n  def add(self, other: Self) -> int:\n    return self.0 + other.0\n",
         &["m", "self_field_identity"],
     )?;
     let owner = module.nominal_declarations.first().ok_or("model missing")?;

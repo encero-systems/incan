@@ -10015,7 +10015,7 @@ def main() -> None:
     )
 }
 
-/// Self-typed arguments read the owner's declared storage slots, including inside explicit comparison methods.
+/// Self-typed arguments read the owner's declared storage slots, including the wrapped value inside newtype methods.
 #[test]
 fn self_field_identity_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
@@ -10024,18 +10024,17 @@ fn self_field_identity_output_matches_legacy() -> Result<(), Box<dyn std::error:
         &fixture.scratch("self-field-identity")?,
         &fixture.sysroot,
         &fixture.formatting,
-        r#"model Cell:
-    value: int
+        r#"type Cell = newtype int:
 
     def total(self, other: Self) -> int:
-        return self.value + other.value
+        return self.0 + other.0
 
     def __eq__(self, other: Self) -> bool:
-        return self.value == other.value
+        return self.0 == other.0
 
 def main() -> None:
-    left = Cell(value=2)
-    right = Cell(value=3)
+    left = Cell(2)
+    right = Cell(3)
     println(left.total(right))
     println(left.__eq__(right))
 "#,
