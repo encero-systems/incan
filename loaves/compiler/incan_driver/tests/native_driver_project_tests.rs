@@ -3232,13 +3232,72 @@ def main() -> None:
     while let Some(items) = queue:
         items.pop()
         count += 1
-        if len(items) == 0:
+        if len(items) == 0 or count == 5:
             break
     println(f"{count} {queue}")
     kept = Some([1])
     match kept:
         Some(xs) => println(len(xs))
         None => pass
+"#,
+    )
+}
+
+/// Prove loops that change their items in place byte-identical to legacy: a loop over a `mut` list parameter or a
+/// `mut` local that appends to each list item, also when the loop variable reuses the parameter's name, or calls a
+/// `mut self` method on each model item, changes the iterated list, while the same item passed to a function's `mut`
+/// parameter is passed as a copy.
+#[test]
+fn in_place_loop_item_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("in-place-loop-item")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"model Cell:
+    pub tags: list[int]
+
+    def tag(mut self, value: int) -> None:
+        self.tags.append(value)
+
+def show(mut row: list[int]) -> int:
+    return len(row)
+
+def grow(mut items: list[list[int]]) -> int:
+    for row in items:
+        row.append(3)
+    return len(items)
+
+def reuse(mut items: list[list[int]]) -> int:
+    for items in items:
+        items.append(4)
+    return 1
+
+def measure(mut items: list[list[int]]) -> int:
+    mut total = 0
+    for row in items:
+        row.append(0)
+        total += show(row)
+    return total
+
+def main() -> None:
+    mut live: list[list[int]] = [[1]]
+    println(grow(live))
+    println(live)
+    println(reuse(live))
+    println(live)
+    println(measure(live))
+    println(live)
+    mut cells = [Cell(tags=[]), Cell(tags=[1])]
+    for cell in cells:
+        cell.tag(9)
+    for cell in cells:
+        println(len(cell.tags))
+    mut rows: list[list[int]] = [[1], [2]]
+    for row in rows:
+        row.append(len(row))
+    println(rows)
 "#,
     )
 }

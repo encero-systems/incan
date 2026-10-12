@@ -978,3 +978,61 @@ fn range_header_end_is_evaluated_once_before_the_loop() -> Result<(), Box<dyn st
     );
     Ok(())
 }
+
+// ---- #1561: a loop whose body changes its item in place iterates its list exclusively ----
+
+/// The iterator of `body_name`'s only builtin loop, read off the statement that materializes it from the iterable.
+fn iterable_read(module: &bir::BodyIrModule, body_name: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let body = body_named(module, body_name)?;
+    let loop_index = body
+        .block
+        .stmts
+        .iter()
+        .position(|statement| matches!(statement.kind, bir::StatementKind::Loop { .. }))
+        .ok_or("the body must contain a builtin loop")?;
+    let initializer = loop_index
+        .checked_sub(1)
+        .and_then(|index| body.block.stmts.get(index))
+        .ok_or("the loop must follow its iterator's initializer")?;
+    match &initializer.kind {
+        bir::StatementKind::Assign {
+            rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
+            ..
+        } => Ok(format!("{:?}", read.fact)),
+        other => Err(format!("unexpected iterator initializer {other:?}").into()),
+    }
+}
+
+#[test]
+fn a_loop_that_changes_its_item_in_place_borrows_its_list_exclusively() -> Result<(), Box<dyn std::error::Error>> {
+    // Legacy iterates with `iter_mut`, so `row.append(3)` changes the caller's list; `show(row)` only passes a copy.
+    let source = concat!(
+        "model Cell:\n",
+        "  pub tags: list[int]\n",
+        "\n",
+        "  def tag(mut self, value: int) -> None:\n",
+        "    self.tags.append(value)\n",
+        "\n",
+        "def show(mut row: list[int]) -> int:\n",
+        "  return len(row)\n",
+        "\n",
+        "def grow(mut items: list[list[int]]) -> None:\n",
+        "  for row in items:\n",
+        "    row.append(3)\n",
+        "\n",
+        "def tag_all(mut cells: list[Cell]) -> None:\n",
+        "  for cell in cells:\n",
+        "    cell.tag(9)\n",
+        "\n",
+        "def measure(mut items: list[list[int]]) -> int:\n",
+        "  mut total = 0\n",
+        "  for row in items:\n",
+        "    total += show(row)\n",
+        "  return total\n",
+    );
+    let module = build(source, &["m", "in_place_iteration"])?;
+    assert_eq!(iterable_read(&module, "grow")?, "MutBorrow");
+    assert_eq!(iterable_read(&module, "tag_all")?, "MutBorrow");
+    assert_eq!(iterable_read(&module, "measure")?, "Borrow");
+    Ok(())
+}
