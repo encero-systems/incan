@@ -9469,3 +9469,19 @@ def main() -> None:
 "#,
     )
 }
+
+/// A method partial retains its receiver snapshot across reassignment and repeated calls, including a generic
+/// receiver, a method alias, and a shared `self` receiver. Its output must remain byte-identical to legacy.
+#[test]
+fn model_capture_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("model-capture")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/codegen_functions_and_aliases/local_partials_of_methods_of_values.incn"
+        ),
+    )
+}
