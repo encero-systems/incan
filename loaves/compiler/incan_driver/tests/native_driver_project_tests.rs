@@ -2853,6 +2853,73 @@ def main() -> None:
     )
 }
 
+/// Method partials on models and classes, directly or through a method alias and over `mut self` methods, call their
+/// target with the presets the call omits and the arguments it supplies, and an ordinary method call takes its
+/// method's own defaults for the slots it omits, as legacy does.
+#[test]
+fn method_partials_and_method_defaults_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("method-partials")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"model User:
+    name: str
+
+    def label(self, prefix: str, suffix: str = "!") -> str:
+        return f"{prefix} {self.name}{suffix}"
+
+    display = label
+    short = partial display(prefix="name")
+    brief = partial label(prefix="brief", suffix="?")
+
+
+model Cell:
+    alive: bool
+    set_alive = partial set_state(state=true)
+    set_dead = partial set_state(state=false)
+
+    def set_state(mut self, state: bool) -> None:
+        self.alive = state
+
+
+class Counter:
+    pub count: int
+
+    def bump(mut self, by: int, times: int = 1) -> None:
+        self.count += by * times
+
+    bump_one = partial bump(by=1)
+
+    def total(self, extra: int = 10) -> int:
+        return self.count + extra
+
+
+def main() -> None:
+    user = User(name="Ada")
+    println(user.short())
+    println(user.brief())
+    println(user.short(prefix="other"))
+    println(user.short(suffix="."))
+    println(user.display("direct"))
+    mut cell = Cell(alive=false)
+    println(cell.alive)
+    cell.set_alive()
+    println(cell.alive)
+    cell.set_dead()
+    println(cell.alive)
+    mut counter = Counter(count=0)
+    counter.bump_one()
+    counter.bump_one(times=3)
+    counter.bump(2)
+    println(counter.count)
+    println(counter.total())
+    println(counter.total(1))
+"#,
+    )
+}
+
 /// Prove canonical scalar casts and default values byte-identical to legacy.
 #[test]
 fn numeric_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
