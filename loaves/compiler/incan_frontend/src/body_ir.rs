@@ -333,18 +333,30 @@ fn build_body_ir_module_v0_with_provider_operations(
                 ast::Declaration::Function(function) => {
                     vec![lower_function_body(function, decl.span, &lowering_facts)]
                 }
-                ast::Declaration::Model(model) => lower_owner_method_bodies(
-                    &model.methods,
-                    &model.name,
-                    owner_self_type(&model.name, &model.type_params),
-                    &lowering_facts,
-                ),
-                ast::Declaration::Class(class) => lower_owner_method_bodies(
-                    &class.methods,
-                    &class.name,
-                    owner_self_type(&class.name, &class.type_params),
-                    &lowering_facts,
-                ),
+                ast::Declaration::Model(model) => {
+                    let receiver_ty = owner_self_type(&model.name, &model.type_params);
+                    let mut bodies =
+                        lower_owner_method_bodies(&model.methods, &model.name, receiver_ty.clone(), &lowering_facts);
+                    bodies.extend(lower_owner_property_bodies(
+                        &model.properties,
+                        &model.name,
+                        receiver_ty,
+                        &lowering_facts,
+                    ));
+                    bodies
+                }
+                ast::Declaration::Class(class) => {
+                    let receiver_ty = owner_self_type(&class.name, &class.type_params);
+                    let mut bodies =
+                        lower_owner_method_bodies(&class.methods, &class.name, receiver_ty.clone(), &lowering_facts);
+                    bodies.extend(lower_owner_property_bodies(
+                        &class.properties,
+                        &class.name,
+                        receiver_ty,
+                        &lowering_facts,
+                    ));
+                    bodies
+                }
                 ast::Declaration::Trait(trait_decl) => lower_owner_method_bodies(
                     &trait_decl.methods,
                     &trait_decl.name,
@@ -438,7 +450,7 @@ type LocalFunctionDeclarations = HashMap<String, Vec<ast::Span>>;
 
 /// Source-local plain models and non-generic classes with canonical checked layouts.
 ///
-/// Unsupported inheritance, properties, and callable aliases never enter this constructor registry; checked field
+/// Unsupported inheritance and callable aliases never enter this constructor registry; checked field
 /// aliases select canonical storage.
 type LocalNominalDeclarations = HashMap<String, bir::NominalDeclaration>;
 
@@ -656,10 +668,24 @@ pub fn has_direct_replacement_method_partials(
             })
 }
 
+/// Determine whether every computed property of a nominal owner has a getter body Body IR lowers and calls: the owner
+/// is not generic and each property has a body.
+///
+/// A property read is a call of the receiver-only getter (see `lower_owner_property_bodies`), so a concrete owner's
+/// properties need no layout or runtime fact beyond that body.
+pub fn has_direct_replacement_properties(
+    owner_type_params: &[ast::TypeParam],
+    properties: &[ast::Spanned<ast::PropertyDecl>],
+) -> bool {
+    properties.is_empty()
+        || owner_type_params.is_empty() && properties.iter().all(|property| property.node.body.is_some())
+}
+
 /// Keep the structural admission boundary shared by builtin and checked serde derive selections.
 /// Same-type method aliases keep the checked target identity and use its retained method body; they add no native
 /// layout or wrapper declaration. Method partials retain deferred preset frames
-/// ([`has_direct_replacement_method_partials`]). Methods may carry only the builtin static and class method markers.
+/// ([`has_direct_replacement_method_partials`]) and computed properties getter bodies
+/// ([`has_direct_replacement_properties`]). Methods may carry only the builtin static and class method markers.
 fn has_direct_replacement_model_shape(model: &ast::ModelDecl) -> bool {
     has_at_most_one_open_shape_feature(
         !model.type_params.is_empty(),
@@ -670,7 +696,7 @@ fn has_direct_replacement_model_shape(model: &ast::ModelDecl) -> bool {
         &model.methods,
         &model.method_aliases,
         &model.method_partials,
-    ) && model.properties.is_empty()
+    ) && has_direct_replacement_properties(&model.type_params, &model.properties)
         && model
             .methods
             .iter()
@@ -736,8 +762,8 @@ pub fn is_direct_replacement_plain_newtype(newtype: &ast::NewtypeDecl) -> bool {
 /// models) are admitted one at a time; combinations stay refused until they have parity evidence. Derives use the
 /// checked selection shared with models, field defaults the declaration-owned deferred computations models use, and
 /// builtin `@staticmethod` and `@classmethod` markers the checker's method facts, and method partials deferred preset
-/// frames, as on models; lint suppressions change nothing at run time. Inheritance, properties and user-defined
-/// decorators remain refused.
+/// frames and computed properties getter bodies, as on models; lint suppressions change nothing at run time.
+/// Inheritance and user-defined decorators remain refused.
 pub fn is_direct_replacement_checked_class(class: &ast::ClassDecl, type_info: &TypeCheckInfo) -> bool {
     has_checked_native_derives(
         &class.decorators,
@@ -754,7 +780,7 @@ pub fn is_direct_replacement_checked_class(class: &ast::ClassDecl, type_info: &T
             &class.method_aliases,
             &class.method_partials,
         )
-        && class.properties.is_empty()
+        && has_direct_replacement_properties(&class.type_params, &class.properties)
         && class.declarative_members.is_empty()
         && class.fields.iter().all(|field| field.node.metadata.alias.is_none())
         && class

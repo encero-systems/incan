@@ -1107,6 +1107,12 @@ pub struct DeclarationArtifacts {
     /// are checked through the same function and so also populate this table, even though Body IR does not lower
     /// their bodies (#1102's own deliberate scope) — the fact simply goes unread for those owners.
     pub method_bindings_by_span: HashMap<(usize, usize), FunctionBindingInfo>,
+    /// Checked getter surface of each model and class computed property, keyed by the property declaration's span: no
+    /// ordinary parameters, the declared return type and the property's own member identity.
+    ///
+    /// Body IR lowers a property body as a receiver-only getter and a property read as a call of it; legacy lowering
+    /// does not read this table.
+    pub property_bindings_by_span: HashMap<(usize, usize), FunctionBindingInfo>,
     /// Function declaration emitted names keyed by source declaration span.
     ///
     /// Present when top-level overloads need Rust-level name disambiguation while preserving one source name.

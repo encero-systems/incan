@@ -1423,6 +1423,46 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         )
     }
 
+    /// Whether the member read at `span` is a computed property the checker resolved, rather than a stored field.
+    pub(super) fn is_property_read(&self, span: ast::Span) -> bool {
+        self.type_info
+            .resolved_identity(span)
+            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Property)
+    }
+
+    /// Lower a computed property read `value.name` as a call of the property's getter body on the borrowed receiver.
+    ///
+    /// The getter is the property body lowered as a receiver-only method (see `lower_owner_property_bodies`), so the
+    /// read carries the property's checked identity as the method target's canonical identity and binds no ordinary
+    /// argument; the receiver is borrowed like any method receiver.
+    pub(super) fn lower_property_read(
+        &mut self,
+        base: &ast::Spanned<ast::Expr>,
+        name: &str,
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let receiver_place = self.lower_expr_to_place(base, scope, out);
+        let receiver = bir::Operand::place(receiver_place, bir::OwnershipFact::Borrow, false);
+        let ty = self.resolve_ty(span);
+        self.push_call_temp(
+            bir::Callee::Method(bir::MethodTarget {
+                name: name.to_string(),
+                intrinsic_carrier: None,
+                canonical: self.type_info.resolved_identity(span).cloned(),
+                type_args: Vec::new(),
+                binding: bir::ArgumentBinding::resolved_positional(0),
+            }),
+            vec![bir::ArgumentElement::One(receiver)],
+            ty,
+            scope,
+            hir_span(span),
+            false,
+            out,
+        )
+    }
+
     /// Lower `Type.method(args)`, a call to a type's static method, as a direct call to the method's body.
     ///
     /// A static method has no receiver, so it is called exactly like a function: the checker's selected method is

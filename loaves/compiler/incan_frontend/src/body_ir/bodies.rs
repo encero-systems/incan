@@ -26,6 +26,37 @@ pub(super) fn lower_owner_method_bodies(
         .collect()
 }
 
+/// Lower each computed property of a model or class into a receiver-only getter body, which a property read calls.
+///
+/// A property is a method with an immutable implicit `self`, no ordinary parameters and its declared return type; its
+/// checked getter surface and member identity come from the checker's `property_bindings_by_span`, which
+/// [`lower_method_body`] reads for the property's span. An abstract (trait) property has no body and lowers nothing.
+pub(super) fn lower_owner_property_bodies(
+    properties: &[ast::Spanned<ast::PropertyDecl>],
+    owner_name: &str,
+    receiver_ty: IncanType,
+    lowering_facts: &BodyIrLoweringFacts<'_, '_>,
+) -> Vec<bir::Body> {
+    properties
+        .iter()
+        .filter_map(|property| {
+            let getter = ast::MethodDecl {
+                decorators: Vec::new(),
+                surface_modifiers: Vec::new(),
+                name: property.node.name.clone(),
+                type_params: Vec::new(),
+                receiver: Some(ast::Receiver::Immutable),
+                receiver_binding: None,
+                params: Vec::new(),
+                trait_target: None,
+                return_type: property.node.return_type.clone(),
+                body: property.node.body.clone(),
+            };
+            lower_method_body(&getter, property.span, owner_name, &receiver_ty, lowering_facts)
+        })
+        .collect()
+}
+
 /// The delegation an `@rust.extern` declaration named `name` records, or `None` for an ordinary declaration (#2023).
 ///
 /// The item is the declaration's own name in the file's `rust.module(...)` module, for functions and static methods
@@ -256,11 +287,16 @@ pub(super) fn lower_method_body(
     );
     let direct_call_id =
         CompilerNodeId::declaration_span(lowering_facts.module_identity, decl_span.start, decl_span.end);
-    let binding = lowering_facts
-        .type_info
-        .declarations
+    // A computed property's getter is checked as a property, so its surface is keyed in the property table.
+    let declarations = &lowering_facts.type_info.declarations;
+    let binding = declarations
         .method_bindings_by_span
-        .get(&(decl_span.start, decl_span.end));
+        .get(&(decl_span.start, decl_span.end))
+        .or_else(|| {
+            declarations
+                .property_bindings_by_span
+                .get(&(decl_span.start, decl_span.end))
+        });
     let mut type_parameters = owner_parameter_names(receiver_ty, owner_name, lowering_facts.type_info);
     type_parameters.extend(method.type_params.iter().map(|parameter| parameter.name.clone()));
     let owner_return_type = binding

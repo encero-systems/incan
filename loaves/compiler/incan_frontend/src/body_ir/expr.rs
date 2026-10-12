@@ -165,6 +165,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
             ast::Expr::Literal(lit) => bir::Operand::Constant(lower_checked_literal(lit, &self.resolve_ty(expr.span))),
             ast::Expr::Paren(inner) => self.lower_expr_to_operand(inner, scope, out),
+            ast::Expr::Field(base, name) if self.is_property_read(expr.span) => {
+                self.lower_property_read(base, name, expr.span, scope, out)
+            }
             ast::Expr::Field(base, name) => {
                 if let Some(target) = self.local_fieldless_enum_variant_target(base, name, expr.span) {
                     return self.push_assign_temp(
@@ -298,12 +301,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
             ast::Expr::Field(base, name) => {
                 // `Color.Red` used where a place is needed (a method receiver, say) is a variant value, not a field of
-                // a value named `Color`: materialize it like any other non-place operand.
+                // a value named `Color`, and a computed property read is a getter call: materialize either like any
+                // other non-place operand.
                 if self
                     .local_fieldless_enum_variant_target(base, name, expr.span)
                     .is_some()
                     || self.local_value_enum_variant_target(base, name, expr.span).is_some()
                     || self.checked_enum_variant_target(base, name, expr.span).is_some()
+                    || self.is_property_read(expr.span)
                 {
                     let ty = self.resolve_ty(expr.span);
                     let operand = self.lower_expr_to_operand(expr, scope, out);

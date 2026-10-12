@@ -132,9 +132,10 @@ impl BodyIrModule {
         })
     }
 
-    /// Whether a function, source Partial forwarding body, or retained nominal method has its own canonical declaration
-    /// identity and span-derived direct-call id. Methods must belong to a retained nominal, normal enum or trait owner
-    /// whose span contains them; an instance receiver must match that owner.
+    /// Whether a function, source Partial forwarding body, or retained nominal method or computed-property getter has
+    /// its own canonical declaration identity and span-derived direct-call id. Methods and getters must belong to a
+    /// retained nominal, normal enum or trait owner whose span contains them; an instance receiver must match that
+    /// owner.
     pub fn body_has_canonical_direct_call_id(&self, body: &Body) -> bool {
         body.direct_call_id == CompilerNodeId::declaration_span(self.module_id.path(), body.span.start, body.span.end)
             && body.canonical.as_ref().is_some_and(|canonical| {
@@ -142,7 +143,7 @@ impl BodyIrModule {
                     SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Partial => {
                         SymbolNamespace::OrdinaryLexical
                     }
-                    SemanticSourceTargetKind::Method => SymbolNamespace::Member,
+                    SemanticSourceTargetKind::Method | SemanticSourceTargetKind::Property => SymbolNamespace::Member,
                     _ => return false,
                 };
                 canonical.declaration_name == body.name

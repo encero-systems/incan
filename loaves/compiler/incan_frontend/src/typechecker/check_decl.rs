@@ -6490,8 +6490,24 @@ impl TypeChecker {
             },
             SemanticSourceTargetKind::Receiver,
         );
+        // As for a method's receiver, Body IR binds the getter's `self` local to this identity, so the body's reads of
+        // `self` resolve to it.
+        self.record_write_target_identity(property_span, "self");
 
         let return_type = self.resolve_type_checked(&property.return_type);
+        self.type_info.declarations.property_bindings_by_span.insert(
+            (property_span.start, property_span.end),
+            FunctionBindingInfo {
+                is_async: false,
+                params: Vec::new(),
+                return_type: return_type.clone(),
+                identity: Some(self.symbols.member_declaration_identity(
+                    &property.name,
+                    SemanticSourceTargetKind::Property,
+                    property_span,
+                )),
+            },
+        );
         let effective_return_type = Self::concretize_self_type_in_annotation(&return_type, &self_ty);
         self.symbols.set_return_type(effective_return_type);
         self.current_return_error_type = return_type.result_err_type().cloned();
