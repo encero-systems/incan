@@ -231,8 +231,8 @@ pub(super) fn check_string_methods(
 ///
 /// The reference compiler uses the explicit fixture home so a published dependency baked there is available under
 /// the same receipt-selected package identity. An ambient home can lack that Loaf even after native compilation
-/// succeeds. A manifest-backed fixture must declare `main.incn` as a script; its explicit consumer bake imports
-/// the provider's portable debug and release closures before either route runs.
+/// succeeds. A manifest-backed fixture must declare the `main` script at `main.incn`; its explicit consumer bake
+/// imports the provider's portable debug and release closures before either route runs.
 pub(super) fn check_builtin_source(
     driver: &Path,
     root: &Path,
