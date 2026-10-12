@@ -3,7 +3,9 @@
 use std::path::{Path, PathBuf};
 
 use incan_driver::{modules::collect_modules_detailed_with_session, session::CompilationSession};
+use incan_frontend::ast::{DecoratorArg, Expr, Literal};
 use incan_mir_lowering::caller::incan::{lower_program, program_refusals};
+use incan_semantics_core::body_ir::BodyIrModule;
 
 /// Environment variable naming the file where the census receives every refusal of one compilation, one per line.
 ///
@@ -23,7 +25,6 @@ fn write_refusal_report(refusals: &[String]) -> Result<(), std::io::Error> {
     }
     std::fs::write(path, text)
 }
-use incan_semantics_core::body_ir::BodyIrModule;
 
 /// Checked owning modules and their source provenance, with one explicit native entry module.
 struct CheckedProgram {
@@ -621,6 +622,15 @@ fn refused_decorator_feature(
     Some(format!("decorator @{}({arguments})", decorator.node.name))
 }
 
+/// Admit only builtin native derive markers with no executable decorator behavior; adopter effects are checked
+/// separately.
+fn retained_trait_derive_marker(decorator: &incan_frontend::ast::Decorator) -> bool {
+    decorator.path.segments == ["rust", "derive"] && decorator.type_args.is_empty() && !decorator.args.is_empty()
+        && decorator.args.iter().all(|argument| matches!(argument,
+            DecoratorArg::Positional(value) if matches!(&value.node,
+                Expr::Literal(Literal::String(path)) if matches!(path.as_str(), "Debug" | "Clone" | "serde::Serialize" | "serde::Deserialize"))))
+}
+
 /// Name the first trait feature the direct route cannot retain.
 ///
 /// Type parameters and supertraits declared in this module are retained: Body IR records each adopter's checked
@@ -629,7 +639,11 @@ fn refused_decorator_feature(
 /// declaration behavior of its own: the checker records the serde derives a standard JSON supertrait implies, and a
 /// call of one of its slots that has no retained body refuses by name where it is lowered.
 fn trait_refusal_feature(item: &incan_frontend::ast::TraitDecl) -> Option<&'static str> {
-    if !item.decorators.is_empty() {
+    if item
+        .decorators
+        .iter()
+        .any(|decorator| !retained_trait_derive_marker(&decorator.node))
+    {
         return Some("decorators");
     }
     if !item.method_aliases.is_empty() {

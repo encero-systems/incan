@@ -981,6 +981,10 @@ pub struct MutableRustTypeArgumentProjection {
 /// Declaration-level binding rewrites and visibility facts consumed by lowering.
 #[derive(Debug, Default, Clone)]
 pub struct DeclarationArtifacts {
+    /// Body IR-only derive effects expanded from already checked source bundles; legacy selections stay untouched.
+    pub body_ir_expanded_derives: HashMap<String, Vec<String>>,
+    /// Body IR-only source trait slots adopted by checked derive bundles, keyed by the adopting declaration.
+    pub body_ir_derived_methods: HashMap<String, Vec<BodyIrDerivedMethod>>,
     /// Checked payload types keyed by their source annotation span; direct lowering never resolves raw annotations.
     pub enum_payload_types: HashMap<(usize, usize), ResolvedType>,
     /// Explicit and automatic native derives selected by checking for each source enum; a std.serde.json protocol
@@ -1188,6 +1192,17 @@ pub struct DeclarationArtifacts {
     /// recorded too, for their trait defaults expanded into this module; the name keeps them apart from this module's
     /// parameters at the same offsets.
     pub mut_param_markers: HashMap<(usize, usize, String), bool>,
+}
+
+/// A checked source trait slot introduced by a derive bundle; this does not supply its executable body.
+#[derive(Debug, Clone)]
+pub struct BodyIrDerivedMethod {
+    /// Source slot identity retained from the resolved trait's method metadata.
+    pub method: CanonicalSymbolId,
+    /// Whether that resolved slot supplies a default body; consumers still require its retained source body.
+    pub has_default: bool,
+    /// Checked adoption arguments paired with the trait's declared parameters.
+    pub type_arguments: Vec<(String, ResolvedType)>,
 }
 
 /// Where a local function declaration takes a decorated method's receiver, and how the method takes it (#1790).

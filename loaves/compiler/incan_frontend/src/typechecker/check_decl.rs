@@ -1082,6 +1082,68 @@ impl TypeChecker {
         })
     }
 
+    /// Snapshot resolved derive slots for Body IR without modifying legacy method or adoption tables.
+    fn record_body_ir_derived_methods(&mut self, owner: &str, adoption: &ResolvedTraitAdoption) {
+        let arguments: Vec<_> = adoption
+            .info
+            .type_params
+            .iter()
+            .cloned()
+            .zip(adoption.args.iter().cloned())
+            .collect();
+        let methods = self
+            .type_info
+            .declarations
+            .body_ir_derived_methods
+            .entry(owner.to_string())
+            .or_default();
+        for method in adoption.info.methods.values() {
+            let Some(identity) = &method.identity else {
+                continue;
+            };
+            if methods.iter().any(|retained| &retained.method == identity) {
+                continue;
+            }
+            methods.push(crate::typechecker::type_info::BodyIrDerivedMethod {
+                method: identity.clone(),
+                has_default: method.has_body,
+                type_arguments: arguments.clone(),
+            });
+        }
+        methods.sort_by(|left, right| left.method.cmp(&right.method));
+    }
+
+    /// Expand checked source derive bundles for Body IR only; the legacy native selection is left intact.
+    fn record_body_ir_expanded_derives(&mut self, owner: &str, derives: &[String]) {
+        let Some(original) = self.type_info.declarations.model_derives.get(owner) else {
+            return;
+        };
+        let mut expanded = original.clone();
+        for derive in derives {
+            let path = self.derive_trait_path(derive);
+            let module = path.join(".");
+            let keys = if let Some(traits) = self.dependency_derivable_modules.get(&module) {
+                traits.iter().map(|name| format!("{module}.{name}")).collect::<Vec<_>>()
+            } else if self.dependency_trait_rust_derive_paths.contains_key(&module) {
+                vec![module]
+            } else {
+                continue;
+            };
+            expanded.retain(|name| name != derive);
+            for key in keys {
+                for path in self.dependency_trait_rust_derive_paths.get(&key).into_iter().flatten() {
+                    if !expanded.contains(path) {
+                        expanded.push(path.clone());
+                    }
+                }
+            }
+        }
+        self.type_info
+            .declarations
+            .body_ir_expanded_derives
+            .insert(owner.to_string(), expanded);
+    }
+
     /// Return the first `@derive` span for diagnostics tied to synthetic derive adoptions.
     fn first_derive_span(decorators: &[Spanned<Decorator>]) -> Span {
         decorators
@@ -3628,8 +3690,10 @@ impl TypeChecker {
             let Some(resolved) = self.resolve_collected_trait_adoption(&adoption, derive_adoption_span) else {
                 continue;
             };
+            self.record_body_ir_derived_methods(&model.name, &resolved);
             resolved_trait_adoptions.push(resolved);
         }
+        self.record_body_ir_expanded_derives(&model.name, &derives);
         let active_model_fields = model
             .fields
             .iter()

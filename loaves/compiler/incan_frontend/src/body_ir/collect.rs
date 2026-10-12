@@ -509,7 +509,12 @@ pub(super) fn collect_local_nominal_declarations(
                     }
                     derives
                 } else {
-                    type_info.declarations.body_ir_model_derives.get(name)?.clone()
+                    type_info
+                        .declarations
+                        .body_ir_expanded_derives
+                        .get(name)
+                        .or_else(|| type_info.declarations.body_ir_model_derives.get(name))?
+                        .clone()
                 },
                 field_types: fields
                     .iter()
@@ -983,6 +988,52 @@ fn method_fills_trait_slot(type_info: &TypeCheckInfo, method: &ast::MethodDecl, 
             == Some(slot)
 }
 
+/// Retain checked source derive slots, selecting a unique local override or the retained default body identity.
+/// Compiled standard slots remain SDK-owned and never masquerade as source trait implementations.
+fn derived_trait_implementations(
+    type_info: &TypeCheckInfo,
+    methods: &[ast::Spanned<ast::MethodDecl>],
+    owner: &CanonicalSymbolId,
+) -> Vec<bir::TraitImplementation> {
+    type_info
+        .declarations
+        .body_ir_derived_methods
+        .get(&owner.declaration_name)
+        .into_iter()
+        .flatten()
+        .filter_map(|method| {
+            if type_info.traits.is_standard_slot(&method.method) || !is_executable_source_trait_slot(&method.method) {
+                return None;
+            }
+            let mut candidates = methods
+                .iter()
+                .filter(|candidate| candidate.node.name == method.method.declaration_name);
+            let implementation = match (candidates.next(), candidates.next()) {
+                (Some(candidate), None) => type_info
+                    .declarations
+                    .method_bindings_by_span
+                    .get(&(candidate.span.start, candidate.span.end))
+                    .and_then(|binding| binding.identity.clone()),
+                (None, None) if method.has_default => Some(method.method.clone()),
+                _ => None,
+            }?;
+            Some(bir::TraitImplementation {
+                owner: owner.clone(),
+                method: method.method.clone(),
+                implementation,
+                type_arguments: method
+                    .type_arguments
+                    .iter()
+                    .map(|(parameter, argument)| bir::TraitTypeArgument {
+                        parameter: parameter.clone(),
+                        argument: semantic_type_from_resolved(argument),
+                    })
+                    .collect(),
+            })
+        })
+        .collect()
+}
+
 /// Retain trait slots and their checked concrete implementation identities for each admitted adopter.
 ///
 /// Successful typechecking already proves adoption and method compatibility. This registry covers the adopter's local
@@ -1031,6 +1082,7 @@ pub(super) fn collect_local_trait_implementations(
         implementations.extend(imported_trait_implementations(
             program, type_info, adoptions, methods, owner,
         ));
+        implementations.extend(derived_trait_implementations(type_info, methods, owner));
         let adopted = adopted_local_traits(program, type_info, adoptions);
         for slot_trait in &adopted {
             for slot in &slot_trait.declaration.methods {
