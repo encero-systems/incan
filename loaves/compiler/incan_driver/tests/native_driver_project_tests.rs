@@ -8558,7 +8558,7 @@ fn imported_user_json_field_output_matches_legacy() -> Result<(), Box<dyn std::e
 fn imported_model_alias_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     check_project_modules_case(
         "imported_model_alias",
-        "from models import Account as A\n\ndef make() -> A:\n  return A(type=\"x\")\n\ndef main() -> None:\n  println(make().type)\n",
+        "from models import Account\nfrom models import Account as A\n\ndef make() -> A:\n  return A(type=\"x\")\n\ndef main() -> None:\n  println(make().type)\n",
         &[("models.incn", "pub model Account:\n  pub type_ [alias=\"type\"]: str\n")],
         b"x\n",
     )

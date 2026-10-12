@@ -50,11 +50,11 @@ fn imported_user_json_keeps_declared_field_identity() -> Result<(), Box<dyn std:
 #[test]
 fn imported_model_alias_return_uses_declared_carrier() -> Result<(), Box<dyn std::error::Error>> {
     let provider_source = "pub model Account:\n  pub type_ [alias=\"type\"]: str\n";
-    let provider = build(provider_source, &["models"])?;
+    let provider = build(provider_source, &["db", "schema"])?;
     let module = build_with_published_imports(
-        "from models import Account as A\n\ndef make() -> A:\n  return A(type=\"x\")\n",
-        &["consumer"],
-        &[("models", &["models"], provider_source)],
+        "from db.schema import Account\nfrom db.schema import Account as A\n\ndef make() -> A:\n  return A(type=\"x\")\n",
+        &["store", "json_store"],
+        &[("db_schema", &["db", "schema"], provider_source)],
         &[provider],
     )?;
     let body = body_named(&module, "make")?;
