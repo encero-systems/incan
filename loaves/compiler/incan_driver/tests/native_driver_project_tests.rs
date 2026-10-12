@@ -6286,6 +6286,75 @@ def main() -> None:
     )
 }
 
+/// Prove borrowed values handed over as owned ones byte-identical to legacy: a model field passed to a by-value
+/// parameter, `self` and a field of `self` returned from a model or class method, list, nested list and bytes
+/// parameters returned whole, and list and bytes literal defaults returned from the call that omits them.
+#[test]
+fn borrowed_value_handover_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("borrowed-value-handover")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"model Cursor:
+    position: int
+
+model Wrapper:
+    cursor: Cursor
+    label: str
+
+    def snapshot(self) -> Wrapper:
+        return self
+
+    def current(self) -> Cursor:
+        return self.cursor
+
+class Account:
+    pub owner: str
+    pub balance: int
+
+    def copy(self) -> Account:
+        return self
+
+def advance(cursor: Cursor) -> Cursor:
+    return Cursor(position=cursor.position + 1)
+
+def keep(payload: bytes = b"x") -> bytes:
+    return payload
+
+def first(items: list[int] = [4, 5, 6]) -> list[int]:
+    return items
+
+def nested(rows: list[list[str]]) -> list[list[str]]:
+    return rows
+
+def main() -> None:
+    other = Wrapper(cursor=Cursor(position=1), label="w")
+    moved = advance(other.cursor)
+    println(f"{moved.position} {other.cursor.position}")
+    copy = other.snapshot()
+    println(f"{copy.cursor.position} {copy.label} {other.cursor.position} {other.label}")
+    println(other.current().position)
+    account = Account(owner="ann", balance=5)
+    twin = account.copy()
+    println(f"{twin.owner} {twin.balance} {account.owner}")
+    data = b"abc"
+    println(len(keep(data)))
+    println(len(keep()))
+    println(len(data))
+    nums = [1, 2]
+    kept = first(nums)
+    println(f"{kept} {nums}")
+    grid = [["a"], ["b", "c"]]
+    println(len(nested(grid)))
+    println(grid)
+    println(first())
+    println(len(keep(b"")))
+"#,
+    )
+}
+
 /// List display preserves legacy Debug spelling, escaping, nesting, and repeated owner reads.
 #[test]
 fn list_display_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
