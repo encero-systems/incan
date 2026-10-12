@@ -6397,6 +6397,33 @@ def main() -> None:
     )
 }
 
+/// A stdlib enum is matched and passed as the SDK crate's own enum, and a stdlib newtype is built, read and called
+/// as the SDK crate's own struct; both declarations come from the representations the SDK packages published.
+#[test]
+fn stdlib_enums_and_newtypes_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "stdlib_enums_and_newtypes",
+        r#"from std.fs import Path
+from std.io import Endian
+
+
+def order_name(order: Endian) -> str:
+    match order:
+        Endian.Little => return "little"
+        Endian.Big => return "big"
+
+
+def main() -> None:
+    println(order_name(Endian.Little))
+    println(order_name(Endian.Big))
+    config = Path("config").joinpath("app.toml")
+    println(config.0)
+    println(f"{config.name()} {config.suffix()} {config.parent().0}")
+"#,
+        b"little\nbig\nconfig/app.toml\napp.toml .toml config\n",
+    )
+}
+
 /// The adopted math unit is an explicit receipt-selected dependency on both native routes.
 #[test]
 fn direct_route_native_sdk_math_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
