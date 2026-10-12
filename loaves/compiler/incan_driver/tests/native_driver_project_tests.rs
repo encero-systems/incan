@@ -4771,6 +4771,46 @@ def main() -> None:
     )
 }
 
+/// Prove collections held by other collections byte-identical to legacy: dictionaries whose values are lists or
+/// dictionaries, a list of dictionaries and a model field holding a dictionary of lists are built, passed and read by
+/// key and index, through nested lookups, without consuming their sources.
+#[test]
+fn nested_collection_value_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("nested-collection-values")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"model Bag:
+    tags: dict[str, list[int]]
+
+
+def count(groups: dict[str, list[int]], key: str) -> int:
+    return len(groups[key])
+
+
+def main() -> None:
+    groups: dict[str, list[int]] = {"a": [1, 2], "b": [3]}
+    println(count(groups, "a"))
+    println(groups["b"][0])
+    first: list[int] = groups["a"]
+    println(first[1])
+    nested: dict[str, dict[str, int]] = {"x": {"y": 5}, "z": {"w": 6}}
+    println(nested["x"]["y"])
+    inner: dict[str, int] = nested["z"]
+    println(inner["w"])
+    rows: list[dict[str, int]] = [{"a": 1}, {"a": 2}]
+    println(rows[1]["a"])
+    bag = Bag(tags={"k": [7, 8, 9]})
+    println(len(bag.tags["k"]))
+    println(groups["a"])
+    println(len(groups))
+    println(len(nested["x"]))
+"#,
+    )
+}
+
 /// Prove unit and payload construction, enum passing/returning, and variant-bound match output against legacy.
 #[test]
 fn source_enum_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
