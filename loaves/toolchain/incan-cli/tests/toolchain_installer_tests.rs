@@ -1543,10 +1543,10 @@ fn compiler_suite_action_composes_baker_guarded_runner_and_storage_evidence() ->
     let provider_cache_action =
         fs::read_to_string(repo_root().join(".github/actions/restore-sdk-provider-store/action.yml"))?;
     assert!(
-        provider_cache_action.contains("oven sdk-provider-store-identity")
+        provider_cache_action.contains("oven sdk-provider-store-identity --inputs")
             && provider_cache_action.contains("rustc --version --verbose")
             && provider_cache_action.contains("incan-sdk-provider-v3"),
-        "the SDK provider cache must use the compiler-owned source identity and retain a selected-rustc suffix"
+        "the SDK provider cache must key on the compiler-owned preparation-input identity, which exists before preparation, and retain a selected-rustc suffix"
     );
     assert!(
         !provider_cache_action.contains("shasum -a 256 target/debug/incan"),

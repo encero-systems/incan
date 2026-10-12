@@ -2453,12 +2453,29 @@ mod tests {
             "compiler-source",
         ])?;
         let Some(Command::Oven {
-            command: OvenCommand::SdkProviderStoreIdentity { compiler_root },
+            command: OvenCommand::SdkProviderStoreIdentity { compiler_root, inputs },
         }) = provider_identity.command
         else {
             return Err(expected_command("oven sdk-provider-store-identity"));
         };
         assert_eq!(compiler_root, PathBuf::from("compiler-source"));
+        assert!(!inputs, "the sealed store identity is the default");
+
+        let input_identity = parse_cli([
+            "incan",
+            "oven",
+            "sdk-provider-store-identity",
+            "--inputs",
+            "--compiler-root",
+            "compiler-source",
+        ])?;
+        let Some(Command::Oven {
+            command: OvenCommand::SdkProviderStoreIdentity { inputs, .. },
+        }) = input_identity.command
+        else {
+            return Err(expected_command("oven sdk-provider-store-identity --inputs"));
+        };
+        assert!(inputs, "--inputs selects the preparation-input identity");
 
         let compiler_suite = parse_cli([
             "incan",

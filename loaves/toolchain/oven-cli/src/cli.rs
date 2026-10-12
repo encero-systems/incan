@@ -221,12 +221,15 @@ pub enum OvenCommand {
         #[arg(long = "format", value_enum, default_value = "text")]
         format: OvenOutputFormat,
     },
-    /// Emit the compiler-owned SDK provider source identity for repository automation.
+    /// Emit the compiler-owned SDK provider identity for repository automation.
     #[command(hide = true)]
     SdkProviderStoreIdentity {
         /// Compiler source checkout that owns the built-in standard library
         #[arg(long = "compiler-root", value_name = "PATH", default_value = ".")]
         compiler_root: PathBuf,
+        /// Emit the identity of the preparation inputs instead of the sealed store, so it is known before preparation
+        #[arg(long = "inputs")]
+        inputs: bool,
     },
     /// Import frozen Cargo declarations as receipt evidence without launching Cargo
     Import {

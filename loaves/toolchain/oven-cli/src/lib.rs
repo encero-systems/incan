@@ -36,8 +36,12 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
             package_features,
             format,
         } => commands::oven_bake_project(project, target, package_features.into(), format),
-        OvenCommand::SdkProviderStoreIdentity { compiler_root } => {
-            let identity = incan_provider::sdk_store::sdk_provider_store_identity_for_compiler_root(&compiler_root)?;
+        OvenCommand::SdkProviderStoreIdentity { compiler_root, inputs } => {
+            let identity = if inputs {
+                incan_provider::sdk_store::sdk_provider_input_identity_for_compiler_root(&compiler_root)?
+            } else {
+                incan_provider::sdk_store::sdk_provider_store_identity_for_compiler_root(&compiler_root)?
+            };
             println!("{identity}");
             Ok(ExitCode::SUCCESS)
         }

@@ -619,19 +619,7 @@ fn sdk_provider_effect_input_key(checkout_root: &Path, compiler_stamp: &str) -> 
 /// Repository automation uses the same native receipt catalog and sealed identity as source publication. A missing
 /// catalog is a preparation requirement; this command never derives an identity from Cargo configuration.
 pub fn sdk_provider_store_identity_for_compiler_root(compiler_root: &Path) -> ProviderResult<String> {
-    let stdlib_root = fs::canonicalize(compiler_root.join("loaves/stdlib")).map_err(|error| {
-        ProviderError::failure(format!(
-            "failed to canonicalize built-in stdlib source directory below {}: {error}",
-            compiler_root.display()
-        ))
-    })?;
-    let executable = env::current_exe()
-        .map_err(|error| ProviderError::failure(format!("failed to resolve current incan executable: {error}")))?;
-    let executable = sdk_provider_builder_executable(None, executable)?;
-    let distribution_profile = env::var(INTERNAL_SDK_DISTRIBUTION_PROFILE_ENV)
-        .ok()
-        .filter(|profile| !profile.is_empty())
-        .unwrap_or_else(|| "full".to_string());
+    let (stdlib_root, executable, distribution_profile) = compiler_root_identity_inputs(compiler_root)?;
     let store = env::var_os(INTERNAL_SDK_PROVIDER_STORE_ENV)
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
@@ -651,6 +639,36 @@ pub fn sdk_provider_store_identity_for_compiler_root(compiler_root: &Path) -> Pr
     })?;
     let receipts = serde_json::from_slice(&receipts).map_err(|error| ProviderError::failure(error.to_string()))?;
     sdk_provider_sealed_store_identity(&stdlib_root, &executable, &distribution_profile, &receipts)
+}
+
+/// Return the identity of one source checkout's SDK preparation inputs, which is known before preparation runs.
+///
+/// The sealed identity names the prepared store but folds in native receipts only preparation produces, so it cannot
+/// key a cache restored ahead of preparation. This identity covers what determines those receipts instead: the
+/// compiler's effect digest over the standard library (whose seed `sdk-lock.json` pins every native unit) and the
+/// publication configuration. Like the sealed identity it reads no Cargo lock.
+pub fn sdk_provider_input_identity_for_compiler_root(compiler_root: &Path) -> ProviderResult<String> {
+    let (stdlib_root, executable, distribution_profile) = compiler_root_identity_inputs(compiler_root)?;
+    sdk_provider_store_identity(&stdlib_root, &executable, None, &distribution_profile)
+}
+
+/// Resolve the checkout's standard library, the running compiler and the selected distribution profile, which every
+/// checkout identity starts from.
+fn compiler_root_identity_inputs(compiler_root: &Path) -> ProviderResult<(PathBuf, PathBuf, String)> {
+    let stdlib_root = fs::canonicalize(compiler_root.join("loaves/stdlib")).map_err(|error| {
+        ProviderError::failure(format!(
+            "failed to canonicalize built-in stdlib source directory below {}: {error}",
+            compiler_root.display()
+        ))
+    })?;
+    let executable = env::current_exe()
+        .map_err(|error| ProviderError::failure(format!("failed to resolve current incan executable: {error}")))?;
+    let executable = sdk_provider_builder_executable(None, executable)?;
+    let distribution_profile = env::var(INTERNAL_SDK_DISTRIBUTION_PROFILE_ENV)
+        .ok()
+        .filter(|profile| !profile.is_empty())
+        .unwrap_or_else(|| "full".to_string());
+    Ok((stdlib_root, executable, distribution_profile))
 }
 
 /// Resolve the source checkout that owns a discovered SDK tree, if this is a development layout.
