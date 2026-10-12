@@ -8145,6 +8145,55 @@ def main() -> None:
     )
 }
 
+/// An Ord adopter that imports only Ord reaches the `__ne__` default of the Eq supertrait, the body the SDK publishes,
+/// on a model, on an enum and through a type parameter bounded by Ord; the default calls the adopter's own `__eq__`.
+#[test]
+fn std_supertrait_default_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "std_supertrait_default",
+        r#"from std.derives.comparison import Ord
+
+
+model Ordered with Ord:
+    v: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.v == other.v
+
+    def __lt__(self, other: Self) -> bool:
+        return self.v < other.v
+
+
+enum Level with Ord:
+    Low
+    High
+
+    def __eq__(self, other: Self) -> bool:
+        return self.rank() == other.rank()
+
+    def __lt__(self, other: Self) -> bool:
+        return self.rank() < other.rank()
+
+    def rank(self) -> int:
+        match self:
+            Level.Low => return 0
+            Level.High => return 1
+
+
+def differ[T with Ord](a: T, b: T) -> bool:
+    return a.__ne__(b)
+
+
+def main() -> None:
+    println(Ordered(v=1).__ne__(Ordered(v=2)))
+    println(Ordered(v=1).__ne__(Ordered(v=1)))
+    println(Level.Low.__ne__(Level.High))
+    println(differ(Ordered(v=3), Ordered(v=3)))
+"#,
+        b"true\nfalse\ntrue\nfalse\n",
+    )
+}
+
 /// Compile a single-module program in the minimal project layout and require the native route to refuse it by name.
 fn check_project_refusal(name: &str, text: &str, reason: &str) -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;

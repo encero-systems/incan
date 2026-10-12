@@ -1131,10 +1131,10 @@ model Card with Measured:
     Ok(())
 }
 
-/// An adopter of a standard-library protocol retains the slots its own methods fill, never one of the protocol's
-/// defaults, whose bodies are not among the project's modules.
+/// An adopter of a standard-library protocol retains each slot its own method fills with that method, never with the
+/// protocol's default for the same slot.
 #[test]
-fn std_protocol_slots_retain_only_the_adopters_own_methods() -> Result<(), Box<dyn std::error::Error>> {
+fn std_protocol_slots_retain_the_adopters_own_methods() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 from std.derives.comparison import Ord
 
@@ -1162,8 +1162,9 @@ model Reversed with Ord:
         module
             .trait_implementations
             .iter()
+            .filter(|implementation| ["__eq__", "__lt__"].contains(&implementation.method.declaration_name.as_str()))
             .all(|implementation| implementation.implementation != implementation.method),
-        "a protocol default must not be retained: {:?}",
+        "an own method must fill its slot: {:?}",
         module.trait_implementations
     );
     Ok(())
@@ -1252,5 +1253,36 @@ pub trait Source[T]:
     };
     let slot = target.canonical.as_ref().ok_or("the Self call must retain its slot")?;
     assert_eq!(slot.declaration_name, "__eq__");
+    Ok(())
+}
+
+/// An adopter of a standard-library protocol without type parameters retains the protocol's own default for a slot it
+/// does not fill itself, beside the slots its own methods fill.
+#[test]
+fn std_protocol_defaults_fill_the_slots_the_adopter_leaves() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from std.derives.comparison import Eq
+
+
+model Key with Eq:
+    id: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.id == other.id
+"#;
+    let module = build(source, &["m", "std_protocol_defaults"])?;
+    let record = |name: &str| {
+        module
+            .trait_implementations
+            .iter()
+            .find(|implementation| implementation.method.declaration_name == name)
+    };
+    let own = record("__eq__").ok_or("the slot the adopter fills must be retained")?;
+    assert_eq!(own.owner.declaration_name, "Key");
+    assert_ne!(own.implementation, own.method);
+    let default = record("__ne__").ok_or("the protocol default must fill the slot the adopter leaves")?;
+    assert_eq!(default.owner.declaration_name, "Key");
+    assert_eq!(default.implementation, default.method);
+    assert!(default.type_arguments.is_empty());
     Ok(())
 }
