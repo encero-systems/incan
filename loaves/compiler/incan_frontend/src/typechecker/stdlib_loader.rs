@@ -64,6 +64,9 @@ struct StdlibModuleData {
     trait_declarations: Vec<(String, ast::TraitDecl)>,
     /// Canonical source paths for imported types referenced by each trait declaration's defaults.
     trait_type_import_paths: HashMap<String, HashMap<String, Vec<String>>>,
+    /// The stdlib types and traits this module imports, keyed by local name, each with the import's module path
+    /// followed by the imported name.
+    imported_type_paths: HashMap<String, Vec<String>>,
     types: Vec<(String, TypeInfo)>,
     /// Source declarations for methods keyed by `(type name, method name)`.
     ///
@@ -535,6 +538,22 @@ impl StdlibAstCache {
         self.cache.get(&module_path.join("."))?.identities.get(name).cloned()
     }
 
+    /// Return the declaring identity of a stdlib type or trait one stdlib module imports under `name`.
+    ///
+    /// The import's own module path is followed, so a type imported through a facade resolves through that facade's
+    /// re-export to the module that declares it. `None` when the module imports no stdlib type under that name.
+    pub fn imported_type_identity(&mut self, module_path: &[String], name: &str) -> Option<CanonicalSymbolId> {
+        self.ensure_loaded(module_path);
+        let path = self
+            .cache
+            .get(&module_path.join("."))?
+            .imported_type_paths
+            .get(name)?
+            .clone();
+        let (declared, module) = path.split_last()?;
+        self.lookup_identity(module, declared)
+    }
+
     /// Look up a specific static binding in a stdlib module.
     pub fn lookup_static(&mut self, module_path: &[String], static_name: &str) -> Option<StaticInfo> {
         self.ensure_loaded(module_path);
@@ -745,6 +764,7 @@ fn load_stdlib_module_data_unguarded(
         traits,
         trait_declarations,
         trait_type_import_paths,
+        imported_type_paths,
         types,
         type_method_declarations,
         type_method_default_const_paths,
@@ -2970,6 +2990,7 @@ pub type File = rusttype RustFile:
             traits: extract_trait_signatures(&program, &["std".to_string(), "fs".to_string()]),
             trait_declarations: extract_trait_declarations(&program),
             trait_type_import_paths: HashMap::new(),
+            imported_type_paths: HashMap::new(),
             types: extract_type_signatures(&program, &["std".to_string(), "fs".to_string()]),
             type_method_declarations: extract_type_method_declarations(&program),
             type_method_default_const_paths: HashMap::new(),

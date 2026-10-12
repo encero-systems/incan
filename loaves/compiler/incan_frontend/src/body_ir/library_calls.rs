@@ -106,15 +106,16 @@ fn library_call(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Opt
 }
 
 /// The stdlib models, classes, enums and newtypes a called stdlib function or method names in its signature, declared
-/// in its own module, under the callee's package origin.
+/// in its own module or imported there from another module of the same package, under that package's origin.
 ///
 /// A name in a stdlib signature is resolved where the stdlib source wrote it, never in the consumer's scope, so a
-/// type that reaches the consumer only through a call, such as a method's `Result` error, keeps its identity.
+/// type that reaches the consumer only through a call, such as a method's `Result` error, keeps its identity. An
+/// imported name is the declaration its import names, and must be one the callee's package owns.
 pub(super) fn signature_type_identities(
     callee: &CanonicalSymbolId,
     cache: &mut StdlibAstCache,
 ) -> Vec<CanonicalSymbolId> {
-    let SymbolOrigin::Package { module_path, .. } = &callee.origin else {
+    let SymbolOrigin::Package { library, module_path } = &callee.origin else {
         return Vec::new();
     };
     let Some(call) = library_call(callee, cache) else {
@@ -130,19 +131,30 @@ pub(super) fn signature_type_identities(
     names
         .into_iter()
         .filter_map(|name| {
-            let mut identity = cache.lookup_identity(&path, &name)?;
-            if identity.origin != SymbolOrigin::Module(path.clone())
-                || !matches!(
-                    identity.kind,
-                    SemanticSourceTargetKind::Model
-                        | SemanticSourceTargetKind::Class
-                        | SemanticSourceTargetKind::Enum
-                        | SemanticSourceTargetKind::Newtype
-                )
-            {
+            let mut identity = cache
+                .lookup_identity(&path, &name)
+                .or_else(|| cache.imported_type_identity(&path, &name))?;
+            if !matches!(
+                identity.kind,
+                SemanticSourceTargetKind::Model
+                    | SemanticSourceTargetKind::Class
+                    | SemanticSourceTargetKind::Enum
+                    | SemanticSourceTargetKind::Newtype
+            ) {
                 return None;
             }
-            identity.origin = callee.origin.clone();
+            let SymbolOrigin::Module(declaring) = &identity.origin else {
+                return None;
+            };
+            let (root, declaring_path) = declaring.split_first()?;
+            if root != stdlib::STDLIB_ROOT {
+                return None;
+            }
+            identity.origin = SymbolOrigin::Package {
+                library: library.clone(),
+                module_path: declaring_path.to_vec(),
+            };
+            cache.callable_source_identity(&identity)?;
             Some(identity)
         })
         .collect()
