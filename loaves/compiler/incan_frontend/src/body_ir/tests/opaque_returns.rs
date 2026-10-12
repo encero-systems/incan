@@ -124,3 +124,25 @@ fn sdk_fallible_adapters_retain_concrete_carriers() -> Result<(), Box<dyn std::e
     }
     Ok(())
 }
+
+/// An SDK trait parameter has no known concrete producer, so its adapter remains opaque.
+#[test]
+fn sdk_unknown_trait_parameter_remains_opaque() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "from std.derives.collection import FallibleIterator\n\ndef adapt(stream: FallibleIterator[int, str]) -> FallibleIterator[int, str]:\n    return stream.take(1)\n",
+        &["m", "sdk_unknown_opaque"],
+    )?;
+    let body = body_named(&module, "adapt")?;
+    assert!(
+        body.locals
+            .iter()
+            .any(|local| matches!(&local.ty, IncanType::Generic { base, .. } if base == "FallibleIterator"))
+    );
+    assert!(
+        !body
+            .named_type_identities
+            .values()
+            .any(|identity| identity.declaration_name == "TakeFallibleIterator")
+    );
+    Ok(())
+}

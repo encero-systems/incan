@@ -10203,6 +10203,26 @@ fn stdlib_fallible_sdk_carriers_output_matches_legacy() -> Result<(), Box<dyn st
     let fixture = driver_fixture()?;
     corpus::check_builtin_source(
         &fixture.driver_binary("debug"),
+        &fixture.scratch("stdlib-fallible-sdk-concrete-carrier")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"from std.derives.collection import FallibleIterator, TakeFallibleIterator
+
+model NumberStream with FallibleIterator[int, str]:
+    index: int
+    def __next__(mut self) -> Result[Option[int], str]:
+        return Ok(None)
+
+def main() -> None:
+    adapter = TakeFallibleIterator[int, str, NumberStream](
+        source=NumberStream(index=4), remaining=3, item_marker=None, error_marker=None
+    )
+    println(adapter.remaining)
+    println(adapter.source.index)
+"#,
+    )?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
         &fixture.scratch("stdlib-fallible-sdk-carriers")?,
         &fixture.sysroot,
         &fixture.formatting,
