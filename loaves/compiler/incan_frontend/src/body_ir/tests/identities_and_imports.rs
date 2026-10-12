@@ -1130,3 +1130,41 @@ model Card with Measured:
     assert!(doubled.type_arguments.is_empty());
     Ok(())
 }
+
+/// An adopter of a standard-library protocol retains the slots its own methods fill, never one of the protocol's
+/// defaults, whose bodies are not among the project's modules.
+#[test]
+fn std_protocol_slots_retain_only_the_adopters_own_methods() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from std.derives.comparison import Ord
+
+
+model Reversed with Ord:
+    value: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.value == other.value
+
+    def __lt__(self, other: Self) -> bool:
+        return self.value > other.value
+"#;
+    let module = build(source, &["m", "std_protocol_slots"])?;
+    let less = module
+        .trait_implementations
+        .iter()
+        .find(|implementation| implementation.method.declaration_name == "__lt__")
+        .ok_or("the protocol slot the adopter fills must be retained")?;
+    assert_eq!(less.owner.declaration_name, "Reversed");
+    assert_eq!(less.implementation.declaration_name, "__lt__");
+    assert_eq!(less.implementation.origin, less.owner.origin);
+    assert_ne!(less.implementation, less.method);
+    assert!(
+        module
+            .trait_implementations
+            .iter()
+            .all(|implementation| implementation.implementation != implementation.method),
+        "a protocol default must not be retained: {:?}",
+        module.trait_implementations
+    );
+    Ok(())
+}

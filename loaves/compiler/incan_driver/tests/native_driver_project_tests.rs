@@ -5998,6 +5998,64 @@ def main() -> None:
     )
 }
 
+/// Through an Eq, Ord or Display bound, a standard slot does what the type gives it: a number compares by value, text
+/// by its equality, an Ord adopter's own `__lt__` runs as written, and `__str__` renders a number and a derived
+/// Display.
+#[test]
+fn std_protocol_slot_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "std_protocol_slot",
+        r#"from std.derives.comparison import Eq, Ord
+
+
+model Reversed with Ord:
+    value: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.value == other.value
+
+    def __lt__(self, other: Self) -> bool:
+        return self.value > other.value
+
+
+@derive(Display)
+model Point:
+    x: int
+
+
+def differ[T with Eq](a: T, b: T) -> bool:
+    return a.__ne__(b)
+
+
+def equal[T with Eq](a: T, b: T) -> bool:
+    return a.__eq__(b)
+
+
+def less[T with Ord](a: T, b: T) -> bool:
+    return a.__lt__(b)
+
+
+def at_most[T with Ord](a: T, b: T) -> bool:
+    return a.__le__(b)
+
+
+def text[T with Display](value: T) -> str:
+    return value.__str__()
+
+
+def main() -> None:
+    println(differ(1, 2))
+    println(equal("a", "a"))
+    println(less(1, 2))
+    println(at_most(2, 2))
+    println(less(Reversed(value=2), Reversed(value=1)))
+    println(text(3))
+    println(text(Point(x=1)))
+"#,
+        b"true\ntrue\ntrue\ntrue\ntrue\n3\nPoint { x: 1 }\n",
+    )
+}
+
 /// Compile a single-module program in the minimal project layout and require the native route to refuse it by name.
 fn check_project_refusal(name: &str, text: &str, reason: &str) -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
