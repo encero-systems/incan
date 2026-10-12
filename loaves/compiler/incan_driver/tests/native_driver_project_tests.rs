@@ -8989,6 +8989,41 @@ def main() -> None:
     )
 }
 
+/// A JSON model writes and reads its aliased fields under their aliases, as legacy's `#[serde(rename)]` does, while
+/// construction and field access accept either name; the canonical name is not a wire key. Pinned to the output legacy
+/// records for it.
+#[test]
+fn serde_field_alias_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_native_case(
+        "serde_field_alias",
+        r#"from std.serde import json
+
+
+@derive(json)
+model Account:
+    type_ [alias="type"]: str
+    class_ as "class": str
+    name: str
+
+    def kind(self) -> str:
+        return self.type
+
+
+def main() -> None:
+    account = Account(type="premium", class="gold", name="Ada")
+    println(account.to_json())
+    println(account.kind())
+    match Account.from_json("{\"type\":\"basic\",\"class\":\"silver\",\"name\":\"Bo\"}"):
+        Ok(decoded) => println(f"{decoded.type_} {decoded.class} {decoded.name}")
+        Err(error) => println(error)
+    match Account.from_json("{\"type_\":\"basic\",\"class\":\"silver\",\"name\":\"Bo\"}"):
+        Ok(decoded) => println(decoded.type_)
+        Err(error) => println(error)
+"#,
+        b"{\"type\":\"premium\",\"class\":\"gold\",\"name\":\"Ada\"}\npremium\nbasic silver Bo\nJSONDecodeError: missing field `type` at line 1 column 46\n",
+    )
+}
+
 /// A keyed lookup in a dictionary with model keys renders a missing key through Display, which a model lacks, so the
 /// direct route refuses it by name rather than handing rustc an unsatisfiable bound.
 #[test]

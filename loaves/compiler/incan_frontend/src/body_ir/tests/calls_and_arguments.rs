@@ -339,6 +339,24 @@ fn enum_methods_and_trait_slots_are_retained() -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
+/// A model's checked field aliases are retained beside its fields, in field order, so its serde form can rename them.
+#[test]
+fn model_field_aliases_are_retained() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "from std.serde import json\n\n@derive(json)\nmodel Account:\n    type_ [alias=\"type\"]: str\n    class_ as \"class\": str\n    name: str\n",
+        &["m", "field_aliases"],
+    )?;
+    let [declaration] = module.nominal_declarations.as_slice() else {
+        return Err("expected one retained model".into());
+    };
+    assert_eq!(
+        declaration.field_aliases,
+        [Some("type".to_owned()), Some("class".to_owned()), None]
+    );
+    assert!(module.is_well_formed_nominal_declaration(declaration));
+    Ok(())
+}
+
 /// A model deriving Copy is retained with that derive, so its values copy exactly where checking said they do.
 #[test]
 fn copy_model_is_retained_with_its_derive() -> Result<(), Box<dyn std::error::Error>> {
