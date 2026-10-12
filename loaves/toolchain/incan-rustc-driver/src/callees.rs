@@ -86,6 +86,10 @@ pub fn planned(tcx: TyCtxt<'_>, name: &str) -> Result<DefId, PlanError> {
 
 /// Resolve a stdlib layout's crate item through public module children; a model layout names a struct and an enum
 /// layout names an enum, so `kind` is the item kind the plan declared.
+///
+/// Each segment selects the public child of that name and the kind it must be: a module on the way, the declared
+/// kind at the end. A class with field defaults compiles a constructor function under its own name beside its struct,
+/// one in the value namespace and one in the type namespace, so a name alone does not select the layout.
 pub fn library_item(tcx: TyCtxt<'_>, path: &str, kind: DefKind) -> Result<DefId, PlanError> {
     let unknown = || PlanError::Invalid {
         function: path.into(),
@@ -95,7 +99,7 @@ pub fn library_item(tcx: TyCtxt<'_>, path: &str, kind: DefKind) -> Result<DefId,
         }
         .into(),
     };
-    let mut segments = path.split("::");
+    let mut segments = path.split("::").peekable();
     let root = segments.next().ok_or_else(unknown)?;
     let krate = tcx
         .crates(())
@@ -103,15 +107,14 @@ pub fn library_item(tcx: TyCtxt<'_>, path: &str, kind: DefKind) -> Result<DefId,
         .find(|krate| tcx.crate_name(**krate).as_str() == root)
         .ok_or_else(unknown)?;
     let mut current = krate.as_def_id();
-    for segment in segments {
-        if tcx.def_kind(current) != DefKind::Mod {
-            return Err(unknown());
-        }
+    while let Some(segment) = segments.next() {
+        let wanted = if segments.peek().is_some() { DefKind::Mod } else { kind };
         current = tcx
             .module_children(current)
             .iter()
-            .find(|child| child.ident.name.as_str() == segment && child.vis.is_public())
-            .and_then(|child| child.res.opt_def_id())
+            .filter(|child| child.ident.name.as_str() == segment && child.vis.is_public())
+            .filter_map(|child| child.res.opt_def_id())
+            .find(|child| tcx.def_kind(*child) == wanted)
             .ok_or_else(unknown)?;
     }
     if tcx.def_kind(current) != kind {
