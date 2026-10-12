@@ -335,6 +335,9 @@ pub def carrier_payload_value(mut builder: Builder, place: Place, span: SourceSp
     ty = frame_place_type(builder.locals, place)
     if numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit:
         return Ok(read_place(place, false, span))
+    match ty:
+        PlanType.FunctionPointer(_signature) => return Ok(read_place(place, false, span))
+        _ => pass
     mut reference_type = PlanType.StringRef
     match ty:
         PlanType.String => pass

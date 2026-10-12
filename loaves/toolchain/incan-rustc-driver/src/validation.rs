@@ -74,6 +74,7 @@ enum Scalar {
     EnumMutRef(i64),
     CheckedInt,
     Tuple(Vec<Scalar>),
+    TupleMutRef(Vec<Scalar>),
     String,
     StringRef,
     StringMutRef,
@@ -195,6 +196,12 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::RangeValue => Scalar::RangeValue,
         PlanType::CallableArguments(inputs) => Scalar::Tuple(inputs.iter().map(scalar).collect()),
         PlanType::Tuple(elements) => Scalar::Tuple(
+            elements
+                .iter()
+                .map(|element| scalar(&tuple_element_type(element.clone())))
+                .collect(),
+        ),
+        PlanType::TupleMutRef(elements) => Scalar::TupleMutRef(
             elements
                 .iter()
                 .map(|element| scalar(&tuple_element_type(element.clone())))
@@ -448,6 +455,7 @@ fn field_owner(function: &Function, ty: Scalar, dereference: bool) -> Result<Sca
     match ty {
         Scalar::ModelRef(owner) | Scalar::ModelMutRef(owner) => Ok(Scalar::Model(owner)),
         Scalar::EnumMutRef(owner) => Ok(Scalar::Enum(owner)),
+        Scalar::TupleMutRef(elements) => Ok(Scalar::Tuple(elements)),
         _ => Err(invalid(
             function,
             "field dereference requires a nominal receiver reference",
@@ -547,6 +555,7 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
                 Scalar::GeneratorMutRef(leaf, depth) => Scalar::Generator(leaf, depth),
                 Scalar::StringMutRef => Scalar::String,
                 Scalar::EnumMutRef(owner) => Scalar::Enum(owner),
+                Scalar::TupleMutRef(elements) => Scalar::Tuple(elements),
                 Scalar::ListRef(leaf, depth) | Scalar::ListMutRef(leaf, depth) => Scalar::List(leaf, depth),
                 Scalar::SetRef(leaf) | Scalar::SetMutRef(leaf) => Scalar::Set(leaf),
                 Scalar::DictRef(key, value) | Scalar::DictMutRef(key, value) => Scalar::Dict(key, value),
@@ -926,6 +935,15 @@ fn borrow_result(plan: &Plan, function: &Function, value: &Place, mutable: bool)
     if mutable {
         return match ty {
             Scalar::ZipIterator(left, right) => Ok(Scalar::ZipIteratorMutRef(left, right)),
+            Scalar::Tuple(elements) => {
+                if shared_reference(&local(function, value.local)?) {
+                    return Err(invalid(
+                        function,
+                        "cannot mutably borrow a tuple through a shared reference",
+                    ));
+                }
+                Ok(Scalar::TupleMutRef(elements))
+            }
             Scalar::Generator(leaf, depth) => Ok(Scalar::GeneratorMutRef(leaf, depth)),
             Scalar::Model(index) => {
                 if matches!(local(function, value.local)?, Scalar::ModelRef(_)) {
@@ -1011,6 +1029,9 @@ fn shared_reference(ty: &Scalar) -> bool {
 /// models, callables, and tuples of admitted types; formatting views stay internal. A function pointer's inputs also
 /// admit the exclusive model reference a `mut` model parameter receives, as a declared parameter does.
 fn source_signature_type(ty: &Scalar) -> bool {
+    if let Scalar::TupleMutRef(elements) = ty {
+        return source_signature_type(&Scalar::Tuple(elements.clone()));
+    }
     if let Scalar::FunctionPointer(signature) = ty {
         let Some((result, inputs)) = signature.split_last() else {
             return false;
@@ -1034,7 +1055,9 @@ fn source_signature_type(ty: &Scalar) -> bool {
                     | Scalar::String
                     | Scalar::List(_, _)
                     | Scalar::Enum(_)
+                    | Scalar::Model(_)
             ) || (matches!(element, Scalar::Tuple(_)) && source_signature_type(element))
+                || (matches!(element, Scalar::FunctionPointer(_)) && source_signature_type(element))
         });
     }
     sized_numeric(ty).is_some()
@@ -1220,9 +1243,6 @@ fn validate_array_length(plan: &Plan, function: &Function, ty: Scalar) -> Result
         {
             Err(invalid(function, "floating-point tuple hashed keys lack Eq and Hash"))
         }
-        Scalar::Dict(_, Leaf::Tuple(_))
-        | Scalar::DictRef(_, Leaf::Tuple(_))
-        | Scalar::DictMutRef(_, Leaf::Tuple(_)) => Err(invalid(function, "tuple dictionary values are not admitted")),
         Scalar::Set(Leaf::Enum(index))
         | Scalar::SetRef(Leaf::Enum(index))
         | Scalar::SetMutRef(Leaf::Enum(index))
@@ -1715,7 +1735,7 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
             validate_model_type(plan, &list_leaf_type(key.clone()))?;
             validate_model_type(plan, &list_leaf_type(value.clone()))?;
         }
-        PlanType::Tuple(elements) => {
+        PlanType::Tuple(elements) | PlanType::TupleMutRef(elements) => {
             for element in elements {
                 validate_model_type(plan, &tuple_element_type(element.clone()))?;
             }
@@ -1725,7 +1745,7 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
     if matches!(ty, PlanType::Tuple(_)) && !source_signature_type(&scalar(ty)) {
         return Err(PlanError::Invalid {
             function: "tuple".into(),
-            reason: "tuple elements must be admitted scalars, owned text, lists or enum carriers".into(),
+            reason: "tuple elements must retain admitted scalar, text, list, nominal, function-pointer or nested tuple layouts".into(),
         });
     }
     if let PlanType::Enum(index, name) | PlanType::EnumRef(index, name) = ty {

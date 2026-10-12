@@ -168,8 +168,14 @@ from nominal_instances import specialize_nominals, instance_arguments
 from traits import method_index, owner_method_index, receiver_fills_slot, specialize_traits, validate_static_receiver
 from decls import lower_model_declarations, static_slot, static_accessors, library_item, library_enum_item
 from model_lists import model_list_read, structural_prefix, prefix_place
-from element_places import is_element_place, element_place_type
-from element_borrows import element_method_owner, element_method_receiver, borrow_element_mut, mutable_element_place
+from element_places import is_element_place, element_place_type, element_prefix_type
+from element_borrows import (
+    element_method_owner,
+    element_method_receiver,
+    borrow_element_mut,
+    mutable_element_place,
+    mutable_element_prefix,
+)
 from option_tests import is_option_carrier, is_union_carrier, option_isinstance, enum_tag
 from derived_defaults import is_derived_default, lower_derived_default
 from models import field_path, field_projection
@@ -1319,6 +1325,8 @@ pub def lower_assignment(
         Some(global) => return write_static(module, builder, destination, global, value, span)
         None => pass
     if len(destination.projection) != 0:
+        if is_element_place(builder, destination)?:
+            return element_assignment(module, builder, destination, value, span)
         base = list_base_place(builder, destination, span)?
         ty = builder.locals[base.local].ty
         if is_collection(ty):
@@ -1341,6 +1349,56 @@ pub def lower_assignment(
         _ => pass
     lower_local_assignment(module, builder, target, value, span)?
     inherit_borrowed_item(builder, target, value)
+    return Ok(None)
+
+
+def element_assignment(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    destination: &RustPlace,
+    value: &RustRvalue,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Evaluate a replacement before reborrowing checked element storage, then write its last index or structural field."""
+    ty = element_place_type(builder, destination)?
+    replacement = temporary(builder, ty, span)
+    lower_local_assignment(module, builder, replacement, value, span)?
+    argument = element_plan_operand(builder, read_place(replacement, replacement.local in builder.owned, span), ty, span)?
+    last = len(destination.projection) - 1
+    container_type = element_prefix_type(builder, destination, last)?
+    match destination.projection[last]:
+        PlaceElem.Index(value) =>
+            if is_list(container_type):
+                subscript = scalar_operand(builder, value, span)?
+                container = mutable_element_prefix(builder, destination, last, span)?
+                leaf, depth = require_list_shape(container_type, "invalid Body IR list write container")?
+                reference = list_borrow(builder, container, true, span)?
+                output = temporary(builder, PlanType.Unit, span)
+                list_call(
+                    builder,
+                    "set_list",
+                    list_element(leaf, depth),
+                    [PlanType.ListMutRef(leaf, depth), PlanType.Int, ty],
+                    PlanType.Unit,
+                    [reference, subscript, argument],
+                    output,
+                    span,
+                )
+                return Ok(None)
+            if is_collection(container_type):
+                types = collection_arguments(container_type)
+                if len(types) != 2:
+                    return Err("unsupported Body IR set indexing assignment")
+                subscript = element_operand(builder, value, types[0], span)?
+                container = mutable_element_prefix(builder, destination, last, span)?
+                return insert_collection(builder, container, [subscript, argument], span)
+        _ => pass
+    target = mutable_element_place(builder, destination, span)?
+    operation = RvalueKind.Use(argument)
+    if ty == PlanType.String or is_owned_list(ty) or is_owned_collection(ty) or is_nominal_type(ty):
+        replace_owned_destination(builder, target, operation, span)
+    else:
+        builder.emit(plan_assign(target, operation, span))
     return Ok(None)
 
 
@@ -1572,6 +1630,8 @@ def stored_callable(mut builder: Builder, operand: &RustOperand, span: SourceSpa
             match read.place.global():
                 Some(_global) => return value_operand(builder, operand, span)
                 None => pass
+            if is_element_place(builder, read.place)?:
+                return value_operand(builder, operand, span)
             source = scalar_place(builder, read.place, span)?
             match partial_flags(builder, source.local):
                 Some(_flags) =>
@@ -3306,7 +3366,7 @@ def call_parameter_type(builder: Builder, body: &RustBody, parameter: &RustCalla
 
     A list, set or dictionary parameter takes a shared or, when `mut`, an exclusive reference to the caller's storage;
     `mut` text, models and enums take an exclusive reference to the caller's value; a `mut` scalar is the callee's own
-    copy. A `mut` tuple or iterator parameter stays refused by name.
+    copy. A `mut` tuple borrows its complete layout; an iterator without retained exclusive storage stays refused.
     """
     declared = native_source_type(builder.nominals, builder.enums, builder.unions, parameter.ty, builder.intrinsics)?
     ty = parameter_representation(body, int(parameter.local.index()), declared)?
@@ -3421,6 +3481,7 @@ pub def call_argument_operand(
         PlanType.StringMutRef => return mutable_argument(builder, value, ty, span)
         PlanType.ModelMutRef(_owner, _name) => return mutable_argument(builder, value, ty, span)
         PlanType.EnumMutRef(_owner, _name) => return mutable_argument(builder, value, ty, span)
+        PlanType.TupleMutRef(_elements) => return mutable_argument(builder, value, ty, span)
         _ => pass
     operand = boundary_operand(builder, value, ty, span)?
     coerced = coerce_numeric_operand(builder, operand, ty, span)?
@@ -3455,6 +3516,13 @@ def loop_variable_copy(mut builder: Builder, value: &RustOperand, span: SourceSp
                 return Ok(Some(cloned_list(builder, root, span)?))
             return Ok(None)
         _ => return Ok(None)
+
+
+def tuple_pointer_element(element: TupleElement) -> bool:
+    """A tuple's function-pointer field requires explicit item reification, independently of whether it owns storage."""
+    match element:
+        TupleElement.FunctionPointer(_signature) => return true
+        _ => return false
 
 
 def function_argument(mut builder: Builder, ty: PlanType, value: Operand, span: SourceSpan) -> Result[Operand, str]:
@@ -4198,7 +4266,9 @@ def checked_aggregate(
                 match element.as_one():
                     Some(value) =>
                         # A list or carrier element takes the destination element's exact carrier, `None` included.
-                        if slot < len(element_types) and carrier_element(element_types[slot]):
+                        if slot < len(element_types) and (carrier_element(element_types[slot]) or tuple_pointer_element(
+                            element_types[slot],
+                        )):
                             operands.append(
                                 boundary_operand(builder, value, tuple_element_type(element_types[slot]), span)?,
                             )
@@ -6803,8 +6873,7 @@ def in_place_item(
     Bind a loop item that the body changes in place as an exclusive reference to its element, as legacy's `iter_mut`.
 
     The element is reborrowed through the runtime's checked `borrow_list_mut` at the cursor position, so each change
-    lands in the list. An element without an exclusive reference representation (a tuple or a scalar) stays refused by
-    name.
+    lands in the list. Tuples keep their complete layout behind that reference; scalar elements remain refused.
     """
     leaf, depth = require_list_shape(place_type(builder.locals, iterator), "unsupported Body IR nonlist cursor")?
     mut reference_type = PlanType.Unit

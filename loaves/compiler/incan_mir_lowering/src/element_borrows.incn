@@ -31,6 +31,7 @@ from builtins import list_call
 from model_lists import structural_prefix, prefix_place
 from element_places import is_element_place, element_place_type
 from classes import frame_type
+from tuples import is_tuple_type
 from lowering import list_borrow, scalar_operand, value_operand, materialized_receiver
 
 
@@ -100,28 +101,48 @@ pub def mutable_element_place(mut builder: Builder, source: &RustPlace, span: So
     Each index reborrows its element or value through the runtime's checked accessor, and each field after it projects
     through the resulting reference. The result is that reference, or a field place behind it.
     """
+    return mutable_element_prefix(builder, source, len(source.projection), span)
+
+
+pub def mutable_element_prefix(
+    mut builder: Builder,
+    source: &RustPlace,
+    count: int,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Reborrow checked element storage up to `count` projections, retaining the container before an assignment's final index."""
+    if count < 0 or count > len(source.projection):
+        return Err("invalid Body IR element prefix length")
     start = element_start(builder, source)?
     mut place = local_root(builder, source, span)?
     if start > 0:
         place = prefix_place(builder, source, start, span)?
-    for position in range(start, len(source.projection)):
+    for position in range(start, count):
         match source.projection[position]:
             PlaceElem.Index(index) =>
-                place = borrow_element(builder, place, index, span)?
+                if is_tuple_type(place_type(builder.locals, place)):
+                    place = mutable_field(builder, place, source.projection[position], span)?
+                else:
+                    place = borrow_element(builder, place, index, span)?
             PlaceElem.Slice(start=_start, end=_end, step=_step) =>
                 return Err("unsupported Body IR mutable borrow through a list slice")
             _ =>
-                owner = dereferenced(builder, place)
-                field = field_projection(
-                    builder.nominals,
-                    place_type(builder.locals, owner),
-                    source.projection[position],
-                    builder.enums,
-                    builder.unions,
-                    builder.intrinsics,
-                )?
-                place = appended_field(owner, field, span)?
+                place = mutable_field(builder, place, source.projection[position], span)?
     return Ok(place)
+
+
+def mutable_field(mut builder: Builder, place: Place, projection: &PlaceElem, span: SourceSpan) -> Result[Place, str]:
+    """Project a checked model or constant tuple field through its retained exclusive reference."""
+    owner = dereferenced(builder, place)
+    field = field_projection(
+        builder.nominals,
+        place_type(builder.locals, owner),
+        projection,
+        builder.enums,
+        builder.unions,
+        builder.intrinsics,
+    )?
+    return appended_field(owner, field, span)
 
 
 pub def borrow_element_mut(
@@ -227,6 +248,7 @@ def mutable_reference_type(element: PlanType) -> Result[PlanType, str]:
         PlanType.Model(owner, name) => return Ok(PlanType.ModelMutRef(owner, name))
         PlanType.Dict(key, value) => return Ok(PlanType.DictMutRef(key, value))
         PlanType.Set(leaf) => return Ok(PlanType.SetMutRef(leaf))
+        PlanType.Tuple(elements) => return Ok(PlanType.TupleMutRef(elements))
         _ => return Err("unsupported Body IR mutable borrow of a scalar collection element")
 
 
@@ -237,6 +259,8 @@ def dereferenced(builder: Builder, place: Place) -> Place:
     match builder.locals[place.local].ty:
         PlanType.ModelMutRef(owner, name) =>
             return Place(local=place.local, projection=Projection.Deref(PlanType.Model(owner, name)), span=place.span)
+        PlanType.TupleMutRef(elements) =>
+            return Place(local=place.local, projection=Projection.Deref(PlanType.Tuple(elements)), span=place.span)
         _ => return place
 
 

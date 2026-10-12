@@ -226,8 +226,14 @@ pub def field_projection(
         PlanType.Tuple(elements) =>
             slot = tuple_slot(projection, len(elements))?
             return Ok(FieldProjection(slot=slot, ty=tuple_element_type(elements[slot])))
+        PlanType.TupleMutRef(elements) =>
+            slot = tuple_slot(projection, len(elements))?
+            return Ok(FieldProjection(slot=slot, ty=tuple_element_type(elements[slot])))
         PlanType.RangeValue => return range_field(projection)
-        _ => return Err("unsupported Body IR model index or slice projection")
+        _ =>
+            return Err(
+                f"unsupported Body IR model index or slice projection at root {root:?}; projection {projection:?}",
+            )
 
 
 pub def field_slot(value: &RustPlaceElem, declaration: &NominalDeclaration) -> Result[int, str]:
@@ -327,10 +333,11 @@ def receiver_field(
 
 
 def exclusive_referent(ty: PlanType) -> Option[PlanType]:
-    """The text or enum value an exclusive reference names; model references keep their receiver projection."""
+    """The text, enum or tuple value an exclusive reference names; model references keep their receiver projection."""
     match ty:
         PlanType.StringMutRef => return Some(PlanType.String)
         PlanType.EnumMutRef(owner, name) => return Some(PlanType.Enum(owner, name))
+        PlanType.TupleMutRef(elements) => return Some(PlanType.Tuple(elements))
         _ => return None
 
 

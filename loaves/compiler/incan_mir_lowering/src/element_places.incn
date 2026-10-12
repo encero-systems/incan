@@ -36,6 +36,13 @@ pub def is_element_place(builder: Builder, source: &RustPlace) -> Result[bool, s
 
 pub def element_place_type(builder: Builder, source: &RustPlace) -> Result[PlanType, str]:
     """Follow an element place's projections to the type of the value its read materializes, emitting nothing."""
+    return element_prefix_type(builder, source, len(source.projection))
+
+
+pub def element_prefix_type(builder: Builder, source: &RustPlace, count: int) -> Result[PlanType, str]:
+    """Resolve a checked element prefix once, without reading or borrowing its storage."""
+    if count < 0 or count > len(source.projection):
+        return Err("invalid Body IR element type prefix length")
     match source.local_id():
         None => return Err("unsupported Body IR global element place")
         Some(local) =>
@@ -46,9 +53,11 @@ pub def element_place_type(builder: Builder, source: &RustPlace) -> Result[PlanT
                     ty = PlanType.Model(owner, name)
                 PlanType.ModelMutRef(owner, name) =>
                     ty = PlanType.Model(owner, name)
+                PlanType.TupleMutRef(elements) =>
+                    ty = PlanType.Tuple(elements)
                 _ => pass
-            for projection in source.projection:
-                ty = projected_type(builder, ty, projection)?
+            for slot in range(count):
+                ty = projected_type(builder, ty, source.projection[slot])?
             return Ok(ty)
 
 

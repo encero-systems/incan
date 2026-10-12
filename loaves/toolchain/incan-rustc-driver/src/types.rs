@@ -47,6 +47,11 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
                 .map(|element| native_type(tcx, &tuple_element_type(element.clone())))
                 .collect::<Result<Vec<_>, _>>()?,
         ),
+        PlanType::TupleMutRef(elements) => Ty::new_mut_ref(
+            tcx,
+            tcx.lifetimes.re_erased,
+            native_type(tcx, &PlanType::Tuple(elements.clone()))?,
+        ),
         PlanType::RangeValue => Ty::new_tup(
             tcx,
             &range_field_types()

@@ -10,11 +10,11 @@ location, including operands and places, so native diagnostics retain provenance
 @derive(Clone, PartialEq)
 pub enum TupleElement:
     """
-    One tuple element's layout: a scalar, owned text, an owned list, an enum carrier, or a nested tuple.
+    One tuple element's layout: a scalar, owned text, an owned list, a model or enum carrier, a Copy function pointer, or a nested tuple.
 
     A list keeps its leaf and depth, an enum carrier (an `Option`, a `Result` or a source enum) keeps its retained
     declaration index and name, and a nested tuple keeps its own element layout, exactly as the matching `PlanType`
-    does.
+    does. A model retains its declaration identity, and a function pointer retains its exact signature.
     """
 
     Int
@@ -25,6 +25,8 @@ pub enum TupleElement:
     List(ListLeaf, int)
     Enum(int, str)
     Tuple(list[TupleElement])
+    Model(int, str)
+    FunctionPointer(list[PlanType])
 
 
 @derive(Clone, PartialEq)
@@ -92,7 +94,7 @@ pub enum PlanType:
     Sized numeric variants preserve their exact Rust carriers. CheckedNumeric stores its named sized carrier; its value projection retains the carrier type. Tuple elements retain their ordered types and own any string elements. Array lengths are exact nonnegative counts. CheckedInt and arrays are body temporaries; shared slice variants already include their reference.
     StringRef borrows an owned String, StringMutRef is the exclusive borrow a `mut str` parameter receives, and StrRef is a string literal's shared str view.
     List stores its scalar or flat tuple leaf element and a positive nesting depth; ListRef and ListMutRef borrow that same Vec representation.
-    ModelRef and ModelMutRef retain shared and mutable nominal receiver references; ModelMutRef and EnumMutRef are also the exclusive borrow a `mut` model or enum parameter, an in-place pattern binding or an in-place loop item holds.
+    ModelRef and ModelMutRef retain shared and mutable nominal receiver references; ModelMutRef, EnumMutRef and TupleMutRef are also the exclusive borrow a `mut` parameter or an in-place loop item holds. TupleMutRef retains its referent's complete tuple layout.
     Decimal retains the legacy Decimal128 carrier; precision is checked upstream and the value keeps its written scale.
     FrozenStr retains the copyable frozen wrapper over static text; it owns no allocation and is distinct from String.
     FrozenBytes retains the copyable wrapper over a static byte slice, distinct from an owned byte list.
@@ -130,6 +132,7 @@ pub enum PlanType:
     CheckedInt
     Tuple(list[TupleElement])
     String
+    TupleMutRef(list[TupleElement])
     StringRef
     StringMutRef
     Decimal
@@ -211,6 +214,8 @@ pub def tuple_element_type(element: TupleElement) -> PlanType:
         TupleElement.List(leaf, depth) => return PlanType.List(leaf, depth)
         TupleElement.Enum(owner, name) => return PlanType.Enum(owner, name)
         TupleElement.Tuple(elements) => return PlanType.Tuple(elements)
+        TupleElement.Model(owner, name) => return PlanType.Model(owner, name)
+        TupleElement.FunctionPointer(signature) => return PlanType.FunctionPointer(signature)
 
 
 @derive(Clone, PartialEq)

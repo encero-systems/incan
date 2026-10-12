@@ -60,6 +60,13 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
                 .map(|element| ty(&tuple_element_type(element.clone()), span))
                 .collect(),
         ),
+        PlanType::TupleMutRef(elements) => ast::TyKind::Ref(
+            None,
+            ast::MutTy {
+                ty: ty(&PlanType::Tuple(elements.clone()), span),
+                mutbl: ast::Mutability::Mut,
+            },
+        ),
         PlanType::RangeValue => ast::TyKind::Tup(range_field_types().iter().map(|field| ty(field, span)).collect()),
         PlanType::Decimal => {
             let mut path = ast::Path::from_ident(ident("incan_native_runtime", span));

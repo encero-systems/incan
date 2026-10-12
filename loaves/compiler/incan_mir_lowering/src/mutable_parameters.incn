@@ -1,4 +1,4 @@
-"""The exclusive references `mut` text, model and enum parameters receive, built the way legacy passes each argument."""
+"""The exclusive references `mut` text, model, enum and tuple parameters receive, built the way legacy passes each argument."""
 
 from pub::incan_mir_plan import Operand, OperandKind, Place, PlanType, Projection, RvalueKind, SourceSpan
 from pub::incan_mir_plan import assign as plan_assign
@@ -7,6 +7,8 @@ from frame import Builder, temporary, read_place, place_type
 from text_plan import clone_text
 from lowering import scalar_place, display_operand, clone_nominal_operand
 from lists import parameter_storage_type
+from tuples import is_tuple_type
+from options import clone_tuple_operand
 
 
 pub def mutable_argument(
@@ -16,7 +18,7 @@ pub def mutable_argument(
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """
-    Borrow the value a `mut` text, model or enum parameter receives, as an exclusive reference of type `reference`.
+    Borrow the value a `mut` text, model, enum or tuple parameter receives, as an exclusive reference of type `reference`.
 
     The caller's own value, or one it last uses, is borrowed in place, so the callee's changes reach it. A text literal,
     a loop variable, or a value the checker reads by copy reaches the callee as a fresh owned copy, as legacy passes
@@ -34,6 +36,7 @@ def referent(reference: PlanType) -> Result[PlanType, str]:
         PlanType.StringMutRef => return Ok(PlanType.String)
         PlanType.ModelMutRef(owner, name) => return Ok(PlanType.Model(owner, name))
         PlanType.EnumMutRef(owner, name) => return Ok(PlanType.Enum(owner, name))
+        PlanType.TupleMutRef(elements) => return Ok(PlanType.Tuple(elements))
         _ => return Err("invalid Body IR mutable parameter reference")
 
 
@@ -77,9 +80,13 @@ def checked_source(mut builder: Builder, place: Place, fact: &OwnershipFact, spa
 
 
 def copied_value(mut builder: Builder, place: Place, span: SourceSpan) -> Result[Place, str]:
-    """Clone text, a model or an enum into a new owned temporary."""
+    """Clone text, a tuple, a model or an enum into a new owned temporary."""
     if place_type(builder.locals, place) == PlanType.String:
         return clone_text(builder, place, span)
+    if is_tuple_type(place_type(builder.locals, place)):
+        match clone_tuple_operand(builder, place, span)?.kind:
+            OperandKind.Move(copy) => return Ok(copy)
+            _ => return Err("invalid Body IR cloned tuple argument")
     match clone_nominal_operand(builder, place, span)?.kind:
         OperandKind.Move(copy) => return Ok(copy)
         _ => return Err("invalid Body IR cloned argument")

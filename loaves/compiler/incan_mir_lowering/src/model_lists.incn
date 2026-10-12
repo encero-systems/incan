@@ -41,6 +41,8 @@ pub def structural_prefix(builder: Builder, source: &RustPlace) -> Result[Option
                     ty = root
                 PlanType.Tuple(_elements) =>
                     ty = root
+                PlanType.TupleMutRef(elements) =>
+                    ty = PlanType.Tuple(elements)
                 PlanType.ModelRef(owner, name) =>
                     ty = PlanType.Model(owner, name)
                 PlanType.ModelMutRef(owner, name) =>
