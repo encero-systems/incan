@@ -3015,6 +3015,47 @@ def main() -> None:
     )
 }
 
+/// Generic functions whose parameters are callables over their type parameters (`transform: (T) -> U`,
+/// `f: () -> Result[T, E]`) run in each closed instance with a named function or a closure as the argument, as legacy
+/// does.
+#[test]
+fn generic_callable_parameters_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("generic-callable-parameters")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"def call_both[T, U with Display](transform: (T) -> U, first: T, second: T) -> str:
+    return f"{transform(first)} {transform(second)}"
+
+
+def call[T, E](f: () -> Result[T, E]) -> Result[T, E]:
+    return f()
+
+
+def apply[T](f: (T) -> T, value: T) -> T:
+    return f(value)
+
+
+def increment(value: int) -> int:
+    return value + 1
+
+
+def shout(text: str) -> str:
+    return text.upper()
+
+
+def main() -> None:
+    println(call_both(increment, 1, 2))
+    println(call_both(shout, "a", "b"))
+    println(call(() => Ok(2)).unwrap_or(0))
+    println(apply(increment, 41))
+    println(apply((x) => x * 2, 21))
+"#,
+    )
+}
+
 /// Prove canonical scalar casts and default values byte-identical to legacy.
 #[test]
 fn numeric_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
