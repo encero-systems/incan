@@ -36,7 +36,19 @@ fn imported_model_alias_fixture_has_known_temporaries() -> Result<(), Box<dyn st
         .filter(|local| local.ty == IncanType::Unknown)
         .map(|local| (local.span, source.get(local.span.start..local.span.end)))
         .collect::<Vec<_>>();
-    assert!(unknown.is_empty(), "{unknown:#?}");
+    let methods = body
+        .block
+        .stmts
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(unknown.is_empty(), "{unknown:#?}\n{methods:#?}");
     Ok(())
 }
 
