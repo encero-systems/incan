@@ -5,6 +5,47 @@
 
 use super::*;
 
+/// Canonical list count retains its checked element carrier independently of positional signature availability.
+#[test]
+fn numeric_count_probe_retains_checked_element() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n  small: i8 = -5\n  values: list[int] = [-5, 250]\n  println(values.count(small))\n",
+        &["m", "numeric_count_probe"],
+    )?;
+    let body = body_named(&module, "main")?;
+    let (target, arguments) = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                args,
+                ..
+            } if target.name == "count" => Some((target, args)),
+            _ => None,
+        })
+        .ok_or("missing count method")?;
+    assert!(
+        target.canonical.as_ref().is_some_and(|identity| identity.origin
+            == incan_semantics_core::SymbolOrigin::Builtin
+            && identity.declaration_name == "List.count"),
+        "{}",
+        module.render_snapshot()
+    );
+    let Some(bir::ArgumentElement::One(bir::Operand::Place(read))) = arguments.get(1) else {
+        return Err("count probe has no retained storage".into());
+    };
+    let local = read.place.local_id().ok_or("count probe has no local")?;
+    assert_eq!(
+        body.locals[local.index()].ty,
+        IncanType::Primitive(IncanPrimitiveType::Int),
+        "{}",
+        module.render_snapshot()
+    );
+    Ok(())
+}
+
 /// A numeric dictionary membership probe retains its checked key carrier before the runtime lookup.
 #[test]
 fn numeric_membership_probe_retains_checked_key() -> Result<(), Box<dyn std::error::Error>> {
