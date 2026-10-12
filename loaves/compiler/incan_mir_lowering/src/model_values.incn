@@ -33,8 +33,13 @@ def nominal_place(builder: Builder, value: &RustOperand, span: SourceSpan) -> Re
                 None => return Ok(None)
                 Some(_local) => pass
             mut place = model_place(
-                builder.nominals, builder.locals[builder.local_offset:], read.place, span,
-                builder.enums, builder.unions, builder.intrinsics,
+                builder.nominals,
+                builder.locals[builder.local_offset:],
+                read.place,
+                span,
+                builder.enums,
+                builder.unions,
+                builder.intrinsics,
             )?
             place.local += builder.local_offset
             match place_type(builder.locals, place):
@@ -74,7 +79,7 @@ def model_call(
             builder.externals.append(
                 ExternalFunction(path=path, type_arguments=[ty], parameters=parameters, return_type=result, span=span),
             )
-            terminate_call(builder, CalleeKind.Instantiated(path, ty), arguments, destination, span)
+            terminate_call(builder, CalleeKind.Instantiated(path, [ty]), arguments, destination, span)
             if result == PlanType.String:
                 builder.owned.append(destination.local)
             return Ok(None)
@@ -290,7 +295,7 @@ pub def lower_model_from_json(
                     span=span,
                 ),
             )
-            lower_callable_result(builder, CalleeKind.Instantiated(path, ty), [text], output, result, span)?
+            lower_callable_result(builder, CalleeKind.Instantiated(path, [ty]), [text], output, result, span)?
             drop_borrowed_text_temporaries(builder, incoming, output.local, span)
             return Ok(None)
         None => return Err("unsupported Body IR discarded from_json")

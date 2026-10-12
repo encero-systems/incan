@@ -341,7 +341,7 @@ pub def generator_runtime_call(
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=[element], parameters=parameters, return_type=result, span=span),
     )
-    terminate_call(builder, CalleeKind.Instantiated(path, element), operands, output, span)
+    terminate_call(builder, CalleeKind.Instantiated(path, [element]), operands, output, span)
 
 
 pub def generator_next(mut builder: Builder, receiver: Place, output: Place, span: SourceSpan) -> Result[None, str]:

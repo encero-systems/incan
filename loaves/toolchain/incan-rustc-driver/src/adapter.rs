@@ -379,16 +379,7 @@ fn instantiate_generic_externals(tcx: TyCtxt<'_>, plan: &Plan) -> Result<Option<
         let Some(types) = inferred.get(path) else {
             continue;
         };
-        callee.kind = match types.as_slice() {
-            [ty] => CalleeKind::Instantiated(path.clone(), ty.clone()),
-            [key, value] => CalleeKind::InstantiatedPair(path.clone(), key.clone(), value.clone()),
-            _ => {
-                return Err(PlanError::Invalid {
-                    function: path.clone(),
-                    reason: "an inferred external instantiation admits one or two type arguments".into(),
-                });
-            }
-        };
+        callee.kind = CalleeKind::Instantiated(path.clone(), types.clone());
     }
     Ok(Some(instantiated))
 }

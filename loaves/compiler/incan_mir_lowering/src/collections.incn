@@ -146,10 +146,7 @@ pub def collection_call(
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=arguments, parameters=parameters, return_type=result, span=span),
     )
-    mut callee = CalleeKind.Instantiated(path, arguments[0])
-    if len(arguments) == 2:
-        callee = CalleeKind.InstantiatedPair(path, arguments[0], arguments[1])
-    terminate_call(builder, callee, operands, destination, span)
+    terminate_call(builder, CalleeKind.Instantiated(path, arguments), operands, destination, span)
     if result == PlanType.String or is_owned_collection(result):
         builder.owned.append(destination.local)
     return Ok(None)

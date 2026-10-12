@@ -256,7 +256,7 @@ pub def zip_generators(
             span=span,
         ),
     )
-    terminate_call(builder, CalleeKind.InstantiatedPair(path, left, right), [first, second], output, span)
+    terminate_call(builder, CalleeKind.Instantiated(path, [left, right]), [first, second], output, span)
     return Ok(None)
 
 

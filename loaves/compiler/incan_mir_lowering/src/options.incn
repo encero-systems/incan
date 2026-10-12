@@ -302,7 +302,7 @@ pub def borrowed_runtime_value(
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=[ty], parameters=[reference_type], return_type=result_type, span=span),
     )
-    terminate_call(builder, CalleeKind.Instantiated(path, ty), [read_place(reference, false, span)], output, span)
+    terminate_call(builder, CalleeKind.Instantiated(path, [ty]), [read_place(reference, false, span)], output, span)
     builder.owned.append(output.local)
     return output
 
@@ -463,10 +463,10 @@ def unwrap_failure(
             span=span,
         ),
     )
-    # A generic runtime function is called through its one explicit instantiation, as `list_call` does.
+    # Keep the full instantiation next to the signature that declares it, as `list_call` does.
     mut callee = CalleeKind.External(path)
-    if len(type_arguments) == 1:
-        callee = CalleeKind.Instantiated(path, type_arguments[0])
+    if len(type_arguments) != 0:
+        callee = CalleeKind.Instantiated(path, type_arguments)
     terminate_call(builder, callee, arguments, destination, span)
 
 

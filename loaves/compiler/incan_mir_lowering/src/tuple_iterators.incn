@@ -65,7 +65,7 @@ pub def zip_call(
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=[first, second], parameters=parameters, return_type=result, span=span),
     )
-    terminate_call(builder, CalleeKind.InstantiatedPair(path, first, second), arguments, output, span)
+    terminate_call(builder, CalleeKind.Instantiated(path, [first, second]), arguments, output, span)
 
 
 pub def clone_zip(mut builder: Builder, source: Place, span: SourceSpan) -> Result[Operand, str]:

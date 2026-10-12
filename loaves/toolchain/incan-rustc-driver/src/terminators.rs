@@ -128,16 +128,8 @@ fn call_operand<'tcx>(
     if let crate::plan::CalleeKind::CloneModel(_, name) = &callee.kind {
         arguments.push(crate::types::model_type(tcx, name)?.into());
     }
-    if let crate::plan::CalleeKind::Instantiated(_, ty) = &callee.kind {
-        arguments.extend(callees::arguments(tcx, callees::resolve(tcx, callee)?, std::slice::from_ref(ty))?.iter());
-    }
-    if let crate::plan::CalleeKind::InstantiatedPair(_, key, value) = &callee.kind {
-        arguments
-            .extend(callees::arguments(tcx, callees::resolve(tcx, callee)?, &[key.clone(), value.clone()])?.iter());
-    }
-    if let crate::plan::CalleeKind::InstantiatedTriple(_, first, second, third) = &callee.kind {
-        let types = [first.clone(), second.clone(), third.clone()];
-        arguments.extend(callees::arguments(tcx, callees::resolve(tcx, callee)?, &types)?.iter());
+    if let crate::plan::CalleeKind::Instantiated(_, types) = &callee.kind {
+        arguments.extend(callees::arguments(tcx, callees::resolve(tcx, callee)?, types)?.iter());
     }
     Ok(mir::Operand::function_handle(
         tcx,

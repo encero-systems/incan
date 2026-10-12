@@ -93,9 +93,15 @@ pub def source_generator(mut builder: Builder, value: Operand, span: SourceSpan)
             first = tuple_element_type(left)
             second = tuple_element_type(right)
             builder.externals.append(
-                ExternalFunction(path=path, type_arguments=[first, second], parameters=[ty], return_type=result, span=span),
+                ExternalFunction(
+                    path=path,
+                    type_arguments=[first, second],
+                    parameters=[ty],
+                    return_type=result,
+                    span=span,
+                ),
             )
-            terminate_call(builder, CalleeKind.InstantiatedPair(path, first, second), [value], output, span)
+            terminate_call(builder, CalleeKind.Instantiated(path, [first, second]), [value], output, span)
             builder.owned.append(output.local)
             return Ok(read_place(output, true, span))
         _ => pass
@@ -203,7 +209,7 @@ pub def construct_chain(
                         span=span,
                     ),
                 )
-                callee = CalleeKind.InstantiatedTriple(path, item, element, callable)
+                callee = CalleeKind.Instantiated(path, [item, element, callable])
                 terminate_call(builder, callee, [source, step], output, span)
                 return Ok(None)
             if callable == PlanType.FunctionPointer([item, result]) and family != "str":
@@ -229,7 +235,7 @@ pub def construct_chain(
                     span=span,
                 ),
             )
-            terminate_call(builder, CalleeKind.InstantiatedPair(path, element, callable), [source, step], output, span)
+            terminate_call(builder, CalleeKind.Instantiated(path, [element, callable]), [source, step], output, span)
             return Ok(None)
         None => return Err("unsupported Body IR generator expression type")
 

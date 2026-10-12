@@ -1470,29 +1470,16 @@ fn signature(plan: &Plan, function: &Function, callee: &Callee) -> Result<(Vec<S
             }
             Ok((vec![Scalar::ModelRef(*index)], Scalar::Model(*index)))
         }
-        CalleeKind::External(path)
-        | CalleeKind::Instantiated(path, _)
-        | CalleeKind::InstantiatedPair(path, _, _)
-        | CalleeKind::InstantiatedTriple(path, _, _, _) => {
+        CalleeKind::External(path) | CalleeKind::Instantiated(path, _) => {
             let external = plan
                 .externals
                 .iter()
                 .find(|external| {
                     &external.path == path
                         && match &callee.kind {
-                            CalleeKind::Instantiated(_, ty) => {
-                                external.type_arguments.len() == 1 && scalar(&external.type_arguments[0]) == scalar(ty)
+                            CalleeKind::Instantiated(_, types) => {
+                                external.type_arguments.iter().map(scalar).eq(types.iter().map(scalar))
                             }
-                            CalleeKind::InstantiatedPair(_, key, value) => external
-                                .type_arguments
-                                .iter()
-                                .map(scalar)
-                                .eq([scalar(key), scalar(value)]),
-                            CalleeKind::InstantiatedTriple(_, first, second, third) => external
-                                .type_arguments
-                                .iter()
-                                .map(scalar)
-                                .eq([scalar(first), scalar(second), scalar(third)]),
                             _ => external.type_arguments.is_empty(),
                         }
                 })
