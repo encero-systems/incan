@@ -60,7 +60,7 @@ from text_ownership import drop_borrowed_text_temporaries
 from decimal_plan import decimal_literal, decimal_comparison, is_decimal_literal
 from frozen_plan import frozen_literal, literal_text
 from loop_exits import exits_to
-from trait_links import is_well_formed_project_implementation
+from trait_links import is_well_formed_module_implementation, is_well_formed_project_implementation
 from derived_methods import (
     comparison_dunder,
     is_derived_clone,
@@ -340,7 +340,7 @@ pub def validate_module(module: &BodyIrModule) -> Result[int, str]:
     """Validate every retained declaration and body before consuming its facts."""
     count = validate_declarations_and_bodies(module)?
     for implementation in module.trait_implementations:
-        if not module.is_well_formed_trait_implementation(implementation):
+        if not is_well_formed_module_implementation(module, implementation):
             return Err("invalid Body IR trait implementation identity")
     return Ok(count)
 

@@ -1,4 +1,4 @@
-"""Project-level validation of trait implementation records whose trait another module declares."""
+"""Validation of trait implementation records whose trait another module, the standard library or an SDK declares."""
 
 from rust::incan_semantics_core import CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin
 from rust::incan_semantics_core::body_ir import BodyIrModule, TraitImplementation
@@ -21,13 +21,32 @@ pub def is_well_formed_project_implementation(
     """
     if module.is_well_formed_trait_implementation(implementation):
         return true
-    if len(implementation.type_arguments) != 0 or not fills_its_slot(implementation):
-        return false
-    if not retains_owner(module, implementation.owner):
+    if not is_imported_slot_record(module, implementation):
         return false
     if not declares_slot(modules, implementation.method) and not protocol_slot_filled_by_owner(implementation):
         return false
     return retains_body(modules, implementation.implementation)
+
+
+pub def is_well_formed_module_implementation(module: &BodyIrModule, implementation: &TraitImplementation) -> bool:
+    """
+    Validate one trait implementation record of a single-module program.
+
+    Besides the module's own traits, only a standard-library or SDK protocol slot can be imported here, and the
+    adopter's own method, retained by this module, must fill it, exactly as a project module's record must.
+    """
+    if module.is_well_formed_trait_implementation(implementation):
+        return true
+    if not is_imported_slot_record(module, implementation) or not protocol_slot_filled_by_owner(implementation):
+        return false
+    return module_retains_body(module, implementation.implementation)
+
+
+def is_imported_slot_record(module: &BodyIrModule, implementation: &TraitImplementation) -> bool:
+    """A record of a trait without type arguments whose slot is filled as its own, for an adopter this module retains."""
+    if len(implementation.type_arguments) != 0 or not fills_its_slot(implementation):
+        return false
+    return retains_owner(module, implementation.owner)
 
 
 def protocol_slot_filled_by_owner(implementation: &TraitImplementation) -> bool:
@@ -55,9 +74,12 @@ def fills_its_slot(implementation: &TraitImplementation) -> bool:
 
 
 def retains_owner(module: &BodyIrModule, owner: &CanonicalSymbolId) -> bool:
-    """Whether this module retains the adopter's well-formed layout."""
+    """Whether this module retains the adopter's well-formed model, class or enum layout."""
     for declaration in module.nominal_declarations:
         if declaration.canonical == owner.clone() and module.is_well_formed_nominal_declaration(declaration):
+            return true
+    for declaration in module.enum_declarations:
+        if declaration.canonical == owner.clone() and module.is_well_formed_native_enum_declaration(declaration):
             return true
     return false
 
