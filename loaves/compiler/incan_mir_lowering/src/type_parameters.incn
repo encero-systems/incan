@@ -60,7 +60,7 @@ pub def instantiate(body: &Body, arguments: list[RustType]) -> Result[Body, str]
     names = body.type_parameters.clone()
     match body.canonical:
         Some(identity) =>
-            if identity.kind != SemanticSourceTargetKind.Function and identity.kind != SemanticSourceTargetKind.Method:
+            if identity.kind != SemanticSourceTargetKind.Function and identity.kind != SemanticSourceTargetKind.Method and identity.kind != SemanticSourceTargetKind.Property:
                 return Err("unsupported Body IR declaration with type parameters")
         None => return Err("unsupported Body IR unproven declaration with type parameters")
     if len(names) != len(arguments):

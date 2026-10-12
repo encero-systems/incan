@@ -11,8 +11,8 @@ use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use std::collections::BTreeSet;
 
 use crate::body_ir::{
-    Body, BodyIrModule, Constant, FieldlessEnumDeclaration, LocalOrigin, NominalDeclaration, StaticInitializer,
-    ValueEnumDeclaration,
+    Body, BodyIrModule, CallableParamDefault, Constant, FieldlessEnumDeclaration, LocalOrigin, NominalDeclaration,
+    StaticInitializer, ValueEnumDeclaration,
 };
 use crate::{
     CanonicalSymbolId, CompilerNodeId, CompilerNodeKind, IncanPrimitiveType, IncanType, SemanticSourceTargetKind,
@@ -184,7 +184,7 @@ impl BodyIrModule {
     /// Whether a function, source Partial forwarding body, or retained nominal method or computed-property getter has
     /// its own canonical declaration identity and span-derived direct-call id. Methods and getters must belong to a
     /// retained nominal, normal enum or trait owner whose span contains them; an instance receiver must match that
-    /// owner.
+    /// owner. A getter additionally requires its exact implicit immutable receiver and no ordinary or method-scoped parameters.
     pub fn body_has_canonical_direct_call_id(&self, body: &Body) -> bool {
         body.direct_call_id == CompilerNodeId::declaration_span(self.module_id.path(), body.span.start, body.span.end)
             && body.canonical.as_ref().is_some_and(|canonical| {
@@ -195,6 +195,9 @@ impl BodyIrModule {
                     SemanticSourceTargetKind::Method | SemanticSourceTargetKind::Property => SymbolNamespace::Member,
                     _ => return false,
                 };
+                if canonical.kind == SemanticSourceTargetKind::Property && !is_getter_frame(body, canonical) {
+                    return false;
+                }
                 canonical.declaration_name == body.name
                     && self.declaration_id_for_canonical(canonical, namespace, canonical.kind.clone())
                         == Some(body.direct_call_id.clone())
@@ -203,6 +206,11 @@ impl BodyIrModule {
                         SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Partial
                     ) || self.nominal_declarations.iter().any(|owner| {
                         self.is_well_formed_nominal_declaration(owner)
+                            && (canonical.kind != SemanticSourceTargetKind::Property
+                                || matches!(
+                                    owner.canonical.kind,
+                                    SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class
+                                ))
                             && canonical.origin == owner.canonical.origin
                             && declares_member(&owner.canonical, canonical)
                             && body.locals.first().is_none_or(|receiver| {
@@ -210,7 +218,8 @@ impl BodyIrModule {
                                     || receiver.ty == nominal_receiver_type(owner)
                             })
                     }) || self.enum_declarations.iter().any(|owner| {
-                        self.is_well_formed_native_enum_declaration(owner)
+                        canonical.kind == SemanticSourceTargetKind::Method
+                            && self.is_well_formed_native_enum_declaration(owner)
                             && canonical.origin == owner.canonical.origin
                             && declares_member(&owner.canonical, canonical)
                             && body.locals.first().is_none_or(|receiver| {
@@ -218,12 +227,14 @@ impl BodyIrModule {
                                     || receiver.ty == crate::IncanType::Named(owner.name.clone())
                             })
                     }) || self.trait_declarations.iter().any(|owner| {
-                        self.declaration_id_for_canonical(
-                            owner,
-                            SymbolNamespace::OrdinaryLexical,
-                            SemanticSourceTargetKind::Trait,
-                        )
-                        .is_some()
+                        canonical.kind == SemanticSourceTargetKind::Method
+                            && self
+                                .declaration_id_for_canonical(
+                                    owner,
+                                    SymbolNamespace::OrdinaryLexical,
+                                    SemanticSourceTargetKind::Trait,
+                                )
+                                .is_some()
                             && canonical.origin == owner.origin
                             && declares_member(owner, canonical)
                             && body.locals.first().is_none_or(|receiver| {
@@ -240,7 +251,8 @@ impl BodyIrModule {
     /// A default belongs to a retained trait: the slot's own or a subtrait's. An explicit implementation must belong
     /// to the concrete owner and takes no trait type arguments; its name may differ from the slot for a checked
     /// method alias. A default's type arguments must be closed types and its name must still match its slot.
-    /// Matching method spellings never suffice to establish any of these relationships.
+    /// Matching method spellings never suffice to establish any of these relationships. A property slot may only be
+    /// filled by its same-named owned getter, never a method or property default.
     pub fn is_well_formed_trait_implementation(&self, value: &crate::body_ir::TraitImplementation) -> bool {
         let owned = declares_member(&value.owner, &value.implementation);
         let inherited = value.method == value.implementation
@@ -257,7 +269,13 @@ impl BodyIrModule {
         };
         value.method.namespace == SymbolNamespace::Member
             && (owned || value.method.declaration_name == value.implementation.declaration_name)
-            && value.implementation.kind == SemanticSourceTargetKind::Method
+            && matches!(
+                value.implementation.kind,
+                SemanticSourceTargetKind::Method | SemanticSourceTargetKind::Property
+            )
+            && value.method.kind == value.implementation.kind
+            && (value.method.kind != SemanticSourceTargetKind::Property
+                || owned && value.method.declaration_name == value.implementation.declaration_name)
             && (self
                 .nominal_declarations
                 .iter()
@@ -275,7 +293,10 @@ impl BodyIrModule {
                 .is_some()
                     && owner.origin == value.method.origin
                     && declares_member(owner, &value.method)
-                    && value.method.kind == SemanticSourceTargetKind::Method
+                    && matches!(
+                        value.method.kind,
+                        SemanticSourceTargetKind::Method | SemanticSourceTargetKind::Property
+                    )
             })
             && arguments_close
             && self.bodies.iter().any(|body| {
@@ -570,6 +591,36 @@ fn literal_static_carrier_matches(ty: &IncanType, value: &Constant) -> bool {
 fn declares_member(owner: &CanonicalSymbolId, member: &CanonicalSymbolId) -> bool {
     owner.declaration_span.start <= member.declaration_span.start
         && member.declaration_span.end <= owner.declaration_span.end
+}
+
+/// Validate the implicit immutable getter receiver independently of the member's owning nominal layout.
+/// This rejects forged static, mutable, generic-method or ordinary-parameter property bodies before scheduling.
+fn is_getter_frame(body: &Body, canonical: &CanonicalSymbolId) -> bool {
+    let Some(receiver) = body.locals.first() else {
+        return false;
+    };
+    let [parameter] = body.params.as_slice() else {
+        return false;
+    };
+    let Some(identity) = receiver.identity.as_ref() else {
+        return false;
+    };
+    !body.is_async
+        && body.type_parameters.is_empty()
+        && body.param_locals.as_slice() == [receiver.id]
+        && matches!(receiver.origin, LocalOrigin::Receiver { mutable: false })
+        && identity.namespace == SymbolNamespace::OrdinaryLexical
+        && identity.kind == SemanticSourceTargetKind::Receiver
+        && identity.origin == canonical.origin
+        && identity.declaration_name == "self"
+        && identity.declaration_span == body.span
+        && parameter.local == receiver.id
+        && parameter.ty == receiver.ty
+        && parameter.span == body.span
+        && receiver.span == body.span
+        && parameter.name == "self"
+        && !parameter.mutable
+        && matches!(parameter.default, CallableParamDefault::Required)
 }
 
 /// Whether a checked type names no open type: no type variable, `Self`, or uninferred placeholder at any depth.
