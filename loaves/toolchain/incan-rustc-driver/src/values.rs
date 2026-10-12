@@ -275,7 +275,7 @@ pub fn rvalue<'tcx>(
         }
         RvalueKind::Discriminant(value) => mir::Rvalue::Discriminant(place(tcx, value)?),
         RvalueKind::FrozenText(text) => frozen_text(tcx, sources, text)?,
-        RvalueKind::FrozenBytes(values) => frozen_bytes(tcx, values, rustc_span::DUMMY_SPAN)?,
+        RvalueKind::FrozenBytes(values) => frozen_bytes(tcx, values, rustc_span::DUMMY_SP)?,
         RvalueKind::TagToInt(value) => {
             mir::Rvalue::Cast(mir::CastKind::IntToInt, operand(tcx, sources, value)?, tcx.types.i64)
         }
