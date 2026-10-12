@@ -1096,13 +1096,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
 
         let is_async = declaration.is_async;
-        let (operands, binding) =
+        let (mut operands, binding) =
             match self.bind_declared_args(&format!("function `{name}`"), declaration.slots, args, scope, out) {
                 Ok(bound) => bound,
                 Err(description) => {
                     return self.unsupported_operand(description, scope, hir_span_value, out);
                 }
             };
+        if declaration.builtin == Some(BuiltinFnId::Print) {
+            self.display_type_parameter_arguments(args, &mut operands, scope, out);
+        }
 
         // The checked expression type is the eventual output for immediately awaited source calls. Body IR
         // represents construction and awaiting separately, so their intervening local must own the future.
@@ -1131,6 +1134,49 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             false,
             out,
         )
+    }
+
+    /// Give each positional `print`/`println` argument whose checked type is a type parameter its display text as
+    /// generic code spells it, through the type argument's own display ([`bir::FormatStyle::TypeParameterDisplay`]).
+    ///
+    /// Legacy prints such a value with `{}`, so a closed instance must not apply the formatting a concrete value of
+    /// that type receives (an integral float keeps no fractional part); the argument becomes that one-part formatted
+    /// string. Arguments of any other type, and calls whose written arguments do not line up one-to-one with their
+    /// lowered elements, are left as lowered.
+    fn display_type_parameter_arguments(
+        &mut self,
+        args: &[ast::CallArg],
+        operands: &mut [bir::ArgumentElement],
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) {
+        if args.len() != operands.len() {
+            return;
+        }
+        for (arg, element) in args.iter().zip(operands.iter_mut()) {
+            let ast::CallArg::Positional(expr) = arg else {
+                continue;
+            };
+            if !matches!(self.resolve_ty(expr.span), IncanType::TypeVar(_)) {
+                continue;
+            }
+            let bir::ArgumentElement::One(operand) = element else {
+                continue;
+            };
+            self.record_runtime_requirement(AbiV0RuntimeRequirement::RuntimeHelper("fstring".to_string()));
+            self.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
+            let displayed = self.push_assign_temp(
+                bir::Rvalue::Format(vec![bir::FormatPart::Expr {
+                    operand: Box::new(operand.clone()),
+                    style: bir::FormatStyle::TypeParameterDisplay,
+                }]),
+                IncanType::Primitive(IncanPrimitiveType::Str),
+                scope,
+                hir_span(expr.span),
+                out,
+            );
+            *element = bir::ArgumentElement::One(displayed);
+        }
     }
 
     /// Return the typechecker's callable type for a closure or local partial value that Body IR constructs itself.

@@ -193,7 +193,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// [`Self::lower_expr_to_operand`] path as any other read, so ownership facts and last-use tracking apply to
     /// f-string interpolations exactly like any other expression use. Mirrors the existing Rust-emission backend's
     /// dedicated `Format` node (`loaves/compiler/incan_ir/src/lower/expr/mod.rs`) rather than desugaring into a helper
-    /// call -- see [`bir::Rvalue::Format`]'s own docs for why this needed its own `Rvalue` shape.
+    /// call -- see [`bir::Rvalue::Format`]'s own docs for why this needed its own `Rvalue` shape. A displayed value
+    /// whose checked type is a type parameter keeps that fact as [`bir::FormatStyle::TypeParameterDisplay`].
     ///
     /// Building the formatted string always allocates and always needs the `fstring` runtime helper
     /// (`incan_std_core::strings::fstring`, the function the existing Rust-emission backend's `Format` node itself
@@ -215,6 +216,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 ast::FStringPart::Expr { expr, format } => {
                     let operand = self.lower_expr_to_operand(expr, scope, out);
                     let style = match format {
+                        ast::FStringFormat::Display if matches!(self.resolve_ty(expr.span), IncanType::TypeVar(_)) => {
+                            bir::FormatStyle::TypeParameterDisplay
+                        }
                         ast::FStringFormat::Display => bir::FormatStyle::Display,
                         ast::FStringFormat::Debug => bir::FormatStyle::Debug,
                         ast::FStringFormat::Unsupported(_) => bir::FormatStyle::Display,

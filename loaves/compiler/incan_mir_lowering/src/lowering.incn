@@ -3843,6 +3843,7 @@ def append_format_part(
         RustFormatPart.Expr(operand=value, style=style) =>
             match style:
                 RustFormatStyle.Display => values.append(display_operand(builder, value, span)?)
+                RustFormatStyle.TypeParameterDisplay => values.append(display_value_operand(builder, value, span, true)?)
                 RustFormatStyle.Debug => values.append(debug_operand(builder, value, span)?)
             parts.append("")
     return Ok(None)
@@ -3891,6 +3892,20 @@ def display_tuple_place(mut builder: Builder, value: &RustPlace, span: SourceSpa
 
 pub def display_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
     """Produce an owned `String` holding a value's display text, honoring the value's ownership fact."""
+    return display_value_operand(builder, value, span, false)
+
+
+def display_value_operand(
+    mut builder: Builder,
+    value: &RustOperand,
+    span: SourceSpan,
+    type_parameter: bool,
+) -> Result[Place, str]:
+    """
+    Produce an owned `String` holding a value's display text, honoring the value's ownership fact.
+
+    A value whose checked type is a type parameter displays as generic code displays it (see `display_plan_value`).
+    """
     match display_model_operand(builder, value, span)?:
         Some(text) => return Ok(text)
         None => pass
@@ -3901,10 +3916,10 @@ pub def display_operand(mut builder: Builder, value: &RustOperand, span: SourceS
             match read.place.global():
                 Some(_global) =>
                     operand = value_operand(builder, value, span)?
-                    return display_plan_operand(builder, operand, span)
+                    return display_plan_value(builder, operand, span, type_parameter)
                 None => pass
             match element_read(builder, read.place, span)?:
-                Some(item) => return display_plan_operand(builder, item, span)
+                Some(item) => return display_plan_value(builder, item, span, type_parameter)
                 None => pass
             match display_tuple_place(builder, read.place, span)?:
                 Some(text) => return Ok(text)
@@ -3915,7 +3930,7 @@ pub def display_operand(mut builder: Builder, value: &RustOperand, span: SourceS
             place = scalar_place(builder, read.place, span)?
             if is_list(place_type(builder.locals, place)) or is_collection(place_type(builder.locals, place)):
                 operand = value_operand(builder, value, span)?
-                return display_plan_operand(builder, operand, span)
+                return display_plan_value(builder, operand, span, type_parameter)
             match place_type(builder.locals, place):
                 PlanType.Enum(owner, name) =>
                     if owner >= len(builder.enums) and builder.intrinsics[owner - len(builder.enums)].carrier != "":
@@ -3940,7 +3955,7 @@ pub def display_operand(mut builder: Builder, value: &RustOperand, span: SourceS
                 Some(text) => return Ok(owned_literal(builder, text, span))
                 None => pass
     operand = value_operand(builder, value, span)?
-    return display_plan_operand(builder, operand, span)
+    return display_plan_value(builder, operand, span, type_parameter)
 
 
 def value_enum_owner(builder: Builder, index: int) -> Result[int, str]:
@@ -3965,12 +3980,26 @@ def display_value_enum(mut builder: Builder, owner: int, source: Place, span: So
 
 
 def display_plan_operand(mut builder: Builder, operand: Operand, span: SourceSpan) -> Result[Place, str]:
+    """Format a materialized scalar without re-reading its source ownership fact."""
+    return display_plan_value(builder, operand, span, false)
+
+
+def display_plan_value(
+    mut builder: Builder,
+    operand: Operand,
+    span: SourceSpan,
+    type_parameter: bool,
+) -> Result[Place, str]:
     """
-    Format a materialized scalar without re-reading its source ownership fact.
+    Format a materialized scalar, as generic code formats it when its checked type is a type parameter.
 
     A list, set or dictionary displays through its structure, as legacy's Debug spells it.
     """
     ty = operand_type(builder, operand)?
+    # Generic code displays a type-parameter value through its type argument's own Display, which spells an
+    # integral float without the fractional part the concrete float spelling keeps.
+    if type_parameter and (ty == PlanType.Float or ty == PlanType.F32 or ty == PlanType.F64):
+        return type_parameter_display(builder, operand, span)
     if is_owned_list(ty) or is_owned_collection(ty):
         return debug_plan_operand(builder, operand, span)
     if ty == PlanType.String:
@@ -4015,8 +4044,17 @@ def debug_union_operand(mut builder: Builder, place: Place, owner: int, span: So
 
 def debug_plan_operand(mut builder: Builder, operand: Operand, span: SourceSpan) -> Result[Place, str]:
     """Invoke legacy Debug on an admitted carrier after its read ownership has been materialized."""
+    return runtime_text(builder, "incan_native_runtime::debug_value", operand, span)
+
+
+def type_parameter_display(mut builder: Builder, operand: Operand, span: SourceSpan) -> Result[Place, str]:
+    """Invoke the carrier's own Display, as generic code formats a type-parameter value."""
+    return runtime_text(builder, "incan_native_runtime::display_value", operand, span)
+
+
+def runtime_text(mut builder: Builder, path: str, operand: Operand, span: SourceSpan) -> Result[Place, str]:
+    """Render one owned carrier through a runtime formatter instantiated at the carrier's exact type."""
     ty = operand_type(builder, operand)?
-    path = "incan_native_runtime::debug_value"
     result = temporary(builder, PlanType.String, span)
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=[ty], parameters=[ty], return_type=PlanType.String, span=span),

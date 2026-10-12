@@ -60,6 +60,7 @@ pub from pattern_assertions import (
 pub from model_values import (
     debug_model,
     debug_value,
+    display_value,
     serialize_model,
     deserialize_model,
     serialize_int,

@@ -2258,6 +2258,12 @@ impl FormatPart {
 pub enum FormatStyle {
     /// User-facing display formatting (`{value}`).
     Display,
+    /// User-facing display formatting of a value whose checked type is a type parameter (`{value}` with `value: T`).
+    ///
+    /// Generic code formats such a value through its type argument's own display implementation, so a closed
+    /// instance must not apply the formatting a concrete value of that type receives; an integral float, for one,
+    /// keeps no fractional part.
+    TypeParameterDisplay,
     /// Structured debug formatting (`{value!r}`).
     Debug,
 }
@@ -2267,6 +2273,7 @@ impl FormatStyle {
     const fn as_str(self) -> &'static str {
         match self {
             Self::Display => "display",
+            Self::TypeParameterDisplay => "type_parameter_display",
             Self::Debug => "debug",
         }
     }

@@ -162,10 +162,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// matching how [`Self::lower_method_call`] arranges an ordinary method call: `args[0]` is the receiver.
     /// Checking resolved the dunder against exactly these positional arguments, so they fill its declared slots in
     /// order. An operator whose identity checking did not record keeps no canonical target and stays refused.
-    ///
-    /// A hook on an instance of a generic owner stays refused by name: its closed body can display a type-parameter
-    /// value, which generic code spells through the type argument's own display (an integral float without its
-    /// fractional part), and Body IR records no such display fact yet.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn lower_operator_dispatch(
         &mut self,
@@ -177,14 +173,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
-        if matches!(self.resolve_ty(receiver.span), IncanType::Generic { .. }) {
-            return self.unsupported_operand(
-                format!("operator hook `{method}` on a generic owner"),
-                scope,
-                hir_span(operator_span),
-                out,
-            );
-        }
         // Source evaluation observes the receiver before the arguments, exactly as for a written method call.
         let receiver_place = self.lower_expr_to_place(receiver, scope, out);
         let mut elements = vec![bir::ArgumentElement::One(bir::Operand::place(
