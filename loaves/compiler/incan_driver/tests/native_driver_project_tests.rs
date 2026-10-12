@@ -6825,6 +6825,40 @@ def main() -> None:
     )
 }
 
+/// An `Ok(...)` or `Err(...)` whose payload is one member of the union its destination's side declares is that
+/// union's member, as a call argument and as a returned value.
+#[test]
+fn result_constructors_into_union_sides_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "result_constructors_into_union_sides",
+        r#"def kind(value: Result[int | str, str]) -> str:
+    match value:
+        Ok(member) =>
+            if isinstance(member, int):
+                return f"int {member}"
+            if isinstance(member, str):
+                return f"text {member}"
+            return "other"
+        Err(message) => return f"error {message}"
+
+
+def made(flag: bool) -> Result[int | str, str]:
+    if flag:
+        return Ok(7)
+    return Err("none")
+
+
+def main() -> None:
+    println(kind(Ok("fine")))
+    println(kind(Ok(3)))
+    println(kind(Err("bad")))
+    println(kind(made(true)))
+    println(kind(made(false)))
+"#,
+        b"text fine\nint 3\nerror bad\nint 7\nerror none\n",
+    )
+}
+
 /// An Option method called on a model field reads that field's carrier and leaves the model whole, for a copied
 /// payload and for an owned text payload alike.
 #[test]
