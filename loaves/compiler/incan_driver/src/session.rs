@@ -143,6 +143,15 @@ impl CompilationModuleAnalysis<'_> {
 }
 
 impl CompilationAnalysis {
+    /// Keep source metadata for generated-output retention only when analysis used no external C header verification.
+    /// The metadata cache shares its original source owners with codegen and rejects ambient legacy discovery.
+    pub fn test_generation_sources(&self) -> Option<StdlibAstCache> {
+        self.type_info_by_path
+            .values()
+            .all(|info| info.c_abi.bindings.is_empty())
+            .then(|| self.stdlib_cache.clone())
+    }
+
     /// Return the paired checked products for one collected source file.
     ///
     /// A caller must consume this bundle when it needs both Body-IR lowering and semantic provenance. Looking up the

@@ -190,6 +190,19 @@ impl ExecutableBuildOwner {
         self.authority.retained_inputs.native_dependency_context(&root, session)
     }
 
+    /// Borrow completed test generation from the existing artifact session; standalone sessions keep canonical work.
+    pub fn test_generation(
+        &self,
+        session: &std::sync::Arc<crate::session::CompilationSession>,
+    ) -> CliResult<Option<std::sync::Arc<super::test_generation::RetainedTestGeneration>>> {
+        let Some(manifest) = session.manifest.as_ref() else {
+            return Ok(None);
+        };
+        let root =
+            std::fs::canonicalize(manifest.project_root()).map_err(|error| CliError::failure(error.to_string()))?;
+        Ok(self.authority.retained_inputs.test_generation(&root, session))
+    }
+
     /// Select the original discovery mode for one reconciled test request without a second session cache.
     fn test_session(
         &mut self,

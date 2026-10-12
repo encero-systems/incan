@@ -1555,6 +1555,7 @@ fn collect_selected_tests(
             prepare_oven_test_command_context(Arc::clone(&session), &representative_test, &planned, native_context)?;
         let context_mut = Arc::get_mut(&mut context)
             .ok_or_else(|| CliError::failure("test command context escaped before collection"))?;
+        context_mut.test_generation = owner.test_generation(&session)?;
         for root in rust_roots {
             let prepared = rust::prepare(&root, context_mut, package_features)?;
             all_tests.extend(prepared.tests.iter().cloned());

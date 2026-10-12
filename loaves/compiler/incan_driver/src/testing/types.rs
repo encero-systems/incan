@@ -28,7 +28,7 @@ pub struct TestSummary {
 }
 
 /// Information about a discovered test
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TestInfo {
     pub file_path: PathBuf,
     pub function_name: String,
@@ -45,7 +45,7 @@ pub struct TestInfo {
 }
 
 /// A single parametrized test variant's call information.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ParametrizeCall {
     /// Display ID shown in test output (e.g. `"test_add[1-2-3]"`).
     pub display_id: String,
