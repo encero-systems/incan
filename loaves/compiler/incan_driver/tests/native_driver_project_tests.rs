@@ -7424,6 +7424,52 @@ def main() -> None:
     )
 }
 
+/// A single-module program whose model and enum adopt the standard library's Ord validates their imported protocol
+/// slots, which their own `__eq__` and `__lt__` fill, as a project module's do: the dunders and the `<` operator run.
+#[test]
+fn single_module_std_protocol_slot_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_case(
+        "single_module_std_protocol_slot",
+        r#"from std.derives.comparison import Ord
+
+
+model Ordered with Ord:
+    v: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.v == other.v
+
+    def __lt__(self, other: Self) -> bool:
+        return self.v < other.v
+
+
+enum Level with Ord:
+    Low
+    High
+
+    def __eq__(self, other: Self) -> bool:
+        return self.rank() == other.rank()
+
+    def __lt__(self, other: Self) -> bool:
+        return self.rank() < other.rank()
+
+    def rank(self) -> int:
+        match self:
+            Level.Low => return 0
+            Level.High => return 1
+
+
+def main() -> None:
+    println(Ordered(v=1).__lt__(Ordered(v=2)))
+    println(Ordered(v=1) < Ordered(v=2))
+    println(Level.High.__lt__(Level.Low))
+    println(Level.Low.__eq__(Level.Low))
+    println(Level.High < Level.Low)
+"#,
+        b"true\ntrue\nfalse\ntrue\nfalse\n",
+    )
+}
+
 /// Compile a single-module program in the minimal project layout and require the native route to refuse it by name.
 fn check_project_refusal(name: &str, text: &str, reason: &str) -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
