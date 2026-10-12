@@ -1,6 +1,6 @@
 """Concrete nominal layouts selected from checked Body IR types, retaining source declaration identities."""
 
-from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind
+from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive, SemanticSourceTargetKind
 from rust::incan_semantics_core::body_ir import BodyIrModule, Body, NominalDeclaration, LocalOrigin
 from symbols import type_component
 from type_parameters import substitute
@@ -148,7 +148,29 @@ def collect_generic_nominal_type(
         # Recursive nominal carrier dependencies remain outside this concrete-layout admission profile.
         if declaration.canonical.render_compact() in ancestors:
             return Err(f"unsupported Body IR recursive nominal field instantiation on {base}")
+        require_newtype_arguments(declaration, arguments)?
         return retain_nominal_instance(declaration, arguments, instances, ancestors)
+    return Ok(None)
+
+
+def require_newtype_arguments(declaration: &NominalDeclaration, arguments: list[RustType]) -> Result[None, str]:
+    """Keep generic newtype layouts inside the concrete payload profile whose conditional derives are admitted."""
+    if declaration.canonical.kind != SemanticSourceTargetKind.Newtype:
+        return Ok(None)
+    if len(declaration.type_parameters) != 1 or len(declaration.field_types) != 1:
+        return Err("unsupported Body IR generic Newtype underlying template outside sole owner parameter")
+    match declaration.field_types[0]:
+        RustType.TypeVar(name) =>
+            if str(name) != str(declaration.type_parameters[0]):
+                return Err("unsupported Body IR generic Newtype underlying template outside sole owner parameter")
+        _ => return Err("unsupported Body IR generic Newtype underlying template outside sole owner parameter")
+    for argument in arguments:
+        match argument:
+            RustType.Primitive(Primitive.Int) => pass
+            RustType.Primitive(Primitive.Str) =>
+                if "Copy" in declaration.derives:
+                    return Err("unsupported Body IR generic Newtype Copy payload str")
+            _ => return Err("unsupported Body IR generic Newtype argument outside int or str")
     return Ok(None)
 
 
@@ -228,7 +250,7 @@ def is_receiver(origin: &LocalOrigin) -> bool:
 
 def admitted_owner(declaration: &NominalDeclaration) -> bool:
     """Admit retained source owners and exact native carriers after the original module's layout validation."""
-    return declaration.native_item != "" or declaration.canonical.kind == SemanticSourceTargetKind.Class or declaration.canonical.kind == SemanticSourceTargetKind.Model
+    return declaration.native_item != "" or declaration.canonical.kind == SemanticSourceTargetKind.Class or declaration.canonical.kind == SemanticSourceTargetKind.Model or declaration.canonical.kind == SemanticSourceTargetKind.Newtype
 
 
 def close_owner_body(body: &Body, instance: NominalInstance) -> Result[Body, str]:
