@@ -8164,6 +8164,33 @@ def main() -> None:
     )
 }
 
+/// Same-module functions sharing one name are distinct overloads: each call runs the one the checker selected by
+/// parameter type or arity.
+#[test]
+fn local_overloaded_functions_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_declaration_case(
+        "local_overloaded_functions",
+        r#"def convert(value: int) -> int:
+    return value + 1
+
+
+def convert(value: str) -> str:
+    return value + "!"
+
+
+def convert(value: int, step: int) -> int:
+    return value + step
+
+
+def main() -> None:
+    println(convert(1))
+    println(convert("a"))
+    println(convert(1, 10))
+"#,
+        None,
+    )
+}
+
 /// `list.repeat` builds a list of clones of its value through legacy's runtime helper: scalars, text read from a
 /// binding that stays usable, nested lists, models, a zero count and arguments written by name.
 #[test]
