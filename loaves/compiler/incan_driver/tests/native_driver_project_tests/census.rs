@@ -252,7 +252,9 @@ fn validate_requested_fixture_names(known: &BTreeSet<String>, wanted: &BTreeSet<
 /// Require complete measurements and reject execution or diagnostic failures regardless of their display class.
 ///
 /// Pending semantic outcomes and named construction refusals remain visible; accepting their measurements does not
-/// establish complete native-route support. Pending status never excuses a driver failure or timeout.
+/// establish complete native-route support. A pending fixture declares behavior legacy does not have yet, so its
+/// different output, or the shared checker's different diagnostic, is legacy's own outcome at exact parity. Pending
+/// status never excuses a driver failure or timeout.
 fn census_acceptance(records: &[Record], expected: &BTreeSet<(String, String)>) -> Result<(), String> {
     if expected.is_empty() {
         return Err("census requested no fixtures".into());
@@ -266,7 +268,7 @@ fn census_acceptance(records: &[Record], expected: &BTreeSet<(String, String)>) 
         }
         let accepted = match record.observed.as_str() {
             "pass" | "refused" | "check-only" => true,
-            "wrong" => record.pending_reason.is_some(),
+            "wrong" | "diagnostic-mismatch" => record.pending_reason.is_some(),
             _ => false,
         };
         if !accepted {
@@ -526,17 +528,20 @@ fn acceptance_record(name: &str, observed: &str, pending: bool) -> Record {
     }
 }
 
-/// Displaying an outcome as pending cannot hide driver, timeout, diagnostic or unknown-result failures.
+/// Displaying an outcome as pending cannot hide driver, timeout or unknown-result failures; a pending fixture's
+/// different output or diagnostic is accepted only while it stays pending.
 #[test]
 fn census_acceptance_rejects_suppressed_execution_failures() -> Result<(), Box<dyn std::error::Error>> {
     let expected = BTreeSet::from([("area".into(), "one".into())]);
-    for observed in ["driver-error", "diagnostic-mismatch", "unrecognized"] {
+    for observed in ["driver-error", "unrecognized"] {
         for pending in [false, true] {
             assert!(census_acceptance(&[acceptance_record("one", observed, pending)], &expected).is_err());
         }
     }
-    assert!(census_acceptance(&[acceptance_record("one", "wrong", false)], &expected).is_err());
-    census_acceptance(&[acceptance_record("one", "wrong", true)], &expected)?;
+    for observed in ["wrong", "diagnostic-mismatch"] {
+        assert!(census_acceptance(&[acceptance_record("one", observed, false)], &expected).is_err());
+        census_acceptance(&[acceptance_record("one", observed, true)], &expected)?;
+    }
     for observed in ["pass", "refused", "check-only"] {
         census_acceptance(&[acceptance_record("one", observed, false)], &expected)?;
     }
