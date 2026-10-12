@@ -9499,12 +9499,12 @@ class Greeter:
         return self.greeting + " " + name + punct
 
     def make(self) -> str:
-        hello = (name: str) => self.greet(name, "!")
+        hello: (str) -> str = (name) => self.greet(name, "!")
         return hello("you") + " " + hello("me")
 
 def main() -> None:
     mut user = User(name="ann")
-    label = (prefix: str, suffix: str) => user.label(prefix, suffix)
+    label: (str, str) -> str = (prefix, suffix) => user.label(prefix, suffix)
     show = () => user.name
     user = User(name="bob")
     println(label("x", "!"))
@@ -9513,7 +9513,7 @@ def main() -> None:
     println(show())
     println(user.name)
     b = Box(value=1)
-    joined = (other: int) => b.pair(other, "-")
+    joined: (int) -> list[int] = (other) => b.pair(other, "-")
     println(joined(2))
     println(joined(3))
     g = Greeter(greeting="hi")
