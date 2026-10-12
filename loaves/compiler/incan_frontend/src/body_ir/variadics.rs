@@ -83,6 +83,23 @@ impl BodyBuilder<'_, '_> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> Result<(Vec<bir::ArgumentElement>, bir::ArgumentBinding), String> {
+        self.bind_prepared_rest_args(callee, slots, args, None, scope, out)
+    }
+
+    /// Pack rest slots from either source expressions or previously evaluated checked tuple components.
+    ///
+    /// Prepared values carry their own retained component type; the tuple operand's expression span must not give a
+    /// component the enclosing tuple's storage layout. Both paths retain the same written argument order.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn bind_prepared_rest_args(
+        &mut self,
+        callee: &str,
+        slots: &[DeclaredSlot],
+        args: &[ast::CallArg],
+        prepared: Option<Vec<(bir::Operand, IncanType)>>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Result<(Vec<bir::ArgumentElement>, bir::ArgumentBinding), String> {
         // ---- Bind checked destinations before evaluating source expressions ----
         let destinations = rest_destinations(callee, slots, args)?;
         let mut ordinary = vec![None; slots.len()];
@@ -96,6 +113,7 @@ impl BodyBuilder<'_, '_> {
         });
 
         // ---- Evaluate each argument once in written order ----
+        let mut prepared = prepared.map(Vec::into_iter);
         for (written, (arg, slot)) in args.iter().zip(destinations).enumerate() {
             let expr = match arg {
                 ast::CallArg::Positional(expr)
@@ -103,19 +121,16 @@ impl BodyBuilder<'_, '_> {
                 | ast::CallArg::PositionalUnpack(expr)
                 | ast::CallArg::KeywordUnpack(expr) => expr,
             };
-            let mut operand = self.lower_expr_to_operand(expr, scope, out);
+            let (mut operand, operand_ty) = match prepared.as_mut() {
+                Some(values) => values.next().ok_or("missing prepared rest argument")?,
+                None => (self.lower_expr_to_operand(expr, scope, out), self.resolve_ty(expr.span)),
+            };
             if rest_spread_moves_reused_local(arg, &operand, &self.locals) {
                 return Err("rest spread of a reused owned local: legacy moves its source".to_string());
             }
             if !slots[slot].is_mut {
                 operand = self.owned_parameter_operand(expr, operand);
-                operand = self.push_assign_temp(
-                    bir::Rvalue::Use(operand),
-                    self.resolve_ty(expr.span),
-                    scope,
-                    hir_span(expr.span),
-                    out,
-                );
+                operand = self.push_assign_temp(bir::Rvalue::Use(operand), operand_ty, scope, hir_span(expr.span), out);
             }
             if !slots[slot].is_rest {
                 let operand = if slots[slot].is_mut {

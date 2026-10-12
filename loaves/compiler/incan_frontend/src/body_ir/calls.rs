@@ -364,6 +364,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let elements = self.lower_spread_capable_args(args, scope, out);
             return Ok((elements, bir::ArgumentBinding::UnresolvedPositional));
         };
+        if fixed_spreads::has_checked_tuple_spread(self.type_info, args) {
+            return self.bind_checked_tuple_spreads(callee, &slots, args, scope, out);
+        }
         // A spread whose shape the typechecker proved is an ordinary fixed-arity call in disguise: `add(*(1, 2))`
         // really is `add(1, 2)`. Expanding it here means it binds through the same declaration-slot planner as any
         // other call, instead of being pushed onto the runtime-arity path it does not belong on.

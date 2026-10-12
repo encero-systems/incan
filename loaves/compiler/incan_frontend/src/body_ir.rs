@@ -1771,6 +1771,7 @@ mod primitives;
 
 mod args;
 mod variadics;
+mod fixed_spreads;
 
 use bodies::*;
 use collect::*;
