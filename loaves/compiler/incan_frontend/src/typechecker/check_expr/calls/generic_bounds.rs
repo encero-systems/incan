@@ -221,6 +221,14 @@ impl TypeChecker {
                     &type_bindings,
                     &info.return_type,
                 );
+                self.retain_body_ir_constructor_call_instantiation(
+                    call_span,
+                    &info.type_params,
+                    &arguments,
+                    &type_bindings,
+                    &info.return_type,
+                    &info.type_param_bound_details,
+                );
             }
         }
 
@@ -744,6 +752,71 @@ impl TypeChecker {
         );
     }
 
+    /// Close one executable call from Body IR-only constructor facts, preserving every legacy-read call table.
+    ///
+    /// This uses the same checked structural binding relation as ordinary call inference, but only settled bindings
+    /// satisfying the declared bounds cross the Body IR boundary. Missing constructor or parameter facts leave the
+    /// call's existing representation unchanged; native lowering does not infer arguments from runtime operands.
+    fn retain_body_ir_constructor_call_instantiation(
+        &mut self,
+        span: Span,
+        parameters: &[String],
+        arguments: &[(&Spanned<Expr>, &ResolvedType)],
+        bindings: &std::collections::HashMap<String, ResolvedType>,
+        returned: &ResolvedType,
+        bounds: &std::collections::HashMap<String, Vec<crate::symbols::TypeBoundInfo>>,
+    ) {
+        let mut concrete = bindings
+            .iter()
+            .filter(|(_, ty)| Self::is_settled_type_argument(ty))
+            .map(|(name, ty)| (name.clone(), ty.clone()))
+            .collect::<std::collections::HashMap<_, _>>();
+        let mut has_constructor = false;
+        for (expression, parameter) in arguments {
+            if let Some(actual) = self
+                .type_info
+                .calls
+                .body_ir_constructor_types
+                .get(&(expression.span.start, expression.span.end))
+            {
+                has_constructor = true;
+                self.infer_type_param_bindings(parameter, actual, &mut concrete);
+            }
+        }
+        if !has_constructor
+            || parameters.iter().any(|parameter| {
+                concrete
+                    .get(parameter)
+                    .is_none_or(|ty| !Self::is_settled_type_argument(ty))
+            })
+        {
+            return;
+        }
+        for (parameter, requirements) in bounds {
+            let Some(actual) = concrete.get(parameter) else {
+                return;
+            };
+            if requirements
+                .iter()
+                .any(|bound| !self.type_satisfies_explicit_bound_info(actual, bound, &concrete))
+            {
+                return;
+            }
+        }
+        let ordered = parameters
+            .iter()
+            .filter_map(|parameter| concrete.get(parameter).cloned())
+            .collect();
+        self.type_info
+            .calls
+            .body_ir_call_type_arguments
+            .insert((span.start, span.end), ordered);
+        self.type_info
+            .calls
+            .body_ir_call_result_types
+            .insert((span.start, span.end), substitute_resolved_type(returned, &concrete));
+    }
+
     /// Seed owner type-parameter bindings from the concrete receiver type.
     fn receiver_type_param_bindings(
         &self,
@@ -966,6 +1039,14 @@ impl TypeChecker {
                     &arguments,
                     &type_bindings,
                     &return_type,
+                );
+                self.retain_body_ir_constructor_call_instantiation(
+                    call_site_span,
+                    &method_info.type_params,
+                    &arguments,
+                    &type_bindings,
+                    &return_type,
+                    &method_info.type_param_bound_details,
                 );
             }
         }

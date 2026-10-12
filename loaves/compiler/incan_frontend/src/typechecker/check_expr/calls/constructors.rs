@@ -11,6 +11,77 @@ use incan_lang::lang::conventions::TYPE_CONSTRUCTOR_HOOK;
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
 
 impl TypeChecker {
+    /// Retain an executable constructor binding without changing contextual types or legacy call facts.
+    ///
+    /// The constructor's original fields identify its own binders, whereas contextual checking can replace them
+    /// with a generic callee's still-open binders. Checked value types close the original field contract here; a
+    /// settled destination takes precedence, and every declared nominal bound must hold before Body IR uses it.
+    pub(in crate::typechecker::check_expr::calls) fn retain_body_ir_constructor_type(
+        &mut self,
+        name: &str,
+        declaration: &TypeInfo,
+        context: Option<&(ResolvedType, std::collections::HashMap<String, ResolvedType>)>,
+        args: &[CallArg],
+        span: Span,
+    ) {
+        let (parameters, fields) = match declaration {
+            TypeInfo::Model(model) => (&model.type_params, &model.fields),
+            TypeInfo::Class(class) => (&class.type_params, &class.fields),
+            _ => return,
+        };
+        if parameters.is_empty() {
+            return;
+        }
+
+        // ---- Checked destination and original field binders ----
+        let mut bindings = context
+            .map(|(_, bindings)| bindings)
+            .into_iter()
+            .flat_map(|bindings| bindings.iter())
+            .filter(|(_, ty)| Self::is_settled_type_argument(ty))
+            .map(|(name, ty)| (name.clone(), ty.clone()))
+            .collect::<std::collections::HashMap<_, _>>();
+        for argument in args {
+            let CallArg::Named(field, value) = argument else {
+                return;
+            };
+            let Some((_, original)) = self.resolve_field_info(fields, &field.node, true, true) else {
+                return;
+            };
+            let Some(actual) = self.type_info.expr_type(value.span) else {
+                return;
+            };
+            self.infer_type_param_bindings(&original.ty, actual, &mut bindings);
+        }
+        if parameters.iter().any(|parameter| {
+            bindings
+                .get(parameter)
+                .is_none_or(|ty| !Self::is_settled_type_argument(ty))
+        }) {
+            return;
+        }
+
+        // ---- Bound proof and Body IR-only publication ----
+        if let Some(bounds) = self.declared_nominal_bounds(name) {
+            for (parameter, requirements) in bounds {
+                let Some(actual) = bindings.get(parameter) else {
+                    return;
+                };
+                if requirements
+                    .iter()
+                    .any(|bound| !self.type_satisfies_explicit_bound_info(actual, bound, &bindings))
+                {
+                    return;
+                }
+            }
+        }
+        let carrier = self.constructor_result_type_with_bindings(name, &bindings);
+        self.type_info
+            .calls
+            .body_ir_constructor_types
+            .insert((span.start, span.end), carrier);
+    }
+
     /// Validate model/class constructor arguments, including RFC 017 coercions for typed field initializers.
     pub(in crate::typechecker::check_expr::calls) fn check_model_or_class_constructor_call(
         &mut self,

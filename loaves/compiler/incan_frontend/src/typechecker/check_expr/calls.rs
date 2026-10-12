@@ -507,8 +507,18 @@ impl TypeChecker {
                                 field.ty = substitute_resolved_type(&field.ty, type_bindings);
                             }
                         }
+                        let errors_before_constructor = self.errors.len();
                         let constructor_ty =
                             self.check_model_or_class_constructor_call(name, name, &fields, args, span);
+                        if self.errors.len() == errors_before_constructor {
+                            self.retain_body_ir_constructor_type(
+                                name,
+                                &type_info,
+                                constructor_context.as_ref(),
+                                args,
+                                span,
+                            );
+                        }
                         self.record_expr_type(callee.span, ResolvedType::Named(name.clone()));
                         self.type_info
                             .expressions

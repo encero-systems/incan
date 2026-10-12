@@ -1494,6 +1494,11 @@ pub struct CallArtifacts {
     ///
     /// Legacy never reads this additive table: its own contextual types and monomorph decisions remain untouched.
     pub body_ir_call_type_arguments: HashMap<(usize, usize), Vec<ResolvedType>>,
+    /// Executable constructor carriers recovered from original declared fields and checked values after contextual
+    /// checking substituted a callee's open parameters into those fields. Only Body IR reads this additive fact.
+    pub body_ir_constructor_types: HashMap<(usize, usize), ResolvedType>,
+    /// Executable call results under the same retained argument binding, consumed only by Body IR.
+    pub body_ir_call_result_types: HashMap<(usize, usize), ResolvedType>,
     /// Concrete owner types inferred from checked nominal constructor fields before an open caller context masks them.
     ///
     /// Body IR retains these executable carriers while legacy checking preserves its contextual expression type.

@@ -48,8 +48,9 @@ impl TypeChecker {
             let Some(actual) = self
                 .type_info
                 .calls
-                .inferred_constructor_types
+                .body_ir_constructor_types
                 .get(&key)
+                .or_else(|| self.type_info.calls.inferred_constructor_types.get(&key))
                 .or_else(|| self.type_info.expr_type(expression.span))
             else {
                 return;
