@@ -194,14 +194,14 @@ pub def insert_collection(
     values: list[Operand],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Insert already evaluated operands through a short exclusive borrow."""
-    types = collection_arguments(builder.locals[receiver.local].ty)
+    """Insert already evaluated operands through a short exclusive borrow of the selected collection storage."""
+    ty = place_type(builder.locals, receiver)
+    types = collection_arguments(ty)
     if len(values) != len(types):
         return Err("unsupported Body IR collection insert arity")
     for index in range(len(values)):
         if value_type(builder, values[index])? != types[index]:
             return Err("unsupported Body IR collection element coercion")
-    ty = builder.locals[receiver.local].ty
     reference = borrow_collection(builder, receiver, true, span)?
     mut parameters = [collection_reference(ty, true)]
     parameters.extend(collection_arguments(ty))

@@ -91,6 +91,13 @@ pub model Builder:
     pub iteration_locals: list[int] = []
     pub step_bindings: list[int] = []
     pub step_clauses: list[tuple[int, int, list[int]]] = []
+    # Lexical Body IR scopes identify owners that survive a loop body, including its enclosing result place.
+    pub scoped_locals: list[tuple[int, int]] = []
+    pub scope_parents: list[tuple[int, int]] = []
+    pub loop_scopes: list[int] = []
+    # Each break contributes its initialized owners to the loop's exit join.
+    pub loop_exit_blocks: list[list[int]] = []
+    pub loop_exit_owners: list[list[list[int]]] = []
 
     def new_block(mut self, span: SourceSpan) -> int:
         """Allocate a block before connecting edges, preserving index stability."""

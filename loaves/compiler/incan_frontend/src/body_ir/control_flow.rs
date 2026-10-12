@@ -200,8 +200,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// lexically nested in a `loop:` expression from being rewritten into an assignment to the *outer* loop's
     /// result place (see [`Self::loop_break_targets`] for why the stack exists).
     ///
-    /// `loop_scope` is the caller's to create rather than this helper's, because the `loop:` expression must
-    /// declare its result temporary in that scope before any body statement is lowered.
+    /// `loop_scope` is the caller's to create rather than this helper's. A `loop:` expression declares its result in
+    /// the enclosing scope before lowering its body, so that result survives every loop-body exit.
     ///
     /// The two `for` paths deliberately do not route through here. [`Self::lower_range_counting_loop`] drops its
     /// scope mid-body, before the index advance it appends afterwards, and [`Self::lower_general_iteration`] leaves
@@ -394,7 +394,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let hir_span_value = hir_span(span);
         let ty = self.resolve_ty(span);
         let loop_scope = self.new_scope(Some(scope), hir_span_value);
-        let result_local = self.new_temp(ty.clone(), loop_scope, hir_span_value);
+        let result_local = self.new_temp(ty.clone(), scope, hir_span_value);
 
         self.push_loop(
             loop_scope,

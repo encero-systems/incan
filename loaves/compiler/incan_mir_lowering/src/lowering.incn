@@ -1017,7 +1017,7 @@ def verify_branch_owners(reachable: bool, owned: list[int], incoming: list[int])
 
 
 def drop_loop_owners(mut builder: Builder, span: SourceSpan) -> Result[None, str]:
-    """Release owners created inside the innermost loop. Incoming owners must stay live because another iteration would read them again."""
+    """Release loop-local owners while retaining initialized enclosing storage, including a loop expression's result."""
     incoming = builder.loop_owners[-1]
     for owner in incoming:
         if owner not in builder.owned:
@@ -1025,9 +1025,34 @@ def drop_loop_owners(mut builder: Builder, span: SourceSpan) -> Result[None, str
     retained = builder.owned
     for index in range(len(retained)):
         owner = retained[len(retained) - index - 1]
-        if owner not in incoming:
+        if owner not in incoming and loop_local_owner(builder, owner):
             drop_owned(builder, owner, span)
     return Ok(None)
+
+
+def loop_local_owner(builder: Builder, local: int) -> bool:
+    """Use Body IR's lexical scope tree to distinguish loop-local storage from values declared outside the loop."""
+    for slot in range(len(builder.scoped_locals)):
+        index = builder.scoped_locals[slot][0]
+        scope = builder.scoped_locals[slot][1]
+        if index != local:
+            continue
+        mut current = scope
+        for _ in range(len(builder.scope_parents) + 1):
+            if current == builder.loop_scopes[-1]:
+                return true
+            mut parent = -1
+            for ancestor in range(len(builder.scope_parents)):
+                enclosing_scope = builder.scope_parents[ancestor][0]
+                enclosing = builder.scope_parents[ancestor][1]
+                if enclosing_scope == current:
+                    parent = enclosing
+            if parent < 0:
+                return false
+            current = parent
+        return true
+    # Native temporaries have no source scope and belong to the current evaluation.
+    return true
 # =====================================================================================================================
 # Statements and control flow
 # =====================================================================================================================
@@ -1241,6 +1266,10 @@ def lower_loop_exit(mut builder: Builder, repeat: bool, span: SourceSpan) -> Res
     if repeat:
         builder.finish(TerminatorKind.Goto(header), span)
     else:
+        end = builder.current
+        owners = builder.owned
+        builder.loop_exit_blocks[-1].append(end)
+        builder.loop_exit_owners[-1].append(owners)
         builder.finish(TerminatorKind.Goto(after), span)
     return Ok(None)
 
@@ -1290,6 +1319,9 @@ pub def lower_assignment(
         match structural_prefix(builder, destination)?:
             Some((count, _through_tuple)) =>
                 if count > 0 and count < len(destination.projection):
+                    receiver = prefix_place(builder, destination, count, span)?
+                    if is_collection(place_type(builder.locals, receiver)):
+                        return dictionary_entry_assignment(builder, destination, receiver, count, value, span)
                     return indexed_assignment_at(builder, destination, count, value, span)
             None => pass
     target = scalar_place(builder, destination, span)?
@@ -1722,6 +1754,12 @@ def lifted_frame(builder: Builder, name: str, arguments: list[PlanType], result:
     for local in builder.function_pointer_locals:
         if local > builder.local_offset:
             pointer_locals.append(local - builder.local_offset + count)
+    mut scoped_locals: list[tuple[int, int]] = []
+    for slot in range(len(builder.scoped_locals)):
+        local = builder.scoped_locals[slot][0]
+        scope = builder.scoped_locals[slot][1]
+        if local > builder.local_offset:
+            scoped_locals.append((local - builder.local_offset + count, scope))
     mut lifted = Builder(
         locals=locals,
         parameter_count=count,
@@ -1753,6 +1791,8 @@ def lifted_frame(builder: Builder, name: str, arguments: list[PlanType], result:
         function_pointer_locals=pointer_locals,
         name=name,
         synthesized=[],
+        scoped_locals=scoped_locals,
+        scope_parents=builder.scope_parents,
     )
     _ = lifted.new_block(span)
     return lifted
@@ -2159,13 +2199,21 @@ def lower_loop(module: &BodyIrModule, mut builder: Builder, body: &RustBlock, sp
     incoming = builder.owned
     builder.loops.append((header, after))
     builder.loop_owners.append(incoming)
+    builder.loop_scopes.append(int(body.scope.0))
+    builder.loop_exit_blocks.append([])
+    builder.loop_exit_owners.append([])
     lower_block(module, builder, body)?
     if not builder.closed[builder.current]:
         drop_loop_owners(builder, span)?
     _loop = builder.loops.pop()
     _owners = builder.loop_owners.pop()
+    _scope = builder.loop_scopes.pop()
+    ends = builder.loop_exit_blocks.pop()
+    owners = builder.loop_exit_owners.pop()
     finish_fallthrough(builder, header, span)
     builder.owned = incoming
+    if len(ends) != 0:
+        builder.owned = join_branch_owners(builder, after, ends, owners, span)?
     builder.current = after
     # A loop nothing leaves (`loop:` or `while true:` without `break`) never falls through to what follows it.
     builder.closed[after] = not exits_to(builder.blocks, header, after)
@@ -5067,17 +5115,7 @@ def lower_function(
         body,
         native_source_type(module.nominal_declarations, module.enum_declarations, unions, body.return_type, intrinsics)?,
     )?
-    mut return_type = declared_type
-    if body.is_generator():
-        for parameter in body.params:
-            capture = frame_type(module, body.locals[int(parameter.local.index())], intrinsics)?
-            if parameter_storage_type(capture, parameter.mutable) != capture:
-                return Err("unsupported Body IR borrowed generator parameter")
-            match capture:
-                PlanType.ModelRef(_owner, _name) => return Err("unsupported Body IR borrowed generator receiver")
-                PlanType.ModelMutRef(_owner, _name) => return Err("unsupported Body IR borrowed generator receiver")
-                _ => pass
-        return_type = PlanType.Unit
+    return_type = producer_return_type(module, body, declared_type, intrinsics)?
     if function_name(module, body) == "main" and return_type != PlanType.Unit:
         if body.is_async or not entry_result(module, return_type, intrinsics):
             return Err("unsupported Body IR non-unit native main")
@@ -5087,6 +5125,7 @@ def lower_function(
     names, bindings = body_type_bindings(module, body, type_arguments)?
     mut selected_unions = unions
     retain_body_unions(selected_unions, body)
+    scoped_locals, scope_parents = frame_scopes(body)
     mut builder = Builder(
         locals=frame_locals(module, body, unions, return_type, span, source, file, intrinsics)?,
         parameter_count=len(parameters),
@@ -5119,6 +5158,8 @@ def lower_function(
         name=evaluator_name(module, body),
         synthesized=[],
         iteration_locals=list_iterator_locals(body.block),
+        scoped_locals=scoped_locals,
+        scope_parents=scope_parents,
     )
     _ = builder.new_block(span)
     if body.is_generator():
@@ -5163,6 +5204,42 @@ def lower_function(
                 function.name = producer_name(function.name)
             None => return Err("unsupported Body IR generator return type")
     return Ok((function, builder.externals, builder.instances, builder.synthesized))
+
+
+def producer_return_type(
+    module: &BodyIrModule,
+    body: &RustBody,
+    declared: PlanType,
+    intrinsics: list[EnumDeclaration],
+) -> Result[PlanType, str]:
+    """A generator producer returns unit and holds only owned parameters; ordinary functions retain their declared result."""
+    if not body.is_generator():
+        return Ok(declared)
+    for parameter in body.params:
+        capture = frame_type(module, body.locals[int(parameter.local.index())], intrinsics)?
+        if parameter_storage_type(capture, parameter.mutable) != capture:
+            return Err("unsupported Body IR borrowed generator parameter")
+        match capture:
+            PlanType.ModelRef(_owner, _name) => return Err("unsupported Body IR borrowed generator receiver")
+            PlanType.ModelMutRef(_owner, _name) => return Err("unsupported Body IR borrowed generator receiver")
+            _ => pass
+    return Ok(PlanType.Unit)
+
+
+def frame_scopes(body: &RustBody) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """Retain the checked scope IDs and parent links in Copy tables; a negative parent denotes the root scope."""
+    mut scoped_locals: list[tuple[int, int]] = []
+    for local in body.locals:
+        scoped_locals.append((int(local.id.index()) + 1, int(local.scope.0)))
+    mut scope_parents: list[tuple[int, int]] = []
+    for scope in body.scopes:
+        mut parent = -1
+        match scope.parent:
+            Some(enclosing) =>
+                parent = int(enclosing.0)
+            None => pass
+        scope_parents.append((int(scope.id.0), parent))
+    return (scoped_locals, scope_parents)
 
 
 def frame_locals(
@@ -5448,7 +5525,9 @@ def read_indexed_element(
     slot: int,
     span: SourceSpan,
 ) -> Result[Place, str]:
-    """Clone one list element, or the value one key selects in a dictionary, out of the place earlier steps reached."""
+    """Read a checked tuple field, or clone a list element or dictionary value, from the place earlier steps reached."""
+    if is_tuple_type(place_type(builder.locals, place)):
+        return read_element_field(builder, place, source.projection[slot], span)
     if is_collection(place_type(builder.locals, place)):
         return read_dictionary_element(builder, place, source, slot, span)
     argument = list_index_operand(builder, source, slot, span)?
@@ -6569,8 +6648,10 @@ def iteration_root(mut builder: Builder, value: &RustPlace, exclusive: bool, spa
     Select the list a loop iterates: a loop changing the items of a list held by a list element or dictionary value
     iterates the stored list itself, reached through the container's checked reborrows.
     """
-    if exclusive and is_element_place(builder, value)?:
-        return mutable_element_place(builder, value, span)
+    if is_element_place(builder, value)?:
+        if exclusive:
+            return mutable_element_place(builder, value, span)
+        return materialized_receiver(builder, value, span)
     return list_root_place(builder, value, span)
 
 
@@ -6828,16 +6909,28 @@ def dictionary_index_assignment(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Replace dictionary entries after evaluating the source value and retained key."""
-    if len(destination.projection) != 1:
-        return Err("unsupported Body IR nested dictionary mutation")
     receiver = list_base_place(builder, destination, span)?
+    return dictionary_entry_assignment(builder, destination, receiver, 0, value, span)
+
+
+def dictionary_entry_assignment(
+    mut builder: Builder,
+    destination: &RustPlace,
+    receiver: Place,
+    start: int,
+    value: &RustRvalue,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Insert an evaluated entry into its retained dictionary, including a dictionary reached through a structural field."""
+    if len(destination.projection) != start + 1:
+        return Err("unsupported Body IR nested dictionary mutation")
     types = collection_arguments(place_type(builder.locals, receiver))
     if len(types) != 2:
         return Err("unsupported Body IR set indexing assignment")
     match value:
         RustRvalue.Use(value) =>
             argument = element_operand(builder, value, types[1], span)?
-            match destination.projection[0]:
+            match destination.projection[start]:
                 PlaceElem.Index(index) =>
                     key = element_operand(builder, index, types[0], span)?
                     return insert_collection(builder, receiver, [key, argument], span)
