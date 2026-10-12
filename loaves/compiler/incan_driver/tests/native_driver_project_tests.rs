@@ -2687,6 +2687,64 @@ def main() -> None:
     )
 }
 
+/// Partials over model and class constructors build their values with presets as overridable defaults and every
+/// other field left to the declaration's own default or the call's argument, as legacy does (#701).
+#[test]
+fn constructor_partials_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("constructor-partials")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"const DEFAULT_NAMESPACE: str = "registry"
+
+
+class Counter:
+    pub start: int
+    pub step: int = 1
+
+
+counter = partial Counter(step=2)
+plain = partial Counter(start=5)
+
+
+model Spec:
+    name: str
+    namespace: str = "unset"
+    replicas: int = 1
+
+    def describe(self) -> str:
+        return f"{self.namespace}/{self.name}:{self.replicas}"
+
+
+spec = partial Spec(namespace=DEFAULT_NAMESPACE)
+
+
+pub model Reader:
+    pub layer: str
+    pub format: str
+
+
+pub BronzeReader = partial Reader(layer="bronze", format="delta")
+
+
+def main() -> None:
+    c = counter(start=1)
+    println(f"{c.start} {c.step}")
+    p = plain()
+    println(f"{p.start} {p.step}")
+    q = plain(start=4, step=3)
+    println(f"{q.start} {q.step}")
+    println(spec(name="alpha", replicas=3).describe())
+    println(spec(name="beta").describe())
+    println(spec(name="gamma", namespace="custom").describe())
+    reader = BronzeReader()
+    println(f"{reader.layer} {reader.format}")
+"#,
+    )
+}
+
 /// Prove canonical scalar casts and default values byte-identical to legacy.
 #[test]
 fn numeric_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

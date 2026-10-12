@@ -22,6 +22,42 @@ fn a_nominal_field_read_by_value_clones_from_its_owner() -> Result<(), Box<dyn s
     Ok(())
 }
 
+/// A Partial over a model constructor builds that model from its complete field layout, keeping its presets and the
+/// model's own field defaults as deferred defaults.
+#[test]
+fn a_constructor_partial_builds_its_model_with_presets_and_field_defaults() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "model Spec:\n  name: str\n  namespace: str = \"unset\"\n  replicas: int = 1\n\nspec = partial Spec(namespace=\"x\")\n",
+        &["m", "constructor_partial"],
+    )?;
+    let declaration = module.nominal_declarations.first().ok_or("model declaration missing")?;
+    let body = body_named(&module, "spec")?;
+    let target = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::Constructor(target), _),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .ok_or_else(|| format!("the partial must construct its model: {}", body.render_snapshot()))?;
+    assert_eq!(target.canonical.as_ref(), Some(&declaration.canonical));
+    assert_eq!(
+        target.canonical_field_layout.as_deref(),
+        Some(declaration.fields.as_slice())
+    );
+    let defaults = body
+        .params
+        .iter()
+        .map(|parameter| matches!(parameter.default, bir::CallableParamDefault::Source(_)))
+        .collect::<Vec<_>>();
+    assert_eq!(defaults, [false, true, true]);
+    Ok(())
+}
+
 /// `unwrap` on Option and Result is an intrinsic carrier method, like `unwrap_or`, so the backend reads its payload
 /// through the carrier layout instead of treating the call as a builtin collection member.
 #[test]
