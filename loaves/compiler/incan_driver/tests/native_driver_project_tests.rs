@@ -11745,6 +11745,25 @@ fn stored_nested_enumeration_refusal_is_retained() -> Result<(), Box<dyn std::er
     )
 }
 
+/// A user enumeration function supplies its own indices and tuple values; changing its returned items does not
+/// create a view of its source argument.
+#[test]
+fn shadowed_enumeration_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_collection_family_source(
+        "shadowed-enumeration",
+        r#"def enumerate(values: list[list[int]]) -> list[tuple[int, list[int]]]:
+    println("user")
+    return [(7, values[0])]
+def main() -> None:
+    mut rows: list[list[int]] = [[1]]
+    for i, row in enumerate(rows):
+        row.append(i)
+        println(row)
+    println(rows)
+"#,
+    )
+}
+
 /// The traits-owned callable binder fact remains explicit on a base that does not contain its normalization fix.
 #[test]
 fn generic_callable_binder_refusal_is_retained() -> Result<(), Box<dyn std::error::Error>> {

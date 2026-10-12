@@ -1131,3 +1131,26 @@ fn enumeration_keeps_ordinary_body_aliases_as_values() -> Result<(), Box<dyn std
             if place.local_id() == Some(alias) && read.fact != bir::OwnershipFact::MutBorrow)));
     Ok(())
 }
+
+/// A same-named user function keeps its checked call and ordinary tuple iteration; builtin source normalization
+/// requires canonical identity rather than a name match.
+#[test]
+fn enumeration_named_user_function_keeps_its_checked_call() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def enumerate(values: list[int]) -> list[tuple[int, int]]:\n  return [(7, values[0])]\ndef shadowed(values: list[int]) -> int:\n  mut total = 0\n  for i, value in enumerate(values):\n    total += i + value\n  return total\n";
+    let module = build(source, &["m", "enumeration_shadow"])?;
+    let body = body_named(&module, "shadowed")?;
+    let calls: Vec<_> = body
+        .block
+        .stmts
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+                ..
+            } => Some(target.builtin),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(calls, vec![None]);
+    Ok(())
+}
