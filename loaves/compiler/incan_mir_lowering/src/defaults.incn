@@ -37,7 +37,7 @@ pub def model_default_arguments(
                 types.append(
                     native_source_type(builder.nominals, builder.enums, builder.unions, ty, builder.intrinsics)?,
                 )
-            return default_arguments(module, builder, binding, elements, body, types, span, 0)
+            return default_arguments(module, builder, binding, elements, body, types, span, 0, true)
         None => return Err(f"unsupported Body IR unavailable field defaults on {declaration.name}")
 
 
@@ -70,13 +70,13 @@ pub def method_default_arguments(
             for index in range(len(frame.params)):
                 if frame.params[index].name != body.params[index].name or frame.params[index].ty != body.params[index].ty:
                     return Err("invalid Body IR method-partial parameter")
-            values = default_arguments(module, builder, target.binding, arguments[1:], frame, types, span, 1)?
+            values = default_arguments(module, builder, target.binding, arguments[1:], frame, types, span, 1, false)?
             return Ok(Some(values))
     match target.binding:
         ArgumentBinding.Resolved(arguments=_bindings, defaulted_slots=defaults) =>
             if len(defaults) == 0:
                 return Ok(None)
-            values = default_arguments(module, builder, target.binding, arguments[1:], body, types, span, 1)?
+            values = default_arguments(module, builder, target.binding, arguments[1:], body, types, span, 1, false)?
             return Ok(Some(values))
         _ => return Ok(None)
 
@@ -90,12 +90,14 @@ pub def default_arguments(
     types: list[PlanType],
     span: SourceSpan,
     parameter_offset: int,
+    owned: bool,
 ) -> Result[list[Operand], str]:
     """
     Fill canonical slots, using a fresh declaration-local frame for each deferred default.
 
     `types` lists the ordinary slots the binding numbers. A method passes a `parameter_offset` of one: its receiver is
-    bound separately, yet stays the first parameter of the declaration whose defaults are evaluated.
+    bound separately, yet stays the first parameter of the declaration whose defaults are evaluated. With `owned`, a
+    collection slot receives an owned value, as a model construction stores it, instead of a call's borrow.
     """
     if parameter_offset < 0 or len(body.params) != len(types) + parameter_offset:
         return Err("invalid Body IR default parameter frame length")
@@ -114,14 +116,16 @@ pub def default_arguments(
                 occupied.append(slot)
                 match elements[index].as_one():
                     Some(value) =>
-                        operands[slot] = call_argument_operand(builder, value, types[slot], span, false)?
+                        operands[slot] = call_argument_operand(builder, value, types[slot], span, owned)?
                     None => return Err("unsupported Body IR spread ArgumentElement")
             for slot in defaults:
                 index = int(slot.clone())
                 if index < 0 or index >= len(types) or index in occupied:
                     return Err("invalid Body IR default slot map")
                 occupied.append(index)
-                operands[index] = evaluate_default(module, builder, body, index + parameter_offset, types[index], span)?
+                operands[index] = evaluate_default(
+                    module, builder, body, index + parameter_offset, types[index], span, owned,
+                )?
             return Ok(operands)
         _ => return Err("unsupported Body IR unresolved ArgumentBinding")
 
@@ -133,8 +137,14 @@ pub def evaluate_default(
     index: int,
     ty: PlanType,
     span: SourceSpan,
+    owned: bool,
 ) -> Result[Operand, str]:
-    """Isolate default-local identities from caller locals and drop temporary owners after extracting the result."""
+    """
+    Isolate default-local identities from caller locals and drop temporary owners after extracting the result.
+
+    With `owned`, a collection default is moved into the slot that stores it; otherwise the call borrows it and its
+    owner stays in the caller frame until the call returns.
+    """
     _ = default_type(ty)?
     match body.params[index].default:
         CallableParamDefault.Source(computation) =>
@@ -164,13 +174,13 @@ pub def evaluate_default(
                 lower_statement(module, builder, statement)?
             builder.anchor = anchor
             before = builder.owned
-            result = call_argument_operand(builder, computation.result, ty, span, false)?
+            result = call_argument_operand(builder, computation.result, ty, span, owned)?
             mut result_owner = -1
             match result.kind:
                 OperandKind.Move(place) =>
                     result_owner = place.local
                 _ => pass
-            if is_list(ty) or is_collection(ty):
+            if not owned and (is_list(ty) or is_collection(ty)):
                 result_owner = borrowed_default_owner(builder, computation.result, before, span)?
             builder.local_offset = saved
             retained = builder.owned

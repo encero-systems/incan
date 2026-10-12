@@ -113,7 +113,7 @@ def default_fields(
             Some(body) =>
                 match body.params[slot].default:
                     CallableParamDefault.Source(_computation) =>
-                        operands.append(evaluate_default(module, builder, body, slot, ty, span)?)
+                        operands.append(evaluate_default(module, builder, body, slot, ty, span, true)?)
                         continue
                     _ => pass
             None => pass

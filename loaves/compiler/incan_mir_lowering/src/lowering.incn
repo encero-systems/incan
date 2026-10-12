@@ -3075,7 +3075,7 @@ def ordered_arguments(
     for parameter in body.params:
         types.append(call_parameter_type(builder, body, parameter)?)
     if has_defaulted_slots(binding):
-        return default_arguments(module, builder, binding, elements, body, types, span, 0)
+        return default_arguments(module, builder, binding, elements, body, types, span, 0, false)
     return ordered_slot_operands(builder, binding, elements, types, span, 0)
 
 
