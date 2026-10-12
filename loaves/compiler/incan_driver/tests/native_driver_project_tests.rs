@@ -9103,6 +9103,45 @@ def main() -> Result[None, EnvironError]:
     )
 }
 
+/// A compression error carries the SDK's Codec enum even when the consumer imports only the decompressor.
+#[test]
+fn stdlib_nested_signature_types_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("stdlib-nested-signature-types")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"from std.compression.gzip import decompress
+
+def main() -> None:
+    match decompress(b"data"):
+        Ok(_) => println("value")
+        Err(_) => println("error")
+"#,
+    )
+}
+
+/// A type imported through the datetime facade remains an SDK type when it occurs only in a parameter annotation.
+#[test]
+fn stdlib_reexported_annotation_types_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("stdlib-reexported-annotation-types")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"from std.datetime import TimeDelta
+
+def touch(delta: TimeDelta) -> None:
+    pass
+
+def main() -> None:
+    println("ready")
+"#,
+    )
+}
+
 /// A `main` returning `Result[None, E]` is the binary's entry point as legacy's is: its output before an `Err` is kept,
 /// and the error is reported on stderr with a failing exit code.
 #[test]

@@ -6031,6 +6031,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/library_types.rs": {
+      "disposition": "keep",
+      "notes": "Body IR-only SDK type identity and nested declaration retention on the direct route.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "tests": {}
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/method_partials.rs": {
       "disposition": "keep",
       "notes": "Checked method-partial frames and presets retained for direct-route execution; relocated from methods_and_defaults.rs.",

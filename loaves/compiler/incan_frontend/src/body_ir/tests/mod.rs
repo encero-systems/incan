@@ -19,6 +19,7 @@ mod control_flow_and_loops;
 mod for_patterns;
 mod identities_and_imports;
 mod input_contract_and_refusals;
+mod library_types;
 mod method_partials;
 mod methods_and_defaults;
 mod newtypes;
