@@ -1087,17 +1087,21 @@ pub(super) fn collect_local_trait_implementations(
 ) -> Vec<bir::TraitImplementation> {
     let mut implementations = Vec::new();
     for declaration in &program.declarations {
-        let (adoptions, methods) = match &declaration.node {
+        let (adoptions, methods, properties): (
+            &[ast::Spanned<ast::TraitBound>],
+            &[ast::Spanned<ast::MethodDecl>],
+            &[ast::Spanned<ast::PropertyDecl>],
+        ) = match &declaration.node {
             ast::Declaration::Model(model) if is_direct_replacement_checked_model(model, type_info) => {
-                (&model.traits, &model.methods)
+                (&model.traits, &model.methods, &model.properties)
             }
             ast::Declaration::Class(class) if is_direct_replacement_checked_class(class, type_info) => {
-                (&class.traits, &class.methods)
+                (&class.traits, &class.methods, &class.properties)
             }
             ast::Declaration::Newtype(newtype) if is_direct_replacement_plain_newtype(newtype) => {
-                (&newtype.traits, &newtype.methods)
+                (&newtype.traits, &newtype.methods, &[])
             }
-            ast::Declaration::Enum(value) if is_direct_native_enum(value) => (&value.traits, &value.methods),
+            ast::Declaration::Enum(value) if is_direct_native_enum(value) => (&value.traits, &value.methods, &[]),
             _ => continue,
         };
         let Some(owner) = type_info
@@ -1121,6 +1125,7 @@ pub(super) fn collect_local_trait_implementations(
         ));
         implementations.extend(derived_trait_implementations(type_info, methods, owner));
         let adopted = adopted_local_traits(program, type_info, adoptions);
+        implementations.extend(property_implementations(type_info, &adopted, properties, owner));
         for slot_trait in &adopted {
             for slot in &slot_trait.declaration.methods {
                 let Some(method) = type_info
@@ -1148,6 +1153,62 @@ pub(super) fn collect_local_trait_implementations(
                     type_arguments,
                 });
             }
+        }
+    }
+    implementations
+}
+
+/// Retain a concrete getter filling a checked local trait property requirement, including local supertraits.
+/// Property defaults are not admitted; ambiguous or absent source getters never acquire a guessed implementation.
+fn property_implementations(
+    facts: &TypeCheckInfo,
+    adopted: &[AdoptedTrait<'_>],
+    properties: &[ast::Spanned<ast::PropertyDecl>],
+    owner: &CanonicalSymbolId,
+) -> Vec<bir::TraitImplementation> {
+    let mut implementations = Vec::new();
+    for trait_info in adopted {
+        for slot in &trait_info.declaration.properties {
+            if slot.node.body.is_some() {
+                continue;
+            }
+            let Some(method) = facts
+                .declarations
+                .body_ir_property_bindings
+                .get(&(slot.span.start, slot.span.end))
+                .and_then(|binding| binding.callable.identity.as_ref())
+            else {
+                continue;
+            };
+            let mut candidates = properties
+                .iter()
+                .filter(|property| property.node.name == slot.node.name && property.node.body.is_some());
+            let Some(property) = candidates.next() else {
+                continue;
+            };
+            if candidates.next().is_some() {
+                continue;
+            }
+            let Some(implementation) = facts
+                .declarations
+                .body_ir_property_bindings
+                .get(&(property.span.start, property.span.end))
+                .and_then(|binding| binding.callable.identity.as_ref())
+            else {
+                continue;
+            };
+            if implementations
+                .iter()
+                .any(|existing: &bir::TraitImplementation| &existing.method == method)
+            {
+                continue;
+            }
+            implementations.push(bir::TraitImplementation {
+                owner: owner.clone(),
+                method: method.clone(),
+                implementation: implementation.clone(),
+                type_arguments: Vec::new(),
+            });
         }
     }
     implementations

@@ -279,6 +279,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.lower_property_read(base, name, expr.span, scope, out)
             }
             ast::Expr::Field(base, name) => {
+                if let Some(value) = self.lower_property_read(base, expr.span, scope, out) {
+                    return value;
+                }
                 if let Some(target) = self.local_fieldless_enum_variant_target(base, name, expr.span) {
                     return self.push_assign_temp(
                         bir::Rvalue::FieldlessEnumVariant(target),
@@ -419,6 +422,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 })
             }
             ast::Expr::Field(base, name) => {
+                if let Some(value) = self.lower_property_read(base, expr.span, scope, out) {
+                    let ty = self.resolve_ty(expr.span);
+                    return self.materialize_operand_to_place(value, ty, scope, hir_span(expr.span), out);
+                }
                 // `Color.Red` used where a place is needed (a method receiver, say) is a variant value, not a field of
                 // a value named `Color`, and a computed property read is a getter call: materialize either like any
                 // other non-place operand.

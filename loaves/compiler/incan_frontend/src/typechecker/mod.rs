@@ -70,6 +70,7 @@ mod validate_rust_module;
 mod web_routes;
 
 pub use const_eval::ConstValue;
+pub use type_info::{BodyIrPropertyBindingInfo, ClassFieldDefaultInfo, semantic_type_from_resolved};
 pub use type_info::{
     CAbiInteropArtifacts, CAbiOutputSlot, CAbiSpan, CAbiSpanAccess, CAbiSpanAccessKind, CAbiSpanKind, CBindingBuffer,
     CBindingDescriptor, CBindingEnum, CBindingEnumVariant, CBindingFacade, CBindingFunctionCall, CBindingOutcome,
@@ -85,7 +86,6 @@ pub use type_info::{
     ValidatedNewtypeCoercionInfo, ValidatedNewtypeCoercionMode, ValidatedNewtypeCoercionStep,
     c_binding_descriptor_identity,
 };
-pub use type_info::{ClassFieldDefaultInfo, semantic_type_from_resolved};
 #[cfg(test)]
 mod identity_surface_tests;
 #[cfg(test)]

@@ -543,8 +543,8 @@ fn model_refusal_feature(model: &incan_frontend::ast::ModelDecl) -> String {
     ) {
         return "method partials".to_owned();
     }
-    if !incan_frontend::body_ir::has_direct_replacement_properties(&model.type_params, &model.properties) {
-        return "properties".to_owned();
+    if model.properties.iter().any(|property| property.node.body.is_none()) {
+        return "abstract properties".to_owned();
     }
 
     // ---- Method facts ----
@@ -571,8 +571,8 @@ fn class_refusal_feature(class: &incan_frontend::ast::ClassDecl) -> String {
     ) {
         return "method partials".to_owned();
     }
-    if !incan_frontend::body_ir::has_direct_replacement_properties(&class.type_params, &class.properties) {
-        return "properties".to_owned();
+    if class.properties.iter().any(|property| property.node.body.is_none()) {
+        return "abstract properties".to_owned();
     }
     if !class.declarative_members.is_empty() {
         return "declarative members".to_owned();
@@ -652,8 +652,8 @@ fn trait_refusal_feature(item: &incan_frontend::ast::TraitDecl) -> Option<&'stat
     if !item.method_partials.is_empty() {
         return Some("method partials");
     }
-    if !item.properties.is_empty() {
-        return Some("properties");
+    if item.properties.iter().any(|property| property.node.body.is_some()) {
+        return Some("property defaults");
     }
     if item.methods.iter().any(|method| !method.node.decorators.is_empty()) {
         return Some("decorated methods");

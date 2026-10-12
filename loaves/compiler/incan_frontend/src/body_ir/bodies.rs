@@ -3,6 +3,21 @@
 use super::*;
 use incan_lang::lang::decorators::{self, DecoratorId};
 
+/// Retain a nominal owner's methods and concrete property getters under their independent checked identities.
+pub(super) fn lower_owner_member_bodies(
+    methods: &[ast::Spanned<ast::MethodDecl>],
+    properties: &[ast::Spanned<ast::PropertyDecl>],
+    owner_name: &str,
+    receiver_ty: IncanType,
+    lowering_facts: &BodyIrLoweringFacts<'_, '_>,
+) -> Vec<bir::Body> {
+    let mut bodies = lower_owner_method_bodies(methods, owner_name, receiver_ty.clone(), lowering_facts);
+    bodies.extend(properties.iter().filter_map(|property| {
+        super::properties::lower_getter_body(property, owner_name, &receiver_ty, lowering_facts)
+    }));
+    bodies
+}
+
 /// Lower every non-abstract method in `methods` (owned by the declaration named `owner_name`) into one
 /// [`bir::Body`] each, skipping abstract methods (`body: None`). `receiver_ty` is the typechecker-equivalent type
 /// for a declared receiver: a concrete nominal type for models, classes, newtypes, and enums, or

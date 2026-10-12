@@ -360,30 +360,20 @@ fn build_body_ir_module_v0_with_provider_operations(
                 ast::Declaration::Function(function) => {
                     vec![lower_function_body(function, decl.span, &lowering_facts)]
                 }
-                ast::Declaration::Model(model) => {
-                    let receiver_ty = owner_self_type(&model.name, &model.type_params);
-                    let mut bodies =
-                        lower_owner_method_bodies(&model.methods, &model.name, receiver_ty.clone(), &lowering_facts);
-                    bodies.extend(lower_owner_property_bodies(
-                        &model.properties,
-                        &model.name,
-                        receiver_ty,
-                        &lowering_facts,
-                    ));
-                    bodies
-                }
-                ast::Declaration::Class(class) => {
-                    let receiver_ty = owner_self_type(&class.name, &class.type_params);
-                    let mut bodies =
-                        lower_owner_method_bodies(&class.methods, &class.name, receiver_ty.clone(), &lowering_facts);
-                    bodies.extend(lower_owner_property_bodies(
-                        &class.properties,
-                        &class.name,
-                        receiver_ty,
-                        &lowering_facts,
-                    ));
-                    bodies
-                }
+                ast::Declaration::Model(model) => lower_owner_member_bodies(
+                    &model.methods,
+                    &model.properties,
+                    &model.name,
+                    owner_self_type(&model.name, &model.type_params),
+                    &lowering_facts,
+                ),
+                ast::Declaration::Class(class) => lower_owner_member_bodies(
+                    &class.methods,
+                    &class.properties,
+                    &class.name,
+                    owner_self_type(&class.name, &class.type_params),
+                    &lowering_facts,
+                ),
                 ast::Declaration::Trait(trait_decl) => lower_owner_method_bodies(
                     &trait_decl.methods,
                     &trait_decl.name,
@@ -482,10 +472,11 @@ type FunctionDefaultSources = HashMap<String, Vec<FunctionDefaultSource>>;
 /// small source-local map long enough to attach the chosen declaration identity to each named call.
 type LocalFunctionDeclarations = HashMap<String, Vec<ast::Span>>;
 
-/// Source-local plain models and non-generic classes with canonical checked layouts.
+/// Source-local checked models and classes with canonical layouts.
 ///
 /// Unsupported inheritance and callable aliases never enter this constructor registry; checked field
 /// aliases select canonical storage.
+/// Computed properties contribute getter bodies rather than layout fields.
 type LocalNominalDeclarations = HashMap<String, bir::NominalDeclaration>;
 
 /// Source-local fieldless normal enums whose canonical unit variants are retained for direct comparison.
@@ -714,17 +705,13 @@ pub fn has_direct_replacement_method_partials(
     })
 }
 
-/// Determine whether every computed property of a nominal owner has a getter body Body IR lowers and calls: the owner
-/// is not generic and each property has a body.
-///
-/// A property read is a call of the receiver-only getter (see `lower_owner_property_bodies`), so a concrete owner's
-/// properties need no layout or runtime fact beyond that body.
+/// Determine whether every computed property has a checked getter body; abstract properties remain refused.
+/// Owner parameters stay in the immutable receiver frame, and property reads call the getter without adding layout fields.
 pub fn has_direct_replacement_properties(
-    owner_type_params: &[ast::TypeParam],
+    _owner_type_params: &[ast::TypeParam],
     properties: &[ast::Spanned<ast::PropertyDecl>],
 ) -> bool {
-    properties.is_empty()
-        || owner_type_params.is_empty() && properties.iter().all(|property| property.node.body.is_some())
+    properties.iter().all(|property| property.node.body.is_some())
 }
 
 /// Keep the structural admission boundary shared by builtin and checked serde derive selections.
@@ -1398,7 +1385,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Unlike [`Self::declare_new_local`], no last-use countdown is seeded: a receiver is always a Rust-level
     /// reference (`&self`/`&mut self`), so nothing about it can be "used up" the way an owned local's remaining
     /// reads can — see the receiver carve-out in [`Self::ownership_fact_for_place`], which decides the ownership
-    /// fact for every `self` read before that countdown would ever be consulted.
+    /// fact for every `self` read before that countdown would ever be consulted. Computed getters use their separate
+    /// Body IR-only receiver provenance when the legacy write table has no implicit receiver entry.
     fn declare_receiver_local(
         &mut self,
         ty: IncanType,
@@ -1407,7 +1395,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         span: HirSourceSpan,
     ) -> bir::LocalId {
         let source_span = ast::Span::new(span.start, span.end);
-        let identity = self.type_info.resolved_write_identity(source_span, "self").cloned();
+        let identity = self
+            .type_info
+            .resolved_write_identity(source_span, "self")
+            .cloned()
+            .or_else(|| {
+                self.type_info
+                    .declarations
+                    .body_ir_property_bindings
+                    .get(&(source_span.start, source_span.end))
+                    .and_then(|binding| binding.receiver_identity.clone())
+            });
         let id = bir::LocalId(self.next_local);
         self.next_local += 1;
         self.locals.push(bir::LocalDecl {
@@ -1816,6 +1814,7 @@ mod control_flow;
 mod stmt;
 
 pub(crate) mod free_vars;
+mod properties;
 mod provider_ops;
 mod refusals;
 

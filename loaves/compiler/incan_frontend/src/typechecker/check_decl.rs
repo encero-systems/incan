@@ -6622,6 +6622,19 @@ impl TypeChecker {
         // `self` resolve to it.
         self.record_write_target_identity(property_span, "self");
 
+        let receiver_identity = self
+            .symbols
+            .lookup("self")
+            .and_then(|id| self.symbols.identity_of(id))
+            .cloned();
+        if let Some(binding) = self
+            .type_info
+            .declarations
+            .body_ir_property_bindings
+            .get_mut(&(property_span.start, property_span.end))
+        {
+            binding.receiver_identity = receiver_identity;
+        }
         let return_type = self.resolve_type_checked(&property.return_type);
         self.type_info.declarations.property_bindings_by_span.insert(
             (property_span.start, property_span.end),

@@ -1140,6 +1140,9 @@ pub struct DeclarationArtifacts {
     /// Body IR lowers a property body as a receiver-only getter and a property read as a call of it; legacy lowering
     /// does not read this table.
     pub property_bindings_by_span: HashMap<(usize, usize), FunctionBindingInfo>,
+    /// Body IR-only getter signatures and receiver provenance, keyed by the exact property declaration span.
+    /// Legacy property metadata and callable binding tables remain unchanged.
+    pub body_ir_property_bindings: HashMap<(usize, usize), BodyIrPropertyBindingInfo>,
     /// Function declaration emitted names keyed by source declaration span.
     ///
     /// Present when top-level overloads need Rust-level name disambiguation while preserving one source name.
@@ -2026,6 +2029,19 @@ pub struct FunctionBindingInfo {
     /// declarations (each overload keeps its own); name-keyed *imported* entries carry the declaring module's proven
     /// identity or `None` when import resolution could not prove one — absent is never permission to reconstruct.
     pub identity: Option<CanonicalSymbolId>,
+}
+
+/// Checked facts needed to retain a property as a canonical immutable getter on the direct route.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BodyIrPropertyBindingInfo {
+    /// Zero-argument callable signature, excluding the implicit receiver, under the property declaration's identity.
+    pub callable: FunctionBindingInfo,
+    /// Declared owner frame, whose parameters close through a checked concrete receiver at a read.
+    pub receiver_type: ResolvedType,
+    /// Ordered binders declared by that owner, never inferred from the getter's result spelling.
+    pub owner_parameters: Vec<String>,
+    /// Exact implicit receiver binding created when the getter body is checked; absent for abstract requirements.
+    pub receiver_identity: Option<CanonicalSymbolId>,
 }
 
 /// Typechecker-resolved binding of one `model`/`class` construction's arguments to the declared field layout, or a
