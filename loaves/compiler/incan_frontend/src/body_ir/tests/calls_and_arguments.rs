@@ -2041,3 +2041,24 @@ fn result_constructor_arguments_take_the_parameter_type_the_call_settles() -> Re
     );
     Ok(())
 }
+
+/// `list.repeat` lowers to its compiler-owned helper with the arguments in slot order, whatever order the call site
+/// names them in, and records that the helper may raise.
+#[test]
+fn list_repeat_lowers_to_its_helper_in_slot_order() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def f() -> list[int]:\n    return list.repeat(count=3, value=7)\n";
+    let module = build(source, &["m", "list_repeat_helper"])?;
+    let body = body_named(&module, "f")?;
+    let rendered = body.render_snapshot();
+    assert!(
+        rendered.contains("helper:list_repeat(const(7), const(3))"),
+        "{rendered}"
+    );
+    assert!(
+        body.panic_facts
+            .iter()
+            .any(|fact| fact.reason == bir::PanicReason::HelperMayPanic(bir::HelperOp::ListRepeat)),
+        "{rendered}"
+    );
+    Ok(())
+}

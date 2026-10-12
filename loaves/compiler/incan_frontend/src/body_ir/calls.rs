@@ -4,8 +4,39 @@ use super::args::*;
 use super::primitives::*;
 use super::*;
 use incan_lang::lang::builtins::BuiltinFnId;
+use incan_lang::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
 use incan_lang::lang::surface::{dict_methods, list_methods, set_methods};
 use incan_semantics_core::SymbolOrigin;
+
+/// Put a fully bound two-slot call's single-value arguments in declared slot order.
+///
+/// `None` unless each slot is supplied exactly once by one written value and nothing is left to a default.
+fn slot_ordered_pair(elements: Vec<bir::ArgumentElement>, binding: &bir::ArgumentBinding) -> Option<[bir::Operand; 2]> {
+    let bir::ArgumentBinding::Resolved {
+        arguments,
+        defaulted_slots,
+    } = binding
+    else {
+        return None;
+    };
+    if !defaulted_slots.is_empty() || arguments.len() != 2 || elements.len() != 2 {
+        return None;
+    }
+    let mut ordered: [Option<bir::Operand>; 2] = [None, None];
+    for (element, bound) in elements.into_iter().zip(arguments) {
+        let bir::ArgumentElement::One(operand) = element else {
+            return None;
+        };
+        let slot = ordered.get_mut(bound.slot)?;
+        if slot.replace(operand).is_some() {
+            return None;
+        }
+    }
+    let [Some(first), Some(second)] = ordered else {
+        return None;
+    };
+    Some([first, second])
+}
 
 /// Read receiver exclusivity from the canonical builtin collection registry, never from a source method's spelling.
 fn collection_method_changes_receiver(identity: &CanonicalSymbolId) -> bool {
@@ -1252,6 +1283,82 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         ))
     }
 
+    /// Lower `list.repeat(value, count)` as the [`bir::HelperOp::ListRepeat`] call the typechecker resolved.
+    ///
+    /// The receiver is the builtin `list` type surface rather than a value, so nothing is read from it. The checker
+    /// records the helper's member identity on the call and marks the receiver a type name, and both are required:
+    /// a local binding that shadows `list` keeps its ordinary method call. Arguments bind to the helper's `value` and
+    /// `count` slots by position or name, are evaluated in written order, and are passed in slot order.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_list_repeat_call(
+        &mut self,
+        recv: &ast::Spanned<ast::Expr>,
+        name: &str,
+        type_args: &[ast::Spanned<ast::Type>],
+        args: &[ast::CallArg],
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<bir::Operand> {
+        let helper_id = BuiltinCollectionHelperId::ListRepeat;
+        let ast::Expr::Ident(receiver) = &recv.node else {
+            return None;
+        };
+        if receiver != collection_helpers::receiver(helper_id)
+            || name != collection_helpers::member(helper_id)
+            || self.bindings.contains_key(receiver)
+            || !matches!(self.type_info.ident_kind(recv.span), Some(IdentKind::TypeName))
+        {
+            return None;
+        }
+        let identity = crate::symbols::canonical_builtin_member_identity(
+            collections::as_str(CollectionTypeId::List),
+            collection_helpers::member(helper_id),
+        );
+        if self.type_info.resolved_identity(span) != Some(&identity) {
+            return None;
+        }
+        let call_span = hir_span(span);
+        if !type_args.is_empty() {
+            let description = "list.repeat with explicit type arguments".to_string();
+            return Some(self.unsupported_operand(description, scope, call_span, out));
+        }
+        let slots = Vec::from(["value", "count"].map(|slot| DeclaredSlot {
+            name: Some(slot.to_string()),
+            has_default: false,
+            is_partial_preset: false,
+            is_rest: false,
+            is_mut: false,
+        }));
+        let (operands, binding) = match self.bind_declared_args("builtin `list.repeat`", Some(slots), args, scope, out)
+        {
+            Ok(bound) => bound,
+            Err(description) => return Some(self.unsupported_operand(description, scope, call_span, out)),
+        };
+        let Some([value, count]) = slot_ordered_pair(operands, &binding) else {
+            let description = "list.repeat without one value and one count".to_string();
+            return Some(self.unsupported_operand(description, scope, call_span, out));
+        };
+        let helper = bir::HelperOp::ListRepeat;
+        self.record_runtime_requirement(AbiV0RuntimeRequirement::RuntimeHelper(helper.as_str().to_string()));
+        self.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
+        self.record_runtime_requirement(AbiV0RuntimeRequirement::PanicStrategy);
+        self.panic_facts.push(bir::PanicFact {
+            span: call_span,
+            reason: bir::PanicReason::HelperMayPanic(helper),
+        });
+        let ty = self.resolve_ty(span);
+        Some(self.push_call_temp(
+            bir::Callee::Helper(helper),
+            fixed_elements(vec![value, count]),
+            ty,
+            scope,
+            call_span,
+            true,
+            out,
+        ))
+    }
+
     /// Lower `module.function(args)` as a direct call to the declaration its receiver qualifies.
     ///
     /// A module binding is a namespace, not a value. `identity_provider.imported_path(17)` reaches the AST as a
@@ -1373,6 +1480,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         self.settle_open_call_arguments(span, args);
         if let Some(lowered) = self.lower_checked_builtin_method_call(type_args, args, span, scope, out) {
+            return lowered;
+        }
+        if let Some(lowered) = self.lower_list_repeat_call(recv, name, type_args, args, span, scope, out) {
             return lowered;
         }
         if let Some(lowered) = self.lower_module_qualified_call(recv, name, type_args, args, span, scope, out) {

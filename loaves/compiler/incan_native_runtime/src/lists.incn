@@ -8,6 +8,7 @@ from rust::incan_std_core::collections import (
     list_count as runtime_count,
     list_index as runtime_index,
     list_get_mut as runtime_get_mut,
+    list_repeat as runtime_repeat,
     list_slice as runtime_slice,
 )
 from std.derives.comparison import Eq, Ord
@@ -100,6 +101,11 @@ pub def swap_list[T](mut values: list[T], left: int, right: int) -> None:
 pub def concat_list[T with Clone](left: &list[T], right: &list[T]) -> list[T]:
     """Concatenate borrowed lists through the legacy helper without consuming either operand."""
     return runtime_concat(left, right)
+
+
+pub def repeat_list[T with Clone](value: T, count: int) -> list[T]:
+    """Build `count` clones of an owned value through the legacy helper, including its negative-count ValueError."""
+    return runtime_repeat(value, count)
 
 
 pub def sorted_list[T with (Clone, Ord)](values: &list[T]) -> list[T]:

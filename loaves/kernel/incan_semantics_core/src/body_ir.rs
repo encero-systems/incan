@@ -3279,6 +3279,13 @@ pub enum HelperOp {
     /// Arguments are in source order, `(lhs, rhs)`: concatenation is not commutative, and unlike the membership
     /// helpers there is no receiver convention pulling the operands apart.
     ListConcat,
+    /// `list.repeat(value, count)`: a new list of `count` clones of `value`, raising `ValueError` for a negative
+    /// count.
+    ///
+    /// `list` here is the builtin collection's type surface, not a list value, so the typechecker resolves the call
+    /// to a compiler-owned collection helper rather than a method on any receiver. Arguments are in the helper's
+    /// declared order, `(value, count)`, whatever order the call site wrote them in.
+    ListRepeat,
     /// `v in xs` on a list: element containment, not substring containment.
     ///
     /// Membership is the one operator whose meaning genuinely changes with its operand types, so each collection
@@ -3366,6 +3373,7 @@ impl HelperOp {
             Self::StrContains => "str_contains",
             Self::StrNotContains => "str_not_contains",
             Self::ListConcat => "list_concat",
+            Self::ListRepeat => "list_repeat",
             Self::ListContains => "list_contains",
             Self::ListNotContains => "list_not_contains",
             Self::SetContains => "set_contains",

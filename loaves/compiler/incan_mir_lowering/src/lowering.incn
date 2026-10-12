@@ -3314,6 +3314,7 @@ def lower_runtime_helper(
         RustHelper.StrSplit => return lower_split_helper(builder, arguments, destination, span)
         RustHelper.StrJoin => return lower_join_helper(builder, arguments, destination, span)
         RustHelper.ListConcat => return lower_list_concat(builder, arguments, destination, span)
+        RustHelper.ListRepeat => return lower_list_repeat(builder, arguments, destination, span)
         RustHelper.ListContains => return lower_list_helper(builder, false, arguments, destination, span)
         RustHelper.ListNotContains => return lower_list_helper(builder, true, arguments, destination, span)
         _ => pass
@@ -7717,6 +7718,38 @@ def lower_sequence_builtin(
             output,
             span,
         )
+    return Ok(None)
+
+
+def lower_list_repeat(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Clone one owned value `count` times into a new list through legacy's runtime helper.
+
+    The element type is the checked list the call assigns. The value moves into the helper, so a value read from a
+    binding arrives as the copy its ownership fact already made.
+    """
+    if len(arguments) != 2:
+        return Err("unsupported Body IR list_repeat arity")
+    match destination:
+        Some(_place) => pass
+        None => return Err("unsupported Body IR discarded list_repeat")
+    output = call_destination(builder, destination, PlanType.Unit, span)?
+    leaf, depth = require_list_shape(place_type(builder.locals, output), "unsupported Body IR list_repeat type")?
+    element = list_element(leaf, depth)
+    types = [element, PlanType.Int]
+    mut operands: list[Operand] = []
+    for index in range(2):
+        match arguments[index].as_one():
+            Some(value) => operands.append(call_argument_operand(builder, value, types[index], span, true)?)
+            None => return Err("unsupported Body IR list_repeat spread")
+    list_call(
+        builder, "repeat_list", element, [element, PlanType.Int], PlanType.List(leaf, depth), operands, output, span,
+    )
     return Ok(None)
 
 
