@@ -92,8 +92,8 @@ fn library_call(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Opt
     })
 }
 
-/// The stdlib models and classes a called stdlib function or method names in its signature, declared in its own
-/// module, under the callee's package origin.
+/// The stdlib models, classes, enums and newtypes a called stdlib function or method names in its signature, declared
+/// in its own module, under the callee's package origin.
 ///
 /// A name in a stdlib signature is resolved where the stdlib source wrote it, never in the consumer's scope, so a
 /// type that reaches the consumer only through a call, such as a method's `Result` error, keeps its identity.
@@ -121,7 +121,10 @@ pub(super) fn signature_type_identities(
             if identity.origin != SymbolOrigin::Module(path.clone())
                 || !matches!(
                     identity.kind,
-                    SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class
+                    SemanticSourceTargetKind::Model
+                        | SemanticSourceTargetKind::Class
+                        | SemanticSourceTargetKind::Enum
+                        | SemanticSourceTargetKind::Newtype
                 )
             {
                 return None;
@@ -148,8 +151,8 @@ fn named_leaves(ty: &IncanType, names: &mut BTreeSet<String>) {
     }
 }
 
-/// Find the nongeneric model or class declaring this method and return its owner name, receiver parameter, ordinary
-/// parameters and result. A static method has no receiver parameter.
+/// Find the nongeneric model, class or newtype declaring this method and return its owner name, receiver parameter,
+/// ordinary parameters and result. A static method has no receiver parameter.
 ///
 /// The stdlib source records each method under its source module; rebased onto the consumer's package origin it must
 /// equal the checked identity exactly, and the owner type must itself be a declaration that SDK package owns.
@@ -170,6 +173,8 @@ fn method_signature(
         let (methods, generic) = match &info {
             TypeInfo::Model(model) => (&model.methods, !model.type_params.is_empty()),
             TypeInfo::Class(class) => (&class.methods, !class.type_params.is_empty()),
+            // A rusttype's methods belong to the Rust type it names, not to an item the SDK crate compiled.
+            TypeInfo::Newtype(newtype) if !newtype.is_rusttype => (&newtype.methods, !newtype.type_params.is_empty()),
             _ => continue,
         };
         let Some(method) = methods.get(&identity.declaration_name) else {

@@ -199,7 +199,9 @@ impl rustc_driver::Callbacks for Callbacks {
                 self.plan
                     .models
                     .iter()
-                    .filter_map(|model| model.library_item.split("::").next())
+                    .map(|model| &model.library_item)
+                    .chain(self.plan.enums.iter().map(|value| &value.library_item))
+                    .filter_map(|item| item.split("::").next())
                     .filter(|root| !root.is_empty()),
             )
             .collect();
@@ -239,6 +241,11 @@ impl rustc_driver::Callbacks for Callbacks {
         }
         for model in self.plan.models.iter().filter(|model| !model.library_item.is_empty()) {
             if let Err(error) = verify_library_layout(tcx, model) {
+                refuse(tcx, error);
+            }
+        }
+        for value in self.plan.enums.iter().filter(|value| !value.library_item.is_empty()) {
+            if let Err(error) = verify_library_enum(tcx, value) {
                 refuse(tcx, error);
             }
         }
@@ -288,7 +295,7 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
         function: model.library_item.clone(),
         reason: reason.into(),
     };
-    let def = callees::library_item(tcx, &model.library_item)?;
+    let def = callees::library_item(tcx, &model.library_item, rustc_hir::def::DefKind::Struct)?;
     if tcx.generics_of(def).count() != 0 {
         return Err(invalid("stdlib layout struct has generic parameters"));
     }
@@ -306,6 +313,35 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
             || field.ty(tcx, identity).skip_normalization() != crate::types::native_type(tcx, &planned.ty)?
         {
             return Err(invalid("stdlib layout field differs from metadata"));
+        }
+    }
+    Ok(())
+}
+
+/// Check a stdlib enum against its crate's metadata: a nongeneric enum whose variants have the plan's names, order and
+/// payload types, since construction and matching address variants by index.
+fn verify_library_enum(tcx: TyCtxt<'_>, value: &crate::plan::EnumDeclaration) -> Result<(), PlanError> {
+    let invalid = |reason: &str| PlanError::Invalid {
+        function: value.library_item.clone(),
+        reason: reason.into(),
+    };
+    let def = callees::library_item(tcx, &value.library_item, rustc_hir::def::DefKind::Enum)?;
+    if tcx.generics_of(def).count() != 0 {
+        return Err(invalid("stdlib enum has generic parameters"));
+    }
+    let declared = tcx.adt_def(def).variants();
+    if declared.len() != value.variants.len() {
+        return Err(invalid("stdlib enum variant count differs from metadata"));
+    }
+    let identity = rustc_middle::ty::GenericArgs::identity_for_item(tcx, def);
+    for (variant, planned) in declared.iter().zip(&value.variants) {
+        if variant.name.as_str() != planned.name || variant.fields.len() != planned.fields.len() {
+            return Err(invalid("stdlib enum variant differs from metadata"));
+        }
+        for (field, ty) in variant.fields.iter().zip(&planned.fields) {
+            if field.ty(tcx, identity).skip_normalization() != crate::types::native_type(tcx, ty)? {
+                return Err(invalid("stdlib enum payload differs from metadata"));
+            }
         }
     }
     Ok(())

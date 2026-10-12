@@ -1,7 +1,13 @@
 """Runtime layouts of checked source-local declarations; erased aliases have no storage."""
 
 from rust::incan_semantics_core import SymbolOrigin
-from rust::incan_semantics_core::body_ir import BodyIrModule, NominalDeclaration, StaticDeclaration, GlobalPlace
+from rust::incan_semantics_core::body_ir import (
+    BodyIrModule,
+    NominalDeclaration,
+    StaticDeclaration,
+    GlobalPlace,
+    EnumDeclaration as RustEnumDeclaration,
+)
 from pub::incan_mir_plan import EnumDeclaration, ModelDeclaration, Parameter, SourceSpan, PlanType, ListLeaf
 from unions import native_source_type, collect_unions
 
@@ -133,22 +139,33 @@ def library_fields(
 
 
 def library_item(declaration: &NominalDeclaration) -> str:
+    """Name the compiled item that owns a stdlib layout, or nothing for any other layout."""
+    return library_path(declaration.canonical.origin, str(declaration.canonical.declaration_name))
+
+
+pub def library_enum_item(declaration: &RustEnumDeclaration) -> str:
+    """Name the compiled item that owns a stdlib enum, or nothing for any other enum."""
+    return library_path(declaration.canonical.origin, str(declaration.canonical.declaration_name))
+
+
+def library_path(origin: &SymbolOrigin, name: str) -> str:
     """
-    Name the compiled item that owns a stdlib layout, `library::module::Name`, or nothing for any other layout.
+    Name a stdlib declaration's compiled item, `library::module::Name`, or nothing for any other origin.
 
     SDK packages compile each stdlib module into the like-named module of their crate, and the native route links
-    those crates, so a stdlib layout is named rather than declared. A dependency package's layout is declared from
-    its published representation instead.
+    those crates, so a stdlib type is named rather than declared. A dependency package's type is declared from its
+    published representation instead.
     """
-    if declaration.canonical.origin == SymbolOrigin.Builtin:
+    # Comparing in expression position keeps the `SymbolOrigin` import that the match patterns alone would not.
+    if origin == SymbolOrigin.Builtin:
         return ""
-    match declaration.canonical.origin:
+    match origin:
         SymbolOrigin.Package(library=library, module_path=path) =>
             if not str(library).startswith("incan_stdlib_"):
                 return ""
             mut segments = [str(library)]
             for segment in path:
                 segments.append(str(segment))
-            segments.append(str(declaration.canonical.declaration_name))
+            segments.append(name)
             return "::".join(segments)
         _ => return ""

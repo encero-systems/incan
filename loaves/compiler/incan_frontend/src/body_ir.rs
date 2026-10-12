@@ -171,6 +171,15 @@ pub fn library_call_delegations(type_info: &TypeCheckInfo) -> Vec<bir::StdlibDel
     library_calls::collect(type_info)
 }
 
+/// The package-origin models, classes, enums and newtypes one module uses, including those it reaches only through a
+/// stdlib signature or a checked expression type. A consumer resolves the ones its linked SDK packages publish.
+pub fn library_type_identities(type_info: &TypeCheckInfo) -> Vec<CanonicalSymbolId> {
+    let mut cache = crate::typechecker::stdlib_loader::StdlibAstCache::new();
+    library_nominals::type_identities(type_info, &mut cache)
+        .into_iter()
+        .collect()
+}
+
 /// Prepare one manifest-free parsed module so it satisfies [`build_body_ir_module_v0`]'s input contract.
 ///
 /// This lives beside the boundary it governs rather than inside any one caller, because every manifest-free caller owes

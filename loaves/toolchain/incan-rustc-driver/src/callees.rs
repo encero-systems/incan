@@ -84,11 +84,16 @@ pub fn planned(tcx: TyCtxt<'_>, name: &str) -> Result<DefId, PlanError> {
         .ok_or_else(|| PlanError::UnknownCallee(name.into()))
 }
 
-/// Resolve a stdlib layout's crate item through public module children; only a struct names a model layout.
-pub fn library_item(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
+/// Resolve a stdlib layout's crate item through public module children; a model layout names a struct and an enum
+/// layout names an enum, so `kind` is the item kind the plan declared.
+pub fn library_item(tcx: TyCtxt<'_>, path: &str, kind: DefKind) -> Result<DefId, PlanError> {
     let unknown = || PlanError::Invalid {
         function: path.into(),
-        reason: "stdlib layout names no public struct".into(),
+        reason: match kind {
+            DefKind::Enum => "stdlib layout names no public enum",
+            _ => "stdlib layout names no public struct",
+        }
+        .into(),
     };
     let mut segments = path.split("::");
     let root = segments.next().ok_or_else(unknown)?;
@@ -109,7 +114,7 @@ pub fn library_item(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
             .and_then(|child| child.res.opt_def_id())
             .ok_or_else(unknown)?;
     }
-    if tcx.def_kind(current) != DefKind::Struct {
+    if tcx.def_kind(current) != kind {
         return Err(unknown());
     }
     Ok(current)

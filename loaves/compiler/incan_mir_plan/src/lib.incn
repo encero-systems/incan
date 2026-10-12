@@ -661,6 +661,8 @@ pub model EnumDeclaration:
     pub source_type: str = ""
     # A union's Debug prints the member it holds, as legacy's hand-written impl does; it is never derived.
     pub member_debug: bool = false
+    # A stdlib enum names the compiled SDK crate item that owns it; the plan never declares it.
+    pub library_item: str = ""
 
 
 @derive(Clone, PartialEq)

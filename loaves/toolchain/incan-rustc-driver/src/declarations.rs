@@ -389,7 +389,7 @@ pub(crate) fn model_items(
     span: Span,
 ) -> Vec<Box<ast::Item>> {
     if !model.library_item.is_empty() {
-        return vec![library_alias(model, span)];
+        return vec![library_alias(&model.name, &model.library_item, model.public, span)];
     }
     let mut declaration = self::model(model, span);
     for derive in model.derives.iter().filter(|derive| derive.as_str() != "Display") {
@@ -437,10 +437,10 @@ pub(crate) fn model_items(
     vec![module, alias]
 }
 
-/// Name a stdlib layout's compiled crate item under the plan's model name, so MIR uses that crate's own ADT and
+/// Name a stdlib layout's or enum's compiled crate item under the plan's name, so MIR uses that crate's own ADT and
 /// nothing about its storage is declared here.
-fn library_alias(model: &crate::plan::ModelDeclaration, span: Span) -> Box<ast::Item> {
-    let mut segments = model.library_item.split("::");
+fn library_alias(name: &str, library_item: &str, public: bool, span: Span) -> Box<ast::Item> {
+    let mut segments = library_item.split("::");
     let mut path = ast::Path::from_ident(ident(segments.next().unwrap_or_default(), span));
     for segment in segments {
         path.segments.push(ast::PathSegment::from_ident(ident(segment, span)));
@@ -448,7 +448,7 @@ fn library_alias(model: &crate::plan::ModelDeclaration, span: Span) -> Box<ast::
     let mut alias = item(
         ast::ItemKind::TyAlias(Box::new(ast::TyAlias {
             defaultness: ast::Defaultness::Implicit,
-            ident: ident(&model.name, span),
+            ident: ident(name, span),
             generics: ast::Generics::default(),
             after_where_clause: ast::WhereClause::default(),
             bounds: Vec::new(),
@@ -461,7 +461,7 @@ fn library_alias(model: &crate::plan::ModelDeclaration, span: Span) -> Box<ast::
         })),
         span,
     );
-    alias.vis = visibility(model.public, span);
+    alias.vis = visibility(public, span);
     alias
 }
 
@@ -758,6 +758,9 @@ fn hashed_type(name: &str, leaves: &[&ListLeaf], span: Span) -> Box<ast::Ty> {
 pub fn enum_declaration(value: &crate::plan::EnumDeclaration, span: Span) -> Box<ast::Item> {
     if !value.carrier.is_empty() {
         return carrier_alias(value, span);
+    }
+    if !value.library_item.is_empty() {
+        return library_alias(&value.name, &value.library_item, value.public, span);
     }
     let variants = value
         .variants

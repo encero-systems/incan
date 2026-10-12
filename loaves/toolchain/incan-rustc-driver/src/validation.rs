@@ -1622,11 +1622,11 @@ fn valid_nominal_derives(derives: &[String], tuple: bool) -> bool {
 
 /// A stdlib layout names a crate item by an identifier path below a crate root; its derives and storage belong to the
 /// crate that compiled it.
-fn valid_library_item(declaration: &crate::plan::ModelDeclaration) -> bool {
-    if declaration.library_item.is_empty() {
+fn valid_library_item(library_item: &str) -> bool {
+    if library_item.is_empty() {
         return true;
     }
-    let segments: Vec<_> = declaration.library_item.split("::").collect();
+    let segments: Vec<_> = library_item.split("::").collect();
     segments.len() >= 2 && segments.iter().all(|segment| identifier(segment))
 }
 
@@ -1650,7 +1650,7 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
                 && !names.insert(crate::declarations::model_module_name(declaration)))
             || declaration.fields.len() != declaration.field_public.len()
             || !derives_valid
-            || !valid_library_item(declaration)
+            || !valid_library_item(&declaration.library_item)
         {
             return Err(PlanError::Invalid {
                 function: declaration.name.clone(),
@@ -1755,6 +1755,9 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
             || !identifier(&declaration.name)
             || !names.insert(&declaration.name)
             || declaration.variants.is_empty()
+            || !valid_library_item(&declaration.library_item)
+            || (!declaration.library_item.is_empty()
+                && (!declaration.carrier.is_empty() || !declaration.derives.is_empty()))
             || declaration.derives.iter().any(|name| {
                 !matches!(
                     name.as_str(),

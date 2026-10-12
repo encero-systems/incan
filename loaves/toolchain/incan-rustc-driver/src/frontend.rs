@@ -84,6 +84,18 @@ fn checked_modules(path: &Path) -> Result<CheckedProgram, String> {
         incan_frontend::executable_resolution::resolve_executable_requirements(&session.provider_plan, &required)
             .map_err(|error| format!("unsupported Body IR package executable representation: {error}"))?;
     let mut bodies = resolved.modules;
+
+    // ---- Stdlib declarations published by the linked SDK packages ----
+    // They are context for every module's Body IR, so stdlib enums, newtypes and layouts resolve by identity as package
+    // declarations do, and declaration-only program modules the lowering names by their crate items.
+    let mut library_identities = std::collections::BTreeSet::new();
+    for module in &modules {
+        let type_info = analysis
+            .type_info_for_path(&module.file_path)
+            .ok_or("module analysis is missing")?;
+        library_identities.extend(incan_frontend::body_ir::library_type_identities(type_info));
+    }
+    bodies.extend(published_library_modules(&session.provider_plan, &library_identities));
     // Published fragments retain canonical spans but do not carry source text. Do not attribute those spans to the
     // entry.
     let mut files = bodies
@@ -119,10 +131,14 @@ fn checked_modules(path: &Path) -> Result<CheckedProgram, String> {
             .flat_map(|module| &module.stdlib_delegations)
             .any(|forwarder| forwarder.canonical == call.canonical)
     });
-    let library_layouts = library_layouts
-        .into_iter()
-        .map(|layout| published_layout(&session.provider_plan, layout))
-        .collect();
+    // A layout the SDK did not publish keeps the record built from its stdlib source.
+    let published = bodies
+        .iter()
+        .flat_map(|module| &module.nominal_declarations)
+        .map(|declaration| declaration.canonical.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    library_layouts
+        .retain(|layout: &incan_semantics_core::body_ir::NominalDeclaration| !published.contains(&layout.canonical));
     let libraries = library_modules(library_layouts, library_calls);
     let entry = entry + libraries.len();
     files.splice(0..0, libraries.iter().map(|module| module.module_id.path().to_owned()));
@@ -158,40 +174,67 @@ fn library_modules(
     owners.into_values().collect()
 }
 
-/// Prefer the SDK package's published record for a stdlib layout with field defaults, which carries the checked default
-/// computations a construction runs for omitted fields. A layout the package does not publish keeps its source record,
-/// whose missing defaults refuse an omitted field rather than guess at it.
-fn published_layout(
+/// Resolve the stdlib types the program uses from the representations its linked SDK packages published, one
+/// declaration-only module per stdlib module.
+///
+/// Each identity resolves on its own, so a type a package does not publish, or one that is not an SDK type at all,
+/// is simply absent and keeps its source record or refusal. Only declaration records are kept: layouts, enums,
+/// constants and aliases. Published bodies stay out, because the program calls the compiled items instead.
+fn published_library_modules(
     plan: &incan_frontend::provider::ProviderPlan,
-    layout: incan_semantics_core::body_ir::NominalDeclaration,
-) -> incan_semantics_core::body_ir::NominalDeclaration {
-    if !layout.has_field_defaults {
-        return layout;
+    identities: &std::collections::BTreeSet<incan_semantics_core::CanonicalSymbolId>,
+) -> Vec<BodyIrModule> {
+    use std::collections::BTreeSet;
+    let mut owners = std::collections::BTreeMap::<String, BodyIrModule>::new();
+    let (mut nominals, mut enums, mut fieldless, mut values) =
+        (BTreeSet::new(), BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
+    let (mut constants, mut aliases) = (BTreeSet::new(), BTreeSet::new());
+    for identity in identities {
+        let required = std::iter::once(identity.clone()).collect();
+        let Ok(resolved) = incan_frontend::executable_resolution::resolve_sdk_requirements(plan, &required) else {
+            continue;
+        };
+        for module in resolved.modules {
+            let path = module.module_id.path().to_owned();
+            let owner = owners.entry(path.clone()).or_insert_with(|| declaration_module(path));
+            for declaration in module.nominal_declarations {
+                if nominals.insert(declaration.canonical.clone()) {
+                    owner.nominal_declarations.push(declaration);
+                }
+            }
+            for declaration in module.enum_declarations {
+                if enums.insert(declaration.canonical.clone()) {
+                    owner.enum_declarations.push(declaration);
+                }
+            }
+            for declaration in module.fieldless_enum_declarations {
+                if fieldless.insert(declaration.canonical.clone()) {
+                    owner.fieldless_enum_declarations.push(declaration);
+                }
+            }
+            for declaration in module.value_enum_declarations {
+                if values.insert(declaration.canonical.clone()) {
+                    owner.value_enum_declarations.push(declaration);
+                }
+            }
+            for declaration in module.constant_declarations {
+                if constants.insert(declaration.canonical.clone()) {
+                    owner.constant_declarations.push(declaration);
+                }
+            }
+            for declaration in module.type_alias_declarations {
+                if aliases.insert(declaration.canonical.clone()) {
+                    owner.type_alias_declarations.push(declaration);
+                }
+            }
+        }
     }
-    let required = std::iter::once(layout.canonical.clone()).collect();
-    incan_frontend::executable_resolution::resolve_sdk_requirements(plan, &required)
-        .ok()
-        .and_then(|resolved| {
-            resolved
-                .modules
-                .into_iter()
-                .flat_map(|module| module.nominal_declarations)
-                .find(|published| published.canonical == layout.canonical)
-        })
-        .unwrap_or(layout)
+    owners.into_values().collect()
 }
 
-/// The declaration-only module owning one stdlib identity, or nothing when that identity already travels.
-fn library_module<'modules>(
-    owners: &'modules mut std::collections::BTreeMap<String, BodyIrModule>,
-    carried: &mut std::collections::BTreeSet<incan_semantics_core::CanonicalSymbolId>,
-    identity: &incan_semantics_core::CanonicalSymbolId,
-) -> Option<&'modules mut BodyIrModule> {
-    let owner = incan_semantics_core::canonical_module_identity(identity)?;
-    if !carried.insert(identity.clone()) {
-        return None;
-    }
-    Some(owners.entry(owner.clone()).or_insert_with(|| BodyIrModule {
+/// An empty module for one stdlib module identity, holding only the declarations the program needs from it.
+fn declaration_module(owner: String) -> BodyIrModule {
+    BodyIrModule {
         constant_declarations: Vec::new(),
         type_alias_declarations: Vec::new(),
         enum_declarations: Vec::new(),
@@ -204,7 +247,20 @@ fn library_module<'modules>(
         trait_declarations: Vec::new(),
         trait_implementations: Vec::new(),
         bodies: Vec::new(),
-    }))
+    }
+}
+
+/// The declaration-only module owning one stdlib identity, or nothing when that identity already travels.
+fn library_module<'modules>(
+    owners: &'modules mut std::collections::BTreeMap<String, BodyIrModule>,
+    carried: &mut std::collections::BTreeSet<incan_semantics_core::CanonicalSymbolId>,
+    identity: &incan_semantics_core::CanonicalSymbolId,
+) -> Option<&'modules mut BodyIrModule> {
+    let owner = incan_semantics_core::canonical_module_identity(identity)?;
+    if !carried.insert(identity.clone()) {
+        return None;
+    }
+    Some(owners.entry(owner.clone()).or_insert_with(|| declaration_module(owner)))
 }
 
 /// Refuse source storage whose checked layout was deliberately omitted from Body IR.
@@ -578,14 +634,16 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // ---- Explicit native dependencies ----
-    for model in plan.models.iter().filter(|model| !model.library_item.is_empty()) {
-        let root = model.library_item.split("::").next().unwrap_or_default();
+    let library_items = plan
+        .models
+        .iter()
+        .map(|model| &model.library_item)
+        .chain(plan.enums.iter().map(|value| &value.library_item))
+        .filter(|item| !item.is_empty());
+    for item in library_items {
+        let root = item.split("::").next().unwrap_or_default();
         if !dependencies.externs.iter().any(|(name, _)| name == root) {
-            return Err(format!(
-                "unsupported Body IR native dependency `{root}` for stdlib layout `{}`",
-                model.library_item
-            )
-            .into());
+            return Err(format!("unsupported Body IR native dependency `{root}` for stdlib layout `{item}`").into());
         }
     }
     for external in &plan.externals {
