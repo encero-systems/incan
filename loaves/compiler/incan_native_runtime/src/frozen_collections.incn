@@ -31,11 +31,13 @@ pub def frozen_list_text_items[T with (Display, Static)](value: RuntimeFrozenLis
     return result
 
 
-pub def frozen_list_byte_items[T with (RuntimeClone, Into[bytes], Static)](value: RuntimeFrozenList[T]) -> list[bytes]:
+pub def frozen_list_byte_items[Source with (RuntimeClone, Into[bytes], Static)](
+    value: RuntimeFrozenList[Source],
+) -> list[bytes]:
     """Copy static byte slices into owned byte buffers at the same read boundary as legacy iteration."""
     mut result: list[bytes] = []
     for item in value.iter():
-        result.append(Into.into[bytes](RuntimeClone.clone(item)))
+        result.append(Into.into(RuntimeClone.clone(item)))
     return result
 
 
@@ -81,9 +83,9 @@ pub def frozen_dict_text_keys[K with (Display, Static), V with Static](value: Ru
     return result
 
 
-pub def own_static_bytes[T with Into[bytes]](value: T) -> bytes:
+pub def own_static_bytes[Source with Into[bytes]](value: Source) -> bytes:
     """Copy a static byte slice into the owned byte buffer a frozen element read returns."""
-    return Into.into[bytes](value)
+    return Into.into(value)
 
 
 pub def frozen_dict_text_get[K with (Display, Static), V with (RuntimeClone, Static)](
