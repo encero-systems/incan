@@ -140,6 +140,8 @@ pub enum PlanType:
     FrozenBytes
     # Dependency-owned frozen collection and its exact static element types; dictionaries carry key then value.
     FrozenCollection(str, list[PlanType])
+    # Exact static string storage, including generic arguments; StrRef remains a body-local formatting view.
+    StaticText
     StaticBytes
     StrRef
     StringArray(int)

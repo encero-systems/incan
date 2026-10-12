@@ -252,8 +252,8 @@ fn frozen_collection_ty(name: &str, elements: &[PlanType], span: Span) -> Box<as
         .iter()
         .map(|element| {
             let input = match element {
-                PlanType::StrRef | PlanType::StaticBytes => {
-                    let inner = if matches!(element, PlanType::StrRef) {
+                PlanType::StaticText | PlanType::StaticBytes => {
+                    let inner = if matches!(element, PlanType::StaticText) {
                         ast::TyKind::Path(None, ast::Path::from_ident(ident("str", span)))
                     } else {
                         ast::TyKind::Slice(ty(&PlanType::U8, span))

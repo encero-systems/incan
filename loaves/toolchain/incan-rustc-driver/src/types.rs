@@ -122,6 +122,7 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::FrozenStr => frozen_type(tcx)?,
         PlanType::FrozenBytes => frozen_bytes_type(tcx)?,
         PlanType::FrozenCollection(name, elements) => frozen_collection_type(tcx, name, elements)?,
+        PlanType::StaticText => Ty::new_imm_ref(tcx, tcx.lifetimes.re_static, tcx.types.str_),
         PlanType::StaticBytes => Ty::new_imm_ref(tcx, tcx.lifetimes.re_static, Ty::new_slice(tcx, tcx.types.u8)),
         PlanType::StringRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, string_type(tcx)?),
         PlanType::StringMutRef => Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, string_type(tcx)?),
@@ -184,11 +185,7 @@ pub fn frozen_collection_type<'tcx>(
     let arguments = elements
         .iter()
         .map(|element| {
-            let ty = if matches!(element, PlanType::StrRef) {
-                Ty::new_imm_ref(tcx, tcx.lifetimes.re_static, tcx.types.str_)
-            } else {
-                native_type(tcx, element)?
-            };
+            let ty = native_type(tcx, element)?;
             Ok(ty.into())
         })
         .collect::<Result<Vec<_>, PlanError>>()?;

@@ -53,7 +53,7 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                 for argument in arguments:
                     mut element = model_type(declarations, argument)?
                     if element == PlanType.String:
-                        element = PlanType.StrRef
+                        element = PlanType.StaticText
                     elif element == PlanType.FrozenBytes:
                         element = PlanType.StaticBytes
                     storage.append(element)

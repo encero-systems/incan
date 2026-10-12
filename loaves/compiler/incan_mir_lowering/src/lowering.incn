@@ -6920,7 +6920,7 @@ def frozen_list_snapshot_type(ty: PlanType) -> Result[PlanType, str]:
         PlanType.FrozenCollection(name, elements) =>
             if name != "FrozenList" or len(elements) != 1:
                 return Err("unsupported Body IR frozen collection snapshot")
-            if elements[0] == PlanType.StrRef:
+            if elements[0] == PlanType.StaticText:
                 return Ok(PlanType.List(ListLeaf.Str, 1))
             return Ok(PlanType.List(collection_leaf(elements[0])?, 1))
         _ => return Err("unsupported Body IR nonfrozen snapshot")
@@ -6933,7 +6933,7 @@ def frozen_list_snapshot(mut builder: Builder, value: Operand, span: SourceSpan)
     match ty:
         PlanType.FrozenCollection(_name, elements) =>
             mut path = "incan_native_runtime::frozen_list_items"
-            if elements[0] == PlanType.StrRef:
+            if elements[0] == PlanType.StaticText:
                 path = "incan_native_runtime::frozen_list_text_items"
             output = temporary(builder, snapshot, span)
             instantiated_external_call(builder, path, [elements[0]], [ty], snapshot, [value], output, span)?
