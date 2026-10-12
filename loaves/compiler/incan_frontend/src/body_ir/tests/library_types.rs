@@ -87,3 +87,42 @@ fn stdlib_trait_signature_retains_its_nominal_return_type() -> Result<(), Box<dy
     );
     Ok(())
 }
+
+/// A checked SDK trait method delegates through its owning trait with a concrete Self binder.
+#[test]
+fn stdlib_trait_method_retains_its_sdk_call_signature() -> Result<(), Box<dyn std::error::Error>> {
+    let mut cache = StdlibAstCache::new();
+    let path = vec!["std".to_owned(), "io".to_owned()];
+    let reader = cache
+        .lookup_trait(&path, "BinaryReader")
+        .ok_or("missing reader trait")?;
+    let identity = reader
+        .methods
+        .get("chunks")
+        .and_then(|method| method.identity.clone())
+        .ok_or("missing chunks identity")?;
+    let mut info = TypeCheckInfo::default();
+    info.references.resolved_identities.insert((1, 2), identity);
+    let calls = library_call_delegations(&info);
+    let call = calls
+        .iter()
+        .find(|call| call.canonical.declaration_name == "chunks")
+        .ok_or("missing SDK trait call")?;
+    assert_eq!(call.type_parameters, vec!["Self"]);
+    assert_eq!(
+        call.parameters[0],
+        IncanType::Ref(Box::new(IncanType::TypeVar("Self".to_owned())))
+    );
+    assert_eq!(
+        call.return_type,
+        IncanType::Generic {
+            base: "ReaderChunks".to_owned(),
+            args: vec![IncanType::TypeVar("Self".to_owned())],
+        }
+    );
+    assert_eq!(
+        call.rust_path().as_deref(),
+        Some("incan_stdlib_system::io::BinaryReader::chunks")
+    );
+    Ok(())
+}
