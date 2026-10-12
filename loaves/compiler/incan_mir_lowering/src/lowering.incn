@@ -7028,8 +7028,9 @@ def tuple_paths(
         RustPattern.Or(alternatives) =>
             for choice in range(len(alternatives)):
                 matched = builder.new_block(span)
-                next_alternative = builder.new_block(span)
-                pattern_tests(builder, fields[index], alternatives[choice], matched, next_alternative, span)?
+                # A miss in this alternative or in any later item retries with the item's next alternative.
+                retry = builder.new_block(span)
+                pattern_tests(builder, fields[index], alternatives[choice], matched, retry, span)?
                 builder.current = matched
                 mut chosen = choices.clone()
                 chosen[index] = choice
@@ -7040,7 +7041,7 @@ def tuple_paths(
                     index + 1,
                     chosen,
                     selected,
-                    next_alternative,
+                    retry,
                     incoming,
                     span,
                 )?
@@ -7048,7 +7049,7 @@ def tuple_paths(
                     bound = owners
                 elif not same_owners(owners, bound):
                     return Err("unsupported Body IR binding alternation ownership")
-                builder.current = next_alternative
+                builder.current = retry
         _ => return Err("invalid Body IR binding alternation")
     builder.finish(TerminatorKind.Goto(rejected), span)
     return Ok(bound)

@@ -110,6 +110,111 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         )
     }
 
+    /// Retain a canonical `list(source)` conversion as the loop it is: an empty list that receives each item a `for`
+    /// loop over `source` yields, in order.
+    ///
+    /// The checker types the constructor's element from exactly that iteration rule, so lists, text, frozen
+    /// collections, dictionaries (their keys) and generators all convert through the one iteration primitive a `for`
+    /// statement and a comprehension use, rather than through per-source helpers. Each item moves into the list.
+    pub(super) fn lower_list_constructor_source(
+        &mut self,
+        source: &ast::Spanned<ast::Expr>,
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let hir_span_value = hir_span(span);
+        let ty = self.resolve_ty(span);
+        let Some([element_ty]) = collection_member_types(&ty, CollectionTypeId::List) else {
+            return self.unsupported_operand(
+                "list constructor without a checked element type".to_string(),
+                scope,
+                hir_span_value,
+                out,
+            );
+        };
+        let element_ty = element_ty.clone();
+        let list_local = self.new_temp(ty.clone(), scope, hir_span_value);
+        out.push(bir::Statement {
+            kind: bir::StatementKind::Assign {
+                place: bir::Place::from_local(list_local),
+                rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::List, Vec::new()),
+            },
+            span: hir_span_value,
+        });
+        self.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
+        let loop_scope = self.new_scope(Some(scope), hir_span_value);
+        let item_local = self.new_temp(element_ty.clone(), loop_scope, hir_span_value);
+        self.lower_general_iteration(
+            source,
+            item_local,
+            scope,
+            loop_scope,
+            hir_span_value,
+            out,
+            move |builder, loop_scope, body_stmts| {
+                let item = builder.temp_operand(item_local, &element_ty);
+                body_stmts.push(bir::Statement {
+                    kind: bir::StatementKind::Call {
+                        destination: None,
+                        callee: bir::Callee::Method(bir::MethodTarget {
+                            canonical: Some(crate::symbols::canonical_builtin_member_identity("List", "append")),
+                            ..bir::MethodTarget::synthesized("push")
+                        }),
+                        args: fixed_elements(vec![
+                            bir::Operand::place(
+                                bir::Place::from_local(list_local),
+                                bir::OwnershipFact::MutBorrow,
+                                false,
+                            ),
+                            item,
+                        ]),
+                        may_panic: false,
+                    },
+                    span: hir_span_value,
+                });
+                builder.insert_scope_drops(body_stmts, loop_scope);
+            },
+        );
+        self.temp_operand(list_local, &ty)
+    }
+
+    /// Retain a canonical `dict(source)` conversion of a dictionary as a dictionary literal holding one `**source`
+    /// spread, so the copy takes every entry of the source in its order, exactly as `{**source}` does.
+    ///
+    /// Other sources, such as a list of pairs, have no retained representation yet and stay refused by name.
+    pub(super) fn lower_dict_constructor_source(
+        &mut self,
+        source: &ast::Spanned<ast::Expr>,
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let hir_span_value = hir_span(span);
+        if collection_member_types(&self.resolve_ty(source.span), CollectionTypeId::Dict).is_none() {
+            return self.unsupported_operand(
+                "dict constructor from a non-dict source".to_string(),
+                scope,
+                hir_span_value,
+                out,
+            );
+        }
+        let bir::ArgumentElement::Spread(spread) =
+            self.lower_spread_element(source, bir::SpreadKind::Mapping, scope, out)
+        else {
+            return self.unsupported_operand("dict constructor source".to_string(), scope, hir_span_value, out);
+        };
+        let ty = self.resolve_ty(span);
+        self.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
+        self.push_assign_temp(
+            bir::Rvalue::Dict(vec![bir::DictEntry::Spread(spread)]),
+            ty,
+            scope,
+            hir_span_value,
+            out,
+        )
+    }
+
     /// Lower `start..end` / `start..=end` used as a **value** into a [`bir::AggregateKind::Range`] aggregate.
     ///
     /// A range is a value, not only a loop header: `r = 0..10` typechecks, so Body IR has to be able to hold one

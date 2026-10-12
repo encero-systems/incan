@@ -971,10 +971,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
         // The checked constructor identity distinguishes this conversion from a same-spelled source callable.
         if type_args.is_empty()
-            && self.type_info.resolved_collection_constructor(span) == Some(CollectionTypeId::Set)
             && let [ast::CallArg::Positional(source)] = args
         {
-            return self.lower_set_constructor_source(source, span, scope, out);
+            match self.type_info.resolved_collection_constructor(span) {
+                Some(CollectionTypeId::Set) => return self.lower_set_constructor_source(source, span, scope, out),
+                Some(CollectionTypeId::List) => return self.lower_list_constructor_source(source, span, scope, out),
+                Some(CollectionTypeId::Dict) => return self.lower_dict_constructor_source(source, span, scope, out),
+                _ => {}
+            }
         }
 
         // A retained zero-argument constructor fact distinguishes builtin construction from a same-spelled source

@@ -150,15 +150,15 @@ pub def return_representation(body: &RustBody, ty: PlanType) -> Result[PlanType,
 
 pub def closure_arguments(signature: list[PlanType]) -> Result[list[PlanType], str]:
     """
-    Pack scalar/text inputs, shared collection views and the exclusive borrows `mut` parameters take with their exact
-    checked call representations.
+    Pack scalar/text inputs, owned models and enums, shared collection views and the exclusive borrows `mut`
+    parameters take with their exact checked call representations.
     """
     if len(signature) == 0:
         return Err("invalid Body IR callable signature without return type")
     mut elements: list[PlanType] = []
     for index in range(len(signature) - 1):
         input = signature[index]
-        if not closure_value_type(input):
+        if not closure_value_type(input) and not owned_nominal_input(input):
             match input:
                 PlanType.ListRef(_leaf, _depth) => pass
                 PlanType.SetRef(_leaf) => pass
@@ -174,6 +174,14 @@ pub def closure_arguments(signature: list[PlanType]) -> Result[list[PlanType], s
     if not closure_value_type(signature[-1]):
         return Err("unsupported Body IR closure result outside scalars and owned text")
     return Ok(elements)
+
+
+def owned_nominal_input(ty: PlanType) -> bool:
+    """Report whether a callable input is an owned model or enum, which the call moves into the callable."""
+    match ty:
+        PlanType.Model(_index, _name) => return true
+        PlanType.Enum(_index, _name) => return true
+        _ => return false
 
 
 def closure_value_type(ty: PlanType) -> bool:
@@ -253,8 +261,9 @@ pub def pointer_forwarder(name: str, signature: list[PlanType], span: SourceSpan
         parameters.append(Parameter(name=f"__incan_argument_{index}", ty=ty, span=span))
         place = plan_place(index + 2, span)
         mut kind = OperandKind.Copy(place)
-        # Owned text and the exclusive borrow a `mut` input receives move on; every other input is copied.
-        if ty == PlanType.String or is_exclusive_borrow(ty):
+        # Owned text, an owned model or enum, and the exclusive borrow a `mut` input receives move on; every other
+        # input is copied.
+        if ty == PlanType.String or is_exclusive_borrow(ty) or owned_nominal_input(ty):
             kind = OperandKind.Move(place)
         operands.append(Operand(kind=kind, span=span))
     pointer_value = Operand(kind=OperandKind.Copy(plan_place(1, span)), span=span)
