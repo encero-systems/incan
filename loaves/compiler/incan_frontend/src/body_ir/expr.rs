@@ -138,8 +138,35 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             ConstValue::Float(number) if *ty == float => Some(bir::Constant::Float(number.to_string())),
             ConstValue::Bool(flag) => Some(bir::Constant::Bool(*flag)),
             ConstValue::FrozenStr(text) => Some(bir::Constant::FrozenStr(text.clone())),
+            ConstValue::FrozenBytes(bytes) if *ty == IncanType::Primitive(IncanPrimitiveType::FrozenBytes) => {
+                Some(bir::Constant::Bytes(bytes.clone()))
+            }
             _ => None,
         }
+    }
+
+    /// Keep a frozen byte const's checked carrier in a typed temporary. The byte literal vocabulary alone does not
+    /// distinguish mutable bytes from static storage, so flattening this read to a bare constant would lose that fact.
+    fn checked_constant_operand(
+        &mut self,
+        constant: bir::Constant,
+        ty: IncanType,
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        if ty != IncanType::Primitive(IncanPrimitiveType::FrozenBytes) {
+            return bir::Operand::Constant(constant);
+        }
+        let local = self.new_temp(ty, scope, span);
+        out.push(bir::Statement {
+            kind: bir::StatementKind::Assign {
+                place: bir::Place::from_local(local),
+                rvalue: bir::Rvalue::Use(bir::Operand::Constant(constant)),
+            },
+            span,
+        });
+        bir::Operand::place(bir::Place::from_local(local), bir::OwnershipFact::Copy, true)
     }
 
     /// Lower one expression into an [`bir::Operand`], dispatching on its AST kind and, where evaluation has side
@@ -193,7 +220,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     );
                 };
                 if let Some(constant) = self.checked_constant(&place, &ty) {
-                    return bir::Operand::Constant(constant);
+                    return self.checked_constant_operand(constant, ty, scope, span, out);
                 }
                 let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
                 bir::Operand::place(place, fact, last_use)
@@ -251,7 +278,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 if let Some(place) = self.module_member_place(base, expr.span) {
                     let ty = self.resolve_ty(expr.span);
                     if let Some(constant) = self.checked_constant(&place, &ty) {
-                        return bir::Operand::Constant(constant);
+                        return self.checked_constant_operand(constant, ty, scope, span, out);
                     }
                     let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
                     return bir::Operand::place(place, fact, last_use);
