@@ -4,6 +4,24 @@
 
 use super::*;
 
+/// The record-pattern fixture closes every enum construction even alongside inferred generic model and class calls.
+#[test]
+fn generic_enum_record_fixture_has_closed_temporaries() -> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/cli_logic_comparisons_and_patterns/record_patterns_over_generic_models_and_classes.incn"
+    );
+    let module = build(source, &["record_enum_destination"])?;
+    let body = body_named(&module, "main")?;
+    let unclosed = body
+        .locals
+        .iter()
+        .filter(|local| local.ty == IncanType::Named("Shape".to_owned()))
+        .map(|local| (local.span, source.get(local.span.start..local.span.end)))
+        .collect::<Vec<_>>();
+    assert!(unclosed.is_empty(), "{unclosed:#?}");
+    Ok(())
+}
+
 /// A checked generic enum destination closes unit and payload constructor temporaries and retains positional slots.
 #[test]
 fn generic_enum_constructors_keep_destination_and_slots() -> Result<(), Box<dyn std::error::Error>> {

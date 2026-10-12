@@ -6,6 +6,40 @@
 
 use super::*;
 
+/// The imported alias fixture's method and stored-field reads must keep known expression carriers.
+#[test]
+fn imported_model_alias_fixture_has_known_temporaries() -> Result<(), Box<dyn std::error::Error>> {
+    let provider_source =
+        "pub model Account:\n  pub type_ [alias=\"type\"]: str\n  def get_type(self) -> str:\n    return self.type\n";
+    let factory_source = "from db.schema import Account\nfrom db.schema import Account as A\n\npub def make_aliased() -> A:\n  return A(type=\"y\")\n";
+    let provider = build(provider_source, &["db", "schema"])?;
+    let factory = build_with_published_imports(
+        factory_source,
+        &["store", "json_store"],
+        &[("db_schema", &["db", "schema"], provider_source)],
+        &[provider.clone()],
+    )?;
+    let source = "from store.json_store import make_aliased\nfrom db.schema import Account\n\ndef main() -> None:\n  println(make_aliased().get_type())\n  println(Account(type=\"z\").type)\n";
+    let module = build_with_published_imports(
+        source,
+        &["consumer"],
+        &[
+            ("db_schema", &["db", "schema"], provider_source),
+            ("store_json_store", &["store", "json_store"], factory_source),
+        ],
+        &[provider, factory],
+    )?;
+    let body = body_named(&module, "main")?;
+    let unknown = body
+        .locals
+        .iter()
+        .filter(|local| local.ty == IncanType::Unknown)
+        .map(|local| (local.span, source.get(local.span.start..local.span.end)))
+        .collect::<Vec<_>>();
+    assert!(unknown.is_empty(), "{unknown:#?}");
+    Ok(())
+}
+
 /// A user model with a builtin wrapper spelling keeps the field identity its providing module published.
 #[test]
 fn imported_user_json_keeps_declared_field_identity() -> Result<(), Box<dyn std::error::Error>> {
