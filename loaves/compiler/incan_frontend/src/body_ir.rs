@@ -75,7 +75,8 @@ use crate::ast;
 use crate::provider::ProviderPlan;
 use crate::symbols::{CallableParam, ResolvedType};
 use crate::typechecker::{
-    FixedUnpackPlan, IdentKind, ResolvedOperatorKind, TypeCheckInfo, semantic_type_from_resolved,
+    FixedUnpackPlan, IdentKind, ResolvedOperatorKind, TypeCheckInfo, ValidatedNewtypeCoercionInfo,
+    semantic_type_from_resolved,
 };
 
 /// Build Body IR v0 for every top-level function declaration and every non-abstract class/model/trait method in a
@@ -948,6 +949,9 @@ struct BodyBuilder<'type_info, 'source> {
     /// value flows, on the call parameter, closure or comprehension it flows into rather than on the value's own span
     /// (see [`Self::settle_open_result_value`]).
     settled_types: HashMap<(usize, usize), IncanType>,
+    /// Spans of values whose newtype coercion is being lowered, so lowering the wrapped value itself does not apply
+    /// the coercion again (see `lower_newtype_coercion`).
+    coercions_in_progress: HashSet<(usize, usize)>,
     next_local: u32,
     next_scope: u32,
 }
@@ -987,6 +991,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             type_overrides: HashMap::new(),
             in_place_pattern: false,
             settled_types: HashMap::new(),
+            coercions_in_progress: HashSet::new(),
             next_local: 0,
             next_scope: 0,
         }

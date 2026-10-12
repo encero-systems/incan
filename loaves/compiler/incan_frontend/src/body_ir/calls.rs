@@ -432,6 +432,75 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.type_info.declarations.named_type_identities.get(&owner).cloned()
     }
 
+    /// Whether field `slot` of the source-local model or class `owner` declares a default built only from literals and
+    /// builtin empty constructors ([`ast::Spanned::is_literal_construction`]), which evaluates to an equal value and
+    /// does nothing else. A field with no default, another default, or an owner this module does not retain answers
+    /// `false`.
+    fn field_default_is_literal(&self, owner: &str, slot: usize) -> bool {
+        let Some(declaration) = self.local_nominal_declarations.get(owner) else {
+            return false;
+        };
+        self.function_default_sources
+            .get(owner)
+            .filter(|fields| fields.len() == declaration.fields.len())
+            .and_then(|fields| fields.get(slot))
+            .and_then(|field| field.default.as_ref())
+            .is_some_and(|default| {
+                default.is_literal_construction(&|span| self.type_info.resolved_collection_constructor(span).is_some())
+            })
+    }
+
+    /// Lower a value the checker coerces into a newtype where it is used (RFC 017).
+    ///
+    /// A coercion of one step that names no validation hook and no primitive constraints only wraps the value, so
+    /// it is the construction of that plain newtype, as legacy wraps it directly: the value is lowered once, then
+    /// built into the retained plain newtype's sole tuple slot. Any other coercion (a validation hook, generated
+    /// constraints, a chain of steps, or a newtype this module does not retain) refuses by name, because Body IR has
+    /// no form for its checks and the unconverted value must not reach a consumer.
+    pub(super) fn lower_newtype_coercion(
+        &mut self,
+        expr: &ast::Spanned<ast::Expr>,
+        coercion: &ValidatedNewtypeCoercionInfo,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let span = hir_span(expr.span);
+        let declaration = match coercion.steps.as_slice() {
+            [step] if step.ctor.is_none() && step.constraints.is_empty() => self
+                .local_nominal_declarations
+                .get(&step.newtype_name)
+                .filter(|declaration| {
+                    declaration.canonical.kind == SemanticSourceTargetKind::Newtype && declaration.fields == ["0"]
+                })
+                .cloned(),
+            _ => None,
+        };
+        let Some(declaration) = declaration else {
+            return self.unsupported_operand("validated-newtype coercion".to_string(), scope, span, out);
+        };
+        let key = (expr.span.start, expr.span.end);
+        self.coercions_in_progress.insert(key);
+        let value = self.lower_expr_to_operand(expr, scope, out);
+        self.coercions_in_progress.remove(&key);
+        let ty = self.checked_type(&coercion.target_type);
+        self.push_assign_temp(
+            bir::Rvalue::Aggregate(
+                bir::AggregateKind::Constructor(Box::new(bir::ConstructorTarget {
+                    name: declaration.name.clone(),
+                    canonical: Some(declaration.canonical.clone()),
+                    direct_declaration_id: Some(declaration.direct_declaration_id.clone()),
+                    canonical_field_layout: Some(declaration.fields.clone()),
+                    binding: bir::ArgumentBinding::resolved_positional(1),
+                })),
+                fixed_elements(vec![value]),
+            ),
+            ty,
+            scope,
+            span,
+            out,
+        )
+    }
+
     /// Lower a `model`/`class` or plain-newtype construction into a [`bir::AggregateKind::Constructor`] aggregate.
     ///
     /// Models/classes bind named fields; a newtype binds its single positional argument to tuple slot zero. Lowering
@@ -501,12 +570,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .collect();
         // Legacy stages reordered arguments, but otherwise evaluates fields in declaration order. The current
         // aggregate boundary evaluates supplied operands before deferred defaults, so it cannot interleave an
-        // observable supplied expression after an omitted field. Preserve that gap as a named refusal.
+        // observable supplied expression after an omitted field whose default is itself observable. A default built
+        // only from literals evaluates to an equal value and does nothing else, so its place in the order is not
+        // observable. Preserve the remaining gap as a named refusal.
         let reordered = field_binding.argument_slots.windows(2).any(|pair| pair[0] > pair[1]);
         if !reordered
             && planned.iter().any(|(slot, expression)| {
-                (0..*slot).any(|prior| !field_binding.argument_slots.contains(&prior))
-                    && !matches!(expression.node, ast::Expr::Literal(_))
+                (0..*slot).any(|prior| {
+                    !field_binding.argument_slots.contains(&prior) && !self.field_default_is_literal(name, prior)
+                }) && !matches!(expression.node, ast::Expr::Literal(_))
             })
         {
             return self.unsupported_operand(

@@ -104,10 +104,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let span = hir_span(expr.span);
-        // Checking can convert this value into a validated newtype where it is used. Body IR has no form for that
-        // conversion yet, so refuse here rather than hand a consumer the unconverted underlying value.
-        if self.type_info.validated_newtype_coercion(expr.span).is_some() {
-            return self.unsupported_operand("validated-newtype coercion".to_string(), scope, span, out);
+        // Checking can convert this value into a newtype where it is used. A conversion that only wraps the value in a
+        // retained plain newtype is that newtype's construction; one that validates or constrains it has no Body IR
+        // form yet, so it refuses rather than handing a consumer the unconverted underlying value.
+        if let Some(coercion) = self.type_info.validated_newtype_coercion(expr.span)
+            && !self.coercions_in_progress.contains(&(expr.span.start, expr.span.end))
+        {
+            return self.lower_newtype_coercion(expr, coercion, scope, out);
         }
         if let Some(lowered) = self.lower_operator_hook_expr(expr, scope, out) {
             return lowered;
