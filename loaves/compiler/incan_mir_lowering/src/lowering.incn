@@ -8621,15 +8621,11 @@ def lower_sequence_builtin(
         return Err("unsupported Body IR sequence builtin arity")
     receiver = argument_place(builder, arguments, 0, span)?
     leaf, depth = require_list_shape(place_type(builder.locals, receiver), "unsupported Body IR sequence builtin type")?
-    if depth != 1:
+    if depth != 1 and builtin == RustBuiltin.Sum:
         return Err("unsupported Body IR nested sequence builtin")
     if builtin == RustBuiltin.Sorted:
-        match leaf:
-            ListLeaf.Model(_index, _name) => return Err("unsupported Body IR builtin Sorted model list")
-            ListLeaf.Tuple(elements) =>
-                if TupleElement.Float in elements:
-                    return Err("unsupported Body IR builtin Sorted tuple containing float")
-            _ => pass
+        if leaf != ListLeaf.Float or depth != 1:
+            require_sort_order(builder, list_element(leaf, depth))?
     reference = borrowed_list_argument(builder, arguments, 0, false, span)?
     if builtin == RustBuiltin.Sum:
         mut name = "sum_int"
@@ -8650,7 +8646,7 @@ def lower_sequence_builtin(
         return Ok(None)
     result = PlanType.List(leaf, depth)
     output = call_destination(builder, destination, result, span)?
-    if leaf == ListLeaf.Float:
+    if leaf == ListLeaf.Float and depth == 1:
         external_call(
             builder,
             "incan_native_runtime::sorted_float",
@@ -8672,6 +8668,29 @@ def lower_sequence_builtin(
             output,
             span,
         )
+    return Ok(None)
+
+
+def require_sort_order(builder: Builder, element: PlanType) -> Result[None, str]:
+    """
+    Require retained native ordering for new model and compound sorting shapes.
+
+    A model's Rust Ord derive is executable authority; a source Ord adoption alone does not prove its native dunders.
+    Existing scalar and enum leaves retain their established profile. Floating elements inside a compound value have
+    no Rust Ord implementation, unlike the separately admitted flat floating-list partial-order sort.
+    """
+    match element:
+        PlanType.Model(owner, _name) =>
+            if owner >= len(builder.nominals) or "Ord" not in builder.nominals[owner].derives:
+                return Err("unsupported Body IR Sorted nominal without a retained Ord derive")
+        PlanType.Tuple(elements) =>
+            for item in elements:
+                require_sort_order(builder, tuple_element_type(item))?
+        PlanType.Float => return Err("unsupported Body IR Sorted compound containing float")
+        PlanType.List(_leaf, _depth) =>
+            leaf, depth = require_list_shape(element, "unsupported Body IR Sorted compound list")?
+            require_sort_order(builder, list_element(leaf, depth))?
+        _ => pass
     return Ok(None)
 
 
