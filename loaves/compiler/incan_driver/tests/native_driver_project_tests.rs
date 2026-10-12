@@ -10694,7 +10694,7 @@ fn collection_projection_reads_output_matches_legacy() -> Result<(), Box<dyn std
     )
 }
 
-/// Dictionary entry writes through a generic model's field change that retained field rather than a copied map.
+/// Settled match payloads remain initialized when a list or tuple projection exposes their reads.
 #[test]
 fn settled_match_projection_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
