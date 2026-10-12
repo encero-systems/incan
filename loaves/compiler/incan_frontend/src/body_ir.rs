@@ -701,7 +701,9 @@ pub fn has_direct_replacement_properties(
 /// Same-type method aliases keep the checked target identity and use its retained method body; they add no native
 /// layout or wrapper declaration. Method partials retain deferred preset frames
 /// ([`has_direct_replacement_method_partials`]) and computed properties getter bodies
-/// ([`has_direct_replacement_properties`]). Methods may carry only the builtin static and class method markers.
+/// ([`has_direct_replacement_properties`]). Without checked facts, methods may carry only builtin static and class
+/// method markers. Checked nongeneric models also admit proven method replacement chains, retaining their original
+/// callables and initialized bindings.
 fn has_direct_replacement_model_shape(model: &ast::ModelDecl, type_info: Option<&TypeCheckInfo>) -> bool {
     has_direct_replacement_method_partials(
         &model.type_params,
