@@ -8542,6 +8542,28 @@ fn check_project_case(name: &str, text: &str, expected_stdout: &[u8]) -> Result<
     check_project_modules_case(name, text, &[], expected_stdout)
 }
 
+/// Imported generic Json is the user's model storage, independently of the stdlib wrapper's field shortcut.
+#[test]
+fn imported_user_json_field_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_case(
+        "imported_user_json_field",
+        "from models import Json\n\ndef read(wrapper: Json[int]) -> int:\n  return wrapper.value\n\ndef main() -> None:\n  println(read(Json[int](value=5)))\n",
+        &[("models.incn", "pub model Json[T]:\n  pub value: T\n")],
+        b"5\n",
+    )
+}
+
+/// A constructor and field read through an imported model alias preserve the same native carrier as legacy.
+#[test]
+fn imported_model_alias_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_case(
+        "imported_model_alias",
+        "from models import Account as A\n\ndef make() -> A:\n  return A(type=\"x\")\n\ndef main() -> None:\n  println(make().type)\n",
+        &[("models.incn", "pub model Account:\n  pub type_ [alias=\"type\"]: str\n")],
+        b"x\n",
+    )
+}
+
 /// Compare a program of several modules in the minimal project layout, pinning its output.
 ///
 /// `modules` names further source files beside `src/main.incn`, each with its text, as a multi-module behavior

@@ -6,6 +6,63 @@
 
 use super::*;
 
+/// A user model with a builtin wrapper spelling keeps the field identity its providing module published.
+#[test]
+fn imported_user_json_keeps_declared_field_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let provider_source = "pub model Json[T]:\n  pub value: T\n";
+    let provider = build(provider_source, &["models"])?;
+    let field = provider.nominal_declarations[0].field_identities[0].clone();
+    let module = build_with_published_imports(
+        "from models import Json\n\ndef read(wrapper: Json[int]) -> int:\n  return wrapper.value\n",
+        &["consumer"],
+        &[("models", &["models"], provider_source)],
+        &[provider],
+    )?;
+    let body = body_named(&module, "read")?;
+    let read = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Return {
+                value: Some(bir::Operand::Place(read)),
+            } => Some(read),
+            _ => None,
+        })
+        .ok_or("field read missing")?;
+    let [
+        bir::PlaceElem::Field {
+            name,
+            canonical,
+            structural,
+        },
+    ] = read.place.projection.as_slice()
+    else {
+        return Err("field projection missing".into());
+    };
+    assert_eq!(name, "value");
+    assert!(!structural);
+    assert_eq!(canonical.as_ref(), Some(&field));
+    Ok(())
+}
+
+/// Imported model aliases retain the declaring carrier at callable return and construction boundaries.
+#[test]
+fn imported_model_alias_return_uses_declared_carrier() -> Result<(), Box<dyn std::error::Error>> {
+    let provider_source = "pub model Account:\n  pub type_ [alias=\"type\"]: str\n";
+    let provider = build(provider_source, &["models"])?;
+    let module = build_with_published_imports(
+        "from models import Account as A\n\ndef make() -> A:\n  return A(type=\"x\")\n",
+        &["consumer"],
+        &[("models", &["models"], provider_source)],
+        &[provider],
+    )?;
+    let body = body_named(&module, "make")?;
+    assert_eq!(body.return_type, IncanType::Named("Account".to_owned()));
+    assert_eq!(body.locals[0].ty, IncanType::Named("Account".to_owned()));
+    Ok(())
+}
+
 /// Lower a module that imports from other modules, declaring each dependency's flattened cache name *and* its
 /// real path segments.
 ///
