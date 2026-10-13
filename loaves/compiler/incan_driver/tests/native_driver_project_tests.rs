@@ -15477,6 +15477,34 @@ fn static_collection_defaults_across_modules_match_legacy() -> Result<(), Box<dy
     )
 }
 
+/// The original NaN argument fixture preserves the native f64 value and legacy output.
+#[test]
+fn math_nan_argument_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("math-nan-argument")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/execution_numerics_and_conversions/a_nan_f64_passes_through_a_call.incn"
+        ),
+    )
+}
+
+/// The original math fixture keeps finite and nonfinite constants beside compiled SDK function calls.
+#[test]
+fn math_constants_and_functions_output_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("math-constants-and-functions")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!("../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_math.incn"),
+    )
+}
+
 /// A factory method on an imported static initializes a callable replacement with legacy byte parity.
 #[test]
 fn imported_static_decorator_factory_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

@@ -489,6 +489,39 @@ fn imported_model_alias_return_uses_declared_carrier() -> Result<(), Box<dyn std
     Ok(())
 }
 
+/// Package-owned math constants retain their proven Rust values through module and renamed imports.
+#[test]
+fn math_constants_retain_values_through_imports() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "import std.math\nfrom std.math import PI as CIRCLE, NAN as NOT_A_NUMBER\n\ndef finite() -> float:\n  return math.PI + math.E + math.TAU + CIRCLE\n\ndef infinite() -> float:\n  return math.INFINITY\n\ndef not_a_number() -> f64:\n  return NOT_A_NUMBER\n",
+        &["app", "math_constants"],
+    )?;
+    let finite = body_named(&module, "finite")?.render_snapshot();
+    for value in [std::f64::consts::PI, std::f64::consts::E, std::f64::consts::TAU] {
+        assert!(finite.contains(&format!("const({value})")), "{finite}");
+    }
+    let infinite = body_named(&module, "infinite")?.render_snapshot();
+    assert!(infinite.contains("const(inf)"), "{infinite}");
+    let nan = body_named(&module, "not_a_number")?.render_snapshot();
+    assert!(nan.contains("const(NaN)"), "{nan}");
+    Ok(())
+}
+
+/// A same-spelled local or user declaration keeps its own value rather than selecting a stdlib constant.
+#[test]
+fn math_constant_names_do_not_replace_user_bindings() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "import std.math\nconst PI: float = 99.0\n\ndef local(PI: float) -> float:\n  return PI\n\ndef declared() -> float:\n  return PI\n",
+        &["app", "math_shadow"],
+    )?;
+    let local = body_named(&module, "local")?.render_snapshot();
+    assert!(!local.contains("const("), "{local}");
+    let declared = body_named(&module, "declared")?.render_snapshot();
+    assert!(declared.contains("const(99)"), "{declared}");
+    assert!(!declared.contains(&std::f64::consts::PI.to_string()), "{declared}");
+    Ok(())
+}
+
 /// An imported static factory receiver remains distinct from the method selected at the shared decorator span.
 #[test]
 fn imported_static_decorator_factory_retains_receiver() -> Result<(), Box<dyn std::error::Error>> {
