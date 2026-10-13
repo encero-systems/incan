@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 
 /// Build real checked storage and its public reader in one package module.
 fn storage_module() -> Result<bir::BodyIrModule, Box<dyn std::error::Error>> {
-    let source = "\"\"\"Retain a public cell and its exact reader.\"\"\"\n\npub static count: int = 10\n\npub def current_count() -> int:\n    \"\"\"Read the same public cell on each call.\"\"\"\n    return count\n";
+    let source = "\"\"\"Retain a public cell and its exact reader.\"\"\"\n\npub static count: int = 10\n\npub def current_count() -> int:\n    \"\"\"Read the same public cell on each call.\"\"\"\n    return count\n\npub def bump(amount: int) -> int:\n    \"\"\"Update the same cell through its checked write identity.\"\"\"\n    count += amount\n    return count\n";
     let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
     let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
     let path = vec!["storage".to_string()];
@@ -19,6 +19,39 @@ fn storage_module() -> Result<bir::BodyIrModule, Box<dyn std::error::Error>> {
         .check_program(&program)
         .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
     Ok(build_body_ir_module_v0(&program, &path, checker.type_info()))
+}
+
+/// A published mutating body retains the same checked storage requirement as a reader.
+#[test]
+fn public_static_writer_retains_its_storage_requirement() -> Result<(), Box<dyn std::error::Error>> {
+    let module = storage_module()?;
+    let storage = module.static_declarations.first().ok_or("missing storage")?;
+    let writer = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "bump")
+        .ok_or("missing writer")?;
+    assert!(writer.first_representation_gap().is_none(), "writer gap: {writer:#?}");
+    let identity = writer.canonical.as_ref().ok_or("missing writer identity")?;
+    let public = BTreeSet::from([storage.canonical.clone(), identity.clone()]);
+    let bytes = build_surface(
+        std::slice::from_ref(&module),
+        "cells",
+        "0.1.0",
+        &public,
+        &BTreeSet::new(),
+    )?;
+    let archive = SurfaceReader::open(&bytes)?;
+    let DeclarationCoverage::Covered { requirements, .. } = archive.index().coverage(identity)? else {
+        return Err(format!(
+            "writer coverage: {:?}; writer {writer:#?}",
+            archive.index().coverage(identity)?
+        )
+        .into());
+    };
+    assert_eq!(requirements, &[storage.canonical.clone()]);
+    assert_eq!(archive.declaration(identity)?.block, writer.block);
+    Ok(())
 }
 
 /// A public reader publishes its exact storage requirement rather than discarding the initializer or global place.
