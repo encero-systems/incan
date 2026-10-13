@@ -9,6 +9,49 @@ use crate::{lexer, parser};
 const STRUCTURAL: &str = include_str!("../../../../incan_test_support/fixtures/native_iteration/structural.incn");
 const FALLIBLE: &str = include_str!("../../../../incan_test_support/fixtures/native_iteration/fallible.incn");
 
+/// SDK generic iterator defaults and the adopter's next body retain the same exact checked trait instantiation.
+#[test]
+fn sdk_fallible_defaults_retain_adoption_arguments() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        include_str!(
+            "../../../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_fallible_iterator_loop.incn"
+        ),
+        &["m", "sdk_fallible_defaults"],
+    )?;
+    let owner = module
+        .nominal_declarations
+        .iter()
+        .find(|owner| owner.name == "NumberStream")
+        .ok_or("missing stream")?;
+    for name in ["__iter__", "__next__", "collect"] {
+        let record = module
+            .trait_implementations
+            .iter()
+            .find(|record| record.owner == owner.canonical && record.method.declaration_name == name)
+            .ok_or_else(|| format!("missing {name} implementation"))?;
+        assert_eq!(
+            record
+                .type_arguments
+                .iter()
+                .map(|argument| argument.parameter.as_str())
+                .collect::<Vec<_>>(),
+            ["T", "E"]
+        );
+        assert_eq!(
+            record.type_arguments[0].argument,
+            IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Int)
+        );
+        assert_eq!(
+            record.type_arguments[1].argument,
+            IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Str)
+        );
+        if name != "__next__" {
+            assert_eq!(record.method, record.implementation);
+        }
+    }
+    Ok(())
+}
+
 /// Visit calls inside structured loop and match control flow without mistaking a poll spelling for a target.
 fn method_calls<'body>(statements: &'body [bir::Statement], calls: &mut Vec<&'body bir::MethodTarget>) {
     for statement in statements {
