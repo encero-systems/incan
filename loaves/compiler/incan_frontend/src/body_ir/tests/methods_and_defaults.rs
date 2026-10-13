@@ -4,6 +4,34 @@
 
 use super::*;
 
+/// Bare generic adoptions retain both their own and inherited canonical implementation slots.
+#[test]
+fn bare_generic_adoption_retains_supertrait_slots() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Read[Element]:\n    def read(self) -> Element: ...\n\ntrait Ordered[Item] with Read[Item]:\n    def same(self) -> Self: ...\n\nmodel Cell[Payload] with Ordered:\n    value: Payload\n    def read(self) -> Payload:\n        return self.value\n    def same(self) -> Self:\n        return self\n\ndef main() -> None:\n    println(Cell(value=7).read())\n",
+        &["m", "bare_supertrait_slots"],
+    )?;
+    let owner = module
+        .nominal_declarations
+        .iter()
+        .find(|owner| owner.name == "Cell")
+        .ok_or("missing Cell")?;
+    for name in ["read", "same"] {
+        let body = body_named(&module, name)?;
+        assert!(
+            module
+                .trait_implementations
+                .iter()
+                .any(|slot| slot.owner == owner.canonical
+                    && slot.method.declaration_name == name
+                    && Some(&slot.implementation) == body.canonical.as_ref()),
+            "missing {name} slot: {:#?}",
+            module.trait_implementations
+        );
+    }
+    Ok(())
+}
+
 /// A concrete witness reached through a call also closes a later hidden trait input's retained argument binding.
 #[test]
 fn trait_value_returns_close_later_hidden_inputs() -> Result<(), Box<dyn std::error::Error>> {
