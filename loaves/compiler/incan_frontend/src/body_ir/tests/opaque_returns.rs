@@ -2,6 +2,45 @@
 
 use super::{IncanType, body_named, build};
 
+/// The native loader's authenticated SDK hook identity must preserve the default constructor's concrete Self carrier.
+#[test]
+fn sdk_package_iteration_hooks_keep_concrete_carriers() -> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_fallible_adapter_loop.incn"
+    );
+    let tokens = super::lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = super::parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut checker = super::TypeChecker::new();
+    let module_path = vec!["m".into(), "sdk_package_hooks".into()];
+    checker.set_current_module_path(Some(module_path.clone()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut facts = checker.type_info().clone();
+    let mut selected = 0;
+    for hooks in facts.protocols.body_ir_iterations.values_mut() {
+        let identity = hooks
+            .iter
+            .canonical
+            .as_ref()
+            .ok_or("missing checked iterator identity")?;
+        hooks.iter.canonical =
+            Some(super::super::library_nominals::sdk_identity(identity).ok_or("missing authenticated SDK hook")?);
+        selected += 1;
+    }
+    assert!(selected > 0);
+    let module = super::build_body_ir_module_v0(&program, &module_path, &facts);
+    let body = body_named(&module, "consume")?;
+    assert!(
+        !body.locals.iter().any(|local| matches!(&local.ty,
+            IncanType::Generic { base, .. } if base.split([':', '.']).next_back() == Some("FallibleIterator")
+        )),
+        "{}",
+        body.render_snapshot()
+    );
+    Ok(())
+}
+
 /// A selected SDK constructor remains a template over the caller's declared binder, ready for checked specialization.
 #[test]
 fn sdk_generic_reader_adapter_retains_its_constructor_template() -> Result<(), Box<dyn std::error::Error>> {
