@@ -11598,14 +11598,17 @@ fn compile_source_modules_reference(
         .arg(&source)
         .arg(&generated)
         .output()?;
+    let diagnostic = String::from_utf8_lossy(&reference_build.stderr);
     assert!(
         reference_build.status.success()
-            || String::from_utf8_lossy(&reference_build.stderr).contains("cannot find `serde` in the crate root"),
+            || diagnostic.contains("cannot find `serde` in the crate root")
+            || diagnostic.contains("shared native owner was not admitted by this command"),
         "{}",
         String::from_utf8_lossy(&reference_build.stderr)
     );
-    // The build command materializes the complete module tree and SDK facade before its missing-extern failure.
-    // Compile those exact files; the debug --emit-rust action emits only one unit with unresolved module markers.
+    // Both named legacy admission failures occur after complete module emission; this closure supplies the exact
+    // admitted owners. Compile those exact files; the debug --emit-rust action emits only one unit with unresolved
+    // module markers.
     let reference = generated.join("src/main.rs");
     success(
         &closure
@@ -13194,7 +13197,7 @@ fn validation_error_fixtures_reach_checked_method_boundary() -> Result<(), Box<d
 /// Inherited self-calls reach the nearest subclass override while ancestor calls keep their original behavior.
 #[test]
 fn inherited_class_dispatch_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    check_project_case(
+    check_inheritance_project_case(
         "inherited-class-dispatch",
         include_str!(
             "../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/subtrait_default_and_class_override.incn"
@@ -13206,7 +13209,7 @@ fn inherited_class_dispatch_output_matches_legacy() -> Result<(), Box<dyn std::e
 /// Inherited fields keep their ABI positions through shared and mutable receiver calls at several depths.
 #[test]
 fn inherited_class_fields_and_mutation_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    check_project_case(
+    check_inheritance_project_case(
         "inherited-class-fields",
         r#"class Ancestor:
     pub total: int
@@ -13250,9 +13253,44 @@ def main() -> None:
 /// An override's own class-valued local does not require inherited receiver substitution.
 #[test]
 fn own_class_override_local_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    check_project_case(
+    check_inheritance_project_case(
         "own-class-override-local",
         "class Base:\n    pub n: int\n    def score(self) -> int:\n        return self.n\n    def report(self) -> int:\n        return self.score()\n\nclass Child extends Base:\n    def score(self) -> int:\n        other = Child(n=9)\n        return self.n + other.n\n\ndef main() -> None:\n    println(Child(n=1).report())\n    println(Base(n=2).report())\n",
         b"10\n2\n",
     )
+}
+
+/// Compare the unchanged complete legacy project emission with the direct route using one admitted runtime closure.
+fn check_inheritance_project_case(
+    name: &str,
+    text: &str,
+    expected_stdout: &[u8],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch(name)?;
+    let source = support::cli_project::write_minimal_project(&root, name, "")?;
+    fs::write(&source, text)?;
+    let mut closure = corpus::runtime_closure(&fixture.formatting)?;
+    closure.extend_with(&sdk_closure(fixture)?)?;
+    let native = root.join("native");
+    success(
+        &corpus::source_command(
+            &fixture.driver_binary("debug"),
+            &source,
+            &native,
+            &fixture.sysroot,
+            &closure,
+        )
+        .current_dir(&root)
+        .output()?,
+        "inherited project native compilation",
+    );
+    let legacy = compile_source_modules_reference(fixture, name, &source, &[], &closure)?;
+    let expected = Command::new(legacy).output()?;
+    let actual = Command::new(native).output()?;
+    success(&expected, "inherited project legacy emission execution");
+    success(&actual, "inherited project native execution");
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(actual.stdout, expected_stdout);
+    Ok(())
 }
