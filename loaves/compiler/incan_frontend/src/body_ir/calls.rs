@@ -504,6 +504,21 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         })
     }
 
+    /// Retain an applied factory owner from the checked construction result, independently of method type arguments.
+    ///
+    /// A selected static factory returning its own generic nominal carries that owner's arguments on the associated
+    /// call. A wrapper result, ordinary function, absent factory selection or mismatched nominal cannot supply them.
+    /// This consumes existing checked facts only; the legacy inference tables remain unchanged.
+    fn checked_nominal_factory_owner(&self, callee_span: ast::Span, call_span: ast::Span) -> Option<IncanType> {
+        self.checked_nominal_factory_declaration(callee_span, call_span)?;
+        let owner = self.type_info.resolved_identity(callee_span)?;
+        let result = self.resolve_ty(call_span);
+        match &result {
+            IncanType::Generic { base, .. } if base == &owner.declaration_name => Some(result),
+            _ => None,
+        }
+    }
+
     /// Retain checked explicit or inferred call-site type arguments, refusing unresolved explicit arguments.
     ///
     /// Type arguments are part of a call's resolved identity, so Body IR takes the typechecker's
@@ -1492,7 +1507,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         };
         self.push_call_temp(
             bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
-                receiver_type: None,
+                receiver_type: self.checked_nominal_factory_owner(callee.span, span),
                 name,
                 direct_call_id: declaration.direct_call_id,
                 canonical: declaration.canonical,
