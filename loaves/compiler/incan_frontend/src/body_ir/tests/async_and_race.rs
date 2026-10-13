@@ -882,3 +882,46 @@ fn checked_task_list_iteration_keeps_closed_items() -> Result<(), Box<dyn std::e
     assert_eq!(loop_sources, vec![bir::OwnershipFact::Move, bir::OwnershipFact::Borrow]);
     Ok(())
 }
+
+/// A comprehension's checked binder never borrows its output type from an outer same-spelled task.
+#[test]
+fn task_comprehension_storage_respects_its_binder() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "import std.async\nfrom std.rust import Send, Static\nfrom rust::incan_std_async::task import JoinHandle, RuntimeFuture, spawn as native_spawn\ndef launch[T with (Send, Static), F with RuntimeFuture[T]](future: F) -> JoinHandle[T]:\n  return native_spawn(future)\nasync def integer() -> int:\n  return 1\nasync def text() -> str:\n  return \"s\"\ndef collect() -> None:\n  handle = launch(integer())\n  items = [launch(text())]\n  result = [handle for handle in items]\n";
+    let module = build(source, &["m", "task_comprehension_scope"])?;
+    let body = body_named(&module, "collect")?;
+    let result = body
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("result"))
+        .ok_or("result")?;
+    assert_eq!(
+        result.ty,
+        IncanType::Generic {
+            base: "List".into(),
+            args: vec![IncanType::Generic {
+                base: "JoinHandle".into(),
+                args: vec![IncanType::Primitive(IncanPrimitiveType::Str)],
+            }]
+        }
+    );
+    let handles: Vec<_> = body
+        .locals
+        .iter()
+        .filter(|local| local.name.as_deref() == Some("handle"))
+        .map(|local| &local.ty)
+        .collect();
+    assert_eq!(
+        handles,
+        vec![
+            &IncanType::Generic {
+                base: "JoinHandle".into(),
+                args: vec![IncanType::Primitive(IncanPrimitiveType::Int)]
+            },
+            &IncanType::Generic {
+                base: "JoinHandle".into(),
+                args: vec![IncanType::Primitive(IncanPrimitiveType::Str)]
+            },
+        ]
+    );
+    Ok(())
+}
