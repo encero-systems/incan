@@ -66,6 +66,26 @@ fn testing_helper_retains_closed_call_arguments() -> Result<(), Box<dyn std::err
     Ok(())
 }
 
+/// A bare None argument supplies the Unit carrier legacy uses for the helper's otherwise unmentioned channel.
+#[test]
+fn absent_testing_channel_retains_unit_call_argument() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "from std.testing import assert_is_none\n\ndef main() -> None:\n    assert_is_none(None)\n",
+        &["m", "closed_absent_testing_channel"],
+    )?;
+    let targets = named_targets(&module, "main");
+    let target = targets
+        .iter()
+        .find(|target| target.name == "assert_is_none")
+        .ok_or("missing testing helper")?;
+    assert_eq!(
+        target.type_args.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        ["Unit"],
+        "{target:?}"
+    );
+    Ok(())
+}
+
 /// The generic trait-returning original preserves the adopter's concrete result carrier at every call.
 #[test]
 fn complete_generic_trait_return_retain_closed_locals() -> Result<(), Box<dyn std::error::Error>> {
