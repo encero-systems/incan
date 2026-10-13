@@ -399,6 +399,21 @@ def main() -> None:
     )
 }
 
+/// A compiled SDK trait default dispatches with its concrete receiver and preserves legacy output.
+#[test]
+fn sdk_trait_default_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let mut closure = corpus::runtime_closure(&fixture.formatting)?;
+    closure.extend_with(&sdk_closure(fixture)?)?;
+    corpus::check_builtin_source_with_closure(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("sdk-trait-default")?,
+        &fixture.sysroot,
+        &closure,
+        "from std.io import IoError\nfrom std.traits.error import Error\n\ndef main() -> None:\n  error = IoError(kind=\"test\", detail=\"detail\")\n  match error.source():\n    Some(source) => println(source)\n    None => println(\"no source\")\n",
+    )
+}
+
 /// Opaque trait results, Self-returning slots, and supertrait returns preserve legacy's concrete storage and output.
 #[test]
 fn trait_value_return_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

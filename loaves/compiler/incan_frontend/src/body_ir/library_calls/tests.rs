@@ -6,6 +6,30 @@ use super::library_call;
 use crate::symbols::TypeInfo;
 use crate::typechecker::stdlib_loader::StdlibAstCache;
 
+/// A Body IR provider-slot identity receives its own crate-call record while legacy keeps the source reference.
+#[test]
+fn provider_trait_slot_retains_matching_delegation() -> Result<(), Box<dyn std::error::Error>> {
+    let mut cache = StdlibAstCache::new();
+    let path = source_path(&["traits", "error"]);
+    let error = cache.lookup_trait(&path, "Error").ok_or("Error trait missing")?;
+    let source = error
+        .methods
+        .get("source")
+        .and_then(|method| method.identity.clone())
+        .ok_or("source slot missing")?;
+    let provider = published(source.clone(), "incan_stdlib_core", &["traits", "error"]);
+    let mut facts = crate::typechecker::TypeCheckInfo::default();
+    facts.references.resolved_identities.insert((1, 2), source.clone());
+    facts.traits.provider_slot_identities.insert((1, 2), provider.clone());
+    let records = super::collect(&facts);
+    assert!(
+        records.iter().any(|record| record.canonical == provider),
+        "{records:#?}"
+    );
+    assert_eq!(facts.resolved_identity(crate::ast::Span::new(1, 2)), Some(&source));
+    Ok(())
+}
+
 /// The source module path of a stdlib module under the `std` root.
 fn source_path(module_path: &[&str]) -> Vec<String> {
     std::iter::once("std")
