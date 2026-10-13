@@ -680,3 +680,26 @@ fn foreign_runtime_future_output_stays_open() -> Result<(), Box<dyn std::error::
     );
     Ok(())
 }
+
+/// A native task handle followed by a source future cannot erase the earlier argument's binding evidence.
+#[test]
+fn mixed_runtime_future_arguments_stay_open() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "import std.async\nfrom std.async.task import JoinHandle\nfrom rust::incan_std_async::task import RuntimeFuture\ndef accept[T, F with RuntimeFuture[T]](first: F, second: F) -> None:\n  pass\nasync def work() -> int:\n  return 1\ndef launch(handle: JoinHandle[int]) -> None:\n  accept(handle, work())\n";
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut checker = TypeChecker::new();
+    let errors = checker
+        .check_program(&program)
+        .err()
+        .ok_or("mixed native future carriers must fail checking")?;
+    assert!(
+        errors.iter().any(|error| error.message.contains("Type mismatch")),
+        "{errors:?}"
+    );
+    assert!(
+        checker.type_info().calls.body_ir_call_type_arguments.is_empty(),
+        "mixed native arguments: {:?}",
+        checker.type_info().calls.body_ir_call_type_arguments
+    );
+    Ok(())
+}
