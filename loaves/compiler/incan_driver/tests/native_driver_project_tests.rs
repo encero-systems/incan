@@ -16134,9 +16134,9 @@ type Nonnegative = newtype int:
             return Err(ValidationError("negative sum"))
         return Ok(Nonnegative(value))
 
-def observe(value: Nonnegative) -> Nonnegative:
-    println(f"item {value.0}")
-    return value
+def observe(value: int) -> Nonnegative:
+    println(f"item {value}")
+    return Nonnegative(value)
 
 def main() -> None:
     empty: list[Money] = []
@@ -16145,7 +16145,7 @@ def main() -> None:
     println(overflow.iter().sum().0)
     constrained_empty: list[Constrained] = []
     println(constrained_empty.iter().sum().0)
-    values = [Nonnegative(1), Nonnegative(2)]
+    values = [1, 2]
     total = values.iter().map(observe).sum()
     println(total.0)
     checked_empty: list[Nonnegative] = []

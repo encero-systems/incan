@@ -55,6 +55,37 @@ fn numeric_newtype_sum_retains_projection_and_final_reconstruction() -> Result<(
         .rfind("constructor(Money)")
         .ok_or("missing final Money construction")?;
     assert!(consumer < reconstruction, "{raw}");
+    let body = super::body_named(&module, "raw")?;
+    let loop_index = body
+        .block
+        .stmts
+        .iter()
+        .position(|statement| matches!(statement.kind, super::bir::StatementKind::Loop { .. }))
+        .ok_or("missing sum loop")?;
+    let super::bir::StatementKind::Loop { body: loop_body } = &body.block.stmts[loop_index].kind else {
+        return Err("missing typed sum loop".into());
+    };
+    let super::bir::StatementKind::IterNext {
+        iterator: super::bir::Operand::Place(read),
+        ..
+    } = &loop_body.stmts[0].kind
+    else {
+        return Err("missing typed sum poll".into());
+    };
+    let iterator = read.place.local_id().ok_or("missing local sum iterator")?;
+    assert!(
+        body.block.stmts[..loop_index]
+            .iter()
+            .any(|statement| matches!(&statement.kind,
+        super::bir::StatementKind::Assign { place, rvalue: super::bir::Rvalue::Use(super::bir::Operand::Place(source)) }
+        if place.local_id() == Some(iterator) && source.fact == super::bir::OwnershipFact::Move))
+    );
+    assert!(
+        body.block.stmts[loop_index + 1..]
+            .iter()
+            .any(|statement| matches!(statement.kind,
+        super::bir::StatementKind::Drop { local } if local == iterator))
+    );
     Ok(())
 }
 
