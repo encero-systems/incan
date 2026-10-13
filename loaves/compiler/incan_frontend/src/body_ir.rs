@@ -166,6 +166,22 @@ pub fn library_nominal_declarations(type_info: &TypeCheckInfo) -> Vec<bir::Nomin
             layouts.push(layout);
         }
     }
+    for layout in &mut layouts {
+        for (selected, implications) in incan_lang::lang::derives::DERIVE_IMPLICATIONS {
+            if layout
+                .derives
+                .iter()
+                .any(|name| name == incan_lang::lang::derives::as_str(*selected))
+            {
+                for implied in *implications {
+                    let name = incan_lang::lang::derives::as_str(*implied).to_owned();
+                    if !layout.derives.contains(&name) {
+                        layout.derives.push(name);
+                    }
+                }
+            }
+        }
+    }
     layouts
 }
 
