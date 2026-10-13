@@ -316,6 +316,12 @@ fn prepare_inner(
     // Native test helpers consume the same leased closure as their root. Both existing child consumers receive
     // that checked plan: generated-code checks and vocabulary extraction must not discover another dependency graph.
     let mut environment = environment;
+    // Insta otherwise starts Cargo to discover a workspace. Its runtime override belongs to the child
+    // environment, not the compilation receipt; preserve an explicitly configured snapshot workspace.
+    environment.insert(
+        "INSTA_WORKSPACE_ROOT".into(),
+        std::env::var("INSTA_WORKSPACE_ROOT").unwrap_or_else(|_| context.project_root.to_string_lossy().into_owned()),
+    );
     environment.insert("RUSTC".to_string(), rustc.display().to_string());
     environment.insert(
         oven_model::compiler_suite_env::OVEN_COMPILER_SUITE_RUSTC_ENV.to_string(),
