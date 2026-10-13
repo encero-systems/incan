@@ -2818,3 +2818,30 @@ fn a_plain_newtype_coercion_builds_the_newtype() -> Result<(), Box<dyn std::erro
     assert!(rendered.contains("constructor(Days)"), "{rendered}");
     Ok(())
 }
+/// The checked residual type of the second independent test is retained rather than the original union storage type.
+#[test]
+fn independent_isinstance_retains_residual_newtype() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "@derive(Clone)\ntype LocalPath = newtype str\n\ndef normalize(value: LocalPath | str) -> LocalPath:\n  if isinstance(value, str):\n    return LocalPath(value)\n  if isinstance(value, LocalPath):\n    return value\n";
+    let module = build(source, &["m", "residual_newtype"])?;
+    let body = body_named(&module, "normalize")?;
+    let tests: Vec<_> = body
+        .block
+        .stmts
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::IsInstance { value_ty, .. },
+                ..
+            } => Some(value_ty),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tests.len(), 2, "{}", body.render_snapshot());
+    assert_eq!(
+        tests[1],
+        &IncanType::Named("LocalPath".into()),
+        "{}",
+        body.render_snapshot()
+    );
+    Ok(())
+}

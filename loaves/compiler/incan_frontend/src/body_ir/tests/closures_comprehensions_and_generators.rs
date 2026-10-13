@@ -38,6 +38,25 @@ fn closure_captures_the_receiver_in_its_own_local() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
+/// A generic parameter invoked through the checked callable trait retains its environment-capable representation.
+#[test]
+fn callable_bound_parameter_retains_closure_representation() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "from std.traits.callable import Callable1\n\ndef apply[Mapper with (Clone, Callable1[int, str])](mapper: Mapper, value: int) -> str:\n  return mapper(value)\n";
+    let module = build(source, &["m", "bound_callable_representation"])?;
+    let body = body_named(&module, "apply")?;
+    let facts = body
+        .callable_representation
+        .as_ref()
+        .ok_or("missing callable representation")?;
+    assert_eq!(
+        facts.closure_holding_parameters,
+        vec![bir::LocalId(0)],
+        "{}",
+        body.render_snapshot()
+    );
+    Ok(())
+}
+
 /// Preserve the checker's `Fn` representation choices separately from the function-type call surface.
 #[test]
 fn callable_signatures_retain_closure_holding_parameters_and_returns() -> Result<(), Box<dyn std::error::Error>> {
