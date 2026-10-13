@@ -6256,6 +6256,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/channel_errors.rs": {
+      "disposition": "keep",
+      "notes": "Checked channel value arguments close send-error payload types without changing legacy inference.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/task_handles.rs": {
       "disposition": "keep",
       "notes": "Registered opaque task storage and native argument identity; unrelated Rust paths remain unprojected.",

@@ -11997,6 +11997,37 @@ fn stdlib_text_codec_methods_output_matches_legacy() -> Result<(), Box<dyn std::
     Ok(())
 }
 
+/// Channel errors close before the separately owned sender/newtype boundary; explicit constructors keep that boundary.
+#[test]
+fn stdlib_channel_errors_reach_sender_boundary() -> Result<(), Box<dyn std::error::Error>> {
+    for (name, source, reason) in [
+        (
+            "unpacked-channel",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/channel_ends_unpacked_and_sent_through_a_wrapper.incn"
+            ),
+            "unsupported Body IR type Sender",
+        ),
+        (
+            "async-channel-sync",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_async_channels_and_sync.incn"
+            ),
+            "unsupported Body IR type Sender",
+        ),
+        (
+            "explicit-channel",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/cli_values_and_calls/channel_constructors_with_an_explicit_element_type.incn"
+            ),
+            "unsupported Body IR type Sender[str]",
+        ),
+    ] {
+        check_builtin_refusal(name, source, reason)?;
+    }
+    Ok(())
+}
+
 /// Require a named refusal at the same standalone boundary used by builtin parity tests.
 fn check_builtin_refusal(name: &str, text: &str, reason: &str) -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
