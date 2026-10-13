@@ -2108,14 +2108,19 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
             if (!tuple && !identifier(&field.name))
                 || !fields.insert(&field.name)
                 || !source_signature_type(&scalar(&field.ty))
-                || matches!(
-                    field.ty,
-                    PlanType::FunctionPointer(_) | PlanType::Closure(_) | PlanType::ClosureRef(_)
-                )
             {
                 return Err(PlanError::Invalid {
                     function: declaration.name.clone(),
                     reason: "invalid model field declaration".into(),
+                });
+            }
+            if matches!(
+                field.ty,
+                PlanType::FunctionPointer(_) | PlanType::Closure(_) | PlanType::ClosureRef(_)
+            ) {
+                return Err(PlanError::Invalid {
+                    function: declaration.name.clone(),
+                    reason: "unsupported callable model field declaration".into(),
                 });
             }
             validate_model_type(plan, &field.ty)?;
