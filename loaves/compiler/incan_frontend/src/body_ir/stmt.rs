@@ -206,6 +206,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         {
             ty = returned;
         }
+        ty = self.retained_result_binding_type(assignment.name_span, &assignment.name, ty);
         let materializes_range = self.expr_has_materialized_range_layout(&assignment.value);
         self.settle_open_result_value(&assignment.value, &ty);
         let value = self.lower_boundary_value(&assignment.value, Some(&ty), scope, out);

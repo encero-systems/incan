@@ -3,6 +3,7 @@
 use super::primitives::result_type_parts;
 use super::{BodyBuilder, IncanPrimitiveType, IncanType, ast, bir};
 use incan_lang::lang::surface::result_methods::{self, ResultMethodId};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::{HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 
 impl BodyBuilder<'_, '_> {
@@ -58,6 +59,19 @@ impl BodyBuilder<'_, '_> {
         self.refine_result_channels(&recorded, &local.ty)
     }
 
+    /// Seed a rebind's constructor context from the exact local the checker selected, never a same-spelled shadow.
+    pub(super) fn retained_result_binding_type(&self, span: ast::Span, name: &str, recorded: IncanType) -> IncanType {
+        let Some(local) = self
+            .type_info
+            .resolved_write_identity(span, name)
+            .and_then(|identity| self.identity_bindings.get(identity))
+            .and_then(|local| self.locals.get(local.index()))
+        else {
+            return recorded;
+        };
+        self.refine_result_channels(&recorded, &local.ty)
+    }
+
     /// Select only a registry-owned builtin Result member, excluding same-spelled source methods.
     fn checked_result_method(&self, span: ast::Span) -> Option<ResultMethodId> {
         let identity = self.type_info.resolved_identity(span)?;
@@ -69,7 +83,11 @@ impl BodyBuilder<'_, '_> {
         {
             return None;
         }
-        result_methods::from_str(identity.declaration_name.strip_prefix("Result.")?)
+        let member = identity
+            .declaration_name
+            .strip_prefix(collections::as_str(CollectionTypeId::Result))?
+            .strip_prefix('.')?;
+        result_methods::from_str(member)
     }
 
     /// Carry a checked chaining callback's closed result into its call, retaining the unselected channel.
@@ -79,9 +97,12 @@ impl BodyBuilder<'_, '_> {
         receiver: ast::Span,
         arguments: &[bir::ArgumentElement],
     ) {
+        // ---- Context: only the checked builtin owns the Result channel rule ----
         let Some(method) = self.checked_result_method(span) else {
             return;
         };
+
+        // ---- Context: retain the selected callback or receiver payload ----
         let actual = match method {
             ResultMethodId::AndThen | ResultMethodId::OrElse => {
                 let Some(value) = arguments
@@ -109,6 +130,8 @@ impl BodyBuilder<'_, '_> {
             }
             _ => return,
         };
+
+        // ---- Context: preserve fixed call channels and fill only their holes ----
         let recorded = self.resolve_ty(span);
         let refined = self.refine_result_channels(&recorded, &actual);
         if refined != recorded {
@@ -129,6 +152,7 @@ impl BodyBuilder<'_, '_> {
     /// Only an int addition with a newly retained Result payload fills its missing scalar result; unrelated unknown
     /// operations retain their existing refusal. This pass records types and never evaluates source expressions.
     pub(super) fn retain_result_scalar_context(&mut self, expression: &ast::Spanned<ast::Expr>) -> bool {
+        // ---- Context: payload reads must be known before binary admission ----
         match &expression.node {
             ast::Expr::MethodCall(receiver, _, _, _)
                 if matches!(
