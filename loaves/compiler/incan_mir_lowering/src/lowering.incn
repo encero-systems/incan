@@ -10230,7 +10230,7 @@ def carrier_receiver(
     span: SourceSpan,
 ) -> Result[Place, str]:
     """
-    The place a carrier method reads: the receiver itself, or a copy of a list element.
+    The place a carrier method reads: the exact scalar referent, a static snapshot, or a copy of a list element.
 
     An element is read out of its list as any element read is, as legacy's checked `list_get` reads it; the copy drops
     when its scope ends.
@@ -10243,6 +10243,8 @@ def carrier_receiver(
                 RustOperand.Place(read) =>
                     if indexes_a_list(read.place):
                         return element_copy(builder, read.place, span)
+                    if read.place.global().is_none():
+                        return scalar_place(builder, read.place, span)
                 _ => pass
         None => pass
     return argument_place(builder, arguments, 0, span)
