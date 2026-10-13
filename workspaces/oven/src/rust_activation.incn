@@ -6,6 +6,9 @@ versions, select native candidates or execute build providers. Every output slot
 selected-child binding or its retained inactive reason before the semantic input producer can finish.
 """
 
+# Explicit payload import until foreign None type qualification is fixed (#2010).
+from std.toml import TomlLocation
+
 from cfg_predicate import parse_selector, evaluate_cfg, Selector
 from semver_req import parse_version, parse_requirement, requirement_matches
 from std.collections import Deque, OrderedSet

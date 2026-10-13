@@ -1,5 +1,8 @@
 """Select pinned Loaf versions alongside the shared host/target activation policy."""
 
+# Explicit payload import until foreign None type qualification is fixed (#2010).
+from std.toml import TomlLocation
+
 from semver_req import parse_version, compare_version_order
 from std.json import JsonValue
 from std import toml
