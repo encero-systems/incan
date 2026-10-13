@@ -2,6 +2,33 @@
 
 use super::{IncanType, body_named, build};
 
+/// A selected SDK constructor remains a template over the caller's declared binder, ready for checked specialization.
+#[test]
+fn sdk_generic_reader_adapter_retains_its_constructor_template() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        include_str!(
+            "../../../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_fallible_adapter_loop.incn"
+        ),
+        &["m", "generic_reader_adapter"],
+    )?;
+    let body = body_named(&module, "consume")?;
+    assert!(
+        body.locals.iter().any(|local| matches!(&local.ty,
+            IncanType::Generic { base, args } if base == "MapErrFallibleIterator" && args.len() == 5
+        )),
+        "{}",
+        body.render_snapshot()
+    );
+    assert!(
+        !body.locals.iter().any(|local| matches!(&local.ty,
+            IncanType::Generic { base, .. } if base == "FallibleIterator"
+        )),
+        "{}",
+        body.render_snapshot()
+    );
+    Ok(())
+}
+
 /// A single checked adopter returned as a trait must keep its concrete carrier through the call result.
 #[test]
 fn local_trait_return_retains_its_concrete_producer() -> Result<(), Box<dyn std::error::Error>> {
