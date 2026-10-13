@@ -2951,7 +2951,8 @@ def lower_library_method(
     if len(delegation.native_type_arguments) != 0:
         native_arguments = []
         for argument in delegation.native_type_arguments:
-            native_arguments.append(substitute(argument, names, closed)?)
+            concrete: RustType = substitute(argument, names, closed)?
+            native_arguments.append(concrete.clone())
     mut output = temporary(builder, result, span)
     match destination:
         Some(place) =>
