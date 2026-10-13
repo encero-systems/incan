@@ -244,6 +244,7 @@ fn direct_rustc_output_recipe(
     test_harness: bool,
     output_kind: OvenDirectRustcOutputKind,
 ) -> Result<OvenDirectRustcOutputReceipt, OvenRustcError> {
+    let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::native_output_recipe", input = %request.source.display()).entered();
     let OvenTrustedDirectRustcTargetRequest {
         receipt,
         artifacts,
@@ -905,6 +906,7 @@ pub(super) fn caller_output_receipt_path(output: &Path) -> Result<PathBuf, OvenR
 /// Missing, malformed, old or mismatched evidence is a cache miss. Returning the verified digest lets the caller
 /// report reuse without rereading the output. The caller must perform receipt/compiler/input admission first.
 pub(super) fn caller_output_reusable_digest(output: &Path, expected: &OvenDirectRustcOutputReceipt) -> Option<String> {
+    let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::reconcile_native_output", input = %output.display()).entered();
     let receipt_path = caller_output_receipt_path(output).ok()?;
     let bytes = fs::read(&receipt_path).ok()?;
     let record: OvenDirectRustcOutputRecord = serde_json::from_slice(&bytes).ok()?;

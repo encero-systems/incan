@@ -637,6 +637,8 @@ impl Current {
         manifest: &toml::Value,
         report: &mut NativeLoafConsumerReport,
     ) -> Result<bool> {
+        let _trace =
+            tracing::trace_span!(target: "incan::invocation", "oven_rustc::reconcile_native_link_closure").entered();
         let proc_macro = manifest
             .get("rust")
             .and_then(|rust| rust.get("type"))
@@ -679,6 +681,7 @@ impl Current {
         record: &super::NativeLoafRecord,
         manifest: &toml::Value,
     ) -> Result<bool> {
+        let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::reconcile_local_native_dependencies", input = %record.source.loaf).entered();
         let demands = current_inputs::local_dependency_demands(manifest, &record.source.features)
             .map_err(NativeLoafError::Failed)?;
         if demands.len() != record.dependencies.len() {
@@ -814,6 +817,7 @@ impl Current {
 
     /// Compare a selected local unit to its current explicit graph facet using the existing producer mapping.
     fn matches_local(&mut self, source: &super::NativeLoafSource, manifest: &toml::Value) -> Result<bool> {
+        let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::reconcile_local_native_source", input = %source.loaf).entered();
         self.read_local_declarations()?;
         let mut found = 0;
         for (facet, declaration) in self.graph.facets.iter().zip(

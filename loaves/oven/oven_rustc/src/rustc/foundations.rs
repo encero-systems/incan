@@ -396,6 +396,7 @@ pub(super) fn verified_regular_file(path: &Path, kind: &'static str) -> Result<P
 /// Persistent acceleration is bound to the exact held file's replacement-sensitive metadata. This does not replace
 /// receipt, ownership or invocation-input validation at the caller.
 pub(super) fn digest_regular_file(path: &Path, kind: &'static str) -> Result<String, OvenRustcError> {
+    let _trace = tracing::trace_span!(target: "incan::invocation", "oven_rustc::digest_native_file", input = %path.display(), kind).entered();
     let path = verified_regular_file(path, kind)?;
     let (_, digest) = oven_store::store::digest_regular_file(&path)?;
     Ok(digest)
