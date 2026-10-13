@@ -4765,7 +4765,7 @@ def debug_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -
                         place = scalar_place(builder, read.place, span)?
                         match place_type(builder.locals, place):
                             PlanType.Model(_owner, _name) => return debug_model_operand(builder, value, span)
-                            PlanType.Enum(owner, _name) => return debug_union_operand(builder, place, owner, span)
+                            PlanType.Enum(owner, _name) => return debug_enum_operand(builder, place, owner, span)
                             _ => pass
                     Some(_global) => pass
         _ => pass
@@ -4948,12 +4948,17 @@ pub def display_plan_value(
     return Ok(result)
 
 
-def debug_union_operand(mut builder: Builder, place: Place, owner: int, span: SourceSpan) -> Result[Place, str]:
-    """Render a union through its member-delegating Debug on a copy; other enums keep their named refusal."""
-    if not is_union_carrier(builder, owner):
-        return Err("unsupported Body IR nonmodel FormatStyle.Debug")
-    copied = clone_nominal_operand(builder, place, span)?
-    return debug_plan_operand(builder, copied, span)
+def debug_enum_operand(mut builder: Builder, place: Place, owner: int, span: SourceSpan) -> Result[Place, str]:
+    """Render unions through member Debug and checked text Options through native Some/None Debug on a clone."""
+    if is_union_carrier(builder, owner):
+        copied = clone_nominal_operand(builder, place, span)?
+        return debug_plan_operand(builder, copied, span)
+    if owner >= len(builder.enums) and owner < len(builder.enums) + len(builder.intrinsics):
+        declaration = builder.intrinsics[owner - len(builder.enums)]
+        if declaration.carrier == "Option" and declaration.variants[1].fields == [PlanType.String]:
+            copied = carrier_payload_value(builder, place, span)?
+            return debug_plan_operand(builder, copied, span)
+    return Err("unsupported Body IR nonmodel FormatStyle.Debug")
 
 
 def debug_plan_operand(mut builder: Builder, operand: Operand, span: SourceSpan) -> Result[Place, str]:
