@@ -65,7 +65,7 @@ pub def value_method_owner(
     unions: list[RustType],
     intrinsics: list[NativeEnumDeclaration],
 ) -> Result[Option[int], str]:
-    """Admit the checker-generated value getter only for its exact retained receiver owner."""
+    """Admit the getter under its owner's span; independently declared methods retain their canonical body path."""
     index = receiver_layout(module, locals, argument, span, unions, intrinsics)?
     if index < 0 or index >= len(module.enum_declarations):
         return Ok(None)
@@ -74,6 +74,11 @@ pub def value_method_owner(
         if module.enum_declarations[index].canonical != declaration.canonical:
             continue
         validate_layout(module.enum_declarations[index], declaration)?
+        match target.canonical:
+            Some(identity) =>
+                if identity.declaration_span != declaration.canonical.declaration_span:
+                    return Ok(None)
+            None => pass
         validate_getter(declaration, target)?
         return Ok(Some(owner))
     return Ok(None)
@@ -137,7 +142,15 @@ def receiver_layout(
     """Read the enum carrier from the receiver place; other carriers keep their ordinary method path."""
     match argument.as_one():
         Some(RustOperand.Place(read)) =>
-            source = model_place(module.nominal_declarations, locals, read.place, span, module.enum_declarations, unions, intrinsics)?
+            source = model_place(
+                module.nominal_declarations,
+                locals,
+                read.place,
+                span,
+                module.enum_declarations,
+                unions,
+                intrinsics,
+            )?
             match place_type(locals, source):
                 PlanType.Enum(index, _name) => return Ok(index)
                 _ => pass
