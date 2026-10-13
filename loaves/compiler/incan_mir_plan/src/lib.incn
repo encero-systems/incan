@@ -756,7 +756,7 @@ pub def consuming_closure_example(file: str, output_function: str) -> Plan:
         ), block([], TerminatorKind.Return, location)],
         span=location,
     )
-    model = ModelDeclaration(
+    capture_declaration = ModelDeclaration(
         name="OwnedCapture",
         public=false,
         fields=[Parameter(name="value", ty=PlanType.Int, span=location)],
@@ -767,9 +767,12 @@ pub def consuming_closure_example(file: str, output_function: str) -> Plan:
     output = ExternalFunction(path=output_function, parameters=[PlanType.Int], return_type=PlanType.Unit, span=location)
     return Plan(
         enums=[],
-        models=[model],
+        models=[capture_declaration],
         functions=[lifted, consuming_fixture_constructor(location, capture, closure), consuming_fixture_entry(
-            location, capture, closure, output_function,
+            location,
+            capture,
+            closure,
+            output_function,
         )],
         externals=[output],
         span=location,
@@ -783,11 +786,17 @@ def consuming_fixture_constructor(location: SourceSpan, capture: PlanType, closu
         parameters=[Parameter(name="capture", ty=capture, span=location)],
         return_type=closure,
         locals=[Local(ty=closure, span=location), Local(ty=capture, span=location)],
-        blocks=[block([], TerminatorKind.Call(
-            Callee(kind=CalleeKind.ClosureBodyOnce("consume_capture", 1), span=location),
-            [Operand(kind=OperandKind.Move(place(1, location)), span=location)],
-            place(0, location), 1, Unwind.Continue,
-        ), location), block([], TerminatorKind.Return, location)],
+        blocks=[block(
+            [],
+            TerminatorKind.Call(
+                Callee(kind=CalleeKind.ClosureBodyOnce("consume_capture", 1), span=location),
+                [Operand(kind=OperandKind.Move(place(1, location)), span=location)],
+                place(0, location),
+                1,
+                Unwind.Continue,
+            ),
+            location,
+        ), block([], TerminatorKind.Return, location)],
         span=location,
     )
 
@@ -799,24 +808,48 @@ def consuming_fixture_entry(location: SourceSpan, capture: PlanType, closure: Pl
         parameters=[],
         return_type=PlanType.Unit,
         locals=[Local(ty=PlanType.Unit, span=location), Local(ty=capture, span=location), Local(
-            ty=closure, span=location,
+            ty=closure,
+            span=location,
         ), Local(ty=PlanType.CallableArguments([]), span=location), Local(ty=PlanType.Int, span=location)],
         blocks=[block(
             [assign(place(1, location), RvalueKind.Model(0, [integer(42, location)]), location)],
-            TerminatorKind.Call(Callee(kind=CalleeKind.Planned("capture_new"), span=location),
+            TerminatorKind.Call(
+                Callee(kind=CalleeKind.Planned("capture_new"), span=location),
                 [Operand(kind=OperandKind.Move(place(1, location)), span=location)],
-                place(2, location), 1, Unwind.Continue),
+                place(2, location),
+                1,
+                Unwind.Continue,
+            ),
             location,
         ), block(
             [assign(place(3, location), RvalueKind.Tuple([]), location)],
-            TerminatorKind.Call(Callee(kind=CalleeKind.CallClosureOnce([PlanType.Int]), span=location),
+            TerminatorKind.Call(
+                Callee(kind=CalleeKind.CallClosureOnce([PlanType.Int]), span=location),
                 [Operand(kind=OperandKind.Move(place(2, location)), span=location), Operand(
-                    kind=OperandKind.Move(place(3, location)), span=location,
-                )], place(4, location), 2, Unwind.Continue),
+                    kind=OperandKind.Move(place(3, location)),
+                    span=location,
+                )],
+                place(4, location),
+                2,
+                Unwind.Continue,
+            ),
             location,
-        ), block([], TerminatorKind.Call(Callee(kind=CalleeKind.External(output), span=location),
-            [copy(4, location)], place(0, location), 3, Unwind.Continue), location), block(
-            [assign(place(0, location), RvalueKind.Use(Operand(kind=OperandKind.Literal(Constant.Unit), span=location)), location)],
+        ), block(
+            [],
+            TerminatorKind.Call(
+                Callee(kind=CalleeKind.External(output), span=location),
+                [copy(4, location)],
+                place(0, location),
+                3,
+                Unwind.Continue,
+            ),
+            location,
+        ), block(
+            [assign(
+                place(0, location),
+                RvalueKind.Use(Operand(kind=OperandKind.Literal(Constant.Unit), span=location)),
+                location,
+            )],
             TerminatorKind.Return,
             location,
         )],
