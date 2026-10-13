@@ -52,7 +52,7 @@ fn published_generic_declarations_reach_owned_next_stages() -> Result<(), Box<dy
             "codegen_dependencies",
             "implied_generic_supertrait_adoption",
             "refused",
-            "unsupported Body IR type Catalog[int]",
+            "unsupported Body IR type Catalog[int] in first frame local 0",
         ),
         (
             "lowering_dependencies",
