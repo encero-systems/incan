@@ -199,6 +199,7 @@ fn nominal(type_info: &TypeCheckInfo, name: &str) -> Option<bir::NominalDeclarat
         field_types: Vec::<IncanType>::new(),
         field_public: Vec::new(),
         field_aliases: Vec::new(),
+        reflection_fields: None,
         public: true,
         has_field_defaults: false,
         field_default_body: None,
