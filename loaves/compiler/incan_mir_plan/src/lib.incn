@@ -460,6 +460,8 @@ pub enum CalleeKind:
     StaticStore(int)
     # Run computed static slot `n`'s initializer unless it has already run, keeping the value in its storage.
     StaticForce(int)
+    # Call the selected planned method while holding computed slot n's actual shared or exclusive storage guard.
+    StaticMethod(int, str)
 
 
 @derive(Clone, PartialEq)

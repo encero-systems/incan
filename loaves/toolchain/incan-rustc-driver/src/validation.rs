@@ -1598,6 +1598,18 @@ fn signature(plan: &Plan, function: &Function, callee: &Callee) -> Result<(Vec<S
             crate::statics::cell(plan, *slot)?;
             Ok((Vec::new(), Scalar::Unit))
         }
+        CalleeKind::StaticMethod(slot, name) => {
+            let method = crate::statics::method_target(plan, *slot, name)?;
+            Ok((
+                method
+                    .parameters
+                    .iter()
+                    .skip(1)
+                    .map(|parameter| scalar(&parameter.ty))
+                    .collect(),
+                scalar(&method.return_type),
+            ))
+        }
         CalleeKind::Planned(name) => {
             let function = plan
                 .functions

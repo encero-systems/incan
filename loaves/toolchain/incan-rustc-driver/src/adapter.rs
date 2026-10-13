@@ -208,6 +208,10 @@ impl rustc_driver::Callbacks for Callbacks {
                 Err(error) => compiler.sess.dcx().fatal(error.to_string()),
             };
             krate.items.extend(crate::statics::items(cell, span));
+            match crate::statics::method_items(&self.plan, cell, span) {
+                Ok(items) => krate.items.extend(items),
+                Err(error) => compiler.sess.dcx().fatal(error.to_string()),
+            }
         }
         let mut roots: BTreeSet<_> = self
             .plan

@@ -3,15 +3,153 @@
 //! Legacy declares a computed static as `static S: LazyLock<StaticCell<T>> = LazyLock::new(|| StaticCell::new(init))`
 //! (RFC 052): the value is computed once, by whichever comes first of the module's declaration-order forcing and a
 //! read, and lives behind a read-write lock. The adapter declares the same lazily initialized, lock-guarded storage,
-//! `LazyLock<RwLock<T>>`, initialized by the static's planned initializer function, together with three accessors:
-//! load returns a clone of the current value, store replaces it, and force initializes it unless it already is. The
-//! storage and accessors keep rustc's own MIR; only the initializer is a planned body.
+//! `LazyLock<RwLock<T>>`, initialized by the static's planned initializer function, together with load/store/force
+//! accessors and guarded method accessors. Load returns a clone of the current value, store replaces it, and force
+//! initializes it unless it already is. A guarded accessor holds the actual storage lock throughout the selected
+//! planned method call. The storage and accessors keep rustc's own MIR; only initializers and selected methods are
+//! planned bodies.
 
-use crate::plan::StaticCell;
+use crate::plan::{CalleeKind, Function, PlanType, StaticCell, TerminatorKind};
 use crate::{declarations, error::PlanError, plan::Plan};
 use rustc_ast as ast;
 use rustc_span::{Ident, Span, Symbol};
+use std::collections::BTreeSet;
 use thin_vec::{ThinVec, thin_vec};
+
+/// Name the guarded accessor for one exact storage slot and selected planned method.
+pub(crate) fn method_name(slot: i64, method: &str) -> String {
+    format!("__incan_static_method_{slot}_{method}")
+}
+
+/// Require the selected method's receiver to borrow exactly this cell's model carrier and its result to outlive the
+/// storage guard. The same signature controls adapter declaration and plan validation.
+pub(crate) fn method_target<'plan>(plan: &'plan Plan, slot: i64, name: &str) -> Result<&'plan Function, PlanError> {
+    let cell = cell(plan, slot)?;
+    let method = plan
+        .functions
+        .iter()
+        .find(|method| method.name == name)
+        .ok_or_else(|| PlanError::UnknownCallee(name.into()))?;
+    let receiver = method.parameters.first().ok_or_else(|| PlanError::Invalid {
+        function: name.into(),
+        reason: "unsupported static method without receiver".into(),
+    })?;
+    let carrier = match &receiver.ty {
+        PlanType::ModelRef(owner, name) | PlanType::ModelMutRef(owner, name) => PlanType::Model(*owner, name.clone()),
+        _ => {
+            return Err(PlanError::Invalid {
+                function: method.name.clone(),
+                reason: "unsupported static method receiver".into(),
+            });
+        }
+    };
+    if cell.ty != carrier
+        || !matches!(
+            method.return_type,
+            PlanType::Int
+                | PlanType::Float
+                | PlanType::Bool
+                | PlanType::Unit
+                | PlanType::String
+                | PlanType::FunctionPointer(_)
+        )
+    {
+        return Err(PlanError::Invalid {
+            function: method.name.clone(),
+            reason: "unsupported static method carrier or escaping result".into(),
+        });
+    }
+    Ok(method)
+}
+
+/// Declare each selected guarded method once. Caller arguments are evaluated before this accessor acquires its guard;
+/// mutation, panic poisoning and guard release then follow the legacy StaticCell call shape.
+pub(crate) fn method_items(plan: &Plan, cell: &StaticCell, span: Span) -> Result<Vec<Box<ast::Item>>, PlanError> {
+    let names = plan
+        .functions
+        .iter()
+        .flat_map(|function| &function.blocks)
+        .filter_map(|block| match &block.terminator.kind {
+            TerminatorKind::Call(callee, ..) => match &callee.kind {
+                CalleeKind::StaticMethod(slot, name) if *slot == cell.slot => Some(name.as_str()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>();
+    names
+        .into_iter()
+        .map(|name| guarded_method_item(cell.slot, method_target(plan, cell.slot, name)?, span))
+        .collect()
+}
+
+/// Emit a normal Rust body that keeps the actual read/write guard alive throughout the selected planned method call.
+/// Only the selected method's body is replaced with planned MIR.
+fn guarded_method_item(slot: i64, method: &Function, span: Span) -> Result<Box<ast::Item>, PlanError> {
+    // ---- Parameters: the selected method's ordinary inputs ----
+    let receiver = method
+        .parameters
+        .first()
+        .ok_or_else(|| PlanError::UnknownCallee(method.name.clone()))?;
+    let mutable = matches!(receiver.ty, PlanType::ModelMutRef(..));
+    let names = method
+        .parameters
+        .iter()
+        .skip(1)
+        .enumerate()
+        .map(|(index, _)| format!("__incan_arg_{index}"))
+        .collect::<Vec<_>>();
+    let parameters = names
+        .iter()
+        .zip(method.parameters.iter().skip(1))
+        .map(|(name, parameter)| (name.as_str(), declarations::ty(&parameter.ty, span)))
+        .collect();
+
+    // ---- Storage: the actual shared or exclusive guard ----
+    let lock = expression(
+        ast::ExprKind::AddrOf(
+            ast::BorrowKind::Ref,
+            ast::Mutability::Not,
+            deref(path_expr(&[storage_name(slot).as_str()], false, span), span),
+        ),
+        span,
+    );
+    let guard = call(
+        &["std", "result", "Result", "unwrap_or_else"],
+        vec![
+            call(
+                &["std", "sync", "RwLock", if mutable { "write" } else { "read" }],
+                vec![lock],
+                span,
+            ),
+            path_expr(&["std", "sync", "PoisonError", "into_inner"], true, span),
+        ],
+        span,
+    );
+    let reference = expression(
+        ast::ExprKind::AddrOf(
+            ast::BorrowKind::Ref,
+            if mutable {
+                ast::Mutability::Mut
+            } else {
+                ast::Mutability::Not
+            },
+            deref(guard, span),
+        ),
+        span,
+    );
+
+    // ---- Dispatch: keep the guard alive through the complete call ----
+    let mut arguments = vec![reference];
+    arguments.extend(names.iter().map(|name| path_expr(&[name.as_str()], false, span)));
+    Ok(function(
+        &method_name(slot, &method.name),
+        parameters,
+        Some(declarations::ty(&method.return_type, span)),
+        vec![tail(call_local(&method.name, arguments, span), span)],
+        span,
+    ))
+}
 
 /// Name the static item that stores slot `slot`.
 fn storage_name(slot: i64) -> String {

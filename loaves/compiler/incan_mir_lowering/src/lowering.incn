@@ -2817,6 +2817,8 @@ def lower_method_call(
         return Err("invalid Body IR Method missing receiver")
     if lower_reflection(builder, target, arguments, destination, span)?:
         return Ok(None)
+    if lower_global_method(module, builder, target, arguments, destination, span)?:
+        return Ok(None)
     if lower_standard_slot(module, builder, target, arguments, destination, span)?:
         return Ok(None)
     # A list or dictionary element receiver is reborrowed in its container; no native place names it.
@@ -2901,6 +2903,20 @@ def call_method_body(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Call the selected method body with its already borrowed receiver and the bound ordinary arguments."""
+    body = instantiated_method_body(module, builder, target, index)?
+    ordinary = method_ordinary_operands(module, builder, target, arguments, body, span)?
+    mut operands = [read_place(reference, true, span)]
+    operands.extend(ordinary)
+    return emit_local_call(module, builder, body, operands, destination, span)
+
+
+def instantiated_method_body(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    index: int,
+) -> Result[RustBody, str]:
+    """Close only the selected method's retained parameters and queue its exact executable instance."""
     mut body = module.bodies[index].clone()
     if len(body.type_parameters) != 0:
         closed = checked_type_arguments(builder, target.type_args)?
@@ -2909,6 +2925,18 @@ def call_method_body(
     else:
         if len(target.type_args) != 0:
             return Err("unsupported Body IR type arguments on a method without type parameters")
+    return Ok(body)
+
+
+def method_ordinary_operands(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    body: &RustBody,
+    span: SourceSpan,
+) -> Result[list[Operand], str]:
+    """Bind the ordinary slots once, excluding the method's separately prepared receiver."""
     mut types: list[PlanType] = []
     for position in range(1, len(body.params)):
         types.append(call_parameter_type(builder, body, body.params[position])?)
@@ -2918,10 +2946,75 @@ def call_method_body(
             ordinary = values
         None =>
             ordinary = ordered_slot_operands(builder, target.binding, arguments, types, span, 1)?
-    mut operands = [read_place(reference, true, span)]
-    for operand in ordinary:
-        operands.append(operand)
-    return emit_local_call(module, builder, body, operands, destination, span)
+    return Ok(ordinary)
+
+
+def lower_global_method(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Call a computed model static's selected method under its actual storage lock, preserving mutation and unwinding rather than copying a receiver out of storage."""
+    match arguments[0].as_one():
+        Some(RustOperand.Place(read)) =>
+            match read.place.global():
+                Some(global) =>
+                    _ = lower_static_method_body(module, builder, target, read, global, arguments, destination, span)?
+                    return Ok(true)
+                None => return Ok(false)
+        _ => return Ok(false)
+
+
+def lower_static_method_body(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    read: &RustPlaceOperand,
+    global: &RustGlobalPlace,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Validate canonical storage, selected receiver passing and a nonescaping result before calling under its guard."""
+    if len(read.place.projection) != 0:
+        return Err("unsupported Body IR projected global method receiver")
+    slot = static_slot(builder.statics, global)?
+    if not is_computed_static(builder.statics[slot]):
+        return Err("unsupported Body IR noncomputed global method receiver")
+    owner = native_source_type(builder.nominals, builder.enums, builder.unions, global.ty, builder.intrinsics)?
+    match owner:
+        PlanType.Model(_owner, _name) => pass
+        _ => return Err("unsupported Body IR nonmodel global method receiver")
+    index = owner_method_index(module, target, owner, builder.intrinsics)?
+    body = instantiated_method_body(module, builder, target, index)?
+    receiver = frame_type(module, body.locals[0], builder.intrinsics)?
+    match receiver:
+        PlanType.ModelMutRef(_owner, _name) =>
+            if read.fact != OwnershipFact.MutBorrow:
+                return Err("unsupported Body IR global method without checked mutable receiver")
+        PlanType.ModelRef(_owner, _name) =>
+            if read.fact != OwnershipFact.Borrow:
+                return Err("unsupported Body IR global method without checked shared receiver")
+        _ => return Err("unsupported Body IR global method receiver frame")
+    declared_result = native_source_type(
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        body.return_type,
+        builder.intrinsics,
+    )?
+    result = return_representation(body, declared_result)?
+    match result:
+        (PlanType.Int | PlanType.Float | PlanType.Bool | PlanType.Unit | PlanType.String | PlanType.FunctionPointer(_)) =>
+            pass
+        _ => return Err("unsupported Body IR global method borrowed or unproven result")
+    operands = method_ordinary_operands(module, builder, target, arguments, body, span)?
+    initialize_module_statics(builder, static_owner(builder.statics[slot]), span)
+    callee = CalleeKind.StaticMethod(slot, function_name(module, body))
+    return emit_selected_body_call(builder, body, callee, operands, destination, span)
 
 
 def lower_library_method(
@@ -3261,6 +3354,19 @@ def emit_local_call(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Emit a previously validated local call, sharing owned-result replacement between functions and methods."""
+    callee = CalleeKind.Planned(function_name(module, body))
+    return emit_selected_body_call(builder, body, callee, operands, destination, span)
+
+
+def emit_selected_body_call(
+    mut builder: Builder,
+    body: &RustBody,
+    callee: CalleeKind,
+    operands: list[Operand],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Preserve the selected body's result carrier and unwind cleanup for direct and guarded static calls."""
     mut output = plan_place(0, span)
     match destination:
         Some(place) =>
@@ -3273,14 +3379,7 @@ def emit_local_call(
             )
     declared = native_source_type(builder.nominals, builder.enums, builder.unions, body.return_type, builder.intrinsics)?
     result_type = return_representation(body, declared)?
-    return lower_callable_result(
-        builder,
-        CalleeKind.Planned(function_name(module, body)),
-        operands,
-        output,
-        result_type,
-        span,
-    )
+    return lower_callable_result(builder, callee, operands, output, result_type, span)
 
 
 pub def lower_callable_result(

@@ -27,6 +27,7 @@ pub fn resolve(tcx: TyCtxt<'_>, callee: &Callee) -> Result<DefId, PlanError> {
         CalleeKind::StaticLoad(slot) => planned(tcx, &crate::statics::load_name(*slot)),
         CalleeKind::StaticStore(slot) => planned(tcx, &crate::statics::store_name(*slot)),
         CalleeKind::StaticForce(slot) => planned(tcx, &crate::statics::force_name(*slot)),
+        CalleeKind::StaticMethod(slot, method) => planned(tcx, &crate::statics::method_name(*slot, method)),
     }
 }
 
