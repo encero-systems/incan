@@ -6240,6 +6240,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/text_codecs.rs": {
+      "disposition": "keep",
+      "notes": "Builtin codec slots and registry defaults retained in Body IR; source-owned members keep their own contract.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/trait_placeholders.rs": {
       "disposition": "keep",
       "notes": "Documented trait placeholders retain interface-only context, while real default bodies and unit no-ops remain executable.",
@@ -6250,7 +6258,7 @@
     },
     "loaves/compiler/incan_frontend/src/body_ir/tests/web_path.rs": {
       "disposition": "keep",
-      "notes": "Canonical web Path tuple storage and filesystem Path exclusion; frontend-only contract coverage.",
+      "notes": "Authenticated canonical native web Path tuple storage and independent filesystem Path ownership retained in Body IR; frontend-only contract coverage.",
       "owner": 1337,
       "split_required": false,
       "split_target": "",

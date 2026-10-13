@@ -12,12 +12,11 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 4158 | 270 | 431 |
+| keep | 4160 | 271 | 431 |
 | re-point | 1487 | 91 | 1058 |
 | retire | 1507 | 153 | 0 |
 | unaffected | 1977 | 212 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **unclassified** | 2 | 1 | 0 |
 | **Total** | **9131** | **727** | **1494** |
 
 - Retire-class tests: 1507, of which twinned 1022, dies 295, open 190 (neither yet).
@@ -1834,7 +1833,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
 
-### `loaves/compiler/incan_frontend` (2465 tests in 146 files: keep 2450, unaffected 13, unclassified 2)
+### `loaves/compiler/incan_frontend` (2465 tests in 146 files: keep 2452, unaffected 13)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -1874,9 +1873,9 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_frontend/src/body_ir/tests/result_callbacks.rs` | 5 | 90 | 90 | keep | - | - | - | #1337 | - | Contextual Result callback parameter and settled constructor channels retained in Body IR; frontend-only contract coverage. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/returned_callables.rs` | 1 | 39 | 39 | keep | - | - | - | #1337 | - | Checked callable expression values and evaluation order retained in Body IR; frontend-only contract coverage. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/static_storage.rs` | 5 | 179 | 179 | keep | - | - | - | #1337 | - | Canonical static storage and live versus detached local storage bindings; frontend-only contract coverage. |
-| `loaves/compiler/incan_frontend/src/body_ir/tests/text_codecs.rs` | 2 | 59 | 59 | **unclassified** | - | - | - | - | - | no row in dispositions.json |
+| `loaves/compiler/incan_frontend/src/body_ir/tests/text_codecs.rs` | 2 | 59 | 59 | keep | - | - | - | #1337 | - | Builtin codec slots and registry defaults retained in Body IR; source-owned members keep their own contract. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/trait_placeholders.rs` | 2 | 49 | 49 | keep | - | - | - | #1337 | - | Documented trait placeholders retain interface-only context, while real default bodies and unit no-ops remain executable. |
-| `loaves/compiler/incan_frontend/src/body_ir/tests/web_path.rs` | 2 | 45 | 45 | keep | - | - | - | #1337 | checker 2, parser 2 | Canonical web Path tuple storage and filesystem Path exclusion; frontend-only contract coverage. |
+| `loaves/compiler/incan_frontend/src/body_ir/tests/web_path.rs` | 2 | 45 | 45 | keep | - | - | - | #1337 | checker 2, parser 2 | Authenticated canonical native web Path tuple storage and independent filesystem Path ownership retained in Body IR; frontend-only contract coverage. |
 | `loaves/compiler/incan_frontend/src/compiler_stack.rs` | 3 | 113 | 41 | keep | - | - | - | #1561 | - | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/contract_metadata.rs` | 5 | 517 | 89 | keep | - | - | - | #1561 | parser 2, formatter 3 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/executable_resolution/tests.rs` | 5 | 274 | 274 | keep | - | - | - | #1337 | replacement 5, checker 5, parser 5 | Selected package executable closures retain active SDK context, coverage and digest checks, reject disabled providers and refuse conflicting package instances. |
