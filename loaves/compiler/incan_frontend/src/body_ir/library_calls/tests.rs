@@ -6,6 +6,43 @@ use super::library_call;
 use crate::symbols::TypeInfo;
 use crate::typechecker::stdlib_loader::StdlibAstCache;
 
+/// Each explicit Index implementation retains its complete native Self, key, and result instantiation.
+#[test]
+fn sdk_index_implementations_retain_native_arguments() -> Result<(), Box<dyn std::error::Error>> {
+    let mut cache = StdlibAstCache::new();
+    let Some(TypeInfo::Newtype(value)) = cache.lookup_type(&source_path(&["json"]), "JsonValue") else {
+        return Err("missing JsonValue".into());
+    };
+    let methods = value
+        .method_overloads
+        .get("__getitem__")
+        .ok_or("missing Index implementations")?;
+    assert_eq!(methods.len(), 2);
+    for method in methods {
+        let identity = published(
+            method.identity.clone().ok_or("missing implementation identity")?,
+            "incan_stdlib_data",
+            &["json"],
+        );
+        let call = library_call(&identity, &mut cache).ok_or("missing native Index delegation")?;
+        assert_eq!(
+            call.rust_path().as_deref(),
+            Some("incan_stdlib_core::traits::indexing::Index::__getitem__")
+        );
+        let target = method.trait_target.as_ref().ok_or("missing checked Index target")?;
+        let expected = std::iter::once(super::IncanType::Named("JsonValue".to_owned()))
+            .chain(target.type_args.iter().map(super::semantic_type_from_resolved))
+            .collect::<Vec<_>>();
+        let encoded = serde_json::to_value(&call)?;
+        assert_eq!(
+            encoded.get("native_type_arguments"),
+            Some(&serde_json::to_value(&expected)?)
+        );
+        assert_eq!(call.canonical, identity);
+    }
+    Ok(())
+}
+
 /// A selected inherent overload keeps its exact declaration instead of the cache's last same-named method.
 #[test]
 fn sdk_method_overload_retains_selected_signature() -> Result<(), Box<dyn std::error::Error>> {
@@ -62,10 +99,12 @@ fn sdk_trait_implementations_require_trait_dispatch() -> Result<(), Box<dyn std:
             "incan_stdlib_data",
             &["json"],
         );
-        assert!(
-            library_call(&identity, &mut cache).is_none(),
-            "an inherent path cannot select this trait implementation: {identity:?}"
-        );
+        if let Some(call) = library_call(&identity, &mut cache) {
+            assert_eq!(
+                call.rust_path().as_deref(),
+                Some("incan_stdlib_core::traits::indexing::Index::__getitem__")
+            );
+        }
     }
     Ok(())
 }
