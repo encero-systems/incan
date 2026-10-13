@@ -15700,12 +15700,8 @@ fn carrier_receiver_default_order_output_matches_legacy() -> Result<(), Box<dyn 
 model Holder:
     value: Option[str]
 
-def reset_option(mut value: Option[str]) -> str:
-    value = Some("option-new")
-    return "fallback"
-
-def reset_result(mut value: Result[str, str]) -> str:
-    value = Ok("result-new")
+def default_value(mut events: list[str]) -> str:
+    events.append("default")
     return "fallback"
 
 def reset_holder(mut holder: Holder) -> str:
@@ -15716,29 +15712,31 @@ def reset_static() -> str:
     SHARED = Some("static-new")
     return "fallback"
 
-def choose_option(mut value: Option[str]) -> str:
-    first = value.unwrap_or(reset_option(value))
+def choose_option(mut value: Option[str], mut events: list[str]) -> str:
+    first = value.unwrap_or(default_value(events))
     return f"{first}/{value.unwrap()}"
 
-def choose_result(mut value: Result[str, str]) -> str:
-    first = value.unwrap_or(reset_result(value))
+def choose_result(mut value: Result[str, str], mut events: list[str]) -> str:
+    first = value.unwrap_or(default_value(events))
     return f"{first}/{value.unwrap()}"
 
 def main() -> None:
     mut option: Option[str] = Some("option-old")
     mut result: Result[str, str] = Ok("result-old")
-    println(choose_option(option))
+    mut events: list[str] = []
+    println(choose_option(option, events))
     println(option.unwrap())
-    println(choose_result(result))
+    println(choose_result(result, events))
     println(result.unwrap())
     mut local: Option[str] = Some("local-old")
-    println(local.unwrap_or(reset_option(local)))
+    println(local.unwrap_or(default_value(events)))
     println(local.unwrap())
     mut holder = Holder(value=Some("field-old"))
     println(holder.value.unwrap_or(reset_holder(holder)))
     println(holder.value.unwrap())
     println(SHARED.unwrap_or(reset_static()))
     println(SHARED.unwrap())
+    println(len(events))
 "#,
     )
 }
