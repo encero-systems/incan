@@ -11112,7 +11112,8 @@ fn stdlib_frozen_metadata_iteration_reaches_dispatch_frontier() -> Result<(), Bo
     Ok(())
 }
 
-/// The web Path parameter keeps Axum storage even when the called function only reads Query's payload.
+/// The web Path parameter keeps Axum storage. Plain payloads have live legacy parity; the original derived handler
+/// additionally keeps its recorded output while legacy's standalone serde and inventory roots remain unavailable.
 #[test]
 fn stdlib_web_path_payload_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
@@ -11121,9 +11122,14 @@ fn stdlib_web_path_payload_output_matches_legacy() -> Result<(), Box<dyn std::er
         &fixture.scratch("stdlib-web-path-payload")?,
         &fixture.sysroot,
         &fixture.formatting,
+        "from std.web import Path, Query\n\nmodel Search:\n    q: str\n\ndef snapshot(id: Path[int], query: Query[Search]) -> str:\n    return query.value.q\n\ndef search_text(query: Query[Search]) -> str:\n    return query.value.q\n\ndef main() -> None:\n    println(search_text(Query(Search(q=\"incan\"))))\n",
+    )?;
+    check_native_case(
+        "stdlib-web-path-original",
         include_str!(
             "../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/web_extractor_value_reads_the_payload.incn"
         ),
+        b"incan\n",
     )
 }
 
