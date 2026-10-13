@@ -165,15 +165,9 @@ fn retain_checked_nominal_names(ty: IncanType, facts: &TypeCheckInfo) -> IncanTy
                 .declarations
                 .named_type_identities
                 .get(&name)
-                .or_else(|| facts.declarations.body_ir_native_type_identities.get(&name))
                 .map_or(name.clone(), |identity| identity.declaration_name.clone()),
         ),
         IncanType::Generic { base, args } => {
-            let base = facts
-                .declarations
-                .body_ir_native_type_identities
-                .get(&base)
-                .map_or(base.clone(), |owner| owner.declaration_name.clone());
             let mut args: Vec<_> = args
                 .into_iter()
                 .map(|ty| retain_checked_nominal_names(ty, facts))

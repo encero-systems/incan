@@ -1175,12 +1175,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     .get(&(span.start, span.end))
             })
             .or_else(|| self.type_info.expr_type(span))
-            .or_else(|| {
-                self.type_info
-                    .calls
-                    .body_ir_native_argument_types
-                    .get(&(span.start, span.end))
-            })
             .map(|ty| self.checked_type(ty))
             .unwrap_or(IncanType::Unknown);
         if self.leaves_type_open(&checked)
@@ -1508,17 +1502,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// spelling lookup. Checked union member reads carry an explicit payload projection while the local retains its
     /// storage type. Only a genuinely unproven reference may use the legacy `External` recovery local.
     fn place_for_name(&mut self, name: &str, span: ast::Span, ty: &IncanType) -> Option<bir::Place> {
-        if let Some(identity) = self
-            .type_info
-            .resolved_identity(span)
-            .or_else(|| {
-                self.type_info
-                    .calls
-                    .body_ir_native_argument_identities
-                    .get(&(span.start, span.end))
-            })
-            .cloned()
-        {
+        if let Some(identity) = self.type_info.resolved_identity(span).cloned() {
             if let Some(&id) = self.identity_bindings.get(&identity) {
                 if let Some(global) = self.static_aliases.get(&id) {
                     return Some(bir::Place::from_global(global.clone()));

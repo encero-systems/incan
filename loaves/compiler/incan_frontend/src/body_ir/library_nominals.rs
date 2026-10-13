@@ -189,14 +189,9 @@ pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::NominalDeclaration>
         })
         .chain(super::runtime_nominals::collect(type_info))
         .collect::<Vec<_>>();
-    let native_owners = type_info
-        .declarations
-        .body_ir_native_type_identities
-        .values()
-        .collect::<BTreeSet<_>>();
-    for identity in native_owners {
-        if uses_native_carrier(type_info, &identity.declaration_name)
-            && let Some(declaration) = bir::native_carrier_nominal(identity)
+    for (name, identity) in &type_info.declarations.body_ir_native_type_identities {
+        if uses_native_carrier(type_info, name)
+            && let Some(declaration) = bir::native_builtin_nominal(identity)
         {
             declarations.push(declaration);
         }
@@ -216,10 +211,7 @@ fn uses_native_carrier(type_info: &TypeCheckInfo, name: &str) -> bool {
     });
     type_info.expressions.expr_types.values().chain(signatures).any(|ty| {
         let mut names = BTreeSet::new();
-        super::library_calls::named_leaves(
-            &super::parameter_types::checked_semantic_type(ty, type_info),
-            &mut names,
-        );
+        super::library_calls::named_leaves(&semantic_type_from_resolved(ty), &mut names);
         names.contains(name)
     })
 }
@@ -264,7 +256,6 @@ fn library_newtype(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> 
     Some(bir::NominalDeclaration {
         native_item: String::new(),
         class_inheritance: None,
-        native_type_arguments: Vec::new(),
         direct_declaration_id: CompilerNodeId::declaration_span(
             &module,
             identity.declaration_span.start,
@@ -331,7 +322,6 @@ fn library_nominal(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> 
     Some(bir::NominalDeclaration {
         native_item: bir::native_nominal_item(identity).unwrap_or_default(),
         class_inheritance: None,
-        native_type_arguments: Vec::new(),
         direct_declaration_id: CompilerNodeId::declaration_span(
             &module,
             identity.declaration_span.start,

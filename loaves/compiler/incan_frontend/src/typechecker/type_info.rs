@@ -1530,15 +1530,6 @@ pub struct CallArtifacts {
     pub body_ir_constructor_types: HashMap<(usize, usize), ResolvedType>,
     /// Executable call results under the same retained argument binding, consumed only by Body IR.
     pub body_ir_call_result_types: HashMap<(usize, usize), ResolvedType>,
-    /// Body IR-only tuple constructor facts selected by an active std.web surface binding. Legacy keeps its existing
-    /// construction table; the canonical owner is checked from the original Rust re-export at this call site.
-    pub body_ir_native_constructor_bindings: HashMap<(usize, usize), (CanonicalSymbolId, ConstructorFieldBinding)>,
-    /// Native surface payload types missing from legacy's expression snapshot. An already checked String symbol or
-    /// literal authorizes Html's fixed String slot; legacy expression typing remains unchanged.
-    pub body_ir_native_argument_types: HashMap<(usize, usize), ResolvedType>,
-    /// Checked variable identities accompanying native payload types when legacy did not visit the argument. This
-    /// selects the existing parameter/local, never a same-spelled external or a new semantic binding.
-    pub body_ir_native_argument_identities: HashMap<(usize, usize), CanonicalSymbolId>,
     /// Concrete owner types inferred from checked nominal constructor fields before an open caller context masks them.
     ///
     /// Body IR retains these executable carriers while legacy checking preserves its contextual expression type.
@@ -2794,41 +2785,6 @@ impl TypeCheckInfo {
     /// Return the resolved `model`/`class` construction field binding recorded for `span`, if any (#1158).
     pub fn constructor_field_binding(&self, span: Span) -> Option<&ConstructorFieldBinding> {
         self.calls.constructor_field_bindings.get(&(span.start, span.end))
-    }
-
-    /// Return a checked construction's ordinary or native tuple slot binding to Body IR without changing legacy's
-    /// getter. Native entries exist only for an accepted, single-payload std.web surface call.
-    pub fn body_ir_constructor_field_binding(&self, span: Span) -> Option<&ConstructorFieldBinding> {
-        self.constructor_field_binding(span).or_else(|| {
-            self.calls
-                .body_ir_native_constructor_bindings
-                .get(&(span.start, span.end))
-                .map(|(_, binding)| binding)
-        })
-    }
-
-    /// The exact foreign owner checked for a native surface construction; ordinary source calls retain their
-    /// existing expression identity instead.
-    pub fn body_ir_native_constructor_identity(&self, span: Span) -> Option<&CanonicalSymbolId> {
-        self.calls
-            .body_ir_native_constructor_bindings
-            .get(&(span.start, span.end))
-            .map(|(owner, _)| owner)
-    }
-
-    /// Record a validated native tuple construction in the direct-route table only, never in legacy's slot table.
-    pub fn record_body_ir_native_constructor(&mut self, span: Span, owner: CanonicalSymbolId) {
-        self.calls.body_ir_native_constructor_bindings.insert(
-            (span.start, span.end),
-            (
-                owner,
-                ConstructorFieldBinding {
-                    argument_slots: vec![0],
-                    defaulted_slots: Vec::new(),
-                    field_count: 1,
-                },
-            ),
-        );
     }
 
     /// Record the resolved field binding for one nominal construction call site, including a newtype's tuple slot

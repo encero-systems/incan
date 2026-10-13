@@ -1387,7 +1387,6 @@ mod tests {
         module.nominal_declarations.push(crate::body_ir::NominalDeclaration {
             native_item: String::new(),
             class_inheritance: None,
-            native_type_arguments: Vec::new(),
             direct_declaration_id: CompilerNodeId::declaration_span("lib", 200, 499),
             canonical: owner.clone(),
             name: "Holder".into(),
@@ -1457,7 +1456,6 @@ mod tests {
         module.nominal_declarations.push(crate::body_ir::NominalDeclaration {
             native_item: String::new(),
             class_inheritance: None,
-            native_type_arguments: Vec::new(),
             direct_declaration_id: CompilerNodeId::declaration_span("lib", 200, 299),
             canonical: type_id.clone(),
             name: "Record".into(),
@@ -1595,7 +1593,6 @@ mod tests {
         input.nominal_declarations.push(crate::body_ir::NominalDeclaration {
             native_item: String::new(),
             class_inheritance: None,
-            native_type_arguments: Vec::new(),
             direct_declaration_id: CompilerNodeId::declaration_span("lib", 200, 299),
             canonical: published_type.clone(),
             name: "Record".into(),

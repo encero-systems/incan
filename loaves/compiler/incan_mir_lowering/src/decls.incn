@@ -94,12 +94,7 @@ pub def lower_model_declarations(
         mut field_public = declaration.field_public
         mut serde_names: list[str] = []
         if item != "":
-            mut arguments: list[RustType] = []
-            for argument in declaration.native_type_arguments:
-                arguments.append(argument.clone())
-            if len(arguments) == 0:
-                arguments = instance_arguments(module, declaration)?
-            for argument in arguments:
+            for argument in instance_arguments(module, declaration)?:
                 library_arguments.append(
                     native_source_type(
                         module.nominal_declarations,

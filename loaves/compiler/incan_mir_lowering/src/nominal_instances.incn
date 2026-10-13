@@ -227,8 +227,8 @@ def is_receiver(origin: &LocalOrigin) -> bool:
 
 
 def admitted_owner(declaration: &NominalDeclaration) -> bool:
-    """Admit retained source owners and exact native carriers after the original module's layout validation."""
-    return declaration.native_item != "" or declaration.canonical.kind == SemanticSourceTargetKind.Class or declaration.canonical.kind == SemanticSourceTargetKind.Model
+    """Restrict concrete layouts to the source declaration kinds whose canonical field facts are retained."""
+    return declaration.canonical.kind == SemanticSourceTargetKind.Class or declaration.canonical.kind == SemanticSourceTargetKind.Model
 
 
 def close_owner_body(body: &Body, instance: NominalInstance) -> Result[Body, str]:

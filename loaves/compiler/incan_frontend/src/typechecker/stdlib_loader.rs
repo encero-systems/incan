@@ -44,7 +44,6 @@ use incan_lang::lang::decorators::{self, DecoratorId};
 use incan_lang::lang::rust_keywords;
 use incan_lang::lang::stdlib;
 use incan_lang::lang::surface::functions::{self as surface_functions, SurfaceFnId};
-use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_lang::lang::types::collections::{self as collection_types, CollectionTypeId};
 use incan_lang::lang::types::numerics as numeric_types;
 use incan_lang::lang::types::stringlike::{self as string_types, StringLikeId};
@@ -366,36 +365,6 @@ impl StdlibAstCache {
             .iter()
             .find(|(name, _)| name == type_name)
             .map(|(_, info)| info.clone())
-    }
-
-    /// Resolve an active web surface's original Rust re-export for Body IR only. Ordinary surface placeholders have
-    /// no target identity; this independent import-only check keeps the actual source path and leaves legacy symbols
-    /// and the shared stdlib cache unchanged. Other surfaces or a changed runtime owner yield nothing.
-    pub(crate) fn native_web_identity(&mut self, surface: SurfaceTypeId) -> Option<CanonicalSymbolId> {
-        let module = match surface {
-            SurfaceTypeId::Json | SurfaceTypeId::Html => "response",
-            SurfaceTypeId::Query => "request",
-            _ => return None,
-        };
-        let name = surface_types::as_str(surface);
-        let path = vec!["std".to_owned(), "web".to_owned(), module.to_owned()];
-        let source = self.source_inputs.read_module(&path)?;
-        let tokens = crate::lexer::lex(&source).ok()?;
-        self.source_inputs.record_parse();
-        let mut program = crate::parser::parse(&tokens).ok()?;
-        program.declarations.retain(|declaration| {
-            let ast::Declaration::Import(import) = &declaration.node else {
-                return false;
-            };
-            matches!(&import.kind, ast::ImportKind::RustFrom { items, .. }
-                if items.iter().any(|item| item.alias.as_deref().unwrap_or(&item.name) == name))
-        });
-        let mut checker = super::TypeChecker::new();
-        checker.set_current_module_path(Some(path));
-        checker.check_program(&program).ok()?;
-        let identity = checker.symbols.identity_of(checker.symbols.lookup(name)?)?.clone();
-        incan_semantics_core::body_ir::native_carrier_nominal(&identity)?;
-        Some(identity)
     }
 
     /// Read the source layout of a compiler-provided foreign nominal for Body IR only. The ordinary cache exports

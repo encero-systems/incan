@@ -494,9 +494,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// receiver binding instead, while checking types the construction as the owner; the owner's declaration then
     /// comes from the checker's module-scope nominal bindings for that type, never from the callee's spelling.
     fn constructed_declaration_identity(&self, callee_span: ast::Span, span: ast::Span) -> Option<CanonicalSymbolId> {
-        if let Some(owner) = self.type_info.body_ir_native_constructor_identity(span) {
-            return Some(owner.clone());
-        }
         let identity = self.type_info.resolved_identity(callee_span)?;
         if identity.kind != SemanticSourceTargetKind::Receiver || identity.declaration_name != "cls" {
             return Some(identity.clone());
@@ -559,7 +556,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let hir_span_value = hir_span(span);
-        let Some(field_binding) = self.type_info.body_ir_constructor_field_binding(span).cloned() else {
+        let Some(field_binding) = self.type_info.constructor_field_binding(span).cloned() else {
             return self.unsupported_operand(
                 format!("construction of `{name}` with an unresolved field layout"),
                 scope,
@@ -1059,7 +1056,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // records no monomorphization for them, and the constructed value's own type already carries the resolved
         // arguments -- so this deliberately does not duplicate them on the constructor target rather than claiming
         // construction cannot be generic.
-        if self.type_info.body_ir_constructor_field_binding(span).is_some() {
+        if self.type_info.constructor_field_binding(span).is_some() {
             return self.lower_nominal_construction(&name, args, span, callee.span, scope, out);
         }
 

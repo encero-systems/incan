@@ -36,58 +36,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.lower_expr_to_operand(index, scope, out)
     }
 
-    /// Retain a known web carrier's tuple payload before its checked source field. The runtime owner comes from the
-    /// independent native declaration whitelist, and the payload member keeps the checker's identity; a source model
-    /// with the same spelling follows the ordinary field path. Missing facts stay unresolved rather than selecting
-    /// storage from a field name.
-    fn lower_checked_field_projections(
-        &self,
-        base: &ast::Spanned<ast::Expr>,
-        name: &str,
-        span: ast::Span,
-    ) -> Vec<bir::PlaceElem> {
-        let ty = self
-            .published_expression_type(base)
-            .unwrap_or_else(|| self.resolve_ty(base.span));
-        let IncanType::Generic { base: owner, args } = &ty else {
-            return vec![self.lower_checked_field_projection(base, name, span)];
-        };
-        let [payload] = args.as_slice() else {
-            return vec![self.lower_checked_field_projection(base, name, span)];
-        };
-        let native = self.local_nominal_declarations.values().find(|declaration| {
-            declaration.name == *owner
-                && declaration.fields == ["0"]
-                && matches!(
-                    declaration.canonical.origin,
-                    incan_semantics_core::SymbolOrigin::RustCrate(_)
-                )
-                && bir::native_carrier_nominal(&declaration.canonical).as_ref() == Some(declaration)
-        });
-        let Some(declaration) = native else {
-            return vec![self.lower_checked_field_projection(base, name, span)];
-        };
-        let Some(slot) = declaration.field_identities.first() else {
-            return vec![self.lower_checked_field_projection(base, name, span)];
-        };
-        let tuple = bir::PlaceElem::field("0", Some(slot.clone()));
-        if name == "value" {
-            return vec![tuple];
-        }
-        let identity = self
-            .type_info
-            .resolved_identity(span)
-            .filter(|identity| {
-                identity.namespace == SymbolNamespace::Member && identity.kind == SemanticSourceTargetKind::Field
-            })
-            .cloned()
-            .or_else(|| self.retained_field_identity(payload, name));
-        let field_name = identity
-            .as_ref()
-            .map_or_else(|| name.to_owned(), |field| field.declaration_name.clone());
-        vec![tuple, bir::PlaceElem::field(field_name, identity)]
-    }
-
     /// Classify tuple projections and retain the declaration name selected for a checked nominal field alias.
     ///
     /// Numeric spelling alone proves nothing: only an in-bounds element of the existing checked tuple shape is
@@ -369,7 +317,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 let mut place = self.lower_expr_to_place(base, scope, out);
                 place
                     .projection
-                    .extend(self.lower_checked_field_projections(base, name, expr.span));
+                    .push(self.lower_checked_field_projection(base, name, expr.span));
                 let ty = self.resolve_ty(expr.span);
                 let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
                 bir::Operand::place(place, fact, last_use)
@@ -494,7 +442,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 let mut place = self.lower_expr_to_place(base, scope, out);
                 place
                     .projection
-                    .extend(self.lower_checked_field_projections(base, name, expr.span));
+                    .push(self.lower_checked_field_projection(base, name, expr.span));
                 place
             }
             // A `__getitem__` hook returns a value; it is not a projection of its receiver.
