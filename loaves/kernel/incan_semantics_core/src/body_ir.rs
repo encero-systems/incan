@@ -86,7 +86,8 @@ pub struct BodyIrModule {
     /// without this representation remains source-owned; a consumer must never infer SDK ownership from its hash.
     #[serde(default)]
     pub native_union_declarations: Vec<NativeUnionDeclaration>,
-    /// Source-local persistent storage, including RFC 036 replacement callables, with literal or computed initialization.
+    /// Source-local persistent storage, including RFC 036 replacement callables, with literal or computed
+    /// initialization.
     #[serde(default)]
     pub static_declarations: Vec<StaticDeclaration>,
     /// Identity of the owning module, matching [`crate::HirModule::id`].

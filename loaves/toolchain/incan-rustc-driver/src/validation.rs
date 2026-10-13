@@ -752,9 +752,12 @@ fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, 
 /// Reject implicit copies of any recursively owned value, including tuple string fields.
 fn owns_values(ty: &Scalar) -> bool {
     match ty {
-        Scalar::String | Scalar::StringArray(_) | Scalar::Model(_) | Scalar::Closure(_) | Scalar::ValidationError | Scalar::Future(_) => {
-            true
-        }
+        Scalar::String
+        | Scalar::StringArray(_)
+        | Scalar::Model(_)
+        | Scalar::Closure(_)
+        | Scalar::ValidationError
+        | Scalar::Future(_) => true,
         Scalar::Tuple(elements) => elements.iter().any(owns_values),
         _ => false,
     }

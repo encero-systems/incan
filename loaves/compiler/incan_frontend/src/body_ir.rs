@@ -207,7 +207,8 @@ pub fn library_type_identities(type_info: &TypeCheckInfo) -> Vec<CanonicalSymbol
 
 /// Project exact SDK union owner and payload records after source modules and their selected SDK layouts are joined.
 ///
-/// Only the provider plan's admitted emitted-definition table grants a native alias; semantic shape or a plausible hash alone never establishes ownership. Missing or unsupported records remain absent for fail-closed lowering.
+/// Only the provider plan's admitted emitted-definition table grants a native alias; semantic shape or a plausible hash
+/// alone never establishes ownership. Missing or unsupported records remain absent for fail-closed lowering.
 pub fn library_native_union_declarations(
     plan: &ProviderPlan,
     modules: &[bir::BodyIrModule],
@@ -1963,8 +1964,8 @@ mod primitives;
 mod args;
 mod fixed_spreads;
 mod numeric_destinations;
-mod variadics;
 mod rest_args;
+mod variadics;
 
 use bodies::*;
 use collect::*;
