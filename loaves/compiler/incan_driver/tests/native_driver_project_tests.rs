@@ -15928,6 +15928,19 @@ fn consuming_carriers_in_loops_output_matches_legacy() -> Result<(), Box<dyn std
     )
 }
 
+/// A callable held by a generic parameter transfers through its local alias with the frozen legacy output.
+#[test]
+fn generic_capturing_callable_alias_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("generic-capturing-callable-alias")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "from std.traits.callable import Callable1\n\ndef use[Callback with (Clone, Callable1[str, str])](callback: Callback, text: str) -> str:\n  alias = callback\n  return alias(text)\n\ndef main() -> None:\n  prefix = \"prefix-\"\n  callback: (str) -> str = (text) => f\"{prefix}{text}\"\n  println(use(callback, \"x\"))\n",
+    )
+}
+
 /// Consumed frame receivers are read before eager defaults, while static defaults precede guarded storage reads.
 #[test]
 fn carrier_receiver_default_order_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
