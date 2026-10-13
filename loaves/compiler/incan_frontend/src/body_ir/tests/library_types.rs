@@ -4,6 +4,23 @@ use super::*;
 use crate::typechecker::stdlib_loader::StdlibAstCache;
 use incan_semantics_core::SymbolOrigin;
 
+/// Older serialized modules omit native union facts and must load with an empty inventory, never inferred ownership.
+#[test]
+fn native_union_inventory_defaults_for_older_modules() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build("def main() -> None:\n    pass\n", &["m", "old_union_inventory"])?;
+    let mut wire = serde_json::to_value(&module)?;
+    assert_eq!(wire.get("native_union_declarations"), Some(&serde_json::json!([])));
+    wire.as_object_mut()
+        .ok_or("module is not an object")?
+        .remove("native_union_declarations");
+    let older: bir::BodyIrModule = serde_json::from_value(wire)?;
+    assert_eq!(
+        serde_json::to_value(older)?.get("native_union_declarations"),
+        Some(&serde_json::json!([]))
+    );
+    Ok(())
+}
+
 /// The SDK's declared Eq and Ord retain the native comparison capabilities that the shared derive registry implies.
 #[test]
 fn stdlib_uuid_retains_implied_comparison_capabilities() -> Result<(), Box<dyn std::error::Error>> {
