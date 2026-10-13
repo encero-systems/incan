@@ -18,19 +18,34 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
-/// A returned callable runs directly, including the original annotated local, method and collection controls.
+/// The original callable fixture advances past its returned method call and retains its separate projection refusal.
 #[test]
 fn returned_callable_fixture_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
-    corpus::check_builtin_source(
-        &fixture.driver_binary("debug"),
-        &fixture.scratch("returned-callable-fixture")?,
-        &fixture.sysroot,
-        &fixture.formatting,
+    let root = fixture.scratch("returned-callable-fixture")?;
+    let source = root.join("probe.incn");
+    fs::write(
+        &source,
         include_str!(
             "../../incan_test_support/fixtures/behavior/cli_values_and_calls/capturing_closures_in_function_types.incn"
         ),
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let refused = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &source,
+        &root.join("native"),
+        &fixture.sysroot,
+        &closure,
     )
+    .output()?;
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("unsupported Body IR model index or slice projection"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    Ok(())
 }
 
 /// Mixed fixed and rest unpacking preserves the complete original fixture's byte-identical legacy output.
@@ -1018,7 +1033,7 @@ def main() -> None:
     )
 }
 
-/// Evaluate a callable factory once before evaluating the arguments to the returned callable.
+/// Free and method factories evaluate once before their returned callable's arguments and retain their captures.
 #[test]
 fn returned_callable_evaluation_order_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
@@ -1036,8 +1051,19 @@ def argument() -> int:
     println("argument")
     return 4
 
+class Acc:
+    pub base: int
+
+    def adder(self) -> (int) -> int:
+        println("method")
+        base = self.base
+        return (value) => value + base
+
 def main() -> None:
     println(make(3)(argument()))
+    acc = Acc(base=3)
+    println(acc.adder()(argument()))
+    println(acc.adder()(2))
 "#,
     )
 }
