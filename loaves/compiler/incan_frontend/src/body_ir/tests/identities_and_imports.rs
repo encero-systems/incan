@@ -5,6 +5,49 @@
 //! their targets.
 
 use super::*;
+use crate::library_exports::collect_checked_public_exports;
+use crate::library_manifest::LibraryManifest;
+use crate::library_manifest_index::{LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry};
+use std::collections::HashMap;
+
+/// Check a published root module from its actual exports and retain the same provider's executable model layout.
+fn checked_package_counter(
+    source: &str,
+) -> Result<(ast::Program, TypeCheckInfo, bir::BodyIrModule), Box<dyn std::error::Error>> {
+    let provider_source = "pub model Counter:\n  pub value: int\n";
+    let tokens = lexer::lex(provider_source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let provider_program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let provider_path = Vec::new();
+    let mut provider_checker = TypeChecker::new();
+    provider_checker.set_current_module_path(Some(provider_path.clone()));
+    provider_checker.set_current_package_identity(Some("provider".to_owned()));
+    provider_checker
+        .check_program(&provider_program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let exports = collect_checked_public_exports(&provider_program, &provider_checker);
+    let manifest = LibraryManifest::from_checked_exports("provider", "0.1.0", &exports);
+    let index = LibraryManifestIndex::from_entries(HashMap::from([(
+        "provider".to_owned(),
+        LibraryManifestIndexEntry::Loaded {
+            manifest: Box::new(manifest),
+            metadata: LibraryArtifactMetadata::from_crate_root(
+                "provider",
+                "provider",
+                std::path::PathBuf::from("tests/module-counter-artifact"),
+            ),
+        },
+    )]));
+    let provider = build_body_ir_module_v0(&provider_program, &provider_path, provider_checker.type_info());
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(vec!["consumer".to_owned()]));
+    checker.set_library_manifest_index(index);
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    Ok((program, checker.type_info().clone(), provider))
+}
 
 /// The imported alias carrier and stored field keep their declaring owner while method selection retains its checked
 /// target.
@@ -70,20 +113,22 @@ fn imported_model_alias_keeps_carrier_before_method_resolution() -> Result<(), B
 /// Both module spellings preserve construction's exact nominal owner and field binding instead of a function call.
 #[test]
 fn module_nominal_construction_retains_owner_and_fields() -> Result<(), Box<dyn std::error::Error>> {
-    let provider_source = "pub model Counter:\n  pub value: int\n";
-    let source = "import provider as p\nimport provider\n\ndef main() -> None:\n  first = p.Counter(value=42)\n  second = provider.Counter(value=7)\n  println(first.value)\n  println(second.value)\n";
-    let provider = build(provider_source, &["provider"])?;
+    let source = "import pub::provider as p\nimport pub::provider\n\ndef main() -> None:\n  first = p.Counter(value=42)\n  second = provider.Counter(value=7)\n  println(first.value)\n  println(second.value)\n";
+    let (program, type_info, provider) = checked_package_counter(source)?;
     let declaration = provider
         .nominal_declarations
         .first()
         .ok_or("provider model missing")?
         .clone();
-    let module = build_with_published_imports(
-        source,
-        &["consumer"],
-        &[("provider", &["provider"], provider_source)],
-        &[provider],
-    )?;
+    assert!(
+        type_info
+            .references
+            .resolved_identities
+            .values()
+            .any(|identity| identity == &declaration.canonical)
+    );
+    let module =
+        build_body_ir_module_v0_with_executable_context(&program, &["consumer".to_owned()], &type_info, &[provider]);
     let body = body_named(&module, "main")?;
     let constructors: Vec<_> = body
         .block
@@ -112,19 +157,10 @@ fn module_nominal_construction_retains_owner_and_fields() -> Result<(), Box<dyn 
 /// A surviving member identity does not turn an unproven receiver into a module namespace.
 #[test]
 fn module_nominal_construction_requires_receiver_identity() -> Result<(), Box<dyn std::error::Error>> {
-    let provider_source = "pub model Counter:\n  pub value: int\n";
-    let source = "import provider as p\n\ndef main() -> None:\n  first = p.Counter(value=42)\n  println(first.value)\n";
-    let provider_tokens = lexer::lex(provider_source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
-    let provider = parser::parse(&provider_tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
-    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
-    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let source =
+        "import pub::provider as p\n\ndef main() -> None:\n  first = p.Counter(value=42)\n  println(first.value)\n";
+    let (program, mut type_info, provider) = checked_package_counter(source)?;
     let module_path = vec!["consumer".to_owned()];
-    let mut checker = TypeChecker::new();
-    checker.set_current_module_path(Some(module_path.clone()));
-    checker
-        .check_with_imports(&program, &[("provider", &provider)])
-        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
-    let mut type_info = checker.type_info().clone();
     assert!(
         type_info
             .references
@@ -136,7 +172,7 @@ fn module_nominal_construction_requires_receiver_identity() -> Result<(), Box<dy
         .references
         .resolved_identities
         .retain(|_, identity| identity.kind != SemanticSourceTargetKind::Module);
-    let module = build_body_ir_module_v0(&program, &module_path, &type_info);
+    let module = build_body_ir_module_v0_with_executable_context(&program, &module_path, &type_info, &[provider]);
     let body = body_named(&module, "main")?;
     assert!(
         !body.block.stmts.iter().any(|statement| matches!(

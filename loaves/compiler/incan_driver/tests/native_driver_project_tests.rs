@@ -137,12 +137,33 @@ fn sdk_index_trait_output_matches_legacy() -> Result<(), Box<dyn std::error::Err
 /// Aliased and ordinary module-qualified model construction preserves selected storage and legacy output.
 #[test]
 fn module_nominal_construction_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    check_project_modules_case(
-        "module-nominal-construction",
-        "import provider as p\nimport provider\n\ndef main() -> None:\n  first = p.Counter(value=42)\n  second = provider.Counter(value=7)\n  println(first.value)\n  println(second.value)\n",
-        &[("provider.incn", "pub model Counter:\n  pub value: int\n")],
-        b"42\n7\n",
-    )
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("module-nominal-construction")?;
+    let provider = root.join("deps/provider");
+    fs::create_dir_all(provider.join("src"))?;
+    fs::create_dir_all(root.join("src"))?;
+    fs::write(
+        root.join("loaf.toml"),
+        "[project]\nname = 'module_nominal_construction'\nversion = '0.1.0'\n[dependencies]\nprovider = { path = 'deps/provider' }\n",
+    )?;
+    fs::write(
+        provider.join("loaf.toml"),
+        "[project]\nname = 'provider'\nversion = '0.1.0'\n",
+    )?;
+    fs::write(provider.join("src/lib.incn"), "pub model Counter:\n  pub value: int\n")?;
+    fs::write(
+        root.join("src/main.incn"),
+        "import pub::provider as p\nimport pub::provider\n\ndef main() -> None:\n  first = p.Counter(value=42)\n  second = provider.Counter(value=7)\n  println(first.value)\n  println(second.value)\n",
+    )?;
+    let mut publish = support::cli_project::configured_incan_command(&provider, &["oven", "bake", "--project", "."]);
+    support::configure_explicit_oven_bake_command(&mut publish)?;
+    publish.env("INCAN_OVEN_BAKE_PROFILES", "debug,release");
+    success(&publish.output()?, "nominal module provider publication");
+    let mut prepare = support::cli_project::configured_incan_command(&root, &["oven", "bake", "--project", "."]);
+    support::configure_explicit_oven_bake_command(&mut prepare)?;
+    prepare.env("INCAN_OVEN_BAKE_PROFILES", "debug,release");
+    success(&prepare.output()?, "nominal module consumer preparation");
+    assert_package_routes_match(fixture, &root, "module_nominal_construction", b"42\n7\n")
 }
 
 /// The original module-bound trait package retains constructor, bound, adoption and default-method legacy bytes.
