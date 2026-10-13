@@ -23,6 +23,7 @@ fn frozen_codec_calls_retain_complete_slots() -> Result<(), Box<dyn std::error::
         })
         .collect::<Vec<_>>();
     assert_eq!(calls.len(), 2, "{}", body.render_snapshot());
+    assert!(calls.iter().all(|(_, args)| matches!(args.first().and_then(bir::ArgumentElement::as_one), Some(bir::Operand::Place(read)) if read.place.global().is_none())), "{}", body.render_snapshot());
     assert!(
         calls
             .iter()
