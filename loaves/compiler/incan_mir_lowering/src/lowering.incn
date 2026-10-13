@@ -2944,6 +2944,11 @@ def lower_library_method(
     ordinary = library_call_operands(builder, delegation, target.binding, arguments, ordinary_types, span, 1, false)?
     mut operands = [read_place(reference, true, span)]
     operands.extend(ordinary)
+    mut native_arguments = closed
+    if len(delegation.native_type_arguments) != 0:
+        native_arguments = []
+        for argument in delegation.native_type_arguments:
+            native_arguments.append(substitute(argument, names, closed)?)
     mut output = temporary(builder, result, span)
     match destination:
         Some(place) =>
@@ -2952,9 +2957,9 @@ def lower_library_method(
     match delegation.rust_path():
         None => return Err("unsupported Body IR stdlib method native identity")
         Some(path) =>
-            if len(closed) != 0:
+            if len(native_arguments) != 0:
                 mut type_arguments: list[PlanType] = []
-                for argument in closed:
+                for argument in native_arguments:
                     type_arguments.append(
                         native_source_type(builder.nominals, builder.enums, builder.unions, argument, builder.intrinsics)?,
                     )

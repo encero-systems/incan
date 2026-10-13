@@ -14,9 +14,27 @@ use incan_semantics_core::{
 
 use super::{IncanType, TypeCheckInfo, bir, library_defaults, semantic_type_from_resolved};
 use crate::ast;
-use crate::symbols::{CallableParam, SymbolKind, TypeInfo};
+use crate::symbols::{CallableParam, MethodInfo, SymbolKind, TypeInfo};
 use crate::typechecker::stdlib_loader::StdlibAstCache;
 use incan_lang::lang::stdlib;
+
+/// One source-owned SDK method signature and the native instantiation its explicit trait target selects.
+struct MethodSignature {
+    /// Source nominal or trait owning the selected declaration.
+    owner: String,
+    /// Declared shared or exclusive receiver, absent for a static method.
+    receiver: Option<IncanType>,
+    /// Source ordinary parameters, before closing owner placeholders.
+    parameters: Vec<CallableParam>,
+    /// Declared result, before substituting Self or owner placeholders.
+    return_type: IncanType,
+    /// Owner binders that the concrete receiver closes.
+    type_parameters: Vec<String>,
+    /// Exact compiled trait item; empty uses the source owner's ordinary native method.
+    native_item: Vec<String>,
+    /// Explicit trait instantiation, Self first, independent of the source owner's binder count.
+    native_type_arguments: Vec<IncanType>,
+}
 
 /// Collect a crate-call record for every stdlib function and model or class method one module resolves, including
 /// declared type parameters. Nongeneric newtype methods keep their existing admission.
@@ -58,11 +76,25 @@ fn library_call(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Opt
         .chain(module_path.iter().cloned())
         .collect::<Vec<_>>();
     let name = &identity.declaration_name;
+    let mut native_type_arguments = Vec::new();
     let (parameters, return_type, type_parameters, parameter_defaults) = match identity.kind {
         SemanticSourceTargetKind::Method => {
-            let (owner, receiver, params, result, names) = method_signature(&published, &path, cache)?;
-            item.push(owner.clone());
-            item.push(name.clone());
+            let MethodSignature {
+                owner,
+                receiver,
+                parameters: params,
+                return_type: result,
+                type_parameters: names,
+                native_item,
+                native_type_arguments: native_args,
+            } = method_signature(&published, &path, cache)?;
+            if native_item.is_empty() {
+                item.push(owner.clone());
+                item.push(name.clone());
+            } else {
+                item = native_item;
+            }
+            native_type_arguments = native_args;
             let ordinary = owned_parameters(&params, &names)?;
             let defaults = library_defaults::method_defaults(&path, &owner, name, receiver.is_some(), &ordinary, cache);
             let mut parameters = receiver.into_iter().collect::<Vec<_>>();
@@ -119,6 +151,7 @@ fn library_call(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Opt
         parameters,
         return_type,
         type_parameters,
+        native_type_arguments,
         parameter_defaults,
     })
 }
@@ -147,6 +180,7 @@ pub(super) fn signature_type_identities(
             .parameters
             .into_iter()
             .chain(std::iter::once(call.return_type))
+            .chain(call.native_type_arguments)
             .collect(),
         None => trait_signature_types(&published, &path, cache),
     };
@@ -248,7 +282,7 @@ fn method_signature(
     identity: &CanonicalSymbolId,
     path: &[String],
     cache: &mut StdlibAstCache,
-) -> Option<(String, Option<IncanType>, Vec<CallableParam>, IncanType, Vec<String>)> {
+) -> Option<MethodSignature> {
     let source_origin = SymbolOrigin::Module(path.to_vec());
     let rebased = |declared: &CanonicalSymbolId| {
         let mut rebased = declared.clone();
@@ -280,9 +314,15 @@ fn method_signature(
         };
         let owner_identity = rebased(&cache.lookup_identity(path, &owner)?);
         cache.callable_source_identity(&owner_identity)?;
-        if method.is_async || !method.has_body || !method.type_params.is_empty() || method.trait_target.is_some() {
+        if method.is_async || !method.has_body || !method.type_params.is_empty() {
             return None;
         }
+        let concrete_owner = owner_type(&owner, names);
+        let (native_item, native_type_arguments) = if method.trait_target.is_some() {
+            native_trait_item(method, &concrete_owner, cache)?
+        } else {
+            (Vec::new(), Vec::new())
+        };
         let receiver = method.receiver.as_ref().map(|receiver| {
             let owner_type = Box::new(owner_type(&owner, names));
             match receiver {
@@ -290,13 +330,15 @@ fn method_signature(
                 ast::Receiver::Mutable => IncanType::RefMut(owner_type),
             }
         });
-        return Some((
+        return Some(MethodSignature {
             owner,
             receiver,
-            method.params.clone(),
-            semantic_type_from_resolved(&method.return_type),
-            names.clone(),
-        ));
+            parameters: method.params.clone(),
+            return_type: semantic_type_from_resolved(&method.return_type),
+            type_parameters: names.clone(),
+            native_item,
+            native_type_arguments,
+        });
     }
     trait_method_signature(identity, path, cache)
 }
@@ -307,7 +349,7 @@ fn trait_method_signature(
     identity: &CanonicalSymbolId,
     path: &[String],
     cache: &mut StdlibAstCache,
-) -> Option<(String, Option<IncanType>, Vec<CallableParam>, IncanType, Vec<String>)> {
+) -> Option<MethodSignature> {
     for (owner, declaration) in cache.list_traits(path) {
         if !declaration.type_params.is_empty() {
             continue;
@@ -333,15 +375,57 @@ fn trait_method_signature(
             ast::Receiver::Immutable => IncanType::Ref(Box::new(self_type.clone())),
             ast::Receiver::Mutable => IncanType::RefMut(Box::new(self_type.clone())),
         };
-        return Some((
+        return Some(MethodSignature {
             owner,
-            Some(receiver),
-            method.params.clone(),
-            self_as(&semantic_type_from_resolved(&method.return_type), &self_type),
-            vec!["Self".to_owned()],
-        ));
+            receiver: Some(receiver),
+            parameters: method.params.clone(),
+            return_type: self_as(&semantic_type_from_resolved(&method.return_type), &self_type),
+            type_parameters: vec!["Self".to_owned()],
+            native_item: Vec::new(),
+            native_type_arguments: Vec::new(),
+        });
     }
     None
+}
+
+/// Resolve an explicit SDK implementation's native trait declaration and preserve its checked Self/trait arguments.
+/// The catalog-owned trait and exact source slot must exist; unresolved aliases, missing binders, or a different
+/// receiver contract cannot authorize an inherent-method approximation.
+fn native_trait_item(
+    method: &MethodInfo,
+    owner: &IncanType,
+    cache: &mut StdlibAstCache,
+) -> Option<(Vec<String>, Vec<IncanType>)> {
+    let bound = method.trait_target.as_ref()?;
+    let path = bound.module_path.as_deref()?;
+    let declaration = cache.lookup_trait(path, &bound.name)?;
+    if declaration.type_params.len() != bound.type_args.len() {
+        return None;
+    }
+    let name = &method.identity.as_ref()?.declaration_name;
+    let slot = declaration.methods.get(name)?;
+    if slot.receiver != method.receiver || !slot.type_params.is_empty() || slot.is_async {
+        return None;
+    }
+    let identity = cache.lookup_identity(path, &bound.name)?;
+    let published = super::library_nominals::sdk_identity(&identity)?;
+    cache.callable_source_identity(&published)?;
+    let SymbolOrigin::Package { library, module_path } = published.origin else {
+        return None;
+    };
+    let item = std::iter::once(library)
+        .chain(module_path)
+        .chain([published.declaration_name, name.clone()])
+        .collect();
+    let arguments = std::iter::once(owner.clone())
+        .chain(
+            bound
+                .type_args
+                .iter()
+                .map(|argument| self_as(&semantic_type_from_resolved(argument), owner)),
+        )
+        .collect();
+    Some((item, arguments))
 }
 
 /// Keep only ordinary parameters, each passed owned as the SDK declares it, with native carriers and active binders.

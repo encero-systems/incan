@@ -94,6 +94,7 @@ fn delegation(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Optio
         parameters,
         return_type,
         type_parameters: Vec::new(),
+        native_type_arguments: Vec::new(),
         // A transparent forwarder declares no defaults.
         parameter_defaults: Vec::new(),
     };

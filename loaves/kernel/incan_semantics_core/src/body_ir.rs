@@ -228,6 +228,11 @@ pub struct StdlibDelegation {
     /// instantiates them with its checked type arguments, in the same order; a nongeneric callee has none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub type_parameters: Vec<String>,
+    /// Declaration-owned native instantiation for an explicit SDK trait implementation, Self first and then the
+    /// trait's arguments. Owner placeholders close through `type_parameters` at the receiver. Empty keeps the
+    /// existing function or owner-binder instantiation; consumers must not reconstruct these arguments from names.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub native_type_arguments: Vec<IncanType>,
     /// What each parameter takes when a call omits it, in `parameters` order, a method's receiver first.
     ///
     /// A parameter without a default is [`CallableParamDefault::Required`]. A default is a
