@@ -2918,6 +2918,9 @@ def lower_library_method(
     The record's first parameter is the receiver as that crate declares it, a shared or exclusive borrow of the
     retained stdlib layout. The receiver is borrowed in place and the other arguments bind as for a local method; the
     driver checks the whole signature against the crate's metadata before building the call.
+
+    An explicit trait implementation retains its native Self and trait arguments separately from owner binders.
+    The receiver closes owner placeholders, and the recorded native arguments select the exact compiled trait item.
     """
     if len(target.type_args) != 0:
         return Err("unsupported Body IR type arguments on a stdlib method")
