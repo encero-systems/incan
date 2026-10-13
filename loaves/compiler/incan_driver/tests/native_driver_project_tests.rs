@@ -18,6 +18,32 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// Shared callable aliases retain their borrowed environment for the duration of the receiving invocation.
+#[test]
+fn borrowed_callable_alias_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("borrowed-callable-alias")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "def apply(mapper: (int) -> str, value: int) -> str:\n  alias = mapper\n  return alias(value)\n\ndef main() -> None:\n  prefix = \"item\"\n  closure = (value: int) => f\"{prefix}:{value}\"\n  println(apply(closure, 3))\n",
+    )
+}
+
+/// Constant branches preserve selected writes and the enclosing text owner's lifetime.
+#[test]
+fn constant_branch_ownership_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("constant-branch-ownership")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "def main() -> None:\n  mut text = \"start\"\n  if true:\n    text = \"selected\"\n  else:\n    text = \"wrong\"\n  println(text)\n  if false:\n    text = \"wrong\"\n  else:\n    text = \"final\"\n  println(text)\n",
+    )
+}
+
 /// Newtype union narrowing preserves present, absent, and independently exhaustive branch output from legacy.
 #[test]
 fn newtype_union_isinstance_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
