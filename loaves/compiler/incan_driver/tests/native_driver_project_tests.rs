@@ -6432,6 +6432,28 @@ fn declaration_case_outputs(
 
 /// Source async calls defer discarded body effects and evaluate arguments before their immediately ready awaits.
 /// SDK prelude tasks preserve the original fixture's executor, task handles and output.
+/// SDK runtime task types keep their native storage in ordinary unused signatures.
+#[test]
+fn async_runtime_nominal_signatures_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_async_family_source(
+        "async-runtime-nominal-signatures",
+        r#"from std.async import JoinHandle, Mutex, RaceArm, TaskJoinError
+
+def handle(value: JoinHandle[int]) -> None:
+    pass
+def error(value: TaskJoinError) -> None:
+    pass
+def lock(value: Mutex[int]) -> None:
+    pass
+def arm(value: RaceArm[int]) -> None:
+    pass
+def main() -> None:
+    println("SDK signatures")
+"#,
+    )
+}
+
+/// SDK prelude tasks preserve the original fixture's executor, task handles and output.
 #[test]
 fn async_prelude_tasks_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     check_async_family_source(

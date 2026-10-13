@@ -28,6 +28,33 @@ fn retains_sdk_join_error_from_await() -> Result<(), Box<dyn std::error::Error>>
 }
 
 /// Await consumes the owned future and records a separately typed resumed destination.
+/// A source declaration sharing the task error's spelling keeps its own layout and methods.
+#[test]
+fn source_join_error_name_keeps_its_own_layout() -> Result<(), Box<dyn std::error::Error>> {
+    let source =
+        "model TaskJoinError:\n  detail: int\ndef describe(error: TaskJoinError) -> int:\n  return error.detail\n";
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    assert!(
+        !library_nominal_declarations(checker.type_info())
+            .iter()
+            .any(|declaration| declaration.name == "TaskJoinError")
+    );
+    let module = build(source, &["m", "source_error"])?;
+    assert!(
+        module
+            .nominal_declarations
+            .iter()
+            .any(|declaration| declaration.name == "TaskJoinError" && declaration.fields == ["detail"])
+    );
+    Ok(())
+}
+
+/// Await consumes the owned future and records a separately typed resumed destination.
 #[test]
 fn lowers_await_as_an_explicit_suspension_point_with_a_destination() -> Result<(), Box<dyn std::error::Error>> {
     let source = format!("{ASYNC_PRELUDE}async def f() -> int:\n  v = await fast()\n  return v\n");
