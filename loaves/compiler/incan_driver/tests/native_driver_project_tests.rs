@@ -10206,28 +10206,49 @@ fn stdlib_fallible_sdk_carriers_output_matches_legacy() -> Result<(), Box<dyn st
         &fixture.scratch("stdlib-fallible-sdk-concrete-carrier")?,
         &fixture.sysroot,
         &fixture.formatting,
-        r#"from std.derives.collection import FallibleIterator, TakeFallibleIterator
-
-model NumberStream with FallibleIterator[int, str]:
-    index: int
-    def __next__(mut self) -> Result[Option[int], str]:
-        return Ok(None)
+        r#"from std.derives.collection import TakeFallibleIterator
+from std.io import BytesIO, IoError, ReaderChunks, _BytesIO
 
 def main() -> None:
-    adapter = TakeFallibleIterator[int, str, NumberStream](
-        source=NumberStream(index=4), remaining=3, item_marker=None, error_marker=None
+    stream = BytesIO(b"abcde").chunks(2)
+    adapter = TakeFallibleIterator[bytes, IoError, ReaderChunks[_BytesIO]](
+        source=stream, remaining=3, item_marker=None, error_marker=None
     )
     println(adapter.remaining)
-    println(adapter.source.index)
+    println(adapter.source.chunk_size)
 "#,
     )?;
-    corpus::check_builtin_source(
-        &fixture.driver_binary("debug"),
-        &fixture.scratch("stdlib-fallible-sdk-carriers")?,
-        &fixture.sysroot,
-        &fixture.formatting,
-        include_str!("../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/fallible_iterator_take.incn"),
-    )
+    for (name, source, expected) in [
+        (
+            "sdk_fallible_take_default",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/fallible_iterator_take.incn"
+            ),
+            "unsupported Body IR nonlocal or trait-object Method",
+        ),
+        (
+            "sdk_fallible_collection_loop",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_derives_collection_adapters.incn"
+            ),
+            "unsupported Body IR Method without canonical identity",
+        ),
+        (
+            "sdk_fallible_collection_default",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_derives_collection_adapters_with_imported_clone.incn"
+            ),
+            "unsupported Body IR nonlocal or trait-object Method",
+        ),
+        (
+            "sdk_fallible_source_native_impl",
+            "from std.derives.collection import FallibleIterator, TakeFallibleIterator\n\nmodel NumberStream with FallibleIterator[int, str]:\n    index: int\n    def __next__(mut self) -> Result[Option[int], str]:\n        return Ok(None)\n\ndef main() -> None:\n    adapter = TakeFallibleIterator[int, str, NumberStream](source=NumberStream(index=4), remaining=3, item_marker=None, error_marker=None)\n    println(adapter.remaining)\n",
+            "unsupported native instantiation of `incan_stdlib_core::derives::TakeFallibleIterator`",
+        ),
+    ] {
+        check_project_refusal(name, source, expected)?;
+    }
+    Ok(())
 }
 
 /// A compression error retains its nested Codec identity; the SDK's absent executable enum representation stays
