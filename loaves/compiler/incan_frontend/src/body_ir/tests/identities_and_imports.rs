@@ -67,6 +67,91 @@ fn imported_model_alias_keeps_carrier_before_method_resolution() -> Result<(), B
     Ok(())
 }
 
+/// Both module spellings preserve construction's exact nominal owner and field binding instead of a function call.
+#[test]
+fn module_nominal_construction_retains_owner_and_fields() -> Result<(), Box<dyn std::error::Error>> {
+    let provider_source = "pub model Counter:\n  pub value: int\n";
+    let source = "import provider as p\nimport provider\n\ndef main() -> None:\n  first = p.Counter(value=42)\n  second = provider.Counter(value=7)\n  println(first.value)\n  println(second.value)\n";
+    let provider = build(provider_source, &["provider"])?;
+    let declaration = provider
+        .nominal_declarations
+        .first()
+        .ok_or("provider model missing")?
+        .clone();
+    let module = build_with_published_imports(
+        source,
+        &["consumer"],
+        &[("provider", &["provider"], provider_source)],
+        &[provider],
+    )?;
+    let body = body_named(&module, "main")?;
+    let constructors: Vec<_> = body
+        .block
+        .stmts
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::Constructor(target), _),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(constructors.len(), 2, "{}", body.render_snapshot());
+    for target in constructors {
+        assert_eq!(target.canonical.as_ref(), Some(&declaration.canonical));
+        assert_eq!(
+            target.direct_declaration_id.as_ref(),
+            Some(&declaration.direct_declaration_id)
+        );
+        assert_eq!(target.canonical_field_layout.as_ref(), Some(&declaration.fields));
+    }
+    Ok(())
+}
+
+/// A surviving member identity does not turn an unproven receiver into a module namespace.
+#[test]
+fn module_nominal_construction_requires_receiver_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let provider_source = "pub model Counter:\n  pub value: int\n";
+    let source = "import provider as p\n\ndef main() -> None:\n  first = p.Counter(value=42)\n  println(first.value)\n";
+    let provider_tokens = lexer::lex(provider_source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let provider = parser::parse(&provider_tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let module_path = vec!["consumer".to_owned()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(module_path.clone()));
+    checker
+        .check_with_imports(&program, &[("provider", &provider)])
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut type_info = checker.type_info().clone();
+    assert!(
+        type_info
+            .references
+            .resolved_identities
+            .values()
+            .any(|identity| identity.kind == SemanticSourceTargetKind::Module)
+    );
+    type_info
+        .references
+        .resolved_identities
+        .retain(|_, identity| identity.kind != SemanticSourceTargetKind::Module);
+    let module = build_body_ir_module_v0(&program, &module_path, &type_info);
+    let body = body_named(&module, "main")?;
+    assert!(
+        !body.block.stmts.iter().any(|statement| matches!(
+            &statement.kind,
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::Constructor(_), _),
+                ..
+            }
+        )),
+        "{}",
+        body.render_snapshot()
+    );
+    Ok(())
+}
+
 /// A module-qualified function value requires both independent checked identities; spelling cannot supply either.
 #[test]
 fn module_function_values_require_receiver_and_member_identities() -> Result<(), Box<dyn std::error::Error>> {

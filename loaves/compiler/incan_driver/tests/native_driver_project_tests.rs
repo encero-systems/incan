@@ -134,6 +134,49 @@ fn sdk_index_trait_output_matches_legacy() -> Result<(), Box<dyn std::error::Err
     )
 }
 
+/// Aliased and ordinary module-qualified model construction preserves selected storage and legacy output.
+#[test]
+fn module_nominal_construction_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_case(
+        "module-nominal-construction",
+        "import provider as p\nimport provider\n\ndef main() -> None:\n  first = p.Counter(value=42)\n  second = provider.Counter(value=7)\n  println(first.value)\n  println(second.value)\n",
+        &[("provider.incn", "pub model Counter:\n  pub value: int\n")],
+        b"42\n7\n",
+    )
+}
+
+/// The original module-bound trait package retains constructor, bound, adoption and default-method legacy bytes.
+#[test]
+fn package_module_trait_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("package-module-trait")?;
+    let area = support::fixtures_dir().join("behavior/cli_dependencies");
+    let behavior = support::behavior_fixtures::discover(&area)?
+        .into_iter()
+        .find(|case| case.name == "dependency_trait_through_a_module_binding")
+        .ok_or("module-bound trait package fixture missing")?;
+    support::behavior_fixtures::materialize(&behavior, &root)?;
+    for provider in &behavior.providers {
+        let mut publish = support::cli_project::configured_incan_command(
+            &root.join(&provider.path),
+            &["oven", "bake", "--project", "."],
+        );
+        support::configure_explicit_oven_bake_command(&mut publish)?;
+        publish.env("INCAN_OVEN_BAKE_PROFILES", "debug,release");
+        success(&publish.output()?, "module-bound trait provider publication");
+    }
+    let mut prepare = support::cli_project::configured_incan_command(&root, &["oven", "bake", "--project", "."]);
+    support::configure_explicit_oven_bake_command(&mut prepare)?;
+    prepare.env("INCAN_OVEN_BAKE_PROFILES", "debug,release");
+    success(&prepare.output()?, "module-bound trait consumer preparation");
+    assert_package_routes_match(
+        fixture,
+        &root,
+        "dependency_trait_through_a_module_binding",
+        b"dep!\ndep\nMINE\nyours\n",
+    )
+}
+
 /// Aliased and ordinary module function values keep canonical invocation and callable-argument legacy bytes.
 #[test]
 fn module_function_value_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
