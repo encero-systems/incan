@@ -1863,6 +1863,7 @@ pub(crate) struct CallSiteFacts {
     monomorph_type_args: Option<Vec<ResolvedType>>,
     body_ir_constructor_type: Option<ResolvedType>,
     body_ir_call_result_type: Option<ResolvedType>,
+    body_ir_self_result_method: Option<CanonicalSymbolId>,
     body_ir_self_method_identity: Option<CanonicalSymbolId>,
     body_ir_self_method_result_type: Option<ResolvedType>,
     body_ir_self_method_params: Option<Vec<CallableParam>>,
@@ -3149,6 +3150,7 @@ impl TypeCheckInfo {
             monomorph_type_args: self.calls.call_site_monomorph_type_args.remove(&key),
             body_ir_constructor_type: self.calls.body_ir_constructor_types.remove(&key),
             body_ir_call_result_type: self.calls.body_ir_call_result_types.remove(&key),
+            body_ir_self_result_method: self.calls.body_ir_self_result_methods.remove(&key),
             body_ir_self_method_identity: self.traits.self_method_identities.remove(&key),
             body_ir_self_method_result_type: self.traits.self_method_result_types.remove(&key),
             body_ir_self_method_params: self.traits.self_method_params.remove(&key),
@@ -3162,6 +3164,7 @@ impl TypeCheckInfo {
         self.calls.body_ir_constructor_types.remove(&key);
         self.calls.body_ir_call_type_arguments.remove(&key);
         self.calls.body_ir_call_result_types.remove(&key);
+        self.calls.body_ir_self_result_methods.remove(&key);
         self.traits.self_method_identities.remove(&key);
         self.traits.self_method_result_types.remove(&key);
         self.traits.self_method_params.remove(&key);
@@ -3215,6 +3218,11 @@ impl TypeCheckInfo {
             &mut self.calls.body_ir_call_result_types,
             key,
             facts.body_ir_call_result_type,
+        );
+        put(
+            &mut self.calls.body_ir_self_result_methods,
+            key,
+            facts.body_ir_self_result_method,
         );
         put(
             &mut self.traits.self_method_identities,
