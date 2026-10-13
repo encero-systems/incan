@@ -36,10 +36,12 @@ pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::StdlibDelegation> {
         .cloned()
         .collect::<BTreeSet<_>>();
     let mut cache = StdlibAstCache::new();
-    identities
+    let mut calls: Vec<_> = identities
         .iter()
         .filter_map(|identity| library_call(identity, &mut cache))
-        .collect()
+        .collect();
+    calls.extend(super::runtime_nominals::members(type_info));
+    calls
 }
 
 /// Build one record after confirming the stdlib source declares exactly this identity, with what each of its parameters

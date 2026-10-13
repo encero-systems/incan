@@ -1765,6 +1765,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
         // A call on an open `Self` receiver in a standard-library trait default binds against its slot's declared
         // parameters, which the checker retains for Body IR only.
+        let native_member = super::runtime_nominals::member(self.type_info, &self.resolve_ty(recv.span), name);
         let declared: Option<Vec<DeclaredSlot>> = self
             .type_info
             .call_site_callable_params(span)
@@ -1776,7 +1777,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     .map(Vec::as_slice)
             })
             .or_else(|| retained_binding.map(|binding| binding.params.as_slice()))
-            .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect());
+            .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect())
+            // Published task members take only their receiver. The frozen checker leaves their external signature
+            // open, but the guarded SDK contract supplies an empty ordinary parameter list for binding.
+            .or_else(|| native_member.as_ref().map(|_| Vec::new()));
 
         // The receiver is read before the arguments, matching source evaluation order: `recv.m(f())` observes the
         // receiver place first. Method receivers are treated as borrowed rather than moved/cloned, mirroring how the
@@ -1814,7 +1818,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let mut call_args = Vec::with_capacity(arg_operands.len() + 1);
         call_args.push(bir::ArgumentElement::One(receiver_operand));
         call_args.append(&mut arg_operands);
-        let checked = self.method_call_result_type(span);
+        let checked = native_member.as_ref().map_or_else(
+            || self.method_call_result_type(span),
+            |member| member.return_type.clone(),
+        );
         let ty = match retained_binding {
             Some(binding) if self.leaves_type_open(&checked) => self.checked_type(&binding.return_type),
             _ => checked,
@@ -1846,20 +1853,21 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 },
                 // A standard slot reached through the stdlib source cache is named by its provider identity, the one
                 // the program's implementation records and the SDK's published bodies carry.
-                canonical: self
-                    .type_info
-                    .traits
-                    .provider_slot_identities
-                    .get(&(span.start, span.end))
-                    .or_else(|| self.type_info.resolved_identity(span))
-                    .or_else(|| {
-                        self.type_info
-                            .traits
-                            .self_method_identities
-                            .get(&(span.start, span.end))
-                    })
-                    .or_else(|| retained_binding.and_then(|binding| binding.identity.as_ref()))
-                    .cloned(),
+                canonical: native_member.map(|member| member.canonical).or_else(|| {
+                    self.type_info
+                        .traits
+                        .provider_slot_identities
+                        .get(&(span.start, span.end))
+                        .or_else(|| self.type_info.resolved_identity(span))
+                        .or_else(|| {
+                            self.type_info
+                                .traits
+                                .self_method_identities
+                                .get(&(span.start, span.end))
+                        })
+                        .or_else(|| retained_binding.and_then(|binding| binding.identity.as_ref()))
+                        .cloned()
+                }),
                 type_args: resolved_type_args,
                 binding,
             }),

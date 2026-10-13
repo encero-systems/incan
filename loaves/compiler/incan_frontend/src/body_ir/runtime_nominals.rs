@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 use incan_lang::lang::stdlib::facets;
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeCategory, SurfaceTypeKind};
 use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, HirSourceSpan, SemanticSourceTargetKind, SymbolOrigin};
+use incan_semantics_core::{IncanPrimitiveType, SymbolNamespace};
 
 use super::{IncanType, TypeCheckInfo, bir, semantic_type_from_resolved};
 
@@ -28,6 +29,109 @@ pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::NominalDeclaration>
         }
     }
     names.into_iter().filter_map(|name| nominal(type_info, &name)).collect()
+}
+
+/// Retain the public native members of SDK task carriers found in this module's checked types.
+/// Storage stays opaque; every call still requires the adapter to verify this contract against linked native metadata.
+pub(super) fn members(facts: &TypeCheckInfo) -> Vec<bir::StdlibDelegation> {
+    collect(facts)
+        .iter()
+        .flat_map(|declaration| {
+            let (receiver, names): (IncanType, &[&str]) = match surface_types::from_str(&declaration.name) {
+                Some(surface_types::SurfaceTypeId::TaskJoinError) => (
+                    IncanType::Named(declaration.name.clone()),
+                    &["message", "source", "is_cancelled", "is_panic"],
+                ),
+                Some(surface_types::SurfaceTypeId::JoinHandle) => (
+                    IncanType::Generic {
+                        base: declaration.name.clone(),
+                        args: vec![IncanType::TypeVar("T".into())],
+                    },
+                    &["abort"],
+                ),
+                _ => return Vec::new(),
+            };
+            names.iter().filter_map(|name| member(facts, &receiver, name)).collect()
+        })
+        .collect()
+}
+
+/// Recognize SDK task storage whose executable call result must survive an inferred consumer binding.
+/// This does not infer an output or admit an equal-spelled source type; it reuses the guarded registry ownership.
+pub(super) fn retains_task_storage(facts: &TypeCheckInfo, ty: &IncanType) -> bool {
+    let owner = match ty {
+        IncanType::Named(owner) | IncanType::Generic { base: owner, .. } => owner,
+        _ => return false,
+    };
+    surface_types::from_str(owner).is_some_and(|id| surface_types::category(id) == SurfaceTypeCategory::AsyncTask)
+        && nominal(facts, owner).is_some()
+}
+
+/// Bind only a registry-owned SDK task receiver to its published native method signature.
+/// These contracts mirror task.rs; they grant no source field access or equal-spelled source/foreign method behavior.
+pub(super) fn member(facts: &TypeCheckInfo, receiver: &IncanType, name: &str) -> Option<bir::StdlibDelegation> {
+    let (owner, template, parameters) = match receiver {
+        IncanType::Named(owner)
+            if surface_types::from_str(owner) == Some(surface_types::SurfaceTypeId::TaskJoinError) =>
+        {
+            (owner, receiver.clone(), Vec::new())
+        }
+        IncanType::Generic { base, args }
+            if surface_types::from_str(base) == Some(surface_types::SurfaceTypeId::JoinHandle) && args.len() == 1 =>
+        {
+            (
+                base,
+                IncanType::Generic {
+                    base: base.clone(),
+                    args: vec![IncanType::TypeVar("T".into())],
+                },
+                vec!["T".into()],
+            )
+        }
+        _ => return None,
+    };
+    let declared = nominal(facts, owner)?;
+    let mut canonical = declared.canonical.clone();
+    canonical.namespace = SymbolNamespace::Member;
+    canonical.declaration_name = name.into();
+    canonical.kind = SemanticSourceTargetKind::Method;
+    let SymbolOrigin::Package { library, module_path } = declared.canonical.origin else {
+        return None;
+    };
+    let mut path = std::iter::once(library)
+        .chain(module_path)
+        .chain(std::iter::once(owner.clone()))
+        .collect::<Vec<_>>();
+    let id = surface_types::from_runtime_rust_path(&path.join("::"))?;
+    let result = match (id, name) {
+        (surface_types::SurfaceTypeId::TaskJoinError, "message") => IncanType::Primitive(IncanPrimitiveType::Str),
+        (surface_types::SurfaceTypeId::TaskJoinError, "source") => IncanType::Generic {
+            base: "Option".into(),
+            args: vec![IncanType::Primitive(IncanPrimitiveType::Str)],
+        },
+        (surface_types::SurfaceTypeId::TaskJoinError, "is_cancelled" | "is_panic") => {
+            IncanType::Primitive(IncanPrimitiveType::Bool)
+        }
+        (surface_types::SurfaceTypeId::JoinHandle, "abort") => IncanType::Primitive(IncanPrimitiveType::Unit),
+        _ => return None,
+    };
+    path.push(name.into());
+    let target = CanonicalSymbolId {
+        namespace: SymbolNamespace::Member,
+        origin: SymbolOrigin::RustCrate(path),
+        declaration_name: name.into(),
+        kind: SemanticSourceTargetKind::RustItem,
+        scope_discriminant: None,
+        declaration_span: HirSourceSpan::new(0, 0),
+    };
+    Some(bir::StdlibDelegation {
+        canonical,
+        target,
+        parameters: vec![IncanType::Ref(Box::new(template))],
+        return_type: result,
+        type_parameters: parameters,
+        parameter_defaults: Vec::new(),
+    })
 }
 
 /// Resolve registered task, race and synchronization vocabulary to its runtime facet; source-owned names stay out.

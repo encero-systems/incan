@@ -178,6 +178,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// local: those are the two source declaration forms that deliberately shadow an enclosing binding.
     /// An inferred binding of a nongeneric source call retains its providing module's closed return carrier, so a
     /// private import alias in the producer cannot become a consumer-side storage type.
+    /// Inferred SDK task bindings likewise keep the checked call's executable output; explicitly annotated bindings
+    /// keep their declared contract.
     pub(super) fn lower_assignment(
         &mut self,
         assignment: &ast::AssignmentStmt,
@@ -207,12 +209,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let value = self.lower_boundary_value(&assignment.value, Some(&ty), scope, out);
         // Future construction is a distinct Body IR value even when the surface checker exposes its output type.
         // Preserve that carrier through a binding or alias instead of silently turning it into a scalar copy.
+        // An inferred SDK task binding also keeps the individual checked call's concrete output argument.
         if let bir::Operand::Place(read) = &value
+            && read.place.projection.is_empty()
             && let Some(local) = read.place.local_id()
-            && let IncanType::Generic { base, .. } = &self.locals[local.index()].ty
-            && base == "Awaitable"
         {
-            ty = self.locals[local.index()].ty.clone();
+            let storage = &self.locals[local.index()].ty;
+            let future = matches!(storage, IncanType::Generic { base, .. } if base == "Awaitable");
+            let inferred_task =
+                assignment.ty.is_none() && super::runtime_nominals::retains_task_storage(self.type_info, storage);
+            if future || inferred_task {
+                ty = storage.clone();
+            }
         }
         let binding_span = hir_span(assignment.name_span);
         let target_identity = self
