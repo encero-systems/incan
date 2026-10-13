@@ -11997,7 +11997,7 @@ fn stdlib_text_codec_methods_output_matches_legacy() -> Result<(), Box<dyn std::
     Ok(())
 }
 
-/// Channel errors close before the separately owned sender/newtype boundary; explicit constructors keep that boundary.
+/// Channel errors close before the remaining receiver type binding; explicit constructors keep the sender boundary.
 #[test]
 fn stdlib_channel_errors_reach_sender_boundary() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
@@ -12014,14 +12014,14 @@ fn stdlib_channel_errors_reach_sender_boundary() -> Result<(), Box<dyn std::erro
             include_str!(
                 "../../incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/channel_ends_unpacked_and_sent_through_a_wrapper.incn"
             ),
-            "unsupported Body IR type Sender",
+            "unsupported Body IR type TypeVar",
         ),
         (
             "async-channel-sync",
             include_str!(
                 "../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_async_channels_and_sync.incn"
             ),
-            "unsupported Body IR type Sender",
+            "unsupported Body IR type TypeVar",
         ),
         (
             "explicit-channel",

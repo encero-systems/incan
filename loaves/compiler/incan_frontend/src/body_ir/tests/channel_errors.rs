@@ -24,6 +24,27 @@ fn channel_send_retains_closed_error_payload() -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
+/// The original unpacked-channel body has closed send errors even while its receive payload remains open.
+#[test]
+fn unpacked_channel_retains_closed_errors_and_open_receive() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        include_str!(
+            "../../../../incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/channel_ends_unpacked_and_sent_through_a_wrapper.incn"
+        ),
+        &["m", "unpacked_channel"],
+    )?;
+    let body = body_named(&module, "main")?;
+    assert!(
+        body.locals.iter().all(|local| !open_send_error(&local.ty)),
+        "{}",
+        body.render_snapshot()
+    );
+    assert!(body.locals.iter().any(|local| matches!(&local.ty,
+        IncanType::Generic { base, args } if base == "Option" && args.iter().any(|ty| matches!(ty, IncanType::TypeVar(_) | IncanType::Unknown))
+    )), "{}", body.render_snapshot());
+    Ok(())
+}
+
 /// A declared string sender preserves its checked error argument rather than adopting another carrier.
 #[test]
 fn annotated_channel_send_keeps_error_payload() -> Result<(), Box<dyn std::error::Error>> {
