@@ -388,6 +388,7 @@ fn decorated_rest_parameters_retain_owned_packs() -> Result<(), Box<dyn std::err
         assert_eq!(facts["params"][3]["kind"], "RestKeyword");
     }
     let main = body_named(&module, "main")?;
+    let mut call_count = 0;
     for statement in &main.block.stmts {
         if let bir::StatementKind::Call {
             callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
@@ -396,9 +397,56 @@ fn decorated_rest_parameters_retain_owned_packs() -> Result<(), Box<dyn std::err
         } = &statement.kind
             && target.name == "decorated_total"
         {
+            call_count += 1;
             assert_eq!(args.len(), 4);
             assert_eq!(target.binding, bir::ArgumentBinding::resolved_positional(4));
+            for (index, base) in [(2, "List"), (3, "Dict")] {
+                let bir::ArgumentElement::Fixed(bir::Operand::Place(read)) = &args[index] else {
+                    return Err("rest argument must select its owned pack local".into());
+                };
+                assert!(matches!(&main.locals[read.place.local.index()].ty,
+                    IncanType::Generic { base: actual, .. } if actual == base));
+            }
         }
     }
+    assert_eq!(call_count, 2);
+    Ok(())
+}
+
+/// Positional postcard parameter records require a new representation version, not a JSON-only default.
+#[test]
+fn rest_parameter_wire_shape_refuses_version_nine() -> Result<(), Box<dyn std::error::Error>> {
+    use incan_semantics_core::executable_representation::{
+        EXECUTABLE_REPRESENTATION_VERSION, ExecutableRepresentationError, decode_module,
+    };
+    assert_eq!(EXECUTABLE_REPRESENTATION_VERSION, 10);
+    assert!(matches!(
+        decode_module(&[9]),
+        Err(ExecutableRepresentationError::UnsupportedVersion {
+            found: 9,
+            supported: 10
+        })
+    ));
+    Ok(())
+}
+
+/// Rest packs are callee-owned and must be dropped on return, while ordinary collections keep caller ownership.
+#[test]
+fn rest_packs_drop_without_dropping_ordinary_collections() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def total(ordinary: List[int], *xs: int, **labels: str) -> int:\n    return 1\n";
+    let module = build(source, &["m", "rest_ownership"])?;
+    let body = body_named(&module, "total")?;
+    let drops: Vec<_> = body
+        .block
+        .stmts
+        .iter()
+        .filter_map(|statement| match statement.kind {
+            bir::StatementKind::Drop { local } => Some(local),
+            _ => None,
+        })
+        .collect();
+    assert!(!drops.contains(&body.params[0].local));
+    assert!(drops.contains(&body.params[1].local));
+    assert!(drops.contains(&body.params[2].local));
     Ok(())
 }
