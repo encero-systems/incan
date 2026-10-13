@@ -115,6 +115,8 @@ impl TypeChecker {
             let Some(parameter) = parameter else {
                 return;
             };
+            let testing_argument = self.body_ir_testing_argument_type(identity, expression);
+            let testing_channel = testing_argument.is_some();
             let key = (expression.span.start, expression.span.end);
             let Some(actual) = self
                 .type_info
@@ -130,10 +132,8 @@ impl TypeChecker {
                 return;
             };
             let expected = normalized(&parameter.ty, &names, &self.type_info);
-            let actual = self
-                .body_ir_testing_argument_type(identity, expression)
-                .unwrap_or_else(|| self.body_ir_argument_type(expression, actual));
-            if self.body_ir_testing_argument_type(identity, expression).is_some() {
+            let actual = testing_argument.unwrap_or_else(|| self.body_ir_argument_type(expression, actual));
+            if testing_channel {
                 self.type_info
                     .expressions
                     .body_ir_expr_types
@@ -164,6 +164,8 @@ impl TypeChecker {
                 .body_ir_call_type_arguments
                 .insert((span.start, span.end), arguments);
             let result = substitute_resolved_type(&normalized(&info.return_type, &names, &self.type_info), &bindings);
+            self.retain_body_ir_call_parameters(info, &names, &bindings, span);
+            tracing::debug!(target: "incan::invocation", identity = ?identity, declared = ?info.return_type, names = ?names, bindings = ?bindings, result = ?result, "direct-route checked call result");
             if concrete(&result) {
                 self.type_info
                     .calls
@@ -185,18 +187,42 @@ impl TypeChecker {
         }
     }
 
+    /// Record the already checked instance's parameter storage, so argument binding cannot reopen its closed leaves.
+    fn retain_body_ir_call_parameters(
+        &mut self,
+        info: &FunctionInfo,
+        names: &[String],
+        bindings: &HashMap<String, ResolvedType>,
+        span: Span,
+    ) {
+        let parameters = info
+            .params
+            .iter()
+            .map(|parameter| crate::symbols::CallableParam {
+                ty: substitute_resolved_type(&normalized(&parameter.ty, names, &self.type_info), bindings),
+                ..parameter.clone()
+            })
+            .collect::<Vec<_>>();
+        if parameters.iter().all(|parameter| concrete(&parameter.ty)) {
+            self.type_info
+                .calls
+                .body_ir_call_parameter_types
+                .insert((span.start, span.end), parameters);
+        }
+    }
+
     /// Retain only canonical testing helpers' syntactically absent channels as Unit, matching legacy emission.
     /// Ordinary calls, source-owned equal spellings and constructors with supplied channels keep their checked facts.
     fn body_ir_testing_argument_type(
-        &self,
+        &mut self,
         identity: Option<&CanonicalSymbolId>,
         expression: &Spanned<Expr>,
     ) -> Option<ResolvedType> {
         let identity = identity?;
-        let SymbolOrigin::Module(module) = &identity.origin else {
+        let source = self.stdlib_cache.callable_source_identity(identity)?;
+        let SymbolOrigin::Module(mut path) = source.origin else {
             return None;
         };
-        let mut path = module.clone();
         path.push(identity.declaration_name.clone());
         let helper = testing::assert_helper_id_from_std_path(&path)?;
         if helper == TestingAssertHelperId::AssertIsNone && matches!(expression.node, Expr::Literal(Literal::None)) {
@@ -433,6 +459,17 @@ pub(super) fn normalized(
         ),
         ResolvedType::Ref(inner) => ResolvedType::Ref(Box::new(normalized(inner, binders, facts))),
         ResolvedType::RefMut(inner) => ResolvedType::RefMut(Box::new(normalized(inner, binders, facts))),
+        ResolvedType::TypeToken(inner) => ResolvedType::TypeToken(Box::new(normalized(inner, binders, facts))),
+        ResolvedType::Function(parameters, result) => ResolvedType::Function(
+            parameters
+                .iter()
+                .map(|parameter| crate::symbols::CallableParam {
+                    ty: normalized(&parameter.ty, binders, facts),
+                    ..parameter.clone()
+                })
+                .collect(),
+            Box::new(normalized(result, binders, facts)),
+        ),
         ResolvedType::FrozenList(inner) => ResolvedType::FrozenList(Box::new(normalized(inner, binders, facts))),
         ResolvedType::FrozenSet(inner) => ResolvedType::FrozenSet(Box::new(normalized(inner, binders, facts))),
         ResolvedType::FrozenDict(key, value) => ResolvedType::FrozenDict(

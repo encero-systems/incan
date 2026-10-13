@@ -1581,6 +1581,9 @@ pub struct CallArtifacts {
     /// Concrete constructor carriers and ordinary checked arguments share this ordered fact. Legacy never reads this
     /// additive table: its own contextual types and monomorph decisions remain untouched.
     pub body_ir_call_type_arguments: HashMap<(usize, usize), Vec<ResolvedType>>,
+    /// Closed call-site parameters under the same checked instantiation, preserving declaration roles and defaults.
+    /// Only Body IR reads this contract; legacy parameter snapshots retain their original inferred holes.
+    pub body_ir_call_parameter_types: HashMap<(usize, usize), Vec<CallableParam>>,
     /// Executable constructor carriers recovered from original declared fields and checked values after contextual
     /// checking substituted a callee's open parameters into those fields. Only Body IR reads this additive fact.
     pub body_ir_constructor_types: HashMap<(usize, usize), ResolvedType>,
@@ -2879,6 +2882,15 @@ impl TypeCheckInfo {
             .call_site_callable_params
             .get(&(span.start, span.end))
             .map(Vec::as_slice)
+    }
+
+    /// Return closed checked call parameters for Body IR, preserving the legacy signature when no complete fact exists.
+    pub fn body_ir_call_site_callable_params(&self, span: Span) -> Option<&[CallableParam]> {
+        self.calls
+            .body_ir_call_parameter_types
+            .get(&(span.start, span.end))
+            .map(Vec::as_slice)
+            .or_else(|| self.call_site_callable_params(span))
     }
 
     /// Return the resolved winner-binding type for the `race for` arm whose awaitable is at `span` (#1164).

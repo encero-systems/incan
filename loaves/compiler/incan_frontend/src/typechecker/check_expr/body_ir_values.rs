@@ -72,6 +72,20 @@ impl TypeChecker {
         expression: &Spanned<Expr>,
         recorded: &ResolvedType,
     ) {
+        if matches!(expression.node, Expr::Call(_, _, _) | Expr::MethodCall(_, _, _, _))
+            && let Some(actual) = self
+                .type_info
+                .calls
+                .body_ir_call_result_types
+                .get(&(expression.span.start, expression.span.end))
+                .cloned()
+        {
+            self.type_info
+                .expressions
+                .body_ir_expr_types
+                .insert((expression.span.start, expression.span.end), actual);
+            return;
+        }
         let actual = match &expression.node {
             Expr::Ident(_) => self
                 .type_info
