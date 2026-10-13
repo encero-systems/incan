@@ -15937,7 +15937,7 @@ fn generic_capturing_callable_alias_output_matches_legacy() -> Result<(), Box<dy
         &fixture.scratch("generic-capturing-callable-alias")?,
         &fixture.sysroot,
         &fixture.formatting,
-        "from std.traits.callable import Callable1\n\ndef use[Callback with (Clone, Callable1[str, str])](callback: Callback, text: str) -> str:\n  alias = callback\n  return alias(text)\n\ndef main() -> None:\n  prefix = \"prefix-\"\n  callback: (str) -> str = (text) => f\"{prefix}{text}\"\n  println(use(callback, \"x\"))\n",
+        "from std.traits.callable import Callable1\n\ndef use[Callback with (Clone, Callable1[str, str])](callback: Callback, text: str) -> str:\n  alias = callback\n  return alias(text)\n\ndef plain(text: str) -> str:\n  return text\n\ndef main() -> None:\n  prefix = \"prefix-\"\n  callback: (str) -> str = (text) => f\"{prefix}{text}\"\n  println(use(callback, \"x\"))\n  println(use(plain, \"y\"))\n",
     )
 }
 
