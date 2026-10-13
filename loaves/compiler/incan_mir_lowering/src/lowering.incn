@@ -924,18 +924,23 @@ def comparison_collection_place(
     value: &RustOperand,
     span: SourceSpan,
 ) -> Result[Option[Place], str]:
-    """Select a whole collection comparison operand only when Body IR retained its shared read."""
+    """Select a checked collection owner or field only when Body IR retained its shared read; indexing stays separate."""
     match value:
         RustOperand.Place(read) =>
-            if len(read.place.projection) != 0:
-                return Ok(None)
+            for projection in read.place.projection:
+                match projection:
+                    PlaceElem.Index(_index) => return Ok(None)
+                    PlaceElem.Slice(start=_start, end=_end, step=_step) => return Ok(None)
+                    _ => pass
             match read.place.local_id():
                 None => return Ok(None)
                 Some(_local) => pass
             place = scalar_place(builder, read.place, span)?
             match equality_shape(place_type(builder.locals, place)):
                 None => return Ok(None)
-                Some(_shape) => pass
+                Some(shape) =>
+                    if len(read.place.projection) != 0 and shape != place_type(builder.locals, place):
+                        return Err("unsupported Body IR projected collection reference equality")
             if read.fact != OwnershipFact.Borrow:
                 return Err("unsupported Body IR collection equality without retained shared read")
             return Ok(Some(place))
