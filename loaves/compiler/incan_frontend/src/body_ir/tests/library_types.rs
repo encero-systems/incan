@@ -4,6 +4,25 @@ use super::*;
 use crate::typechecker::stdlib_loader::StdlibAstCache;
 use incan_semantics_core::SymbolOrigin;
 
+/// A closed source function call already supplies the reader argument; nominal admission must not infer it again.
+#[test]
+fn sdk_reader_call_retains_checked_function_arguments() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "from std.io import BinaryReader, BytesIO\n\ndef chunk_size[R with BinaryReader](reader: R) -> int:\n    return reader.chunks(2).chunk_size\n\ndef main() -> None:\n    println(chunk_size(BytesIO(b\"abcde\")))\n",
+        &["m", "reader_instance"],
+    )?;
+    let owner = body_named(&module, "chunk_size")?
+        .canonical
+        .as_ref()
+        .ok_or("missing function identity")?;
+    let target = named_targets(&module, "main")
+        .into_iter()
+        .find(|target| target.canonical.as_ref() == Some(owner))
+        .ok_or("missing checked reader call")?;
+    assert_eq!(target.type_args, vec![IncanType::Named("_BytesIO".to_owned())]);
+    Ok(())
+}
+
 /// A checked SDK signature and its semantic payloads alone cannot authorize an anonymous native enum alias.
 #[test]
 fn sdk_union_signature_requires_a_selected_artifact() -> Result<(), Box<dyn std::error::Error>> {

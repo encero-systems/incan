@@ -10752,6 +10752,19 @@ def main() -> None:
     )
 }
 
+/// Closed function calls retain the SDK reader layout needed by their instantiated frame before lowering it.
+#[test]
+fn stdlib_reader_layout_in_function_instance_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("stdlib-reader-layout-function-instance")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "from std.io import BinaryReader, BytesIO\n\ndef chunk_size[R with BinaryReader](reader: R) -> int:\n    return reader.chunks(2).chunk_size\n\ndef main() -> None:\n    println(chunk_size(BytesIO(b\"abcde\")))\n",
+    )
+}
+
 /// Path methods receive the SDK-owned anonymous union for both Path and str targets.
 #[test]
 fn stdlib_path_union_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
