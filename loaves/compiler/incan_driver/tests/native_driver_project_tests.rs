@@ -18,6 +18,33 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// Startup text precedes successful main output and matches the frozen legacy bytes.
+#[test]
+fn import_this_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("import-this-output")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "import this\n\ndef main() -> None:\n  println(\"done\")\n",
+    )
+}
+
+/// Startup output is retained before a fallible main's body, including its legacy error status and diagnostic.
+#[test]
+fn import_this_fallible_main_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let (actual, expected) = declaration_case_outputs(
+        "import_this_fallible_main",
+        "import this\n\ndef main() -> Result[None, str]:\n  println(\"before failure\")\n  return Err(\"runtime failure\")\n",
+    )?;
+    assert_eq!(actual.stdout, expected.stdout);
+    assert_eq!(actual.stderr, expected.stderr);
+    assert_eq!(actual.status.code(), Some(1));
+    assert_eq!(actual.status.code(), expected.status.code());
+    Ok(())
+}
+
 /// Generic empty collection construction retains checked write context and the frozen legacy result.
 #[test]
 fn generic_empty_collection_context_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

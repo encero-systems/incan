@@ -5,6 +5,39 @@
 
 use super::*;
 
+/// The exact builtin module import retains one entrypoint effect and the existing authoritative text asset.
+#[test]
+fn import_this_retains_entrypoint_text_effect() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "import this\n\ndef main() -> None:\n  println(\"done\")\n",
+        &["m", "import_this_effect"],
+    )?;
+    let value = serde_json::to_value(&module)?;
+    let effects = value
+        .get("entrypoint_effects")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("missing retained entrypoint effects")?;
+    assert_eq!(effects.len(), 1);
+    assert_eq!(
+        effects[0]["PrintText"]["text"].as_str(),
+        Some(include_str!("../../../../../stdlib/zen.txt"))
+    );
+    Ok(())
+}
+
+/// An ordinary module retains no synthetic entrypoint output.
+#[test]
+fn ordinary_module_retains_no_entrypoint_effects() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build("def main() -> None:\n  pass\n", &["m", "no_import_effect"])?;
+    let value = serde_json::to_value(&module)?;
+    let effects = value
+        .get("entrypoint_effects")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("missing explicit entrypoint effect list")?;
+    assert!(effects.is_empty());
+    Ok(())
+}
+
 /// A checked write to a shadowed collection cannot settle a different outer binding's open constructor.
 #[test]
 fn collection_write_context_preserves_binding_identity() -> Result<(), Box<dyn std::error::Error>> {
