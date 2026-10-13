@@ -130,6 +130,7 @@ pub(super) fn member(facts: &TypeCheckInfo, receiver: &IncanType, name: &str) ->
         parameters: vec![IncanType::Ref(Box::new(template))],
         return_type: result,
         type_parameters: parameters,
+        native_type_arguments: Vec::new(),
         parameter_defaults: Vec::new(),
     })
 }
