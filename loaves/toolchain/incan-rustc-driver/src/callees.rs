@@ -15,7 +15,8 @@ pub fn resolve(tcx: TyCtxt<'_>, callee: &Callee) -> Result<DefId, PlanError> {
             "local callable has no declaration callee".into(),
         )),
         CalleeKind::CallClosure(_) => fn_call(tcx),
-        CalleeKind::ClosureBody(..) => Err(PlanError::UnknownCallee(
+        CalleeKind::CallClosureOnce(_) => fn_once_call(tcx),
+        CalleeKind::ClosureBody(..) | CalleeKind::ClosureBodyOnce(..) => Err(PlanError::UnknownCallee(
             "closure constructors keep rustc's own body".into(),
         )),
         CalleeKind::Instantiated(path, _) => external(tcx, path),
@@ -75,6 +76,19 @@ pub fn fn_call(tcx: TyCtxt<'_>) -> Result<DefId, PlanError> {
         .copied()
         .find(|def| tcx.item_name(*def).as_str() == "call")
         .ok_or_else(|| PlanError::UnknownCallee("Fn::call".into()))
+}
+
+/// Resolve FnOnce::call_once through its language item for a moved owned callable receiver.
+pub fn fn_once_call(tcx: TyCtxt<'_>) -> Result<DefId, PlanError> {
+    let trait_id = tcx
+        .lang_items()
+        .fn_once_trait()
+        .ok_or_else(|| PlanError::UnknownCallee("FnOnce".into()))?;
+    tcx.associated_item_def_ids(trait_id)
+        .iter()
+        .copied()
+        .find(|def| tcx.item_name(*def).as_str() == "call_once")
+        .ok_or_else(|| PlanError::UnknownCallee("FnOnce::call_once".into()))
 }
 
 /// Resolve only a source-local function item admitted by the plan's canonical frontend identity.

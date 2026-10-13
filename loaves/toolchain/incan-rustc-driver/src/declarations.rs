@@ -210,13 +210,15 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
             ast::TyKind::Tup(thin_vec![numeric_ty(kind, span), ty(&PlanType::Bool, span)])
         }
         PlanType::FunctionPointer(signature) => function_pointer_ast(signature, span),
-        PlanType::Closure(signature) => {
+        PlanType::Closure(signature) | PlanType::ClosureOnce(signature) => {
             let mut path = boxed_path(span);
             if let Some(segment) = path.segments.last_mut() {
                 segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
                     span,
                     args: thin_vec![ast::AngleBracketedArg::Arg(ast::GenericArg::Type(callable_object_ast(
-                        signature, span
+                        signature,
+                        span,
+                        matches!(kind, PlanType::ClosureOnce(_))
                     )))],
                 })));
             }
@@ -225,7 +227,7 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
         PlanType::ClosureRef(signature) => ast::TyKind::Ref(
             None,
             ast::MutTy {
-                ty: callable_object_ast(signature, span),
+                ty: callable_object_ast(signature, span, false),
                 mutbl: ast::Mutability::Not,
             },
         ),
@@ -364,8 +366,8 @@ fn generator_ty(name: &str, leaf: &ListLeaf, depth: i64, span: Span) -> Box<ast:
     })
 }
 
-/// Spell `dyn Fn(inputs) -> output` structurally for a boxed closure or a closure-holding parameter.
-pub(crate) fn callable_object_ast(signature: &[PlanType], span: Span) -> Box<ast::Ty> {
+/// Spell the planned `dyn Fn(inputs) -> output` or `dyn FnOnce(inputs) -> output` object structurally.
+pub(crate) fn callable_object_ast(signature: &[PlanType], span: Span, consumes_environment: bool) -> Box<ast::Ty> {
     let (inputs, output) = match signature.split_last() {
         Some((result, parameters)) => (
             parameters.iter().map(|parameter| ty(parameter, span)).collect(),
@@ -373,7 +375,7 @@ pub(crate) fn callable_object_ast(signature: &[PlanType], span: Span) -> Box<ast
         ),
         None => (ThinVec::new(), ty(&PlanType::Unit, span)),
     };
-    let mut path = ast::Path::from_ident(ident("Fn", span));
+    let mut path = ast::Path::from_ident(ident(if consumes_environment { "FnOnce" } else { "Fn" }, span));
     path.segments[0].args = Some(Box::new(ast::GenericArgs::Parenthesized(ast::ParenthesizedArgs {
         span,
         inputs,

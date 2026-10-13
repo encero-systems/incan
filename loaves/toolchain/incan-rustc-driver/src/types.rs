@@ -120,6 +120,7 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::Bool => tcx.types.bool,
         PlanType::FunctionPointer(signature) => function_pointer_type(tcx, signature)?,
         PlanType::Closure(signature) => Ty::new_box(tcx, callable_object_type(tcx, signature)?),
+        PlanType::ClosureOnce(signature) => Ty::new_box(tcx, consuming_callable_object_type(tcx, signature)?),
         PlanType::ClosureRef(signature) => {
             Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, callable_object_type(tcx, signature)?)
         }
@@ -283,12 +284,30 @@ fn bound_callable_inputs<'tcx>(
 ///
 /// The object's trait and its `FnOnce::Output` projection come from language items, never from source spellings.
 pub fn callable_object_type<'tcx>(tcx: TyCtxt<'tcx>, signature: &[PlanType]) -> Result<Ty<'tcx>, PlanError> {
+    callable_object_type_for_kind(tcx, signature, false)
+}
+
+/// Build the exact dyn FnOnce object whose owned box transfers its environment during invocation.
+pub fn consuming_callable_object_type<'tcx>(tcx: TyCtxt<'tcx>, signature: &[PlanType]) -> Result<Ty<'tcx>, PlanError> {
+    callable_object_type_for_kind(tcx, signature, true)
+}
+
+/// Preserve one signature and output projection while selecting the declared shared or consuming trait contract.
+fn callable_object_type_for_kind<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    signature: &[PlanType],
+    consumes_environment: bool,
+) -> Result<Ty<'tcx>, PlanError> {
     let (result, parameters) = signature.split_last().ok_or_else(|| PlanError::Invalid {
         function: "callable object".into(),
         reason: "callable signature has no return type".into(),
     })?;
     let missing = |item: &str| PlanError::UnknownCallee(item.into());
-    let fn_trait = tcx.lang_items().fn_trait().ok_or_else(|| missing("Fn"))?;
+    let fn_trait = if consumes_environment {
+        tcx.lang_items().fn_once_trait().ok_or_else(|| missing("FnOnce"))?
+    } else {
+        tcx.lang_items().fn_trait().ok_or_else(|| missing("Fn"))?
+    };
     let output = tcx
         .lang_items()
         .fn_once_output()

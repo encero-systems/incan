@@ -2187,6 +2187,11 @@ pub struct ClosureBody {
     /// arguments without captures.
     #[serde(default)]
     pub function_item: bool,
+    /// Invocation consumes the owned environment because a proven captured iterator moves into deferred work.
+    /// Consumers must construct an FnOnce object and invoke it through a moved last-use operand; reusable Fn
+    /// borrowing or cloning the iterator for another invocation would change this contract.
+    #[serde(default)]
+    pub consumes_environment: bool,
     /// The closure's own captured-binding locals, in the same order as [`Rvalue::Closure::captured_operands`] --
     /// `capture_locals[i]` is where a read of the `i`-th captured operand's value is durably bound inside the
     /// closure body, so subsequent reads inside the body see it as an ordinary local rather than re-reading the
@@ -4874,6 +4879,7 @@ mod tests {
                         body: Box::new(ClosureBody {
                             original_callable: None,
                             function_item: false,
+                            consumes_environment: false,
                             capture_locals: vec![capture_local],
                             stmts: Vec::new(),
                             result: Operand::place(

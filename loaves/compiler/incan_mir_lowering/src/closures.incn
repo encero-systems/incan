@@ -249,7 +249,7 @@ def closure_value_type(ty: PlanType) -> bool:
     return numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit or ty == PlanType.String
 
 
-pub def closure_capture_type(ty: PlanType) -> bool:
+pub def closure_capture_type(ty: PlanType, consumes_environment: bool) -> bool:
     """
     Admit the captures a by-value environment can hand to its lifted function on every call.
 
@@ -257,6 +257,10 @@ pub def closure_capture_type(ty: PlanType) -> bool:
     snapshots move into the environment once, and each call forwards a clone, because a callable can run more than once.
     Checking forbids changes to captured values and aliases of their storage, so these are read-only snapshots.
     """
+    if consumes_environment:
+        match ty:
+            PlanType.ZipIterator(_left, _right) => return true
+            _ => pass
     match ty:
         PlanType.Model(_owner, _name) => return true
         PlanType.List(_leaf, _depth) => return true
@@ -275,6 +279,7 @@ pub def closure_constructor(
     lifted: str,
     captures: list[PlanType],
     signature: list[PlanType],
+    consumes_environment: bool,
     span: SourceSpan,
 ) -> Function:
     """
@@ -283,7 +288,12 @@ pub def closure_constructor(
     Its plan body is only the validated contract the driver checks: one `ClosureBody` call returning the boxed object.
     The driver supplies the native closure, whose body forwards the captures and then its own inputs to `lifted`.
     """
-    mut locals = [Local(ty=PlanType.Closure(signature), span=span)]
+    mut object_type = PlanType.Closure(signature)
+    mut body_call = CalleeKind.ClosureBody(lifted, len(captures))
+    if consumes_environment:
+        object_type = PlanType.ClosureOnce(signature)
+        body_call = CalleeKind.ClosureBodyOnce(lifted, len(captures))
+    mut locals = [Local(ty=object_type, span=span)]
     mut parameters: list[Parameter] = []
     mut operands: list[Operand] = []
     for index in range(len(captures)):
@@ -291,21 +301,15 @@ pub def closure_constructor(
         parameters.append(Parameter(name=f"__incan_capture_{index}", ty=captures[index], span=span))
         # Owned captures move into the environment; Copy scalars are copied.
         mut capture = OperandKind.Copy(plan_place(index + 1, span))
-        if owned_capture(captures[index]):
+        if consumes_environment or owned_capture(captures[index]):
             capture = OperandKind.Move(plan_place(index + 1, span))
         operands.append(Operand(kind=capture, span=span))
-    call = TerminatorKind.Call(
-        Callee(kind=CalleeKind.ClosureBody(lifted, len(captures)), span=span),
-        operands,
-        plan_place(0, span),
-        1,
-        Unwind.Continue,
-    )
+    call = TerminatorKind.Call(Callee(kind=body_call, span=span), operands, plan_place(0, span), 1, Unwind.Continue)
     # The `Statement` import keeps these empty blocks' element type in scope (the compiler gap tracked by #2010).
     return Function(
         name=name,
         parameters=parameters,
-        return_type=PlanType.Closure(signature),
+        return_type=object_type,
         locals=locals,
         blocks=[plan_block([], call, span), plan_block([], TerminatorKind.Return, span)],
         span=span,
@@ -361,6 +365,7 @@ pub def callable_signature(ty: PlanType) -> Result[list[PlanType], str]:
         PlanType.FunctionPointer(signature) => return Ok(signature)
         PlanType.FunctionItem(_name, signature) => return Ok(signature)
         PlanType.Closure(signature) => return Ok(signature)
+        PlanType.ClosureOnce(signature) => return Ok(signature)
         PlanType.ClosureRef(signature) => return Ok(signature)
         _ => return Err("unsupported Body IR local callable representation")
 

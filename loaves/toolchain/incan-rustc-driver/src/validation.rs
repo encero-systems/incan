@@ -118,6 +118,7 @@ enum Scalar {
     FunctionPointer(Vec<Scalar>),
     FunctionItem(String, Vec<Scalar>),
     Closure(Vec<Scalar>),
+    ClosureOnce(Vec<Scalar>),
     ClosureRef(Vec<Scalar>),
     Future(Vec<Scalar>),
 }
@@ -261,6 +262,7 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::StrSlice => Scalar::StrSlice,
         PlanType::FunctionPointer(signature) => Scalar::FunctionPointer(signature.iter().map(scalar).collect()),
         PlanType::Closure(signature) => Scalar::Closure(signature.iter().map(scalar).collect()),
+        PlanType::ClosureOnce(signature) => Scalar::ClosureOnce(signature.iter().map(scalar).collect()),
         PlanType::ClosureRef(signature) => Scalar::ClosureRef(signature.iter().map(scalar).collect()),
         PlanType::FunctionItem(name, signature) => {
             Scalar::FunctionItem(name.clone(), signature.iter().map(scalar).collect())
@@ -763,6 +765,7 @@ fn owns_values(ty: &Scalar) -> bool {
         | Scalar::StringArray(_)
         | Scalar::Model(_)
         | Scalar::Closure(_)
+        | Scalar::ClosureOnce(_)
         | Scalar::ValidationError
         | Scalar::Future(_) => true,
         Scalar::Tuple(elements) => elements.iter().any(owns_values),
@@ -1139,7 +1142,7 @@ fn source_signature_type(ty: &Scalar) -> bool {
                 source_signature_type(input) || matches!(input, Scalar::ModelRef(_) | Scalar::ModelMutRef(_))
             });
     }
-    if let Scalar::Closure(signature) | Scalar::ClosureRef(signature) = ty {
+    if let Scalar::Closure(signature) | Scalar::ClosureOnce(signature) | Scalar::ClosureRef(signature) = ty {
         return callable_object_signature(signature);
     }
     if let Scalar::Tuple(elements) = ty {
@@ -1296,7 +1299,7 @@ fn validate_closure_constructor(function: &Function) -> Result<(), PlanError> {
         || first.cleanup
         || second.cleanup
         || !matches!(second.terminator.kind, TerminatorKind::Return)
-        || !matches!(function.return_type, PlanType::Closure(_))
+        || !matches!(function.return_type, PlanType::Closure(_) | PlanType::ClosureOnce(_))
         || usize::try_from(count).ok() != Some(function.parameters.len())
     {
         return Err(refused());
@@ -1304,8 +1307,17 @@ fn validate_closure_constructor(function: &Function) -> Result<(), PlanError> {
     let TerminatorKind::Call(_, arguments, destination, 1, Unwind::Continue) = &first.terminator.kind else {
         return Err(refused());
     };
-    // Each capture is forwarded from its own parameter: owned captures move into the environment, Copy scalars
-    // are copied.
+    let consumes_environment = matches!(function.return_type, PlanType::ClosureOnce(_));
+    let TerminatorKind::Call(callee, ..) = &first.terminator.kind else {
+        return Err(refused());
+    };
+    if consumes_environment != matches!(callee.kind, CalleeKind::ClosureBodyOnce(..))
+        || (consumes_environment && function.parameters.is_empty())
+    {
+        return Err(refused());
+    }
+    // Each capture comes from its own parameter. Consuming environments move every capture; reusable environments move
+    // owned text, lists, and models and copy scalars.
     let forwarded = arguments.iter().enumerate().all(|(index, argument)| {
         let (moved, place) = match &argument.kind {
             OperandKind::Copy(place) => (false, place),
@@ -1316,7 +1328,7 @@ fn validate_closure_constructor(function: &Function) -> Result<(), PlanError> {
             .parameters
             .get(index)
             .is_some_and(|parameter| crate::closures::owned_capture(&parameter.ty));
-        moved == owned
+        moved == (owned || consumes_environment)
             && matches!(place.projection, Projection::Whole)
             && usize::try_from(place.local).ok() == Some(index + 1)
     });
@@ -1559,7 +1571,20 @@ fn signature(plan: &Plan, function: &Function, callee: &Callee) -> Result<(Vec<S
                 result.clone(),
             ))
         }
-        CalleeKind::ClosureBody(name, count) => {
+        CalleeKind::CallClosureOnce(signature) => {
+            let signature: Vec<_> = signature.iter().map(scalar).collect();
+            if !callable_object_signature(&signature) {
+                return Err(invalid(function, "consuming callable-object signature is unsupported"));
+            }
+            let (result, inputs) = signature
+                .split_last()
+                .ok_or_else(|| invalid(function, "consuming callable-object has no result"))?;
+            Ok((
+                vec![Scalar::ClosureOnce(signature.clone()), Scalar::Tuple(inputs.to_vec())],
+                result.clone(),
+            ))
+        }
+        CalleeKind::ClosureBody(name, count) | CalleeKind::ClosureBodyOnce(name, count) => {
             let lifted = plan
                 .functions
                 .iter()
@@ -1579,7 +1604,11 @@ fn signature(plan: &Plan, function: &Function, callee: &Callee) -> Result<(Vec<S
                     .iter()
                     .map(|parameter| scalar(&parameter.ty))
                     .collect(),
-                Scalar::Closure(object),
+                if matches!(callee.kind, CalleeKind::ClosureBodyOnce(..)) {
+                    Scalar::ClosureOnce(object)
+                } else {
+                    Scalar::Closure(object)
+                },
             ))
         }
         CalleeKind::Value(value) => {
@@ -1982,7 +2011,7 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
             ));
         }
     }
-    if let PlanType::Closure(signature) | PlanType::ClosureRef(signature) = ty
+    if let PlanType::Closure(signature) | PlanType::ClosureOnce(signature) | PlanType::ClosureRef(signature) = ty
         && !callable_object_signature(&signature.iter().map(scalar).collect::<Vec<_>>())
     {
         return Err(PlanError::Invalid {
@@ -1990,7 +2019,7 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
             reason: "callable-object signature requires admitted inputs and a final return type".into(),
         });
     }
-    if let PlanType::Closure(signature) | PlanType::ClosureRef(signature) = ty {
+    if let PlanType::Closure(signature) | PlanType::ClosureOnce(signature) | PlanType::ClosureRef(signature) = ty {
         for component in signature {
             validate_model_type(plan, component)?;
         }
@@ -2147,7 +2176,10 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
                     reason: "invalid model field declaration".into(),
                 });
             }
-            if matches!(field.ty, PlanType::Closure(_) | PlanType::ClosureRef(_)) {
+            if matches!(
+                field.ty,
+                PlanType::Closure(_) | PlanType::ClosureOnce(_) | PlanType::ClosureRef(_)
+            ) {
                 return Err(PlanError::Invalid {
                     function: declaration.name.clone(),
                     reason: "unsupported callable model field declaration".into(),

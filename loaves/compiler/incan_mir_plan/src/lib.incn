@@ -188,6 +188,8 @@ pub enum PlanType:
     FunctionPointer(list[PlanType])
     FunctionItem(str, list[PlanType])
     Closure(list[PlanType])
+    # An owned FnOnce object whose invocation transfers its environment instead of borrowing it.
+    ClosureOnce(list[PlanType])
     ClosureRef(list[PlanType])
     CallableArguments(list[PlanType])
     # Exactly one output carrier; the owned pinned future executes only when polled.
@@ -452,6 +454,8 @@ pub enum CalleeKind:
     # A synthesized constructor's boxed environment. Its closure forwards the leading captured parameters, then its own
     # inputs, to the named lifted function; the count says how many of that function's parameters are captures.
     ClosureBody(str, int)
+    # A constructor and lifted body for a consuming environment, forwarded by value exactly once.
+    ClosureBodyOnce(str, int)
     # Invoke a borrowed callable object of this signature with one packed argument tuple.
     CallClosure(list[PlanType])
     # Read a clone of computed static storage slot `n`, running its initializer first if nothing has yet.
@@ -462,6 +466,8 @@ pub enum CalleeKind:
     StaticForce(int)
     # Call the selected planned method while holding computed slot n's actual shared or exclusive storage guard.
     StaticMethod(int, str)
+    # Invoke the owned callable object by moving it with one packed argument tuple.
+    CallClosureOnce(list[PlanType])
 
 
 @derive(Clone, PartialEq)

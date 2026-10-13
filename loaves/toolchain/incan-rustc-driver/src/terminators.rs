@@ -125,6 +125,15 @@ fn call_operand<'tcx>(
         arguments.push(crate::types::callable_object_type(tcx, signature)?.into());
         arguments.push(crate::types::callable_arguments_type(tcx, parameters)?.into());
     }
+    if let crate::plan::CalleeKind::CallClosureOnce(signature) = &callee.kind {
+        let (_, parameters) = signature.split_last().ok_or_else(|| PlanError::Invalid {
+            function: "consuming callable object".into(),
+            reason: "callable signature has no return type".into(),
+        })?;
+        let object = crate::types::consuming_callable_object_type(tcx, signature)?;
+        arguments.push(rustc_middle::ty::Ty::new_box(tcx, object).into());
+        arguments.push(crate::types::callable_arguments_type(tcx, parameters)?.into());
+    }
     if let crate::plan::CalleeKind::CloneEnum(_, name) = &callee.kind {
         arguments.push(crate::types::enum_type(tcx, name)?.into());
     }

@@ -3,6 +3,88 @@
 use super::free_vars::*;
 use super::reads::*;
 use super::*;
+use incan_lang::lang::builtins::BuiltinFnId;
+
+/// Follow straight-line whole-local moves to a checked canonical zip producer, refusing intervening control flow.
+fn canonical_zip_local(mut local: bir::LocalId, mut statements: &[bir::Statement]) -> bool {
+    loop {
+        let mut predecessor = None;
+        for (index, statement) in statements.iter().enumerate().rev() {
+            match &statement.kind {
+                bir::StatementKind::Call {
+                    destination: Some(destination),
+                    callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+                    ..
+                } if destination == &bir::Place::from_local(local) => return target.builtin == Some(BuiltinFnId::Zip),
+                bir::StatementKind::Call {
+                    destination: Some(destination),
+                    ..
+                } if destination.local_id() == Some(local) => return false,
+                bir::StatementKind::Assign { place, rvalue } if place == &bir::Place::from_local(local) => {
+                    if let bir::Rvalue::Use(bir::Operand::Place(read)) = rvalue
+                        && read.place.projection.is_empty()
+                        && let Some(source) = read.place.local_id()
+                    {
+                        predecessor = Some((source, index));
+                    }
+                    break;
+                }
+                bir::StatementKind::Assign { place, .. } if place.local_id() == Some(local) => return false,
+                bir::StatementKind::If { .. }
+                | bir::StatementKind::Loop { .. }
+                | bir::StatementKind::UnsafeRegion { .. }
+                | bir::StatementKind::Race { .. } => return false,
+                _ => {}
+            }
+        }
+        let Some((source, index)) = predecessor else {
+            return false;
+        };
+        local = source;
+        statements = &statements[..index];
+    }
+}
+
+/// Retain consuming authority only when a captured canonical zip moves into a deferred generator source.
+fn consumes_zip_environment(
+    captures: &[bir::Operand],
+    capture_locals: &[bir::LocalId],
+    body: &[bir::Statement],
+    prefix: &[bir::Statement],
+) -> bool {
+    body.iter().any(|statement| {
+        let bir::StatementKind::Assign {
+            rvalue:
+                bir::Rvalue::Generator {
+                    source: bir::Operand::Place(source),
+                    ..
+                },
+            ..
+        } = &statement.kind
+        else {
+            return false;
+        };
+        if source.fact != bir::OwnershipFact::Move || !source.place.projection.is_empty() {
+            return false;
+        }
+        let Some(local) = source.place.local_id() else {
+            return false;
+        };
+        let Some(index) = capture_locals.iter().position(|capture| *capture == local) else {
+            return false;
+        };
+        let Some(bir::Operand::Place(outer)) = captures.get(index) else {
+            return false;
+        };
+        if !outer.place.projection.is_empty() {
+            return false;
+        }
+        outer
+            .place
+            .local_id()
+            .is_some_and(|outer| canonical_zip_local(outer, prefix))
+    })
+}
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Mark only a resolver-proven named function read, preserving its checked target rather than identifying it by
@@ -151,6 +233,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let closure_body = bir::ClosureBody {
             original_callable: None,
             function_item: false,
+            consumes_environment: consumes_zip_environment(&captured_operands, &capture_locals, &body_stmts, out),
             capture_locals,
             stmts: body_stmts,
             result,

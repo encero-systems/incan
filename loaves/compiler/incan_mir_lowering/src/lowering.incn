@@ -1576,6 +1576,7 @@ def lower_local_assignment(
                     closure.capture_locals,
                     closure.stmts,
                     closure.result,
+                    closure.consumes_environment,
                     span,
                 )
         RustRvalue.Generator(source=source, captured_operands=captures, body=generator) =>
@@ -1584,7 +1585,10 @@ def lower_local_assignment(
             if callable_copy_type(place_type(builder.locals, target)):
                 callable = stored_callable(builder, operand, span)?
                 match operand_type(builder, callable)?:
-                    PlanType.Closure(signature) => return move_closure(builder, target, callable, signature, span)
+                    PlanType.Closure(signature) =>
+                        return move_closure(builder, target, callable, signature, false, span)
+                    PlanType.ClosureOnce(signature) =>
+                        return move_closure(builder, target, callable, signature, true, span)
                     _ =>
                         return assign_callable(
                             builder,
@@ -1786,6 +1790,7 @@ def move_closure(
     target: Place,
     value: Operand,
     signature: list[PlanType],
+    consumes_environment: bool,
     span: SourceSpan,
 ) -> Result[None, str]:
     """Transfer an owned closure into a callable binding, which takes the closure's own boxed type."""
@@ -1806,9 +1811,13 @@ def move_closure(
         _ => pass
     if declared != signature:
         return Err("invalid Body IR closure assignment signature")
+    if consumes_environment:
+        match value.kind:
+            OperandKind.Move(_source) => pass
+            _ => return Err("unsupported Body IR consuming closure assignment without a move")
     track_rvalue_moves(builder, RvalueKind.Use(value))
     drop_owned(builder, target.local, span)
-    hold_closure(builder, target.local, signature, flags)?
+    hold_closure(builder, target.local, signature, flags, consumes_environment)?
     builder.emit(plan_assign(target, RvalueKind.Use(value), span))
     builder.owned.append(target.local)
     return Ok(None)
@@ -1834,7 +1843,13 @@ def stored_callable(mut builder: Builder, operand: &RustOperand, span: SourceSpa
     return value_operand(builder, operand, span)
 
 
-def hold_closure(mut builder: Builder, local: int, signature: list[PlanType], flags: list[bool]) -> Result[None, str]:
+def hold_closure(
+    mut builder: Builder,
+    local: int,
+    signature: list[PlanType],
+    flags: list[bool],
+    consumes_environment: bool,
+) -> Result[None, str]:
     """
     Type a binding as the owned closure it now holds and record the closure's supplied flags, if it has any.
 
@@ -1842,10 +1857,18 @@ def hold_closure(mut builder: Builder, local: int, signature: list[PlanType], fl
     """
     match builder.locals[local].ty:
         PlanType.Closure(held) =>
+            if consumes_environment:
+                return Err("unsupported Body IR binding changing callable consumption")
             if held != signature:
                 return Err("unsupported Body IR binding holding closures with different default parameters")
+        PlanType.ClosureOnce(held) =>
+            if not consumes_environment or held != signature:
+                return Err("unsupported Body IR binding changing callable consumption or signature")
         _ => pass
-    builder.locals[local].ty = PlanType.Closure(signature)
+    mut object_type = PlanType.Closure(signature)
+    if consumes_environment:
+        object_type = PlanType.ClosureOnce(signature)
+    builder.locals[local].ty = object_type
     record_partial(builder, local, flags)
     return Ok(None)
 
@@ -1867,6 +1890,7 @@ def lower_closure(
     capture_locals: &list[RustLocalId],
     statements: &list[RustStatement],
     result: &RustOperand,
+    consumes_environment: bool,
     span: SourceSpan,
 ) -> Result[None, str]:
     """
@@ -1894,9 +1918,10 @@ def lower_closure(
         ty = operand_type(builder, operand)?
         match ty:
             PlanType.ZipIterator(_left, _right) =>
-                return Err("unsupported Body IR iterator closure capture without FnOnce contract")
+                if not consumes_environment:
+                    return Err("unsupported Body IR iterator closure capture without FnOnce contract")
             _ => pass
-        if not closure_capture_type(ty):
+        if not closure_capture_type(ty, consumes_environment):
             return Err("unsupported Body IR closure capture outside scalars, owned text and models")
         operands.append(operand)
         capture_types.append(ty)
@@ -1927,10 +1952,10 @@ def lower_closure(
     if target.local in builder.function_pointer_locals:
         return Err("unsupported Body IR capturing closure stored as a function pointer")
     _ = closure_arguments(signature)?
-    constructor = closure_constructor(f"{name}_new", name, capture_types, signature, span)
+    constructor = closure_constructor(f"{name}_new", name, capture_types, signature, consumes_environment, span)
     synthesize(builder, constructor)
     drop_owned(builder, target.local, span)
-    hold_closure(builder, target.local, signature, flags)?
+    hold_closure(builder, target.local, signature, flags, consumes_environment)?
     terminate_call(builder, CalleeKind.Planned(f"{name}_new"), operands, target, span)
     builder.owned.append(target.local)
     return Ok(None)
@@ -2160,7 +2185,7 @@ def step_callable(
     signature = [item, result]
     if len(captures) == 0:
         return step_pointer(builder, name, signature, span)
-    synthesize(builder, closure_constructor(f"{name}_new", name, captures, signature, span))
+    synthesize(builder, closure_constructor(f"{name}_new", name, captures, signature, false, span))
     environment = temporary(builder, PlanType.Closure(signature), span)
     terminate_call(builder, CalleeKind.Planned(f"{name}_new"), operands, environment, span)
     builder.owned.append(environment.local)
@@ -2366,7 +2391,11 @@ def bind_closure_input(
     lifted.locals[destination].ty = storage
     # Text and an owned collection, model, enum or carrier input move into the local the body reads, which then owns them; an
     # exclusive borrow moves in too, and every other input is a copy or a shared view.
-    owned = ty == PlanType.String or is_nominal_type(ty) or is_owned_collection(ty)
+    mut owned = ty == PlanType.String or is_nominal_type(ty) or is_owned_collection(ty)
+    match ty:
+        PlanType.ZipIterator(_left, _right) =>
+            owned = true
+        _ => pass
     value = read_place(plan_place(argument, span), owned or is_exclusive_borrow(ty), span)
     lifted.emit(plan_assign(plan_place(destination, span), RvalueKind.Use(value), span))
     if owned:
@@ -3464,11 +3493,39 @@ pub def call_callable_place(
         None =>
             output = temporary(builder, result, span)
     match place_type(builder.locals, callable):
+        PlanType.ClosureOnce(_held) =>
+            if held.fact != OwnershipFact.Move or not held.last_use:
+                return Err("unsupported Body IR consuming callable requires a moved last-use invocation")
+            return call_closure_once(builder, callable, signature, operands, output, span)
         PlanType.Closure(_held) => return call_closure(builder, callable, signature, operands, output, span)
         PlanType.ClosureRef(_held) => return call_closure(builder, callable, signature, operands, output, span)
         _ => pass
     value = place_read(builder, held.place, held.fact, span)?
     return lower_callable_result(builder, CalleeKind.Value(value), operands, output, result, span)
+
+
+def call_closure_once(
+    mut builder: Builder,
+    callable: Place,
+    signature: list[PlanType],
+    operands: list[Operand],
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Transfer an owned callable environment once, preserving packed argument and result ownership."""
+    elements = closure_arguments(signature)?
+    packed = temporary(builder, PlanType.CallableArguments(elements), span)
+    track_rvalue_moves(builder, RvalueKind.Tuple(operands))
+    builder.emit(plan_assign(packed, RvalueKind.Tuple(operands), span))
+    forget_owned(builder, callable.local)
+    return lower_callable_result(
+        builder,
+        CalleeKind.CallClosureOnce(signature),
+        [read_place(callable, true, span), read_place(packed, true, span)],
+        output,
+        signature[-1],
+        span,
+    )
 
 
 pub def call_closure(
@@ -3533,7 +3590,7 @@ def callable_argument(
                     # The environment belongs to the item, not to this call site: every function passing the item
                     # synthesizes the identical constructor, so the plan keeps one copy.
                     anchor = SourceSpan(file=builder.file, line=1, column=1)
-                    synthesize(builder, closure_constructor(constructor, name, [], signature, anchor))
+                    synthesize(builder, closure_constructor(constructor, name, [], signature, false, anchor))
                     boxed = temporary(builder, PlanType.Closure(signature), span)
                     terminate_call(builder, CalleeKind.Planned(constructor), [], boxed, span)
                     builder.owned.append(boxed.local)
@@ -3543,7 +3600,7 @@ def callable_argument(
                     name = f"__incan_pointer_closure_{builder.name}_{len(builder.synthesized)}"
                     synthesize(builder, pointer_forwarder(name, signature, span))
                     constructor = f"{name}_new"
-                    synthesize(builder, closure_constructor(constructor, name, [source], signature, span))
+                    synthesize(builder, closure_constructor(constructor, name, [source], signature, false, span))
                     boxed = temporary(builder, PlanType.Closure(signature), span)
                     terminate_call(
                         builder,
@@ -4466,6 +4523,9 @@ def lower_print(
     path = "incan_native_runtime::println_text"
     external_call(builder, path, [PlanType.String], PlanType.Unit, [read_place(text, true, span)], output, span)
     return Ok(None)
+# =====================================================================================================================
+# Formatting and strings
+# =====================================================================================================================
 
 
 def lower_scalar_conversion(
@@ -4803,9 +4863,6 @@ def lower_string_field_assignment(
     forget_owned(builder, replacement.local)
     builder.emit(plan_assign(destination, RvalueKind.Use(read_place(replacement, true, span)), span))
     return Ok(None)
-# =====================================================================================================================
-# Formatting and strings
-# =====================================================================================================================
 
 
 def lower_format(
@@ -5137,6 +5194,9 @@ def lower_string_assignment(
             builder.owned.append(destination.local)
             return Ok(None)
         _ => return Err("unsupported Body IR string Rvalue outside formatting")
+# =====================================================================================================================
+# Module and function entry points
+# =====================================================================================================================
 
 
 def lower_discarded_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[None, str]:
@@ -5256,9 +5316,6 @@ def lower_text_helper(
                 builder.owned.append(output.local)
         None => drop_owned(builder, text.local, span)
     return Ok(None)
-# =====================================================================================================================
-# Module and function entry points
-# =====================================================================================================================
 
 
 def lower_str_builtin(
@@ -5674,6 +5731,9 @@ def append_generator_constructor(
             )
             return Ok(None)
         None => return Err("unsupported Body IR generator return type")
+# =====================================================================================================================
+# Module and function entry points
+# =====================================================================================================================
 
 
 def lower_instances(
@@ -5719,9 +5779,6 @@ def lower_instances(
         _ = merge_externals(externals, runtime)?
         instances.extend(pending)
     return Ok(None)
-# =====================================================================================================================
-# Module and function entry points
-# =====================================================================================================================
 
 
 def instance_is_retained(instance: Instance, completed: list[Instance]) -> bool:

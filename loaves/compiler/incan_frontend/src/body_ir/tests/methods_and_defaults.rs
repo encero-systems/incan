@@ -1092,6 +1092,7 @@ fn unsupported_rvalue_bodies_in_a_default_are_found_at_their_nested_source_spans
                 body: Box::new(bir::ClosureBody {
                     original_callable: None,
                     function_item: false,
+                    consumes_environment: false,
                     capture_locals: Vec::new(),
                     stmts: vec![unsupported(closure_span, "closure body")],
                     result: result.clone(),
