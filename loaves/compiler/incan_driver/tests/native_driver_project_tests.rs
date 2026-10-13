@@ -131,18 +131,58 @@ fn newtype_union_isinstance_output_matches_legacy() -> Result<(), Box<dyn std::e
     )
 }
 
-/// Each Result combinator executes its capturing callback with legacy output and contextual channels.
+/// Capturing callbacks advance past unresolved channels and retain the separate closure-result carrier refusal.
 #[test]
 fn capturing_result_callbacks_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
-    corpus::check_builtin_source(
-        &fixture.driver_binary("debug"),
-        &fixture.scratch("capturing-result-callbacks")?,
-        &fixture.sysroot,
-        &fixture.formatting,
+    let root = fixture.scratch("capturing-result-callbacks")?;
+    let source = root.join("probe.incn");
+    fs::write(
+        &source,
         include_str!(
             "../../incan_test_support/fixtures/behavior/cli_values_and_calls/capturing_closures_as_result_combinator_callbacks.incn"
         ),
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let refused = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &source,
+        &root.join("native"),
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr)
+            .contains("unsupported Body IR closure result outside scalars, owned text and lists"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    Ok(())
+}
+
+/// Result constructor rebindings keep the inferred local carrier and repeated receiver use.
+#[test]
+fn rebound_result_channels_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("rebound-result-channels")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"
+def passed() -> Result[int, str]:
+    return Ok(2)
+
+def main() -> None:
+    mut r = passed().and_then((x) => Ok(x * 2))
+    r = Err("no")
+    println(r.unwrap_or(0))
+    r = Ok(3)
+    println(r.unwrap_or(0))
+    println(r.unwrap_or(7))
+"#,
     )
 }
 

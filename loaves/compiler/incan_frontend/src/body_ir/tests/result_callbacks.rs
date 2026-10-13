@@ -2,6 +2,15 @@
 
 use super::*;
 
+/// A rebind uses the retained local Result channels for a constructor that leaves one side open.
+#[test]
+fn rebinding_result_channels_preserves_the_local_carrier() -> Result<(), Box<dyn std::error::Error>> {
+    check_callback_facts(
+        "def passed() -> Result[int, str]:\n    return Ok(2)\n\ndef main() -> None:\n    mut r = passed().and_then((x) => Ok(x * 2))\n    r = Err(\"no\")\n    println(r.unwrap_or(0))\n    r = Ok(3)\n    println(r.unwrap_or(0))\n",
+        "rebound_result_channels",
+    )
+}
+
 /// Detect an unresolved component even when a callable or Result carrier contains it.
 fn has_unresolved_component(ty: &IncanType) -> bool {
     match ty {
