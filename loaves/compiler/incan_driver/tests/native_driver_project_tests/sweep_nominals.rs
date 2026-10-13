@@ -1,6 +1,6 @@
 //! Live legacy parity for source carrier identities across same-spelled module declarations.
 
-use super::check_project_modules_case;
+use super::{census, check_project_modules_case};
 
 /// Same-spelled source owners keep their declaring modules through omitted argument defaults.
 #[test]
@@ -25,6 +25,16 @@ fn same_named_defaults_output_matches_legacy() -> Result<(), Box<dyn std::error:
             ),
         ],
         b"1\n2\n",
+    )?;
+    census::require_named_refusal(
+        "cli_dependencies",
+        "dependency_same_named_declarations_in_two_modules",
+        "unsupported Body IR nominal type Product",
+    )?;
+    census::require_named_refusal(
+        "lowering_dependencies",
+        "provider_nominal_types_and_unions_issue892",
+        "unsupported Body IR union member conversion",
     )
 }
 
