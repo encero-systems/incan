@@ -8244,6 +8244,46 @@ def main() -> None:
     )
 }
 
+/// Inferred parameter Clone copies scalar instances and clones text without replacing source-method dispatch.
+#[test]
+fn inferred_parameter_clone_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("inferred-parameter-clone")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#""""Exercise the compiler's inferred Clone contract on concrete scalar and text instances."""
+
+
+def duplicate[T](value: T) -> T:
+    """Clone the declaration parameter without spelling its inferred bound."""
+    return value.clone()
+
+
+model Counter:
+    """Provide an unrelated source method with the same spelling."""
+
+    pub value: int
+
+    def clone(self) -> int:
+        """Keep this concrete source call distinct from the inferred trait requirement."""
+        return self.value + 1
+
+
+def main() -> None:
+    """Read text owners after cloning and keep scalar and source-method results distinct."""
+    text = "value"
+    println(duplicate(7))
+    println(duplicate(true))
+    println(duplicate(text))
+    println(text)
+    println(duplicate(duplicate(text)))
+    println(Counter(value=8).clone())
+"#,
+    )
+}
+
 /// A package's bound callable reaches the selected SDK while its generic receiver preserves ordinary value reads.
 #[test]
 fn published_generic_sdk_bound_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

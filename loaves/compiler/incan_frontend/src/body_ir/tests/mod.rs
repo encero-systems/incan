@@ -22,6 +22,7 @@ mod derived_display;
 mod for_patterns;
 mod frozen_collections;
 mod identities_and_imports;
+mod inferred_clone;
 mod input_contract_and_refusals;
 mod iteration_protocol;
 mod library_types;
