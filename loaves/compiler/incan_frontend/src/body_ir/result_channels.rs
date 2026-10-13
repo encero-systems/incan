@@ -1,7 +1,7 @@
 //! Closed Result constructor channels carried through Body IR without changing legacy inference facts.
 
 use super::primitives::result_type_parts;
-use super::{BodyBuilder, IncanPrimitiveType, IncanType, ast, bir};
+use super::{BodyBuilder, IncanPrimitiveType, IncanType, ast, bir, hir_span};
 use incan_lang::lang::surface::result_methods::{self, ResultMethodId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::{HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
@@ -59,17 +59,40 @@ impl BodyBuilder<'_, '_> {
         self.refine_result_channels(&recorded, &local.ty)
     }
 
-    /// Seed a rebind's constructor context from the exact local the checker selected, never a same-spelled shadow.
-    pub(super) fn retained_result_binding_type(&self, span: ast::Span, name: &str, recorded: IncanType) -> IncanType {
+    /// Keep a rebind's carrier from its exact checked local, never a same-spelled shadow. An intrinsic constructor
+    /// whose payload legacy left open remains explicitly unsupported: retaining a Body IR type does not prove that
+    /// legacy can build that reassignment.
+    pub(super) fn retained_result_binding_type(
+        &mut self,
+        assignment: &ast::AssignmentStmt,
+        recorded: IncanType,
+        out: &mut Vec<bir::Statement>,
+    ) -> IncanType {
         let Some(local) = self
             .type_info
-            .resolved_write_identity(span, name)
+            .resolved_write_identity(assignment.name_span, &assignment.name)
             .and_then(|identity| self.identity_bindings.get(identity))
             .and_then(|local| self.locals.get(local.index()))
         else {
             return recorded;
         };
-        self.refine_result_channels(&recorded, &local.ty)
+        let refined = self.refine_result_channels(&recorded, &local.ty);
+        let mut value = &assignment.value;
+        while let ast::Expr::Paren(inner) = &value.node {
+            value = inner;
+        }
+        if refined != recorded
+            && let ast::Expr::Call(callee, type_args, _) = &value.node
+            && type_args.is_empty()
+            && self.intrinsic_result_constructor(callee, value.span).is_some()
+        {
+            self.push_unsupported_stmt(
+                "Result constructor rebinding without a legacy-retained payload".to_string(),
+                hir_span(value.span),
+                out,
+            );
+        }
+        refined
     }
 
     /// Select only a registry-owned builtin Result member, excluding same-spelled source methods.
