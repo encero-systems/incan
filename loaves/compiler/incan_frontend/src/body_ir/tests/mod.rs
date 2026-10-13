@@ -39,6 +39,7 @@ mod operators_literals_and_assignment;
 mod patterns_and_assertions;
 mod properties;
 mod provider_plans;
+mod protocol_hooks;
 mod raises_assertions;
 mod result_callbacks;
 mod returned_callables;

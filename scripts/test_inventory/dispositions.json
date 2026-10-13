@@ -6200,6 +6200,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/protocol_hooks.rs": {
+      "disposition": "keep",
+      "notes": "Checked truthiness receivers and length/membership method identities retained in Body IR; frontend-only contract coverage.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/result_callbacks.rs": {
       "disposition": "keep",
       "notes": "Contextual Result callback parameter and settled constructor channels retained in Body IR; frontend-only contract coverage.",

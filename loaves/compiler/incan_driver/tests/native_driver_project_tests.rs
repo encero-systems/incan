@@ -2401,6 +2401,61 @@ impl DriverFixture {
 /// The process-wide fixture; a bake failure is kept as text so every test reports it.
 static DRIVER_FIXTURE: OnceLock<Result<DriverFixture, String>> = OnceLock::new();
 
+/// Custom truth, length, membership, call and iteration hooks in the original fixture match legacy output.
+#[test]
+fn protocol_hooks_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("protocol-hooks")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!("../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/protocol_hooks.incn"),
+    )
+}
+
+/// Length dispatch evaluates fresh receivers once and preserves shared and mutable source receivers.
+#[test]
+fn length_protocol_receivers_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("length-protocol-receivers")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"
+model Bag:
+    count: int
+
+    def __len__(self) -> int:
+        """Return this fixture's shared length."""
+        return self.count
+
+model Counter:
+    count: int
+
+    def __len__(mut self) -> int:
+        """Advance the mutable fixture and return its length."""
+        self.count += 1
+        return self.count
+
+def make() -> Bag:
+    """Expose receiver evaluation before length dispatch."""
+    println("receiver")
+    return Bag(count=3)
+
+def main() -> None:
+    """Exercise shared calls, a fresh receiver and a mutable hook."""
+    bag = Bag(count=4)
+    println(len(bag))
+    println(len(make()))
+    mut counter = Counter(count=0)
+    println(len(counter))
+    println(counter.count)
+"#,
+    )
+}
+
 /// Return the shared fixture, baking it on first use. Tests running in parallel wait for that single bake.
 fn driver_fixture() -> Result<&'static DriverFixture, Box<dyn std::error::Error>> {
     DRIVER_FIXTURE
