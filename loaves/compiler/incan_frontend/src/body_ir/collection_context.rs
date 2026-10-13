@@ -189,7 +189,10 @@ fn operand_type(operand: &bir::Operand, locals: &[bir::LocalDecl]) -> Option<Inc
                 bir::Constant::Str(_) => IncanPrimitiveType::Str,
                 bir::Constant::Bytes(_) => IncanPrimitiveType::Bytes,
                 bir::Constant::Unit => IncanPrimitiveType::Unit,
-                bir::Constant::TypedNumeric(_) | bir::Constant::FrozenStr(_) | bir::Constant::None => return None,
+                bir::Constant::TypedNumeric(_)
+                | bir::Constant::FrozenStr(_)
+                | bir::Constant::FrozenAggregate(_, _)
+                | bir::Constant::None => return None,
             };
             Some(IncanType::Primitive(primitive))
         }

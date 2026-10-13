@@ -104,9 +104,18 @@ impl BodyBuilder<'_, '_> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> Option<bir::Operand> {
-        let access = self.type_info.computed_property_access(span)?;
-        let name = access.property.clone();
         let source_span = hir_span(span);
+        let Some(access) = self.type_info.computed_property_access(span) else {
+            return self.is_property_read(span).then(|| {
+                self.unsupported_operand(
+                    "computed property without checked access classification".into(),
+                    scope,
+                    source_span,
+                    out,
+                )
+            });
+        };
+        let name = access.property.clone();
 
         // ---- Checked getter target ----
         let Some(canonical) = self

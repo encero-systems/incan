@@ -275,9 +275,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
             ast::Expr::Literal(lit) => bir::Operand::Constant(lower_checked_literal(lit, &self.resolve_ty(expr.span))),
             ast::Expr::Paren(inner) => self.lower_expr_to_operand(inner, scope, out),
-            ast::Expr::Field(base, name) if self.is_property_read(expr.span) => {
-                self.lower_property_read(base, name, expr.span, scope, out)
-            }
             ast::Expr::Field(base, name) => {
                 if let Some(value) = self.lower_property_read(base, expr.span, scope, out) {
                     return value;
@@ -434,7 +431,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     .is_some()
                     || self.local_value_enum_variant_target(base, name, expr.span).is_some()
                     || self.checked_enum_variant_target(base, name, expr.span).is_some()
-                    || self.is_property_read(expr.span)
                 {
                     let ty = self.resolve_ty(expr.span);
                     let operand = self.lower_expr_to_operand(expr, scope, out);
