@@ -1688,14 +1688,19 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .map(bir::Place::from_global)
     }
 
-    /// Select a canonical module-storage root when `identity` denotes a `const` or `static`.
+    /// Select a canonical module-storage root when `identity` denotes a `const` or `static`. Only a declaration in
+    /// the checker's exact source-owned inventory grants rebinding permission, including a package compilation;
+    /// imported storage keeps projection-only writes regardless of its spelling or package name.
     fn global_place(&self, identity: CanonicalSymbolId, ty: IncanType) -> Option<bir::GlobalPlace> {
         let write_policy = match identity.kind {
             SemanticSourceTargetKind::Const => bir::GlobalWritePolicy::ReadOnly,
             SemanticSourceTargetKind::Static => {
-                let declared_here = identity
-                    .module_path()
-                    .is_some_and(|path| body_ir_module_identity(path) == self.module_identity);
+                let declared_here = self
+                    .type_info
+                    .declarations
+                    .declaration_identities
+                    .values()
+                    .any(|declared| declared == &identity);
                 if declared_here {
                     bir::GlobalWritePolicy::Rebindable
                 } else {
