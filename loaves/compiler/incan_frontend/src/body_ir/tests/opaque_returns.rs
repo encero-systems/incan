@@ -13,6 +13,11 @@ fn sdk_generic_reader_adapter_retains_its_constructor_template() -> Result<(), B
     )?;
     let body = body_named(&module, "consume")?;
     assert!(
+        body.named_type_identities.contains_key("ReaderChunks"),
+        "receiver identities: {:?}",
+        body.named_type_identities
+    );
+    assert!(
         body.locals.iter().any(|local| matches!(&local.ty,
             IncanType::Generic { base, args } if base == "MapErrFallibleIterator" && args.len() == 5
         )),

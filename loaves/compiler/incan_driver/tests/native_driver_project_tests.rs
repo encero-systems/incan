@@ -10762,6 +10762,13 @@ fn stdlib_reader_layout_in_function_instance_output_matches_legacy() -> Result<(
         &fixture.sysroot,
         &fixture.formatting,
         "from std.io import BinaryReader, BytesIO\n\ndef chunk_size[R with BinaryReader](reader: R) -> int:\n    return reader.chunks(2).chunk_size\n\ndef main() -> None:\n    println(chunk_size(BytesIO(b\"abcde\")))\n",
+    )?;
+    check_project_refusal(
+        "stdlib_generic_reader_adapter_closure",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_fallible_adapter_loop.incn"
+        ),
+        "unsupported Body IR closure input outside scalars, text, collection views and borrows",
     )
 }
 

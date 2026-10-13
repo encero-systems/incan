@@ -17,6 +17,15 @@ struct Factory {
     constructor: CanonicalSymbolId,
     arguments: Vec<ast::Spanned<ast::Type>>,
     declared_result: IncanType,
+    self_results: Vec<CanonicalSymbolId>,
+}
+
+/// One proven SDK constructor result, retaining its interface and exact Self-returning SDK slots.
+#[derive(Clone)]
+struct Carrier {
+    declared: IncanType,
+    concrete: IncanType,
+    self_results: Vec<CanonicalSymbolId>,
 }
 
 /// Retain constructor identities needed by the checked SDK defaults called from this module.
@@ -42,16 +51,31 @@ pub(super) fn layouts(facts: &TypeCheckInfo) -> Vec<bir::NominalDeclaration> {
     super::library_nominals::collect(&selected)
 }
 
-/// Refine only whole temporary results of exact SDK defaults whose checked arguments close their constructor.
+/// Retain whole temporary results of exact SDK defaults as concrete carriers or templates over declared caller binders.
 pub(super) fn retain(module: &mut bir::BodyIrModule, facts: &TypeCheckInfo) {
     let mut cache = StdlibAstCache::new();
+    let sdk_types = super::library_nominals::type_identities(facts, &mut cache);
     for body in &mut module.bodies {
+        for identity in &sdk_types {
+            if matches!(
+                identity.kind,
+                SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class
+            ) {
+                body.named_type_identities
+                    .entry(identity.declaration_name.clone())
+                    .or_insert_with(|| identity.clone());
+            }
+        }
+        let binders = body.type_parameters.iter().cloned().collect::<BTreeSet<_>>();
+        let mut carriers = BTreeMap::new();
         retain_block(
             &mut body.block,
             &mut body.locals,
             &mut body.named_type_identities,
             facts,
             &mut cache,
+            &binders,
+            &mut carriers,
         );
     }
 }
@@ -117,12 +141,25 @@ fn factory(identity: &CanonicalSymbolId, cache: &mut StdlibAstCache) -> Option<F
             constructor,
             arguments: arguments.clone(),
             declared_result: semantic_type_from_resolved(&method.return_type),
+            self_results: info
+                .methods
+                .values()
+                .filter(|slot| {
+                    slot.receiver.is_some()
+                        && !slot.is_async
+                        && slot.params.is_empty()
+                        && slot.type_params.is_empty()
+                        && semantic_type_from_resolved(&slot.return_type) == IncanType::SelfType
+                })
+                .filter_map(|slot| slot.identity.clone())
+                .collect(),
         });
     }
     None
 }
 
-/// Apply checked trait and method arguments to the source constructor's declared placeholders.
+/// Apply checked trait and method arguments after authenticating the exact call-site identity and owning trait.
+/// Generic body checking retains call references even when its ambient trait-identity map has no entry.
 fn instance(
     factory: &Factory,
     target: &bir::MethodTarget,
@@ -130,16 +167,14 @@ fn instance(
     receiver: IncanType,
     declared_result: &IncanType,
     facts: &TypeCheckInfo,
+    binders: &BTreeSet<String>,
 ) -> Option<IncanType> {
     let call = facts.resolved_method_call(span)?;
     let ResolvedMethodDispatch::Trait {
         trait_name, type_args, ..
     } = &call.dispatch;
-    if facts
-        .traits
-        .method_identities
-        .get(&(trait_name.clone(), target.name.clone()))
-        != target.canonical.as_ref()
+    if trait_name != &factory.trait_name
+        || facts.references.resolved_identities.get(&(span.start, span.end)) != target.canonical.as_ref()
     {
         return None;
     }
@@ -172,7 +207,7 @@ fn instance(
             _ => None,
         })
         .collect::<Option<Vec<_>>>()?;
-    args.iter().all(closed).then(|| IncanType::Generic {
+    args.iter().all(|arg| closed(arg, binders)).then(|| IncanType::Generic {
         base: factory.constructor.declaration_name.clone(),
         args,
     })
@@ -195,14 +230,18 @@ fn substitute(ty: &IncanType, bindings: &BTreeMap<String, IncanType>) -> Option<
     }
 }
 
-/// Keep unresolved binders and unknown types out of concrete adapter claims.
-fn closed(ty: &IncanType) -> bool {
+/// Allow only concrete types or the caller's declared binders in a verified constructor template.
+///
+/// Unknown types and undeclared placeholders grant no carrier. A declared binder preserves its identity until the
+/// normal checked function specialization closes it; this does not turn a trait parameter into a nominal receiver.
+fn closed(ty: &IncanType, binders: &BTreeSet<String>) -> bool {
     match ty {
-        IncanType::Unknown | IncanType::SelfType | IncanType::TypeVar(_) => false,
-        IncanType::Generic { args, .. } | IncanType::Tuple(args) => args.iter().all(closed),
-        IncanType::Ref(inner) | IncanType::RefMut(inner) | IncanType::TypeToken(inner) => closed(inner),
+        IncanType::Unknown | IncanType::SelfType => false,
+        IncanType::TypeVar(name) => binders.contains(name),
+        IncanType::Generic { args, .. } | IncanType::Tuple(args) => args.iter().all(|arg| closed(arg, binders)),
+        IncanType::Ref(inner) | IncanType::RefMut(inner) | IncanType::TypeToken(inner) => closed(inner, binders),
         IncanType::Function { params, return_type } => {
-            params.iter().all(|parameter| closed(&parameter.ty)) && closed(return_type)
+            params.iter().all(|parameter| closed(&parameter.ty, binders)) && closed(return_type, binders)
         }
         _ => true,
     }
@@ -235,6 +274,50 @@ fn receiver_type(
     .then_some(ty)
 }
 
+/// Keep a proven constructor carrier through its SDK trait's Self-returning slot without granting missing dispatch.
+fn retain_self_result(
+    destination: &bir::Place,
+    target: &bir::MethodTarget,
+    args: &[bir::ArgumentElement],
+    locals: &mut [bir::LocalDecl],
+    carriers: &mut BTreeMap<usize, Carrier>,
+) -> bool {
+    if !target.type_args.is_empty() || args.len() != 1 || !destination.projection.is_empty() {
+        return false;
+    }
+    let Some(bir::ArgumentElement::One(bir::Operand::Place(read))) = args.first() else {
+        return false;
+    };
+    if !read.place.projection.is_empty() {
+        return false;
+    }
+    let Some(source) = read.place.local_id().and_then(|local| usize::try_from(local.0).ok()) else {
+        return false;
+    };
+    let Some(carrier) = carriers.get(&source).cloned() else {
+        return false;
+    };
+    if !locals.get(source).is_some_and(|local| local.ty == carrier.concrete)
+        || !carrier.self_results.iter().any(|slot| {
+            slot.declaration_name == target.name && target.canonical.as_ref().is_none_or(|identity| identity == slot)
+        })
+    {
+        return false;
+    }
+    let Some(output) = destination.local_id().and_then(|local| usize::try_from(local.0).ok()) else {
+        return false;
+    };
+    let Some(local) = locals.get_mut(output) else {
+        return false;
+    };
+    if local.origin != bir::LocalOrigin::Temporary || local.ty != carrier.declared {
+        return false;
+    }
+    local.ty = carrier.concrete.clone();
+    carriers.insert(output, carrier);
+    true
+}
+
 /// Project temporary ABI carriers in evaluation order while keeping missing default bodies and targets unchanged.
 fn retain_block(
     block: &mut bir::Block,
@@ -242,6 +325,8 @@ fn retain_block(
     identities: &mut BTreeMap<String, CanonicalSymbolId>,
     facts: &TypeCheckInfo,
     cache: &mut StdlibAstCache,
+    binders: &BTreeSet<String>,
+    carriers: &mut BTreeMap<usize, Carrier>,
 ) {
     for statement in &mut block.stmts {
         match &mut statement.kind {
@@ -252,6 +337,9 @@ fn retain_block(
                 ..
             } => {
                 if !destination.projection.is_empty() {
+                    continue;
+                }
+                if retain_self_result(destination, target, args, locals, carriers) {
                     continue;
                 }
                 let Some(identity) = &target.canonical else {
@@ -276,6 +364,7 @@ fn retain_block(
                     receiver,
                     &declared_result,
                     facts,
+                    binders,
                 ) else {
                     continue;
                 };
@@ -298,17 +387,27 @@ fn retain_block(
                     continue;
                 }
                 identities.insert(factory.constructor.declaration_name.clone(), factory.constructor);
+                carriers.insert(
+                    local_index,
+                    Carrier {
+                        declared: declared_result,
+                        concrete: ty.clone(),
+                        self_results: factory.self_results,
+                    },
+                );
                 local.ty = ty;
             }
             bir::StatementKind::If {
                 then_block, else_block, ..
             } => {
-                retain_block(then_block, locals, identities, facts, cache);
+                retain_block(then_block, locals, identities, facts, cache, binders, carriers);
                 if let Some(else_block) = else_block {
-                    retain_block(else_block, locals, identities, facts, cache);
+                    retain_block(else_block, locals, identities, facts, cache, binders, carriers);
                 }
             }
-            bir::StatementKind::Loop { body } => retain_block(body, locals, identities, facts, cache),
+            bir::StatementKind::Loop { body } => {
+                retain_block(body, locals, identities, facts, cache, binders, carriers)
+            }
             _ => {}
         }
     }
