@@ -15,6 +15,7 @@ mod helpers;
 mod async_and_race;
 mod calls_and_arguments;
 mod class_inheritance;
+mod closed_callback_types;
 mod closures_comprehensions_and_generators;
 mod control_flow_and_loops;
 mod decorated_bindings;
