@@ -9,18 +9,23 @@ fn frozen_codec_calls_retain_complete_slots() -> Result<(), Box<dyn std::error::
     let source = "const RAW: FrozenBytes = b\"ok\"\nconst TEXT: FrozenStr = \"ok\"\n\ndef read() -> Result[str, ValidationError]:\n    _ = TEXT.encode()\n    return RAW.decode()\n";
     let module = build(source, &["m", "frozen_codec_slots"])?;
     let body = body_named(&module, "read")?;
+    let calls = body
+        .block
+        .stmts
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                args,
+                ..
+            } => Some((target, args)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(calls.len(), 2, "{}", body.render_snapshot());
     assert!(
-        body.block
-            .stmts
+        calls
             .iter()
-            .filter_map(|statement| match &statement.kind {
-                bir::StatementKind::Call {
-                    callee: bir::Callee::Method(target),
-                    args,
-                    ..
-                } => Some((target, args)),
-                _ => None,
-            })
             .all(|(target, args)| target.canonical.is_some() && args.len() >= 2),
         "{}",
         body.render_snapshot()
