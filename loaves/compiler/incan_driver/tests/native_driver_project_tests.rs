@@ -2985,6 +2985,19 @@ def main() -> None:
     )
 }
 
+/// A bare generic adoption preserves its direct method's behavior without changing the legacy positional rule.
+#[test]
+fn bare_generic_adoption_direct_method_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("bare-generic-adoption-direct")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!("../../incan_test_support/fixtures/native_trait_adoption/bare_argument_witness.incn"),
+    )
+}
+
 /// Derived Display preserves the structure of source models, classes, newtypes and ordinary enums.
 #[test]
 fn derived_display_structures_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

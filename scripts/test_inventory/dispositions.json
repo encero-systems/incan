@@ -6464,6 +6464,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/body_ir_adoption_arguments.rs": {
+      "disposition": "keep",
+      "notes": "Checked Body IR-only bare-adoption argument witnesses and preservation of legacy explicit-clause facts.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/typechecker/tests/bounds_and_derives.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
