@@ -15686,6 +15686,19 @@ fn static_unwrap_or_original_output_matches_legacy() -> Result<(), Box<dyn std::
     )
 }
 
+/// The final textual reads of incoming carriers still clone on each pass through a repeated loop.
+#[test]
+fn consuming_carriers_in_loops_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("consuming-carriers-in-loops")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "def main() -> None:\n  option: Option[str] = Some(\"kept\")\n  result: Result[str, str] = Err(\"missing\")\n  for index in range(2):\n    println(option.unwrap_or(\"fallback\"))\n    println(result.unwrap_or(\"fallback\"))\n",
+    )
+}
+
 /// Consumed frame receivers are read before eager defaults, while static defaults precede guarded storage reads.
 #[test]
 fn carrier_receiver_default_order_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
