@@ -18,6 +18,19 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// A model's function-pointer field retains its borrowed list input and stays callable after the field is copied.
+#[test]
+fn model_function_pointer_list_input_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("model-function-pointer-list")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "model Sizer:\n    size: (list[int]) -> int\n\ndef count(values: list[int]) -> int:\n    return len(values)\n\ndef main() -> None:\n    owner = Sizer(size=count)\n    callback = owner.size\n    println(callback([1, 2]))\n    println(callback([]))\n",
+    )
+}
+
 /// The complete original callable storage and capture fixture preserves legacy output after returned-callable intake.
 #[test]
 fn callable_storage_projection_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
