@@ -14355,14 +14355,14 @@ fn cancelled_sdk_task_error_matches_legacy() -> Result<(), Box<dyn std::error::E
         "cancelled-sdk-task-error",
         r#"
 import std.async
-from std.async.task import spawn
+from std.async.task import spawn, JoinHandle
 from std.async.time import sleep_ms
 async def pending() -> int:
     while true:
         await sleep_ms(1)
     return 1
 async def main() -> None:
-    task = spawn(pending())
+    task: JoinHandle[int] = spawn(pending())
     task.abort()
     match await task:
         Ok(_value) => println("unexpected completion")

@@ -738,6 +738,7 @@ fn retains_sdk_join_error_method_contract() -> Result<(), Box<dyn std::error::Er
         })
         .ok_or("message call")?;
     assert_eq!(target.canonical.as_ref(), Some(&call.canonical));
+    assert_eq!(target.binding, bir::ArgumentBinding::resolved_positional(0));
     let local = destination.local_id().ok_or("message destination")?;
     assert_eq!(
         body.locals[local.index()].ty,
