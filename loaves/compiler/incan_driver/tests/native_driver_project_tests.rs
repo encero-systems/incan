@@ -120,7 +120,7 @@ fn callable_storage_projection_output_matches_legacy() -> Result<(), Box<dyn std
     )
 }
 
-/// The original reader reaches the SDK adapter interface boundary after its closed closure input is admitted.
+/// The original reader preserves its adapter interface refusal and unchanged legacy chunk output.
 #[test]
 fn original_sdk_reader_reaches_adapter_interface() -> Result<(), Box<dyn std::error::Error>> {
     check_project_modules_refusal_case(
@@ -143,7 +143,7 @@ fn applied_sdk_factory_output_matches_legacy() -> Result<(), Box<dyn std::error:
         &fixture.scratch("applied-sdk-factory")?,
         &fixture.sysroot,
         &fixture.formatting,
-        "from std.graph import DiGraph\n\ndef main() -> None:\n    graph = DiGraph[str]()\n    println(graph.next_node_id)\n",
+        "from std.graph import DiGraph\n\ndef main() -> None:\n    graph: DiGraph[str] = DiGraph[str]()\n    println(graph.next_node_id)\n",
     )
 }
 
