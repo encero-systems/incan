@@ -13602,9 +13602,7 @@ fn web_payload_carriers_output_matches_legacy() -> Result<(), Box<dyn std::error
         r#"import std.web as web
 from std.web import Json, Query, Html
 from std.web import Html as Page
-from std.serde import json
 
-@derive(json)
 model Search:
     q: str
 
@@ -13632,5 +13630,38 @@ def main() -> None:
     println("html")
 "#,
     )?;
+    Ok(())
+}
+
+/// The original mixed-extractor fixture advances past web payloads to the separate Path carrier boundary.
+#[test]
+fn web_extractor_fixture_reaches_path_boundary() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let mut closure = corpus::runtime_closure(&fixture.formatting)?;
+    closure.extend_with(&sdk_closure(fixture)?)?;
+    let root = fixture.scratch("web-extractor-path-boundary")?;
+    let path = root.join("main.incn");
+    fs::write(
+        &path,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/web_extractor_value_reads_the_payload.incn"
+        ),
+    )?;
+    let binary = root.join("native");
+    let output = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &path,
+        &binary,
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("unsupported Body IR type Path[int]"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!binary.exists());
     Ok(())
 }
