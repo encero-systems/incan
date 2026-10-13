@@ -522,7 +522,6 @@ fn math_constant_names_do_not_replace_user_bindings() -> Result<(), Box<dyn std:
     Ok(())
 }
 
-/// An imported static factory receiver remains distinct from the method selected at the shared decorator span.
 /// A stale declaration span or foreign package owner cannot grant a math constant's value.
 #[test]
 fn math_constants_require_exact_source_identity() -> Result<(), Box<dyn std::error::Error>> {
