@@ -6208,6 +6208,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/provider_plans.rs": {
+      "disposition": "keep",
+      "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/result_callbacks.rs": {
       "disposition": "keep",
       "notes": "Contextual Result callback parameter and settled constructor channels retained in Body IR; frontend-only contract coverage.",
