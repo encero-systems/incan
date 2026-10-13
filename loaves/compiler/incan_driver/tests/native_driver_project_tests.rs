@@ -121,6 +121,21 @@ fn callable_storage_projection_output_matches_legacy() -> Result<(), Box<dyn std
     )
 }
 
+/// The complete original zip capture executes once with the same owned iterator and legacy output.
+#[test]
+fn consuming_zip_closure_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("consuming-zip-closure")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/execution_collections/executes_a_closure_that_captures_canonical_zip.incn"
+        ),
+    )
+}
+
 /// Option text Debug preserves Some/None spelling and the original borrowed value across repeated formatting.
 #[test]
 fn option_text_debug_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
@@ -206,6 +221,19 @@ fn sdk_index_trait_output_matches_legacy() -> Result<(), Box<dyn std::error::Err
         include_str!(
             "../../incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/json_value_indexing.incn"
         ),
+    )
+}
+
+/// A reusable scalar environment still runs twice without an ownership or invocation-contract change.
+#[test]
+fn reusable_scalar_closure_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("reusable-scalar-closure")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "def main() -> None:\n  offset = 3\n  add: (int) -> int = (value) => value + offset\n  println(add(1))\n  println(add(2))\n",
     )
 }
 

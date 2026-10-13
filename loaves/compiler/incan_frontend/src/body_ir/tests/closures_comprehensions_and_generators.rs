@@ -3,6 +3,79 @@
 //! to forwarding closures, and generator bodies (`yield`).
 
 use super::*;
+/// Moving a captured zip into the deferred generator retains a consuming environment and a moved local invocation.
+#[test]
+fn captured_zip_closure_retains_consuming_invocation() -> Result<(), Box<dyn std::error::Error>> {
+    let source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/execution_collections/executes_a_closure_that_captures_canonical_zip.incn"
+    );
+    let module = build(source, &["consuming_zip"])?;
+    let body = body_named(&module, "captured_zip_closure")?;
+    let closure = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Closure { body, .. },
+                ..
+            } => Some(body),
+            _ => None,
+        })
+        .ok_or("captured closure missing")?;
+    let contract = serde_json::to_value(closure)?;
+    assert_eq!(
+        contract.get("consumes_environment"),
+        Some(&serde_json::Value::Bool(true)),
+        "{}",
+        body.render_snapshot()
+    );
+    let invocation = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Function(bir::CallableTarget::Local(target)),
+                ..
+            } => Some(target),
+            _ => None,
+        })
+        .ok_or("local invocation missing")?;
+    assert_eq!(invocation.operand.fact, bir::OwnershipFact::Move);
+    assert!(invocation.operand.last_use);
+    Ok(())
+}
+
+/// A captured scalar used repeatedly remains reusable; moving it into the environment does not imply FnOnce.
+#[test]
+fn scalar_capture_keeps_reusable_invocation_contract() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def main() -> None:\n  offset = 3\n  add: (int) -> int = (value) => value + offset\n  println(add(1))\n  println(add(2))\n",
+        &["reusable_scalar"],
+    )?;
+    let body = body_named(&module, "main")?;
+    let closure = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Closure { body, .. },
+                ..
+            } => Some(body),
+            _ => None,
+        })
+        .ok_or("scalar closure missing")?;
+    let contract = serde_json::to_value(closure)?;
+    assert!(
+        !contract
+            .get("consumes_environment")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or_default()
+    );
+    Ok(())
+}
 
 /// A deferred read of `self` belongs to an explicit captured local, never the enclosing receiver frame.
 #[test]
