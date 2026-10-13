@@ -417,7 +417,7 @@ fn build_body_ir_module_v0_with_provider_operations(
         decorated_bindings::collect(program, &lowering_facts, &mut bodies, &mut static_declarations);
     apply_top_level_input_contract_refusal(program, &mut bodies);
     static_declarations.sort_by_key(|declaration| declaration.canonical.declaration_span.start);
-    let mut module = bir::BodyIrModule {
+    bir::BodyIrModule {
         decorated_bindings,
         entrypoint_effects: entrypoint_effects::collect(program),
         constant_declarations,
@@ -440,7 +440,6 @@ fn build_body_ir_module_v0_with_provider_operations(
     };
     opaque_returns::retain(&mut module, type_info);
     library_opaque_returns::retain(&mut module, type_info);
-    trait_values::retain_inputs(&mut module, program, type_info, context);
     module
 }
 
@@ -1921,7 +1920,6 @@ mod enum_types;
 mod opaque_returns;
 mod parameter_types;
 mod partials;
-mod trait_values;
 
 mod primitives;
 
