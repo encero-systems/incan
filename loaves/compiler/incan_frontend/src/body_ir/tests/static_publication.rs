@@ -54,6 +54,44 @@ fn public_static_writer_retains_its_storage_requirement() -> Result<(), Box<dyn 
     Ok(())
 }
 
+/// A checked import of storage cannot acquire the declaring module's permission to rebind it.
+#[test]
+fn imported_package_static_keeps_projection_only_writes() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "pub static count: int = 10\n";
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let provider = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let source = "from storage import count\n\npub def read() -> int:\n    return count\n";
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let consumer = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let path = vec!["reader".to_string()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(path.clone()));
+    checker.set_current_package_identity(Some("cells".to_string()));
+    checker.register_dependency_module_path_segments("storage", vec!["storage".to_string()]);
+    checker
+        .check_with_imports(&consumer, &[("storage", &provider)])
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let module = build_body_ir_module_v0(&consumer, &path, checker.type_info());
+    let body = module.bodies.first().ok_or("missing reader")?;
+    let global = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| {
+            if let bir::StatementKind::Return {
+                value: Some(bir::Operand::Place(value)),
+            } = &statement.kind
+            {
+                value.place.global()
+            } else {
+                None
+            }
+        })
+        .ok_or("missing imported storage read")?;
+    assert_eq!(global.write_policy, bir::GlobalWritePolicy::ProjectionOnly);
+    Ok(())
+}
+
 /// A public reader publishes its exact storage requirement rather than discarding the initializer or global place.
 #[test]
 fn public_static_reader_retains_its_storage_requirement() -> Result<(), Box<dyn std::error::Error>> {
