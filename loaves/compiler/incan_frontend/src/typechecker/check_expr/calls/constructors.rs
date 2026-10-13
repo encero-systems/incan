@@ -308,6 +308,23 @@ impl TypeChecker {
         );
     }
 
+    /// Record Html's native tuple owner only for a checked String payload. Other accepted legacy shapes have no
+    /// direct construction fact, so they keep a named refusal instead of becoming Html<String> with another payload.
+    pub(in crate::typechecker::check_expr::calls) fn record_body_ir_html_constructor(
+        &mut self,
+        args: &[CallArg],
+        span: Span,
+    ) {
+        let [CallArg::Positional(value)] = args else {
+            return;
+        };
+        if self.type_info.expr_type(value.span) == Some(&ResolvedType::Str)
+            && let Some(owner) = self.stdlib_cache.native_web_identity(SurfaceTypeId::Html)
+        {
+            self.type_info.record_body_ir_native_constructor(span, owner);
+        }
+    }
+
     /// Type-check a JSON/Query constructor call (`Json(...)` / `Query(...)`).
     ///
     /// NOTE: This method is called from multiple dispatch points in the typechecker because calls can be classified
@@ -361,6 +378,8 @@ impl TypeChecker {
             let name = surface_types::as_str(tid);
             self.errors
                 .push(errors::constructor_single_arg_required(name, args.len(), call_span));
+        } else if let Some(owner) = self.stdlib_cache.native_web_identity(tid) {
+            self.type_info.record_body_ir_native_constructor(call_span, owner);
         }
 
         ResolvedType::Generic(surface_types::as_str(tid).to_string(), vec![inner])
@@ -620,6 +639,7 @@ impl TypeChecker {
             }
             if matches!(tid, SurfaceTypeId::Html) {
                 self.record_direct_callee_identity(name, span);
+                self.record_body_ir_html_constructor(args, span);
                 return ResolvedType::Named(surface_types::as_str(tid).to_string());
             }
         }
