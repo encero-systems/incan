@@ -47,6 +47,45 @@ fn constrained_newtype_partials_preserve_named_ingress_refusal() -> Result<(), B
     Ok(())
 }
 
+/// A nominal callee and checked parameters cannot substitute for an absent full-call factory selection.
+#[test]
+fn sdk_constructor_factory_requires_full_call_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let call = "Regex(\"x+\", ignore_case=true, multiline=false, dotall=false, verbose=false)";
+    let source = format!(
+        "from std.regex import Regex, RegexError\n\ndef build() -> Result[Regex, RegexError]:\n  return {call}\n"
+    );
+    let tokens = lexer::lex(&source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let path = vec!["unselected_factory".to_owned()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(path.clone()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let start = source.find(call).ok_or("factory call missing")?;
+    let span = ast::Span {
+        start,
+        end: start + call.len(),
+    };
+    let mut checked = checker.type_info().clone();
+    let selected = checked
+        .references
+        .resolved_identities
+        .remove(&(span.start, span.end))
+        .ok_or("factory identity missing")?;
+    assert_eq!(selected.kind, SemanticSourceTargetKind::Method);
+    assert!(checked.call_site_callable_params(span).is_some());
+    assert!(checked.resolved_identity(ast::Span { start, end: start + 5 }).is_some());
+    let module = build_body_ir_module_v0(&program, &path, &checked);
+    let targets = named_targets(&module, "build");
+    let [target] = targets.as_slice() else {
+        return Err("expected one refused nominal call".into());
+    };
+    assert_ne!(target.canonical.as_ref(), Some(&selected));
+    assert!(target.direct_call_id.is_none());
+    Ok(())
+}
+
 /// Constructor syntax retains the checked static factory at the full call span and its complete parameter binding.
 #[test]
 fn sdk_constructor_syntax_retains_selected_factory() -> Result<(), Box<dyn std::error::Error>> {
