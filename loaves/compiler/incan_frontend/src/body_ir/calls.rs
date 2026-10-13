@@ -8,6 +8,17 @@ use incan_lang::lang::surface::collection_helpers::{self, BuiltinCollectionHelpe
 use incan_lang::lang::surface::{dict_methods, list_methods, set_methods};
 use incan_semantics_core::SymbolOrigin;
 
+/// Keep written constructor expressions aligned with their checked slots; an unpack never names one field.
+fn constructor_argument_expressions(args: &[ast::CallArg]) -> Result<Vec<&ast::Spanned<ast::Expr>>, &'static str> {
+    args.iter()
+        .map(|argument| match argument {
+            ast::CallArg::Positional(expression) | ast::CallArg::Named(_, expression) => Ok(expression),
+            ast::CallArg::PositionalUnpack(_) => Err("a positional argument spread"),
+            ast::CallArg::KeywordUnpack(_) => Err("a keyword argument spread"),
+        })
+        .collect()
+}
+
 /// Put a fully bound two-slot call's single-value arguments in declared slot order.
 ///
 /// `None` unless each slot is supplied exactly once by one written value and nothing is left to a default.
@@ -601,14 +612,41 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 out,
             );
         };
+        self.lower_nominal_construction_with_slots(
+            name,
+            args,
+            span,
+            callee_span,
+            scope,
+            out,
+            (field_binding.field_count, &field_binding.argument_slots),
+        )
+    }
 
+    /// Materialize a construction from checker-selected slots or a complete canonical field-identity binding.
+    ///
+    /// Both producers preserve written evaluation order and the same selected owner. This boundary never binds a
+    /// source field name: the supplied slot layout must already belong to that owner's canonical declaration.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_nominal_construction_with_slots(
+        &mut self,
+        name: &str,
+        args: &[ast::CallArg],
+        span: ast::Span,
+        callee_span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+        layout: (usize, &[usize]),
+    ) -> bir::Operand {
+        let hir_span_value = hir_span(span);
+        let (field_count, argument_slots) = layout;
         let written_exprs = match nominal_argument_expressions(name, args) {
             Ok(values) => values,
             Err(description) => {
                 return self.unsupported_operand(description, scope, hir_span_value, out);
             }
         };
-        if written_exprs.len() != field_binding.argument_slots.len() {
+        if written_exprs.len() != argument_slots.len() {
             return self.unsupported_operand(
                 format!("construction of `{name}` with an unresolved field layout"),
                 scope,
@@ -617,23 +655,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             );
         }
 
-        let planned: Vec<(usize, &ast::Spanned<ast::Expr>)> = field_binding
-            .argument_slots
-            .iter()
-            .copied()
-            .zip(written_exprs)
-            .collect();
+        let planned: Vec<(usize, &ast::Spanned<ast::Expr>)> =
+            argument_slots.iter().copied().zip(written_exprs).collect();
         // Legacy stages reordered arguments, but otherwise evaluates fields in declaration order. The current
         // aggregate boundary evaluates supplied operands before deferred defaults, so it cannot interleave an
         // observable supplied expression after an omitted field whose default is itself observable. A default built
         // only from literals evaluates to an equal value and does nothing else, so its place in the order is not
         // observable. Preserve the remaining gap as a named refusal.
-        let reordered = field_binding.argument_slots.windows(2).any(|pair| pair[0] > pair[1]);
+        let reordered = argument_slots.windows(2).any(|pair| pair[0] > pair[1]);
         if !reordered
             && planned.iter().any(|(slot, expression)| {
-                (0..*slot).any(|prior| {
-                    !field_binding.argument_slots.contains(&prior) && !self.field_default_is_literal(name, prior)
-                }) && !matches!(expression.node, ast::Expr::Literal(_))
+                (0..*slot).any(|prior| !argument_slots.contains(&prior) && !self.field_default_is_literal(name, prior))
+                    && !matches!(expression.node, ast::Expr::Literal(_))
             })
         {
             return self.unsupported_operand(
@@ -647,14 +680,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let single_field = self.single_field_checked_ingress(
             canonical.as_ref(),
             &planned,
-            field_binding.field_count,
+            field_count,
             scope,
             hir_span_value,
             out,
         );
         let lowered = match single_field {
             Some(value) => Ok((vec![value], bir::ArgumentBinding::resolved_positional(1))),
-            None => self.lower_planned_args(&planned, field_binding.field_count, &[], &[], scope, out),
+            None => self.lower_planned_args(&planned, field_count, &[], &[], scope, out),
         };
         let (operands, binding) = match lowered {
             Ok(bound) => bound,
@@ -673,7 +706,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // imported aliases use their original canonical identity, while absent or unsupported context retains
         // neither fact and is refused without guessing from `name`.
         let (direct_declaration_id, canonical_field_layout) =
-            self.nominal_constructor_layout(canonical.as_ref(), field_binding.field_count);
+            self.nominal_constructor_layout(canonical.as_ref(), field_count);
         if let Some(checked) =
             self.checked_newtype_construction(name, canonical.as_ref(), &operands, &ty, scope, hir_span_value, out)
         {
@@ -717,6 +750,44 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 )
             })
             .unwrap_or((None, None))
+    }
+
+    /// Bind fully supplied module constructor fields by checked identities against the same retained owner.
+    ///
+    /// No source spelling, default, generic field or spread supplies execution authority here. Missing, duplicate or
+    /// mismatched identities leave construction refused without altering the constructor table legacy consumes.
+    fn supplied_module_constructor_slots(
+        &self,
+        canonical: &CanonicalSymbolId,
+        args: &[ast::CallArg],
+    ) -> Option<Vec<usize>> {
+        let declaration = self
+            .local_nominal_declarations
+            .values()
+            .find(|declaration| &declaration.canonical == canonical)?;
+        if args.is_empty()
+            || args.len() != declaration.fields.len()
+            || declaration.field_identities.len() != declaration.fields.len()
+            || !declaration.type_parameters.is_empty()
+        {
+            return None;
+        }
+        let mut slots = Vec::with_capacity(args.len());
+        for argument in args {
+            let ast::CallArg::Named(field, _) = argument else {
+                return None;
+            };
+            let identity = self.type_info.resolved_identity(field.span)?;
+            let slot = declaration
+                .field_identities
+                .iter()
+                .position(|field| field == identity)?;
+            if slots.contains(&slot) {
+                return None;
+            }
+            slots.push(slot);
+        }
+        Some(slots)
     }
 
     /// Lower call arguments positionally, admitting spreads, for a call whose arity is not statically known.
@@ -1614,7 +1685,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         ))
     }
 
-    /// Lower `module.function(args)` as a direct call to the declaration its receiver qualifies.
+    /// Lower a module-qualified function call or nominal construction using its selected declaration.
     ///
     /// A module binding is a namespace, not a value. `identity_provider.imported_path(17)` reaches the AST as a
     /// method call, but there is no receiver to read, and treating the qualifier as a place refuses at a name that
@@ -1622,6 +1693,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// identity keeps the call on the direct path instead of re-deriving a target from the two spellings the source
     /// happens to join with a dot. The receiver's own identity decides whether this applies, so a local variable
     /// that happens to share a module's name still lowers as an ordinary method call.
+    ///
+    /// A selected nominal owner constructs an aggregate instead of invoking a function. Its checked field slots, or
+    /// a complete set of checked field identities matching that owner's retained layout, determine the binding.
+    /// Missing layout or identity evidence remains an explicit refusal.
     ///
     /// Returns `None` when the receiver is not a module, leaving every other receiver shape untouched.
     #[allow(clippy::too_many_arguments)]
@@ -1655,6 +1730,31 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 out,
             ));
         };
+        if matches!(
+            canonical.kind,
+            SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class | SemanticSourceTargetKind::Newtype
+        ) {
+            if self.type_info.body_ir_constructor_field_binding(span).is_some() {
+                return Some(self.lower_nominal_construction(name, args, span, span, scope, out));
+            }
+            let Some(slots) = self.supplied_module_constructor_slots(&canonical, args) else {
+                return Some(self.unsupported_operand(
+                    format!("module-qualified construction of `{name}` without a checked canonical field binding"),
+                    scope,
+                    hir_span_value,
+                    out,
+                ));
+            };
+            return Some(self.lower_nominal_construction_with_slots(
+                name,
+                args,
+                span,
+                span,
+                scope,
+                out,
+                (slots.len(), &slots),
+            ));
+        }
         let resolved_type_args = match self.call_site_type_arguments(span, type_args) {
             Ok(resolved_type_args) => resolved_type_args,
             Err(description) => {
