@@ -16103,7 +16103,7 @@ fn method_partial_default_masks_output_match_legacy() -> Result<(), Box<dyn std:
         &fixture.scratch("method-partial-default-masks")?,
         &fixture.sysroot,
         &fixture.formatting,
-        "model Labeler:\n  value: str\n  def label(self, left: str, right: str) -> str:\n    return left + self.value + right\n\ndef main() -> None:\n  labeler = Labeler(value=\"center\")\n  held = partial labeler.label(right=\"!\")\n  println(held(\"a\"))\n  println(held(\"b\", right=\"?\"))\n",
+        "from std.traits.callable import Callable1\n\nmodel Labeler:\n  value: str\n  def label(self, left: str, right: str) -> str:\n    return left + self.value + right\n\ndef use[Callback with (Clone, Callable1[str, str])](callback: Callback, text: str) -> str:\n  alias = callback\n  return alias(text)\n\ndef plain(text: str) -> str:\n  return text\n\ndef main() -> None:\n  labeler = Labeler(value=\"center\")\n  held = partial labeler.label(right=\"!\")\n  println(held(\"a\"))\n  println(held(\"b\", right=\"?\"))\n  prefix = \"prefix-\"\n  callback: (str) -> str = (text) => f\"{prefix}{text}\"\n  println(use(callback, \"x\"))\n  println(use(plain, \"y\"))\n",
     )
 }
 
