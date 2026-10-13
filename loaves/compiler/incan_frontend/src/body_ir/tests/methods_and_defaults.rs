@@ -4,6 +4,35 @@
 
 use super::*;
 
+/// Generated reflection retains its checked typed/string mode and excludes type-private slots, not all private slots.
+#[test]
+fn reflection_retains_checked_mode_and_field_policy() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "model Local:\n    name: str\n\npub model Visible:\n    pub name: str\n    secret: int\n\ndef generic[T](value: T) -> None:\n    println(value.__field_value__(\"name\"))\n    value.__field_items__()\n\ndef main() -> None:\n    local = Local(name=\"Ada\")\n    local.__field_value__(\"name\")\n    local.__field_items__()\n",
+        &["reflection_policy"],
+    )?;
+    let json = serde_json::to_value(&module)?;
+    for (name, expected) in [("Local", vec![0]), ("Visible", vec![0])] {
+        let declaration = json["nominal_declarations"]
+            .as_array()
+            .ok_or("missing declarations")?
+            .iter()
+            .find(|value| value["name"] == name)
+            .ok_or("missing nominal")?;
+        assert_eq!(declaration["reflection_fields"], serde_json::json!(expected));
+    }
+    for (body, expected) in [
+        ("main", ["TypedValue", "TypedItems"]),
+        ("generic", ["StringValue", "StringItems"]),
+    ] {
+        let value = serde_json::to_string(body_named(&module, body)?)?;
+        for mode in expected {
+            assert!(value.contains(mode), "missing {mode} in {value}");
+        }
+    }
+    Ok(())
+}
+
 /// Bare generic adoptions retain both their own and inherited canonical implementation slots.
 #[test]
 fn bare_generic_adoption_retains_supertrait_slots() -> Result<(), Box<dyn std::error::Error>> {

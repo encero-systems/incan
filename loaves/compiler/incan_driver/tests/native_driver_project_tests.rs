@@ -18,6 +18,35 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// Concrete typed fields and generic string reflection preserve both original fixtures' complete legacy output.
+#[test]
+fn field_value_reflection_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    for (name, source) in [
+        (
+            "typed-field-reflection",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/codegen_models_and_collections/field_value_reflection.incn"
+            ),
+        ),
+        (
+            "generic-field-reflection",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/ownership_numerics_and_bounds/reflection_over_a_generic_value.incn"
+            ),
+        ),
+    ] {
+        corpus::check_builtin_source(
+            &fixture.driver_binary("debug"),
+            &fixture.scratch(name)?,
+            &fixture.sysroot,
+            &fixture.formatting,
+            source,
+        )?;
+    }
+    Ok(())
+}
+
 /// Original generic supertrait receivers and upcasts dispatch through their concrete legacy carriers.
 #[test]
 fn generic_trait_adoption_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
