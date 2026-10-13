@@ -15346,6 +15346,34 @@ fn static_collection_defaults_across_modules_match_legacy() -> Result<(), Box<dy
     )
 }
 
+/// Literal integer constant arithmetic preserves legacy's boundary values and evaluation result.
+#[test]
+fn integer_constant_arithmetic_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("integer-constant-arithmetic")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "const LOWEST: int = -9223372036854775807 - 1\nconst PRODUCT: int = (3 + 4) * 5\n\ndef main() -> None:\n  println(LOWEST)\n  println(PRODUCT)\n",
+    )
+}
+
+/// The complete overflow-checking fixture reads its checked constant through the direct route.
+#[test]
+fn constant_abs_sum_original_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("constant-abs-sum-original")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/abs_and_sum_are_overflow_checked.incn"
+        ),
+    )
+}
+
 /// A method partial snapshots its receiver once, preserves aliases and closed owner types, and forwards presets.
 #[test]
 fn method_partial_of_a_value_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

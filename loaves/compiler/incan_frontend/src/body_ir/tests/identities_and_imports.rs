@@ -489,6 +489,47 @@ fn imported_model_alias_return_uses_declared_carrier() -> Result<(), Box<dyn std
     Ok(())
 }
 
+/// Checked literal integer arithmetic retains one value without changing legacy's evaluation table.
+#[test]
+fn literal_integer_constant_arithmetic_retains_values() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "const LOWEST: int = -9223372036854775807 - 1\nconst PRODUCT: int = (3 + 4) * 5\n\ndef main() -> None:\n  println(LOWEST)\n  println(PRODUCT)\n",
+        &["app"],
+    )?;
+    assert!(
+        module
+            .constant_declarations
+            .iter()
+            .any(|item| item.value == bir::Constant::Int(i64::MIN))
+    );
+    assert!(
+        module
+            .constant_declarations
+            .iter()
+            .any(|item| item.value == bir::Constant::Int(35))
+    );
+    let snapshot = module.render_snapshot();
+    assert!(snapshot.contains("const(-9223372036854775808)"), "{snapshot}");
+    assert!(snapshot.contains("const(35)"), "{snapshot}");
+    Ok(())
+}
+
+/// Overflow and symbolic operands remain absent rather than fabricating a wrapped compile-time value.
+#[test]
+fn unproven_integer_constant_arithmetic_stays_unretained() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "const OVER: int = 9223372036854775807 + 1\nconst BASE: int = 4\nconst SYMBOLIC: int = BASE + 1\n\ndef main() -> None:\n  println(OVER)\n  println(SYMBOLIC)\n",
+        &["app"],
+    )?;
+    assert!(
+        !module
+            .constant_declarations
+            .iter()
+            .any(|item| matches!(item.canonical.declaration_name.as_str(), "OVER" | "SYMBOLIC"))
+    );
+    Ok(())
+}
+
 /// An imported model's constructor and field reads retain the same concrete types as its declaring module.
 #[test]
 fn imported_model_default_fill_retains_consumer_types() -> Result<(), Box<dyn std::error::Error>> {
