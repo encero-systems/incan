@@ -981,8 +981,6 @@ pub struct MutableRustTypeArgumentProjection {
 /// Declaration-level binding rewrites and visibility facts consumed by lowering.
 #[derive(Debug, Default, Clone)]
 pub struct DeclarationArtifacts {
-    /// Body IR-only derive effects expanded from already checked source bundles; legacy selections stay untouched.
-    pub body_ir_expanded_derives: HashMap<String, Vec<String>>,
     /// Body IR-only source trait slots adopted by checked derive bundles, keyed by the adopting declaration.
     pub body_ir_derived_methods: HashMap<String, Vec<BodyIrDerivedMethod>>,
     /// Checked payload types keyed by their source annotation span; direct lowering never resolves raw annotations.

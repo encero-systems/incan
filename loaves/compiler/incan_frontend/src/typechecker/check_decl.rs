@@ -1113,9 +1113,9 @@ impl TypeChecker {
         methods.sort_by(|left, right| left.method.cmp(&right.method));
     }
 
-    /// Expand checked source derive bundles from the Body IR snapshot; the legacy native selection is left intact.
-    /// This preserves executable derives retained before the legacy inspection-mode selection changes.
-    fn record_body_ir_expanded_derives(&mut self, owner: &str, derives: &[String]) {
+    /// Expand checked source derive bundles in the Body IR record; the legacy native selection is left intact.
+    /// Canonical builtin markers remain selected, and later JSON protocol additions update this same record.
+    fn expand_body_ir_model_derives(&mut self, owner: &str, derives: &[String]) {
         let Some(original) = self.type_info.declarations.body_ir_model_derives.get(owner) else {
             return;
         };
@@ -1130,7 +1130,7 @@ impl TypeChecker {
             } else {
                 continue;
             };
-            expanded.retain(|name| name != derive);
+            expanded.retain(|name| name != derive || derives::from_str(name).is_some());
             for key in keys {
                 for path in self.dependency_trait_rust_derive_paths.get(&key).into_iter().flatten() {
                     if !expanded.contains(path) {
@@ -1141,7 +1141,7 @@ impl TypeChecker {
         }
         self.type_info
             .declarations
-            .body_ir_expanded_derives
+            .body_ir_model_derives
             .insert(owner.to_string(), expanded);
     }
 
@@ -3694,7 +3694,7 @@ impl TypeChecker {
             self.record_body_ir_derived_methods(&model.name, &resolved);
             resolved_trait_adoptions.push(resolved);
         }
-        self.record_body_ir_expanded_derives(&model.name, &derives);
+        self.expand_body_ir_model_derives(&model.name, &derives);
         let active_model_fields = model
             .fields
             .iter()

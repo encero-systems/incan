@@ -560,11 +560,7 @@ pub fn is_direct_replacement_checked_model(model: &ast::ModelDecl, type_info: &T
     }
     has_checked_native_derives(
         &model.decorators,
-        type_info
-            .declarations
-            .body_ir_expanded_derives
-            .get(&model.name)
-            .or_else(|| type_info.declarations.body_ir_model_derives.get(&model.name)),
+        type_info.declarations.body_ir_model_derives.get(&model.name),
         type_info.declarations.rust_builtin_derive_models.contains(&model.name),
     ) && has_direct_replacement_model_shape(model, Some(type_info))
 }
