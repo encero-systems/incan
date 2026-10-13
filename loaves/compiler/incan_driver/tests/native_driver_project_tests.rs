@@ -10752,6 +10752,21 @@ def main() -> None:
     )
 }
 
+/// Path methods receive the SDK-owned anonymous union for both Path and str targets.
+#[test]
+fn stdlib_path_union_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("stdlib-path-union")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/emit_calls_and_builtins/std_fs_path_str_or_path_targets.incn"
+        ),
+    )
+}
+
 /// SDK-owned UUID comparisons retain their declared Eq and Ord capabilities while leaving execution to the SDK.
 #[test]
 fn stdlib_uuid_comparison_capabilities_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
