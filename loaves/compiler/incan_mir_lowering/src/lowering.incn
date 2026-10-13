@@ -125,6 +125,7 @@ from rust::incan_semantics_core::body_ir import (
     Rvalue as RustRvalue,
     Statement as RustStatement,
     StatementKind as RustStatementKind,
+    UnsafeAcknowledgment as RustUnsafeAcknowledgment,
     StdlibDelegation as RustStdlibDelegation,
     UnOp,
     PlaceElem,
@@ -1150,9 +1151,7 @@ pub def lower_statement(module: &BodyIrModule, mut builder: Builder, statement: 
                 return Ok(None)
             return lower_assignment(module, builder, destination, value, span)
         RustStatementKind.UnsafeRegion(acknowledgment=acknowledgment, body=body) =>
-            if not acknowledgment.matches_region(module.module_id, statement.span, body.scope):
-                return Err("unsupported Body IR invalid unsafe acknowledgment receipt")
-            return lower_block(module, builder, body)
+            return lower_unsafe_region(module, builder, statement, acknowledgment, body)
         RustStatementKind.If(cond=condition, then_block=then_body, else_block=else_body) =>
             return lower_if(module, builder, condition, then_body, else_body, span)
         RustStatementKind.Loop(body=body) =>
@@ -1196,6 +1195,19 @@ pub def lower_statement(module: &BodyIrModule, mut builder: Builder, statement: 
         RustStatementKind.Unsupported(description=description) =>
             return Err(f"unsupported Body IR Unsupported: {description}")
     return Ok(None)
+
+
+def lower_unsafe_region(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    statement: &RustStatement,
+    acknowledgment: &RustUnsafeAcknowledgment,
+    body: &RustBlock,
+) -> Result[None, str]:
+    """Validate the typed source receipt before lowering exactly the operations retained under its acknowledgment."""
+    if not acknowledgment.matches_region(module.module_id, statement.span, body.scope):
+        return Err("unsupported Body IR invalid unsafe acknowledgment receipt")
+    return lower_block(module, builder, body)
 
 
 def source_future_place(builder: Builder, awaited: &RustOperand, span: SourceSpan) -> Result[Place, str]:
