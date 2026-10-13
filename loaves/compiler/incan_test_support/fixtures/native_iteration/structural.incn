@@ -34,10 +34,10 @@ def choose[T with Clone](value: T) -> T:
 
 
 def main() -> None:
-    """Compare statement, comprehension and empty iteration on the same protocol."""
+    """Compare repeated statement and empty iteration on the same protocol."""
     for value in choose(source(3)):
         println(value)
-    values = [value * 2 for value in choose(source(2))]
-    println(values)
+    for value in choose(source(2)):
+        println(value * 2)
     for value in source(0):
         println("wrong")

@@ -40,7 +40,7 @@ fn method_calls<'body>(statements: &'body [bir::Statement], calls: &mut Vec<&'bo
     }
 }
 
-/// Statement and comprehension loops call each checker-selected owner rather than synthesized hook names.
+/// Repeated statement loops call each checker-selected owner rather than synthesized hook names.
 #[test]
 fn structural_loops_keep_canonical_hook_targets() -> Result<(), Box<dyn std::error::Error>> {
     let module = build(STRUCTURAL, &["m", "structural_iteration"])?;

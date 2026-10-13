@@ -2630,7 +2630,7 @@ def main() -> None:
     )
 }
 
-/// Structural iteration evaluates its source once, polls the selected cursor and shares the comprehension path.
+/// Structural iteration evaluates each source once and polls the selected cursor through repeated and empty loops.
 #[test]
 fn structural_iteration_hooks_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
@@ -2653,6 +2653,13 @@ fn fallible_iteration_hooks_output_matches_legacy() -> Result<(), Box<dyn std::e
         &fixture.sysroot,
         &fixture.formatting,
         include_str!("../../incan_test_support/fixtures/native_iteration/fallible.incn"),
+    )?;
+    check_project_refusal(
+        "fallible-iteration-sdk-method-frontier",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_fallible_iterator_loop.incn"
+        ),
+        "unsupported Body IR nonlocal or trait-object Method",
     )
 }
 
