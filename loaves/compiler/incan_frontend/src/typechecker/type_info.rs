@@ -1726,6 +1726,8 @@ pub struct TestingArtifacts {
 /// Custom protocol decisions that lower into explicit runtime calls.
 #[derive(Debug, Default, Clone)]
 pub struct ProtocolArtifacts {
+    /// Independent checked hook calls for Body IR, separate from the legacy iteration record and written call facts.
+    pub body_ir_iterations: HashMap<(usize, usize), BodyIrIterationHooksInfo>,
     /// RFC 068: Custom `for` iteration protocol choices keyed by iterable expression span.
     ///
     /// Lowering consumes this so a structural `__iter__` / `__next__` pair can become an explicit loop that calls the
@@ -1839,6 +1841,37 @@ pub(crate) struct CallSiteFacts {
     identity: Option<CanonicalSymbolId>,
     callable_params: Option<Vec<CallableParam>>,
     monomorph_type_args: Option<Vec<ResolvedType>>,
+    body_ir_constructor_type: Option<ResolvedType>,
+    body_ir_call_type_args: Option<Vec<ResolvedType>>,
+    body_ir_call_result_type: Option<ResolvedType>,
+    body_ir_self_method_identity: Option<CanonicalSymbolId>,
+    body_ir_self_method_result_type: Option<ResolvedType>,
+    body_ir_self_method_params: Option<Vec<CallableParam>>,
+    body_ir_provider_slot_identity: Option<CanonicalSymbolId>,
+}
+
+/// Exact checker-selected calls behind one structural or fallible iteration; only Body IR consumes this record.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BodyIrIterationHooksInfo {
+    /// Call that materializes the iterator before the first poll.
+    pub iter: BodyIrProtocolCallInfo,
+    /// Call that advances the materialized iterator inside the loop.
+    pub next: BodyIrProtocolCallInfo,
+}
+
+/// Retained signature and identity for one synthetic hook, never inferred by a backend from its spelling.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BodyIrProtocolCallInfo {
+    /// Exact source or active SDK declaration; absent remains a named refusal.
+    pub canonical: Option<CanonicalSymbolId>,
+    /// Checked ordinary parameters, excluding the receiver, including their default-presence contract.
+    pub params: Option<Vec<CallableParam>>,
+    /// Checked method-scoped instantiation arguments, independent of the written iterable's generic call.
+    pub type_args: Vec<ResolvedType>,
+    /// Checked result after receiver and trait arguments have been applied.
+    pub return_type: ResolvedType,
+    /// Declared instance receiver mode; an absent or ambiguous receiver remains refused.
+    pub receiver_is_mutable: Option<bool>,
 }
 
 /// Typechecker-resolved custom iteration protocol consumed by IR lowering.
@@ -3095,7 +3128,26 @@ impl TypeCheckInfo {
             identity: self.references.resolved_identities.remove(&key),
             callable_params: self.calls.call_site_callable_params.remove(&key),
             monomorph_type_args: self.calls.call_site_monomorph_type_args.remove(&key),
+            body_ir_constructor_type: self.calls.body_ir_constructor_types.remove(&key),
+            body_ir_call_type_args: self.calls.body_ir_call_type_args.remove(&key),
+            body_ir_call_result_type: self.calls.body_ir_call_result_types.remove(&key),
+            body_ir_self_method_identity: self.traits.self_method_identities.remove(&key),
+            body_ir_self_method_result_type: self.traits.self_method_result_types.remove(&key),
+            body_ir_self_method_params: self.traits.self_method_params.remove(&key),
+            body_ir_provider_slot_identity: self.traits.provider_slot_identities.remove(&key),
         }
+    }
+
+    /// Clear only direct-route hook facts between two synthetic resolutions, leaving legacy's probe state unchanged.
+    pub(crate) fn clear_body_ir_call_site_facts(&mut self, span: Span) {
+        let key = (span.start, span.end);
+        self.calls.body_ir_constructor_types.remove(&key);
+        self.calls.body_ir_call_type_args.remove(&key);
+        self.calls.body_ir_call_result_types.remove(&key);
+        self.traits.self_method_identities.remove(&key);
+        self.traits.self_method_result_types.remove(&key);
+        self.traits.self_method_params.remove(&key);
+        self.traits.provider_slot_identities.remove(&key);
     }
 
     /// Make `facts`, as [`Self::take_call_site_facts`] returned them, the facts of the call at `span`, dropping any a
@@ -3135,6 +3187,41 @@ impl TypeCheckInfo {
             &mut self.calls.call_site_monomorph_type_args,
             key,
             facts.monomorph_type_args,
+        );
+        put(
+            &mut self.calls.body_ir_constructor_types,
+            key,
+            facts.body_ir_constructor_type,
+        );
+        put(
+            &mut self.calls.body_ir_call_type_args,
+            key,
+            facts.body_ir_call_type_args,
+        );
+        put(
+            &mut self.calls.body_ir_call_result_types,
+            key,
+            facts.body_ir_call_result_type,
+        );
+        put(
+            &mut self.traits.self_method_identities,
+            key,
+            facts.body_ir_self_method_identity,
+        );
+        put(
+            &mut self.traits.self_method_result_types,
+            key,
+            facts.body_ir_self_method_result_type,
+        );
+        put(
+            &mut self.traits.self_method_params,
+            key,
+            facts.body_ir_self_method_params,
+        );
+        put(
+            &mut self.traits.provider_slot_identities,
+            key,
+            facts.body_ir_provider_slot_identity,
         );
     }
 

@@ -71,7 +71,10 @@ mod validate_rust_module;
 mod web_routes;
 
 pub use const_eval::ConstValue;
-pub use type_info::{BodyIrPropertyBindingInfo, ClassFieldDefaultInfo, semantic_type_from_resolved};
+pub use type_info::{
+    BodyIrIterationHooksInfo, BodyIrPropertyBindingInfo, BodyIrProtocolCallInfo, ClassFieldDefaultInfo,
+    semantic_type_from_resolved,
+};
 pub use type_info::{
     CAbiInteropArtifacts, CAbiOutputSlot, CAbiSpan, CAbiSpanAccess, CAbiSpanAccessKind, CAbiSpanKind, CBindingBuffer,
     CBindingDescriptor, CBindingEnum, CBindingEnumVariant, CBindingFacade, CBindingFunctionCall, CBindingOutcome,

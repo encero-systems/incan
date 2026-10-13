@@ -1228,32 +1228,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
     }
 
-    /// Lower one general (non-range) iteration: materialize an iterator from `iter_expr` before the loop, then push
-    /// a single [`bir::StatementKind::Loop`] whose body opens with a [`bir::StatementKind::IterNext`] writing each
-    /// produced item into `pattern_local`, followed by `body_fn`. Shared by [`Self::lower_for`]'s general-iterable
-    /// path and [`Self::lower_comprehension_clauses`]'s `for`-clause handling, so builtin-vs-protocol iteration is
-    /// resolved in exactly one place rather than twice.
+    /// Lower a general iteration through the same checked path for statement loops and comprehension clauses.
     ///
-    /// Looks up [`TypeCheckInfo::protocol_iteration`] at `iter_expr`'s span to decide the [`bir::IterProtocol`]:
-    /// `None` means a builtin collection or range, where "the iterator" is modeled as the iterable's own value (no
-    /// method dispatch) -- a plain `Assign`; `Some` means a resolved `__iter__`/`__next__` protocol, where the
-    /// iterator is obtained via an explicit `iter_method` [`bir::Callee::Method`] call. When the resolved protocol
-    /// is fallible (`for item in iterable?:`, RFC 115), `iter_expr` is itself `ast::Expr::Try(inner)` with the `?`
-    /// acting as the fallible-poll marker rather than an ordinary `Result` unwrap -- `inner` is lowered directly as
-    /// the iterable in that case (matching the existing Rust-emission backend's own `(Expr::Try(inner), Some(_)) =>
-    /// lower inner` special case in `loaves/compiler/incan_ir/src/lower/stmt.rs`), so the marker `?` is not
-    /// double-lowered through [`Self::lower_try`]. Any other `Expr::Try` (an ordinary `for item in
-    /// result_of_iterable?:` unwrap) falls through to the normal expression-lowering path, which already turns it
-    /// into a [`bir::StatementKind::TryPropagate`] ahead of the loop via [`Self::lower_expr_to_place`]'s existing
-    /// `Expr::Try` handling -- no special-casing needed for that form.
+    /// The iterable is evaluated once before the loop. Builtin collections retain their borrowed-value initializer and
+    /// [`bir::StatementKind::IterNext`]; a custom protocol uses separately retained canonical hook calls, intrinsic
+    /// Option dispatch and, for a fallible poll, checked [`bir::StatementKind::TryPropagate`] routing. No backend
+    /// resolves a user hook from its spelling.
     ///
-    /// The iterable is read as a [`bir::OwnershipFact::Borrow`], matching [`Self::lower_method_call`]'s
-    /// established receiver-borrow precedent (never an unsound move, and consistent with obtaining an iterator
-    /// conceptually borrowing its source rather than consuming it at this normalized level); the materialized iterator
-    /// local is polled with [`bir::OwnershipFact::MutBorrow`] each iteration, since polling advances its internal
-    /// state. A builtin loop whose body changes its item in place (see [`Self::body_changes_item_in_place`]) reads the
-    /// iterable as a [`bir::OwnershipFact::MutBorrow`] instead, so each item is the element itself, as legacy iterates
-    /// with `iter_mut` (#1561).
+    /// A fallible loop's header `?` marks polling, so its inner expression is materialized without a second Result
+    /// unwrap. An ordinary Result-valued iterable still goes through normal expression propagation. Hook receivers
+    /// use their checked modes; a builtin loop that changes an item in place borrows the actual initializer
+    /// exclusively, preserving legacy's `iter_mut` behavior even when evaluating the iterable emitted other statements.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn lower_general_iteration(
         &mut self,
@@ -1298,60 +1283,55 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return;
         }
 
-        let iterable_place = self.lower_expr_to_place(effective_iter_expr, outer_scope, out);
-        let iterator_ty = match &protocol {
-            Some(p) => semantic_type_from_resolved(&p.iterator_type),
-            None => self.resolve_ty(effective_iter_expr.span),
+        // ---- Materialize the iterable exactly once ----
+        let (iterator_local, iterator_init) = match self.initialize_general_iterator(
+            effective_iter_expr,
+            iter_expr.span,
+            protocol.is_some(),
+            outer_scope,
+            span,
+            out,
+        ) {
+            Ok(iterator) => iterator,
+            Err(description) => {
+                self.push_unsupported_stmt(description, span, out);
+                return;
+            }
         };
-        let iterator_local = self.new_temp(iterator_ty, outer_scope, span);
-        let iterator_init = out.len();
-        match &protocol {
-            Some(p) => out.push(bir::Statement {
-                kind: bir::StatementKind::Call {
-                    destination: Some(bir::Place::from_local(iterator_local)),
-                    callee: bir::Callee::Method(bir::MethodTarget::synthesized(p.iter_method.clone())),
-                    args: fixed_elements(vec![bir::Operand::place(
-                        iterable_place,
-                        bir::OwnershipFact::Borrow,
-                        false,
-                    )]),
-                    may_panic: false,
-                },
-                span,
-            }),
-            None => out.push(bir::Statement {
-                kind: bir::StatementKind::Assign {
-                    place: bir::Place::from_local(iterator_local),
-                    rvalue: bir::Rvalue::Use(bir::Operand::place(iterable_place, bir::OwnershipFact::Borrow, false)),
-                },
-                span,
-            }),
-        }
 
+        // ---- Poll before each iteration body ----
         self.loop_break_targets.push(None);
         self.loop_continue_actions.push(Vec::new());
         let mut body_stmts = Vec::new();
 
-        let iter_protocol = match &protocol {
-            Some(p) => bir::IterProtocol::UserDefined {
-                next_method: p.next_method.clone(),
+        if protocol.is_some() {
+            if let Err(description) = self.lower_checked_iteration_poll(
+                iter_expr.span,
+                iterator_local,
+                pattern_local,
                 fallible,
-            },
-            None => bir::IterProtocol::Builtin,
-        };
-        body_stmts.push(bir::Statement {
-            kind: bir::StatementKind::IterNext {
-                destination: bir::Place::from_local(pattern_local),
-                iterator: bir::Operand::place(
-                    bir::Place::from_local(iterator_local),
-                    bir::OwnershipFact::MutBorrow,
-                    false,
-                ),
-                protocol: iter_protocol,
-            },
-            span,
-        });
+                loop_scope,
+                span,
+                &mut body_stmts,
+            ) {
+                self.push_unsupported_stmt(description, span, &mut body_stmts);
+            }
+        } else {
+            body_stmts.push(bir::Statement {
+                kind: bir::StatementKind::IterNext {
+                    destination: bir::Place::from_local(pattern_local),
+                    iterator: bir::Operand::place(
+                        bir::Place::from_local(iterator_local),
+                        bir::OwnershipFact::MutBorrow,
+                        false,
+                    ),
+                    protocol: bir::IterProtocol::Builtin,
+                },
+                span,
+            });
+        }
 
+        // ---- Body control flow and scope cleanup ----
         body_fn(self, loop_scope, &mut body_stmts);
         self.retain_in_place_iteration_bindings(&mut body_stmts, pattern_local);
         self.loop_break_targets.pop();

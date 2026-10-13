@@ -1899,6 +1899,7 @@ mod assertions;
 mod comprehensions;
 
 mod control_flow;
+mod iteration_protocol;
 
 mod stmt;
 
