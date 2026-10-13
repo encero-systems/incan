@@ -1929,7 +1929,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         .as_ref()
                         .is_some_and(|block| self.body_changes_item_in_place(&block.stmts, item))
             }
-            bir::StatementKind::Loop { body } => self.body_changes_item_in_place(&body.stmts, item),
+            bir::StatementKind::Loop { body } | bir::StatementKind::UnsafeRegion { body, .. } => {
+                self.body_changes_item_in_place(&body.stmts, item)
+            }
             _ => false,
         }
     }

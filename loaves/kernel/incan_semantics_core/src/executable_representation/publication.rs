@@ -582,7 +582,9 @@ impl<'a> PublicationAudit<'a> {
                     self.statements(&mut block.stmts)?;
                 }
             }
-            StatementKind::Loop { body } => self.statements(&mut body.stmts)?,
+            StatementKind::Loop { body } | StatementKind::UnsafeRegion { body, .. } => {
+                self.statements(&mut body.stmts)?
+            }
             StatementKind::Break { value } | StatementKind::Return { value } => {
                 if let Some(value) = value {
                     self.operand(value)?;

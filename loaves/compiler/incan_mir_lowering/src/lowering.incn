@@ -1126,7 +1126,9 @@ def loop_local_owner(builder: Builder, local: int) -> bool:
 
 
 def lower_block(module: &BodyIrModule, mut builder: Builder, block: &RustBlock) -> Result[None, str]:
-    """Lower a retained lexical block and stop after a terminating source statement."""
+    """Validate source acknowledgment receipts, lower the retained block, and stop after a terminating statement."""
+    if not block.unsafe_acknowledgments_valid(module.module_id):
+        return Err("unsupported Body IR invalid unsafe acknowledgment receipt or enclosing scope")
     for statement in block.stmts:
         lower_statement(module, builder, statement)?
         if builder.closed[builder.current]:
@@ -1147,6 +1149,10 @@ pub def lower_statement(module: &BodyIrModule, mut builder: Builder, statement: 
             if later_clause_index(builder, whole_local(destination)) >= 0:
                 return Ok(None)
             return lower_assignment(module, builder, destination, value, span)
+        RustStatementKind.UnsafeRegion(acknowledgment=acknowledgment, body=body) =>
+            if not acknowledgment.matches_region(module.module_id, statement.span, body.scope):
+                return Err("unsupported Body IR invalid unsafe acknowledgment receipt")
+            return lower_block(module, builder, body)
         RustStatementKind.If(cond=condition, then_block=then_body, else_block=else_body) =>
             return lower_if(module, builder, condition, then_body, else_body, span)
         RustStatementKind.Loop(body=body) =>

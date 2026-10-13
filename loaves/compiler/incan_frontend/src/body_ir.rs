@@ -46,12 +46,10 @@
 //! means a caller skipped it. See [`build_body_ir_module_v0`]'s input contract (#1166) for what a caller owes and
 //! for how such a node is named when it arrives anyway.
 //!
-//! One entry in that residue is a decided boundary rather than pending work, and is stated here so it is not read
-//! as a gap. An `unsafe:` region refuses permanently: it introduces no Incan scope, so inlining its statements
-//! would be trivial, and that is precisely the problem — it would erase the acknowledgment the region exists to
-//! record and let a direct replacement execution profile run an explicitly authorized region without ever being
-//! told. Body IR v0 carries no acknowledgment fact a consumer could weigh, so the honest answer is a named
-//! refusal owned by #1162 rather than a silent inline. See [`BodyBuilder::refuse_unsafe_region`].
+//! Source `unsafe:` regions retain an acknowledgment receipt, their source span, and the exact operations they
+//! cover. They introduce no Incan scope. Consumers must validate and deliberately admit the acknowledgment before
+//! lowering its operations; it neither grants provider capabilities nor bypasses another unsupported construct.
+//! See [`BodyBuilder::lower_unsafe_region`].
 //!
 //! One coverage limit is silent rather than marked, and it is deliberate. Expression-position `yield` (the two-way
 //! send/receive protocol) is a stub in the existing Rust-emission backend too, so there is no behavior to preserve;

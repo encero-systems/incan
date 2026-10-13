@@ -660,7 +660,7 @@ fn yields(stmts: &[bir::Statement]) -> bool {
         bir::StatementKind::If {
             then_block, else_block, ..
         } => yields(&then_block.stmts) || else_block.as_ref().is_some_and(|block| yields(&block.stmts)),
-        bir::StatementKind::Loop { body } => yields(&body.stmts),
+        bir::StatementKind::Loop { body } | bir::StatementKind::UnsafeRegion { body, .. } => yields(&body.stmts),
         _ => false,
     })
 }

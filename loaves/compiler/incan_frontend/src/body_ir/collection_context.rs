@@ -79,7 +79,9 @@ fn collect_context(statements: &[bir::Statement], locals: &[bir::LocalDecl], fac
                     collect_context(&block.stmts, locals, facts);
                 }
             }
-            bir::StatementKind::Loop { body } => collect_context(&body.stmts, locals, facts),
+            bir::StatementKind::Loop { body } | bir::StatementKind::UnsafeRegion { body, .. } => {
+                collect_context(&body.stmts, locals, facts)
+            }
             bir::StatementKind::Race { arms, .. } => {
                 for arm in arms {
                     collect_context(&arm.body.stmts, locals, facts);

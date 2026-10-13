@@ -887,10 +887,10 @@ impl Body {
     /// enforces this), so this alone is already a reliable generator signal for a `Body` in isolation.
     ///
     /// The walk recurses into every statement kind that carries a nested [`Block`] -- [`StatementKind::If`],
-    /// [`StatementKind::Loop`], and each [`StatementKind::Race`] arm -- but does not recurse into a
-    /// [`Rvalue::Closure`]'s [`ClosureBody`] or a [`Rvalue::Generator`]'s [`GeneratorBody`]. A yield nested in either
-    /// value does not make the *enclosing* function body a generator, matching how the existing backend's own
-    /// `body_contains_yield` walker never descends into nested closure/function literals.
+    /// [`StatementKind::Loop`], [`StatementKind::UnsafeRegion`], and each [`StatementKind::Race`] arm -- but does not
+    /// recurse into a [`Rvalue::Closure`]'s [`ClosureBody`] or a [`Rvalue::Generator`]'s [`GeneratorBody`]. A yield
+    /// nested in either value does not make the *enclosing* function body a generator, matching how the existing
+    /// backend's own `body_contains_yield` walker never descends into nested closure/function literals.
     pub fn is_generator(&self) -> bool {
         block_contains_yield(&self.block)
     }
@@ -978,7 +978,9 @@ fn statement_representation_gap(stmt: &Statement) -> Option<&str> {
                 .as_ref()
                 .and_then(|block| statements_representation_gap(&block.stmts))
         }),
-        StatementKind::Loop { body } => statements_representation_gap(&body.stmts),
+        StatementKind::Loop { body } | StatementKind::UnsafeRegion { body, .. } => {
+            statements_representation_gap(&body.stmts)
+        }
         StatementKind::Race { arms, .. } => arms
             .iter()
             .find_map(|arm| statements_representation_gap(&arm.body.stmts)),
@@ -1036,7 +1038,7 @@ fn statement_contains_yield(stmt: &Statement) -> bool {
         StatementKind::If {
             then_block, else_block, ..
         } => block_contains_yield(then_block) || else_block.as_ref().is_some_and(block_contains_yield),
-        StatementKind::Loop { body } => block_contains_yield(body),
+        StatementKind::Loop { body } | StatementKind::UnsafeRegion { body, .. } => block_contains_yield(body),
         // A race arm body is a nested block like any other. A body cannot currently be both async and a generator,
         // so this is unreachable today; walking it anyway keeps the traversal total over the statement vocabulary
         // rather than silently under-reporting if that ever changes.
@@ -3649,6 +3651,48 @@ pub struct Block {
     pub stmts: Vec<Statement>,
 }
 
+impl Block {
+    /// Check each direct acknowledgment against this block's existing scope before a consumer lowers its operations.
+    /// Nested control-flow blocks are checked when consumed, and nested acknowledgment regions recurse here.
+    pub fn unsafe_acknowledgments_valid(&self, module: &CompilerNodeId) -> bool {
+        self.stmts.iter().all(|statement| match &statement.kind {
+            StatementKind::UnsafeRegion { acknowledgment, body } => {
+                acknowledgment.matches_region(module, &statement.span, self.scope)
+                    && body.scope == self.scope
+                    && body.unsafe_acknowledgments_valid(module)
+            }
+            _ => true,
+        })
+    }
+}
+
+/// Source acknowledgment of one `unsafe:` region, binding its receipt to the module, byte span, and enclosing scope.
+///
+/// This records source syntax, not a capability grant or an authority decision. The enclosing
+/// [`StatementKind::UnsafeRegion`] retains the exact operations being acknowledged; a consumer must validate this
+/// receipt before admitting them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UnsafeAcknowledgment {
+    /// Compiler-owned statement identity minted from the source module and the region's byte span.
+    pub receipt: CompilerNodeId,
+    /// Original region span; generated operations retain their individual spans inside this boundary.
+    pub span: HirSourceSpan,
+    /// Existing Incan scope containing the region; `unsafe:` introduces no separate binding scope.
+    pub scope: ScopeId,
+}
+
+impl UnsafeAcknowledgment {
+    /// Validate the source receipt against its owning module, enclosing scope, and statement span before admission.
+    ///
+    /// A matching receipt does not authorize a provider operation or admit an otherwise unsupported nested statement.
+    pub fn matches_region(&self, module: &CompilerNodeId, span: &HirSourceSpan, scope: ScopeId) -> bool {
+        module == &CompilerNodeId::module(module.path())
+            && self.span == *span
+            && self.scope == scope
+            && self.receipt == CompilerNodeId::statement_span(module.path(), span.start, span.end)
+    }
+}
+
 /// Render a block's statements at the given indentation depth (in two-space units).
 fn render_block(out: &mut String, block: &Block, depth: usize) {
     let indent = "  ".repeat(depth);
@@ -3660,6 +3704,14 @@ fn render_block(out: &mut String, block: &Block, depth: usize) {
 /// Render one statement, recursing into nested blocks for control-flow statements.
 fn render_statement(out: &mut String, stmt: &Statement, indent: &str, depth: usize) {
     match &stmt.kind {
+        StatementKind::UnsafeRegion { acknowledgment, body } => {
+            let _ = writeln!(
+                out,
+                "{indent}unsafe acknowledgment={} scope={}",
+                acknowledgment.receipt, acknowledgment.scope.0
+            );
+            render_block(out, body, depth + 1);
+        }
         StatementKind::Assign { place, rvalue } => {
             let _ = writeln!(
                 out,
@@ -3840,6 +3892,15 @@ pub struct Statement {
 /// represented as distinct statement kinds, so the canonical vocabulary has a single loop shape.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum StatementKind {
+    /// An explicit source `unsafe:` acknowledgment, with its receipt and nested operations in the enclosing scope.
+    /// Consumers must validate the receipt and deliberately admit the region; ordinary statement flattening must not
+    /// erase it.
+    UnsafeRegion {
+        /// Source receipt identifying exactly this region, without granting unrelated operation capabilities.
+        acknowledgment: UnsafeAcknowledgment,
+        /// Operations covered by the acknowledgment; its scope is the enclosing block's scope.
+        body: Block,
+    },
     /// Assign an rvalue into a place.
     Assign { place: Place, rvalue: Rvalue },
     /// Call a function, method, locally stored callable value, or runtime helper, optionally storing its result.

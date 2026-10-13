@@ -288,7 +288,9 @@ pub(super) fn first_unsupported_default_statement_inner(statement: &bir::Stateme
                 .as_ref()
                 .and_then(|block| first_unsupported_default_statement(&block.stmts))
         }),
-        bir::StatementKind::Loop { body } => first_unsupported_default_statement(&body.stmts),
+        bir::StatementKind::Loop { body } | bir::StatementKind::UnsafeRegion { body, .. } => {
+            first_unsupported_default_statement(&body.stmts)
+        }
         bir::StatementKind::Race { arms, .. } => arms
             .iter()
             .find_map(|arm| first_unsupported_default_statement(&arm.body.stmts)),
