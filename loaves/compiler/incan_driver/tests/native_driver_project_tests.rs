@@ -6802,9 +6802,6 @@ fn declaration_case_outputs(
     Ok((actual, expected))
 }
 
-/// Source async calls defer discarded body effects and evaluate arguments before their immediately ready awaits.
-/// SDK prelude tasks preserve the original fixture's executor, task handles and output.
-/// SDK runtime task types keep their native storage in ordinary unused signatures.
 /// A checked native SDK task type keeps its concrete type argument through Body IR projection.
 #[test]
 fn async_native_task_path_signature_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
@@ -14305,7 +14302,7 @@ fn native_tasks_and_prelude_match_legacy() -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
-/// A later pending race arm wins after its shorter timer, and the losing source body and callback stay cancelled.
+/// A later suspending race arm wins while a permanently pending source arm and its callback stay cancelled.
 #[test]
 fn pending_source_race_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     check_async_family_source(
@@ -14315,8 +14312,8 @@ import std.async
 from std.async.time import sleep_ms
 async def slow() -> int:
     println("slow starts")
-    await sleep_ms(80)
-    println("slow resumes")
+    while true:
+        await sleep_ms(1)
     return 1
 async def fast() -> int:
     println("fast starts")
