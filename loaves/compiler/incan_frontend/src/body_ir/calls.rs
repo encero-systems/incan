@@ -1008,8 +1008,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// (notably a builtin) still lowers its arguments faithfully, recording
     /// [`bir::ArgumentBinding::UnresolvedPositional`], and refuses only a named spelling it cannot bind without one.
     /// Argument spreads lower as [`bir::ArgumentElement::Spread`] elements, since a spread has no declared slot to
-    /// bind to by construction. A non-identifier callee remains an explicit unsupported form; v0 has no
-    /// dynamic-call-target node for it yet.
+    /// bind to by construction. A checked callable expression is evaluated into a local target before its arguments;
+    /// missing signatures and unretained type applications remain explicit unsupported forms.
     pub(super) fn lower_call(
         &mut self,
         callee: &ast::Spanned<ast::Expr>,
@@ -1034,7 +1034,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         self.settle_open_call_arguments(span, args);
         let ast::Expr::Ident(name) = &callee.node else {
-            return self.unsupported_operand("indirect call target".to_string(), scope, hir_span_value, out);
+            return self.lower_evaluated_callable_call(callee, type_args, args, span, scope, out);
         };
         let name = name.clone();
 
@@ -1869,6 +1869,111 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }),
             call_args,
             ty,
+            scope,
+            hir_span_value,
+            false,
+            out,
+        )
+    }
+
+    /// Invoke a checked callable expression through its evaluated value, retaining source evaluation order.
+    ///
+    /// The expression's retained function signature owns argument binding. A call result or closure expression is an
+    /// owned value evaluated before its arguments. Reads of existing callable storage, explicit type applications,
+    /// rest parameters and open carriers remain named refusals; no declaration is selected by source spelling.
+    fn lower_evaluated_callable_call(
+        &mut self,
+        expression: &ast::Spanned<ast::Expr>,
+        type_args: &[ast::Spanned<ast::Type>],
+        args: &[ast::CallArg],
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let hir_span_value = hir_span(span);
+        if !matches!(
+            expression.node,
+            ast::Expr::Call(..) | ast::Expr::MethodCall(..) | ast::Expr::Closure(..)
+        ) {
+            return self.unsupported_operand(
+                "callable expression without a retained owned evaluation".to_string(),
+                scope,
+                hir_span_value,
+                out,
+            );
+        }
+        let ty = self.resolve_ty(expression.span);
+        let IncanType::Function { params, .. } = &ty else {
+            return self.unsupported_operand(
+                "callable expression without a checked function signature".to_string(),
+                scope,
+                hir_span_value,
+                out,
+            );
+        };
+        if !type_args.is_empty() || self.leaves_type_open(&ty) {
+            return self.unsupported_operand(
+                "callable expression with an unretained type application".to_string(),
+                scope,
+                hir_span_value,
+                out,
+            );
+        }
+        if params
+            .iter()
+            .any(|parameter| parameter.kind != IncanCallableParamKind::Normal)
+        {
+            return self.unsupported_operand(
+                "callable expression with rest parameters".to_string(),
+                scope,
+                hir_span_value,
+                out,
+            );
+        }
+        let slots = params.iter().map(DeclaredSlot::from_semantic_param).collect::<Vec<_>>();
+        let planned = match plan_declared_args("callable expression", &slots, args) {
+            Ok(planned) => planned,
+            Err(description) => return self.unsupported_operand(description, scope, hir_span_value, out),
+        };
+
+        // ---- Context: freeze the callable before evaluating its arguments ----
+        let callable = self.lower_expr_to_operand(expression, scope, out);
+        let callable = self.push_assign_temp(bir::Rvalue::Use(callable), ty, scope, hir_span(expression.span), out);
+        let bir::Operand::Place(operand) = callable else {
+            return self.unsupported_operand(
+                "callable expression without a retained value".to_string(),
+                scope,
+                hir_span_value,
+                out,
+            );
+        };
+
+        // ---- Context: bind the physical arguments and invoke that evaluated value ----
+        let (arguments, binding) = match self.lower_planned_args(
+            &planned,
+            slots.len(),
+            &slots.iter().map(|slot| slot.is_mut).collect::<Vec<_>>(),
+            scope,
+            out,
+        ) {
+            Ok(bound) => bound,
+            Err(description) => return self.unsupported_operand(description, scope, hir_span_value, out),
+        };
+        let mut arguments = fixed_elements(arguments);
+        let shared = slots
+            .iter()
+            .enumerate()
+            .filter_map(|(index, slot)| matches!(slot.ty, IncanType::Ref(_)).then_some(index))
+            .collect::<Vec<_>>();
+        self.share_argument_slots(&mut arguments, &binding, &shared);
+        let callee = bir::Callee::Function(bir::CallableTarget::Local(bir::LocalCallableTarget {
+            operand,
+            binding,
+        }));
+        self.push_call_temp(
+            callee,
+            arguments,
+            self.resolve_ty(span),
             scope,
             hir_span_value,
             false,
