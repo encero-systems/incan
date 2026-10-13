@@ -1,7 +1,7 @@
 //! Checked method-partial default frames and receiver snapshots for direct execution.
 
 use super::{IncanType, bir, body_named, build};
-use incan_semantics_core::SemanticSourceTargetKind;
+use incan_semantics_core::{IncanPrimitiveType, SemanticSourceTargetKind};
 
 /// A method partial on a model or class retains its target method's frame, through a method alias too, with the presets
 /// as defaults beside the target's own, and a call of the partial omits the preset as a defaulted slot of its target.
@@ -114,12 +114,12 @@ fn method_partials_capture_receivers_and_keep_checked_targets() -> Result<(), Bo
                     .any(|param| matches!(param.default, bir::CallableParamDefault::PartialPreset { .. }))
             );
             if target.name == "pair" {
-                assert_eq!(params[0].ty, IncanType::Int);
+                assert_eq!(params[0].ty, IncanType::Primitive(IncanPrimitiveType::Int));
                 assert_eq!(
                     body.locals[receiver.index()].ty,
                     IncanType::Generic {
                         base: "Box".to_string(),
-                        args: vec![IncanType::Int]
+                        args: vec![IncanType::Primitive(IncanPrimitiveType::Int)]
                     }
                 );
             }
