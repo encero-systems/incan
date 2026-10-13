@@ -1385,6 +1385,7 @@ mod tests {
         let mut module = module(vec![method, user]);
         module.nominal_declarations.push(crate::body_ir::NominalDeclaration {
             native_item: String::new(),
+            class_inheritance: None,
             direct_declaration_id: CompilerNodeId::declaration_span("lib", 200, 499),
             canonical: owner.clone(),
             name: "Holder".into(),

@@ -2494,11 +2494,11 @@ def main() -> None:
 
 /// Trait-required computed getters evaluate their bodies at every source property access.
 #[test]
-fn computed_properties_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+fn checked_computed_property_dispatch_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
     corpus::check_builtin_source(
         &fixture.driver_binary("debug"),
-        &fixture.scratch("computed-properties")?,
+        &fixture.scratch("checked-computed-property-dispatch")?,
         &fixture.sysroot,
         &fixture.formatting,
         include_str!(

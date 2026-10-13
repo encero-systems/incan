@@ -12,9 +12,12 @@ pub(super) fn lower_owner_member_bodies(
     lowering_facts: &BodyIrLoweringFacts<'_, '_>,
 ) -> Vec<bir::Body> {
     let mut bodies = lower_owner_method_bodies(methods, owner_name, receiver_ty.clone(), lowering_facts);
-    bodies.extend(properties.iter().filter_map(|property| {
-        super::properties::lower_getter_body(property, owner_name, &receiver_ty, lowering_facts)
-    }));
+    bodies.extend(lower_owner_property_bodies(
+        properties,
+        owner_name,
+        receiver_ty,
+        lowering_facts,
+    ));
     bodies
 }
 
@@ -43,9 +46,8 @@ pub(super) fn lower_owner_method_bodies(
 
 /// Lower each computed property of a model or class into a receiver-only getter body, which a property read calls.
 ///
-/// A property is a method with an immutable implicit `self`, no ordinary parameters and its declared return type; its
-/// checked getter surface and member identity come from the checker's `property_bindings_by_span`, which
-/// [`lower_method_body`] reads for the property's span. An abstract (trait) property has no body and lowers nothing.
+/// The canonical getter record supplies its immutable receiver, owner parameters and declared return type. Every
+/// owner uses the same checked getter builder; abstract properties have no executable body and lower nothing.
 pub(super) fn lower_owner_property_bodies(
     properties: &[ast::Spanned<ast::PropertyDecl>],
     owner_name: &str,
@@ -54,21 +56,7 @@ pub(super) fn lower_owner_property_bodies(
 ) -> Vec<bir::Body> {
     properties
         .iter()
-        .filter_map(|property| {
-            let getter = ast::MethodDecl {
-                decorators: Vec::new(),
-                surface_modifiers: Vec::new(),
-                name: property.node.name.clone(),
-                type_params: Vec::new(),
-                receiver: Some(ast::Receiver::Immutable),
-                receiver_binding: None,
-                params: Vec::new(),
-                trait_target: None,
-                return_type: property.node.return_type.clone(),
-                body: property.node.body.clone(),
-            };
-            lower_method_body(&getter, property.span, owner_name, &receiver_ty, lowering_facts)
-        })
+        .filter_map(|property| super::properties::lower_getter_body(property, owner_name, &receiver_ty, lowering_facts))
         .collect()
 }
 

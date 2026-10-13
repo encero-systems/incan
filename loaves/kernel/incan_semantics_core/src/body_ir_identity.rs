@@ -184,7 +184,8 @@ impl BodyIrModule {
     /// Whether a function, source Partial forwarding body, or retained nominal method or computed-property getter has
     /// its own canonical declaration identity and span-derived direct-call id. Methods and getters must belong to a
     /// retained nominal, normal enum or trait owner whose span contains them; an instance receiver must match that
-    /// owner. A getter additionally requires its exact implicit immutable receiver and no ordinary or method-scoped parameters.
+    /// owner. A getter additionally requires its exact implicit immutable receiver and no ordinary or method-scoped
+    /// parameters.
     pub fn body_has_canonical_direct_call_id(&self, body: &Body) -> bool {
         body.direct_call_id == CompilerNodeId::declaration_span(self.module_id.path(), body.span.start, body.span.end)
             && body.canonical.as_ref().is_some_and(|canonical| {

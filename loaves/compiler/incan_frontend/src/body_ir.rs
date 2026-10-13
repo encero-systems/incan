@@ -706,7 +706,8 @@ pub fn has_direct_replacement_method_partials(
 }
 
 /// Determine whether every computed property has a checked getter body; abstract properties remain refused.
-/// Owner parameters stay in the immutable receiver frame, and property reads call the getter without adding layout fields.
+/// Owner parameters stay in the immutable receiver frame, and property reads call the getter without adding layout
+/// fields.
 pub fn has_direct_replacement_properties(
     _owner_type_params: &[ast::TypeParam],
     properties: &[ast::Spanned<ast::PropertyDecl>],
@@ -1827,8 +1828,8 @@ mod reads;
 
 mod carrier_projection;
 mod collect;
-mod decorated_bindings;
 mod collection_context;
+mod decorated_bindings;
 mod static_aliases;
 
 mod bodies;
