@@ -134,6 +134,32 @@ fn sdk_index_trait_output_matches_legacy() -> Result<(), Box<dyn std::error::Err
     )
 }
 
+/// A fully supplied SDK factory isolates constructor selection and preserves successful and invalid-pattern bytes.
+#[test]
+fn explicit_regex_factory_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("explicit-regex-factory")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "from std.regex import Regex, RegexError\n\ndef build() -> Result[None, RegexError]:\n  regex = Regex(\"x+\", ignore_case=true, multiline=false, dotall=false, verbose=false)?\n  println(regex.is_match(\"aXXb\"))\n  return Ok(None)\n\ndef main() -> None:\n  match build():\n    Ok(_) => pass\n    Err(error) => println(error.message())\n  match Regex(\"(unclosed\", ignore_case=false, multiline=false, dotall=false, verbose=false):\n    Ok(_) => println(\"accepted\")\n    Err(_) => println(\"refused\")\n",
+    )
+}
+
+/// The complete original regex fixture preserves constructor flags, omitted arguments and invalid-pattern behavior.
+#[test]
+fn original_regex_constructor_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("original-regex-constructor")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!("../../incan_test_support/fixtures/behavior/snapshots_stdlib/std_regex.incn"),
+    )
+}
+
 /// Aliased and ordinary module-qualified model construction preserves selected storage and legacy output.
 #[test]
 fn module_nominal_construction_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

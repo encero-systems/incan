@@ -47,6 +47,82 @@ fn constrained_newtype_partials_preserve_named_ingress_refusal() -> Result<(), B
     Ok(())
 }
 
+/// Constructor syntax retains the checked static factory at the full call span and its complete parameter binding.
+#[test]
+fn sdk_constructor_syntax_retains_selected_factory() -> Result<(), Box<dyn std::error::Error>> {
+    let call = "Regex(\"x+\", ignore_case=true, multiline=false, dotall=false, verbose=false)";
+    let source = format!(
+        "from std.regex import Regex, RegexError\n\ndef build() -> Result[Regex, RegexError]:\n  return {call}\n"
+    );
+    let tokens = lexer::lex(&source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let path = vec!["constructor_factory".to_owned()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(path.clone()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let start = source.find(call).ok_or("factory call missing")?;
+    let span = ast::Span {
+        start,
+        end: start + call.len(),
+    };
+    let expected = checker
+        .type_info()
+        .resolved_identity(span)
+        .ok_or("selected factory identity missing")?
+        .clone();
+    assert_eq!(expected.kind, SemanticSourceTargetKind::Method, "{expected:#?}");
+    assert_eq!(expected.declaration_name, "__incan_new");
+    let parameters = checker
+        .type_info()
+        .call_site_callable_params(span)
+        .ok_or("checked factory parameters missing")?;
+    assert_eq!(parameters.len(), 5);
+    let module = build_body_ir_module_v0(&program, &path, checker.type_info());
+    let targets = named_targets(&module, "build");
+    let [target] = targets.as_slice() else {
+        return Err("expected one factory invocation".into());
+    };
+    assert_eq!(
+        target.canonical.as_ref(),
+        Some(&expected),
+        "{}",
+        body_named(&module, "build")?.render_snapshot()
+    );
+    let bir::ArgumentBinding::Resolved {
+        arguments,
+        defaulted_slots,
+    } = &target.binding
+    else {
+        return Err(format!("factory lacks a checked binding: {target:#?}").into());
+    };
+    assert_eq!(arguments.len(), 5);
+    assert!(defaulted_slots.is_empty());
+    Ok(())
+}
+
+/// A local function named Regex keeps its own function identity and signature rather than becoming an SDK factory.
+#[test]
+fn sdk_constructor_selection_preserves_source_shadowing() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def Regex(value: int) -> int:\n  return value + 1\n\ndef main() -> int:\n  return Regex(3)\n",
+        &["shadow_factory"],
+    )?;
+    let expected = body_named(&module, "Regex")?
+        .canonical
+        .as_ref()
+        .ok_or("source function identity missing")?;
+    let targets = named_targets(&module, "main");
+    let [target] = targets.as_slice() else {
+        return Err("expected one source invocation".into());
+    };
+    assert_eq!(target.canonical.as_ref(), Some(expected));
+    assert_eq!(expected.kind, SemanticSourceTargetKind::Function);
+    assert!(target.direct_call_id.is_some());
+    Ok(())
+}
+
 /// A newtype Partial keeps its source parameter name while forwarding to the retained one-field layout.
 #[test]
 fn newtype_partial_retains_value_parameter_and_constructor() -> Result<(), Box<dyn std::error::Error>> {
