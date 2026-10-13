@@ -39,6 +39,7 @@ mod patterns_and_assertions;
 mod properties;
 mod provider_plans;
 mod raises_assertions;
+mod returned_callables;
 mod static_storage;
 
 use helpers::{

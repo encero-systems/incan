@@ -18,6 +18,21 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// A returned callable runs directly, including the original annotated local, method and collection controls.
+#[test]
+fn returned_callable_fixture_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("returned-callable-fixture")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/cli_values_and_calls/capturing_closures_in_function_types.incn"
+        ),
+    )
+}
+
 /// Mixed fixed and rest unpacking preserves the complete original fixture's byte-identical legacy output.
 #[test]
 fn fixed_unpack_with_rest_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
@@ -999,6 +1014,30 @@ def main() -> None:
     thing = Thing(name="thing")
     println(takes_rest(thing, 1, 2, 3))
     println(takes_rest(thing))
+"#,
+    )
+}
+
+/// Evaluate a callable factory once before evaluating the arguments to the returned callable.
+#[test]
+fn returned_callable_evaluation_order_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("returned-callable-order")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"
+def make(base: int) -> (int) -> int:
+    println("factory")
+    return (value) => base + value
+
+def argument() -> int:
+    println("argument")
+    return 4
+
+def main() -> None:
+    println(make(3)(argument()))
 "#,
     )
 }
