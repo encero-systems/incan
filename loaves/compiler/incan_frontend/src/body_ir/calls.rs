@@ -372,9 +372,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// is none to bind against.
     ///
     /// A checked rest-bearing surface packs explicit values into owned list/dictionary operands in declaration
-    /// order, after evaluating written values in source order. Open pack elements, spreads, omitted defaults and
-    /// non-scalar ordinary passing stay refused by name. An absent declaration surface retains unresolved argument
-    /// elements instead; it must not claim a computed slot map.
+    /// order, after evaluating written values in source order. Checked fixed components expand before pack planning;
+    /// unretained pack elements and passing modes stay refused by name. An absent declaration surface retains
+    /// unresolved argument elements instead; it must not claim a computed slot map.
     pub(super) fn bind_declared_args(
         &mut self,
         callee: &str,
@@ -390,9 +390,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if fixed_spreads::has_checked_tuple_spread(self.type_info, args) {
             return self.bind_checked_tuple_spreads(callee, &slots, args, scope, out);
         }
-        if slots.iter().any(|slot| slot.kind != IncanCallableParamKind::Normal) {
-            return self.bind_rest_args(callee, &slots, args, scope, out);
-        }
         // A spread whose shape the typechecker proved is an ordinary fixed-arity call in disguise: `add(*(1, 2))`
         // really is `add(1, 2)`. Expanding it here means it binds through the same declaration-slot planner as any
         // other call, instead of being pushed onto the runtime-arity path it does not belong on.
@@ -403,6 +400,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 None => vec![arg.clone()],
             })
             .collect();
+        if slots.iter().any(|slot| slot.kind != IncanCallableParamKind::Normal) {
+            return self.bind_rest_args(callee, &slots, &expanded, scope, out);
+        }
         let planned = plan_declared_args(callee, &slots, &expanded)?;
         let (operands, binding) = self
             .lower_planned_args(

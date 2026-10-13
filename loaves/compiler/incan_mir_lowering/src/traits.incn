@@ -254,7 +254,7 @@ pub def owner_method_index(
     owner: PlanType,
     intrinsics: list[EnumDeclaration],
 ) -> Result[int, str]:
-    """Select the checked implementation for a receiver whose retained model or source enum owner is already known."""
+    """Select one checked implementation for a known receiver; several trait instantiations need an explicit call-site selection."""
     match target.canonical:
         None => return Err("unsupported Body IR unproven Method")
         Some(_identity) => pass
@@ -270,10 +270,19 @@ pub def owner_method_index(
                     if Some(implementation.method) == canonical:
                         canonical = Some(implementation.implementation.clone())
                         break
+    mut selected: Option[TraitImplementation] = None
     for implementation in module.trait_implementations:
         if implementation.owner == identity and Some(implementation.method) == canonical:
-            canonical = Some(implementation.implementation)
-            break
+            match selected:
+                Some(previous) =>
+                    if previous.implementation != implementation.implementation or previous.type_arguments != implementation.type_arguments:
+                        return Err("unsupported Body IR trait method at several instantiations for one receiver")
+                None =>
+                    selected = Some(implementation.clone())
+    match selected:
+        Some(implementation) =>
+            canonical = Some(implementation.implementation.clone())
+        None => pass
     for index in range(len(module.bodies)):
         body = module.bodies[index]
         if body.canonical != canonical or len(body.params) == 0:
