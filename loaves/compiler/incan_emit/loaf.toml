@@ -60,3 +60,14 @@ test_support = [
 edition = "2024"
 name = "incan_emit"
 type = "lib"
+
+# Test-only dependencies and helper features; production defaults are unchanged.
+[envs.test.dependencies]
+incan_derive = { loaf = "incan_derive", path = "../../stdlib/derive/incan_derive" }
+incan_std_core = { loaf = "incan_std_core", path = "../../stdlib/core" }
+incan_test_support = { loaf = "incan_test_support", path = "../incan_test_support" }
+incan_frontend = { features = ["test_support"] }
+rust_inspect = { features = ["test_fixtures"] }
+insta = { loaf = "crates-io/insta", version = "1.45", features = ["glob"] }
+tempfile = { optional = false }
+wat = { loaf = "crates-io/wat", version = "1" }

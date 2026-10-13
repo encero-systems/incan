@@ -1185,7 +1185,9 @@ impl NativeTestProgressReporter {
             // `--test-threads 4` and not under `--test-threads 1`. Naming a stalled *root* therefore cannot be built
             // on this event; that needs a supervisor above the per-root reporter.
             ("test", "timeout") => return self.render_slow_notice(&event),
-            ("test", _) if !outcome.is_empty() => return self.render_terminal_event(&event, outcome),
+            ("test", _) if !outcome.is_empty() => {
+                return self.render_terminal_event(&event, outcome);
+            }
             // A libtest event shape this does not know about. Pass it through rather than drop it: a future harness
             // spelling should be visible to whoever is reading, not silently absent.
             _ => return vec![line.to_string()],
@@ -1334,6 +1336,16 @@ fn run_native_batch_child_with_log(
     if let Some(log) = &result_log {
         command.arg("--logfile").arg(log.path());
     }
+    // Nested commands may share a service only while their supervising test group is alive. The existing owner
+    // coordinate includes this inherited token, so another case cannot borrow a service that this case will reap.
+    let owner_scope = tempfile::Builder::new()
+        .prefix("oven-test-owner-")
+        .tempdir()
+        .map_err(|source| OvenNativeTestError::Io {
+            path: executable.to_path_buf(),
+            source,
+        })?;
+    command.env("INCAN_INTERNAL_TEST_OWNER_SCOPE", owner_scope.path());
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     // Nested Incan commands and fixture children inherit this group, allowing a timeout to close every inherited
     // stdout/stderr writer before reader threads are joined.

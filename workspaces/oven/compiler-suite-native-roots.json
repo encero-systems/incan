@@ -613,6 +613,32 @@
       "features": [],
       "default-features": false,
       "optional": false
+    },
+    {
+      "name": "insta",
+      "loaf": "crates-io/insta",
+      "req": "1.45",
+      "features": [
+        "glob"
+      ],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "wat",
+      "loaf": "crates-io/wat",
+      "req": "1",
+      "features": [],
+      "default-features": true,
+      "optional": false
+    },
+    {
+      "name": "proptest",
+      "loaf": "crates-io/proptest",
+      "req": "1",
+      "features": [],
+      "default-features": true,
+      "optional": false
     }
   ],
   "host-roots": [],
@@ -1750,6 +1776,16 @@
     ],
     "retained-xxhash-rust": [
       "retained-xxhash-rust"
+    ],
+    "insta": [
+      "loaves/compiler/incan_emit/loaf.toml:envs.test.dependencies.insta"
+    ],
+    "wat": [
+      "loaves/compiler/incan_emit/loaf.toml:envs.test.dependencies.wat",
+      "loaves/toolchain/incan-cli/loaf.toml:envs.test.dependencies.wat"
+    ],
+    "proptest": [
+      "loaves/compiler/incan_format/loaf.toml:envs.test.dependencies.proptest"
     ]
   }
 }

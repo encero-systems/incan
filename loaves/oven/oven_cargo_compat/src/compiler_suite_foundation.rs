@@ -1187,7 +1187,7 @@ mod tests {
             family
                 .partitions
                 .iter()
-                .all(|partition| published.contains(&partition.stored.manifest.identity))
+                .all(|partition| published.contains(&partition.stored.manifest().identity))
         );
 
         // ---- The planner inputs come back relocated below the admitted entries ----
@@ -1263,15 +1263,15 @@ mod tests {
                 .collect::<Vec<_>>(),
         )?;
         for entry in &held {
-            for file in &entry.manifest.materialized_files {
-                let metadata = fs::metadata(entry.artifact_root.join(&file.relative_path))?;
+            for file in &entry.manifest().materialized_files {
+                let metadata = fs::metadata(entry.artifact_root().join(&file.relative_path))?;
                 assert!(
                     metadata.nlink() >= 2,
                     "{} was copied rather than adopted by link",
                     file.relative_path
                 );
             }
-            let payload = serde_json::from_slice::<OvenCompilerTestSuiteFoundationPayload>(&entry.payload)?;
+            let payload = serde_json::from_slice::<OvenCompilerTestSuiteFoundationPayload>(entry.payload())?;
             assert_eq!(
                 payload.family.as_ref().map(|family| family.key.as_str()),
                 Some(key.as_str())
@@ -1341,7 +1341,7 @@ mod tests {
         let partition = held
             .iter()
             .find(|entry| {
-                serde_json::from_slice::<OvenCompilerTestSuiteFoundationPayload>(&entry.payload)
+                serde_json::from_slice::<OvenCompilerTestSuiteFoundationPayload>(entry.payload())
                     .ok()
                     .and_then(|payload| payload.family)
                     .is_some_and(|family| family.partition_index == partition_index)
@@ -1351,13 +1351,13 @@ mod tests {
             receipt: receipt.clone(),
             domain: "compiler-suite".to_string(),
             kind: OvenArtifactKind::CompilerTestSuiteFoundation,
-            payload: partition.payload.clone(),
+            payload: partition.payload().to_vec(),
             materialized_files: partition
-                .manifest
+                .manifest()
                 .materialized_files
                 .iter()
                 .map(|file| OvenArtifactMaterializedFile {
-                    source_path: partition.artifact_root.join(&file.relative_path),
+                    source_path: partition.artifact_root().join(&file.relative_path),
                     relative_path: file.relative_path.clone(),
                 })
                 .collect(),
@@ -1484,13 +1484,13 @@ mod tests {
         assert_eq!(family.partitions.len(), 2);
         for partition in &family.partitions {
             assert!(
-                partition.stored.artifact_root.starts_with(&local_path),
+                partition.stored.artifact_root().starts_with(&local_path),
                 "served locally after import"
             );
-            assert_eq!(partition.stored.manifest.receipt_identity, consumer.identity);
-            assert!(!on_mirror.contains(&partition.stored.manifest.identity));
-            for file in &partition.stored.manifest.materialized_files {
-                assert!(partition.stored.artifact_root.join(&file.relative_path).is_file());
+            assert_eq!(partition.stored.manifest().receipt_identity, consumer.identity);
+            assert!(!on_mirror.contains(&partition.stored.manifest().identity));
+            for file in &partition.stored.manifest().materialized_files {
+                assert!(partition.stored.artifact_root().join(&file.relative_path).is_file());
             }
         }
         drop(family);
@@ -1510,10 +1510,10 @@ mod tests {
             .iter()
             .flat_map(|entry| {
                 entry
-                    .manifest
+                    .manifest()
                     .materialized_files
                     .iter()
-                    .map(|file| entry.artifact_root.join(&file.relative_path))
+                    .map(|file| entry.artifact_root().join(&file.relative_path))
             })
             .collect::<Vec<_>>();
         drop(held);

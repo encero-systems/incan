@@ -54,6 +54,15 @@ pub(super) fn project_root(path: &Path) -> CliResult<Option<PathBuf>> {
         .transpose()
 }
 
+/// Use one authored Rust layout for discovery, macro classification and the package's own library dependency.
+fn rust_source_directory(manifest: &ProjectManifest) -> PathBuf {
+    let root = manifest.project_root();
+    manifest
+        .rust_source
+        .as_ref()
+        .map_or_else(|| root.join("src"), |source| root.join(&source.root).join("src"))
+}
+
 /// Discover authored crate roots, never treating nested Rust modules as independent crates.
 /// The selected path narrows the package's conventional roots and declared binary roles.
 pub(super) fn discover_roots(path: &Path) -> CliResult<Vec<PathBuf>> {
@@ -62,10 +71,7 @@ pub(super) fn discover_roots(path: &Path) -> CliResult<Vec<PathBuf>> {
     };
     let manifest_path = root.join("loaf.toml");
     let manifest = ProjectManifest::load(&manifest_path).map_err(|e| CliError::failure(e.to_string()))?;
-    let source = manifest
-        .rust_source
-        .as_ref()
-        .map_or_else(|| root.join("src"), |source| root.join(&source.root).join("src"));
+    let source = rust_source_directory(&manifest);
     let mut candidates = vec![source.join("lib.rs"), source.join("main.rs")];
     candidates.extend(manifest.rust_bins.iter().map(|role| root.join(&role.path)));
     let tests = root.join("tests");
@@ -120,6 +126,65 @@ fn resolve_test_manifest(
     ))
 }
 
+/// A procedural macro's own library harness needs the selected toolchain's dynamic `proc_macro` support.
+/// Integration tests remain ordinary binaries even when their owning package declares a procedural macro.
+/// Resolve the same authored source root as discovery; a sibling test declaration cannot promote another root.
+fn proc_macro_test_root(manifest: &ProjectManifest, source: &Path) -> Result<bool, std::io::Error> {
+    if !manifest
+        .rust_facet
+        .as_ref()
+        .is_some_and(|facet| facet.kind.as_deref() == Some("proc-macro"))
+    {
+        return Ok(false);
+    }
+    let library = rust_source_directory(manifest).join("lib.rs");
+    if !library.is_file() {
+        return Ok(false);
+    }
+    Ok(library.canonicalize()? == source.canonicalize()?)
+}
+
+/// Independent binary and integration-test roots link their own authored library as an ordinary local dependency.
+/// Library unit tests compile that source directly. A sibling declaration is already a complete target contract and
+/// must not inherit an implicit self dependency from the package containing it.
+fn test_dependencies(
+    manifest: &ProjectManifest,
+    features: &incan_provider::ResolvedPackageFeatures,
+    source: &Path,
+    has_target_declaration: bool,
+) -> Result<Vec<oven_model::manifest::DependencySpec>, Box<dyn std::error::Error>> {
+    let mut dependencies = crate::commands::oven::native_compiler_tests::native_test_dependencies(manifest, features)?;
+    if has_target_declaration {
+        return Ok(dependencies);
+    }
+    let root = manifest.project_root();
+    let library = rust_source_directory(manifest).join("lib.rs");
+    if library.is_file() && library.canonicalize()? != source.canonicalize()? {
+        let name = manifest
+            .rust_facet
+            .as_ref()
+            .and_then(|facet| facet.name.as_deref())
+            .or_else(|| manifest.project.as_ref().and_then(|project| project.name.as_deref()))
+            .ok_or("Rust test package has no library identity")?
+            .replace('-', "_");
+        if dependencies.iter().any(|dependency| dependency.crate_name == name) {
+            return Err(format!("Rust test library `{name}` has a competing dependency declaration").into());
+        }
+        dependencies.push(oven_model::manifest::DependencySpec {
+            crate_name: name,
+            version: None,
+            features: features.active_features.iter().cloned().collect(),
+            default_features: false,
+            source: oven_model::manifest::DependencySource::Path {
+                path: root.to_path_buf(),
+            },
+            optional: false,
+            package: None,
+        });
+    }
+    Ok(dependencies)
+}
+
 /// Preserve exact compilation inputs and leases while mapping real libtest metadata into common test records.
 fn prepare_inner(
     source: &Path,
@@ -148,8 +213,7 @@ fn prepare_inner(
         return Err("Rust test roots with build scripts require declared build facts in their native plan".into());
     }
     let features = selected_features.active_features.iter().cloned().collect::<Vec<_>>();
-    let dependencies =
-        crate::commands::oven::native_compiler_tests::native_test_dependencies(manifest, &selected_features)?;
+    let dependencies = test_dependencies(manifest, &selected_features, source, owned_manifest.is_some())?;
     let rustc = resolve_active_rustc()?;
     let project = manifest
         .project
@@ -238,7 +302,7 @@ fn prepare_inner(
             edition,
             source_evidence_key: "test-root",
             features: &features,
-            prefer_dynamic: false,
+            prefer_dynamic: proc_macro_test_root(manifest, source)?,
         },
         &context.store,
     )?;
@@ -460,6 +524,69 @@ mixed = { loaf = "mixed", path = "mixed", optional = true, default-features = fa
             vec![root.join("tests/check.rs").canonicalize()?]
         );
         assert!(discover_roots(&root.join("rust/src/helper.rs"))?.is_empty());
+        Ok(())
+    }
+
+    /// Integration tests receive the authored library and selected features; unit and explicitly declared roots do not.
+    #[test]
+    fn independent_roots_link_the_selected_package_library() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let root = project.path();
+        std::fs::create_dir_all(root.join("src"))?;
+        std::fs::create_dir_all(root.join("tests"))?;
+        let library = root.join("src/lib.rs");
+        let integration = root.join("tests/check.rs");
+        std::fs::write(&library, "")?;
+        std::fs::write(&integration, "")?;
+        let manifest = oven_model::manifest::ProjectManifest::from_str(
+            "[project]\nname = \"own-library\"\n[project.features]\ntest_support = []\n",
+            &root.join("loaf.toml"),
+        )?;
+        let selected = incan_provider::FeatureSelection {
+            requested: std::collections::BTreeSet::from(["test_support".into()]),
+            ..Default::default()
+        };
+        let (effective, features) = super::resolve_test_manifest(&manifest, &selected)?;
+        assert!(super::test_dependencies(&effective, &features, &library, false)?.is_empty());
+        assert!(super::test_dependencies(&effective, &features, &integration, true)?.is_empty());
+        let dependencies = super::test_dependencies(&effective, &features, &integration, false)?;
+        assert_eq!(dependencies.len(), 1);
+        assert_eq!(dependencies[0].crate_name, "own_library");
+        assert!(dependencies[0].features.contains(&"test_support".to_string()));
+        assert!(!dependencies[0].default_features);
+        assert_eq!(
+            dependencies[0].source,
+            oven_model::manifest::DependencySource::Path {
+                path: root.to_path_buf()
+            }
+        );
+        Ok(())
+    }
+
+    /// Only the authored macro library receives sysroot macro support, including non-default source layouts.
+    #[test]
+    fn macro_harness_mode_follows_authored_library_root() -> Result<(), Box<dyn std::error::Error>> {
+        let project = tempfile::tempdir()?;
+        let root = project.path();
+        std::fs::create_dir_all(root.join("rust/src"))?;
+        std::fs::create_dir_all(root.join("tests"))?;
+        let library = root.join("rust/src/lib.rs");
+        let integration = root.join("tests/check.rs");
+        std::fs::write(&library, "")?;
+        std::fs::write(&integration, "")?;
+        let declaration =
+            "[project]\nname = \"macro-root\"\n[rust]\ntype = \"proc-macro\"\n[rust.source]\nroot = \"rust\"\n";
+        let manifest = oven_model::manifest::ProjectManifest::from_str(declaration, &root.join("loaf.toml"))?;
+        assert!(super::proc_macro_test_root(&manifest, &library.canonicalize()?)?);
+        assert!(!super::proc_macro_test_root(&manifest, &integration)?);
+        let ordinary = oven_model::manifest::ProjectManifest::from_str(
+            &declaration.replace("proc-macro", "lib"),
+            &root.join("loaf.toml"),
+        )?;
+        assert!(!super::proc_macro_test_root(&ordinary, &library)?);
+        let sibling =
+            oven_model::manifest::ProjectManifest::from_str(declaration, &root.join("tests/check.loaf.toml"))?;
+        assert!(!super::proc_macro_test_root(&sibling, &integration)?);
         Ok(())
     }
 

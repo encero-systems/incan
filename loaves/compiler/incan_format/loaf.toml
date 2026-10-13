@@ -16,3 +16,8 @@ version = "0.6.0-dev.6"
 edition = "2024"
 name = "incan_format"
 type = "lib"
+
+# Integration-test dependencies belong to the same selected test environment.
+[envs.test.dependencies]
+incan_test_support = { loaf = "incan_test_support", path = "../incan_test_support" }
+proptest = { loaf = "crates-io/proptest", version = "1" }

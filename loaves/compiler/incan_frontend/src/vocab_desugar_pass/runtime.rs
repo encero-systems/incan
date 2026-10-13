@@ -1,5 +1,5 @@
+use std::collections::HashMap;
 use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -63,14 +63,18 @@ struct ResolvedWasmArtifact {
 /// Stateful runtime for loading and executing dependency-provided WASM desugarers.
 pub struct WasmDesugarerRuntime {
     engine: Engine,
-    /// Compiled modules keyed by artifact path. Populated on first use.
-    modules: HashMap<PathBuf, Module>,
-    /// Artifact paths whose SHA-256 has already been verified this compiler run.
-    ///
-    /// Once a module is compiled and cached, re-reading and re-hashing the file on every subsequent invocation is
-    /// unnecessary I/O. The invariant is: every path in `modules` is also in `verified_artifacts`, so a cache hit
-    /// implies prior integrity verification.
-    verified_artifacts: HashSet<PathBuf>,
+    /// Modules compiled by this exact engine, keyed by verified content digest, independent of package location.
+    modules: HashMap<String, Module>,
+}
+
+impl std::fmt::Debug for WasmDesugarerRuntime {
+    /// Describe retained compilation without exposing engine internals or executable bytes.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("WasmDesugarerRuntime")
+            .field("compiled_modules", &self.modules.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl WasmDesugarerRuntime {
@@ -78,20 +82,20 @@ impl WasmDesugarerRuntime {
     ///
     /// Fuel is used to bound guest execution work and reduce runaway desugarer risk at compile time.
     pub fn new() -> Result<Self, VocabDesugarPassError> {
+        let _trace = tracing::trace_span!(target: "incan::invocation", "incan_frontend::vocab_runtime_init").entered();
         let mut config = Config::new();
         config.consume_fuel(true);
         let engine = Engine::new(&config).map_err(|err| VocabDesugarPassError::EngineInit(err.to_string()))?;
         Ok(Self {
             engine,
             modules: HashMap::new(),
-            verified_artifacts: HashSet::new(),
         })
     }
 
     /// Execute the dependency-provided desugarer for one bridged vocab syntax node.
     ///
-    /// Modules are cached by artifact path so repeated DSL uses inside the same compiler run do not recompile the same
-    /// guest module over and over.
+    /// Retained compilation uses verified content identity. Every request rechecks artifact bytes and creates a fresh
+    /// guest instance, fuel budget and ABI buffers; neither guest state nor desugared output is retained.
     pub fn desugar_node(
         &mut self,
         library_manifest_index: &LibraryManifestIndex,
@@ -99,33 +103,50 @@ impl WasmDesugarerRuntime {
         module_path: Option<&str>,
     ) -> Result<incan_vocab::DesugarResponse, VocabDesugarPassError> {
         let resolved = resolve_wasm_artifact_for_node(library_manifest_index, node)?;
+        let _trace = tracing::trace_span!(target: "incan::invocation", "incan_frontend::vocab_desugar_node", input = %resolved.path.display(), artifact_digest = %resolved.expected_sha256).entered();
 
-        // ---- Context: compile and verify only on first encounter; reuse cache on subsequent calls ----
-        let module = match self.modules.entry(resolved.path.clone()) {
-            Entry::Occupied(entry) => entry.into_mut(),
-            Entry::Vacant(entry) => {
-                let artifact_path = entry.key().clone();
-                let bytes = fs::read(&artifact_path).map_err(|source| VocabDesugarPassError::ArtifactRead {
-                    path: artifact_path.clone(),
-                    source,
-                })?;
-                verify_artifact_checksum(&artifact_path, &bytes, &resolved.expected_sha256)?;
-                let compiled =
-                    Module::new(&self.engine, &bytes).map_err(|source| VocabDesugarPassError::WasmCompile {
-                        path: artifact_path.clone(),
-                        source,
-                    })?;
-                self.verified_artifacts.insert(artifact_path);
-                entry.insert(compiled)
-            }
-        };
+        let module = self.compiled_module(&resolved)?;
 
         let request = incan_vocab::DesugarRequest {
             node: node.clone(),
             module_path: module_path.map(|value| value.to_string()),
         };
 
-        execute_desugarer_module(&self.engine, module, &resolved, &request)
+        let _execution = tracing::trace_span!(target: "incan::invocation", "incan_frontend::vocab_wasm_execute", input = %resolved.path.display()).entered();
+        execute_desugarer_module(&self.engine, &module, &resolved, &request)
+    }
+    /// Verify current artifact bytes before selecting a compiled module from this engine's existing map.
+    /// The returned module is a shared Wasmtime handle, preserving engine ownership without copying compiled code.
+    /// Changed bytes with stale metadata fail before lookup; a new verified digest compiles a distinct module.
+    fn compiled_module(&mut self, resolved: &ResolvedWasmArtifact) -> Result<Module, VocabDesugarPassError> {
+        let bytes = {
+            let _trace = tracing::trace_span!(target: "incan::invocation", "incan_frontend::vocab_artifact_read_verify", input = %resolved.path.display()).entered();
+            let bytes = fs::read(&resolved.path).map_err(|source| VocabDesugarPassError::ArtifactRead {
+                path: resolved.path.clone(),
+                source,
+            })?;
+            verify_artifact_checksum(&resolved.path, &bytes, &resolved.expected_sha256)?;
+            bytes
+        };
+        // Bound retained executable memory across long-lived owners and changing dependency generations.
+        if self.modules.len() >= 32 && !self.modules.contains_key(&resolved.expected_sha256) {
+            self.modules.clear();
+        }
+        match self.modules.entry(resolved.expected_sha256.clone()) {
+            Entry::Occupied(entry) => {
+                tracing::trace!(target: "incan::invocation", decision = "reuse_vocab_wasm_module");
+                Ok(entry.get().clone())
+            }
+            Entry::Vacant(entry) => {
+                let _trace = tracing::trace_span!(target: "incan::invocation", "incan_frontend::vocab_wasm_compile", input = %resolved.path.display(), bytes = bytes.len()).entered();
+                let compiled =
+                    Module::new(&self.engine, &bytes).map_err(|source| VocabDesugarPassError::WasmCompile {
+                        path: resolved.path.clone(),
+                        source,
+                    })?;
+                Ok(entry.insert(compiled).clone())
+            }
+        }
     }
 }
 
@@ -784,6 +805,92 @@ mod tests {
     use std::path::Path;
 
     use super::*;
+
+    /// Retained modules require current verified bytes even at an unchanged path, and share compilation after
+    /// relocation.
+    #[test]
+    fn retained_module_validates_current_digest_and_reuses_relocated_bytes() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let path = root.path().join("module.wasm");
+        let bytes = b"\0asm\x01\0\0\0";
+        fs::write(&path, bytes)?;
+        let mut artifact = ResolvedWasmArtifact {
+            path: path.clone(),
+            expected_sha256: format!("{:x}", Sha256::digest(bytes)),
+            entrypoint: "unused".to_string(),
+            abi_version: 1,
+        };
+        let mut runtime = WasmDesugarerRuntime::new()?;
+        runtime.compiled_module(&artifact)?;
+        runtime.compiled_module(&artifact)?;
+        assert_eq!(runtime.modules.len(), 1);
+        let relocated = root.path().join("relocated.wasm");
+        fs::write(&relocated, bytes)?;
+        artifact.path = relocated.clone();
+        runtime.compiled_module(&artifact)?;
+        assert_eq!(
+            runtime.modules.len(),
+            1,
+            "relocation must retain the same compiled module"
+        );
+        // A valid custom section changes identity without changing the empty module's behavior.
+        let changed = [bytes.as_slice(), &[0, 2, 1, b'x']].concat();
+        fs::write(&relocated, &changed)?;
+        assert!(matches!(
+            runtime.compiled_module(&artifact),
+            Err(VocabDesugarPassError::ChecksumMismatch { .. })
+        ));
+        artifact.expected_sha256 = format!("{:x}", Sha256::digest(&changed));
+        runtime.compiled_module(&artifact)?;
+        assert_eq!(runtime.modules.len(), 2);
+        fs::remove_file(&relocated)?;
+        assert!(matches!(
+            runtime.compiled_module(&artifact),
+            Err(VocabDesugarPassError::ArtifactRead { .. })
+        ));
+        fs::write(&relocated, bytes)?;
+        assert!(matches!(
+            runtime.compiled_module(&artifact),
+            Err(VocabDesugarPassError::ChecksumMismatch { .. })
+        ));
+        artifact.expected_sha256 = format!("{:x}", Sha256::digest(bytes));
+        runtime.compiled_module(&artifact)?;
+        assert_eq!(runtime.modules.len(), 2);
+        Ok(())
+    }
+
+    /// The retained executable module cannot retain mutable guest globals between fresh execution instances.
+    #[test]
+    fn retained_module_keeps_guest_state_request_local() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let path = root.path().join("global.wasm");
+        let bytes: &[u8] = b"\0asm\x01\0\0\0\x06\x06\x01\x7f\x01\x41\0\x0b\x07\x09\x01\x05state\x03\0";
+        fs::write(&path, bytes)?;
+        let artifact = ResolvedWasmArtifact {
+            path,
+            expected_sha256: format!("{:x}", Sha256::digest(bytes)),
+            entrypoint: "unused".to_string(),
+            abi_version: 1,
+        };
+        let mut runtime = WasmDesugarerRuntime::new()?;
+        let first = runtime.compiled_module(&artifact)?;
+        let mut store = Store::new(&runtime.engine, ());
+        let instance = Instance::new(&mut store, &first, &[])?;
+        let global = instance
+            .get_global(&mut store, "state")
+            .ok_or("fixture has no state global")?;
+        global.set(&mut store, Val::I32(42))?;
+        let retained = runtime.compiled_module(&artifact)?;
+        let mut fresh_store = Store::new(&runtime.engine, ());
+        let fresh_instance = Instance::new(&mut fresh_store, &retained, &[])?;
+        let fresh_global = fresh_instance
+            .get_global(&mut fresh_store, "state")
+            .ok_or("fixture has no state global")?;
+        assert_eq!(fresh_global.get(&mut fresh_store).i32(), Some(0));
+        assert_eq!(global.get(&mut store).i32(), Some(42));
+        assert_eq!(runtime.modules.len(), 1);
+        Ok(())
+    }
 
     #[test]
     fn rejects_parent_directory_artifact_escape() -> Result<(), Box<dyn std::error::Error>> {

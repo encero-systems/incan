@@ -14,7 +14,7 @@ use super::preparation::{NativeLoafPreparation, ResolvedNativeGraph, read_resolv
 use super::selection::{LocalSources, select_roots_with_sources, source_manifest};
 use super::{
     NativeLoafClosure, NativeLoafError, NativeLoafGraph, NativeLoafOrigin, NativeLoafRoot, NativeLoafVerificationWork,
-    Result, failed, refused,
+    Result, failed, input_failure, refused,
 };
 use crate::sdk_closure::{Seed, current_inputs};
 
@@ -387,7 +387,9 @@ impl Current {
             ));
         }
         let (owner, graph, graph_digest) = read_resolved_native_graph(request.graph)?;
-        let lock_bytes = std::fs::read(owner.join(&graph.registry_lock)).map_err(failed)?;
+        let lock_path = owner.join(&graph.registry_lock);
+        let lock_bytes = std::fs::read(&lock_path)
+            .map_err(|error| input_failure("read native resolution lock", &lock_path, error))?;
         let seed = current_inputs::read_resolution_bytes(&lock_bytes).map_err(NativeLoafError::Failed)?;
         let rustc = request.rustc.canonicalize().map_err(failed)?;
         let compiler = CompilerInputs {
@@ -899,12 +901,16 @@ impl Current {
 fn read_local_declaration(project: &Path) -> Result<toml::Value> {
     let path = project.join("loaf.toml");
     let _invocation = tracing::trace_span!(target: "incan::invocation", "oven_rustc::read_current_local_declaration", input = %path.display()).entered();
-    toml::from_str(&std::fs::read_to_string(path).map_err(failed)?).map_err(failed)
+    let declaration =
+        std::fs::read_to_string(&path).map_err(|error| input_failure("read local declaration", &path, error))?;
+    toml::from_str(&declaration).map_err(failed)
 }
 
 /// Canonicalize the complete declaration set by normalized alias, independent of map traversal order.
 fn declaration_key(dependencies: &[DependencySpec], owner: &Path) -> Result<serde_json::Value> {
-    let owner = owner.canonicalize().map_err(failed)?;
+    let owner = owner
+        .canonicalize()
+        .map_err(|error| input_failure("canonicalize declaration owner", owner, error))?;
     let mut values = BTreeMap::new();
     for dependency in dependencies {
         let alias = dependency.crate_name.replace('-', "_");
@@ -914,7 +920,11 @@ fn declaration_key(dependencies: &[DependencySpec], owner: &Path) -> Result<serd
         let source = match &dependency.source {
             DependencySource::Registry => serde_json::json!({"registry": true}),
             DependencySource::Path { path } => {
-                serde_json::json!({"path": owner.join(path).canonicalize().map_err(failed)?})
+                let declared_path = owner.join(path);
+                let canonical = declared_path
+                    .canonicalize()
+                    .map_err(|error| input_failure("canonicalize declared dependency", &declared_path, error))?;
+                serde_json::json!({"path": canonical})
             }
             DependencySource::Git { .. } => {
                 return Err(refused(

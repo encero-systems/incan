@@ -23,3 +23,7 @@ test_support = []
 edition = "2024"
 name = "oven_store"
 type = "lib"
+
+# Shared by library and integration-test roots.
+[envs.test.dependencies]
+tempfile = { loaf = "crates-io/tempfile", version = "3" }

@@ -350,7 +350,8 @@ pub struct OvenTrustedDirectRustcTargetRequest<'a> {
     pub source_evidence_key: &'a str,
     /// Resolved target feature set from the publisher's unit graph.
     pub features: &'a [String],
-    /// Whether Cargo's publisher compiled this libtest root with `-C prefer-dynamic`.
+    /// Whether this libtest root requires dynamic sysroot support, as declared by a procedural-macro library or its
+    /// published target inventory.
     pub prefer_dynamic: bool,
 }
 
