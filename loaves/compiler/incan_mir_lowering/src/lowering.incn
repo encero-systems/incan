@@ -451,7 +451,7 @@ def validate_declarations_and_bodies(module: &BodyIrModule) -> Result[int, str]:
             return Err("invalid Body IR value enum declaration identity")
     for body in module.bodies:
         if not module.body_has_canonical_direct_call_id(body):
-            return Err("invalid Body IR body identity")
+            return Err(f"unsupported Body IR body identity {module.module_id.path()}::{body.name}")
     return Ok(len(module.bodies))
 
 
