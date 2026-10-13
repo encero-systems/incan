@@ -35,6 +35,7 @@ mod newtype_constraints;
 mod newtype_fields;
 mod newtype_hooks;
 mod newtype_json;
+mod newtype_sum;
 mod newtypes;
 mod nominal_parameters;
 mod opaque_returns;
