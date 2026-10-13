@@ -7,6 +7,147 @@ use super::*;
 const ASYNC_PRELUDE: &str =
     "import std.async\n\nasync def fast() -> int:\n  return 1\n\nasync def slow() -> int:\n  return 2\n\n";
 
+/// The exact SDK FnOnce bridge retains a checked zero-argument callable's output in native task storage.
+#[test]
+fn sdk_blocking_callback_retains_output() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"import std.async
+from std.rust import Send, Static
+from rust::incan_std_async::task import JoinHandle, RuntimeFnOnce, spawn_blocking as native_spawn
+def launch[T with (Send, Static), F with RuntimeFnOnce[T]](task: F) -> JoinHandle[T]:
+    return native_spawn(task)
+def work() -> int:
+    return 2
+def main() -> None:
+    task = launch(work)
+"#;
+    let module = build(source, &["m", "blocking_callback"])?;
+    let body = body_named(&module, "main")?;
+    let task = body
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("task"))
+        .ok_or("task")?;
+    assert_eq!(
+        task.ty,
+        IncanType::Generic {
+            base: "JoinHandle".into(),
+            args: vec![IncanType::Primitive(IncanPrimitiveType::Int)]
+        }
+    );
+    Ok(())
+}
+
+/// A checked native race callback closes both its input and output against the future's retained output.
+#[test]
+fn sdk_race_callback_retains_output() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"import std.async
+from std.rust import Send, Static
+from rust::incan_std_async::task import RuntimeFuture
+from rust::incan_std_async::race import RaceArm, RuntimeRaceCallback, arm as native_arm
+def package[T with Send, R with (Send, Static), F with RuntimeFuture[T], C with RuntimeRaceCallback[T, R]](task: F, callback: C) -> RaceArm[R]:
+    return native_arm(task, callback)
+async def work() -> int:
+    return 1
+def describe(value: int) -> str:
+    return str(value)
+def main() -> None:
+    packaged = package(work(), describe)
+"#;
+    let module = build(source, &["m", "race_callback"])?;
+    let body = body_named(&module, "main")?;
+    let arm = body
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("packaged"))
+        .ok_or("arm")?;
+    assert_eq!(
+        arm.ty,
+        IncanType::Generic {
+            base: "RaceArm".into(),
+            args: vec![IncanType::Primitive(IncanPrimitiveType::Str)]
+        }
+    );
+    Ok(())
+}
+
+/// A parent call reads an already checked nested task result without reusing legacy's open SDK placeholder.
+#[test]
+fn nested_sdk_task_call_retains_output() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"import std.async
+from std.rust import Send, Static
+from rust::incan_std_async::task import JoinHandle, RuntimeFuture, spawn as native_spawn
+def launch[T with (Send, Static), F with RuntimeFuture[T]](task: F) -> JoinHandle[T]:
+    return native_spawn(task)
+def forward[T](task: JoinHandle[T]) -> JoinHandle[T]:
+    return task
+async def work() -> int:
+    return 3
+def main() -> None:
+    task = forward(launch(work()))
+"#;
+    let module = build(source, &["m", "nested_task_call"])?;
+    let body = body_named(&module, "main")?;
+    let task = body
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("task"))
+        .ok_or("task")?;
+    assert_eq!(
+        task.ty,
+        IncanType::Generic {
+            base: "JoinHandle".into(),
+            args: vec![IncanType::Primitive(IncanPrimitiveType::Int)]
+        }
+    );
+    Ok(())
+}
+
+/// The SDK's positional rest slot is one owned list in its published native ABI.
+#[test]
+fn sdk_variadic_race_retains_list_signature() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "import std.async\nfrom std.async.race import race, RaceArm\nasync def collect(arm: RaceArm[int]) -> int:\n    return await race(arm)\n";
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let calls = library_call_delegations(checker.type_info());
+    let call = calls
+        .iter()
+        .find(|call| call.canonical.declaration_name == "race")
+        .ok_or("SDK race signature")?;
+    assert_eq!(
+        call.parameters,
+        vec![IncanType::Generic {
+            base: "List".into(),
+            args: vec![IncanType::Generic {
+                base: "RaceArm".into(),
+                args: vec![IncanType::TypeVar("R".into())]
+            }]
+        }]
+    );
+    Ok(())
+}
+
+/// Equal-spelled foreign callback traits cannot authorize native SDK output retention.
+#[test]
+fn foreign_callback_outputs_stay_open() -> Result<(), Box<dyn std::error::Error>> {
+    for source in [
+        "from rust::foreign_runtime::task import RuntimeFnOnce\ndef launch[T, F with RuntimeFnOnce[T]](task: F) -> None:\n    pass\ndef work() -> int:\n    return 1\ndef main() -> None:\n    launch(work)\n",
+        "from rust::foreign_runtime::race import RuntimeRaceCallback\ndef launch[T, R, F with RuntimeRaceCallback[T, R]](task: F) -> None:\n    pass\ndef work(value: int) -> str:\n    return str(value)\ndef main() -> None:\n    launch(work)\n",
+    ] {
+        let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+        let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&program)
+            .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+        assert!(checker.type_info().calls.body_ir_call_type_arguments.is_empty());
+    }
+    Ok(())
+}
+
 /// A join result retains the SDK-owned error even when no error import appears in the source.
 #[test]
 fn retains_sdk_join_error_from_await() -> Result<(), Box<dyn std::error::Error>> {
