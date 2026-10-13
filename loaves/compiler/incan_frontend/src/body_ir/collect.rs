@@ -440,6 +440,8 @@ pub(super) fn collect_published_callable_returns(
 }
 
 /// Collect the exact source spans eligible for same-module direct named-call dispatch.
+///
+/// The returned map retains declaration authority rather than resolving consumer spellings.
 pub(super) fn collect_local_function_declarations(program: &ast::Program) -> LocalFunctionDeclarations {
     let mut declarations = LocalFunctionDeclarations::new();
     for declaration in &program.declarations {
