@@ -6052,8 +6052,8 @@
       "disposition": "keep",
       "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
       "owner": 1561,
-      "split_required": false,
-      "split_target": "",
+      "split_required": true,
+      "split_target": "module identities and published import identities",
       "twin": ""
     },
     "loaves/compiler/incan_frontend/src/body_ir/tests/input_contract_and_refusals.rs": {
