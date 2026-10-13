@@ -8416,16 +8416,16 @@ fn value_enum_methods_output_matches_legacy() -> Result<(), Box<dyn std::error::
 from std.compression import Codec as PublishedCodec
 
 
-enum Codec(str):
+enum LocalCodec(str):
     """Keep string values and both ordinary and static methods on one checked enum."""
 
     Gzip = "gzip"
     Zlib = "zlib"
 
     @staticmethod
-    def selected() -> Codec:
+    def selected() -> LocalCodec:
         """Select a member through the enum's own static body."""
-        return Codec.Zlib
+        return LocalCodec.Zlib
 
     def label(self) -> str:
         """Read the generated scalar value through a retained receiver body."""
@@ -8434,9 +8434,9 @@ enum Codec(str):
 
 def main() -> None:
     """Preserve literal, static-body, receiver-body and repeated enum reads."""
-    codec = Codec.Gzip
+    codec = LocalCodec.Gzip
     println(codec.value())
-    println(Codec.selected().value())
+    println(LocalCodec.selected().value())
     println(codec.label())
     println(codec.value())
     println(PublishedCodec.Zstd.value())
