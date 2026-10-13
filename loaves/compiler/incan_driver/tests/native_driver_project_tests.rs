@@ -410,7 +410,7 @@ fn sdk_reader_and_error_methods_match_legacy() -> Result<(), Box<dyn std::error:
         &fixture.scratch("sdk-reader-error-methods")?,
         &fixture.sysroot,
         &closure,
-        "from std.io import BytesIO\nfrom std.hash import reader_digest\n\ndef main() -> None:\n    match BytesIO(b\"AB\").read(1):\n        Ok(value) => println(len(value))\n        Err(error) => println(error.kind)\n    match reader_digest(BytesIO(b\"x\"), \"wrong\", chunk_size=1):\n        Ok(value) => println(len(value))\n        Err(error) => println(error.message())\n",
+        "from std.io import BytesIO, IoError\nfrom std.hash import reader_digest, HashError\nfrom std.traits.error import Error\n\ndef main() -> None:\n    match BytesIO(b\"AB\").read(1):\n        Ok(value) => println(len(value))\n        Err(error) => println(error.kind)\n    match reader_digest(BytesIO(b\"x\"), \"wrong\", chunk_size=1):\n        Ok(value) => println(len(value))\n        Err(error) => println(error.message())\n",
     )
 }
 
