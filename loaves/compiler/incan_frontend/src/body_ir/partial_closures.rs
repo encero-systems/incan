@@ -31,14 +31,56 @@ struct PartialClosureFrame {
 }
 
 impl BodyBuilder<'_, '_> {
-    /// Consume the checker's exact constructor selection or existing function binding, never an inferred backend name.
-    fn local_partial_target(&self, partial: &ast::PartialExpr) -> Result<PartialClosureTarget, String> {
-        let ast::Expr::Ident(name) = &partial.target.node else {
+    /// Retain a module member's checked signature and selected function identity without reading the namespace.
+    ///
+    /// The receiver must be the checker's module binding, and the member must independently select a function.
+    /// Its source name supplies diagnostics only; no local declaration or default body is selected by that name.
+    fn module_partial_target(&self, partial: &ast::PartialExpr) -> Result<PartialClosureTarget, String> {
+        let ast::Expr::Field(base, name) = &partial.target.node else {
             return Err("partial callable with a non-function-name target".to_owned());
         };
+        if !self
+            .type_info
+            .resolved_identity(base.span)
+            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Module)
+        {
+            return Err("partial callable without a checked module receiver".to_owned());
+        }
+        let identity = self
+            .type_info
+            .resolved_identity(partial.target.span)
+            .filter(|identity| identity.kind == SemanticSourceTargetKind::Function)
+            .ok_or("module function value without a checked canonical function")?;
+        let Some(ResolvedType::Function(params, result)) = self.type_info.expr_type(partial.target.span) else {
+            return Err("module function value without a checked callable signature".to_owned());
+        };
+        if params.iter().any(|parameter| {
+            parameter.name.is_none() || (!partial.args.is_empty() && parameter.kind != ast::ParamKind::Normal)
+        }) {
+            return Err("partial callable target with an unnamed or rest parameter".to_owned());
+        }
+        Ok(PartialClosureTarget {
+            name: name.clone(),
+            binding: FunctionBindingInfo {
+                is_async: false,
+                params: params.clone(),
+                return_type: (**result).clone(),
+                identity: Some(identity.clone()),
+            },
+            constructor: None,
+            direct_call_id: None,
+            defaults: None,
+        })
+    }
+
+    /// Consume the checker's exact constructor selection or existing function binding, never an inferred backend name.
+    fn local_partial_target(&self, partial: &ast::PartialExpr) -> Result<PartialClosureTarget, String> {
         if !partial.type_args.is_empty() {
             return Err("partial callable with explicit type arguments".to_owned());
         }
+        let ast::Expr::Ident(name) = &partial.target.node else {
+            return self.module_partial_target(partial);
+        };
 
         // ---- Checked target identity and retained constructor layout ----
         let selected = self.type_info.resolved_identity(partial.target.span);

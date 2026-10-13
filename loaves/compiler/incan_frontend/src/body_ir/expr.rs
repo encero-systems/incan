@@ -354,6 +354,24 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             ast::Expr::Literal(lit) => bir::Operand::Constant(lower_checked_literal(lit, &self.resolve_ty(expr.span))),
             ast::Expr::Paren(inner) => self.lower_expr_to_operand(inner, scope, out),
             ast::Expr::Field(base, name) => {
+                if self
+                    .type_info
+                    .resolved_identity(base.span)
+                    .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Module)
+                    && self
+                        .type_info
+                        .resolved_identity(expr.span)
+                        .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Function)
+                {
+                    let partial = ast::PartialExpr {
+                        target: Box::new(expr.clone()),
+                        type_args: Vec::new(),
+                        args: Vec::new(),
+                    };
+                    let value = self.lower_partial(&partial, expr.span, scope, out);
+                    self.retain_function_item(out);
+                    return value;
+                }
                 if let Some(value) = self.lower_property_read(base, expr.span, scope, out) {
                     return value;
                 }
