@@ -18,6 +18,7 @@ mod class_inheritance;
 mod closures_comprehensions_and_generators;
 mod control_flow_and_loops;
 mod decorated_bindings;
+mod derived_display;
 mod for_patterns;
 mod frozen_collections;
 mod identities_and_imports;

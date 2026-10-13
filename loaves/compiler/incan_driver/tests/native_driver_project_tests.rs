@@ -2773,6 +2773,34 @@ def main() -> None:
     )
 }
 
+/// Derived Display preserves the structure of source models, classes, newtypes and ordinary enums.
+#[test]
+fn derived_display_structures_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("derived-display-structures")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/derived_display_prints_the_value_structure.incn"
+        ),
+    )
+}
+
+/// Formatting an enum repeatedly borrows its payload and preserves the same Debug spelling as derived Display.
+#[test]
+fn derived_enum_display_repeated_reads_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("derived-enum-display-repeated")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!("../../incan_test_support/fixtures/native_formatting/derived_enum_display.incn"),
+    )
+}
+
 /// Structural iteration evaluates each source once and polls the selected cursor through repeated and empty loops.
 #[test]
 fn structural_iteration_hooks_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
