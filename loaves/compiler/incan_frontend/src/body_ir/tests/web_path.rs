@@ -1,6 +1,7 @@
 //! Web Path storage follows the authenticated Axum re-export, independently of filesystem Path.
 
 use super::*;
+use incan_semantics_core::SymbolOrigin;
 
 /// The checked web surface retains its original Rust owner and public tuple payload.
 #[test]
