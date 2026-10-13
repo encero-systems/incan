@@ -53,6 +53,6 @@ def borrowed_enum_debug(
             span=span,
         ),
     )
-    terminate_call(builder, CalleeKind.Instantiated(path, ty), [read_place(reference, false, span)], result, span)
+    terminate_call(builder, CalleeKind.Instantiated(path, [ty]), [read_place(reference, false, span)], result, span)
     builder.owned.append(result.local)
     return Ok(result)
