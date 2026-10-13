@@ -4,6 +4,78 @@
 
 use super::*;
 
+/// An opaque trait result keeps the single concrete carrier selected by its checked return expression.
+#[test]
+fn trait_value_return_retains_concrete_carrier() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Named:\n  pass\n\nmodel Item with Named:\n  number: int\n\ndef make() -> Named:\n  return Item(number=3)\n\ndef main() -> None:\n  value = make()\n  println(7)\n",
+        &["trait_value_return"],
+    )?;
+    assert_eq!(
+        body_named(&module, "make")?.return_type,
+        IncanType::Named("Item".to_owned())
+    );
+    assert!(
+        body_named(&module, "main")?
+            .locals
+            .iter()
+            .all(|local| local.ty != IncanType::Named("Named".to_owned()))
+    );
+    Ok(())
+}
+
+/// A supertrait result preserves the hidden concrete input rather than allocating or converting a trait object.
+#[test]
+fn trait_value_supertrait_return_retains_input_carrier() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Root:\n  pass\n\ntrait Mid with Root:\n  pass\n\nmodel Item with Mid:\n  number: int\n\ndef upcast(value: Mid) -> Root:\n  return value\n\ndef main() -> None:\n  value = upcast(Item(number=3))\n  println(7)\n",
+        &["trait_value_upcast"],
+    )?;
+    assert_eq!(
+        body_named(&module, "upcast")?.return_type,
+        IncanType::TypeVar("__IncanTrait0".to_owned())
+    );
+    assert!(
+        body_named(&module, "main")?
+            .locals
+            .iter()
+            .all(|local| local.ty != IncanType::Named("Root".to_owned()))
+    );
+    Ok(())
+}
+
+/// A method whose declared result is Self preserves its hidden receiver through an opaque trait return.
+#[test]
+fn trait_value_self_result_retains_hidden_receiver() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Named:\n  def same(self) -> Self: ...\n\nmodel Item with Named:\n  number: int\n  def same(self) -> Self:\n    return self\n\ndef forward(value: Named) -> Named:\n  return value.same()\n\ndef main() -> None:\n  value = forward(Item(number=3))\n  println(7)\n",
+        &["trait_value_self_result"],
+    )?;
+    let body = body_named(&module, "forward")?;
+    assert_eq!(body.return_type, IncanType::TypeVar("__IncanTrait0".to_owned()));
+    assert!(
+        body.locals
+            .iter()
+            .all(|local| local.ty != IncanType::Named("Named".to_owned())),
+        "{body:#?}"
+    );
+    Ok(())
+}
+
+/// Distinct concrete return carriers cannot be silently collapsed into one opaque legacy result.
+#[test]
+fn trait_value_return_with_several_carriers_stays_open() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "trait Named:\n  pass\n\nmodel One with Named:\n  number: int\n\nmodel Two with Named:\n  text: str\n\ndef choose(flag: bool) -> Named:\n  if flag:\n    return One(number=3)\n  return Two(text=\"x\")\n",
+        &["trait_value_several_returns"],
+    )?;
+    assert_eq!(
+        body_named(&module, "choose")?.return_type,
+        IncanType::Named("Named".to_owned())
+    );
+    Ok(())
+}
+
 /// Legacy's trait-typed input is a hidden concrete binder, recorded independently of its source trait identity.
 #[test]
 fn trait_value_input_retains_hidden_binder_and_call_carrier() -> Result<(), Box<dyn std::error::Error>> {

@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 4013 | 261 | 431 |
+| keep | 4018 | 261 | 431 |
 | re-point | 1487 | 91 | 1058 |
 | retire | 1507 | 153 | 0 |
 | unaffected | 1977 | 212 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **8984** | **717** | **1494** |
+| **Total** | **8989** | **717** | **1494** |
 
 - Retire-class tests: 1507, of which twinned 1022, dies 295, open 190 (neither yet).
 - Retire-class files with open rows: 35 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -127,7 +127,7 @@ The collector counts these in the text of each test function and of the file-loc
 
 `Lines` is the file length; `Test lines` is the test region the split threshold applies to: the `#[cfg(test)]` modules when the file has any, otherwise the whole file. `Twins` is `twinned/retire-class` and `Dies` the number recorded `dies`, for files with retire-class tests. Per-test rows follow a file only when it carries per-test overrides.
 
-### `loaves/compiler/incan_driver` (949 tests in 96 files: keep 573, re-point 19, retire 104, unaffected 253)
+### `loaves/compiler/incan_driver` (950 tests in 96 files: keep 574, re-point 19, retire 104, unaffected 253)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -215,7 +215,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/tests/generated_rust_callability_artifact_tests.rs` | 1 | 258 | 258 | retire | 1/1 | 0 | - | #1561 | text 1, run 1, checker 1 | The generated Cargo manifests and the `transforms.rs`/`main.rs` text (fn-pointer parameters, qualified provider calls) die with #654; the surviving observable, the consumer run printing `2 3 4` (a `Callable` value passed across a `pub::` package boundary, which no other test runs), is the twin: a project fixture carrying the producer under `deps/callability_core`, which the runner bakes before `incan run` (harness-deps). |
 | `loaves/compiler/incan_driver/tests/generated_rust_native_consumer_tests.rs` | 1 | 367 | 367 | retire | 0/1 | 1 | - | #1561 | run 1 | public generated-Rust artifact contract (RFC 120 projections, native consumers, audit) |
 | `loaves/compiler/incan_driver/tests/mir_plan_contract_tests.rs` | 3 | 141 | 141 | keep | - | - | - | #1337 | checker 1, parser 1 | public Incan scalar native-plan contract and required sibling dependency boundary |
-| `loaves/compiler/incan_driver/tests/native_driver_project_tests.rs` | 342 | 14023 | 14023 | keep | - | - | planned: native_driver_project_tests/collections.rs for focused collection parity cases | #1337 | run 341, checker 5 | Oven-built pinned native driver; scalar plan and real Body IR lowering; unchanged benchmark byte parity and opt-in census of every behavior fixture |
+| `loaves/compiler/incan_driver/tests/native_driver_project_tests.rs` | 343 | 14061 | 14061 | keep | - | - | planned: native_driver_project_tests/collections.rs for focused collection parity cases | #1337 | run 342, checker 5 | Oven-built pinned native driver; scalar plan and real Body IR lowering; unchanged benchmark byte parity and opt-in census of every behavior fixture |
 | `loaves/compiler/incan_driver/tests/native_driver_project_tests/census.rs` | 7 | 711 | 711 | keep | - | - | - | #1337 | run 2 | Direct-route census refusal grouping and bounded process capture; route-independent measurement support |
 | `loaves/compiler/incan_driver/tests/native_driver_project_tests/dev7_carrier_admission.rs` | 3 | 114 | 114 | keep | - | - | - | #1337 | run 3 | Real frontend and Incan lower_module accept nested carrier layouts; actual native validation rejects independent malformed payload paths, layouts, collection identities and by-value recursion. |
 | `loaves/compiler/incan_driver/tests/native_driver_project_tests/enum_alias_admission.rs` | 1 | 47 | 47 | keep | - | - | - | #1337 | run 1 | Actual Incan lower_module accepts checked aliases and rejects independently corrupted canonical enum targets, payloads and bindings. |
@@ -1833,7 +1833,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
 
-### `loaves/compiler/incan_frontend` (2378 tests in 136 files: keep 2365, unaffected 13)
+### `loaves/compiler/incan_frontend` (2382 tests in 136 files: keep 2369, unaffected 13)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -1854,7 +1854,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_frontend/src/body_ir/tests/iteration_protocol.rs` | 4 | 181 | 181 | keep | - | - | - | #1337 | checker 1, parser 1 | Canonical iteration hook targets, checked polling and temporary-call fact preservation; frontend contract coverage. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/library_types.rs` | 9 | 285 | 285 | keep | - | - | - | #1337 | checker 1, parser 1 | Body IR-only SDK type identity and nested declaration retention on the direct route. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/method_partials.rs` | 4 | 200 | 200 | keep | - | - | - | #1337 | - | Checked method-partial declaration frames, value-receiver snapshots, presets and named default admission; frontend-only Body IR contracts. |
-| `loaves/compiler/incan_frontend/src/body_ir/tests/methods_and_defaults.rs` | 55 | 1781 | 1781 | keep | - | - | required | #1561 | replacement 1, checker 1, parser 1 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/body_ir/tests/methods_and_defaults.rs` | 59 | 1853 | 1853 | keep | - | - | required | #1561 | replacement 1, checker 1, parser 1 | split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/native_carriers.rs` | 6 | 196 | 196 | keep | - | - | - | #1337 | checker 2, parser 2 | Checked native stdlib ABI ownership and source-shadow controls retained in Body IR without legacy changes. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/newtype_constraints.rs` | 5 | 127 | 127 | keep | - | - | - | #1337 | - | Checked constrained-primitive predicates and explicit/implicit construction sequencing retained in Body IR. |
 | `loaves/compiler/incan_frontend/src/body_ir/tests/newtype_hooks.rs` | 9 | 259 | 259 | keep | - | - | - | #1337 | replacement 1, checker 1, parser 1 | Canonical source hook calls, own-owner raw construction, and ordered fail-fast coercion chains retained in Body IR. |

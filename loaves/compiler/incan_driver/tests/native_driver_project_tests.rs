@@ -342,6 +342,44 @@ def main() -> None:
     )
 }
 
+/// Opaque trait results, Self-returning slots, and supertrait returns preserve legacy's concrete storage and output.
+#[test]
+fn trait_value_return_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("trait-value-return")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"trait Root:
+    def number(self) -> int: ...
+
+trait Mid with Root:
+    def same(self) -> Self: ...
+
+model Item with Mid:
+    value: int
+    def number(self) -> int:
+        return self.value
+    def same(self) -> Self:
+        return self
+
+def make(value: int) -> Mid:
+    return Item(value=value)
+
+def upcast(value: Mid) -> Root:
+    return value
+
+def forward(value: Mid) -> Root:
+    return value.same()
+
+def main() -> None:
+    println(upcast(make(3)).number())
+    println(forward(make(7)).number())
+"#,
+    )
+}
+
 /// Trait-typed inputs retain legacy's independent concrete generic carriers and declaration-slot binding.
 #[test]
 fn trait_value_input_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
