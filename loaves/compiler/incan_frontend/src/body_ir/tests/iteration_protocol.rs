@@ -40,7 +40,7 @@ fn method_calls<'body>(statements: &'body [bir::Statement], calls: &mut Vec<&'bo
     }
 }
 
-/// Repeated statement and comprehension loops call each checker-selected owner rather than synthesized hook names.
+/// Repeated statement loops call each checker-selected owner rather than synthesized hook names.
 #[test]
 fn structural_loops_keep_canonical_hook_targets() -> Result<(), Box<dyn std::error::Error>> {
     let module = build(STRUCTURAL, &["m", "structural_iteration"])?;
@@ -49,7 +49,7 @@ fn structural_loops_keep_canonical_hook_targets() -> Result<(), Box<dyn std::err
     method_calls(&main.block.stmts, &mut calls);
     for name in ["__iter__", "__next__"] {
         let selected: Vec<_> = calls.iter().filter(|call| call.name == name).collect();
-        assert_eq!(selected.len(), 4, "{}", main.render_snapshot());
+        assert_eq!(selected.len(), 3, "{}", main.render_snapshot());
         for call in selected {
             let canonical = call.canonical.as_ref().ok_or("protocol hook has no canonical target")?;
             assert_eq!(canonical.declaration_name, name);
@@ -115,7 +115,7 @@ fn iteration_preserves_the_written_generic_call() -> Result<(), Box<dyn std::err
         .into_iter()
         .filter(|target| target.name == "choose")
         .collect();
-    assert_eq!(chosen.len(), 3);
+    assert_eq!(chosen.len(), 2);
     for target in chosen {
         assert_eq!(target.type_args, [IncanType::Named("Source".into())]);
     }

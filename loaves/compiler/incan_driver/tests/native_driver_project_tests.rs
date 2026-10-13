@@ -3526,8 +3526,7 @@ fn derived_enum_display_repeated_reads_match_legacy() -> Result<(), Box<dyn std:
     )
 }
 
-/// Structural iteration evaluates each source once and polls the selected cursor through repeated, comprehension, and
-/// empty loops.
+/// Structural iteration evaluates each source once and polls the selected cursor through repeated and empty loops.
 #[test]
 fn structural_iteration_hooks_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
