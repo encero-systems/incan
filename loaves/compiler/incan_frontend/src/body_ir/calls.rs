@@ -439,12 +439,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ///
     /// An overload-set spelling cannot select a signature. Its canonical call-site identity must match a retained
     /// candidate; absent proof keeps the binding unresolved rather than borrowing another overload's slots.
+    /// Constructor syntax keeps the static method selected at the full call span instead of the nominal identity
+    /// selected at the callee token, using that method's checked parameter surface.
     fn external_call_declaration(
         &self,
         name: &str,
         callee_span: ast::Span,
         call_span: ast::Span,
     ) -> Result<DirectCallDeclaration, String> {
+        if let Some(factory) = self.checked_nominal_factory_declaration(callee_span, call_span) {
+            return Ok(factory);
+        }
         let canonical = self.type_info.resolved_identity(callee_span).cloned();
         let builtin = self.type_info.resolved_builtin_call(call_span);
         let canonical_builtin_id = canonical.as_ref().and_then(canonical_builtin);
@@ -473,6 +478,40 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             direct_call_id: None,
             builtin,
             canonical,
+        })
+    }
+
+    /// Keep the static factory the checker selected for constructor syntax, independently of the named type.
+    ///
+    /// The callee span names the nominal owner; the full call span selects its executable method and substituted
+    /// parameters. Reading the former as a function would lose that selection. Ordinary functions and unresolved
+    /// nominal calls keep their existing path, and no source spelling supplies a factory identity.
+    fn checked_nominal_factory_declaration(
+        &self,
+        callee_span: ast::Span,
+        call_span: ast::Span,
+    ) -> Option<DirectCallDeclaration> {
+        let owner = self.type_info.resolved_identity(callee_span)?;
+        if !matches!(
+            owner.kind,
+            SemanticSourceTargetKind::Model
+                | SemanticSourceTargetKind::Class
+                | SemanticSourceTargetKind::Newtype
+                | SemanticSourceTargetKind::Enum
+        ) {
+            return None;
+        }
+        let factory = self.type_info.resolved_identity(call_span)?;
+        if factory.kind != SemanticSourceTargetKind::Method {
+            return None;
+        }
+        let parameters = self.type_info.call_site_callable_params(call_span)?;
+        Some(DirectCallDeclaration {
+            is_async: false,
+            slots: Some(parameters.iter().map(DeclaredSlot::from_checked_param).collect()),
+            direct_call_id: None,
+            builtin: None,
+            canonical: Some(factory.clone()),
         })
     }
 
