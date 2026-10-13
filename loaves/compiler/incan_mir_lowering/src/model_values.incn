@@ -23,7 +23,7 @@ from text_ownership import drop_borrowed_text_temporaries
 from lowering import scalar_place, text_argument, lower_callable_result
 
 
-def nominal_place(builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Option[Place], str]:
+pub def nominal_place(builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Option[Place], str]:
     """Locate a checked model operand without applying value-read cloning before a shared trait call."""
     match value:
         RustOperand.Place(read) =>
