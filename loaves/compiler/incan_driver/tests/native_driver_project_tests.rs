@@ -40,7 +40,7 @@ def pair() -> tuple[Item, Token]:
 def main() -> None:
     values = [pair()]
     println(values[0].0.name)
-    println(values[0].1.0)
+    println((values[0].1).0)
 "#,
     )
 }
@@ -7769,18 +7769,18 @@ def main() -> None:
     success(&actual, "native tuple execution");
     assert_eq!(actual.stdout, expected.stdout);
     assert!(actual.stdout.starts_with(b"3\n7\n(3, 7)\n"));
-    for (name, source_text, kind) in [
-        (
-            "function_value",
-            "def apply(value: (int) -> int) -> int:\n    return value(1)\n\ndef main() -> None:\n    println(1)\n",
-            "Function",
-        ),
-        (
-            "singleton",
-            "def main() -> None:\n    println((42,))\n",
-            "singleton Tuple",
-        ),
-    ] {
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &root.join("function-value"),
+        &fixture.sysroot,
+        &fixture.formatting,
+        "def apply(value: (int) -> int) -> int:\n    return value(1)\n\ndef increment(value: int) -> int:\n    return value + 1\n\ndef main() -> None:\n    println(apply(increment))\n",
+    )?;
+    for (name, source_text, kind) in [(
+        "singleton",
+        "def main() -> None:\n    println((42,))\n",
+        "singleton Tuple",
+    )] {
         let refused_source = root.join(format!("{name}.incn"));
         fs::write(&refused_source, source_text)?;
         let refused_output = root.join(format!("{name}-native"));
