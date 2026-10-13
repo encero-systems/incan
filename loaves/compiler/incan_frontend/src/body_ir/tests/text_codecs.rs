@@ -72,10 +72,12 @@ fn effectful_codec_expressions_keep_a_named_refusal() -> Result<(), Box<dyn std:
         "def value() -> bytes:\n    println(\"value\")\n    return b\"ok\"\n\ndef label() -> str:\n    println(\"label\")\n    return \"utf8\"\n\ndef main() -> None:\n    _ = value().decode(encoding=label())\n",
         &["m", "codec_effects"],
     )?;
+    let body = body_named(&module, "main")?;
+    assert!(body.render_snapshot().contains("builtin codec observable expressions"));
     assert!(
-        body_named(&module, "main")?
-            .render_snapshot()
-            .contains("builtin codec observable expressions")
+        body.locals.iter().all(|local| local.ty != IncanType::Unknown),
+        "{}",
+        body.render_snapshot()
     );
     Ok(())
 }

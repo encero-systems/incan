@@ -11565,17 +11565,22 @@ fn stdlib_web_path_payload_output_matches_legacy() -> Result<(), Box<dyn std::er
     )
 }
 
-/// Builtin text codecs retain default, named, dynamic, frozen and invalid UTF-8 behavior byte-for-byte.
+/// Builtin text codecs retain named/default slots, dynamic policies and frozen receivers; native error Display stays
+/// separately refused while its original legacy output remains pinned.
 #[test]
 fn stdlib_text_codec_methods_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
+    let original = include_str!(
+        "../../incan_test_support/fixtures/behavior/snapshots_collections_and_strings/str_encode_bytes_decode.incn"
+    );
+    let codec_only = original
+        .replace("Err(error) => println(error)", "Err(_) => println(\"strict error\")")
+        .replace(
+            "Err(error) => println(f\"failed: {error}\")",
+            "Err(_) => println(\"failed\")",
+        );
     for (name, source) in [
-        (
-            "round-trip",
-            include_str!(
-                "../../incan_test_support/fixtures/behavior/snapshots_collections_and_strings/str_encode_bytes_decode.incn"
-            ),
-        ),
+        ("round-trip-before-error-display", codec_only.as_str()),
         (
             "receiver-kinds",
             include_str!(
@@ -11595,6 +11600,55 @@ fn stdlib_text_codec_methods_output_matches_legacy() -> Result<(), Box<dyn std::
             source,
         )?;
     }
+    check_builtin_refusal(
+        "stdlib_codec_error_display_frontier",
+        original,
+        "unsupported Body IR model display without derived Display",
+    )?;
+    check_builtin_refusal(
+        "stdlib_codec_observable_expression_frontier",
+        "def value() -> bytes:\n    println(\"value\")\n    return b\"ok\"\n\ndef label() -> str:\n    println(\"label\")\n    return \"utf8\"\n\ndef main() -> None:\n    _ = value().decode(encoding=label())\n",
+        "builtin codec observable expressions",
+    )?;
+    let root = fixture.scratch("stdlib-codec-original-legacy")?;
+    let source = root.join("probe.incn");
+    fs::write(&source, original)?;
+    let output = root.join("legacy");
+    success(
+        &support::repo_command()
+            .current_dir(&root)
+            .arg("build")
+            .arg(&source)
+            .arg(&output)
+            .output()?,
+        "original codec legacy compilation",
+    );
+    let legacy = Command::new(output.join("oven/release/probe")).output()?;
+    success(&legacy, "original codec legacy execution");
+    assert_eq!(legacy.stdout, "6\nhéllo\n�\n2\nok\nrawhéllo\ninvalid-utf8: 'utf-8' codec can't decode bytes: invalid utf-8 sequence of 1 bytes from index 0\n".as_bytes());
+    Ok(())
+}
+
+/// Require a named refusal at the same standalone boundary used by builtin parity tests.
+fn check_builtin_refusal(name: &str, text: &str, reason: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch(name)?;
+    let source = root.join("probe.incn");
+    fs::write(&source, text)?;
+    let native = root.join("native");
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let output = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &source,
+        &native,
+        &fixture.sysroot,
+        &closure,
+    )
+    .output()?;
+    let diagnostic = String::from_utf8(output.stderr)?;
+    assert!(!output.status.success(), "{name}: {diagnostic}");
+    assert!(diagnostic.contains(reason), "{name}: expected {reason}; {diagnostic}");
+    assert!(!native.exists());
     Ok(())
 }
 
