@@ -91,6 +91,11 @@ fn retain_residual_types(statements: &mut [bir::Statement]) {
     for statement in statements {
         match &mut statement.kind {
             bir::StatementKind::Assign { place, rvalue } => {
+                if !matches!(rvalue, bir::Rvalue::IsInstance { .. }) {
+                    residuals.clear();
+                    tests.clear();
+                    continue;
+                }
                 if let Some(local) = place.local_id() {
                     residuals.remove(&local);
                     tests.retain(|condition, (source, _, _)| *condition != local && *source != local);
