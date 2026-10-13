@@ -15558,3 +15558,34 @@ def main() -> None:
         "ValidationError: Job validation failed with 1 error(s)\n  amount: must be positive\n",
     )
 }
+/// Published SDK constants retain their declaring module through imports, qualified reads and callable defaults.
+#[test]
+fn sdk_constant_references_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("sdk-constant-references")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        r#"from std import hash
+from std.hash import DEFAULT_CHUNK_SIZE as CHUNK
+
+def default_size(value: int = CHUNK) -> int:
+    return value
+
+def scale(k: int, n: int) -> int:
+    return k * n
+
+chunked = partial scale(k=CHUNK)
+qualified = partial scale(k=hash.DEFAULT_CHUNK_SIZE)
+
+def main() -> None:
+    println(CHUNK)
+    println(hash.DEFAULT_CHUNK_SIZE)
+    println(default_size())
+    println(default_size(value=1))
+    println(chunked(n=1) + 1)
+    println(qualified(n=1) + 1)
+"#,
+    )
+}
