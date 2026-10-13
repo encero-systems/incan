@@ -434,14 +434,17 @@ pub fn native_nominal_item(identity: &CanonicalSymbolId) -> Option<String> {
         {
             return None;
         }
-        let admitted = match path.as_slice() {
-            [root, name] => root == "axum" && name == "Json",
-            [root, module, name] => {
-                root == "axum" && ((module == "extract" && name == "Query") || (module == "response" && name == "Html"))
+        let item = match path.as_slice() {
+            [root, name] if root == "axum" && name == "Json" => "incan_stdlib_web::web::response::Json",
+            [root, module, name] if root == "axum" && module == "extract" && name == "Query" => {
+                "incan_stdlib_web::web::request::Query"
             }
-            _ => false,
+            [root, module, name] if root == "axum" && module == "response" && name == "Html" => {
+                "incan_stdlib_web::web::response::Html"
+            }
+            _ => return None,
         };
-        return admitted.then(|| path.join("::"));
+        return Some(item.to_owned());
     }
     if identity.origin == crate::SymbolOrigin::Builtin
         && identity.namespace == crate::SymbolNamespace::OrdinaryLexical

@@ -1,7 +1,7 @@
 //! Constructor-style call validation for models, classes, enums, and surface constructors.
 
 use super::TypeChecker;
-use crate::ast::{CallArg, Expr, ParamKind, Span, Spanned, Type};
+use crate::ast::{CallArg, Expr, Literal, ParamKind, Span, Spanned, Type};
 use crate::diagnostics::errors::{self, TypeArgumentOrigin};
 use crate::resolved_type_subst::type_param_subst_map_call_site;
 use crate::symbols::{CallableParam, FieldInfo, ResolvedType, SymbolKind, TypeInfo, ValueEnumInfo};
@@ -318,10 +318,34 @@ impl TypeChecker {
         let [CallArg::Positional(value)] = args else {
             return;
         };
-        if self.type_info.expr_type(value.span) == Some(&ResolvedType::Str)
-            && let Some(owner) = self.stdlib_cache.native_web_identity(SurfaceTypeId::Html)
-        {
+        let is_string = match self.type_info.expr_type(value.span) {
+            Some(ty) => ty == &ResolvedType::Str,
+            None => match &value.node {
+                Expr::Literal(Literal::String(_)) => true,
+                Expr::Ident(name) => self.lookup_symbol(name).is_some_and(
+                    |symbol| matches!(&symbol.kind, SymbolKind::Variable(variable) if variable.ty == ResolvedType::Str),
+                ),
+                _ => false,
+            },
+        };
+        if is_string && let Some(owner) = self.stdlib_cache.native_web_identity(SurfaceTypeId::Html) {
             self.type_info.record_body_ir_native_constructor(span, owner);
+            self.type_info
+                .calls
+                .body_ir_native_argument_types
+                .insert((value.span.start, value.span.end), ResolvedType::Str);
+            if let Expr::Ident(name) = &value.node
+                && let Some(identity) = self
+                    .symbols
+                    .lookup(name)
+                    .and_then(|id| self.symbols.identity_of(id))
+                    .cloned()
+            {
+                self.type_info
+                    .calls
+                    .body_ir_native_argument_identities
+                    .insert((value.span.start, value.span.end), identity);
+            }
         }
     }
 
