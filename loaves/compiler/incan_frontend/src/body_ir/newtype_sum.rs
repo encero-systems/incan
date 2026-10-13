@@ -28,18 +28,35 @@ impl BodyBuilder<'_, '_> {
         let IncanType::Named(owner) = &args[0] else {
             return None;
         };
-        let identity = self.type_info.declarations.named_type_identities.get(owner)?;
-        let declaration = self
+        let facts = self.type_info.declarations.newtype_construction.get(owner)?.clone();
+        let source_span = super::hir_span(span);
+        let target = args[0].clone();
+        let Some(identity) = self.type_info.declarations.named_type_identities.get(owner) else {
+            return Some(self.unsupported_typed_operand(
+                "numeric-newtype sum without canonical owner binding".into(),
+                target,
+                scope,
+                source_span,
+                out,
+            ));
+        };
+        let Some(declaration) = self
             .local_nominal_declarations
             .values()
-            .find(|declaration| &declaration.canonical == identity)?
-            .clone();
+            .find(|declaration| &declaration.canonical == identity)
+            .cloned()
+        else {
+            return Some(self.unsupported_typed_operand(
+                "numeric-newtype sum without retained canonical layout".into(),
+                target,
+                scope,
+                source_span,
+                out,
+            ));
+        };
         if identity.kind != super::SemanticSourceTargetKind::Newtype {
             return None;
         }
-        let source_span = super::hir_span(span);
-        let target = args[0].clone();
-        let facts = self.type_info.declarations.newtype_construction.get(owner)?.clone();
         let accepted = self.type_info.body_ir_iterator_sum_items.get(&(span.start, span.end));
         let hook_matches = match (
             facts.checked_constructor.as_deref(),
