@@ -385,9 +385,35 @@ pub(super) fn collect_local_enum_declarations(
                     .collect(),
                 variants,
                 derives: type_info.declarations.enum_derives.get(&value.name)?.clone(),
+                named_type_identities: enum_payload_type_identities(type_info),
             })
         })
         .collect()
+}
+
+/// Align checked aliases with normalized payload names without choosing between distinct declarations sharing one name.
+fn enum_payload_type_identities(type_info: &TypeCheckInfo) -> std::collections::BTreeMap<String, CanonicalSymbolId> {
+    let original = &type_info.declarations.named_type_identities;
+    let mut bindings = original.clone();
+    let mut normalized = std::collections::BTreeMap::new();
+    let mut ambiguous = std::collections::BTreeSet::new();
+    for identity in original.values() {
+        let name = &identity.declaration_name;
+        if normalized.get(name).is_some_and(|previous| previous != identity)
+            || original.get(name).is_some_and(|previous| previous != identity)
+        {
+            ambiguous.insert(name.clone());
+        }
+        normalized.entry(name.clone()).or_insert_with(|| identity.clone());
+    }
+    for (name, identity) in normalized {
+        if ambiguous.contains(&name) {
+            bindings.remove(&name);
+        } else {
+            bindings.insert(name, identity);
+        }
+    }
+    bindings
 }
 
 /// Collect the source expressions a synthesized partial needs to retain target defaults in Body IR: a function's

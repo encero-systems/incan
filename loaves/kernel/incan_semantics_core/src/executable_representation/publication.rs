@@ -129,8 +129,7 @@ pub(super) fn project_enum(
     public: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<(crate::body_ir::EnumDeclaration, BTreeSet<CanonicalSymbolId>), CoverageReason> {
     let mut value = source.clone();
-    let checked_types = BTreeMap::new();
-    let mut audit = PublicationAudit::new(module, library, public, &checked_types);
+    let mut audit = PublicationAudit::new(module, library, public, &source.named_type_identities);
     audit.identity(&mut value.canonical, false)?;
     value.direct_declaration_id = declaration_id(&value.canonical)?;
     for variant in &mut value.variants {
@@ -140,6 +139,29 @@ pub(super) fn project_enum(
             audit.ty(ty)?;
         }
     }
+    value.named_type_identities = audit.used_nominal_types;
+    Ok((value, audit.requirements))
+}
+
+/// Project a public canonical storage identity with complete initialization; source module addresses are rebased by
+/// publication.
+pub(super) fn project_static(
+    source: &crate::body_ir::StaticDeclaration,
+    module: &BodyIrModule,
+    library: &str,
+    public: &BTreeSet<CanonicalSymbolId>,
+) -> Result<(crate::body_ir::StaticDeclaration, BTreeSet<CanonicalSymbolId>), CoverageReason> {
+    if source.canonical.namespace != crate::SymbolNamespace::OrdinaryLexical
+        || source.canonical.kind != crate::SemanticSourceTargetKind::Static
+        || !crate::body_ir_identity::static_initializer_matches(source)
+    {
+        return Err(CoverageReason::UnresolvedReference);
+    }
+    let mut value = source.clone();
+    let checked_types = BTreeMap::new();
+    let mut audit = PublicationAudit::new(module, library, public, &checked_types);
+    audit.identity(&mut value.canonical, false)?;
+    audit.ty(&value.ty)?;
     Ok((value, audit.requirements))
 }
 
@@ -322,10 +344,15 @@ impl<'a> PublicationAudit<'a> {
         }
     }
 
-    /// Canonical field references must be public; module storage requires an executable initialization contract.
+    /// Canonical fields and static storage require public context; a requiring body cannot outlive missing
+    /// initialization.
     fn place(&mut self, place: &mut Place) -> Result<(), CoverageReason> {
-        if matches!(place.root, PlaceRoot::Global(_)) {
-            return Err(CoverageReason::UnsupportedConstruct);
+        if let PlaceRoot::Global(value) = &mut place.root {
+            if value.identity.kind != crate::SemanticSourceTargetKind::Static {
+                return Err(CoverageReason::UnsupportedConstruct);
+            }
+            self.identity(&mut value.identity, true)?;
+            self.ty(&value.ty)?;
         }
         for projection in &mut place.projection {
             match projection {

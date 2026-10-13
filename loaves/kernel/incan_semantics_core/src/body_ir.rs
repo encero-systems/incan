@@ -664,6 +664,9 @@ pub struct EnumDeclaration {
     pub variants: Vec<EnumVariantDeclaration>,
     /// Explicit and automatic derives selected by the checker.
     pub derives: Vec<String>,
+    /// Checker-retained origins for named payload types; publication keeps only bindings the payloads require.
+    #[serde(default)]
+    pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
 }
 
 /// One canonical variant and its checked positional payload layout.

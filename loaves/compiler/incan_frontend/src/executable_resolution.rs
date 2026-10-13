@@ -274,6 +274,7 @@ fn resolve_from_catalog(
             ExecutableDeclaration::Trait(value) => module.trait_declarations.push(value),
             ExecutableDeclaration::Constant(value) => module.constant_declarations.push(value),
             ExecutableDeclaration::TypeAlias(value) => module.type_alias_declarations.push(value),
+            ExecutableDeclaration::Static(value) => module.static_declarations.push(value),
             ExecutableDeclaration::NominalWithTraits(value, implementations) => {
                 module.nominal_declarations.push(value);
                 module.trait_implementations.extend(implementations);
