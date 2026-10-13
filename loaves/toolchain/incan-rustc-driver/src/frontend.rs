@@ -132,7 +132,7 @@ fn checked_modules(path: &Path) -> Result<CheckedProgram, String> {
         files.push(module.file_path.to_string_lossy().into_owned());
     }
     // ---- Stdlib trait defaults the program's adopters take, from the SDK's published representation ----
-    for module in published_standard_defaults(&session.provider_plan, &bodies) {
+    for module in published_standard_defaults(&session.provider_plan, &bodies)? {
         carry_published_module(module, &mut bodies, &mut files, &mut sources, &mut entry);
     }
     // A proven transparent forwarder keeps its direct Rust callee; the crate item serves every other stdlib call.
@@ -353,12 +353,12 @@ fn published_library_modules(
 ///
 /// A record whose implementation is the slot itself takes the protocol's default. Only the defaults the program calls
 /// are taken, so a default nothing calls is never lowered. Each resolves on its own, with its published closure (the
-/// trait around a slot it calls, for one), so a default the SDK does not publish is simply absent: its record stays,
-/// and a call to it refuses where it is lowered.
+/// trait around a slot it calls, for one). A selected default that cannot resolve reports the package's exact
+/// executable representation failure rather than discarding it and later reporting an unrelated native bound.
 fn published_standard_defaults(
     plan: &incan_frontend::provider::ProviderPlan,
     modules: &[BodyIrModule],
-) -> Vec<BodyIrModule> {
+) -> Result<Vec<BodyIrModule>, String> {
     let mut called = std::collections::BTreeSet::new();
     for body in modules.iter().flat_map(|module| &module.bodies) {
         collect_called_methods(&body.block.stmts, &mut called);
@@ -376,16 +376,15 @@ fn published_standard_defaults(
     let mut owners = std::collections::BTreeMap::<String, BodyIrModule>::new();
     for identity in defaults {
         let required = std::iter::once(identity).collect();
-        let Ok(resolved) = incan_frontend::executable_resolution::resolve_sdk_requirements(plan, &required) else {
-            continue;
-        };
+        let resolved = incan_frontend::executable_resolution::resolve_sdk_requirements(plan, &required)
+            .map_err(|error| format!("unsupported Body IR package executable representation: {error}"))?;
         for module in resolved.modules {
             let path = module.module_id.path().to_owned();
             let owner = owners.entry(path.clone()).or_insert_with(|| declaration_module(path));
             join_published_module(owner, module);
         }
     }
-    owners.into_values().collect()
+    Ok(owners.into_values().collect())
 }
 
 /// Collect the checked slots and methods that statements call, through nested blocks, match arms and closures.
