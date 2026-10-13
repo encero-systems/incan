@@ -523,6 +523,43 @@ fn math_constant_names_do_not_replace_user_bindings() -> Result<(), Box<dyn std:
 }
 
 /// An imported static factory receiver remains distinct from the method selected at the shared decorator span.
+/// A stale declaration span or foreign package owner cannot grant a math constant's value.
+#[test]
+fn math_constants_require_exact_source_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let tokens = lexer::lex("import std.math\n\ndef main() -> float:\n  return math.PI\n")
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let path = vec!["app".to_string()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(path.clone()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    for foreign_owner in [false, true] {
+        let mut info = checker.type_info().clone();
+        let mut changed = false;
+        for identity in info.references.resolved_identities.values_mut() {
+            if identity.kind == SemanticSourceTargetKind::Const && identity.declaration_name == "PI" {
+                if foreign_owner {
+                    identity.origin = incan_semantics_core::SymbolOrigin::Package {
+                        library: "unowned_library".to_string(),
+                        module_path: vec!["math".to_string()],
+                    };
+                } else {
+                    identity.declaration_span.start += 1;
+                }
+                changed = true;
+            }
+        }
+        assert!(changed, "the control must corrupt a retained constant identity");
+        let module = build_body_ir_module_v0(&program, &path, &info);
+        let body = body_named(&module, "main")?.render_snapshot();
+        assert!(!body.contains("const(3.141592653589793)"), "{body}");
+    }
+    Ok(())
+}
+
+/// An imported static factory receiver remains distinct from the method selected at the shared decorator span.
 #[test]
 fn imported_static_decorator_factory_retains_receiver() -> Result<(), Box<dyn std::error::Error>> {
     let registry_source = include_str!(
