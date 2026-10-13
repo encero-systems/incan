@@ -3161,8 +3161,10 @@ def library_method_arguments(
             if delegation.rust_path() != Some(str(selected.native_item)) or len(names) == 0 or names[0] != "Self":
                 return Err("unsupported Body IR SDK trait item differs from its delegation")
             mut closed = library_receiver_arguments(module, builder, reference, ["Self"])?
-            closed.extend(checked_type_arguments(builder, selected.type_arguments.clone())?)
-            closed.extend(checked_type_arguments(builder, target.type_args.clone())?)
+            for argument in checked_type_arguments(builder, selected.type_arguments)?:
+                closed.append(argument.clone())
+            for argument in checked_type_arguments(builder, target.type_args)?:
+                closed.append(argument.clone())
             if len(closed) != len(names):
                 return Err("unsupported Body IR SDK trait method type argument arity")
             return Ok(closed)
