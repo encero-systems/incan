@@ -451,3 +451,45 @@ fn rest_packs_drop_without_dropping_ordinary_collections() -> Result<(), Box<dyn
     assert!(drops.contains(&body.params[2].local));
     Ok(())
 }
+
+/// An open declaration element is not a concrete pack fact, even when the call itself inferred a type argument.
+#[test]
+fn generic_rest_calls_refuse_unretained_pack_elements() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def total[T](*xs: T) -> int:\n    return 1\n\ndef main() -> None:\n    println(total(1))\n";
+    let module = build(source, &["m", "generic_rest"])?;
+    assert!(
+        body_named(&module, "main")?
+            .render_snapshot()
+            .contains("rest call with an unretained concrete pack element")
+    );
+    Ok(())
+}
+
+/// Bounded rest binding refuses spread and omitted fixed inputs before recording partial argument effects.
+#[test]
+fn rest_calls_refuse_spreads_and_omitted_defaults() -> Result<(), Box<dyn std::error::Error>> {
+    for (arguments, refusal) in [("1, *(2, 3)", "unretained spread"), ("", "omitted ordinary argument")] {
+        let source = format!(
+            "def total(a: int = 1, *xs: int) -> int:\n    return a\n\ndef main() -> None:\n    println(total({arguments}))\n"
+        );
+        let module = build(&source, &["m", "bounded_rest"])?;
+        assert!(body_named(&module, "main")?.render_snapshot().contains(refusal));
+    }
+    Ok(())
+}
+
+/// Named JSON snapshots default an absent ordinary role; binary snapshots use the separately bumped wire version.
+#[test]
+fn ordinary_parameter_json_defaults_its_role() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def one(value: int) -> int:\n    return value\n",
+        &["m", "parameter_json"],
+    )?;
+    let parameter = &body_named(&module, "one")?.params[0];
+    let mut json = serde_json::to_value(parameter)?;
+    json.as_object_mut()
+        .ok_or("parameter JSON must be an object")?
+        .remove("kind");
+    assert_eq!(serde_json::from_value::<bir::CallableParam>(json)?, *parameter);
+    Ok(())
+}
