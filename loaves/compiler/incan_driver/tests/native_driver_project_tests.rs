@@ -13592,11 +13592,13 @@ fn constrained_newtype_validation_boundaries_produce_no_binary() -> Result<(), B
 #[test]
 fn web_payload_carriers_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
-    corpus::check_builtin_source(
+    let mut closure = corpus::runtime_closure(&fixture.formatting)?;
+    closure.extend_with(&sdk_closure(fixture)?)?;
+    corpus::check_builtin_source_with_closure(
         &fixture.driver_binary("debug"),
         &fixture.scratch("web-payload-carriers")?,
         &fixture.sysroot,
-        &fixture.formatting,
+        &closure,
         r#"import std.web as web
 from std.web import Json, Query, Html
 from std.web import Html as Page

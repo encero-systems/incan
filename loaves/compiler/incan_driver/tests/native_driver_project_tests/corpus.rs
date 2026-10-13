@@ -241,6 +241,18 @@ pub(super) fn check_builtin_source(
     runtime: &Path,
     program: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    check_builtin_source_with_closure(driver, root, sysroot, &runtime_closure(runtime)?, program)
+}
+
+/// Compare live builtin source bytes with an explicitly selected native dependency closure. A web carrier needs the
+/// SDK component's public re-exports, so its caller extends the runtime closure from that exact baked SDK receipt.
+pub(super) fn check_builtin_source_with_closure(
+    driver: &Path,
+    root: &Path,
+    sysroot: &Path,
+    closure: &NativeClosure,
+    program: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let project = root.join("builtin-parity");
     fs::create_dir_all(&project)?;
     let source = project.join("main.incn");
@@ -254,7 +266,7 @@ pub(super) fn check_builtin_source(
     }
     let native = project.join("native");
     success(
-        &compile_source(driver, &source, &native, sysroot, &runtime_closure(runtime)?)?,
+        &compile_source(driver, &source, &native, sysroot, closure)?,
         "native builtin compilation",
     );
     let legacy_output = project.join("legacy");

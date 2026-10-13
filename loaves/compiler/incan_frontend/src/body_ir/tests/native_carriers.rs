@@ -77,9 +77,9 @@ fn web_carriers_retain_foreign_tuple_layouts() -> Result<(), Box<dyn std::error:
         .map_err(|errors| format!("{errors:?}"))?;
     let declarations = library_nominal_declarations(checker.type_info());
     for (name, item) in [
-        ("Json", "axum::Json"),
-        ("Query", "axum::extract::Query"),
-        ("Html", "axum::response::Html"),
+        ("Json", "incan_stdlib_web::web::response::Json"),
+        ("Query", "incan_stdlib_web::web::request::Query"),
+        ("Html", "incan_stdlib_web::web::response::Html"),
     ] {
         let owner = declarations.iter().find(|owner| owner.name == name).ok_or_else(|| {
             format!(
@@ -171,5 +171,25 @@ fn source_json_keeps_its_declared_value_projection() -> Result<(), Box<dyn std::
         bir::StatementKind::Return { value: Some(bir::Operand::Place(value)) }
             if matches!(value.place.projection.as_slice(), [bir::PlaceElem::Field { name, canonical: Some(_), .. }] if name == "value")
     )), "{}", read.render_snapshot());
+    Ok(())
+}
+
+/// Html aliases retain the native constructor and String payload even when legacy omits the argument expression type.
+#[test]
+fn html_string_payload_retains_native_argument_type() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "from std.web import Html as Page\n\ndef render(text: str) -> Page:\n    return Page(text)\n\ndef main() -> None:\n    render(\"html\")\n    Page(\"literal\")\n";
+    let module = build(source, &["m", "html_payload"])?;
+    let render = body_named(&module, "render")?;
+    assert_eq!(render.return_type, IncanType::Named("Html".to_owned()));
+    assert!(
+        render.locals.iter().all(|local| local.ty != IncanType::Unknown),
+        "{}",
+        render.render_snapshot()
+    );
+    assert!(render.block.stmts.iter().any(|statement| matches!(
+        &statement.kind,
+        bir::StatementKind::Assign { rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::Constructor(target), _), .. }
+            if target.canonical.is_some() && target.canonical_field_layout.as_deref() == Some(&["0".to_owned()])
+    )), "{}", render.render_snapshot());
     Ok(())
 }
