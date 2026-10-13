@@ -1995,28 +1995,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let retained_method = self.retained_alias_method(recv, name, type_args, args, span);
         let declared = declared.or_else(|| retained_method.as_ref().map(|_| Vec::new()));
 
-        // The receiver is read before the arguments, matching source evaluation order: `recv.m(f())` observes the
-        // receiver place first. Method receivers are treated as borrowed rather than moved/cloned, mirroring how the
-        // existing Rust-emission backend's ownership planner treats most method receivers
-        // (`loaves/compiler/incan_emit/src/ownership.rs`) -- see this module's rustdoc for the full precedent
-        // discussion.
-        let receiver_operand = if let ast::Expr::Field(base, member) = &recv.node
-            && self.local_value_enum_variant_target(base, member, recv.span).is_some()
-        {
-            self.lower_expr_to_operand(recv, scope, out)
-        } else {
-            let recv_place = self.lower_expr_to_place(recv, scope, out);
-            let fact = if self
-                .type_info
-                .resolved_identity(span)
-                .is_some_and(collection_method_changes_receiver)
-            {
-                bir::OwnershipFact::MutBorrow
-            } else {
-                bir::OwnershipFact::Borrow
-            };
-            bir::Operand::place(recv_place, fact, false)
-        };
+        let receiver_operand = self.lower_method_receiver(recv, span, scope, out);
 
         let (mut arg_operands, binding) =
             match self.bind_declared_args(&format!("method `{name}`"), declared, args, scope, out) {
@@ -2107,6 +2086,43 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             false,
             out,
         )
+    }
+
+    /// Read a method receiver before its arguments, retaining existing enum construction and collection borrowing. A
+    /// checked static decorator factory uses the checker's selected mut-self fact; every other source receiver keeps
+    /// the existing borrow policy, matching the legacy ownership planner.
+    fn lower_method_receiver(
+        &mut self,
+        receiver: &ast::Spanned<ast::Expr>,
+        call_span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        if let ast::Expr::Field(base, member) = &receiver.node
+            && self
+                .local_value_enum_variant_target(base, member, receiver.span)
+                .is_some()
+        {
+            return self.lower_expr_to_operand(receiver, scope, out);
+        }
+        let place = self.lower_expr_to_place(receiver, scope, out);
+        let key = (call_span.start, call_span.end);
+        let mutable = self
+            .type_info
+            .resolved_identity(call_span)
+            .is_some_and(collection_method_changes_receiver)
+            || (self
+                .type_info
+                .declarations
+                .body_ir_decorator_static_receivers
+                .contains_key(&key)
+                && self.type_info.calls.mutable_receiver_method_calls.contains(&key));
+        let fact = if mutable {
+            bir::OwnershipFact::MutBorrow
+        } else {
+            bir::OwnershipFact::Borrow
+        };
+        bir::Operand::place(place, fact, false)
     }
 
     /// Invoke a checked callable expression through its evaluated value, retaining source evaluation order.

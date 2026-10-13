@@ -17,8 +17,9 @@ use super::decorated_method_receivers::DecoratedMethodReceiver;
 use super::derive_contract::DerivedKind;
 use super::trait_bound_relations::CallableMarkerOwner;
 use super::type_info::{
-    BodyIrDecoratorApplication, CapabilityDeclarationInfo, ProviderOperationDeclarationInfo, RegistryDefinitionInfo,
-    RegistryDescriptionInfo, RegistryDescriptionRegistry, RegistryExplicitEntryInfo,
+    BodyIrDecoratorApplication, BodyIrDecoratorStaticReceiver, CapabilityDeclarationInfo,
+    ProviderOperationDeclarationInfo, RegistryDefinitionInfo, RegistryDescriptionInfo, RegistryDescriptionRegistry,
+    RegistryExplicitEntryInfo,
 };
 use super::{
     DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, FunctionBindingInfo, MemberBindingSurface,
@@ -5559,6 +5560,12 @@ impl TypeChecker {
 
     /// Type-check a decorator factory expression such as `@logged(label="x")` or `@app.get("/")`.
     fn check_decorator_factory_expr(&mut self, decorator: &Spanned<Decorator>, display: &str) -> ResolvedType {
+        let key = (decorator.span.start, decorator.span.end);
+        self.type_info
+            .declarations
+            .body_ir_decorator_static_receivers
+            .remove(&key);
+        let static_receiver = self.body_ir_static_decorator_receiver(decorator);
         self.type_info
             .declarations
             .body_ir_decorator_applications
@@ -5589,8 +5596,44 @@ impl TypeChecker {
         let previous = self.body_ir_decorator_factory_span.replace(decorator.span);
         let result = self.check_expr(&factory_expr);
         self.body_ir_decorator_factory_span = previous;
+        if matches!(result, ResolvedType::Function(_, _))
+            && self
+                .type_info
+                .resolved_identity(decorator.span)
+                .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Method)
+            && let Some(receiver) = static_receiver
+        {
+            self.type_info
+                .declarations
+                .body_ir_decorator_static_receivers
+                .insert(key, receiver);
+        }
         self.retain_body_ir_decorator_factory(decorator, &result);
         result
+    }
+
+    /// Snapshot only a checked static symbol used as a two-segment factory receiver. Namespace paths and local callable
+    /// values do not acquire a storage identity through source spelling.
+    fn body_ir_static_decorator_receiver(
+        &self,
+        decorator: &Spanned<Decorator>,
+    ) -> Option<BodyIrDecoratorStaticReceiver> {
+        let [name, _] = decorator.node.path.segments.as_slice() else {
+            return None;
+        };
+        let symbol = self.symbols.lookup(name)?;
+        let Symbol {
+            kind: SymbolKind::Static(storage),
+            ..
+        } = self.symbols.get(symbol)?
+        else {
+            return None;
+        };
+        Some(BodyIrDecoratorStaticReceiver {
+            binding_name: name.clone(),
+            identity: self.symbols.identity_of(symbol)?.clone(),
+            ty: storage.ty.clone(),
+        })
     }
 
     /// Retain ordered arguments from the factory declaration actually resolved by checking, without changing its
@@ -5603,6 +5646,22 @@ impl TypeChecker {
             .body_ir_decorator_applications
             .remove(&key)
             .map(|application| application.factory_type_args);
+        if self
+            .type_info
+            .declarations
+            .body_ir_decorator_static_receivers
+            .contains_key(&key)
+        {
+            self.type_info.declarations.body_ir_decorator_applications.insert(
+                key,
+                BodyIrDecoratorApplication {
+                    callable_type: result.clone(),
+                    type_bindings: HashMap::new(),
+                    factory_type_args: partial_arguments.unwrap_or_default(),
+                },
+            );
+            return;
+        }
         let [name] = decorator.node.path.segments.as_slice() else {
             return;
         };

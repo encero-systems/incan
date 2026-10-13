@@ -1585,7 +1585,20 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// storage type. Only a genuinely unproven reference may use the legacy `External` recovery local.
     /// A synthetic truthiness call shares this span with its receiver, whose separate Body IR identity selects the
     /// value here while the unchanged legacy reference still selects the method.
+    /// Checked static decorator factories likewise retain their receiver's canonical identity and carrier separately
+    /// from their selected method at a shared synthetic span.
     fn place_for_name(&mut self, name: &str, span: ast::Span, ty: &IncanType) -> Option<bir::Place> {
+        if let Some(receiver) = self
+            .type_info
+            .declarations
+            .body_ir_decorator_static_receivers
+            .get(&(span.start, span.end))
+            .filter(|receiver| receiver.binding_name == name)
+        {
+            return self
+                .global_place(receiver.identity.clone(), self.checked_type(&receiver.ty))
+                .map(bir::Place::from_global);
+        }
         if let Some(identity) = self
             .type_info
             .protocols

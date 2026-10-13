@@ -1197,6 +1197,9 @@ pub struct DeclarationArtifacts {
     /// Legacy keeps its original expression and call-site tables; this snapshot closes the factory only after its
     /// returned decorator has been checked against the decorated declaration.
     pub body_ir_decorator_applications: HashMap<(usize, usize), BodyIrDecoratorApplication>,
+    /// Static receivers of checked two-segment decorator factories, retained separately from the selected method at
+    /// the same synthetic span. Legacy reference and expression-type tables remain unchanged.
+    pub body_ir_decorator_static_receivers: HashMap<(usize, usize), BodyIrDecoratorStaticReceiver>,
     /// RFC 036: Method names whose declaration was rebound through a user-defined decorator chain.
     pub decorated_method_bindings: HashMap<(String, String), DecoratedMethodBindingInfo>,
     /// Local function declarations that take a decorated method's receiver, keyed by declaration span (#1790).
@@ -1226,6 +1229,17 @@ pub struct BodyIrDecoratorApplication {
     pub type_bindings: HashMap<String, ResolvedType>,
     /// Factory type arguments in the resolved declaration's parameter order, before application substitution.
     pub factory_type_args: Vec<ResolvedType>,
+}
+
+/// The checked static value a decorator factory method borrows, without conflating it with the selected method.
+#[derive(Debug, Clone)]
+pub struct BodyIrDecoratorStaticReceiver {
+    /// Source binding used for this receiver; aliases keep their canonical storage identity below.
+    pub binding_name: String,
+    /// Canonical checked static declaration, including its provider module.
+    pub identity: CanonicalSymbolId,
+    /// Static carrier before the factory result overwrites the shared synthetic expression span.
+    pub ty: ResolvedType,
 }
 
 /// Checked local inheritance facts for direct execution, without changing the legacy class or symbol tables.

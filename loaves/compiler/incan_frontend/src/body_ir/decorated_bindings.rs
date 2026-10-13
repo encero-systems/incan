@@ -130,7 +130,14 @@ pub(super) fn supports_function(
             |decorator| match decorators::from_segments(&decorator.node.path.segments) {
                 Some(decorators::DecoratorId::RustExtern) => false,
                 Some(_) => true,
-                None => decorator.node.path.segments.len() == 1,
+                None => {
+                    decorator.node.path.segments.len() == 1
+                        || facts
+                            .type_info
+                            .declarations
+                            .body_ir_decorator_static_receivers
+                            .contains_key(&(decorator.span.start, decorator.span.end))
+                }
             },
         )
 }
@@ -395,6 +402,9 @@ fn lower_application(
 /// Recreate only the expression the checker already evaluated at this decorator's own span. Its recorded identities,
 /// argument bindings and result type remain authoritative; this helper does not resolve or recheck a factory.
 fn decorator_expression(decorator: &ast::Spanned<ast::Decorator>) -> Option<ast::Spanned<ast::Expr>> {
+    if decorator.node.path.segments.len() > 2 {
+        return None;
+    }
     let path = ast::Spanned::new(
         ast::Expr::Ident(decorator.node.path.segments.first()?.clone()),
         decorator.span,
@@ -413,10 +423,17 @@ fn decorator_expression(decorator: &ast::Spanned<ast::Decorator>) -> Option<ast:
             ast::DecoratorArg::Named(_, ast::DecoratorArgValue::Type(_)) => return None,
         }
     }
-    Some(ast::Spanned::new(
-        ast::Expr::Call(Box::new(path), decorator.node.type_args.clone(), arguments),
-        decorator.span,
-    ))
+    let expression = match decorator.node.path.segments.as_slice() {
+        [_, method] => ast::Expr::MethodCall(
+            Box::new(path),
+            method.clone(),
+            decorator.node.type_args.clone(),
+            arguments,
+        ),
+        [_] => ast::Expr::Call(Box::new(path), decorator.node.type_args.clone(), arguments),
+        _ => return None,
+    };
+    Some(ast::Spanned::new(expression, decorator.span))
 }
 
 /// Build the visible callable with the final checked signature; every invocation reads the initialized replacement.
