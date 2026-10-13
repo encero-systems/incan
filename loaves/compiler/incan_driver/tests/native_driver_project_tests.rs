@@ -2630,6 +2630,32 @@ def main() -> None:
     )
 }
 
+/// Structural iteration evaluates its source once, polls the selected cursor and shares the comprehension path.
+#[test]
+fn structural_iteration_hooks_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("structural-iteration-hooks")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!("../../incan_test_support/fixtures/native_iteration/structural.incn"),
+    )
+}
+
+/// Fallible polling propagates its first error and distinguishes exhaustion from a successfully yielded item.
+#[test]
+fn fallible_iteration_hooks_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("fallible-iteration-hooks")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!("../../incan_test_support/fixtures/native_iteration/fallible.incn"),
+    )
+}
+
 /// Trait-required computed getters evaluate their bodies at every source property access.
 #[test]
 fn checked_computed_property_dispatch_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

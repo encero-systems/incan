@@ -6056,6 +6056,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/iteration_protocol.rs": {
+      "disposition": "keep",
+      "notes": "Canonical iteration hook targets, checked polling and temporary-call fact preservation; frontend contract coverage.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/body_ir/tests/library_types.rs": {
       "disposition": "keep",
       "notes": "Body IR-only SDK type identity and nested declaration retention on the direct route.",
