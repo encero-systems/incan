@@ -278,7 +278,7 @@ fn method_signature(
         };
         let owner_identity = rebased(&cache.lookup_identity(path, &owner)?);
         cache.callable_source_identity(&owner_identity)?;
-        if method.is_async || !method.has_body || !method.type_params.is_empty() {
+        if method.is_async || !method.has_body || !method.type_params.is_empty() || method.trait_target.is_some() {
             return None;
         }
         let receiver = method.receiver.as_ref().map(|receiver| {

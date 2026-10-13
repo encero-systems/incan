@@ -43,8 +43,6 @@ fn sdk_method_overload_retains_selected_signature() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
-/// A Body IR provider-slot identity receives its own crate-call record while legacy keeps the source reference.
-///
 /// Explicit trait implementations have distinct native instantiations and cannot use an inherent method path.
 #[test]
 fn sdk_trait_implementations_require_trait_dispatch() -> Result<(), Box<dyn std::error::Error>> {
