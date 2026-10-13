@@ -33,7 +33,7 @@ fn fixed_unpack_with_rest_output_matches_legacy() -> Result<(), Box<dyn std::err
     )
 }
 
-/// One generic trait slot cannot select the first of several checked SDK implementations for the same owner.
+/// Checked SDK overloads cannot share one native path with conflicting parameter or result signatures.
 #[test]
 fn sdk_numeric_trait_dispatch_refuses_ambiguous_instantiations() -> Result<(), Box<dyn std::error::Error>> {
     check_project_modules_refusal_case(
@@ -43,7 +43,7 @@ fn sdk_numeric_trait_dispatch_refuses_ambiguous_instantiations() -> Result<(), B
         ),
         &[],
         b"5\n2\n772\n513\n",
-        "unsupported Body IR trait method at several instantiations for one receiver",
+        "unsupported Body IR conflicting native call signatures",
     )
 }
 
