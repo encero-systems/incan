@@ -38,22 +38,24 @@ impl PartialTarget {
     }
 }
 
-/// Select a Partial's target from the checker's recorded projection kind: a model or class constructor, or otherwise
-/// a function.
+/// Select a Partial's target from the checker's recorded constructor or function projection kind.
 fn partial_target(partial: &ast::PartialDecl, facts: &BodyIrLoweringFacts<'_, '_>) -> Result<PartialTarget, String> {
     match facts
         .type_info
         .partial_projection(&partial.name)
         .map(|projection| &projection.target_kind)
     {
-        Some(PartialProjectionTargetKind::ModelConstructor | PartialProjectionTargetKind::ClassConstructor) => {
-            constructor_target(partial, facts).map(PartialTarget::Constructor)
-        }
+        Some(
+            PartialProjectionTargetKind::ModelConstructor
+            | PartialProjectionTargetKind::ClassConstructor
+            | PartialProjectionTargetKind::NewtypeConstructor,
+        ) => constructor_target(partial, facts).map(PartialTarget::Constructor),
         _ => function_target(partial, facts).map(PartialTarget::Function),
     }
 }
 
-/// Prove a constructor Partial's target is one retained model or class of this module, by its checked identity.
+/// Prove a constructor Partial's target is one retained model, class, or plain newtype of this module, by its checked
+/// identity.
 ///
 /// The forwarded surface is the declaration's complete field layout in order, so a field the checker projected in
 /// another order, or a declaration without retained layout facts, keeps the Partial refused.
@@ -243,11 +245,7 @@ fn forward_partial(
             out,
         ),
         PartialTarget::Constructor(target) => {
-            if !params
-                .iter()
-                .map(|parameter| &parameter.name)
-                .eq(target.declaration.fields.iter())
-            {
+            if !constructor_parameter_layout_matches(params, &target.declaration) {
                 builder.push_unsupported_stmt(
                     "source Partial whose parameters differ from its constructor's field layout".to_string(),
                     span,
@@ -280,6 +278,25 @@ fn forward_partial(
         span,
     });
     builder.insert_scope_drops(out, scope);
+}
+
+/// Relate source parameter names to physical fields only for a checked retained constructor; a newtype's `value`
+/// parameter fills its sole tuple field `0`, while model and class parameters keep their declared field names.
+pub(super) fn constructor_parameter_layout_matches(
+    params: &[bir::CallableParam],
+    declaration: &bir::NominalDeclaration,
+) -> bool {
+    if declaration.canonical.kind == SemanticSourceTargetKind::Newtype {
+        return declaration.fields == ["0"]
+            && params.len() == 1
+            && params.first().is_some_and(|parameter| {
+                parameter.name == "value" && Some(&parameter.ty) == declaration.field_types.first()
+            });
+    }
+    params
+        .iter()
+        .map(|parameter| &parameter.name)
+        .eq(declaration.fields.iter())
 }
 
 /// Retain a source Partial as an executable body, or a named unsupported body when target facts are unavailable.

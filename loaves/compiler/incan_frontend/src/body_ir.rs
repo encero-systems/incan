@@ -1921,6 +1921,7 @@ mod bodies;
 mod enum_types;
 mod opaque_returns;
 mod parameter_types;
+mod partial_closures;
 mod partials;
 mod trait_values;
 

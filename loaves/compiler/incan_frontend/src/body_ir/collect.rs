@@ -365,8 +365,8 @@ pub(super) fn collect_local_enum_declarations(
 }
 
 /// Collect the source expressions a synthesized partial needs to retain target defaults in Body IR: a function's
-/// parameter defaults, and a model's or class's field defaults for a partial over its constructor, in declaration
-/// order.
+/// parameter defaults, a model's or class's field defaults, or a plain newtype's required value parameter, in
+/// declaration order.
 pub(super) fn collect_function_default_sources(program: &ast::Program) -> FunctionDefaultSources {
     program
         .declarations
@@ -385,6 +385,13 @@ pub(super) fn collect_function_default_sources(program: &ast::Program) -> Functi
             )),
             ast::Declaration::Model(model) => Some((model.name.clone(), field_default_sources(&model.fields))),
             ast::Declaration::Class(class) => Some((class.name.clone(), field_default_sources(&class.fields))),
+            ast::Declaration::Newtype(newtype) if is_direct_replacement_plain_newtype(newtype) => Some((
+                newtype.name.clone(),
+                vec![FunctionDefaultSource {
+                    param_span: newtype.underlying.span,
+                    default: None,
+                }],
+            )),
             _ => None,
         })
         .collect()
