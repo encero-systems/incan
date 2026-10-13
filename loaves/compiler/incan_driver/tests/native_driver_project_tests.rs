@@ -91,34 +91,30 @@ fn callable_bound_closure_and_model_output_matches_legacy() -> Result<(), Box<dy
     )
 }
 
-/// The original callable fixture advances past its returned method call and retains its separate projection refusal.
+/// The complete callable fixture reaches a named field-layout refusal until the adapter admits function pointer fields.
 #[test]
 fn returned_callable_fixture_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    let fixture = driver_fixture()?;
-    let root = fixture.scratch("returned-callable-fixture")?;
-    let source = root.join("probe.incn");
-    fs::write(
-        &source,
+    check_project_modules_refusal_case(
+        "returned-callable-fixture",
         include_str!(
             "../../incan_test_support/fixtures/behavior/cli_values_and_calls/capturing_closures_in_function_types.incn"
         ),
-    )?;
-    let closure = corpus::runtime_closure(&fixture.formatting)?;
-    let refused = corpus::source_command(
-        &fixture.driver_binary("debug"),
-        &source,
-        &root.join("native"),
-        &fixture.sysroot,
-        &closure,
+        &[],
+        b"6\n6\n11\n5\n-2\n4\n11\n8\n4\n6\n8\n0\n2\n",
+        "unsupported callable model field declaration",
     )
-    .output()?;
-    assert!(!refused.status.success());
-    assert!(
-        String::from_utf8_lossy(&refused.stderr).contains("unsupported Body IR model index or slice projection"),
-        "{}",
-        String::from_utf8_lossy(&refused.stderr)
-    );
-    Ok(())
+}
+
+/// A function pointer field alone reaches the adapter's named refusal before any executable body is admitted.
+#[test]
+fn unexecuted_callable_model_fields_are_named_refused() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_refusal_case(
+        "unexecuted-callable-model-field",
+        "model Op:\n    step: (int) -> int\n\ndef main() -> None:\n    println(42)\n",
+        &[],
+        b"42\n",
+        "unsupported callable model field declaration",
+    )
 }
 
 /// Mixed fixed and rest unpacking preserves the complete original fixture's byte-identical legacy output.
