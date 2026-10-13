@@ -207,6 +207,25 @@ pub fn select_library_generation_reference(
     admit_generation_reference(owners, reference, metadata, source_authority_digest, checked_files)
 }
 
+/// Look up the original generation for restoration, declining only whole-owner absence.
+/// Present but damaged or mismatched owners still fail the same checked association admission.
+pub(crate) fn select_optional_library_generation_reference(
+    store: &OvenStore,
+    reference: &LibraryGenerationReference,
+    metadata: Arc<SelectedLibraryMetadata>,
+    source_authority_digest: &str,
+    checked_files: &[OvenPackagedLibraryMetadataFile],
+) -> CliResult<Option<Arc<SelectedLibraryGeneration>>> {
+    validate_generation_reference(reference)?;
+    let Some(owners) = store
+        .try_select_payloads_for_execution(std::slice::from_ref(&reference.owner_identity))
+        .map_err(|error| invalid(error.to_string()))?
+    else {
+        return Ok(None);
+    };
+    admit_generation_reference(owners, reference, metadata, source_authority_digest, checked_files).map(Some)
+}
+
 /// Admit an original source-free generation through existing read-only Store locks, without any publication or repair.
 ///
 /// Exact owner identity, reproduced receipt, complete payload bytes and original checked metadata association use

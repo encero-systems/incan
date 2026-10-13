@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::build::library_outputs::packaged_library_loaf_store_root;
 use crate::build::output_paths::{
@@ -24,7 +25,7 @@ use oven_rustc::rustc::select_direct_rustc_plan_for_execution;
 use oven_store::digest_bytes;
 use oven_store::store::{
     OvenArtifactKind, OvenArtifactMaterializedDirectory, OvenArtifactMaterializedFile, OvenArtifactPublishRequest,
-    OvenStore, OvenStoreExecutionPayload, OvenStoreLimits, PublishedOvenStore,
+    OvenStore, OvenStoreExecutionPayload, PublishedOvenStore,
 };
 
 /// Exported ordinary package descriptors with every exact destination owner retained through publication.
@@ -258,18 +259,19 @@ fn publish_selected_provider_loaf(
 /// This shared producer boundary preserves the ordinary bake handoff. The caller retains the checked preparation and
 /// its profile selections through publication, exports every profile closure before entering, and supplies its final
 /// source authority after lock publication. The metadata and generation leases remain held through atomic index
-/// publication. Real profile outputs are required; source freshness is verified before the association is sealed.
+/// publication. The returned original generation lease must survive completed-output publication. Real profile
+/// outputs are required; source freshness is verified before the association is sealed.
 pub(crate) fn publish_checked_library_package(
     prepared: &PreparedLibraryProject,
     source_authority_digest: &str,
     profiles: BTreeMap<String, OvenPackagedLibraryLoafProfile>,
-    limits: OvenStoreLimits,
-) -> CliResult<()> {
+    store: &OvenStore,
+) -> CliResult<Option<Arc<super::library_generation::SelectedLibraryGeneration>>> {
     let metadata_files =
         packaged_library_metadata_files(&prepared.manifest_path, &prepared.library_manifest, &prepared.out_dir)?;
     let package_store = OvenStore::with_release(
         packaged_library_loaf_store_root(&prepared.out_dir),
-        limits,
+        *store.limits(),
         &incan_oven_facet::compiler_identity(),
     );
     let checked_metadata = prepared
@@ -294,13 +296,18 @@ pub(crate) fn publish_checked_library_package(
         .as_ref()
         .map(|owner| {
             super::library_generation::publish_library_generation(
-                &package_store,
+                store,
                 &prepared.project_root,
                 source_authority_digest,
                 owner,
             )
         })
         .transpose()?;
+    // Keep the exact association in the primary Store as well as its portable package export. A completed output
+    // can then restore both original owners after the replaceable package projection is removed.
+    if let Some(generation) = &generation_owner {
+        generation.export_into(&package_store)?;
+    }
     let manifest = OvenPackagedLibraryLoafManifest {
         schema_version: OVEN_PACKAGED_LIBRARY_LOAF_SCHEMA_VERSION,
         source_authority_digest: source_authority_digest.to_string(),
@@ -313,7 +320,7 @@ pub(crate) fn publish_checked_library_package(
     write_packaged_library_loaf_manifest(&prepared.out_dir, &manifest)?;
     // The destination lease protects the imported metadata while generation publication may prune this Store.
     drop(exported_metadata_owner);
-    Ok(())
+    Ok(generation_owner)
 }
 
 /// Atomically publish the package-local index only after every referenced Loaf and library output exists.
