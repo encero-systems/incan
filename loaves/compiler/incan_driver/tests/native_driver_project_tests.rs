@@ -210,8 +210,9 @@ fn capturing_result_callbacks_output_matches_legacy() -> Result<(), Box<dyn std:
     .output()?;
     assert!(!refused.status.success());
     assert!(
-        String::from_utf8_lossy(&refused.stderr)
-            .contains("unsupported Body IR closure result outside scalars, owned text and lists"),
+        String::from_utf8_lossy(&refused.stderr).contains(
+            "unsupported Body IR closure result outside scalars, owned text, collections and retained model values"
+        ),
         "{}",
         String::from_utf8_lossy(&refused.stderr)
     );
