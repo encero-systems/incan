@@ -15448,6 +15448,45 @@ fn static_collection_defaults_across_modules_match_legacy() -> Result<(), Box<dy
     )
 }
 
+/// A factory method on an imported static initializes a callable replacement with legacy byte parity.
+#[test]
+fn imported_static_decorator_factory_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    check_project_modules_case(
+        "imported_static_decorator_factory",
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/imported_static_decorator_receiver/main.incn"
+        ),
+        &[
+            (
+                "probe_registry.incn",
+                include_str!(
+                    "../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/imported_static_decorator_receiver/probe_registry.incn"
+                ),
+            ),
+            (
+                "probe_decorated.incn",
+                include_str!(
+                    "../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/imported_static_decorator_receiver/probe_decorated.incn"
+                ),
+            ),
+        ],
+        b"7\n",
+    )
+}
+
+/// A mutable static factory initializes once and preserves its receiver's state across replacement calls.
+#[test]
+fn static_decorator_factory_effects_output_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("static-decorator-factory-effects")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        "model Registry:\n  hits: int\n  def add[F](mut self, label: str, amount: int) -> (F) -> F:\n    self.hits += amount\n    println(label)\n    return (func) => func\n\nstatic REGISTRY: Registry = Registry(hits=0)\n\n@REGISTRY.add(\"factory\", 1)\ndef increment(value: int) -> int:\n  return value + 1\n\ndef main() -> None:\n  println(increment(2))\n  println(increment(4))\n  println(REGISTRY.hits)\n",
+    )
+}
+
 /// Literal integer constant arithmetic preserves legacy's boundary values and evaluation result.
 #[test]
 fn integer_constant_arithmetic_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

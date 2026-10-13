@@ -489,6 +489,55 @@ fn imported_model_alias_return_uses_declared_carrier() -> Result<(), Box<dyn std
     Ok(())
 }
 
+/// An imported static factory receiver remains distinct from the method selected at the shared decorator span.
+#[test]
+fn imported_static_decorator_factory_retains_receiver() -> Result<(), Box<dyn std::error::Error>> {
+    let registry_source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/imported_static_decorator_receiver/probe_registry.incn"
+    );
+    let decorated_source = include_str!(
+        "../../../../incan_test_support/fixtures/behavior/cli_modules_and_declarations/imported_static_decorator_receiver/probe_decorated.incn"
+    );
+    let registry = build(registry_source, &["probe_registry"])?;
+    let storage = registry.static_declarations.first().ok_or("missing registry static")?;
+    let identity = storage.canonical.clone();
+    let receiver_type = storage.ty.clone();
+    let module = build_with_published_imports(
+        decorated_source,
+        &["probe_decorated"],
+        &[("probe_registry", &["probe_registry"], registry_source)],
+        &[registry],
+    )?;
+    assert_eq!(module.decorated_bindings.len(), 1, "{}", module.render_snapshot());
+    let initializer = module
+        .static_declarations
+        .iter()
+        .find_map(|storage| match &storage.initial {
+            bir::StaticInitializer::Computed(body) if storage.canonical.declaration_name == "decorated" => Some(body),
+            _ => None,
+        })
+        .ok_or("missing decorated initializer")?;
+    let receiver = initializer
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Method(target),
+                args,
+                ..
+            } if target.name == "add" => match args.first() {
+                Some(bir::ArgumentElement::One(bir::Operand::Place(read))) => read.place.global(),
+                _ => None,
+            },
+            _ => None,
+        })
+        .ok_or("missing static factory receiver")?;
+    assert_eq!(receiver.identity, identity);
+    assert_eq!(receiver.ty, receiver_type);
+    Ok(())
+}
+
 /// Checked literal integer arithmetic retains one value without changing legacy's evaluation table.
 #[test]
 fn literal_integer_constant_arithmetic_retains_values() -> Result<(), Box<dyn std::error::Error>> {
