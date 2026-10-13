@@ -577,3 +577,34 @@ fn retains_native_task_binder() -> Result<(), Box<dyn std::error::Error>> {
     );
     Ok(())
 }
+
+/// A spawning SDK wrapper retains its runtime-owned task return and its own future parameter binder.
+#[test]
+fn retains_native_task_sdk_signature() -> Result<(), Box<dyn std::error::Error>> {
+    let mut cache = crate::typechecker::stdlib_loader::StdlibAstCache::new();
+    let path = vec!["std".to_owned(), "async".to_owned(), "task".to_owned()];
+    let identity = cache
+        .lookup_identity(&path, "spawn")
+        .ok_or("SDK spawn source identity")?;
+    let mut info = TypeCheckInfo::default();
+    info.references.resolved_identities.insert((0, 1), identity);
+    let calls = library_call_delegations(&info);
+    let call = calls
+        .iter()
+        .find(|call| call.canonical.declaration_name == "spawn")
+        .ok_or_else(|| format!("SDK spawn declaration: {calls:?}"))?;
+    assert_eq!(
+        call.return_type,
+        IncanType::Generic {
+            base: "JoinHandle".into(),
+            args: vec![IncanType::TypeVar("T".into())]
+        },
+        "{call:?}"
+    );
+    assert_eq!(
+        call.parameters,
+        vec![IncanType::TypeVar("TaskFuture".into())],
+        "{call:?}"
+    );
+    Ok(())
+}
