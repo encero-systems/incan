@@ -83,7 +83,7 @@ fn published_generic_declarations_reach_owned_next_stages() -> Result<(), Box<dy
     Ok(())
 }
 
-/// Published Partials remain executable when the fixture reaches its separate imported function-value boundary.
+/// Public Partials and both module-bound function-value spellings execute the complete original package fixture.
 #[test]
 fn published_partial_reaches_function_value_next_stage() -> Result<(), Box<dyn std::error::Error>> {
     let graph = driver_fixture()?;
@@ -102,8 +102,7 @@ fn published_partial_reaches_function_value_next_stage() -> Result<(), Box<dyn s
         &closure,
         Duration::from_secs(180),
     )?;
-    assert_eq!(class, "refused", "{detail}");
-    assert_eq!(detail, "unsupported Body IR type Unknown");
+    assert_eq!(class, "pass", "{detail}");
     Ok(())
 }
 

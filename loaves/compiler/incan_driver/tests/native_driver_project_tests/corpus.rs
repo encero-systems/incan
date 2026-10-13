@@ -119,6 +119,7 @@ pub(super) fn check_declarations(
     success(
         &support::repo_command()
             .current_dir(&project)
+            .env("INCAN_HOME", support::oven_fixture_home()?)
             .arg("build")
             .arg(&source)
             .arg(&legacy)

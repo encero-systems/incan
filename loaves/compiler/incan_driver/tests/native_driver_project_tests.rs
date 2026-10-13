@@ -7951,7 +7951,12 @@ fn direct_route_package_module_binding_matches_legacy() -> Result<(), Box<dyn st
     )?;
     let mut publish = support::cli_project::configured_incan_command(&library, &["oven", "bake", "--project", "."]);
     support::configure_explicit_oven_bake_command(&mut publish)?;
-    success(&publish.output()?, "module binding package publication");
+    publish.env("INCAN_OVEN_BAKE_PROFILES", "debug,release");
+    success(&publish.output()?, "module binding portable package publication");
+    let mut prepare = support::cli_project::configured_incan_command(&root, &["oven", "bake", "--project", "."]);
+    support::configure_explicit_oven_bake_command(&mut prepare)?;
+    prepare.env("INCAN_OVEN_BAKE_PROFILES", "debug,release");
+    success(&prepare.output()?, "module binding consumer preparation");
     assert_package_routes_match(fixture, &root, "package_module_binding", b"aliased\n")
 }
 
@@ -8182,6 +8187,7 @@ fn assert_package_routes_match(
     success(
         &support::repo_command()
             .current_dir(root)
+            .env("INCAN_HOME", support::oven_fixture_home()?)
             .arg("build")
             .arg(&source)
             .arg(&legacy)
