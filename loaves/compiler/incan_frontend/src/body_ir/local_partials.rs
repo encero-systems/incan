@@ -66,6 +66,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     callee: bir::Callee::Method(bir::MethodTarget {
                         name: name.clone(),
                         intrinsic_carrier: None,
+                        reflection: None,
                         canonical: Some(canonical.clone()),
                         type_args: Vec::new(),
                         binding: bir::ArgumentBinding::resolved_positional(params.len()),

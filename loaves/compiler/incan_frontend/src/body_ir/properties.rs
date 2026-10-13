@@ -146,6 +146,7 @@ impl BodyBuilder<'_, '_> {
                 name,
                 canonical: Some(canonical),
                 intrinsic_carrier: None,
+                reflection: None,
                 type_args: Vec::new(),
                 binding: bir::ArgumentBinding::resolved_positional(0),
             }),

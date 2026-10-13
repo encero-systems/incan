@@ -2083,7 +2083,8 @@ fn valid_serde_names(declaration: &crate::plan::ModelDeclaration, tuple: bool) -
                 .any(|derive| matches!(derive.as_str(), "serde::Serialize" | "serde::Deserialize")))
 }
 
-/// Validate named model layouts and single-slot newtypes, rejecting cyclic layouts before invoking rustc.
+/// Validate model and newtype metadata before declaration injection. Unsupported callable field layouts retain a named
+/// refusal distinct from malformed metadata; size cycles are checked separately.
 fn validate_models(plan: &Plan) -> Result<(), PlanError> {
     let mut names: BTreeSet<_> = plan.functions.iter().map(|function| function.name.clone()).collect();
     for declaration in &plan.models {

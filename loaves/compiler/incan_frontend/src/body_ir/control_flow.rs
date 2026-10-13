@@ -1360,7 +1360,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// A materialized list expression owns its items, as legacy iterates a call result, literal, or comprehension
     /// directly by value. Named places and projections require the checker's explicit consumption decision.
-    fn temporary_list_iterable(&self, place: &bir::Place, ty: &IncanType) -> bool {
+    pub(super) fn temporary_list_iterable(&self, place: &bir::Place, ty: &IncanType) -> bool {
         collection_member_types(ty, CollectionTypeId::List).is_some()
             && place.projection.is_empty()
             && place

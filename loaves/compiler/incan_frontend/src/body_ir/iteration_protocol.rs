@@ -103,6 +103,7 @@ impl BodyBuilder<'_, '_> {
             name: canonical.declaration_name.clone(),
             canonical: Some(canonical.clone()),
             intrinsic_carrier: None,
+            reflection: None,
             type_args: hook.type_args.iter().map(|ty| self.checked_type(ty)).collect(),
             binding,
         };
