@@ -18,6 +18,36 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::OnceLock;
 
+/// Newtype union narrowing preserves present, absent, and independently exhaustive branch output from legacy.
+#[test]
+fn newtype_union_isinstance_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("newtype-union-isinstance")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_enums_and_matching/newtype_union_isinstance.incn"
+        ),
+    )
+}
+
+/// A callable-bound function invokes both a capturing closure and a model using their checked representations.
+#[test]
+fn callable_bound_closure_and_model_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    corpus::check_builtin_source(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("callable-bound-closure-model")?,
+        &fixture.sysroot,
+        &fixture.formatting,
+        include_str!(
+            "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/callable_bound_closure_and_model.incn"
+        ),
+    )
+}
+
 /// The original callable fixture advances past its returned method call and retains its separate projection refusal.
 #[test]
 fn returned_callable_fixture_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
