@@ -76,15 +76,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
             _ => return Err("partial callable with a non-function-name target".to_string()),
         };
-        if target
-            .params
-            .iter()
-            .any(|param| {
-                param.name.is_none()
-                    || (param.kind != ast::ParamKind::Normal
-                        && (target.receiver.is_some() || !partial.args.is_empty()))
-            })
-        {
+        if target.params.iter().any(|param| {
+            param.name.is_none()
+                || (param.kind != ast::ParamKind::Normal && (target.receiver.is_some() || !partial.args.is_empty()))
+        }) {
             return Err("partial callable target with an unnamed or rest parameter".to_string());
         }
         Ok(target)

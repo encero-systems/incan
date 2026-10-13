@@ -79,6 +79,7 @@ fn nominal(type_info: &TypeCheckInfo, name: &str) -> Option<bir::NominalDeclarat
     Some(bir::NominalDeclaration {
         native_item: String::new(),
         class_inheritance: None,
+        native_type_arguments: Vec::new(),
         direct_declaration_id: CompilerNodeId::declaration_span(&module, offset, offset + 1),
         canonical,
         name: name.to_owned(),

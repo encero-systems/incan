@@ -1,6 +1,11 @@
 """Resolve complete checked carrier and collection types against one retained native layout context."""
 
-from rust::incan_semantics_core import IncanType as RustType, IncanCallableParam, IncanCallableParamKind, RuntimeBuiltinType
+from rust::incan_semantics_core import (
+    IncanType as RustType,
+    IncanCallableParam,
+    IncanCallableParamKind,
+    RuntimeBuiltinType,
+)
 from rust::incan_semantics_core::body_ir import NominalDeclaration, EnumDeclaration as RustEnumDeclaration
 from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
 from pub::incan_mir_plan import PlanType, ListLeaf, EnumDeclaration, TupleElement
