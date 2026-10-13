@@ -44,7 +44,9 @@ pub(super) fn collect_local_receiver_methods(
     methods
 }
 
-/// Retain checker-evaluated constants and checked static literal aggregates once; computed aggregates stay absent.
+/// Retain checker-evaluated constants, checked static literal aggregates and literal integer arithmetic once.
+/// Computed aggregates and symbolic arithmetic stay absent; additional values belong only to Body IR and never
+/// update legacy's evaluation table.
 pub(super) fn collect_constants(program: &ast::Program, type_info: &TypeCheckInfo) -> Vec<bir::ConstantDeclaration> {
     program
         .declarations
@@ -63,6 +65,9 @@ pub(super) fn collect_constants(program: &ast::Program, type_info: &TypeCheckInf
                 Some(crate::typechecker::ConstValue::Float(value)) => bir::Constant::Float(value.to_string()),
                 Some(crate::typechecker::ConstValue::Bool(value)) => bir::Constant::Bool(*value),
                 Some(crate::typechecker::ConstValue::FrozenStr(value)) => bir::Constant::Str(value.clone()),
+                None if type_info.expr_type(item.value.span) == Some(&ResolvedType::Int) => {
+                    bir::Constant::Int(literal_integer_constant(&item.value.node)?)
+                }
                 _ => frozen_literal_constant(
                     &item.value.node,
                     &semantic_type_from_resolved(type_info.expr_type(item.value.span)?),
@@ -108,6 +113,26 @@ fn frozen_literal_constant(value: &ast::Expr, ty: &IncanType) -> Option<bir::Con
         _ => return None,
     };
     Some(bir::Constant::FrozenAggregate(ty.clone(), elements))
+}
+
+/// Evaluate only literal signed integer addition, subtraction, multiplication and negation. Each intermediate must fit
+/// i64, matching legacy's const arithmetic; names, calls, sized literals and every other operation stay unretained.
+fn literal_integer_constant(value: &ast::Expr) -> Option<i64> {
+    match value {
+        ast::Expr::Literal(ast::Literal::Int(value)) if value.suffix.is_none() && value.fits_i64() => Some(value.value),
+        ast::Expr::Unary(ast::UnaryOp::Neg, inner) => literal_integer_constant(&inner.node)?.checked_neg(),
+        ast::Expr::Binary(left, op, right) => {
+            let left = literal_integer_constant(&left.node)?;
+            let right = literal_integer_constant(&right.node)?;
+            match op {
+                ast::BinaryOp::Add => left.checked_add(right),
+                ast::BinaryOp::Sub => left.checked_sub(right),
+                ast::BinaryOp::Mul => left.checked_mul(right),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
 }
 
 /// Retain alias-expanded nongeneric type declarations and their checker-proven nominal references.

@@ -321,7 +321,7 @@ fn build_body_ir_module_v0_with_provider_operations(
         .chain(
             constant_declarations
                 .iter()
-                .filter(|declaration| matches!(declaration.value, bir::Constant::FrozenAggregate(..))),
+                .filter(|declaration| matches!(declaration.value, bir::Constant::FrozenAggregate(..) | bir::Constant::Int(_))),
         )
         .map(|declaration| (declaration.canonical.clone(), declaration.value.clone()))
         .collect::<HashMap<_, _>>();

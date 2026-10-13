@@ -218,9 +218,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Return the checked value a `const` read at `ty` stands for, so the read is that constant rather than a global.
     ///
     /// A constant a context module published keeps its retained value, whether it is read by a bare imported name or
-    /// through a module binding (`helpers.LABEL`). A constant this module declares takes the checker's evaluated value
-    /// once its identity proves the module and declaration kind, because the evaluation table is keyed by name. Any
-    /// other global, and a value the read's checked type does not admit, keeps its place.
+    /// through a module binding (`helpers.LABEL`). This module's retained integer declarations use that same canonical
+    /// table, including literal arithmetic legacy leaves unevaluated. Other local constants take the checker's
+    /// evaluated value once their identity proves the module and declaration kind, because the evaluation table is
+    /// keyed by name. Any other global, and a value the read's checked type does not admit, keeps its place.
     fn checked_constant(&self, place: &bir::Place, ty: &IncanType) -> Option<bir::Constant> {
         let global = place.global()?;
         if global.identity.kind != SemanticSourceTargetKind::Const {
