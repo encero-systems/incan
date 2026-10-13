@@ -3944,7 +3944,7 @@ fn fallible_iteration_hooks_output_matches_legacy() -> Result<(), Box<dyn std::e
         include_str!(
             "../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_fallible_iterator_loop.incn"
         ),
-        "unsupported Body IR body identity pub::incan_stdlib_core::derives::collection::__iter__",
+        "unsupported Body IR package executable representation:",
     )
 }
 
