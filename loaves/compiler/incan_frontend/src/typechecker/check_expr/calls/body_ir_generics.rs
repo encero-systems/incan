@@ -35,7 +35,8 @@ impl TypeChecker {
             .filter(|(_, value)| concrete(value))
             .map(|(name, value)| (name.clone(), value.clone()))
             .collect();
-        for (expression, parameter) in Self::arguments_with_parameter_types(&method.params, args) {
+        let (parameters, result) = self.method_types_substituting_call_site_self(method, receiver);
+        for (expression, parameter) in Self::arguments_with_parameter_types(&parameters, args) {
             let Some(actual) = self.type_info.expr_type(expression.span) else {
                 return;
             };
@@ -50,7 +51,7 @@ impl TypeChecker {
                 return;
             }
         }
-        let output = substitute_resolved_type(&normalized(&method.return_type, &names, &self.type_info), &bindings);
+        let output = substitute_resolved_type(&normalized(&result, &names, &self.type_info), &bindings);
         if !concrete(&output) {
             return;
         }
