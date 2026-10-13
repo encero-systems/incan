@@ -67,6 +67,48 @@ fn imported_model_alias_keeps_carrier_before_method_resolution() -> Result<(), B
     Ok(())
 }
 
+/// A module-qualified function value requires both independent checked identities; spelling cannot supply either.
+#[test]
+fn module_function_values_require_receiver_and_member_identities() -> Result<(), Box<dyn std::error::Error>> {
+    let provider_source = "pub def calculate(value: int) -> int:\n  return value * 2\n";
+    let source = "import provider as p\n\ndef main() -> None:\n  calculate = p.calculate\n  println(calculate(2))\n";
+    let provider_tokens = lexer::lex(provider_source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let provider = parser::parse(&provider_tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let module_path = vec!["consumer".to_owned()];
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(module_path.clone()));
+    checker
+        .check_with_imports(&program, &[("provider", &provider)])
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    for missing in [SemanticSourceTargetKind::Module, SemanticSourceTargetKind::Function] {
+        let mut type_info = checker.type_info().clone();
+        assert!(
+            type_info
+                .references
+                .resolved_identities
+                .values()
+                .any(|identity| identity.kind == missing)
+        );
+        type_info
+            .references
+            .resolved_identities
+            .retain(|_, identity| identity.kind != missing);
+        let module = build_body_ir_module_v0(&program, &module_path, &type_info);
+        let body = body_named(&module, "main")?;
+        assert!(
+            !body.block.stmts.iter().any(|statement| matches!(
+                &statement.kind,
+                bir::StatementKind::Assign { rvalue: bir::Rvalue::Closure { body, .. }, .. } if body.function_item
+            )),
+            "{missing:?}: {}",
+            body.render_snapshot()
+        );
+    }
+    Ok(())
+}
+
 /// A function reached through aliased or ordinary module bindings retains a function-item read, not an unknown field.
 #[test]
 fn module_function_values_retain_checked_callable_shape() -> Result<(), Box<dyn std::error::Error>> {
