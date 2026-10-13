@@ -3,6 +3,37 @@
 //! to forwarding closures, and generator bodies (`yield`).
 
 use super::*;
+
+/// An iterator returned by a source call does not gain canonical zip capture authority from its type spelling.
+#[test]
+fn indirect_iterator_capture_keeps_consumption_unproven() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def pairs() -> Iterator[tuple[int, int]]:\n  return zip([4], [5])\n\ndef main() -> None:\n  values = pairs()\n  capture: () -> list[int] = () => (left + right for left, right in values).collect()\n  println(capture()[0])\n",
+        &["indirect_iterator_capture"],
+    )?;
+    let body = body_named(&module, "main")?;
+    let closure = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Closure { body, .. },
+                ..
+            } => Some(body),
+            _ => None,
+        })
+        .ok_or("indirect iterator closure missing")?;
+    let contract = serde_json::to_value(closure)?;
+    assert!(
+        !contract
+            .get("consumes_environment")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or_default()
+    );
+    Ok(())
+}
+
 /// Moving a captured zip into the deferred generator retains a consuming environment and a moved local invocation.
 #[test]
 fn captured_zip_closure_retains_consuming_invocation() -> Result<(), Box<dyn std::error::Error>> {

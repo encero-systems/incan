@@ -121,6 +121,49 @@ fn callable_storage_projection_output_matches_legacy() -> Result<(), Box<dyn std
     )
 }
 
+/// Legacy rejects reusing a consuming zip closure, and direct lowering must retain a named invocation refusal.
+#[test]
+fn consuming_zip_closure_rejects_repeated_invocation() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let root = fixture.scratch("repeated-consuming-zip")?;
+    let source = root.join("repeat.incn");
+    fs::write(
+        &source,
+        "def main() -> None:\n  pairs = zip([4], [5])\n  sums: () -> list[int] = () => (left + right for left, right in pairs).collect()\n  first = sums()\n  second = sums()\n  println(first[0] + second[0])\n",
+    )?;
+    let legacy = support::repo_command()
+        .current_dir(&root)
+        .env("INCAN_HOME", support::oven_fixture_home()?)
+        .arg("build")
+        .arg(&source)
+        .arg(root.join("legacy"))
+        .output()?;
+    assert!(
+        !legacy.status.success(),
+        "legacy unexpectedly accepted a reusable zip closure"
+    );
+    let diagnostic = String::from_utf8(legacy.stderr)?;
+    assert!(diagnostic.contains("E0382"), "{diagnostic}");
+    let mut closure = corpus::runtime_closure(&fixture.formatting)?;
+    closure.extend_with(&sdk_closure(fixture)?)?;
+    let native = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &source,
+        &root.join("native"),
+        &fixture.sysroot,
+        &closure,
+    )
+    .current_dir(&root)
+    .output()?;
+    assert!(!native.status.success());
+    let diagnostic = String::from_utf8(native.stderr)?;
+    assert!(
+        diagnostic.contains("unsupported Body IR consuming callable requires a moved last-use invocation"),
+        "{diagnostic}"
+    );
+    Ok(())
+}
+
 /// The complete original zip capture executes once with the same owned iterator and legacy output.
 #[test]
 fn consuming_zip_closure_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
