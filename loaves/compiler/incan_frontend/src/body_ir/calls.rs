@@ -99,7 +99,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// A bare identifier follows [`named_static_receiver_type`]. An explicitly instantiated nominal (`Box[int]`) is
     /// the checker's applied type for the whole receiver, so an associated call closes the owner's type parameters at
     /// exactly those arguments; an application the checker did not type as that nominal is a value receiver.
-    fn static_receiver_type(&self, recv: &ast::Spanned<ast::Expr>) -> Option<IncanType> {
+    fn static_receiver_type(&self, recv: &ast::Spanned<ast::Expr>, call_span: ast::Span) -> Option<IncanType> {
+        if let Some(ty) = self
+            .type_info
+            .body_ir_newtypes
+            .static_receiver_type(call_span, self.type_info)
+        {
+            return Some(self.checked_type(ty));
+        }
         match &recv.node {
             ast::Expr::Ident(name) => named_static_receiver_type(name, self.type_info.resolved_identity(recv.span)?),
             ast::Expr::Index(owner, _) => {
@@ -485,6 +492,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 })
                 .collect());
         }
+        // A retained raw owner instance has no method binders; its owner arguments live in the receiver type.
+        if type_args.is_empty()
+            && self
+                .type_info
+                .body_ir_newtypes
+                .callable_params(span, self.type_info)
+                .is_some()
+        {
+            return Ok(Vec::new());
+        }
         let Some(resolved) = self
             .type_info
             .calls
@@ -587,7 +604,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
         let written_exprs = match nominal_argument_expressions(name, args) {
             Ok(values) => values,
-            Err(description) => return self.unsupported_operand(description, scope, hir_span_value, out),
+            Err(description) => {
+                return self.unsupported_operand(description, scope, hir_span_value, out);
+            }
         };
         if written_exprs.len() != field_binding.argument_slots.len() {
             return self.unsupported_operand(
@@ -830,7 +849,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let what = format!("enum variant `{}.{}`", target.enum_name, target.variant_name);
         let (operands, binding) = match self.bind_declared_args(&what, declared, args, scope, out) {
             Ok(bound) => bound,
-            Err(description) => return self.unsupported_operand(description, scope, hir_span_value, out),
+            Err(description) => {
+                return self.unsupported_operand(description, scope, hir_span_value, out);
+            }
         };
         target.binding = binding;
         let ty = self.resolve_ty(span);
@@ -1178,7 +1199,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let (mut operands, binding) =
                 match self.bind_declared_args(&format!("`{method}` of `{name}`"), declared, args, scope, out) {
                     Ok(bound) => bound,
-                    Err(description) => return self.unsupported_operand(description, scope, hir_span_value, out),
+                    Err(description) => {
+                        return self.unsupported_operand(description, scope, hir_span_value, out);
+                    }
                 };
             let mut call_args = Vec::with_capacity(operands.len() + 1);
             call_args.push(bir::ArgumentElement::One(receiver));
@@ -1428,7 +1451,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         };
         let resolved_type_args = match self.call_site_type_arguments(span, type_args) {
             Ok(resolved_type_args) => resolved_type_args,
-            Err(description) => return Some(self.unsupported_operand(description, scope, call_span, out)),
+            Err(description) => {
+                return Some(self.unsupported_operand(description, scope, call_span, out));
+            }
         };
         let declared = self
             .type_info
@@ -1440,7 +1465,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let (operands, binding) =
             match self.bind_declared_args(&format!("builtin `{display_name}`"), declared, args, scope, out) {
                 Ok(bound) => bound,
-                Err(description) => return Some(self.unsupported_operand(description, scope, call_span, out)),
+                Err(description) => {
+                    return Some(self.unsupported_operand(description, scope, call_span, out));
+                }
             };
         let ty = self.resolve_ty(span);
         Some(self.push_call_temp(
@@ -1538,7 +1565,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let (operands, binding) = match self.bind_declared_args("builtin `list.repeat`", Some(slots), args, scope, out)
         {
             Ok(bound) => bound,
-            Err(description) => return Some(self.unsupported_operand(description, scope, call_span, out)),
+            Err(description) => {
+                return Some(self.unsupported_operand(description, scope, call_span, out));
+            }
         };
         let Some([value, count]) = slot_ordered_pair(operands, &binding) else {
             let description = "list.repeat without one value and one count".to_string();
@@ -1607,7 +1636,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         };
         let resolved_type_args = match self.call_site_type_arguments(span, type_args) {
             Ok(resolved_type_args) => resolved_type_args,
-            Err(description) => return Some(self.unsupported_operand(description, scope, hir_span_value, out)),
+            Err(description) => {
+                return Some(self.unsupported_operand(description, scope, hir_span_value, out));
+            }
         };
         let declared: Option<Vec<DeclaredSlot>> = self
             .type_info
@@ -1616,7 +1647,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let (operands, binding) =
             match self.bind_declared_args(&format!("function `{name}`"), declared, args, scope, out) {
                 Ok(bound) => bound,
-                Err(description) => return Some(self.unsupported_operand(description, scope, hir_span_value, out)),
+                Err(description) => {
+                    return Some(self.unsupported_operand(description, scope, hir_span_value, out));
+                }
             };
         let ty = self.resolve_ty(span);
         Some(self.push_call_temp(
@@ -1739,13 +1772,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if let Some(lowered) = self.lower_module_qualified_call(recv, name, type_args, args, span, scope, out) {
             return lowered;
         }
-        if self.static_receiver_type(recv).is_some() {
+        if self.static_receiver_type(recv, span).is_some() {
             return self.lower_static_method_call(recv, name, type_args, args, span, scope, out);
         }
         let retained_binding = self.retained_receiver_method_binding(recv, name, span);
         let helper = match self.checked_string_helper_for_method_call(recv, name, span) {
             Ok(helper) => helper,
-            Err(description) => return self.unsupported_operand(description, scope, hir_span_value, out),
+            Err(description) => {
+                return self.unsupported_operand(description, scope, hir_span_value, out);
+            }
         };
         let resolved_type_args = match self.call_site_type_arguments(span, type_args) {
             Ok(resolved_type_args) => resolved_type_args,
@@ -1763,17 +1798,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // parameters, which the checker retains for Body IR only.
         let native_member = super::runtime_nominals::member(self.type_info, &self.resolve_ty(recv.span), name);
         let declared: Option<Vec<DeclaredSlot>> = self
-            .type_info
-            .call_site_callable_params(span)
+            .native_source_method_slots(span)
             .or_else(|| {
                 self.type_info
                     .traits
                     .self_method_params
                     .get(&(span.start, span.end))
-                    .map(Vec::as_slice)
+                    .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect())
             })
-            .or_else(|| retained_binding.map(|binding| binding.params.as_slice()))
-            .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect())
+            .or_else(|| {
+                retained_binding.map(|binding| binding.params.iter().map(DeclaredSlot::from_checked_param).collect())
+            })
             // Published task members take only their receiver. The frozen checker leaves their external signature
             // open, but the guarded SDK contract supplies an empty ordinary parameter list for binding.
             .or_else(|| native_member.as_ref().map(|_| Vec::new()));
@@ -2099,19 +2134,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .iter()
             .find(|(_, binding)| binding.identity.as_ref() == Some(&canonical))
             .map(|((start, end), _)| CompilerNodeId::declaration_span(self.module_identity, *start, *end));
-        let declared: Option<Vec<DeclaredSlot>> = self
-            .type_info
-            .call_site_callable_params(span)
-            .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect());
+        let declared = self.native_source_method_slots(span);
         let (operands, binding) =
             match self.bind_declared_args(&format!("static method `{spelling}`"), declared, args, scope, out) {
                 Ok(bound) => bound,
-                Err(description) => return self.unsupported_operand(description, scope, hir_span_value, out),
+                Err(description) => {
+                    return self.unsupported_operand(description, scope, hir_span_value, out);
+                }
             };
         let ty = self.resolve_ty(span);
         self.push_call_temp(
             bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
-                receiver_type: self.static_receiver_type(recv),
+                receiver_type: self.static_receiver_type(recv, span),
                 name: spelling,
                 direct_call_id,
                 canonical: Some(canonical),
@@ -2126,6 +2160,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             false,
             out,
         )
+    }
+
+    /// Use an atomic accepted owner instance before ordinary shared signature facts, preserving the same binder.
+    fn native_source_method_slots(&self, span: ast::Span) -> Option<Vec<DeclaredSlot>> {
+        self.type_info
+            .body_ir_newtypes
+            .callable_params(span, self.type_info)
+            .or_else(|| self.type_info.call_site_callable_params(span))
+            .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect())
     }
 
     /// Return the helper operation selected by a checked string-method call, or a source-span-preserving refusal.

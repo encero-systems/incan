@@ -78,6 +78,11 @@ pub struct TypeCheckInfo {
     pub c_abi: CAbiInteropArtifacts,
     /// Source import and alias paths accepted by typechecking, keyed by their active local binding.
     pub import_bindings: CheckedImportBindings,
+    /// Active builtin type identities used only by the Body IR bridge; no checker decision or legacy consumer reads
+    /// this snapshot.
+    pub body_ir_runtime_types: BTreeMap<String, CanonicalSymbolId>,
+    /// Atomic accepted-body refinements consumed only by Body IR; no checker or legacy consumer reads this group.
+    pub(crate) body_ir_newtypes: super::native_newtype_facts::NativeNewtypeFacts,
 }
 
 /// Checked source-path facts for active import-derived bindings.
@@ -2456,7 +2461,9 @@ impl TypeCheckInfo {
                         .unwrap_or_else(|| format!("{module_identity}::package"));
                     (CompilerNodeId::package(&package_identity), package_identity)
                 }
-                SemanticRegistrySubjectKind::Function | SemanticRegistrySubjectKind::Method => continue,
+                SemanticRegistrySubjectKind::Function | SemanticRegistrySubjectKind::Method => {
+                    continue;
+                }
             };
             facts.push(SemanticFact::new(
                 subject,

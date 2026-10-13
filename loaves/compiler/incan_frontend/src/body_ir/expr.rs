@@ -118,6 +118,28 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             ty
         };
         if name == "0"
+            && let IncanType::Generic { base: owner, args } = &ty
+            && let Some(identity) = self
+                .type_info
+                .declarations
+                .named_type_identities
+                .get(owner)
+                .filter(|identity| identity.kind == SemanticSourceTargetKind::Newtype)
+        {
+            if self.type_info.body_ir_newtypes.field_owner(span, self.type_info) == Some(identity)
+                && let Some(declaration) = self.local_nominal_declarations.values().find(|declaration| {
+                    declaration.canonical == *identity
+                        && declaration.name == *owner
+                        && declaration.type_parameters.len() == args.len()
+                        && declaration.fields == ["0"]
+                })
+            {
+                return bir::PlaceElem::field(name, Some(declaration.canonical.clone()));
+            }
+            // A shared reference identity cannot replace the atomic generic payload proof.
+            return bir::PlaceElem::field(name, None);
+        }
+        if name == "0"
             && let IncanType::Named(owner) = &ty
             && let Some(declaration) = self.local_nominal_declarations.values().find(|declaration| {
                 declaration.name == *owner && declaration.canonical.kind == SemanticSourceTargetKind::Newtype
@@ -132,6 +154,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         } else {
             if let Some(identity) = self.retained_native_field_identity(&ty, name) {
                 return bir::PlaceElem::field(name, Some(identity));
+            }
+            if name == "0" && matches!(ty, IncanType::Generic { .. }) {
+                return bir::PlaceElem::field(name, None);
             }
             if let Some(identity) = self.type_info.resolved_identity(span)
                 && identity.namespace == SymbolNamespace::Member

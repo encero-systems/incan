@@ -195,7 +195,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let assignment_span = ast::Span::new(span.start, span.end);
         let mut ty = self
             .type_info
-            .assignment_binding_type(assignment_span)
+            .body_ir_newtypes
+            .assignment_type(assignment_span, self.type_info)
+            .or_else(|| self.type_info.assignment_binding_type(assignment_span))
             .map(|ty| self.checked_type(ty))
             .or_else(|| self.callable_value_ty(&assignment.value))
             .unwrap_or_else(|| self.resolve_ty(assignment.value.span));

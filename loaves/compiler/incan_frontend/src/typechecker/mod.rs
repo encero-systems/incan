@@ -59,6 +59,7 @@ mod helpers;
 mod json_member_requirements;
 mod mut_arguments;
 mod mut_marker;
+mod native_newtype_facts;
 mod nominal_type_param_bounds;
 mod reachability;
 mod receiver_change;
@@ -1272,7 +1273,9 @@ impl TypeChecker {
             RustInspectRegistrySourceAuthority::Sealed(roots) => self
                 .rust_inspect_cache
                 .get_cached_or_extract_fast_with_registry_src_roots(dir, lookup_path, roots.as_slice()),
-            RustInspectRegistrySourceAuthority::Invalid => unreachable!("invalid authority returned above"),
+            RustInspectRegistrySourceAuthority::Invalid => {
+                unreachable!("invalid authority returned above")
+            }
         };
         match metadata {
             Ok(Some(hit)) => Some((*hit.metadata).clone()),
@@ -1338,7 +1341,9 @@ impl TypeChecker {
                     RustInspectRegistrySourceAuthority::Sealed(roots) => self
                         .rust_inspect_cache
                         .get_or_extract_with_registry_src_roots(dir, lookup_path, roots.as_slice(), &|_| ()),
-                    RustInspectRegistrySourceAuthority::Invalid => unreachable!("invalid authority returned above"),
+                    RustInspectRegistrySourceAuthority::Invalid => {
+                        unreachable!("invalid authority returned above")
+                    }
                 };
                 match extracted {
                     Ok(hit) => Some((*hit).clone()),
@@ -7005,8 +7010,12 @@ impl TypeChecker {
         }
 
         let message = match kind {
-            MemberBindingKind::MethodAlias => format!("Duplicate method alias '{}' on '{}'", name, owner),
-            MemberBindingKind::MethodPartial => format!("Duplicate method partial '{}.{}'", owner, name),
+            MemberBindingKind::MethodAlias => {
+                format!("Duplicate method alias '{}' on '{}'", name, owner)
+            }
+            MemberBindingKind::MethodPartial => {
+                format!("Duplicate method partial '{}.{}'", owner, name)
+            }
             _ => format!(
                 "Duplicate member '{}.{}' declared as both {} and {}",
                 owner,
@@ -7327,6 +7336,7 @@ impl TypeChecker {
 
         if fatal.is_empty() {
             self.record_public_type_bridge_roots(program);
+            self.type_info.body_ir_newtypes = native_newtype_facts::project(program, &self.type_info);
             Ok(())
         } else {
             Err(fatal)
