@@ -3,6 +3,21 @@
 use super::*;
 use incan_semantics_core::SymbolOrigin;
 
+/// Legacy's dynamic codec guards reorder and may skip expressions, so unsupported effects must stay refused.
+#[test]
+fn effectful_codec_expressions_keep_a_named_refusal() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def value() -> bytes:\n    println(\"value\")\n    return b\"ok\"\n\ndef label() -> str:\n    println(\"label\")\n    return \"utf8\"\n\ndef main() -> None:\n    _ = value().decode(encoding=label())\n",
+        &["m", "codec_effects"],
+    )?;
+    assert!(
+        body_named(&module, "main")?
+            .render_snapshot()
+            .contains("builtin codec observable expressions")
+    );
+    Ok(())
+}
+
 /// A named errors policy never becomes the encoding label; omitted labels retain the registry's defaults.
 #[test]
 fn builtin_text_codec_calls_retain_complete_slots() -> Result<(), Box<dyn std::error::Error>> {
