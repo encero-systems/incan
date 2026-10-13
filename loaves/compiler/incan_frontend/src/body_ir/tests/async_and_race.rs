@@ -748,6 +748,37 @@ fn retains_sdk_join_error_method_contract() -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
+/// The SDK error source getter retains its distinct owned Option[str] carrier.
+#[test]
+fn retains_sdk_join_error_source_contract() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "from std.async.task import TaskJoinError\ndef source_of(error: TaskJoinError) -> Option[str]:\n  return error.source()\n";
+    let module = build(source, &["m", "sdk_error_source"])?;
+    let body = body_named(&module, "source_of")?;
+    let destination = body
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                destination: Some(place),
+                callee: bir::Callee::Method(target),
+                ..
+            } if target.name == "source" && target.binding == bir::ArgumentBinding::resolved_positional(0) => {
+                place.local_id()
+            }
+            _ => None,
+        })
+        .ok_or("source getter destination")?;
+    assert_eq!(
+        body.locals[destination.index()].ty,
+        IncanType::Generic {
+            base: "Option".into(),
+            args: vec![IncanType::Primitive(IncanPrimitiveType::Str)],
+        }
+    );
+    Ok(())
+}
+
 /// An inferred task binding keeps the checked native future output that closed its SDK spawn call.
 #[test]
 fn inferred_task_binding_retains_closed_output() -> Result<(), Box<dyn std::error::Error>> {
@@ -788,5 +819,66 @@ fn non_sdk_join_error_methods_keep_their_owner() -> Result<(), Box<dyn std::erro
                 .any(|call| call.rust_path().as_deref() == Some("incan_std_async::task::TaskJoinError::message"))
         );
     }
+    Ok(())
+}
+/// The checker-selected consuming loop keeps closed handle storage and moves the list; cloneable loops keep borrowing.
+#[test]
+fn checked_task_list_iteration_keeps_closed_items() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "import std.async\nfrom std.rust import Send, Static\nfrom rust::incan_std_async::task import JoinHandle, RuntimeFuture, spawn as native_spawn\ndef launch[T with (Send, Static), F with RuntimeFuture[T]](future: F) -> JoinHandle[T]:\n  return native_spawn(future)\nasync def work(value: int) -> int:\n  return value\ndef take(handle: JoinHandle[int]) -> None:\n  pass\ndef shout(text: str) -> None:\n  println(text)\nasync def main() -> None:\n  handles = [launch(work(1)), launch(work(2))]\n  for handle in handles:\n    take(handle)\n  names = [\"a\"]\n  for name in names:\n    shout(name)\n  println(len(names))\n";
+    let module = build(source, &["m", "taking_task_list"])?;
+    let body = body_named(&module, "main")?;
+    let handle = IncanType::Generic {
+        base: "JoinHandle".into(),
+        args: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
+    };
+    let handles = body
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("handles"))
+        .ok_or("handles")?;
+    assert_eq!(
+        handles.ty,
+        IncanType::Generic {
+            base: "List".into(),
+            args: vec![handle.clone()]
+        }
+    );
+    let item = body
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("handle"))
+        .ok_or("handle")?;
+    assert_eq!(item.ty, handle);
+    let mut loop_sources = Vec::new();
+    for statement in &body.block.stmts {
+        let bir::StatementKind::Loop { body: loop_body, .. } = &statement.kind else {
+            continue;
+        };
+        let iterator = loop_body
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::IterNext {
+                    iterator: bir::Operand::Place(read),
+                    ..
+                } => read.place.local_id(),
+                _ => None,
+            })
+            .ok_or("loop iterator")?;
+        let fact = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Assign {
+                    place,
+                    rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
+                } if place.local_id() == Some(iterator) => Some(read.fact),
+                _ => None,
+            })
+            .ok_or("iterator materialization")?;
+        loop_sources.push(fact);
+    }
+    assert_eq!(loop_sources, vec![bir::OwnershipFact::Move, bir::OwnershipFact::Borrow]);
     Ok(())
 }

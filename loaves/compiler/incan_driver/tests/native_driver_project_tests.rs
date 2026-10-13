@@ -14673,6 +14673,8 @@ async def main() -> None:
             println(error.is_panic())
             message: str = error.message()
             println(len(message) > 0)
+            source: Option[str] = error.source()
+            println(source.is_none())
 "#,
     )
 }
