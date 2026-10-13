@@ -94,7 +94,15 @@ fn retain_return_annotation(body: &mut bir::Body, program: &ast::Program, facts:
     else {
         return;
     };
-    let Some(name) = type_base(&body.return_type) else {
+    let Some(binding) = facts
+        .declarations
+        .function_bindings_by_span
+        .get(&(body.span.start, body.span.end))
+    else {
+        return;
+    };
+    let declared = super::parameter_types::checked_semantic_type(&binding.return_type, facts);
+    let Some(name) = type_base(&declared) else {
         return;
     };
     body.named_type_identities.insert(name.to_owned(), identity.clone());

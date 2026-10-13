@@ -109,10 +109,14 @@ fn unknown_trait_parameter_remains_opaque() -> Result<(), Box<dyn std::error::Er
         &["m", "unknown_opaque"],
     )?;
     let body = body_named(&module, "identity")?;
-    assert!(
-        matches!(&body.return_type, IncanType::Generic { base, .. } if base == "Read"),
-        "{body:#?}"
-    );
+    assert_eq!(body.return_type, IncanType::TypeVar("__IncanTrait0".into()));
+    assert_eq!(body.return_type, body.params[0].ty);
+    let identity = body
+        .named_type_identities
+        .get("__IncanTrait0")
+        .ok_or("missing hidden trait input identity")?;
+    assert_eq!(identity.declaration_name, "Read");
+    assert_eq!(identity.kind, super::SemanticSourceTargetKind::Trait);
     Ok(())
 }
 

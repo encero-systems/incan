@@ -251,7 +251,7 @@ pub(super) fn lower_function_body(
         }
         let local = builder.declare_new_local(
             param.node.name.clone(),
-            super::variadics::parameter_storage_type(ty, param.node.kind),
+            ty,
             root_scope,
             hir_span(param.span),
             &function.body,

@@ -178,10 +178,38 @@ fn operand_type(value: &bir::Operand, locals: &[bir::LocalDecl]) -> Option<Incan
     locals.get(usize::try_from(local.0).ok()?).map(|local| local.ty.clone())
 }
 
-/// Carry one canonical function's proven return through call destinations, including calls nested in control flow.
+/// Keep a checked alias of a canonical producer's result in the same concrete carrier, preserving its ownership fact.
+fn retain_assignment_result(
+    destination: &bir::Place,
+    source: &bir::Operand,
+    locals: &mut [bir::LocalDecl],
+    carriers: &[Carrier],
+) {
+    if !destination.projection.is_empty() {
+        return;
+    }
+    let Some(source_type) = operand_type(source, locals) else {
+        return;
+    };
+    let Some(local) = destination.local_id().and_then(|id| locals.get_mut(id.index())) else {
+        return;
+    };
+    if carriers
+        .iter()
+        .any(|carrier| carrier.concrete == source_type && carrier.declared == local.ty)
+    {
+        local.ty = source_type;
+    }
+}
+
+/// Carry one canonical function's proven return through call destinations and aliases, including nested control flow.
 fn retain_call_results(block: &mut bir::Block, locals: &mut [bir::LocalDecl], carriers: &[Carrier]) {
     for statement in &mut block.stmts {
         match &mut statement.kind {
+            bir::StatementKind::Assign {
+                place,
+                rvalue: bir::Rvalue::Use(source),
+            } => retain_assignment_result(place, source, locals, carriers),
             bir::StatementKind::Call {
                 destination: Some(destination),
                 callee: bir::Callee::Function(bir::CallableTarget::Named(target)),

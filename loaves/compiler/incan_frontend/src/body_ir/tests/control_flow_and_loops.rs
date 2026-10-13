@@ -133,6 +133,7 @@ fn for_pattern_bindings_do_not_escape_the_loop_scope() -> Result<(), Box<dyn std
     Ok(())
 }
 
+/// A checked structural iterator calls its selected hooks without fallible propagation.
 #[test]
 fn lowers_for_over_a_user_defined_iteration_protocol() -> Result<(), Box<dyn std::error::Error>> {
     let source = "model CounterIter:\n  value: int\n  limit: int\n\n  def __next__(self) -> Option[int]:\n    if self.value < self.limit:\n      return Some(self.value)\n    return None\n\nmodel Counter:\n  limit: int\n\n  def __iter__(self) -> CounterIter:\n    return CounterIter(value=0, limit=self.limit)\n\ndef total() -> int:\n  mut acc = 0\n  for item in Counter(limit=3):\n    acc = acc + item\n  return acc\n";
@@ -144,12 +145,13 @@ fn lowers_for_over_a_user_defined_iteration_protocol() -> Result<(), Box<dyn std
         "should call the resolved __iter__ method to obtain an iterator: {snapshot}"
     );
     assert!(
-        snapshot.contains("user_defined(__next__)"),
+        snapshot.contains("call method:__next__") && !snapshot.contains("try?("),
         "should poll via the resolved __next__ method, non-fallible: {snapshot}"
     );
     Ok(())
 }
 
+/// A checked fallible iterator preserves polling and propagates its checked error explicitly.
 #[test]
 fn lowers_fallible_for_iteration_with_an_implicit_try_propagate_semantic() -> Result<(), Box<dyn std::error::Error>> {
     let source = "model ChunkStream:\n  def __iter__(self) -> ChunkStream:\n    return self\n\n  def __next__(self) -> Result[Option[int], str]:\n    return Ok(None)\n\ndef total() -> Result[int, str]:\n  mut acc = 0\n  for chunk in ChunkStream()?:\n    acc = acc + chunk\n  return Ok(acc)\n";
@@ -157,8 +159,8 @@ fn lowers_fallible_for_iteration_with_an_implicit_try_propagate_semantic() -> Re
     let snapshot = module.render_snapshot();
 
     assert!(
-        snapshot.contains("user_defined(__next__, fallible)"),
-        "fallible protocol iteration should mark IterNext as fallible: {snapshot}"
+        snapshot.contains("call method:__next__") && snapshot.contains("try?("),
+        "fallible protocol iteration must retain checked polling and propagation: {snapshot}"
     );
     Ok(())
 }
