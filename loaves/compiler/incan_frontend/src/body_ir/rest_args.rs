@@ -110,11 +110,20 @@ impl BodyBuilder<'_, '_> {
         if parameters
             .iter()
             .filter(|parameter| parameter.kind != IncanCallableParamKind::Normal)
-            .any(|parameter| parameter.is_mut || !matches!(parameter.ty, IncanType::Primitive(_)))
+            .any(|parameter| {
+                parameter.is_mut
+                    || (!matches!(parameter.ty, IncanType::Primitive(_))
+                        && (!super::runtime_nominals::retains_task_storage(self.type_info, &parameter.ty)
+                            || self.leaves_type_open(&parameter.ty)))
+            })
         {
             return Err(format!("{callee}: rest call with an unretained concrete pack element"));
         }
-        if arguments.iter().any(|argument| {
+        // Closed SDK arms and handles already own their checked storage. The general packer moves those values into
+        // their declared list ABI; the scalar fast path cannot represent their payloads.
+        if parameters.iter().any(|parameter| {
+            parameter.kind != IncanCallableParamKind::Normal && !matches!(parameter.ty, IncanType::Primitive(_))
+        }) || arguments.iter().any(|argument| {
             matches!(
                 argument,
                 ast::CallArg::PositionalUnpack(_) | ast::CallArg::KeywordUnpack(_)
