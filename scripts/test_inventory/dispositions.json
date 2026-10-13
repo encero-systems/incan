@@ -6264,6 +6264,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/executable_resolution/tests.rs": {
+      "disposition": "keep",
+      "notes": "Selected package executable closures retain active SDK context, coverage and digest checks, reject disabled providers and refuse conflicting package instances.",
+      "owner": 1337,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/hir.rs": {
       "disposition": "keep",
       "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics.",
