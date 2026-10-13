@@ -5,6 +5,7 @@ from rust::incan_semantics_core::body_ir import BodyIrModule, Body, NominalDecla
 from symbols import type_component
 from type_parameters import substitute
 from class_inheritance import specialize_classes
+from nominal_frames import nominal_frames, closed_arguments
 
 
 model NominalInstance:
@@ -29,7 +30,7 @@ pub def instance_arguments(module: &BodyIrModule, declaration: &NominalDeclarati
         return Ok([])
     base = str(declaration.canonical.declaration_name)
     name = str(declaration.name)
-    for body in module.bodies:
+    for body in nominal_frames(module)?:
         match find_instance_arguments(body.return_type, base, name):
             Some(arguments) => return Ok(arguments)
             None => pass
@@ -75,7 +76,7 @@ pub def specialize_nominals(module: &BodyIrModule) -> Result[BodyIrModule, str]:
 def specialize_nominal_layouts(module: &BodyIrModule, inherited: list[Body]) -> Result[BodyIrModule, str]:
     """Close checked owner parameters after concrete inherited receiver frames are retained."""
     mut instances: list[NominalInstance] = []
-    for body in module.bodies:
+    for body in nominal_frames(module)?:
         for local in body.locals:
             _ = collect_nominal_type(module, local.ty, instances, [])?
         _ = collect_nominal_type(module, body.return_type, instances, [])?
@@ -186,24 +187,6 @@ def retain_nominal_instance(
             return Ok(None)
     instances.append(NominalInstance(declaration=declaration.clone(), arguments=arguments, ancestors=ancestors))
     return Ok(None)
-
-
-pub def closed_arguments(arguments: list[RustType]) -> bool:
-    """Reject unresolved type variables recursively before retaining an executable layout instance."""
-    for argument in arguments:
-        match argument:
-            RustType.TypeVar(_name) => return false
-            RustType.Generic(base=_base, args=elements) =>
-                if not closed_arguments(elements):
-                    return false
-            RustType.Tuple(elements) =>
-                if not closed_arguments(elements):
-                    return false
-            RustType.SelfType => return false
-            RustType.Infer => return false
-            RustType.Unknown => return false
-            _ => pass
-    return true
 
 
 def close_layout(instance: NominalInstance) -> Result[NominalDeclaration, str]:

@@ -1,0 +1,149 @@
+"""Checked function frames that contribute nominal layouts without adding executable bodies."""
+
+from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind
+from rust::incan_semantics_core::body_ir import (
+    BodyIrModule,
+    Body,
+    Block,
+    StatementKind,
+    Callee,
+    CallableTarget,
+    NamedCallableTarget,
+)
+from type_parameters import substitute, instantiate
+
+
+model ScheduledFrame:
+    """One canonical source function and the checked arguments closing its frame, with its call ancestry."""
+
+    body: Body
+    arguments: list[RustType]
+    ancestors: list[str]
+
+
+pub def nominal_frames(module: &BodyIrModule) -> Result[list[Body], str]:
+    """Inventory ordinary frames and closed source-call frames without granting execution or altering module bodies."""
+    mut frames: list[Body] = []
+    mut pending: list[ScheduledFrame] = []
+    for body in module.bodies:
+        frames.append(body.clone())
+        if len(body.type_parameters) == 0:
+            schedule_block(module, body.block, [], [], pending, [])?
+    mut cursor = 0
+    while cursor < len(pending):
+        request = pending[cursor]
+        cursor += 1
+        frame = instantiate(request.body, request.arguments)?
+        frames.append(frame.clone())
+        match request.body.canonical:
+            Some(identity) =>
+                ancestry = request.ancestors + [identity.render_compact()]
+                schedule_block(
+                    module,
+                    request.body.block,
+                    request.body.type_parameters.clone(),
+                    request.arguments,
+                    pending,
+                    ancestry,
+                )?
+            None => return Err("unsupported Body IR nominal frame without canonical identity")
+    return Ok(frames)
+
+
+def schedule_block(
+    module: &BodyIrModule,
+    block: &Block,
+    names: list[str],
+    arguments: list[RustType],
+    mut pending: list[ScheduledFrame],
+    ancestors: list[str],
+) -> Result[None, str]:
+    """Visit checked calls through normalized blocks; other executable constructs retain their normal lowering path."""
+    for statement in block.stmts:
+        schedule_statement(module, statement.kind, names, arguments, pending, ancestors)?
+    return Ok(None)
+
+
+def schedule_statement(
+    module: &BodyIrModule,
+    kind: &StatementKind,
+    names: list[str],
+    arguments: list[RustType],
+    mut pending: list[ScheduledFrame],
+    ancestors: list[str],
+) -> Result[None, str]:
+    """Borrow a statement kind explicitly so its foreign enum import survives the legacy fixture bake."""
+    match kind:
+        StatementKind.Call(destination=_destination, callee=callee, args=_args, may_panic=_panic) =>
+            match callee:
+                Callee.Function(callable) =>
+                    match callable:
+                        CallableTarget.Named(target) => schedule_call(
+                            module,
+                            target,
+                            names,
+                            arguments,
+                            pending,
+                            ancestors,
+                        )?
+                        _ => pass
+                _ => pass
+        StatementKind.Loop(body=nested) => schedule_block(module, nested, names, arguments, pending, ancestors)?
+        StatementKind.If(cond=_condition, then_block=then_body, else_block=else_body) =>
+            schedule_block(module, then_body, names, arguments, pending, ancestors)?
+            match else_body:
+                Some(nested) => schedule_block(module, nested, names, arguments, pending, ancestors)?
+                None => pass
+        _ => pass
+    return Ok(None)
+
+
+def schedule_call(
+    module: &BodyIrModule,
+    target: &NamedCallableTarget,
+    names: list[str],
+    arguments: list[RustType],
+    mut pending: list[ScheduledFrame],
+    ancestors: list[str],
+) -> Result[None, str]:
+    """Select a source template by complete identity and its recorded arguments; unresolved or recursive calls grant no layouts."""
+    match target.canonical:
+        None => return Ok(None)
+        Some(identity) =>
+            if identity.kind != SemanticSourceTargetKind.Function or identity.render_compact() in ancestors:
+                return Ok(None)
+            match module.body_for_canonical_target(identity):
+                None => return Ok(None)
+                Some(body) =>
+                    if len(body.type_parameters) == 0 or len(body.type_parameters) != len(target.type_args):
+                        return Ok(None)
+                    mut closed: list[RustType] = []
+                    for argument in target.type_args:
+                        match substitute(argument, names, arguments):
+                            Ok(value) => closed.append(value.clone())
+                            Err(_error) => return Ok(None)
+                    if not closed_arguments(closed):
+                        return Ok(None)
+                    for request in pending:
+                        if request.body.canonical == body.canonical and request.arguments == closed:
+                            return Ok(None)
+                    pending.append(ScheduledFrame(body=body.clone(), arguments=closed, ancestors=ancestors))
+    return Ok(None)
+
+
+pub def closed_arguments(arguments: list[RustType]) -> bool:
+    """Reject unresolved placeholders in nominal argument trees; native carrier admission still validates other kinds."""
+    for argument in arguments:
+        match argument:
+            RustType.TypeVar(_name) => return false
+            RustType.Generic(base=_base, args=elements) =>
+                if not closed_arguments(elements):
+                    return false
+            RustType.Tuple(elements) =>
+                if not closed_arguments(elements):
+                    return false
+            RustType.SelfType => return false
+            RustType.Infer => return false
+            RustType.Unknown => return false
+            _ => pass
+    return true
