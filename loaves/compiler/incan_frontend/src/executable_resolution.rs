@@ -9,6 +9,7 @@
 //! the digest is acted on, because the digest must verify before any declaration executes. Only required fragments
 //! are decoded.
 
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -91,6 +92,9 @@ pub struct ResolvedExecutableModules {
 
 /// A resolved provider instance, selected by the compilation's dependency edges and checked artifact context.
 struct PackageArtifact {
+    /// Admitted name, version, content digest and feature projection; canonical package names alone cannot select an
+    /// instance.
+    provider_key: String,
     manifest: LibraryManifest,
     metadata: LibraryArtifactMetadata,
 }
@@ -120,6 +124,8 @@ impl PackageArtifact {
 ///
 /// All versions, coverage records and manifest memberships are validated before returning. No body is executed, no
 /// source is consulted, and each selected fragment is decoded once even when recursion or facades reach it again.
+/// Requirements reached through a public package may name an active SDK provider; they use that provider's admitted
+/// artifact with the same coverage and content checks. Conflicting instances refuse rather than replacing one another.
 pub fn resolve_executable_requirements(
     plan: &ProviderPlan,
     required: &BTreeSet<CanonicalSymbolId>,
@@ -127,7 +133,7 @@ pub fn resolve_executable_requirements(
     if required.is_empty() {
         return Ok(ResolvedExecutableModules::default());
     }
-    resolve_from_catalog(&package_catalog(plan)?, required)
+    resolve_from_catalog(&executable_catalog(plan)?, required)
 }
 
 /// Resolve published records of active SDK packages, which the native route links as crates but still needs as checked
@@ -140,7 +146,37 @@ pub fn resolve_sdk_requirements(
     if required.is_empty() {
         return Ok(ResolvedExecutableModules::default());
     }
-    resolve_from_catalog(&sdk_catalog(plan), required)
+    resolve_from_catalog(&sdk_catalog(plan)?, required)
+}
+
+/// Join only the ordinary and active SDK artifacts already admitted by the compilation's provider plan.
+fn executable_catalog(plan: &ProviderPlan) -> Result<BTreeMap<String, PackageArtifact>, ExecutableResolutionError> {
+    let mut catalog = package_catalog(plan)?;
+    for artifact in sdk_catalog(plan)?.into_values() {
+        insert_artifact(&mut catalog, artifact)?;
+    }
+    Ok(catalog)
+}
+
+/// Preserve one admitted instance per canonical package name, rejecting different versions, digests or feature
+/// projections.
+fn insert_artifact(
+    catalog: &mut BTreeMap<String, PackageArtifact>,
+    artifact: PackageArtifact,
+) -> Result<(), ExecutableResolutionError> {
+    match catalog.entry(artifact.manifest.name.clone()) {
+        Entry::Vacant(entry) => {
+            entry.insert(artifact);
+        }
+        Entry::Occupied(entry) if entry.get().provider_key != artifact.provider_key => {
+            return Err(ExecutableResolutionError::AmbiguousPackage {
+                library: artifact.manifest.name,
+                versions: format!("{}, {}", entry.get().provider_key, artifact.provider_key),
+            });
+        }
+        Entry::Occupied(_) => {}
+    }
+    Ok(())
 }
 
 /// Load every required declaration and its published closure from one package catalog.
@@ -250,41 +286,37 @@ fn resolve_from_catalog(
     Ok(resolved)
 }
 
-/// Active SDK packages that publish a materialized artifact, by package name.
-fn sdk_catalog(plan: &ProviderPlan) -> BTreeMap<String, PackageArtifact> {
-    plan.active_sdk_records()
-        .filter_map(|provider| {
-            Some((
-                provider.identity.name.clone(),
-                PackageArtifact {
-                    manifest: (**provider.manifest.as_ref()?).clone(),
-                    metadata: provider.artifact.clone()?,
-                },
-            ))
-        })
-        .collect()
+/// Select materialized active SDK artifacts without collapsing conflicting instances of a package name.
+fn sdk_catalog(plan: &ProviderPlan) -> Result<BTreeMap<String, PackageArtifact>, ExecutableResolutionError> {
+    let mut catalog = BTreeMap::new();
+    for provider in plan.active_sdk_records() {
+        let (Some(manifest), Some(metadata)) = (provider.manifest.as_deref(), provider.artifact.as_ref()) else {
+            continue;
+        };
+        insert_artifact(
+            &mut catalog,
+            PackageArtifact {
+                provider_key: provider.identity.stable_key(),
+                manifest: manifest.clone(),
+                metadata: metadata.clone(),
+            },
+        )?;
+    }
+    Ok(catalog)
 }
 
 /// Select from the shared provider plan's admitted artifacts; dependency edges are not traversed a second time.
 fn package_catalog(plan: &ProviderPlan) -> Result<BTreeMap<String, PackageArtifact>, ExecutableResolutionError> {
-    let mut identities = BTreeMap::new();
     let mut catalog = BTreeMap::new();
     for package in plan.public_artifacts() {
-        if let Some(previous) = identities.insert(package.identity.name.clone(), package.identity.stable_key())
-            && previous != package.identity.stable_key()
-        {
-            return Err(ExecutableResolutionError::AmbiguousPackage {
-                library: package.identity.name.clone(),
-                versions: format!("{previous}, {}", package.identity.stable_key()),
-            });
-        }
-        catalog.insert(
-            package.identity.name.clone(),
+        insert_artifact(
+            &mut catalog,
             PackageArtifact {
+                provider_key: package.identity.stable_key(),
                 manifest: (*package.manifest).clone(),
                 metadata: package.artifact.clone(),
             },
-        );
+        )?;
     }
     Ok(catalog)
 }
