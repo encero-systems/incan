@@ -11565,6 +11565,39 @@ fn stdlib_web_path_payload_output_matches_legacy() -> Result<(), Box<dyn std::er
     )
 }
 
+/// Builtin text codecs retain default, named, dynamic, frozen and invalid UTF-8 behavior byte-for-byte.
+#[test]
+fn stdlib_text_codec_methods_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    for (name, source) in [
+        (
+            "round-trip",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/snapshots_collections_and_strings/str_encode_bytes_decode.incn"
+            ),
+        ),
+        (
+            "receiver-kinds",
+            include_str!(
+                "../../incan_test_support/fixtures/behavior/lowering_expressions/receiver_aware_method_kinds_issue1668.incn"
+            ),
+        ),
+        (
+            "dynamic-errors",
+            "def encode(text: str, label: str) -> bytes:\n    return text.encode(label)\n\ndef decode(data: bytes, label: str, policy: str) -> Result[str, ValidationError]:\n    return data.decode(label, policy)\n\ndef main() -> None:\n    println(len(encode(\"hé\", \" UTF_8 \")))\n    println(decode(b\"ok\", \"other\", \"strict\"))\n    println(decode(b\"ok\", \"utf8\", \"other\"))\n    println(decode(b\"ok\", \"utf8\", \"Strict\"))\n",
+        ),
+    ] {
+        corpus::check_builtin_source(
+            &fixture.driver_binary("debug"),
+            &fixture.scratch(&format!("stdlib-text-codecs-{name}"))?,
+            &fixture.sysroot,
+            &fixture.formatting,
+            source,
+        )?;
+    }
+    Ok(())
+}
+
 /// Frozen byte literals keep static storage, exact unsigned bytes, copyable parameters, and legacy length behavior.
 #[test]
 fn stdlib_frozen_bytes_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

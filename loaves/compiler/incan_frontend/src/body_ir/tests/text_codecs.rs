@@ -1,0 +1,58 @@
+//! Builtin codec calls retain their named slots and constant defaults before native lowering.
+
+use super::*;
+use incan_semantics_core::SymbolOrigin;
+
+/// A named errors policy never becomes the encoding label; omitted labels retain the registry's defaults.
+#[test]
+fn builtin_text_codec_calls_retain_complete_slots() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "def decode(data: bytes, policy: str) -> Result[str, ValidationError]:\n    return data.decode(errors=policy)\n\ndef encode(text: str) -> bytes:\n    return text.encode()\n",
+        &["m", "codec_slots"],
+    )?;
+    for (name, count, encoding) in [("encode", 2, "utf-8"), ("decode", 3, "utf-8")] {
+        let body = body_named(&module, name)?;
+        let (target, args) = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Call {
+                    callee: bir::Callee::Method(target),
+                    args,
+                    ..
+                } => Some((target, args)),
+                _ => None,
+            })
+            .ok_or("missing codec call")?;
+        assert_eq!(args.len(), count, "{}", body.render_snapshot());
+        assert!(
+            matches!(&target.binding, bir::ArgumentBinding::Resolved { defaulted_slots, .. } if defaulted_slots.is_empty())
+        );
+        assert!(
+            matches!(args.get(1).and_then(bir::ArgumentElement::as_one), Some(bir::Operand::Constant(bir::Constant::Str(label))) if label == encoding)
+        );
+        if name == "decode" {
+            assert!(matches!(
+                args.get(2).and_then(bir::ArgumentElement::as_one),
+                Some(bir::Operand::Place(_))
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// An application encode member keeps its own call contract and acquires no builtin codec defaults.
+#[test]
+fn source_encode_member_keeps_source_slots() -> Result<(), Box<dyn std::error::Error>> {
+    let module = build(
+        "model Encoder:\n    value: int\n\n    def encode(self) -> int:\n        return self.value\n\ndef read(value: Encoder) -> int:\n    return value.encode()\n",
+        &["m", "source_codec"],
+    )?;
+    let body = body_named(&module, "read")?;
+    assert!(body.block.stmts.iter().any(|statement| matches!(&statement.kind,
+        bir::StatementKind::Call { callee: bir::Callee::Method(target), args, .. }
+        if target.canonical.as_ref().is_some_and(|identity| matches!(identity.origin, SymbolOrigin::Module(_))) && args.len() == 1
+    )));
+    Ok(())
+}
