@@ -440,6 +440,7 @@ fn build_body_ir_module_v0_with_provider_operations(
     };
     opaque_returns::retain(&mut module, type_info);
     library_opaque_returns::retain(&mut module, type_info);
+    trait_values::retain_inputs(&mut module, context);
     module
 }
 
@@ -1920,6 +1921,7 @@ mod enum_types;
 mod opaque_returns;
 mod parameter_types;
 mod partials;
+mod trait_values;
 
 mod primitives;
 
