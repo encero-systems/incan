@@ -139,6 +139,12 @@ fn generic_callable_arguments_retain_owned_storage() -> Result<(), Box<dyn std::
     };
     let generic = body_named(&module, "use")?;
     assert_eq!(generic.params[0].ty, IncanType::TypeVar("Callback".to_owned()));
+    let generic_facts = generic
+        .callable_representation
+        .as_ref()
+        .ok_or("missing generic callable representations")?;
+    assert!(generic_facts.closure_holding_parameters.contains(&generic.params[0].local));
+    assert!(!generic.params[0].mutable);
     for target in [capturing, item] {
         assert!(
             matches!(target.type_args.as_slice(), [IncanType::Function { params, return_type }]
