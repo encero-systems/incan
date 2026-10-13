@@ -16171,6 +16171,8 @@ fn numeric_newtype_sum_failure_matches_legacy() -> Result<(), Box<dyn std::error
         return Ok(Positive(value))
 
 def main() -> None:
+    seed = Positive(1)
+    println(seed.0)
     values: list[Positive] = []
     println(values.iter().sum().0)
 "#,
