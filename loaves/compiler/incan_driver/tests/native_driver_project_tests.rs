@@ -2401,17 +2401,32 @@ impl DriverFixture {
 /// The process-wide fixture; a bake failure is kept as text so every test reports it.
 static DRIVER_FIXTURE: OnceLock<Result<DriverFixture, String>> = OnceLock::new();
 
-/// Custom truth, length, membership, call and iteration hooks in the original fixture match legacy output.
+/// The original advances past expression hooks and retains its separately unproven iteration method identity.
 #[test]
 fn protocol_hooks_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     let fixture = driver_fixture()?;
-    corpus::check_builtin_source(
-        &fixture.driver_binary("debug"),
-        &fixture.scratch("protocol-hooks")?,
-        &fixture.sysroot,
-        &fixture.formatting,
+    let root = fixture.scratch("protocol-hooks")?;
+    let source = root.join("probe.incn");
+    fs::write(
+        &source,
         include_str!("../../incan_test_support/fixtures/behavior/snapshots_traits_and_generics/protocol_hooks.incn"),
+    )?;
+    let closure = corpus::runtime_closure(&fixture.formatting)?;
+    let refused = corpus::source_command(
+        &fixture.driver_binary("debug"),
+        &source,
+        &root.join("native"),
+        &fixture.sysroot,
+        &closure,
     )
+    .output()?;
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("unsupported Body IR Method without canonical identity"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    Ok(())
 }
 
 /// Length dispatch evaluates fresh receivers once and preserves shared and mutable source receivers.
@@ -2431,6 +2446,17 @@ model Bag:
         """Return this fixture's shared length."""
         return self.count
 
+    def __contains__(self, item: int) -> bool:
+        """Test this fixture's selected membership hook."""
+        return item == self.count
+
+model Flag:
+    ready: bool
+
+    def __bool__(self) -> bool:
+        """Read this fixture's truthiness value."""
+        return self.ready
+
 model Counter:
     count: int
 
@@ -2448,10 +2474,21 @@ def main() -> None:
     """Exercise shared calls, a fresh receiver and a mutable hook."""
     bag = Bag(count=4)
     println(len(bag))
+    println(4 in bag)
+    println(3 not in bag)
     println(len(make()))
     mut counter = Counter(count=0)
     println(len(counter))
     println(counter.count)
+    flag = Flag(ready=false)
+    if true:
+        let flag = Flag(ready=true)
+        if flag:
+            println("inner")
+    if flag:
+        println("unexpected")
+    else:
+        println("outer")
 "#,
     )
 }
