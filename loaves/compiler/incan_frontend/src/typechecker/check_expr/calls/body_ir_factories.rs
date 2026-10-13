@@ -7,6 +7,9 @@ use super::body_ir_generics::{concrete, normalized};
 use crate::ast::{CallArg, Span};
 use crate::resolved_type_subst::substitute_resolved_type;
 use crate::symbols::{MethodInfo, ResolvedType, TypeInfo};
+use crate::typechecker::nominal_type_param_bounds::NominalTypeParamBounds;
+use crate::typechecker::stdlib_loader::StdlibAstCache;
+use incan_semantics_core::SymbolOrigin;
 
 #[cfg(test)]
 mod tests;
@@ -66,15 +69,14 @@ impl TypeChecker {
         let Some(arguments) = arguments else {
             return;
         };
-        if let Some(bounds) = self.declared_nominal_bounds(&owner)
-            && bounds.iter().any(|(name, requirements)| {
-                bindings.get(name).is_none_or(|actual| {
-                    requirements
-                        .iter()
-                        .any(|bound| !self.type_satisfies_explicit_bound_info(actual, bound, &bindings))
-                })
+        let bounds = self.body_ir_factory_owner_bounds(&owner);
+        if bounds.iter().any(|(name, requirements)| {
+            bindings.get(name).is_none_or(|actual| {
+                requirements
+                    .iter()
+                    .any(|bound| !self.type_satisfies_explicit_bound_info(actual, bound, &bindings))
             })
-        {
+        }) {
             return;
         }
         let output = substitute_resolved_type(&result, &bindings);
@@ -89,6 +91,51 @@ impl TypeChecker {
             .calls
             .body_ir_call_result_types
             .insert((span.start, span.end), output);
+    }
+
+    /// Recover missing SDK bound provenance only from the exact authenticated owner declaration.
+    /// An independent source query keeps the shared checker cache and legacy bound tables unchanged. Bounds absent
+    /// from that declaration or carrying different arguments retain their original metadata and grant no new fact.
+    fn body_ir_factory_owner_bounds(&self, owner: &str) -> NominalTypeParamBounds {
+        let mut bounds = self.declared_nominal_bounds(owner).cloned().unwrap_or_default();
+        let Some(identity) = self
+            .symbols
+            .module_type_identity(owner)
+            .or_else(|| self.type_info.declarations.named_type_identities.get(owner))
+        else {
+            return bounds;
+        };
+        let mut cache = StdlibAstCache::new();
+        cache.bind_provider_plan(&self.provider_plan);
+        let Some(source) = cache.callable_source_identity(identity) else {
+            return bounds;
+        };
+        let SymbolOrigin::Module(path) = source.origin else {
+            return bounds;
+        };
+        let source_bounds = cache.lookup_type_param_bounds(&path, &source.declaration_name);
+        if cache.verify_retained_sources().is_err() {
+            return bounds;
+        }
+        for (parameter, requirements) in &mut bounds {
+            let Some((_, declared)) = source_bounds.iter().find(|(name, _)| name == parameter) else {
+                continue;
+            };
+            for bound in requirements {
+                if bound.module_path.is_some() || bound.source_name.is_some() {
+                    continue;
+                }
+                if let Some(proven) = declared.iter().find(|proven| {
+                    proven.name == bound.name
+                        && proven.type_args == bound.type_args
+                        && proven.implementation_type_params == bound.implementation_type_params
+                        && proven.inferred == bound.inferred
+                }) {
+                    *bound = proven.clone();
+                }
+            }
+        }
+        bounds
     }
 
     /// Restore only a source model or class's declared owner binders; concrete receiver arguments remain fixed.
