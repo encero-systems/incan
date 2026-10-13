@@ -27,7 +27,7 @@ fn borrowed_callable_alias_output_matches_legacy() -> Result<(), Box<dyn std::er
         &fixture.scratch("borrowed-callable-alias")?,
         &fixture.sysroot,
         &fixture.formatting,
-        "def apply(mapper: (int) -> str, value: int) -> str:\n  alias = mapper\n  return alias(value)\n\ndef main() -> None:\n  prefix = \"item\"\n  closure: (int) -> str = (value) => f\"{prefix}:{value}\"\n  println(apply(closure, 3))\n",
+        "from std.traits.callable import Callable1\n\ndef apply[Mapper with (Clone, Callable1[int, str])](mapper: Mapper, value: int) -> str:\n  alias = mapper\n  return alias(value)\n\ndef main() -> None:\n  prefix = \"item\"\n  closure: (int) -> str = (value) => f\"{prefix}:{value}\"\n  println(apply(closure, 3))\n",
     )
 }
 

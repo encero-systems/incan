@@ -2852,6 +2852,7 @@ fn independent_isinstance_invalidates_unproven_paths() -> Result<(), Box<dyn std
     for middle in [
         "  if isinstance(value, str):\n    pass\n",
         "  if isinstance(value, str):\n    return LocalPath(value)\n  observe()\n",
+        "  if isinstance(value, str):\n    return LocalPath(value)\n  marker = 0\n",
     ] {
         let source = format!(
             "@derive(Clone)\ntype LocalPath = newtype str\n\ndef observe() -> None:\n  pass\n\ndef normalize(value: LocalPath | str) -> LocalPath:\n{middle}  if isinstance(value, LocalPath):\n    return value\n  return LocalPath(\"fallback\")\n"
