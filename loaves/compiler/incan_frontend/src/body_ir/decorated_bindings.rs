@@ -254,6 +254,8 @@ fn initializer(
         .is_some_and(|local| matches!(local.origin, bir::LocalOrigin::Receiver { mutable: false }));
     let scope = builder.new_scope(None, hir_span(span));
     let mut statements = Vec::new();
+
+    // ---- Context: the original callable with its checked passing parameters ----
     let mut parameters = original.params.clone();
     let IncanType::Function {
         params: original_parameters,
@@ -284,49 +286,20 @@ fn initializer(
         hir_span(span),
         &mut statements,
     );
+
+    // ---- Context: decorators initialize the replacement bottom-up ----
     for decorator in decorators.iter().rev() {
         if decorators::from_segments(&decorator.node.path.segments).is_some() {
             continue;
         }
-        let Some(path) = decorator_expression(decorator) else {
-            builder.push_unsupported_stmt(
-                "decorator factory arguments".to_string(),
-                hir_span(decorator.span),
-                &mut statements,
-            );
+        let Some(replacement) = lower_application(&mut builder, decorator, value.clone(), scope, &mut statements)
+        else {
             break;
         };
-        let callable = builder.lower_expr_to_operand(&path, scope, &mut statements);
-        let IncanType::Function { return_type, .. } = builder.resolve_ty(decorator.span) else {
-            builder.push_unsupported_stmt(
-                "decorator callable signature".to_string(),
-                hir_span(decorator.span),
-                &mut statements,
-            );
-            break;
-        };
-        let bir::Operand::Place(operand) = callable else {
-            builder.push_unsupported_stmt(
-                "decorator callable value".to_string(),
-                hir_span(decorator.span),
-                &mut statements,
-            );
-            break;
-        };
-        let callee = bir::Callee::Function(bir::CallableTarget::Local(bir::LocalCallableTarget {
-            operand,
-            binding: bir::ArgumentBinding::resolved_positional(1),
-        }));
-        value = builder.push_call_temp(
-            callee,
-            fixed_elements(vec![value]),
-            *return_type,
-            scope,
-            hir_span(decorator.span),
-            false,
-            &mut statements,
-        );
+        value = replacement;
     }
+
+    // ---- Context: the completed once-initialized replacement frame ----
     statements.push(bir::Statement {
         kind: bir::StatementKind::Return { value: Some(value) },
         span: hir_span(span),
@@ -348,6 +321,72 @@ fn initializer(
         closure_holding_return: false,
     });
     body
+}
+
+/// Lower one validated decorator application, preserving a named refusal for any missing expression or signature.
+fn lower_application(
+    builder: &mut BodyBuilder<'_, '_>,
+    decorator: &ast::Spanned<ast::Decorator>,
+    value: bir::Operand,
+    scope: bir::ScopeId,
+    statements: &mut Vec<bir::Statement>,
+) -> Option<bir::Operand> {
+    let Some(path) = decorator_expression(decorator) else {
+        builder.push_unsupported_stmt(
+            "decorator factory arguments".to_string(),
+            hir_span(decorator.span),
+            statements,
+        );
+        return None;
+    };
+
+    // ---- Context: the factory's result after checked decorator substitution ----
+    if let Some(application) = builder
+        .type_info
+        .declarations
+        .body_ir_decorator_applications
+        .get(&(decorator.span.start, decorator.span.end))
+    {
+        let ty = crate::resolved_type_subst::substitute_resolved_type(
+            &application.callable_type,
+            &application.type_bindings,
+        );
+        builder
+            .type_overrides
+            .insert((decorator.span.start, decorator.span.end), builder.checked_type(&ty));
+    }
+    let callable = builder.lower_expr_to_operand(&path, scope, statements);
+    let IncanType::Function { return_type, .. } = builder.resolve_ty(decorator.span) else {
+        builder.push_unsupported_stmt(
+            "decorator callable signature".to_string(),
+            hir_span(decorator.span),
+            statements,
+        );
+        return None;
+    };
+    let bir::Operand::Place(operand) = callable else {
+        builder.push_unsupported_stmt(
+            "decorator callable value".to_string(),
+            hir_span(decorator.span),
+            statements,
+        );
+        return None;
+    };
+
+    // ---- Context: apply the returned callable to the current initialized binding ----
+    let callee = bir::Callee::Function(bir::CallableTarget::Local(bir::LocalCallableTarget {
+        operand,
+        binding: bir::ArgumentBinding::resolved_positional(1),
+    }));
+    Some(builder.push_call_temp(
+        callee,
+        fixed_elements(vec![value]),
+        *return_type,
+        scope,
+        hir_span(decorator.span),
+        false,
+        statements,
+    ))
 }
 
 /// Recreate only the expression the checker already evaluated at this decorator's own span. Its recorded identities,

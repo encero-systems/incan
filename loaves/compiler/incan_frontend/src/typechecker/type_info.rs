@@ -1181,6 +1181,10 @@ pub struct DeclarationArtifacts {
     /// This relation is captured before substitution, so native representation can follow the input callable
     /// without inferring representation identity from structurally equal result types.
     pub generic_identity_decorator_applications: HashSet<(usize, usize)>,
+    /// Validated decorator substitutions and ordered factory arguments retained exclusively for Body IR.
+    /// Legacy keeps its original expression and call-site tables; this snapshot closes the factory only after its
+    /// returned decorator has been checked against the decorated declaration.
+    pub body_ir_decorator_applications: HashMap<(usize, usize), BodyIrDecoratorApplication>,
     /// RFC 036: Method names whose declaration was rebound through a user-defined decorator chain.
     pub decorated_method_bindings: HashMap<(String, String), DecoratedMethodBindingInfo>,
     /// Local function declarations that take a decorated method's receiver, keyed by declaration span (#1790).
@@ -1198,6 +1202,17 @@ pub struct DeclarationArtifacts {
     /// recorded too, for their trait defaults expanded into this module; the name keeps them apart from this module's
     /// parameters at the same offsets.
     pub mut_param_markers: HashMap<(usize, usize, String), bool>,
+}
+
+/// A checked decorator application before substitution, with the bindings needed for its native instance.
+#[derive(Debug, Clone)]
+pub struct BodyIrDecoratorApplication {
+    /// Returned decorator signature before applying the validated bindings.
+    pub callable_type: ResolvedType,
+    /// Generic variable bindings established by ordinary callable argument validation.
+    pub type_bindings: HashMap<String, ResolvedType>,
+    /// Factory type arguments in the resolved declaration's parameter order, before application substitution.
+    pub factory_type_args: Vec<ResolvedType>,
 }
 
 /// Checked local inheritance facts for direct execution, without changing the legacy class or symbol tables.

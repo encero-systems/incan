@@ -17,8 +17,8 @@ use super::decorated_method_receivers::DecoratedMethodReceiver;
 use super::derive_contract::DerivedKind;
 use super::trait_bound_relations::CallableMarkerOwner;
 use super::type_info::{
-    CapabilityDeclarationInfo, ProviderOperationDeclarationInfo, RegistryDefinitionInfo, RegistryDescriptionInfo,
-    RegistryDescriptionRegistry, RegistryExplicitEntryInfo,
+    BodyIrDecoratorApplication, CapabilityDeclarationInfo, ProviderOperationDeclarationInfo, RegistryDefinitionInfo,
+    RegistryDescriptionInfo, RegistryDescriptionRegistry, RegistryExplicitEntryInfo,
 };
 use super::{
     DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, FunctionBindingInfo, MemberBindingSurface,
@@ -5582,7 +5582,49 @@ impl TypeChecker {
                 decorator.span,
             )
         };
-        self.check_expr(&factory_expr)
+        let result = self.check_expr(&factory_expr);
+        self.retain_body_ir_decorator_factory(decorator, &result);
+        result
+    }
+
+    /// Retain ordered arguments from the factory declaration actually resolved by checking, without changing its
+    /// legacy call-site facts. Unbound declaration parameters remain placeholders until decorator validation.
+    fn retain_body_ir_decorator_factory(&mut self, decorator: &Spanned<Decorator>, result: &ResolvedType) {
+        let [name] = decorator.node.path.segments.as_slice() else {
+            return;
+        };
+        let Some(symbol_id) = self.symbols.lookup(name) else {
+            return;
+        };
+        let Some(identity) = self.symbols.identity_of(symbol_id) else {
+            return;
+        };
+        if Some(identity) != self.type_info.resolved_identity(decorator.span) {
+            return;
+        }
+        let Some(Symbol {
+            kind: SymbolKind::Function(info),
+            ..
+        }) = self.symbols.get(symbol_id)
+        else {
+            return;
+        };
+        let key = (decorator.span.start, decorator.span.end);
+        let arguments = self
+            .type_info
+            .calls
+            .call_site_monomorph_type_args
+            .get(&key)
+            .cloned()
+            .unwrap_or_else(|| info.type_params.iter().cloned().map(ResolvedType::TypeVar).collect());
+        self.type_info.declarations.body_ir_decorator_applications.insert(
+            key,
+            BodyIrDecoratorApplication {
+                callable_type: result.clone(),
+                type_bindings: HashMap::new(),
+                factory_type_args: arguments,
+            },
+        );
     }
 
     /// Apply a callable decorator value to the decorated binding type and return the post-decoration callable type.
@@ -5594,6 +5636,14 @@ impl TypeChecker {
         binding_name: &str,
         span: Span,
     ) -> ResolvedType {
+        let key = (span.start, span.end);
+        let factory_type_args = self
+            .type_info
+            .declarations
+            .body_ir_decorator_applications
+            .remove(&key)
+            .map(|application| application.factory_type_args)
+            .unwrap_or_default();
         self.type_info
             .declarations
             .generic_identity_decorator_applications
@@ -5632,6 +5682,14 @@ impl TypeChecker {
             self.errors.push(errors::decorator_result_not_callable(display, span));
             return ResolvedType::Unknown;
         }
+        self.type_info.declarations.body_ir_decorator_applications.insert(
+            key,
+            BodyIrDecoratorApplication {
+                callable_type: ResolvedType::Function(params, ret),
+                type_bindings,
+                factory_type_args,
+            },
+        );
         result_ty
     }
 

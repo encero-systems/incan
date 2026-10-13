@@ -468,6 +468,22 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         span: ast::Span,
         type_args: &[ast::Spanned<ast::Type>],
     ) -> Result<Vec<IncanType>, String> {
+        if let Some(application) = self
+            .type_info
+            .declarations
+            .body_ir_decorator_applications
+            .get(&(span.start, span.end))
+            && !application.factory_type_args.is_empty()
+        {
+            return Ok(application
+                .factory_type_args
+                .iter()
+                .map(|ty| {
+                    let ty = crate::resolved_type_subst::substitute_resolved_type(ty, &application.type_bindings);
+                    self.checked_type(&ty)
+                })
+                .collect());
+        }
         let Some(resolved) = self
             .type_info
             .calls
