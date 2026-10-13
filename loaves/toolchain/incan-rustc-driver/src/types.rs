@@ -9,6 +9,7 @@ use rustc_middle::ty::{Ty, TyCtxt};
 /// List references preserve source parameter borrowing; checked pairs and other shared references are body-internal.
 pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, PlanError> {
     Ok(match ty {
+        PlanType::ScalarRef(elements) => scalar_reference_type(tcx, elements)?,
         PlanType::Future(arguments) => {
             let [output] = arguments.as_slice() else {
                 return Err(PlanError::Unsupported {
@@ -162,6 +163,18 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
             Ty::new_slice(tcx, native_type(tcx, &PlanType::StrRef)?),
         ),
     })
+}
+
+/// Translate a preflight-validated single scalar referent, rejecting malformed arity before constructing its native
+/// reference.
+fn scalar_reference_type<'tcx>(tcx: TyCtxt<'tcx>, elements: &[PlanType]) -> Result<Ty<'tcx>, PlanError> {
+    let [inner] = elements else {
+        return Err(PlanError::Unsupported {
+            function: "scalar reference".into(),
+            reason: "scalar reference requires exactly one referent".into(),
+        });
+    };
+    Ok(Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, native_type(tcx, inner)?))
 }
 
 /// Resolve the dependency-owned immutable wrapper and preserve its exact static storage arguments.

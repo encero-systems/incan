@@ -44,6 +44,21 @@ fn generator_signature_ty(kind: &PlanType, span: Span) -> Option<Box<ast::Ty>> {
     })
 }
 
+/// Build a shared scalar reference only after plan preflight validates its single referent; malformed arity stays an
+/// inferred error type.
+fn scalar_reference_ast(elements: &[PlanType], span: Span) -> ast::TyKind {
+    let [inner] = elements else {
+        return ast::TyKind::Infer;
+    };
+    ast::TyKind::Ref(
+        None,
+        ast::MutTy {
+            ty: ty(inner, span),
+            mutbl: ast::Mutability::Not,
+        },
+    )
+}
+
 /// Construct an admitted native AST type without generating or parsing Rust source.
 pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
     if let PlanType::FrozenCollection(name, elements) = kind {
@@ -56,6 +71,7 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
         return ty;
     }
     let kind = match kind {
+        PlanType::ScalarRef(elements) => scalar_reference_ast(elements, span),
         PlanType::Future(arguments) => {
             let name = arguments.first().map(crate::futures::alias_name).unwrap_or_default();
             ast::TyKind::Path(None, ast::Path::from_ident(ident(&name, span)))

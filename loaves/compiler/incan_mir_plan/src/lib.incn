@@ -95,6 +95,7 @@ pub enum PlanType:
 
     Sized numeric variants preserve their exact Rust carriers. CheckedNumeric stores its named sized carrier; its value projection retains the carrier type. Tuple elements retain their ordered types and own any string elements. Array lengths are exact nonnegative counts. CheckedInt and arrays are body temporaries; shared slice variants already include their reference.
     StringRef borrows an owned String, StringMutRef is the exclusive borrow a `mut str` parameter receives, and StrRef is a string literal's shared str view.
+    ScalarRef borrows exactly one numeric, Boolean, Decimal or frozen scalar carrier; nested references and non-scalar referents are refused before native MIR construction.
     List stores its scalar or flat tuple leaf element and a positive nesting depth; ListRef and ListMutRef borrow that same Vec representation.
     ModelRef and ModelMutRef retain shared and mutable nominal receiver references; ModelMutRef, EnumMutRef and TupleMutRef are also the exclusive borrow a `mut` parameter or an in-place loop item holds. TupleMutRef retains its referent's complete tuple layout.
     Decimal retains the legacy Decimal128 carrier; precision is checked upstream and the value keeps its written scale.
@@ -136,6 +137,8 @@ pub enum PlanType:
     String
     TupleMutRef(list[TupleElement])
     StringRef
+    # Exactly one numeric, Bool, Decimal or frozen scalar referent; the shared borrow owns no storage.
+    ScalarRef(list[PlanType])
     StringMutRef
     Decimal
     FrozenStr

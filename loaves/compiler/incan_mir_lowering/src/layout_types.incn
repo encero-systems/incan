@@ -33,9 +33,7 @@ pub def native_source_type(
         None => pass
     match ty:
         RustType.Ref(inner) =>
-            match native_source_type(nominals, enums, unions, inner, intrinsics)?:
-                PlanType.Model(index, name) => return Ok(PlanType.ModelRef(index, name))
-                _ => return Err("unsupported Body IR shared callable receiver outside a nominal layout")
+            return shared_receiver_type(native_source_type(nominals, enums, unions, inner, intrinsics)?)
         RustType.RefMut(inner) =>
             match native_source_type(nominals, enums, unions, inner, intrinsics)?:
                 PlanType.Model(index, name) => return Ok(PlanType.ModelMutRef(index, name))
@@ -77,6 +75,18 @@ pub def native_source_type(
         RustType.Tuple(elements) => return layout_tuple_type(nominals, enums, unions, elements, intrinsics)
         _ => pass
     return model_type(nominals, ty)
+
+
+pub def shared_receiver_type(ty: PlanType) -> Result[PlanType, str]:
+    """Borrow the exact retained nominal, text or scalar carrier; other shared source layouts remain refused."""
+    match ty:
+        PlanType.Model(index, name) => return Ok(PlanType.ModelRef(index, name))
+        PlanType.Enum(index, name) => return Ok(PlanType.EnumRef(index, name))
+        PlanType.String => return Ok(PlanType.StringRef)
+        _ => pass
+    if ty in [PlanType.Int, PlanType.Float, PlanType.I8, PlanType.I16, PlanType.I32, PlanType.I128, PlanType.ISize, PlanType.USize, PlanType.U8, PlanType.U16, PlanType.U32, PlanType.U64, PlanType.U128, PlanType.F32, PlanType.F64, PlanType.Bool, PlanType.Decimal, PlanType.FrozenStr, PlanType.FrozenBytes]:
+        return Ok(PlanType.ScalarRef([ty]))
+    return Err("unsupported Body IR shared SDK receiver carrier")
 
 
 pub def callable_parameter_type(

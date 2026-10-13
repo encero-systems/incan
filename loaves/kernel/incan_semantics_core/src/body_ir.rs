@@ -3447,8 +3447,14 @@ pub struct StdlibTraitCall {
     pub trait_identity: CanonicalSymbolId,
     /// Compiled SDK item path for that declaration, never inferred by the lowering from a method spelling.
     pub native_item: String,
-    /// Checked trait instantiation in declaration order; Self is supplied by the retained receiver layout.
+    /// Checked trait instantiation in declaration order; Self comes from the concrete nominal frame or checked scalar
+    /// receiver.
     pub type_arguments: Vec<IncanType>,
+    /// Checked explicit receiver before physical lowering, preserving lexical binders and decimal precision and scale.
+    /// Nominal hooks and older publications retain None; consumers must not infer a scalar Self from its physical
+    /// carrier.
+    #[serde(default)]
+    pub receiver_type: Option<IncanType>,
 }
 
 /// Checked reflection operation and its receiver-dependent result contract, retained before generic substitution.

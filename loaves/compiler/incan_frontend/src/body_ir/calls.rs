@@ -2148,6 +2148,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     super::library_calls::trait_dispatch(
                         identity,
                         self.type_info.resolved_method_call(span).map(|call| &call.dispatch),
+                        Some(self.resolve_ty(recv.span)),
                     )
                 }),
                 // A standard slot reached through the stdlib source cache is named by its provider identity, the one

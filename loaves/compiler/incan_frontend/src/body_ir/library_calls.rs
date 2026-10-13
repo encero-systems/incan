@@ -381,13 +381,13 @@ fn trait_method_signature(
             .chain(declaration.type_params.iter().cloned())
             .chain(method.type_params.iter().cloned())
             .collect::<Vec<_>>();
-        let receiver = match method.receiver.as_ref()? {
+        let receiver = method.receiver.as_ref().map(|receiver| match receiver {
             ast::Receiver::Immutable => IncanType::Ref(Box::new(self_type.clone())),
             ast::Receiver::Mutable => IncanType::RefMut(Box::new(self_type.clone())),
-        };
+        });
         return Some(MethodSignature {
             owner,
-            receiver: Some(receiver),
+            receiver,
             parameters: method.params.clone(),
             return_type: super::parameter_types::retain_parameter_type(
                 self_as(&semantic_type_from_resolved(&method.return_type), &self_type),
@@ -402,10 +402,12 @@ fn trait_method_signature(
 }
 
 /// Authenticate a checked trait dispatch against the SDK's declaring slot and retain its ordered trait arguments.
+/// Explicit receivers retain their binder-aware checked Self type; synthetic nominal hooks keep their physical frame.
 /// This is a Body IR-only projection: neither legacy resolution tables nor receiver types are changed.
 pub(super) fn trait_dispatch(
     identity: &CanonicalSymbolId,
     dispatch: Option<&crate::typechecker::ResolvedMethodDispatch>,
+    receiver_type: Option<IncanType>,
 ) -> Option<bir::StdlibTraitCall> {
     let crate::typechecker::ResolvedMethodDispatch::Trait { type_args, .. } = dispatch?;
     let published = super::library_nominals::sdk_identity(identity)?;
@@ -433,6 +435,7 @@ pub(super) fn trait_dispatch(
         trait_identity,
         native_item,
         type_arguments: type_args.iter().map(semantic_type_from_resolved).collect(),
+        receiver_type,
     })
 }
 
