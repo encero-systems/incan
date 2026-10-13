@@ -2083,8 +2083,9 @@ fn valid_serde_names(declaration: &crate::plan::ModelDeclaration, tuple: bool) -
                 .any(|derive| matches!(derive.as_str(), "serde::Serialize" | "serde::Deserialize")))
 }
 
-/// Validate model and newtype metadata before declaration injection. Unsupported callable field layouts retain a named
-/// refusal distinct from malformed metadata; size cycles are checked separately.
+/// Validate model and newtype metadata before declaration injection; size cycles are checked separately.
+/// Function pointer fields keep their closed, validated signature and Copy storage. Captured callable objects retain
+/// a named unsupported refusal distinct from malformed metadata.
 fn validate_models(plan: &Plan) -> Result<(), PlanError> {
     let mut names: BTreeSet<_> = plan.functions.iter().map(|function| function.name.clone()).collect();
     for declaration in &plan.models {
@@ -2134,10 +2135,7 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
                     reason: "invalid model field declaration".into(),
                 });
             }
-            if matches!(
-                field.ty,
-                PlanType::FunctionPointer(_) | PlanType::Closure(_) | PlanType::ClosureRef(_)
-            ) {
+            if matches!(field.ty, PlanType::Closure(_) | PlanType::ClosureRef(_)) {
                 return Err(PlanError::Invalid {
                     function: declaration.name.clone(),
                     reason: "unsupported callable model field declaration".into(),

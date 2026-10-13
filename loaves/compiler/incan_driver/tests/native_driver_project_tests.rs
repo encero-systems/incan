@@ -333,17 +333,16 @@ fn reused_result_callbacks_output_matches_legacy() -> Result<(), Box<dyn std::er
     )
 }
 
-/// The complete callable fixture reaches a named field-layout refusal until the adapter admits function pointer fields.
+/// The complete callable fixture preserves its legacy output after closed function pointer fields are admitted.
 #[test]
 fn returned_callable_fixture_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    check_project_modules_refusal_case(
+    check_project_modules_case(
         "returned-callable-fixture",
         include_str!(
             "../../incan_test_support/fixtures/behavior/cli_values_and_calls/capturing_closures_in_function_types.incn"
         ),
         &[],
         b"6\n6\n11\n5\n-2\n4\n11\n8\n4\n6\n8\n0\n2\n",
-        "unsupported callable model field declaration",
     )
 }
 
