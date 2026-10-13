@@ -137,10 +137,26 @@ fn generic_callable_arguments_retain_owned_storage() -> Result<(), Box<dyn std::
     let [capturing, item] = targets.as_slice() else {
         return Err("expected both checked generic call sites".into());
     };
-    let captured = serde_json::to_value(capturing)?;
-    let pointer = serde_json::to_value(item)?;
-    assert_eq!(captured["owned_callable_slots"], serde_json::json!([0]));
-    assert_eq!(pointer["owned_callable_slots"], serde_json::json!([]));
+    let generic = body_named(&module, "use")?;
+    assert_eq!(generic.params[0].ty, IncanType::TypeVar("Callback".to_owned()));
+    for target in [capturing, item] {
+        assert!(
+            matches!(target.type_args.as_slice(), [IncanType::Function { params, return_type }]
+            if params.len() == 1 && params[0].ty == IncanType::Primitive(IncanPrimitiveType::Str)
+                && **return_type == IncanType::Primitive(IncanPrimitiveType::Str))
+        );
+    }
+    let representations = body
+        .callable_representation
+        .as_ref()
+        .ok_or("missing callable representations")?;
+    let callback = body
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("callback"))
+        .ok_or("missing captured binding")?;
+    assert!(representations.closure_holding_locals.contains(&callback.id));
+    assert!(!representations.function_pointer_locals.contains(&callback.id));
     Ok(())
 }
 
