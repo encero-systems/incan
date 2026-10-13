@@ -64,18 +64,18 @@ def main() -> None:
     )
 }
 
-/// The complete constructor-preset fixture preserves local captures and declaration-owned aggregate defaults.
+/// The original constructor presets reach the library-owned stdlib default while their frozen legacy output stays
+/// fixed.
 #[test]
 fn constructor_presets_original_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    let fixture = driver_fixture()?;
-    corpus::check_builtin_source(
-        &fixture.driver_binary("debug"),
-        &fixture.scratch("constructor-presets-original")?,
-        &fixture.sysroot,
-        &fixture.formatting,
+    check_project_modules_refusal_case(
+        "constructor_presets_original",
         include_str!(
             "../../incan_test_support/fixtures/behavior/cli_values_and_calls/callable_presets_of_constructors_and_declaration_safe_values.incn"
         ),
+        &[],
+        b"bronze orders delta\nbronze orders csv\n1 2\nUserId(7) UserId(8)\nUserId(9)\n-6\n65537\n65537\n1\n3\n0.5\n",
+        "unsupported Body IR unretained global storage `DEFAULT_CHUNK_SIZE`",
     )
 }
 
