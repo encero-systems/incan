@@ -33,9 +33,11 @@ pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::NominalDeclaration>
             );
         }
     }
-    // An SDK handle's Future output contains the SDK join error even when legacy leaves an inferred await open.
-    if names.contains("JoinHandle") && nominal(type_info, "JoinHandle").is_some() {
-        names.insert("TaskJoinError".to_owned());
+    // The registered native handle's Future output carries this error even when legacy leaves a Rust-path await
+    // unknown. Retain the declared runtime dependency alongside the authenticated handle.
+    let handle_name = surface_types::as_str(surface_types::SurfaceTypeId::JoinHandle);
+    if names.contains(handle_name) && nominal(type_info, handle_name).is_some() {
+        names.insert(surface_types::TASK_JOIN_ERROR_TYPE_NAME.to_owned());
     }
     names.into_iter().filter_map(|name| nominal(type_info, &name)).collect()
 }
