@@ -8,6 +8,7 @@ use toml::{Value, map::Map};
 use crate::{CliError, CliResult, ExitCode};
 
 mod dependencies;
+mod features;
 
 type Error = Box<dyn std::error::Error>;
 
@@ -115,9 +116,6 @@ fn declaration(project: &Path, cargo: &Value, workspace: &Value) -> Result<Value
         }
     }
     metadata.insert("private".to_string(), Value::Boolean(true));
-    if let Some(features) = cargo.get("features") {
-        metadata.insert("features".to_string(), features.clone());
-    }
     loaf.as_table_mut()
         .ok_or("Loaf declaration is not a table")?
         .insert("project".to_string(), Value::Table(metadata));

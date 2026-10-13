@@ -35,6 +35,7 @@ pub(super) fn convert(
             }
         }
     }
+    super::features::convert(cargo, loaf, &normal)?;
     test_environment(loaf, &normal, test)?;
     loaf.as_table_mut()
         .ok_or("Loaf declaration is not a table")?
