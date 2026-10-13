@@ -747,6 +747,27 @@ fn retains_sdk_join_error_method_contract() -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
+/// An inferred task binding keeps the checked native future output that closed its SDK spawn call.
+#[test]
+fn inferred_task_binding_retains_closed_output() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "import std.async\nfrom std.async.task import spawn\nasync def work() -> int:\n  return 1\nasync def main() -> None:\n  task = spawn(work())\n  task.abort()\n";
+    let module = build(source, &["m", "inferred_task"])?;
+    let body = body_named(&module, "main")?;
+    let task = body
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("task"))
+        .ok_or("task binding")?;
+    assert_eq!(
+        task.ty,
+        IncanType::Generic {
+            base: "JoinHandle".into(),
+            args: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
+        }
+    );
+    Ok(())
+}
+
 /// Source and foreign equal-spelled errors do not acquire the SDK's native method records.
 #[test]
 fn non_sdk_join_error_methods_keep_their_owner() -> Result<(), Box<dyn std::error::Error>> {

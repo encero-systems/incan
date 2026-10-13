@@ -14355,9 +14355,8 @@ fn cancelled_sdk_task_error_matches_legacy() -> Result<(), Box<dyn std::error::E
         "cancelled-sdk-task-error",
         r#"
 import std.async
-from std.async.task import spawn, TaskJoinError
+from std.async.task import spawn, TaskJoinError, JoinHandle
 from std.async.time import sleep_ms
-from rust::incan_std_async::task import JoinHandle as NativeHandle
 async def wait_for[T, F with Awaitable[T]](task: F) -> T:
     return await task
 async def pending() -> int:
@@ -14365,9 +14364,9 @@ async def pending() -> int:
         await sleep_ms(1)
     return 1
 async def main() -> None:
-    task: NativeHandle[int] = spawn(pending())
+    task = spawn(pending())
     task.abort()
-    match await wait_for[Result[int, TaskJoinError], NativeHandle[int]](task):
+    match await wait_for[Result[int, TaskJoinError], JoinHandle[int]](task):
         Ok(_value) => println("unexpected completion")
         Err(error) =>
             println(error.is_cancelled())
