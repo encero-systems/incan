@@ -117,20 +117,17 @@ def main() -> None:
     )
 }
 
-/// The original ordinal fixture keeps both scalar and value-enum calls as its live legacy contract.
+/// The original ordinal fixture advances to missing native value-enum implementations with its live legacy output
+/// pinned.
 #[test]
 fn sdk_ordinal_fixture_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
-    let fixture = driver_fixture()?;
-    let mut closure = corpus::runtime_closure(&fixture.formatting)?;
-    closure.extend_with(&sdk_closure(fixture)?)?;
-    corpus::check_builtin_source_with_closure(
-        &fixture.driver_binary("debug"),
-        &fixture.scratch("sdk-ordinal-fixture")?,
-        &fixture.sysroot,
-        &closure,
+    check_sdk_adapter_fixture(
+        "sdk-ordinal-fixture",
         include_str!(
             "../../incan_test_support/fixtures/behavior/snapshots_collections_and_strings/ordinal_key_builtin_impls.incn"
         ),
+        b"str:4\ni32:4\nbool:bool:u8\ndecimal:17:decimal128:coefficient-i128-le:scale-u8\nstatus:4:value-enum:str:main.Status:4:paid;4:open;:v1\nhttp:8\n",
+        "unsupported native instantiation of `incan_stdlib_data::collections::OrdinalKey::ordinal_bytes`",
     )
 }
 
@@ -11269,7 +11266,8 @@ def main() -> None:
     )
 }
 
-/// Pin a full multi-module program's next-stage refusal and verify its unchanged legacy output before handing it off.
+/// Pin a full program's next-stage refusal, retain its complete native diagnostic, and verify unchanged live legacy
+/// output.
 fn check_project_modules_refusal_case(
     name: &str,
     text: &str,
@@ -11297,7 +11295,9 @@ fn check_project_modules_refusal_case(
     )
     .current_dir(&root)
     .output()?;
+    fs::write(root.join("native-refusal.stderr"), &actual.stderr)?;
     assert!(!actual.status.success());
+    assert!(!native.exists(), "a named refusal must not leave an executable");
     let diagnostic = String::from_utf8(actual.stderr)?;
     assert!(diagnostic.contains(reason), "{diagnostic}");
     let expected = support::repo_command()
