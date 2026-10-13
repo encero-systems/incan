@@ -481,7 +481,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Place {
         let ty = self.resolve_ty(expr.span);
-        if (ty == IncanType::Primitive(IncanPrimitiveType::FrozenBytes)
+        if (ty == IncanType::Primitive(IncanPrimitiveType::FrozenStr)
+            || ty == IncanType::Primitive(IncanPrimitiveType::FrozenBytes)
             || matches!(&ty, IncanType::Generic { base, .. } if matches!(base.as_str(), "FrozenList" | "FrozenSet" | "FrozenDict")))
             && matches!(expr.node, ast::Expr::Ident(_) | ast::Expr::Field(..))
         {
