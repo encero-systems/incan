@@ -11077,7 +11077,7 @@ fn imported_user_json_field_output_matches_legacy() -> Result<(), Box<dyn std::e
     )
 }
 
-/// A call returning a provider's private model alias retains the declared carrier in the consumer's native frame.
+/// A provider's private model alias retains its carrier, method and field contracts with original legacy bytes.
 #[test]
 fn imported_model_alias_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {
     check_project_modules_case(
@@ -11092,8 +11092,8 @@ fn imported_model_alias_output_matches_legacy() -> Result<(), Box<dyn std::error
         ],
         b"x\n",
     )?;
-    check_project_modules_refusal(
-        "imported_alias_method_next_stage",
+    check_project_modules_case(
+        "imported_alias_method_original",
         include_str!(
             "../../incan_test_support/fixtures/behavior/codegen_modules_and_imports/field_alias_across_modules/main.incn"
         ),
@@ -11111,7 +11111,7 @@ fn imported_model_alias_output_matches_legacy() -> Result<(), Box<dyn std::error
                 ),
             ),
         ],
-        "unsupported Body IR type Unknown",
+        b"x\ny\nz\n",
     )
 }
 
