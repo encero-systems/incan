@@ -156,23 +156,23 @@ fn transient_call_snapshot_preserves_body_ir_only_facts() -> Result<(), Box<dyn 
 
     // ---- Executable facts kept apart from legacy ----
     info.calls.body_ir_constructor_types.insert(key, source.clone());
-    info.calls.body_ir_call_type_args.insert(key, vec![source.clone()]);
+    info.calls.body_ir_call_type_arguments.insert(key, vec![source.clone()]);
     info.calls.body_ir_call_result_types.insert(key, source.clone());
 
     // ---- Temporary hook resolution ----
     let original = info.take_call_site_facts(span);
     assert!(!info.calls.body_ir_constructor_types.contains_key(&key));
-    assert!(!info.calls.body_ir_call_type_args.contains_key(&key));
+    assert!(!info.calls.body_ir_call_type_arguments.contains_key(&key));
     assert!(!info.calls.body_ir_call_result_types.contains_key(&key));
     info.calls.body_ir_constructor_types.insert(key, ResolvedType::Unknown);
-    info.calls.body_ir_call_type_args.insert(key, Vec::new());
+    info.calls.body_ir_call_type_arguments.insert(key, Vec::new());
     info.calls.body_ir_call_result_types.insert(key, ResolvedType::Unknown);
 
     // ---- Restored written call ----
     info.restore_call_site_facts(span, original);
     assert_eq!(info.calls.body_ir_constructor_types.get(&key), Some(&source));
     assert_eq!(
-        info.calls.body_ir_call_type_args.get(&key).map(Vec::as_slice),
+        info.calls.body_ir_call_type_arguments.get(&key).map(Vec::as_slice),
         Some(std::slice::from_ref(&source))
     );
     assert_eq!(info.calls.body_ir_call_result_types.get(&key), Some(&source));

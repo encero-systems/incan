@@ -57,6 +57,11 @@ impl BodyBuilder<'_, '_> {
                     canonical_module_identity(&declaration.canonical).as_deref() == Some(self.module_identity)
                 })
                 .ok_or("partial callable without a retained same-module constructor")?;
+            if declaration.canonical.kind == SemanticSourceTargetKind::Newtype
+                && !super::partials::plain_newtype_partial(&declaration.name, self.type_info)
+            {
+                return Err("partial newtype constructor requiring validation".to_owned());
+            }
             Some(declaration.clone())
         } else {
             None
@@ -297,6 +302,7 @@ impl BodyBuilder<'_, '_> {
                 params: frame.parameters,
                 captured_operands: frame.captured_operands,
                 body: Box::new(bir::ClosureBody {
+                    original_callable: None,
                     function_item: false,
                     capture_locals: frame.capture_locals,
                     stmts: statements,

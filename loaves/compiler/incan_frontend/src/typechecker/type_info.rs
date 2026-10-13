@@ -1842,7 +1842,7 @@ pub(crate) struct CallSiteFacts {
     callable_params: Option<Vec<CallableParam>>,
     monomorph_type_args: Option<Vec<ResolvedType>>,
     body_ir_constructor_type: Option<ResolvedType>,
-    body_ir_call_type_args: Option<Vec<ResolvedType>>,
+    body_ir_call_type_arguments: Option<Vec<ResolvedType>>,
     body_ir_call_result_type: Option<ResolvedType>,
     body_ir_self_method_identity: Option<CanonicalSymbolId>,
     body_ir_self_method_result_type: Option<ResolvedType>,
@@ -3129,7 +3129,7 @@ impl TypeCheckInfo {
             callable_params: self.calls.call_site_callable_params.remove(&key),
             monomorph_type_args: self.calls.call_site_monomorph_type_args.remove(&key),
             body_ir_constructor_type: self.calls.body_ir_constructor_types.remove(&key),
-            body_ir_call_type_args: self.calls.body_ir_call_type_args.remove(&key),
+            body_ir_call_type_arguments: self.calls.body_ir_call_type_arguments.remove(&key),
             body_ir_call_result_type: self.calls.body_ir_call_result_types.remove(&key),
             body_ir_self_method_identity: self.traits.self_method_identities.remove(&key),
             body_ir_self_method_result_type: self.traits.self_method_result_types.remove(&key),
@@ -3142,7 +3142,7 @@ impl TypeCheckInfo {
     pub(crate) fn clear_body_ir_call_site_facts(&mut self, span: Span) {
         let key = (span.start, span.end);
         self.calls.body_ir_constructor_types.remove(&key);
-        self.calls.body_ir_call_type_args.remove(&key);
+        self.calls.body_ir_call_type_arguments.remove(&key);
         self.calls.body_ir_call_result_types.remove(&key);
         self.traits.self_method_identities.remove(&key);
         self.traits.self_method_result_types.remove(&key);
@@ -3194,9 +3194,9 @@ impl TypeCheckInfo {
             facts.body_ir_constructor_type,
         );
         put(
-            &mut self.calls.body_ir_call_type_args,
+            &mut self.calls.body_ir_call_type_arguments,
             key,
-            facts.body_ir_call_type_args,
+            facts.body_ir_call_type_arguments,
         );
         put(
             &mut self.calls.body_ir_call_result_types,

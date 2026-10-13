@@ -1262,7 +1262,7 @@ impl TypeChecker {
         let type_args = self
             .type_info
             .calls
-            .body_ir_call_type_args
+            .body_ir_call_type_arguments
             .get(&key)
             .or_else(|| self.type_info.calls.call_site_monomorph_type_args.get(&key))
             .cloned()

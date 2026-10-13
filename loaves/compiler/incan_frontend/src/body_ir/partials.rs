@@ -3,7 +3,7 @@
 use super::args::fixed_elements;
 use super::{
     AbiV0RuntimeRequirement, BodyBuilder, BodyIrLoweringFacts, CanonicalSymbolId, CompilerNodeId,
-    FunctionDefaultSource, HirSourceSpan, IncanType, SemanticSourceTargetKind, ast, bir, hir_span,
+    FunctionDefaultSource, HirSourceSpan, IncanType, SemanticSourceTargetKind, TypeCheckInfo, ast, bir, hir_span,
     semantic_type_from_resolved,
 };
 use crate::typechecker::PartialProjectionTargetKind;
@@ -54,6 +54,17 @@ fn partial_target(partial: &ast::PartialDecl, facts: &BodyIrLoweringFacts<'_, '_
     }
 }
 
+/// Keep raw newtype Partial forwarding outside checked hooks and constraint validation until deferred ingress retains
+/// those operations. Callers must already hold the checked, physically retained source constructor; this fact lookup
+/// grants no admission by spelling.
+pub(super) fn plain_newtype_partial(name: &str, facts: &TypeCheckInfo) -> bool {
+    facts
+        .declarations
+        .newtype_construction
+        .get(name)
+        .is_some_and(|construction| construction.checked_constructor.is_none() && construction.constraints.is_empty())
+}
+
 /// Prove a constructor Partial's target is one retained model, class, or plain newtype of this module, by its checked
 /// identity.
 ///
@@ -77,6 +88,11 @@ fn constructor_target(
         .values()
         .find(|declaration| &declaration.canonical == canonical)
         .ok_or_else(|| "source Partial over an unretained or nonlocal constructor".to_string())?;
+    if declaration.canonical.kind == SemanticSourceTargetKind::Newtype
+        && !plain_newtype_partial(&declaration.name, facts.type_info)
+    {
+        return Err("source Partial over a newtype requiring validation".to_string());
+    }
     let defaults = facts
         .function_default_sources
         .get(name)

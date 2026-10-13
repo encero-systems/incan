@@ -300,7 +300,7 @@ fn build_body_ir_module_v0_with_provider_operations(
         )
         .map(|declaration| (declaration.canonical.clone(), declaration.value.clone()))
         .collect::<HashMap<_, _>>();
-    let function_default_sources = collect_function_default_sources(program);
+    let function_default_sources = collect_function_default_sources(program, type_info);
     let local_function_declarations = collect_local_function_declarations(program);
     let enum_declarations = collect_local_enum_declarations(program, &module_identity, type_info);
     let local_enum_declarations = enum_declarations
