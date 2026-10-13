@@ -3607,6 +3607,11 @@ pub enum HelperOp {
     NewtypeConstraintValidate,
     /// Extract a checker-selected source hook's successful wrapper or raise its legacy validation failure.
     NewtypeHookExtract,
+    /// Extract a sole supplied local model field's hook result, retaining its canonical target and field labels.
+    ///
+    /// Arguments are the checked Result, target label, and field label. Multi-field collection and constrained or
+    /// chained ingress require separate retained computations and cannot use this operation.
+    NewtypeFieldHookExtract,
     /// Construct the dependency-owned builtin validation error from its checked message.
     ValidationErrorNew,
     /// Construct the dependency-owned builtin validation error from its checked message and code.
@@ -3645,6 +3650,7 @@ impl HelperOp {
             Self::RangeValidate => "range_validate",
             Self::NewtypeConstraintValidate => "newtype_constraint_validate",
             Self::NewtypeHookExtract => "newtype_hook_extract",
+            Self::NewtypeFieldHookExtract => "newtype_field_hook_extract",
             Self::ValidationErrorNew => "validation_error_new",
             Self::ValidationErrorWithCode => "validation_error_with_code",
             Self::StrConcat => "str_concat",

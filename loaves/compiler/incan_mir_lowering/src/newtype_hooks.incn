@@ -11,9 +11,10 @@ pub def lower_newtype_hook_result(
     mut builder: Builder,
     arguments: &list[ArgumentElement],
     destination: &Option[RustPlace],
+    aggregate_field: bool,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Require the checked Result payload to equal its wrapper destination before dispatching validation failure."""
+    """Validate the retained Result and dispatch the chosen fail-fast or sole-field extraction contract."""
     if len(arguments) != 3:
         return Err("invalid Body IR NewtypeHookExtract arity")
     match destination:
@@ -36,9 +37,12 @@ pub def lower_newtype_hook_result(
             )? != PlanType.String:
                 return Err("unsupported Body IR checked-newtype extraction labels")
             operands = fixed_arguments(builder, arguments, span)?
+            mut path = "incan_native_runtime::checked_newtype_result"
+            if aggregate_field:
+                path = "incan_native_runtime::checked_newtype_field_result"
             return instantiated_external_call(
                 builder,
-                "incan_native_runtime::checked_newtype_result",
+                path,
                 [target, error],
                 [input, PlanType.String, PlanType.String],
                 target,

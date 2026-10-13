@@ -1924,6 +1924,7 @@ mod match_;
 mod newtype_derives;
 
 mod newtype_constraints;
+mod newtype_field_ingress;
 mod newtype_hooks;
 mod newtype_ingress;
 mod validation_errors;

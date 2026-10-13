@@ -86,6 +86,35 @@ impl BodyBuilder<'_, '_> {
         span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
+        let hook_name = identity.declaration_name.clone();
+        let checked = self.checked_newtype_hook_call(owner, identity, value, &ty, scope, span, out);
+        self.push_call_temp(
+            bir::Callee::Helper(bir::HelperOp::NewtypeHookExtract),
+            fixed_elements(vec![
+                checked,
+                bir::Operand::Constant(bir::Constant::Str(owner.to_owned())),
+                bir::Operand::Constant(bir::Constant::Str(hook_name)),
+            ]),
+            ty,
+            scope,
+            span,
+            true,
+            out,
+        )
+    }
+
+    /// Call the canonical source hook without choosing a failure strategy; its caller owns Result extraction.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn checked_newtype_hook_call(
+        &mut self,
+        owner: &str,
+        identity: CanonicalSymbolId,
+        value: bir::Operand,
+        ty: &IncanType,
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
         let Some(((start, end), binding)) = self
             .type_info
             .declarations
@@ -104,15 +133,15 @@ impl BodyBuilder<'_, '_> {
             return self.unsupported_operand("checked-newtype hook signature".into(), scope, span, out);
         }
         let direct_call_id = CompilerNodeId::declaration_span(self.module_identity, *start, *end);
-        let returned = super::bodies::close_self_type(self.checked_type(&binding.return_type), &ty);
+        let returned = super::bodies::close_self_type(self.checked_type(&binding.return_type), ty);
         let IncanType::Generic { base, args } = &returned else {
             return self.unsupported_operand("checked-newtype hook return".into(), scope, span, out);
         };
-        if base != "Result" || args.len() != 2 || args[0] != ty {
+        if base != "Result" || args.len() != 2 || &args[0] != ty {
             return self.unsupported_operand("checked-newtype hook result carrier".into(), scope, span, out);
         }
         let hook_name = identity.declaration_name.clone();
-        let checked = self.push_call_temp(
+        self.push_call_temp(
             bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
                 receiver_type: Some(ty.clone()),
                 name: format!("{owner}.{hook_name}"),
@@ -127,19 +156,6 @@ impl BodyBuilder<'_, '_> {
             scope,
             span,
             false,
-            out,
-        );
-        self.push_call_temp(
-            bir::Callee::Helper(bir::HelperOp::NewtypeHookExtract),
-            fixed_elements(vec![
-                checked,
-                bir::Operand::Constant(bir::Constant::Str(owner.to_owned())),
-                bir::Operand::Constant(bir::Constant::Str(hook_name)),
-            ]),
-            ty,
-            scope,
-            span,
-            true,
             out,
         )
     }

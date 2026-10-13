@@ -643,38 +643,37 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 out,
             );
         }
-        let (operands, binding) =
-            match self.lower_planned_args(&planned, field_binding.field_count, &[], &[], scope, out) {
-                Ok(bound) => bound,
-                Err(description) => {
-                    return self.unsupported_operand(
-                        format!("construction of `{name}`: {description}"),
-                        scope,
-                        hir_span_value,
-                        out,
-                    );
-                }
-            };
+        let canonical = self.constructed_declaration_identity(callee_span, span);
+        let single_field = self.single_field_checked_ingress(
+            canonical.as_ref(),
+            &planned,
+            field_binding.field_count,
+            scope,
+            hir_span_value,
+            out,
+        );
+        let lowered = match single_field {
+            Some(value) => Ok((vec![value], bir::ArgumentBinding::resolved_positional(1))),
+            None => self.lower_planned_args(&planned, field_binding.field_count, &[], &[], scope, out),
+        };
+        let (operands, binding) = match lowered {
+            Ok(bound) => bound,
+            Err(description) => {
+                return self.unsupported_operand(
+                    format!("construction of `{name}`: {description}"),
+                    scope,
+                    hir_span_value,
+                    out,
+                );
+            }
+        };
         let ty = self.resolve_ty(span);
         // A constructor field binding proves argument slots, but not that this constructor names one of the plain
         // models admitted to this lowering context. Preserve the selected declaration's identity and layout together;
         // imported aliases use their original canonical identity, while absent or unsupported context retains
         // neither fact and is refused without guessing from `name`.
-        let canonical = self.constructed_declaration_identity(callee_span, span);
-        let (direct_declaration_id, canonical_field_layout) = self
-            .local_nominal_declarations
-            .values()
-            .find(|declaration| {
-                declaration.fields.len() == field_binding.field_count
-                    && canonical.as_ref() == Some(&declaration.canonical)
-            })
-            .map(|declaration| {
-                (
-                    Some(declaration.direct_declaration_id.clone()),
-                    Some(declaration.fields.clone()),
-                )
-            })
-            .unwrap_or((None, None));
+        let (direct_declaration_id, canonical_field_layout) =
+            self.nominal_constructor_layout(canonical.as_ref(), field_binding.field_count);
         if let Some(checked) =
             self.checked_newtype_construction(name, canonical.as_ref(), &operands, &ty, scope, hir_span_value, out)
         {
@@ -697,6 +696,27 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             hir_span_value,
             out,
         )
+    }
+
+    /// Carry only the selected declaration's canonical field order; argument arity alone cannot name a layout.
+    ///
+    /// This retains the existing aggregate boundary for aliases and absent declarations. Validation ingress must
+    /// separately prove field types, hook identity, and failure strategy before it evaluates any supplied input.
+    fn nominal_constructor_layout(
+        &self,
+        canonical: Option<&CanonicalSymbolId>,
+        field_count: usize,
+    ) -> (Option<CompilerNodeId>, Option<Vec<String>>) {
+        self.local_nominal_declarations
+            .values()
+            .find(|declaration| declaration.fields.len() == field_count && canonical == Some(&declaration.canonical))
+            .map(|declaration| {
+                (
+                    Some(declaration.direct_declaration_id.clone()),
+                    Some(declaration.fields.clone()),
+                )
+            })
+            .unwrap_or((None, None))
     }
 
     /// Lower call arguments positionally, admitting spreads, for a call whose arity is not statically known.

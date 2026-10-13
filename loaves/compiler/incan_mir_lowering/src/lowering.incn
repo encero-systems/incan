@@ -3938,7 +3938,9 @@ def lower_runtime_helper(
             operands = fixed_arguments(builder, arguments, span)?
             external_call(builder, path, int_triple, PlanType.Unit, operands, output, span)
             return Ok(None)
-        RustHelper.NewtypeHookExtract => return lower_newtype_hook_result(builder, arguments, destination, span)
+        RustHelper.NewtypeHookExtract => return lower_newtype_hook_result(builder, arguments, destination, false, span)
+        RustHelper.NewtypeFieldHookExtract =>
+            return lower_newtype_hook_result(builder, arguments, destination, true, span)
         RustHelper.ValidationErrorNew => return lower_validation_error(builder, arguments, destination, false, span)
         RustHelper.ValidationErrorWithCode => return lower_validation_error(builder, arguments, destination, true, span)
         RustHelper.NewtypeConstraintValidate =>
