@@ -82,31 +82,9 @@ def inspect(outcome: TimeoutJoinOutcome[int]) -> None:
         TimeoutJoinOutcome.TimedOut(handle) => pass
 "#;
     let module = build(source, &["m", "deadline_outcome"])?;
-    let declaration = module
-        .enum_declarations
-        .iter()
-        .find(|item| item.name == "TimeoutJoinOutcome")
-        .ok_or("native outcome layout")?;
-    assert_eq!(declaration.type_parameters, ["T"]);
-    assert_eq!(
-        declaration
-            .variants
-            .iter()
-            .map(|item| item.name.as_str())
-            .collect::<Vec<_>>(),
-        ["Completed", "JoinFailed", "TimedOut"]
-    );
-    assert_eq!(declaration.variants[0].fields, [IncanType::TypeVar("T".into())]);
-    assert_eq!(
-        declaration.variants[1].fields,
-        [IncanType::Named("TaskJoinError".into())]
-    );
-    assert_eq!(
-        declaration.variants[2].fields,
-        [IncanType::Generic {
-            base: "JoinHandle".into(),
-            args: vec![IncanType::TypeVar("T".into())]
-        }]
+    assert!(
+        module.enum_declarations.is_empty(),
+        "SDK storage belongs to its declaring module"
     );
     let body = body_named(&module, "inspect")?;
     for (name, expected) in [
