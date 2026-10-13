@@ -537,9 +537,14 @@ fn foreign_task_paths_remain_opaque() {
 #[test]
 fn retains_sdk_async_future_delegation() -> Result<(), Box<dyn std::error::Error>> {
     let source = "from std.async.time import sleep\nasync def wait() -> None:\n  await sleep(0.01)\n";
-    let module = build(source, &["m", "sdk_wait"])?;
-    let call = module
-        .stdlib_delegations
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let program = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&program)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let delegations = library_call_delegations(checker.type_info());
+    let call = delegations
         .iter()
         .find(|call| call.canonical.declaration_name == "sleep")
         .ok_or("SDK sleep must retain its executable delegation")?;
