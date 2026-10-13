@@ -362,7 +362,12 @@ from defaults import (
     model_default_arguments,
 )
 from type_parameters import Instance, instantiate, substitute
-from generic_callables import owned_callable_slots
+from generic_callables import (
+    owned_callable_slots,
+    sdk_owned_callable_bindings,
+    sdk_callable_type,
+    sdk_callable_type_arguments,
+)
 from computed_statics import (
     enters_module_initialization,
     initialize_module_statics,
@@ -3125,17 +3130,15 @@ def lower_library_method(
         ordinary_types.append(
             native_source_type(builder.nominals, builder.enums, builder.unions, parameter, builder.intrinsics)?,
         )
+    owned = sdk_owned_callable_bindings(builder, delegation, target.binding, arguments, ordinary_types)?
+    for index in range(len(ordinary_types)):
+        ordinary_types[index] = sdk_callable_type(builder, delegation.parameters[index + 1], names, closed, owned)?
     parameters.extend(ordinary_types)
     result = library_method_result(builder, delegation, target, destination, names, closed, span)?
     ordinary = library_call_operands(builder, delegation, target.binding, arguments, ordinary_types, span, 1, false)?
     mut operands = [read_place(reference, true, span)]
     operands.extend(ordinary)
-    mut native_arguments = closed
-    if len(delegation.native_type_arguments) != 0:
-        native_arguments = []
-        for argument in delegation.native_type_arguments:
-            concrete: RustType = substitute(argument, names, closed)?
-            native_arguments.append(concrete.clone())
+    type_arguments = sdk_callable_type_arguments(builder, delegation, names, closed, owned)?
     mut output = temporary(builder, result, span)
     match destination:
         Some(place) =>
@@ -3144,12 +3147,7 @@ def lower_library_method(
     match delegation.rust_path():
         None => return Err("unsupported Body IR stdlib method native identity")
         Some(path) =>
-            if len(native_arguments) != 0:
-                mut type_arguments: list[PlanType] = []
-                for argument in native_arguments:
-                    type_arguments.append(
-                        native_source_type(builder.nominals, builder.enums, builder.unions, argument, builder.intrinsics)?,
-                    )
+            if len(type_arguments) != 0:
                 return instantiated_external_call(
                     builder,
                     path,
