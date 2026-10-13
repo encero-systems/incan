@@ -54,6 +54,12 @@ pub(super) fn project_body(
                 audit.type_parameters.extend(owner.type_parameters.iter().cloned());
             }
         }
+        for owner in &module.trait_declarations {
+            if encloses(owner, member) {
+                let mut owner = owner.clone();
+                audit.identity(&mut owner, true)?;
+            }
+        }
     }
     let canonical = body.canonical.as_mut().ok_or(CoverageReason::UnresolvedReference)?;
     audit.identity(canonical, false)?;

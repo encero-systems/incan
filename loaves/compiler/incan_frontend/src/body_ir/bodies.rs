@@ -1,6 +1,7 @@
 //! Building one `Body` per lowered function or method declaration, including receiver resolution.
 
 use super::*;
+use crate::symbols::ResolvedType;
 use incan_lang::lang::decorators::{self, DecoratorId};
 
 /// Retain a nominal owner's methods and concrete property getters under their independent checked identities.
@@ -40,7 +41,12 @@ pub(super) fn lower_owner_method_bodies(
 ) -> Vec<bir::Body> {
     methods
         .iter()
-        .filter_map(|method| lower_method_body(&method.node, method.span, owner_name, &receiver_ty, lowering_facts))
+        .filter_map(|method| {
+            if documented_trait_value_placeholder(method, &receiver_ty, lowering_facts.type_info) {
+                return None;
+            }
+            lower_method_body(&method.node, method.span, owner_name, &receiver_ty, lowering_facts)
+        })
         .collect()
 }
 
@@ -58,6 +64,34 @@ pub(super) fn lower_owner_property_bodies(
         .iter()
         .filter_map(|property| super::properties::lower_getter_body(property, owner_name, &receiver_ty, lowering_facts))
         .collect()
+}
+
+/// Keep a documented, value-returning trait placeholder as an interface slot rather than returning its documentation.
+/// A real return and a valid unit no-op remain executable; the parser and legacy method/default tables are unchanged.
+fn documented_trait_value_placeholder(
+    method: &ast::Spanned<ast::MethodDecl>,
+    receiver_ty: &IncanType,
+    type_info: &TypeCheckInfo,
+) -> bool {
+    if receiver_ty != &IncanType::SelfType {
+        return false;
+    }
+    let Some((first, remaining)) = method.node.body.as_deref().and_then(<[_]>::split_first) else {
+        return false;
+    };
+    if !matches!(&first.node, ast::Statement::Expr(expr) if matches!(&expr.node, ast::Expr::Literal(ast::Literal::String(_))))
+        || remaining.is_empty()
+        || !remaining
+            .iter()
+            .all(|statement| matches!(statement.node, ast::Statement::Pass))
+    {
+        return false;
+    }
+    type_info
+        .declarations
+        .method_bindings_by_span
+        .get(&(method.span.start, method.span.end))
+        .is_some_and(|binding| binding.return_type != ResolvedType::Unit)
 }
 
 /// The delegation an `@rust.extern` declaration named `name` records, or `None` for an ordinary declaration (#2023).
