@@ -3,6 +3,31 @@
 use super::*;
 use incan_semantics_core::SymbolOrigin;
 
+/// Frozen codecs keep the same builtin identity and complete constant slots as mutable text and bytes.
+#[test]
+fn frozen_codec_calls_retain_complete_slots() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "const RAW: FrozenBytes = b\"ok\"\nconst TEXT: FrozenStr = \"ok\"\n\ndef read() -> Result[str, ValidationError]:\n    _ = TEXT.encode()\n    return RAW.decode()\n";
+    let module = build(source, &["m", "frozen_codec_slots"])?;
+    let body = body_named(&module, "read")?;
+    assert!(
+        body.block
+            .stmts
+            .iter()
+            .filter_map(|statement| match &statement.kind {
+                bir::StatementKind::Call {
+                    callee: bir::Callee::Method(target),
+                    args,
+                    ..
+                } => Some((target, args)),
+                _ => None,
+            })
+            .all(|(target, args)| target.canonical.is_some() && args.len() >= 2),
+        "{}",
+        body.render_snapshot()
+    );
+    Ok(())
+}
+
 /// Legacy's dynamic codec guards reorder and may skip expressions, so unsupported effects must stay refused.
 #[test]
 fn effectful_codec_expressions_keep_a_named_refusal() -> Result<(), Box<dyn std::error::Error>> {
