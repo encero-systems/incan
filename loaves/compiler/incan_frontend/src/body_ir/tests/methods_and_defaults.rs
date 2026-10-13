@@ -75,13 +75,13 @@ fn carrier_receiver_snapshot_precedes_default_effects() -> Result<(), Box<dyn st
         .iter()
         .enumerate()
         .find_map(|(index, statement)| {
-            let bir::StatementKind::Assign { destination, value } = &statement.kind else {
+            let bir::StatementKind::Assign { place, rvalue } = &statement.kind else {
                 return None;
             };
-            let bir::Rvalue::Use(bir::Operand::Place(read)) = value else {
+            let bir::Rvalue::Use(bir::Operand::Place(read)) = rvalue else {
                 return None;
             };
-            (read.fact == bir::OwnershipFact::Clone).then_some((index, destination))
+            (read.fact == bir::OwnershipFact::Clone).then_some((index, place))
         })
         .ok_or_else(|| format!("missing carrier snapshot: {}", body.render_snapshot()))?;
     let default = body
