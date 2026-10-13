@@ -399,6 +399,21 @@ def main() -> None:
     )
 }
 
+/// SDK receiver methods and returned error methods preserve legacy output at their selected declaration.
+#[test]
+fn sdk_reader_and_error_methods_match_legacy() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture = driver_fixture()?;
+    let mut closure = corpus::runtime_closure(&fixture.formatting)?;
+    closure.extend_with(&sdk_closure(fixture)?)?;
+    corpus::check_builtin_source_with_closure(
+        &fixture.driver_binary("debug"),
+        &fixture.scratch("sdk-reader-error-methods")?,
+        &fixture.sysroot,
+        &closure,
+        "from std.io import BytesIO\nfrom std.hash import reader_digest\n\ndef main() -> None:\n    match BytesIO(b\"AB\").read(1):\n        Ok(value) => println(len(value))\n        Err(error) => println(error.kind)\n    match reader_digest(BytesIO(b\"x\"), \"wrong\", chunk_size=1):\n        Ok(value) => println(len(value))\n        Err(error) => println(error.message())\n",
+    )
+}
+
 /// A compiled SDK trait default dispatches with its concrete receiver and preserves legacy output.
 #[test]
 fn sdk_trait_default_output_matches_legacy() -> Result<(), Box<dyn std::error::Error>> {

@@ -117,6 +117,34 @@ fn stdlib_uuid_retains_implied_comparison_capabilities() -> Result<(), Box<dyn s
     Ok(())
 }
 
+/// Methods on errors returned by SDK functions retain the declaration that supplies their compiled body.
+#[test]
+fn sdk_returned_error_retains_message_delegation() -> Result<(), Box<dyn std::error::Error>> {
+    let mut cache = StdlibAstCache::new();
+    let path = vec!["std".to_owned(), "hash".to_owned(), "_core".to_owned()];
+    let model = cache.lookup_type(&path, "HashError").ok_or("missing HashError")?;
+    let crate::symbols::TypeInfo::Model(model) = model else {
+        return Err("not a model".into());
+    };
+    let mut identity = model
+        .methods
+        .get("message")
+        .and_then(|method| method.identity.clone())
+        .ok_or("missing message")?;
+    identity.origin = SymbolOrigin::Package {
+        library: "incan_stdlib_data".to_owned(),
+        module_path: path[1..].to_vec(),
+    };
+    let mut info = TypeCheckInfo::default();
+    info.references.resolved_identities.insert((1, 2), identity);
+    let calls = library_call_delegations(&info);
+    assert!(
+        calls.iter().any(|call| call.canonical.declaration_name == "message"),
+        "missing message delegation: {calls:#?}"
+    );
+    Ok(())
+}
+
 /// The SDK's error layout names its Codec field type in its own module, independently of consumer bindings.
 #[test]
 fn stdlib_layout_fields_retain_nested_type_identities() -> Result<(), Box<dyn std::error::Error>> {
